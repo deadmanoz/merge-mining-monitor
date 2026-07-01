@@ -1,0 +1,29 @@
+[package]
+name = "mmm-capture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pure offline evidence handling for the merge-mining monitor: parse, normalize, classify."
+
+[lints]
+workspace = true
+
+[features]
+artifact-generation = []
+test-support = []
+
+[dependencies]
+anyhow.workspace = true
+bitcoin.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# Self-referential dev-dep: enables test-support for this crate's own tests/
+# binaries (integration tests link the lib WITHOUT cfg(test), so the
+# cfg(any(test, ...)) arm does not fire for them).
+mmm-capture = { path = ".", features = ["test-support"] }

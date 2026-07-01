@@ -1,0 +1,12 @@
+{
+  "hash": "0x00000000000000000000000000000000000000000000000000000000000186a0",
+  "number": "0x186a0",
+  "timestamp": "0x59682f00",
+  "miner": "0x0123456789abcdef0123456789abcdef01234567",
+  "difficulty": "0x1000",
+  "bitcoinMergedMiningHeader": "0x",
+  "bitcoinMergedMiningCoinbaseTransaction": "0xdeadbeefcafebabe",
+  "bitcoinMergedMiningMerkleProof": "0x1234567890abcdef",
+  "hashForMergedMining": "0x00000000000000000000000000000000000000000000000000000000a5a5a5a5",
+  "uncles": []
+}

@@ -1,0 +1,41 @@
+[package]
+name = "mmm-producers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Every ingest and maintenance engine the merge-mining monitor CLI dispatches; the only crate combining chain RPC with database writes."
+
+[lints]
+workspace = true
+
+[features]
+db-integration = []
+
+[dependencies]
+mmm-bitcoin-core.workspace = true
+mmm-capture.workspace = true
+mmm-pg.workspace = true
+mmm-read-model.workspace = true
+mmm-rpc.workspace = true
+mmm-store.workspace = true
+anyhow.workspace = true
+bitcoin.workspace = true
+csv.workspace = true
+futures.workspace = true
+hex.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# chains/nbits_horizon tests exercise fail-closed resolver paths with the
+# db-integration-gated fake classifier.
+mmm-bitcoin-core = { workspace = true, features = ["db-integration"] }
+# chains/rsk test code calls mmm_capture::test_support from #[cfg(test)];
+# a dependent's cfg(test) never activates a dependency's feature.
+mmm-capture = { workspace = true, features = ["test-support"] }

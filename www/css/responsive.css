@@ -1,0 +1,64 @@
+@media (max-width: 1120px) {
+  /* Stacked layouts need real page scroll; only the full three-column desktop
+     view is locked to a fixed, non-scrolling viewport. */
+  .app-shell {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .workspace {
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+    grid-template-areas:
+      "filters tree"
+      "drawer drawer";
+  }
+
+  .tree-card {
+    min-height: 360px;
+  }
+
+  /* Rails are full-width / stacked here, so width dragging does not apply. */
+  .rail-resize-handle {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    padding: 6px;
+  }
+
+  .topbar,
+  .workspace {
+    display: grid;
+  }
+
+  .topbar {
+    justify-items: stretch;
+  }
+
+  .topbar-actions {
+    justify-content: start;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "filters"
+      "tree"
+      "drawer";
+  }
+
+  .grid-form {
+    grid-template-columns: 1fr;
+  }
+
+  .tree-card {
+    min-height: 360px;
+  }
+
+  .tree-svg {
+    min-height: 300px;
+  }
+}

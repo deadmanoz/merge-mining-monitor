@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-24",
+  "scope": "Elastos child coinbase reward address -> pool identity registry for merge-mined child-miner attribution.",
+  "source": {
+    "name": "project-maintained elastos child-payout registry",
+    "notes": "Maps a child-chain coinbase payout/reward address to a project-stable pool slug, derived from authenticated AuxPoW linkage: each address consistently co-occurs with one pool's independently-attributed Bitcoin parent coinbase across many merge-mined blocks. Pools that rotate their child payout address per block (notably ViaBTC on Namecoin/Syscoin) cannot be pinned to a single address and are intentionally omitted. Shared/protocol/relay outputs that appear across many pools are excluded."
+  },
+  "entries": [
+    {
+      "address": "EfZ6oNo4oKgefbuX3t2dVrH9ME2mR4ZZka",
+      "pool_slug": "antpool",
+      "pool_canonical_name": "AntPool",
+      "evidence": {
+        "support_sources": [
+          "https://blockchain.elastos.io/address/EfZ6oNo4oKgefbuX3t2dVrH9ME2mR4ZZka",
+          "https://minerstat.com/pools/antpool/addresses",
+          "https://www.theminermag.com/home/2023-12-28/bitcoin-mining-pool-block-reward-antpool-hashrate"
+        ],
+        "btc_parent_pool_reconciliation": "292 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'antpool': 292} (purity 1.000).",
+        "web_verification": "insufficient",
+        "note": "reward address is the reliable key; minerinfo 'Antpool' is also stamped by secpool"
+      }
+    },
+    {
+      "address": "EexDsiXag2rH4f7VTPNziYdGJdcxCnvGW6",
+      "pool_slug": "braiins-pool",
+      "pool_canonical_name": "Braiins Pool",
+      "evidence": {
+        "support_sources": [
+          "https://blockchain.elastos.io/address/EexDsiXag2rH4f7VTPNziYdGJdcxCnvGW6",
+          "https://blog.elastos.net/news/elastos-merged-mining-explained-harnessing-bitcoins-strength-for-security/",
+          "https://academy.braiins.com/en/braiins-pool/rewards-and-payouts/"
+        ],
+        "btc_parent_pool_reconciliation": "29 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'braiins-pool': 28, 'redrock-pool': 1} (purity 0.966).",
+        "web_verification": "insufficient",
+        "note": "dominant braiins"
+      }
+    },
+    {
+      "address": "EPEzY8RqLoHiKB5sXsRLNmMcE6ESqvY6Zq",
+      "pool_slug": "f2pool",
+      "pool_canonical_name": "F2Pool",
+      "evidence": {
+        "support_sources": [
+          "https://ela.elastos.io/api/v1/address/EPEzY8RqLoHiKB5sXsRLNmMcE6ESqvY6Zq"
+        ],
+        "btc_parent_pool_reconciliation": "177 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'f2pool': 177} (purity 1.000).",
+        "web_verification": "corroborates"
+      }
+    },
+    {
+      "address": "ER6iCws5hqmVoSeVugnWLNo28rv4iMVy17",
+      "pool_slug": "poolin",
+      "pool_canonical_name": "Poolin",
+      "evidence": {
+        "support_sources": [],
+        "btc_parent_pool_reconciliation": "4 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'poolin': 4} (purity 1.000).",
+        "web_verification": "corroborates",
+        "note": "low volume"
+      }
+    },
+    {
+      "address": "EdaNsdRChz1pmwHRvSCcTvGhZKaEuimToL",
+      "pool_slug": "secpool",
+      "pool_canonical_name": "SecPool",
+      "evidence": {
+        "support_sources": [
+          "https://mempool.space/mining/pool/secpool",
+          "https://blockchain.elastos.io/address/EdaNsdRChz1pmwHRvSCcTvGhZKaEuimToL"
+        ],
+        "btc_parent_pool_reconciliation": "55 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'secpool': 55} (purity 1.000).",
+        "web_verification": "corroborates"
+      }
+    },
+    {
+      "address": "Eeguj3LmsTnTSyFuvM8DXLmjYNBqa6XK4c",
+      "pool_slug": "viabtc",
+      "pool_canonical_name": "ViaBTC",
+      "evidence": {
+        "support_sources": [],
+        "btc_parent_pool_reconciliation": "144 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'viabtc': 144} (purity 1.000).",
+        "web_verification": "corroborates"
+      }
+    }
+  ]
+}

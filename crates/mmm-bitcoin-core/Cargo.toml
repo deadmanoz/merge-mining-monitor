@@ -1,0 +1,23 @@
+[package]
+name = "mmm-bitcoin-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Bitcoin Core node access and the Core-backed parent classification policy."
+
+[lints]
+workspace = true
+
+[features]
+db-integration = []
+
+[dependencies]
+mmm-capture.workspace = true
+anyhow.workspace = true
+bitcoin.workspace = true
+corepc-client.workspace = true
+jsonrpc.workspace = true
+tokio.workspace = true
+tracing.workspace = true

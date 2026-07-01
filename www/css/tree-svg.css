@@ -1,0 +1,148 @@
+.tree-node {
+  cursor: pointer;
+}
+
+/* Source highlight: blocks/edges a selected source did not merge-mine fade back
+   so the relevant headers stand out. No selection => nothing dimmed. */
+.tree-node,
+.tree-edge,
+.tree-edge-label {
+  transition: opacity 0.16s ease;
+}
+
+.tree-node--dim {
+  opacity: 0.18;
+}
+
+.tree-edge--dim {
+  opacity: 0.14;
+}
+
+.tree-block {
+  stroke: var(--surface);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.tree-node[data-selected="true"] .tree-block {
+  stroke: var(--focus);
+  stroke-width: 3;
+}
+
+/* Height and miner name both sit inside the kind-colored block; a dark halo
+   keeps the white text legible on every kind fill across light and dark themes. */
+.tree-block-height {
+  fill: #ffffff;
+  font-size: 16px;
+  font-weight: 700;
+  font-family: var(--mono);
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.32);
+  stroke-width: 2.5px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.tree-block-pool {
+  fill: rgba(255, 255, 255, 0.94);
+  font-size: 11px;
+  font-family: var(--sans);
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.26);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.tree-badge-bg {
+  stroke: var(--surface);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.tree-badge-chains .tree-badge-bg { fill: var(--proof); }
+
+.tree-badge-text {
+  fill: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--mono);
+  pointer-events: none;
+}
+
+.tree-chain-card-bg {
+  fill: var(--surface);
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.2));
+}
+
+.tree-chain-card-title {
+  fill: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--sans);
+  pointer-events: none;
+}
+
+.tree-chain-card-name {
+  fill: var(--text);
+  font-size: 11px;
+  font-family: var(--mono);
+  pointer-events: none;
+}
+
+.tree-chain-card-meta {
+  fill: var(--muted);
+  font-size: 10px;
+  font-family: var(--mono);
+  pointer-events: none;
+}
+
+.tree-chain-card-swatch {
+  stroke: var(--surface);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.tree-edge {
+  fill: none;
+  stroke-width: 2;
+  stroke: var(--context);
+  vector-effect: non-scaling-stroke;
+}
+
+/* Hidden-span count pill: reads as part of the dashed hidden edge it labels, so
+   it borrows the same --context colour and dash pattern and dims with its edge. */
+.tree-edge-label-bg {
+  fill: var(--surface);
+  stroke: var(--context);
+  stroke-width: 1.5;
+  stroke-dasharray: 8 6;
+  vector-effect: non-scaling-stroke;
+}
+
+.tree-edge-label-text {
+  fill: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--mono);
+  pointer-events: none;
+}
+
+.edge-canonical { stroke: var(--canonical); }
+.edge-stale_entry { stroke: var(--stale); stroke-dasharray: 5 4; }
+.edge-stale { stroke: var(--stale); }
+.edge-hidden { stroke: var(--context); stroke-dasharray: 8 6; }
+/* Anchor-orphan fork edges: a solid strict-coloured link to a verified
+   predecessor, and a dashed weak-coloured link for an approximate placement. */
+.edge-orphan { stroke: var(--orphan-strict); }
+.edge-orphan_approx { stroke: var(--orphan-weak); stroke-dasharray: 3 4; }
+
+.null-value { color: var(--unknown); }
+.false-value { color: var(--stale); }
+.true-value { color: var(--canonical); }
+.empty-array { color: var(--context); }
+.relative-time { color: var(--muted); }

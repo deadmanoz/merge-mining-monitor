@@ -1,0 +1,177 @@
+{
+  "schema_version": "v1",
+  "generated_at": 1779792000,
+  "block": {
+    "hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "height": 700004,
+    "kind": "stale",
+    "btc_orphan_class": null,
+    "coinbase_tag": null,
+    "header": {
+      "version": 536870912,
+      "prev_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "merkle_root": "dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada",
+      "time": 1779774000,
+      "bits": "170d21b9",
+      "nonce": 400
+    },
+    "bitcoin_miner_pool": {
+      "id": 7,
+      "slug": "antpool",
+      "name": "AntPool",
+      "known": true
+    },
+    "display_miner_pool": {
+      "id": 7,
+      "slug": "antpool",
+      "name": "AntPool",
+      "known": true
+    },
+    "display_miner_basis": "bitcoin_coinbase",
+    "source_summary": {
+      "sources": [
+        "auxpow:namecoin",
+        "live-chaintip:bitcoin:core"
+      ],
+      "distinct_sources": 2,
+      "auxpow_chain_count": 1,
+      "live_observed": true,
+      "pow_validates_btc_target": true
+    }
+  },
+  "proofs": [
+    {
+      "kind": "auxpow",
+      "source": {
+        "id": 1,
+        "code": "auxpow:namecoin",
+        "kind": "auxpow",
+        "chain": "namecoin",
+        "instance": null
+      },
+      "discovered_at": 1779774100,
+      "confirmed_at": 1779774100,
+      "revoked_at": null,
+      "revocation_reason": null,
+      "pow_validates_btc_target": true,
+      "evidence": {
+        "contributing_event_ids": [
+          501
+        ]
+      }
+    }
+  ],
+  "event_details": [
+    {
+      "id": 501,
+      "source": "auxpow:namecoin",
+      "child_chain": "namecoin",
+      "child_height": 500030,
+      "child_block_hash": "1010101010101010101010101010101010101010101010101010101010101010",
+      "child_block_time": 1779774100,
+      "btc_parent_header_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "event_parent_kind": "unknown",
+      "btc_parent_coinbase_txid": "2727272727272727272727272727272727272727272727272727272727272727",
+      "btc_parent_coinbase_script_hex": "03e6f505",
+      "btc_parent_coinbase_outputs_hex": "00",
+      "child_coinbase_txid": "2828282828282828282828282828282828282828282828282828282828282828",
+      "child_coinbase_script_hex": "04abcd",
+      "aux_merkle_proof_hex": "beefcafe",
+      "chain_id": 1,
+      "slot_index": null,
+      "aux_proof": null,
+      "rsk": null,
+      "pow_validates_btc_target": true,
+      "pow_validates_child_target": true,
+      "difficulty_epoch_ok": null,
+      "event_discovered_at": 1779774100,
+      "event_confirmed_at": 1779774100,
+      "event_revoked_at": null,
+      "event_revocation_reason": null,
+      "child_miner_pool": {
+        "id": 7,
+        "slug": "antpool",
+        "name": "AntPool",
+        "known": true
+      },
+      "pool_attributions": {
+        "btc_parent": [
+          {
+            "namespace": "btc_coinbase_tag",
+            "match_kind": "coinbase_tag",
+            "matched_value": "antpool",
+            "pool": {
+              "id": 7,
+              "slug": "antpool",
+              "name": "AntPool",
+              "known": true
+            },
+            "pool_identity": null,
+            "source": "btc_pool_snapshot",
+            "confidence": "high",
+            "details": {}
+          }
+        ],
+        "child_block": [
+          {
+            "namespace": "btc_coinbase_tag",
+            "match_kind": "coinbase_tag",
+            "matched_value": "antpool",
+            "pool": {
+              "id": 7,
+              "slug": "antpool",
+              "name": "AntPool",
+              "known": true
+            },
+            "pool_identity": null,
+            "source": "btc_pool_snapshot_legacy_child_script",
+            "confidence": "high",
+            "details": {}
+          }
+        ]
+      }
+    }
+  ],
+  "competition": {
+    "btc_height": 700004,
+    "stale_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "canonical_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "stale_bitcoin_miner_pool": {
+      "id": 7,
+      "slug": "antpool",
+      "name": "AntPool",
+      "known": true
+    },
+    "canonical_bitcoin_miner_pool": {
+      "id": 8,
+      "slug": "f2pool",
+      "name": "F2Pool",
+      "known": true
+    },
+    "header_time_delta_s": 25,
+    "propagation_delta_s": null
+  },
+  "stale_branch": {
+    "branch_id": "stale-700004-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "root_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "tip_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "member_hashes": [
+      "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    ],
+    "canonical_competitor_hashes": [
+      "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    ],
+    "btc_height_min": 700004,
+    "btc_height_max": 700004,
+    "depth": 1,
+    "position": "root_and_tip",
+    "parent_stale_hash": null,
+    "child_stale_hashes": []
+  },
+  "commitment": {
+    "format": "namecoin-aux",
+    "parent_coinbase_txid": "2727272727272727272727272727272727272727272727272727272727272727",
+    "parent_coinbase_script_hex": "03e6f505",
+    "marker": null
+  }
+}

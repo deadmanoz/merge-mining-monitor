@@ -1,0 +1,5 @@
+{
+  "fixture": "019199-non-auxpow",
+  "expected_non_auxpow": true,
+  "expected_child_hash": "3570e1722fe72fc41fcab071a0dc605b24bdf5914e6fc97ce1f21b362fd11d09"
+}

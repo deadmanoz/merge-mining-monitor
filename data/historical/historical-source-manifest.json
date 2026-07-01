@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "scope": "historical_auxpow_validated_stales_phase1",
+  "source_class": "validated_stales_csv",
+  "source_repo": "merge-mining-research",
+  "source_repo_commit": "39cb7af8691b4d992e988b746433e46c20ec6f3c",
+  "manifest_generator": "scripts/gen-historical-source-manifest.sh",
+  "total_declared_stale_rows": 1482,
+  "notes": [
+    "Scope is the historical-only chains in scripts/lib/historical-source-chains.sh; live chains are excluded.",
+    "Inputs are committed validated stale CSV blobs from the source repo; full-evidence and orphan-heavy inventories are intentionally kept outside this repo.",
+    "Rows are stale-only provenance inputs and are re-proven by the monitor Bitcoin Core classifier during import."
+  ],
+  "sources": [
+    {
+      "chain": "argentum",
+      "source_code": "auxpow:argentum",
+      "csv_path": "data/argentum_validated_stales.csv",
+      "height_column": "arg_height",
+      "declared_stale_rows": 2,
+      "sha256": "26ec87b2297967c5f8ced753573c9e6322b86260276b1d43731d930cf3d41769"
+    },
+    {
+      "chain": "bitcoin-vault",
+      "source_code": "auxpow:bitcoin-vault",
+      "csv_path": "data/bitcoin-vault_validated_stales.csv",
+      "height_column": "btcv_height",
+      "declared_stale_rows": 8,
+      "sha256": "22affa696716ecf67e1a4649fef0d473d8be0e5d0d586bf5d4618c6ea4900f2e"
+    },
+    {
+      "chain": "bitmark",
+      "source_code": "auxpow:bitmark",
+      "csv_path": "data/bitmark_validated_stales.csv",
+      "height_column": "btmk_height",
+      "declared_stale_rows": 1,
+      "sha256": "f699702dc447266d5f75d6a305c92a1e9ffbf1d8a25acaaa75aba18f8c2ee496"
+    },
+    {
+      "chain": "coiledcoin",
+      "source_code": "auxpow:coiledcoin",
+      "csv_path": "data/coiledcoin_validated_stales.csv",
+      "height_column": "clc_height",
+      "declared_stale_rows": 27,
+      "sha256": "34f6570c1dadab41304c57ca2e42746c721ea245cc897fadf21d73e7c9c5fbe2"
+    },
+    {
+      "chain": "crown",
+      "source_code": "auxpow:crown",
+      "csv_path": "data/crown_validated_stales.csv",
+      "height_column": "crown_height",
+      "declared_stale_rows": 23,
+      "sha256": "a46042ce4f9f04c8d2c9101b93abd671ca982ee724024805e705ec109b5a9e6c"
+    },
+    {
+      "chain": "devcoin",
+      "source_code": "auxpow:devcoin",
+      "csv_path": "data/devcoin_validated_stales.csv",
+      "height_column": "dvc_height",
+      "declared_stale_rows": 484,
+      "sha256": "5111a6f60de8453c80aea1783d22909d28643fdd7051ee96fe3561f6a7d2ece8"
+    },
+    {
+      "chain": "elcash",
+      "source_code": "auxpow:elcash",
+      "csv_path": "data/elcash_validated_stales.csv",
+      "height_column": "elc_height",
+      "declared_stale_rows": 3,
+      "sha256": "f36370e038fe7916b93289ca279825e36fdf57139535a8e7cd7124aa28cd7f4d"
+    },
+    {
+      "chain": "emercoin",
+      "source_code": "auxpow:emercoin",
+      "csv_path": "data/emercoin_validated_stales.csv",
+      "height_column": "emc_height",
+      "declared_stale_rows": 92,
+      "sha256": "5b510cc637e964de9f9a670482397ded4df643cc14688390eab8bb04a71b1b21"
+    },
+    {
+      "chain": "geistgeld",
+      "source_code": "auxpow:geistgeld",
+      "csv_path": "data/geistgeld_validated_stales.csv",
+      "height_column": "geistgeld_height",
+      "declared_stale_rows": 0,
+      "sha256": "0ad057066c214163078114fd6f16ed9c685c1c7ab3d6fda5929857017a2912ec"
+    },
+    {
+      "chain": "groupcoin",
+      "source_code": "auxpow:groupcoin",
+      "csv_path": "data/groupcoin_validated_stales.csv",
+      "height_column": "groupcoin_height",
+      "declared_stale_rows": 31,
+      "sha256": "2901e323ae72b2b1db1253f1b830986920fedfd6703a938ca342da917faee1b8"
+    },
+    {
+      "chain": "huntercoin",
+      "source_code": "auxpow:huntercoin",
+      "csv_path": "data/huntercoin_validated_stales.csv",
+      "height_column": "huc_height",
+      "declared_stale_rows": 13,
+      "sha256": "7790440283fd73c4bcc57bddb7de17aece490e9a552bf75b4dab0952740f3a30"
+    },
+    {
+      "chain": "i0coin",
+      "source_code": "auxpow:i0coin",
+      "csv_path": "data/i0coin_validated_stales.csv",
+      "height_column": "child_height",
+      "declared_stale_rows": 167,
+      "sha256": "91205fe1e5529212b41bcb34037537bc863e8d981b90edcf79d0e1366ac49acb"
+    },
+    {
+      "chain": "ixcoin",
+      "source_code": "auxpow:ixcoin",
+      "csv_path": "data/ixcoin_validated_stales.csv",
+      "height_column": "ixc_height",
+      "declared_stale_rows": 478,
+      "sha256": "fda1fbda95ab7a84ef0b4d677ed6e0b06e7969732014379ec8dfee4d9c9f4f74"
+    },
+    {
+      "chain": "myriadcoin",
+      "source_code": "auxpow:myriadcoin",
+      "csv_path": "data/myriadcoin_validated_stales.csv",
+      "height_column": "xmy_height",
+      "declared_stale_rows": 40,
+      "sha256": "05afd5dac8403c8237990daccf20917be5f23c7c822218b690b8e0f1b039bb35"
+    },
+    {
+      "chain": "terracoin",
+      "source_code": "auxpow:terracoin",
+      "csv_path": "data/terracoin_validated_stales.csv",
+      "height_column": "trc_height",
+      "declared_stale_rows": 35,
+      "sha256": "22581760af21cc53ae0768d5ee5ea525ab0c53f0e232c068131eba5ad9c90664"
+    },
+    {
+      "chain": "unobtanium",
+      "source_code": "auxpow:unobtanium",
+      "csv_path": "data/unobtanium_validated_stales.csv",
+      "height_column": "uno_height",
+      "declared_stale_rows": 44,
+      "sha256": "0691c72809d98b78e960caacefbeac4cd8098f6b72db34545bace329ea8b97d6"
+    },
+    {
+      "chain": "xaya",
+      "source_code": "auxpow:xaya",
+      "csv_path": "data/xaya_validated_stales.csv",
+      "height_column": "child_height",
+      "declared_stale_rows": 34,
+      "sha256": "f32bfbe107d5af5b022183240947247a3b674c42852b8e6c0a184ead2bc0e890"
+    }
+  ]
+}

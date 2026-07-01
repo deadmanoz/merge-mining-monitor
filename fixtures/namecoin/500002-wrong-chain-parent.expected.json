@@ -1,0 +1,12 @@
+{
+  "fixture": "500002-wrong-chain-parent",
+  "height_hint": 500002,
+  "expected_parent_kind": "unknown",
+  "expected_pow_validates_btc_target": true,
+  "expected_pow_validates_child_target": true,
+  "expected_difficulty_epoch_ok": false,
+  "expected_parent_pool_slug": "foundry-usa",
+  "expected_child_height": 500002,
+  "expected_child_hash": "785bd48ee578cd6a04d96ddea9d77b39111d6eccc32d603b87b30bc748e27629",
+  "expected_parent_hash": "20e528017a7638096a61de75204a8363b4f7a05b59bb9b45f133b9f75097a8e8"
+}

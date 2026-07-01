@@ -1,0 +1,22 @@
+{
+  "schema_version": "v1",
+  "generated_at": 1779792000,
+  "error": {
+    "code": "backbone_conflict",
+    "message": "Bitcoin Core backbone is inconsistent for this tree window",
+    "details": {
+      "from_height": 100,
+      "to_height": 115,
+      "first_missing_height": null,
+      "missing_count": 0,
+      "partial_count": 0,
+      "conflict_count": 1,
+      "conflict_height": 108,
+      "conflict_reason": "link_mismatch",
+      "hashes": [
+        "0808080808080808080808080808080808080808080808080808080808080808"
+      ],
+      "action": "run sync-bitcoin-core"
+    }
+  }
+}

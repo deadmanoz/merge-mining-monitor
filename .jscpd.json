@@ -1,0 +1,16 @@
+{
+  "format": ["rust"],
+  "minTokens": 70,
+  "minLines": 8,
+  "threshold": 3,
+  "pattern": "**/*.rs",
+  "ignore": [
+    "**/target/**",
+    "**/www/vendor/**",
+    "**/fixtures/**",
+    "**/.git/**"
+  ],
+  "gitignore": true,
+  "reporters": ["console"],
+  "absolute": true
+}

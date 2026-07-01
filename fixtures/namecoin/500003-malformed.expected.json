@@ -1,0 +1,4 @@
+{
+  "fixture": "500003-malformed",
+  "expected_parse_error": true
+}

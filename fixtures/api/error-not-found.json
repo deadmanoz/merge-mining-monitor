@@ -1,0 +1,11 @@
+{
+  "schema_version": "v1",
+  "generated_at": 1779792000,
+  "error": {
+    "code": "not_found",
+    "message": "block was not found",
+    "details": {
+      "hash": "abababababababababababababababababababababababababababababababab"
+    }
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "manifest_schema_version": "manifest-v1",
+  "fixtures": [
+    {
+      "file": "tree.json",
+      "endpoint_family": "/api/v1/tree",
+      "scenario": "Explicit tree window with canonical context, AuxPoW-referenced canonical nodes, stale forks, child-chain evidence, unknown, near, branch, and hidden edge examples"
+    },
+    {
+      "file": "tree-unheighted-anchor.json",
+      "endpoint_family": "/api/v1/tree",
+      "scenario": "Anchor mode (unheighted_anchor): the orphan-block navigator landing, a strict orphan dangling as a fork off the canonical chain at its validated BIP34 height within a +/-16 canonical window, with placement_height on the orphan node, a solid orphan edge to its verified predecessor, and the orphan/orphan_approx edge kinds"
+    },
+    {
+      "file": "block-one-block-stale.json",
+      "endpoint_family": "/api/v1/block/:hash",
+      "scenario": "One-block stale branch detail"
+    },
+    {
+      "file": "block-multi-block-stale-branch.json",
+      "endpoint_family": "/api/v1/block/:hash",
+      "scenario": "Multi-block stale branch root detail"
+    },
+    {
+      "file": "block-rsk-near.json",
+      "endpoint_family": "/api/v1/block/:hash",
+      "scenario": "RSK canonical evidence plus Namecoin evidence for the same near parent"
+    },
+    {
+      "file": "block-stale-rsk-inferred.json",
+      "endpoint_family": "/api/v1/block/:hash",
+      "scenario": "RSK-only stale block with no recoverable Bitcoin coinbase: bitcoin_miner_pool is Unknown while display_miner_pool resolves the merge-miner from the RSK miner address (display_miner_basis child_inferred)"
+    },
+    {
+      "file": "block-rsk-uncle-near.json",
+      "endpoint_family": "/api/v1/block/:hash",
+      "scenario": "RSK uncle evidence for a near parent"
+    },
+    {
+      "file": "navigator-stale.json",
+      "endpoint_family": "/api/v1/navigator/stale",
+      "scenario": "Unified navigator stale target: height-keyed stale items with opaque cursors and tree-window view metadata"
+    },
+    {
+      "file": "navigator-stale-branch.json",
+      "endpoint_family": "/api/v1/navigator/stale-branch",
+      "scenario": "Unified navigator stale-branch target: multi-block stale branch item with branch metadata, opaque cursor, and tree-window view metadata"
+    },
+    {
+      "file": "navigator-orphan.json",
+      "endpoint_family": "/api/v1/navigator/orphan",
+      "scenario": "Unified navigator orphan target: time-keyed BTC-orphan items with orphan class facets, opaque cursors, and unheighted-anchor view metadata"
+    },
+    {
+      "file": "navigator-orphan-branch.json",
+      "endpoint_family": "/api/v1/navigator/orphan-branch",
+      "scenario": "Unified navigator orphan-branch target: anchor-hash locate mode for a time-bounded orphan branch with unheighted-anchor view metadata"
+    },
+    {
+      "file": "sources.json",
+      "endpoint_family": "/api/v1/sources",
+      "scenario": "Source registry with evidence freshness, operational progress, per-source counts including strict/weak BTC-orphan sub-counts, Namecoin, RSK, Syscoin, Fractal, Hathor, Elastos, Bitcoin Core backbone status, and a catalogued (not recovered) source with null progress"
+    },
+    {
+      "file": "version.json",
+      "endpoint_family": "/api/v1/version",
+      "scenario": "Runtime application SemVer v0.1.0 plus the complete RELEASE_NOTES.md release-note projection for the About dialog"
+    },
+    {
+      "file": "error-backbone-conflict.json",
+      "endpoint_family": "errors",
+      "scenario": "Tree request whose requested Bitcoin height window has an inconsistent synced backbone"
+    },
+    {
+      "file": "error-backbone-unsynced.json",
+      "endpoint_family": "errors",
+      "scenario": "Tree request whose requested Bitcoin height window has missing or incomplete Bitcoin Core backbone rows"
+    },
+    {
+      "file": "error-invalid-hash.json",
+      "endpoint_family": "errors",
+      "scenario": "Invalid block hash path parameter"
+    },
+    {
+      "file": "error-invalid-query.json",
+      "endpoint_family": "errors",
+      "scenario": "Malformed query parameter"
+    },
+    {
+      "file": "error-not-found.json",
+      "endpoint_family": "errors",
+      "scenario": "Valid hash not present in the read model"
+    },
+    {
+      "file": "error-range-too-large.json",
+      "endpoint_family": "errors",
+      "scenario": "Valid request window exceeds endpoint bounds"
+    },
+    {
+      "file": "error-unsupported-source.json",
+      "endpoint_family": "errors",
+      "scenario": "Well-formed but unregistered source code"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+# Rust
+target/
+# Cargo.lock IS committed (this crate produces a binary, per Cargo docs)
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local env / secrets
+.env
+.env.local
+
+# Postgres data volume (compose.yaml mounts a named volume — keep host dir clean)
+pgdata/
+
+# Backups produced by scripts/migrate-safe.sh
+backups/
+
+# Runtime logs / scratch
+logs/
+.tmp/
+
+# Node / Playwright e2e
+node_modules/
+test-results/
+playwright-report/

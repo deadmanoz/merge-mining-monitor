@@ -1,0 +1,220 @@
+.app-shell {
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 10px;
+  padding: 10px;
+  overflow: hidden;
+}
+
+.topbar,
+.filter-rail,
+.tree-card,
+.detail-drawer {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 64px;
+  padding: 8px 10px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.brand > div,
+.section-heading > div {
+  min-width: 0;
+}
+
+.brand-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.brand-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.brand-title-row h1 {
+  min-width: 0;
+}
+
+.brand-mark {
+  width: 48px;
+  height: 48px;
+  background: url("/assets/logo/radar-logo-light-96.png") center / cover no-repeat;
+  box-shadow: inset 0 0 0 1px rgba(24, 33, 28, 0.08);
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+[data-theme="dark"] .brand-mark {
+  background-image: url("/assets/logo/radar-logo-dark-96.png");
+  box-shadow: inset 0 0 0 1px rgba(237, 242, 237, 0.08);
+}
+
+.brand p,
+.meta-line,
+.status-line {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.topbar-actions,
+.section-heading,
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.topbar-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.section-heading {
+  justify-content: space-between;
+  padding: 9px 10px 7px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tree-heading {
+  align-items: flex-start;
+  /* Let the title and the navigator wrap as whole units: when they no longer
+     fit on one row, the nav drops to its own line below the title rather than
+     squeezing the title into a second line. */
+  flex-wrap: wrap;
+}
+
+/* Keep the title on a single line so the navigator (not the heading text) is
+   the thing that wraps to the next row. */
+.tree-heading h2 {
+  white-space: nowrap;
+}
+
+.tree-heading-actions {
+  display: flex;
+  align-items: center;
+  /* Left-pack so a wrapped navigator sits under the title's left edge; on a
+     single wide row the parent's space-between still pushes it to the right. */
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+
+.button,
+.icon-button,
+.secondary-button {
+  min-height: 32px;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+/* Consolidated tree navigator: a "Go to" target picker (Tip / Latest stale /
+   Latest branch / Latest unknown) plus << < > >> step buttons and one adaptive
+   readout. */
+.tree-nav {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.nav-goto-label {
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+.nav-goto {
+  min-height: 32px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+
+.nav-readout {
+  color: var(--muted);
+  font-size: 0.85em;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.button:disabled,
+.icon-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.icon-button {
+  width: 32px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+}
+
+.brand-about-button {
+  width: 28px;
+  min-height: 28px;
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+  flex: 0 0 auto;
+}
+
+.button:hover,
+.icon-button:hover,
+.secondary-button:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-alt);
+}
+
+/* Top-right freshness indicator, updated on every data load/refresh. */
+.last-updated {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Auto-refresh interval picker in the topbar. */
+.refresh-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Crisp 16px line icons for icon buttons (refresh-now, theme). */
+.ui-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+/* Theme button shows the mode it will switch TO: moon in light, sun in dark. */
+.theme-icon-sun { display: none; }
+[data-theme="dark"] .theme-icon-moon { display: none; }
+[data-theme="dark"] .theme-icon-sun { display: block; }
+

@@ -1,0 +1,12 @@
+{
+  "schema_version": "v1",
+  "generated_at": 1779792000,
+  "error": {
+    "code": "invalid_query",
+    "message": "from_height must be less than or equal to to_height",
+    "details": {
+      "from_height": 700010,
+      "to_height": 700000
+    }
+  }
+}

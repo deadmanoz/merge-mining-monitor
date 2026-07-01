@@ -1,0 +1,2114 @@
+{
+  "argentum": {
+    "ticker": "ARG",
+    "chain_status": "dead",
+    "status_detail": "Recovered historical dataset; only Argentum's SHA-256d AuxPoW branch carries Bitcoin evidence, and that branch was not Bitcoin-only. The recovered window is overwhelmingly canonical attestation: 27 Bitcoin blocks merge-mined into the main chain across BTC heights `434,652`-`728,756` (October 2016 to March 2022), alongside just 2 admitted stale blocks, the last in June 2017. No Bitcoin coinbase pool attribution survived recovery, and no live producer is configured in this monitor.",
+    "tagline": "Multi-algo AuxPoW chain whose SHA-256d branch was not Bitcoin-only.",
+    "byline": "2016-2022",
+    "display": {
+      "name": "Argentum"
+    },
+    "history": {
+      "founded": "Launched in June 2013 as a Scrypt proof-of-work chain.[^1][^2]",
+      "merge_mining": "Relaunched as a multi-algo AuxPoW chain around April 2016; the SHA-256d AuxPoW branch activates at Argentum (ARG) height `1,825,000`.[^3][^8]",
+      "ended": "Treated here as a historical Bitcoin-evidence source. Canonical merge-mining attestation runs from October 2016 into March 2022; June 2017 is only the last admitted stale block, not an evidence cutoff. Public trackers and dedicated explorers are now expired or unreachable, and no live producer is configured.[^4][^5][^6]",
+      "narrative": "Argentum (ARG) began in 2013 as a standalone Scrypt proof-of-work chain, then relaunched around April 2016 as a multi-algorithm AuxPoW chain.[^1][^2][^3]\n\nIts SHA-256d branch was not Bitcoin-only. Argentum's own site named both Bitcoin and Deutsche eMark as SHA-256d merge-mining parents.[^7] With `fStrictChainId=false`, a SHA-256d parent header still has to be filtered before it can be treated as Bitcoin evidence.[^8]\n\nFor this monitor, Argentum is a recovered historical source, and most of its admitted value is canonical: 27 of its SHA-256d blocks attest to Bitcoin main-chain blocks, spanning BTC heights `434,652`-`728,756` (October 2016 to March 2022). No Bitcoin coinbase pool attribution survived the recovery gates, so the canonical rows carry no resolved pool. Against that backbone sit just 2 admitted stale blocks across BTC heights `467,186`-`472,975` (May to June 2017): the rarer cases where Argentum SHA-256d hashpower committed to a Bitcoin block the main chain did not keep. June 2017 bounds the stale subset, not the evidence; canonical attestation continues for nearly five more years. Dedicated public trackers no longer provide a reliable active-chain view, so live status is not part of the evidence model.[^4][^5][^6]"
+    },
+    "technical": {
+      "mechanism": "Argentum uses Namecoin-family CAuxPoW on its SHA-256d branch. A merge-mined ARG block carries an 80-byte parent header, the parent coinbase commitment to the ARG block hash, and the merkle branches needed to prove that commitment.",
+      "uniqueness": "Two details matter for Bitcoin evidence. First, SHA-256d is the explicit branch selector, so extraction uses `(nVersion & 0x0E00) == 0x0200` rather than the default Scrypt branch. Second, chain ID `0x004A3` (1187 decimal) with `fStrictChainId=false` means the branch can accept non-Bitcoin SHA-256d parents.[^8]",
+      "capture": "Argentum is imported from a committed historical CSV, not polled live. Upstream recovery synced a self-built `argentumd` node, scanned AuxPoW-era blocks, kept only the SHA-256d branch, reconstructed parent headers, filtered for Bitcoin proof of work and Bitcoin `nBits`, and then classified surviving parents with Bitcoin Core.[^8]",
+      "bitcoin_relevance": "Argentum contributes a small recovered Bitcoin-evidence set across BTC heights `434,652`-`728,756` (October 2016 to March 2022): 27 canonical blocks attesting to the Bitcoin main chain, plus 2 admitted stales (the last June 2017). The canonical body is the merge-mining attestation itself; the stales are the off-chain subset. Argentum is mainly a contamination/filtering case study: the software and branch can carry Bitcoin-parent AuxPoW, but the SHA-256d parent set was not Bitcoin-only; the project itself named Deutsche eMark alongside Bitcoin as a merge-mining parent, so non-Bitcoin SHA-256d parents must be filtered before rows enter the Bitcoin tree.[^7]",
+      "notable": [
+        "Bitcoin-looking SHA-256d work is not enough by itself; permissive parent scope makes filtering mandatory.",
+        "The SHA-256d selector is explicit. Scanning the default branch would silently read the wrong algorithm."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family CAuxPoW on the SHA-256d branch"
+        },
+        {
+          "label": "Activation",
+          "value": "ARG height `1,825,000` (`consensus.nStartAuxPow`), ~Apr 2016[^8]"
+        },
+        {
+          "label": "Block cadence",
+          "value": "45 s overall in the admitted evidence window; SHA-256d slots are roughly 4.5 min across six algos[^8]"
+        },
+        {
+          "label": "Parent scope",
+          "value": "Bitcoin or non-Bitcoin SHA-256d parents; filter required[^7][^8]"
+        },
+        {
+          "label": "Branch selector",
+          "value": "`(nVersion & 0x0E00) == 0x0200` for SHA-256d[^8]"
+        }
+      ],
+      "recovery": [
+        "Committed dataset contributes 27 canonical Bitcoin blocks (BTC `434,652`-`728,756`, no surviving pool attribution) and 2 admitted stale blocks (BTC `467,186`-`472,975`); Current Evidence Counts below show the deployed total.",
+        "The low yield is the point: Argentum shows why permissive SHA-256d AuxPoW sources need explicit Bitcoin-parent filtering before they enter the tree."
+      ]
+    },
+    "provenance": {
+      "source": "Recovered historical dataset from a self-built `argentumd` node; monitor ingestion uses the committed `data/argentum_validated_stales.csv` rows from merge-mining-research.[^8]",
+      "coverage": "Canonical attestation spans BTC heights `434,652`-`728,756` (October 2016 to March 2022); the 2 admitted stales fall within BTC `467,186`-`472,975` (May to June 2017). The June 2017 endpoint bounds the stale subset, not the evidence. Local recovery starts at ARG AuxPoW activation height `1,825,000`; admitted Bitcoin evidence is limited to rows that pass the monitor's validation gates, and non-Bitcoin SHA-256d parents are rejected by admission checks. Live chain status is outside this monitor's Argentum evidence path."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "BitcoinTalk ANN topic 231524 (Argentum)",
+        "url": "https://bitcointalk.org/index.php?topic=231524.0"
+      },
+      {
+        "id": 2,
+        "label": "bitinfocharts Argentum",
+        "url": "https://bitinfocharts.com/argentum/"
+      },
+      {
+        "id": 3,
+        "label": "BitcoinTalk ANN topic 1432608 (multi-algo relaunch)",
+        "url": "https://bitcointalk.org/index.php?topic=1432608.0"
+      },
+      {
+        "id": 4,
+        "label": "WhatToMine ARG-SHA-256",
+        "url": "https://whattomine.com/coins/170-arg-sha-256"
+      },
+      {
+        "id": 5,
+        "label": "CoinLore Argentum",
+        "url": "https://www.coinlore.com/coin/argentum"
+      },
+      {
+        "id": 6,
+        "label": "chainz.cryptoid.info ARG",
+        "url": "https://chainz.cryptoid.info/arg/"
+      },
+      {
+        "id": 7,
+        "label": "Argentum official site (about)",
+        "url": "https://www.argentum.cc/about.html"
+      },
+      {
+        "id": 8,
+        "label": "Argentum chainparams.cpp (source)",
+        "url": "https://raw.githubusercontent.com/argentumproject/argentum/master/src/chainparams.cpp"
+      }
+    ]
+  },
+  "bitcoin": {
+    "ticker": "BTC",
+    "chain_status": "active",
+    "status_detail": "Still active (parent chain)",
+    "tagline": "The main Bitcoin proof-of-work chain whose headers child chains reuse for merge-mining evidence",
+    "byline": "Bitcoin Core placement",
+    "help": {
+      "data": "Bitcoin headers and chain placement",
+      "pool": "Bitcoin miner or pool when coinbase attribution is available"
+    },
+    "display": {
+      "name": "Bitcoin",
+      "order": 0
+    },
+    "history": {
+      "founded": "Jan 2009",
+      "merge_mining": "N/A (parent chain)",
+      "ended": "Active",
+      "narrative": "Bitcoin launched with its genesis block on 3 January 2009 and has operated continuously since. It is the root proof-of-work chain from which merge-mined child chains derive their PoW security: a child chain embeds a Bitcoin block header (or a reference to one) in its own block, letting miners simultaneously mine Bitcoin and one or more child chains at no additional hash cost.\n\nThe monitor treats Bitcoin not as a producer but as the classification authority. A live Bitcoin Core node is the only reliable arbiter of whether a parent header observed in a child block is canonical, stale, or absent from the active chain."
+    },
+    "technical": {
+      "mechanism": "Bitcoin supplies the parent proof-of-work that merge-mined child chains reuse. Child chains point back to Bitcoin by carrying a Bitcoin parent header, a full proof, or a family-specific commitment inside their own blocks. That evidence matters only after the embedded header satisfies Bitcoin's target and the child chain's merge-mining rules.",
+      "capture": "The monitor uses Bitcoin Core to place parent hashes preserved by child-chain evidence. Core can place a header on the active chain, recognize it as a known stale block, or report that it is not known. Only the not-known case enters the offline orphan checks, where Bitcoin proof of work, `nBits` consistency, and any available BIP34 height evidence decide whether the row is strict, weak, excluded, or still pending.",
+      "bitcoin_relevance": "Bitcoin provides the tree's main-chain spine and the placement verdicts for child-chain evidence. Child chains are witnesses: they preserve Bitcoin parent headers that may be canonical, stale, or absent from the local Core node. Core placement separates canonical and stale rows first; offline orphan checks only refine Core-absent candidates. The orphan navigator targets (`/api/v1/navigator/orphan`, `/api/v1/navigator/orphan-branch`) surface those preserved Bitcoin fork candidates.",
+      "notable": [
+        "Core placement decides canonical and stale before any orphan logic runs.",
+        "Core-absent does not automatically mean orphan; candidates still need Bitcoin proof of work and `nBits` checks.",
+        "Strict orphan classification requires a real Bitcoin coinbase with a post-BIP34 height plus an `nBits` epoch match. Sources with no trustworthy BTC coinbase height, including RSK and Hathor, are limited to weak classification.[^1][^2]",
+        "If the committed `nBits` table does not yet cover a candidate, the row stays pending instead of being guessed."
+      ],
+      "key_facts": [
+        {
+          "label": "Role",
+          "value": "Main Bitcoin chain and placement authority for child-chain evidence"
+        },
+        {
+          "label": "Inputs",
+          "value": "Bitcoin parent hashes extracted from merge-mined child-chain evidence"
+        },
+        {
+          "label": "Core lookup",
+          "value": "Active-chain means canonical; known off-chain means stale; not known becomes an orphan candidate"
+        },
+        {
+          "label": "Orphan checks",
+          "value": "Core-absent candidates are checked against Bitcoin proof of work, `nBits` epochs, and BIP34 height when available[^1][^2]"
+        }
+      ],
+      "recovery": [
+        "Unknown parent hashes are resolved by querying Bitcoin Core; existing orphan rows can be rechecked after `nBits` table updates or classifier changes."
+      ]
+    },
+    "provenance": {
+      "source": "Live Bitcoin Core node",
+      "coverage": "Parent-chain placement for Bitcoin hashes surfaced by child-chain evidence"
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "BIP34 specification (bitcoin/bips)",
+        "url": "https://github.com/bitcoin/bips/blob/master/bip-0034.mediawiki"
+      },
+      {
+        "id": 2,
+        "label": "BIP90 buried deployments (bitcoin/bips)",
+        "url": "https://github.com/bitcoin/bips/blob/master/bip-0090.mediawiki"
+      }
+    ]
+  },
+  "bitcoin-vault": {
+    "ticker": "BTCV",
+    "chain_status": "dead",
+    "status_detail": "Recovered historical dataset. The recovered window is overwhelmingly canonical attestation: 2,566 Bitcoin blocks merge-mined into the main chain across BTC heights `657,688`-`833,492` (November 2020 to March 2024), led by Binance Pool, BTC.com, Rawpool, BTCPool, and Together Pool, alongside 9 admitted stale blocks, the last in September 2021. The BTCV mainnet then stalled at block `228,360` in March 2024 and has produced no further blocks.[^1]",
+    "tagline": "Short-lived Bitcoin-merge-mined chain recovered from Blockbook raw blocks.",
+    "byline": "2020-2024",
+    "display": {
+      "name": "Bitcoin Vault"
+    },
+    "history": {
+      "founded": "Mainnet launched on 17 November 2020.",
+      "merge_mining": "Bitcoin merge-mining was part of the launch design; AuxPoW is active from Bitcoin Vault (BTCV) height `58,420`.[^2][^3]",
+      "ended": "Treated here as a recovered historical Bitcoin-evidence source. Canonical merge-mining attestation runs to March 2024; September 2021 is only the last admitted stale block, not an evidence cutoff. The BTCV mainnet itself stalled at height `228,360` on 10 March 2024 and has not advanced since.[^1]",
+      "narrative": "Bitcoin Vault (BTCV) launched in November 2020 with Bitcoin merge-mining built into the chain design rather than added later.[^2][^3]\n\nFor much of its life, block production also passed through a developer-controlled mining gate. That matters for interpretation: BTCV is a Bitcoin-merge-mined source, but not a clean open-pool sample across its whole lifetime.[^2]\n\nFor this monitor, BTCV is a recovered historical source, and most of its value is canonical. 2,566 of its merge-mined blocks attest to Bitcoin main-chain blocks, spanning BTC heights `657,688`-`833,492` (November 2020 to March 2024), mined by Bitcoin pools with Binance Pool, BTC.com, Rawpool, BTCPool, and Together Pool prominent among them. Against that backbone sit 9 admitted stale blocks across BTC heights `657,561`-`699,616` (November 2020 to September 2021): the rarer cases where BTCV hashpower committed to a Bitcoin block the main chain did not keep. September 2021 bounds the stale subset, not the evidence; canonical attestation continues for over two more years.\n\nThe mining gate was removed in March 2024.[^4] The chain produced a small number of additional blocks, then stalled at height `228,360`, so this monitor treats BTCV as a recovered historical dataset rather than a live source.[^1]"
+    },
+    "technical": {
+      "mechanism": "Bitcoin Vault uses Namecoin-family AuxPoW from height `58,420` onward.[^2] Each merge-mined BTCV block carries the Bitcoin parent header, the Bitcoin parent coinbase, and merkle evidence proving the BTCV block commitment.",
+      "uniqueness": "BTCV uses chain ID `1638` (`0x0666`) with strict chain-ID checking.[^2] Its wire evidence is Namecoin-compatible, though the code separates the AuxPoW validator from the block-header carrier. Some pre-activation version-flag blocks are handled by an explicit fake-AuxPoW list, so activation gating matters.",
+      "capture": "Bitcoin Vault is imported from a committed historical CSV, not polled live. Recovery used raw serialized block hex from btcvexplorer.com because its decoded block view does not expose the AuxPoW fields needed to recover Bitcoin parent headers. The imported rows reconstruct the Bitcoin parent header and coinbase, validate Bitcoin proof of work and `nBits`, and then use Bitcoin Core for canonical, stale, or orphan placement.[^1]",
+      "bitcoin_relevance": "BTCV contributes recovered Bitcoin evidence across BTC heights `657,688`-`833,492` (November 2020 to March 2024): 2,566 canonical blocks attesting to the Bitcoin main chain, plus 9 admitted stales (the last September 2021). The canonical body is the merge-mining attestation itself; the stales are the rarer off-chain subset. Its main lesson is operational: apparent merge-mining coverage depends on actual Bitcoin-difficulty submissions, and BTCV's useful window was brief.",
+      "notable": [
+        "Pre-activation version-flag blocks are excluded before they can become Bitcoin evidence."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family CAuxPoW"
+        },
+        {
+          "label": "Activation",
+          "value": "BTCV height `58,420` (`nAuxpowStartHeight`, 2020-11-17)[^2]"
+        },
+        {
+          "label": "Block cadence",
+          "value": "10 min target, Bitcoin-like[^2]"
+        },
+        {
+          "label": "Chain ID",
+          "value": "`1638` (`0x0666`), strict chain-ID checking[^2]"
+        },
+        {
+          "label": "Evidence carried",
+          "value": "Bitcoin parent header, Bitcoin coinbase, and AuxPoW merkle proof"
+        }
+      ],
+      "recovery": [
+        "Committed dataset contributes 2,566 canonical Bitcoin blocks (BTC `657,688`-`833,492`, mined by Binance Pool, BTC.com, Rawpool, and other pools) and 9 admitted stale blocks (BTC `657,561`-`699,616`).",
+        "After filtering, BTCV corroborates a narrow modern window rather than acting as a broad stale archive."
+      ]
+    },
+    "provenance": {
+      "source": "Recovered historical dataset from Trezor Blockbook raw block responses at btcvexplorer.com; monitor ingestion imports the classified row set (canonical attestation and admitted stales together) from the committed `data/bitcoin-vault_validated_stales.csv` rows in merge-mining-research, not the stale subset alone.[^1]",
+      "coverage": "Canonical attestation spans BTC heights `657,688`-`833,492` (November 2020 to March 2024) / BTCV heights `58,737`-`227,922`; the 9 admitted stales fall within BTC `657,561`-`699,616` (November 2020 to September 2021). The September 2021 endpoint bounds the stale subset, not the evidence. Admitted Bitcoin evidence is limited to rows that pass validation and is summarized by Current Evidence Counts."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "Bitcoin Vault block explorer (Blockbook)",
+        "url": "https://btcvexplorer.com/"
+      },
+      {
+        "id": 2,
+        "label": "bitcoinvault chainparams.cpp",
+        "url": "https://github.com/bitcoinvault/bitcoinvault/blob/master/src/chainparams.cpp"
+      },
+      {
+        "id": 3,
+        "label": "BTCV merged mining explained (Medium)",
+        "url": "https://medium.com/bitcoin-vault-btcv/btcv-merged-mining-explained-5b61479eba85"
+      },
+      {
+        "id": 4,
+        "label": "news.bitcoin.com - BTCV mining decentralization",
+        "url": "https://news.bitcoin.com/bitcoin-vault-btcv-proudly-announces-mining-decentralization-with-bitcoin-btc-merge-mining-opportunity/"
+      }
+    ]
+  },
+  "bitmark": {
+    "ticker": "BTMK",
+    "chain_status": "zombie",
+    "status_detail": "Recovered historical dataset; Bitcoin evidence comes from the SHA-256d AuxPoW branch. The recovered window is overwhelmingly canonical attestation: 897 Bitcoin main-chain blocks merge-mined across BTC heights `558,455`-`886,688` from January 2019 into March 2025 (BTC.com dominant among the pools, with a few Mining-Dutch blocks), alongside a single admitted stale block in February 2019. The Bitmark chain still produces blocks today but at negligible sub-Bitcoin difficulty, so it is no longer a full-difficulty Bitcoin merge-miner.",
+    "tagline": "Multi-algo chain whose SHA-256d AuxPoW branch provides a small corroborating Bitcoin stale sample",
+    "byline": "2019-2025",
+    "display": {
+      "name": "Bitmark"
+    },
+    "history": {
+      "founded": "Launched 13 July 2014 as a Scrypt proof-of-work chain.[^1]",
+      "merge_mining": "Fork 1 added multi-algo PoW and AuxPoW at Bitmark (BTMK) height `450,947` in 2018.[^1]",
+      "ended": "Treated here as a historical Bitcoin-evidence source. Canonical merge-mining attestation runs from January 2019 into March 2025; February 2019 is only the date of the single admitted stale block, not an evidence cutoff or a Bitmark shutdown.",
+      "narrative": "Bitmark (BTMK) began as a Scrypt proof-of-work altcoin, then added multi-algo mining and AuxPoW in its 2018 Fork 1 upgrade.[^1]\n\nOnly the SHA-256d branch is relevant to this monitor. That branch can carry Bitcoin parent headers; Bitmark's other algorithm branches do not provide Bitcoin proof-of-work evidence.\n\nFor this monitor, Bitmark is a recovered historical source, and almost all of its value is canonical. 897 of its SHA-256d AuxPoW blocks attest to Bitcoin main-chain blocks across BTC heights `558,455`-`886,688` (January 2019 to March 2025), mined by Bitcoin pools with BTC.com dominant and a few attributed to Mining-Dutch. Against that backbone sits a single admitted stale block at BTC height `565,106` (February 2019): the rarer case where Bitmark hashpower committed to a Bitcoin block the main chain did not keep. February 2019 bounds that lone stale, not the evidence; canonical attestation continues for six more years."
+    },
+    "technical": {
+      "mechanism": "Bitmark uses Namecoin-family CAuxPoW on its SHA-256d branch. A relevant child block carries a Bitcoin parent header, parent coinbase, and merkle proof.",
+      "uniqueness": "The mining algorithm is selected through `nVersion`; only the SHA-256d branch is Bitcoin evidence.[^2] The AuxPoW chain ID is `91` (`0x005B`) with strict chain-ID checking.[^1]",
+      "capture": "Recovered AuxPoW was extracted from a synced Bitmark full node, starting at the Fork 1 activation height and keeping SHA-256d AuxPoW blocks only. Imported rows are revalidated by Bitcoin proof of work, expected Bitcoin `nBits`, and Bitcoin Core placement.",
+      "bitcoin_relevance": "Bitmark contributes recovered Bitcoin evidence across BTC heights `558,455`-`886,688` (January 2019 to March 2025): 897 canonical blocks attesting to the Bitcoin main chain, plus a single admitted stale block (February 2019). The canonical body is the merge-mining attestation itself; the lone stale is the off-chain subset. It remains a low-yield corroborating source, useful mainly for cross-checking recovered parent headers against other chains; its SHA-256d branch now runs far below Bitcoin difficulty and no longer represents full-difficulty Bitcoin merge-mining.",
+      "notable": [
+        "Only the SHA-256d branch is relevant for Bitcoin evidence; other Bitmark algorithms are ignored by this monitor."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family CAuxPoW on the SHA-256d branch"
+        },
+        {
+          "label": "AuxPoW activation",
+          "value": "BTMK height `450,947` (Fork 1, 2018)[^1]"
+        },
+        {
+          "label": "Block cadence",
+          "value": "2 min combined target; each algorithm targets 16 min, so SHA-256d slots are roughly 16 min[^3]"
+        },
+        {
+          "label": "Chain ID",
+          "value": "`91` (`0x005B`), strict chain-ID checking[^1]"
+        },
+        {
+          "label": "Branch selector",
+          "value": "Algorithm encoded in `nVersion`; SHA-256d branch only[^2]"
+        }
+      ],
+      "recovery": [
+        "Committed dataset contributes 897 canonical Bitcoin blocks (BTC `558,455`-`886,688`, mined by BTC.com and a few by Mining-Dutch) and a single admitted stale block (BTC `565,106`).",
+        "Low yield makes Bitmark a corroborating historical source rather than a broad stale archive."
+      ]
+    },
+    "provenance": {
+      "source": "Recovered historical dataset from a synced Bitmark full node; monitor ingestion imports the full classified row set from merge-mining-research (canonical attestation and the admitted stale together), not the stale subset alone.",
+      "coverage": "Canonical attestation spans BTC heights `558,455`-`886,688` (January 2019 to March 2025) / BTMK child heights `607,702`-`2,106,007`; the single admitted stale falls at BTC `565,106` (February 2019). The February 2019 date bounds that lone stale, not the evidence. SHA-256d branch only; admitted Bitcoin evidence is limited to rows that pass validation.[^1]"
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "Bitmark chainparams.cpp (project-bitmark/bitmark)",
+        "url": "https://github.com/project-bitmark/bitmark/blob/master/src/chainparams.cpp"
+      },
+      {
+        "id": 2,
+        "label": "Bitmark core.h (project-bitmark/bitmark)",
+        "url": "https://github.com/project-bitmark/bitmark/blob/master/src/core.h"
+      },
+      {
+        "id": 3,
+        "label": "Bitmark README: Fork 1 multi-algo timing",
+        "url": "https://github.com/project-bitmark/bitmark#fork-1"
+      }
+    ]
+  },
+  "coiledcoin": {
+    "ticker": "CLC",
+    "chain_status": "dead",
+    "status_detail": "Recovered dead-chain dataset. The recovered window is overwhelmingly canonical attestation: 608 Bitcoin blocks merge-mined into the main chain across BTC heights `160,879`-`273,091` (January 2012 to December 2013), with Eligius prominent among the pools (about 77% of attributed canonical rows). Against that backbone sit 27 admitted stale blocks across BTC `161,761`-`187,452`, the last in July 2012. Nearly all recovered rows predate BIP34.",
+    "tagline": "Short-lived 2012 AuxPoW chain whose recovered rows preserve early Bitcoin stale evidence.",
+    "byline": "2012-2013",
+    "display": {
+      "name": "CoiledCoin"
+    },
+    "history": {
+      "founded": "Announced on 5 January 2012 as a SHA-256d Bitcoin-derived chain.[^1]",
+      "merge_mining": "Merge-mining was advertised from launch.[^1]",
+      "ended": "No active explorer or live tip remains, and the chain has been dead since 2012. Canonical merge-mining attestation runs into December 2013; July 2012 is only the last admitted stale block, not an evidence cutoff. CoiledCoin was killed roughly one day after launch by a 51% attack from Luke-Jr's Eligius pool.[^1][^3]",
+      "narrative": "CoiledCoin (CLC) was an early SHA-256d AuxPoW experiment, announced in January 2012 with merge-mining advertised from the start.[^1]\n\nIt was attacked almost immediately. Roughly one day after launch, Luke-Jr directed Eligius pool hashrate at the chain in a 51% attack, mining empty blocks and driving off miners.[^1] That makes CoiledCoin useful context for merge-mining history: a large Bitcoin pool could overwhelm a small auxiliary chain.\n\nFor this monitor, CoiledCoin is a recovered historical source, and most of its value is canonical. 608 of its blocks attest to Bitcoin main-chain blocks, spanning BTC heights `160,879`-`273,091` (January 2012 to December 2013), with Eligius the dominant pool (about 77% of attributed canonical rows) alongside a smaller unattributed remainder. Against that backbone sit 27 admitted stale blocks across BTC `161,761`-`187,452` (January-July 2012): the rarer cases where CoiledCoin hashpower committed to a Bitcoin block the main chain did not keep. July 2012 bounds the stale subset, not the evidence. Nearly all of this evidence is pre-BIP34 (a handful of late-2013 canonical rows are the only exceptions), so it stands as a compact early-Bitcoin sample."
+    },
+    "technical": {
+      "mechanism": "CoiledCoin uses Namecoin-family AuxPoW on a pre-0.6 Bitcoin Core fork. A relevant child block carries a Bitcoin parent header, parent coinbase, and merkle proof, and the parent header must satisfy Bitcoin difficulty.",
+      "uniqueness": "The code predates decoded AuxPoW RPC output, so recovery depends on parsing binary `blk*.dat` files rather than asking the node for decoded `auxpow` JSON. The recovered Bitcoin window is also pre-BIP34, so orphan context cannot rely on a Bitcoin coinbase height.",
+      "capture": "CoiledCoin is imported from a committed historical CSV, not polled live. Upstream recovery synced a purpose-built `coiledcoind` node from the `mmpool/coiledcoin` archive, parsed raw block files offline, and kept rows that carried Bitcoin-difficulty parent headers.[^3] Imported rows are revalidated by Bitcoin proof of work, expected Bitcoin `nBits`, and Bitcoin Core placement.",
+      "bitcoin_relevance": "CoiledCoin contributes recovered Bitcoin evidence across BTC heights `160,879`-`273,091` (January 2012 to December 2013): 608 canonical blocks attesting to the Bitcoin main chain, with Eligius prominent among the pools, plus 27 admitted stales (the last July 2012). The canonical body is the merge-mining attestation itself; the stales are the rarer off-chain subset. Nearly all of it is pre-BIP34 and predates later fast-relay improvements, so it is a useful early-Bitcoin sample. It also documents a merge-mining failure mode: parent-chain pool power could be redirected against a small auxiliary chain.",
+      "notable": [
+        "All recovered Bitcoin rows predate BIP34, so no BIP34 coinbase height is available.",
+        "The Eligius attack makes CoiledCoin a historical example of parent-pool power over a small merge-mined chain."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family AuxPoW on a pre-0.6 Bitcoin Core fork"
+        },
+        {
+          "label": "Merge-mining",
+          "value": "Advertised from launch[^1]"
+        },
+        {
+          "label": "Block cadence",
+          "value": "2 min target[^3]"
+        },
+        {
+          "label": "Evidence window",
+          "value": "BTC heights `161,761`-`187,452`, all pre-BIP34"
+        },
+        {
+          "label": "Recovery format",
+          "value": "Binary `blk*.dat` parse; no decoded AuxPoW RPC"
+        }
+      ],
+      "recovery": [
+        "Committed dataset contributes 608 canonical Bitcoin blocks (BTC `160,879`-`273,091`, Eligius prominent among the pools) and 27 admitted stale blocks (BTC `161,761`-`187,452`).",
+        "Because nearly the whole window predates BIP34, this source cannot create strict-orphan evidence by itself."
+      ]
+    },
+    "provenance": {
+      "source": "Recovered dead-chain dataset from a synced `coiledcoind` node using the `mmpool/coiledcoin` source archive; monitor ingestion imports the full classified row set from merge-mining-research (canonical attestation and admitted stales together), not the stale subset alone.[^3]",
+      "coverage": "Canonical attestation spans BTC heights `160,879`-`273,091` (January 2012 to December 2013); the 27 admitted stales fall within BTC `161,761`-`187,452` (January-July 2012). The July 2012 endpoint bounds the stale subset, not the evidence. Nearly the entire range predates BIP34, and pool attribution is scriptSig-tag-only (Eligius dominant, with an unattributed remainder)."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "CoiledCoin ANN (bitcointalk topic 56675)",
+        "url": "https://bitcointalk.org/index.php?topic=56675.0"
+      },
+      {
+        "id": 3,
+        "label": "mmpool/coiledcoin source archive",
+        "url": "https://github.com/mmpool/coiledcoin"
+      }
+    ]
+  },
+  "crown": {
+    "ticker": "CRW",
+    "chain_status": "dead",
+    "status_detail": "Recovered historical dataset; the recovered window is overwhelmingly canonical attestation: 5,483 Bitcoin blocks merge-mined into the main chain from November 2015 into April 2019 (BTC.TOP dominant, with Huobi Pool, WAYI.CN, and 1Hash also present), alongside 23 admitted stale blocks, the last in December 2018. Bitcoin merge-mining ended at CRW block `2,330,000` in April 2019 when Crown switched from PoW to MN-PoS.",
+    "tagline": "SHA-256d AuxPoW chain whose PoW era contributes recovered Bitcoin stale evidence.",
+    "byline": "2015-2019",
+    "display": {
+      "name": "Crown"
+    },
+    "history": {
+      "founded": "Launched in October 2014 as Crowncoin, a SHA-256d proof-of-work chain.[^1]",
+      "merge_mining": "Activated Namecoin-family AuxPoW at Crown (CRW) block `453,273`; chain ID `20` with strict chain-ID checking.[^1]",
+      "ended": "Bitcoin merge-mining ended at CRW block `2,330,000` in April 2019 when Crown v0.13.0 \"Jade\" switched from PoW to MN-PoS; post-switch Crown blocks do not attest Bitcoin work.[^2] December 2018 is only the last admitted stale block, not the evidence cutoff: canonical attestation continues into April 2019 up to the PoS switch.",
+      "narrative": "Crown (CRW) began as Crowncoin, a SHA-256d proof-of-work chain on a Bitcoin-derived codebase.[^1]\n\nIts PoW era became Bitcoin-merge-mined at CRW block `453,273`. From that point, Crown PoW blocks can carry Bitcoin parent headers and AuxPoW proofs, so they can serve as Bitcoin attestation after validation.[^1]\n\nFor this monitor, Crown is a recovered historical source, and most of its value is canonical. 5,483 of its PoW blocks attest to Bitcoin main-chain blocks, spanning BTC heights `385,325`-`571,351` (November 2015 to April 2019), with BTC.TOP the dominant merge-mining pool and Huobi Pool, WAYI.CN, and 1Hash also present. Against that backbone sit 23 admitted stale blocks across BTC heights `470,447`-`555,155` (June 2017 to December 2018): the rarer cases where Crown hashpower committed to a Bitcoin block the main chain did not keep. December 2018 bounds the stale subset, not the evidence; canonical attestation continues into April 2019, when Crown v0.13.0 \"Jade\" switched the chain from PoW to Masternode/Systemnode Proof-of-Stake at CRW block `2,330,000` and post-switch Crown blocks stopped attesting Bitcoin work.[^2]"
+    },
+    "technical": {
+      "mechanism": "Crown uses Namecoin-family CAuxPoW on its SHA-256d PoW blocks. A relevant child block carries a Bitcoin parent header, parent coinbase, and merkle proof.",
+      "uniqueness": "Crown's AuxPoW chain ID is `20` (`0x14`) with strict chain-ID checking.[^1] That source-side check constrains which auxiliary-chain commitment is valid, while the monitor still validates Bitcoin proof of work, expected Bitcoin `nBits`, and Bitcoin Core placement.",
+      "capture": "Crown is imported from a committed historical CSV, not polled live. Upstream recovery synced a local `crownd` node, parsed raw block hex because the RPC did not expose decoded AuxPoW JSON, and kept PoW-era AuxPoW rows only. Imported rows are revalidated by Bitcoin proof of work, expected Bitcoin `nBits`, and Bitcoin Core placement.",
+      "bitcoin_relevance": "Crown contributes recovered Bitcoin evidence across BTC heights `385,325`-`571,351` (November 2015 to April 2019): 5,483 canonical blocks attesting to the Bitcoin main chain (BTC.TOP dominant, with Huobi Pool, WAYI.CN, and 1Hash also present), plus 23 admitted stales (the last December 2018). The canonical body is the merge-mining attestation itself; the stales are the off-chain subset. The source is useful for recovered compact-block-era evidence, and its April 2019 PoS switch gives the evidence window a clean end.",
+      "notable": [
+        "Post-`2,330,000` Crown blocks are out of scope for Bitcoin evidence because the chain switched away from PoW.[^2]",
+        "Strict chain-ID checking reduces source-side ambiguity, but admitted rows still pass the same Bitcoin validation gates as other sources."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family CAuxPoW on SHA-256d PoW blocks"
+        },
+        {
+          "label": "Activation",
+          "value": "CRW block `453,273` (`AuxpowStartHeight`)[^1]"
+        },
+        {
+          "label": "Block cadence",
+          "value": "1 min target during the PoW era[^1]"
+        },
+        {
+          "label": "Chain ID",
+          "value": "`20` (`0x14`), strict chain-ID checking[^1]"
+        },
+        {
+          "label": "Evidence window",
+          "value": "Ends at CRW block `2,330,000`, the PoW to MN-PoS switch[^2]"
+        },
+        {
+          "label": "Recovery format",
+          "value": "Raw block hex and binary CAuxPoW parse"
+        }
+      ],
+      "recovery": [
+        "Committed dataset contributes 5,483 canonical Bitcoin blocks (BTC `385,325`-`571,351`, merge-mined predominantly by BTC.TOP, with Huobi Pool, WAYI.CN, and 1Hash also present) and 23 admitted stale blocks (BTC `470,447`-`555,155`).",
+        "Coverage is bounded to Crown's PoW era; post-switch MN-PoS blocks do not carry Bitcoin AuxPoW evidence."
+      ]
+    },
+    "provenance": {
+      "source": "Recovered historical dataset from a local `crownd` node; monitor ingestion imports the full classified row set from merge-mining-research (canonical attestation and admitted stales together), not the stale subset alone, from the committed `data/crown_validated_stales.csv` rows.",
+      "coverage": "Canonical attestation spans BTC heights `385,325`-`571,351` (November 2015 to April 2019) / CRW heights `620,574`-`2,329,781`; the 23 admitted stales fall within BTC `470,447`-`555,155` (June 2017 to December 2018) / CRW `1,410,258`-`2,178,872`. The December 2018 endpoint bounds the stale subset, not the evidence. Crown's AuxPoW evidence is bounded by CRW block `453,273` and the PoW to MN-PoS switch at `2,330,000`.[^1][^2]"
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "Crown crown-core chainparams.cpp (Crowndev)",
+        "url": "https://github.com/Crowndev/crown-core/blob/master/src/chainparams.cpp"
+      },
+      {
+        "id": 2,
+        "label": "Crown MN-PoS Simplified (Crown Platform Medium)",
+        "url": "https://medium.com/crownplatform/crown-mn-pos-simplified-9c5bdac13460"
+      }
+    ]
+  },
+  "devcoin": {
+    "ticker": "DVC",
+    "chain_status": "zombie",
+    "status_detail": "Recovered historical dataset; AuxPoW activated at DVC block `25,000`. The recovered window is overwhelmingly canonical attestation: 54,100 Bitcoin blocks merge-mined into the main chain across BTC heights `161,234`-`689,505` (January 2012 to July 2021, with GHash.IO, F2Pool, and BTC.TOP prominent among the pools), alongside 486 admitted stale blocks, the last in December 2020. The chain still produces blocks today but at negligible sub-Bitcoin difficulty, so Bitcoin merge-mining is long over.",
+    "tagline": "Early AuxPoW chain with a large recovered Bitcoin-evidence window spanning 2012-2020.",
+    "byline": "2012-2021",
+    "display": {
+      "name": "Devcoin"
+    },
+    "history": {
+      "founded": "Launched in 2011 as a Bitcoin-derived SHA-256d chain.[^1][^2]",
+      "merge_mining": "Not merge-mined from genesis; AuxPoW activated at Devcoin (DVC) block `25,000` in January 2012.[^1][^6]",
+      "ended": "Treated here as a historical Bitcoin-evidence source. Canonical merge-mining attestation runs into July 2021; December 2020 is only the last admitted stale block, not an evidence cutoff or a Devcoin shutdown. The chain still produces blocks but at negligible sub-Bitcoin difficulty.",
+      "narrative": "Devcoin (DVC) launched in 2011 as an open-source-funding altcoin and early Bitcoin-derived SHA-256d chain.[^1][^2]\n\nIt was not merge-mined from genesis. The first `25,000` DVC blocks were solo SHA-256d; AuxPoW activated in January 2012, after which Devcoin blocks could carry Bitcoin parent headers and coinbase evidence.[^1]\n\nFor this monitor, Devcoin is a historical Bitcoin-evidence source, and most of its value is canonical. 54,100 of its blocks attest to Bitcoin main-chain blocks, spanning BTC heights `161,234`-`689,505` (January 2012 to July 2021), mined by Bitcoin pools with GHash.IO, F2Pool, and BTC.TOP prominent among them. Against that backbone sit 486 admitted stale blocks across BTC heights `161,761`-`661,866` (January 2012 to December 2020): the rarer cases where Devcoin hashpower committed to a Bitcoin block the main chain did not keep. December 2020 bounds the stale subset, not the evidence; canonical attestation continues into July 2021 before the merge-mining tail thins out."
+    },
+    "technical": {
+      "mechanism": "Devcoin uses Namecoin-family CAuxPoW from DVC block `25,000` onward.[^1][^6] A relevant child block carries a Bitcoin parent header, parent coinbase, and merkle proof.",
+      "uniqueness": "Chain ID `4` with strict chain-ID checking is confirmed in `devcoin/core` `chainparams.cpp`.[^1] Devcoin's early activation gives it one of the longest recovered Bitcoin-evidence windows in this monitor.",
+      "capture": "Devcoin is imported from a committed historical CSV, not polled live. Upstream recovery synced a local `devcoind` node, fetched raw block hex, parsed the binary CAuxPoW tail, and kept rows that carried Bitcoin-difficulty parent headers. Imported rows are revalidated by Bitcoin proof of work, expected Bitcoin `nBits`, and Bitcoin Core placement.",
+      "bitcoin_relevance": "Devcoin is one of the highest-yield historical sources in this monitor. It contributes recovered Bitcoin evidence across BTC heights `161,234`-`689,505` (January 2012 to July 2021): 54,100 canonical blocks attesting to the Bitcoin main chain, plus 486 admitted stales (the last December 2020). The canonical body is the merge-mining attestation itself; the stales are the off-chain subset. Its early AuxPoW activation gives it one of the longest recovered Bitcoin-evidence windows in this monitor.",
+      "notable": [
+        "Not merge-mined from genesis: blocks `0`-`24,999` are outside Devcoin's AuxPoW evidence window.[^1]",
+        "Because Devcoin preserves the Bitcoin parent coinbase, BIP34 height and pool-tag evidence can be used when present."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family CAuxPoW"
+        },
+        {
+          "label": "Activation",
+          "value": "DVC block `25,000`, circa Jan 2012 (~BTC height `161,313`)[^1]"
+        },
+        {
+          "label": "Block cadence",
+          "value": "10 min target[^1]"
+        },
+        {
+          "label": "Chain ID",
+          "value": "`4`, strict chain-ID checking[^1]"
+        },
+        {
+          "label": "Evidence window",
+          "value": "BTC heights roughly `161,761`-`661,866`"
+        },
+        {
+          "label": "Recovery format",
+          "value": "Raw block hex and binary CAuxPoW parse"
+        }
+      ],
+      "recovery": [
+        "The committed dataset contributes 54,100 canonical Bitcoin blocks (BTC `161,234`-`689,505`, mined by GHash.IO, F2Pool, BTC.TOP, Eligius, 1THash, and other pools) and 486 admitted stale blocks (BTC `161,761`-`661,866`).",
+        "The window crosses BIP34 activation: early rows require weak height context, later rows can use BIP34 coinbase height when the parent coinbase is present."
+      ]
+    },
+    "provenance": {
+      "source": "Recovered historical dataset from a local `devcoind` node; monitor ingestion imports the full classified row set from merge-mining-research (canonical attestation and admitted stales together), not the stale subset alone.",
+      "coverage": "Canonical attestation spans BTC heights `161,234`-`689,505` (January 2012 to July 2021) / DVC heights `25,249`-`475,838`; the 486 admitted stales fall within BTC `161,761`-`661,866` (DVC heights `25,699`-`450,501`, January 2012 to December 2020). The December 2020 endpoint bounds the stale subset, not the evidence. Pre-BIP34 parent heights are inferred from `nBits` and time context."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "devcoin/core chainparams.cpp",
+        "url": "https://github.com/devcoin/core/blob/master/src/chainparams.cpp"
+      },
+      {
+        "id": 2,
+        "label": "HandWiki: Devcoin",
+        "url": "https://handwiki.org/wiki/Finance:Devcoin"
+      },
+      {
+        "id": 6,
+        "label": "devcoin/core auxpow.h",
+        "url": "https://github.com/devcoin/core/blob/master/src/auxpow.h"
+      }
+    ]
+  },
+  "elastos": {
+    "ticker": "ELA",
+    "chain_status": "active",
+    "status_detail": "Still active; Bitcoin merge-mining with DPoS finality.",
+    "tagline": "Bitcoin-merge-mined chain carrying Bitcoin parent headers and coinbase evidence.",
+    "byline": "2018 · ~2 min blocks",
+    "help": {
+      "data": "Bitcoin parent header, parent coinbase, AuxPoW merkle evidence, and 84-byte child-header validation",
+      "pool": "BTC parent coinbase tags when the pool resolver recognizes them"
+    },
+    "display": {
+      "name": "Elastos",
+      "order": 4
+    },
+    "history": {
+      "founded": "Mainnet launched on 22 December 2017.[^1]",
+      "merge_mining": "Bitcoin merge-mining began on 26 August 2018, at roughly ELA height `177,000`.[^3]",
+      "ended": "Still active; merge-mined blocks are finalized by DPoS supernodes.",
+      "narrative": "Elastos launched its mainnet in December 2017, then added Bitcoin merge-mining in August 2018.[^1][^3]\n\nThis monitor starts at the merge-mining activation point, where ELA blocks begin carrying usable Bitcoin parent evidence.\n\nElastos later added DPoS supernode validation on top of AuxPoW. That finality layer changes child-chain reorg handling, but it does not change the Namecoin-family AuxPoW evidence carried by merge-mined blocks."
+    },
+    "technical": {
+      "mechanism": "Elastos uses Namecoin-family CAuxPoW.[^3] A merge-mined ELA block carries the Bitcoin parent header, the Bitcoin parent coinbase, and merkle evidence proving that the ELA block hash was committed in that parent coinbase.",
+      "uniqueness": "The Elastos.ELA node is a clean-room Go implementation rather than a Bitcoin Core fork. Its child header is 84 bytes: an 80-byte Bitcoin-shaped prefix plus a 4-byte height field, and the child hash covers all 84 bytes.[^5] Chain ID `1224` selects the AuxPoW branch slot.",
+      "capture": "The monitor polls an ELA JSON-RPC endpoint for block height and `getblockbyheight` data. Each candidate must have a parseable AuxPoW blob, a valid 84-byte child-header hash, a verified CAuxPoW commitment, a Bitcoin-valid parent target, a valid child target, and an `nBits` verdict that matches Bitcoin rather than a sibling SHA256d chain.",
+      "bitcoin_relevance": "Elastos is a modern post-2018 Bitcoin witness that preserves the real Bitcoin parent coinbase. That makes it more like Syscoin than RSK or Hathor: pool tags and BIP34 coinbase height can be used when the evidence is present. Because Elastos activated after the BCH fork, the `nBits` contamination filter is part of normal admission.",
+      "notable": [
+        "DPoS finality affects live child-chain reorg handling, not the AuxPoW proof format."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family CAuxPoW exposed as a hex `auxpow` blob[^3]"
+        },
+        {
+          "label": "Activation",
+          "value": "2018-08-26, ~ELA height `177,000` (~BTC height `537,000`)[^3]"
+        },
+        {
+          "label": "Child header",
+          "value": "84 bytes; the child hash includes the trailing height field[^5]"
+        },
+        {
+          "label": "Evidence carried",
+          "value": "Bitcoin parent header, Bitcoin coinbase, and AuxPoW merkle proof"
+        }
+      ],
+      "recovery": [
+        "Rows that pass local proof checks are placed by Bitcoin Core as canonical, stale, or orphan candidates.",
+        "Because Elastos preserves the parent coinbase, Core-absent candidates can continue into BIP34 and `nBits` orphan checks."
+      ]
+    },
+    "provenance": {
+      "source": "Live self-hosted Elastos.ELA node over JSON-RPC, with the public Elastos RPC as fallback; historical validation came from local recovered-node extraction.",
+      "coverage": "Live and ongoing from the AuxPoW activation range; earlier ELA blocks are outside this monitor's Bitcoin-evidence window."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "CyberRepublic Main Net development roadmap",
+        "url": "https://medium.com/@CyberRepublic/updated-main-net-development-roadmap-c0c9afa5c3cc"
+      },
+      {
+        "id": 3,
+        "label": "Elastos.ELA wiki: Merged-mining guide",
+        "url": "https://github.com/elastos/Elastos.ELA/wiki/Merged-mining-guide"
+      },
+      {
+        "id": 5,
+        "label": "Elastos.ELA wiki: Block Structure",
+        "url": "https://github.com/elastos/Elastos.ELA/wiki/Elastos.ELA-Block-Structure"
+      }
+    ]
+  },
+  "elcash": {
+    "ticker": "ELCASH",
+    "chain_status": "zombie",
+    "status_detail": "Recovered historical dataset from a self-synced Electric Cash node; the chain is still merge-mined but at negligible hashrate. Admitted Bitcoin evidence is 2,426 canonical Bitcoin blocks (merge-mining attestation) plus three mid-2021 stale parents.[^1]",
+    "tagline": "Bitcoin Core 0.20 fork that merge-mines Bitcoin; a brief 2021 window of real-pool hashrate left a small stale sample.",
+    "byline": "2021",
+    "display": {
+      "name": "Electric Cash"
+    },
+    "history": {
+      "founded": "Mainnet launched from a fresh genesis in December 2020.[^2]",
+      "merge_mining": "Bitcoin merge-mining is built into the chain: AuxPoW is enabled from height `1` (`nAuxpowStartHeight`), and merge-mined blocks begin after the premine, from Electric Cash (ELCASH) height `4,741`.[^1]",
+      "ended": "Not ended: ELCASH still produces merge-mined blocks. But real Bitcoin-difficulty hashrate has fallen to a negligible tail, so this monitor treats it as a one-time recovered dataset rather than a live producer, alongside the other still-merge-mined-but-low-yield historical chains.[^1]",
+      "narrative": "Electric Cash (ELCASH) is a Bitcoin Core 0.20.2 fork launched in December 2020 with Namecoin-style AuxPoW grafted on, so the bulk of its blocks are merge-mined against Bitcoin.[^1][^2]\n\nFor a window in 2021, real Bitcoin pools pointed hashrate at it, which is why its blocks preserve real Bitcoin parent headers. The overwhelming majority of those parents are sub-Bitcoin-difficulty shares, and many are Bitcoin Cash or Bitcoin SV blocks that merely share the SHA-256d algorithm; only a handful met full Bitcoin difficulty.\n\nFor this monitor, ELCASH is a recovered historical source. A self-synced node was parsed for Bitcoin parent headers, which were filtered by Bitcoin proof of work and expected `nBits` and classified against Bitcoin Core. Three survived as genuine stale Bitcoin blocks (full-difficulty blocks that built on the canonical chain but lost the race to the block Bitcoin kept); one of them was found by Binance Pool."
+    },
+    "technical": {
+      "mechanism": "Electric Cash uses Namecoin-family AuxPoW. Each merge-mined ELCASH block carries the Bitcoin parent header, the Bitcoin parent coinbase, and merkle evidence proving the ELCASH block commitment.[^1]",
+      "uniqueness": "ELCASH uses chain ID `8503` (`0x2137`) with strict chain-ID checking and a Bitcoin-difficulty `powLimit`.[^1] `getblock` does not decode the AuxPoW, so recovery parses the `CAuxPow` from raw block hex (the Namecoin path, not the Syscoin decoded-JSON path).",
+      "capture": "Electric Cash is imported from a committed historical CSV, not polled live. Recovery synced a self-built `elcashd` node, parsed the Namecoin-family AuxPoW payload from raw blocks, filtered parents by Bitcoin proof of work and expected `nBits` (rejecting Bitcoin Cash and Bitcoin SV parents that share the SHA-256d algorithm), and classified survivors with Bitcoin Core.",
+      "bitcoin_relevance": "ELCASH is a modern reminder that a chain can be genuinely merge-mined against Bitcoin yet yield very little: most preserved parents are sub-difficulty shares or non-Bitcoin SHA-256d blocks, and only a brief window of real-pool hashrate produced admitted stale evidence.",
+      "notable": [
+        "Bitcoin Cash and Bitcoin SV parents (lower-difficulty SHA-256d) are rejected by expected-`nBits` before they can become Bitcoin evidence."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family CAuxPoW (raw-parsed)"
+        },
+        {
+          "label": "Activation",
+          "value": "AuxPoW from height `1`; merge-mined blocks from ELCASH height `4,741`"
+        },
+        {
+          "label": "Block cadence",
+          "value": "10 min target, Bitcoin-like[^3]"
+        },
+        {
+          "label": "Chain ID",
+          "value": "`8503` (`0x2137`), strict chain-ID checking[^1]"
+        },
+        {
+          "label": "Evidence carried",
+          "value": "Bitcoin parent header, Bitcoin coinbase, and AuxPoW merkle proof"
+        }
+      ],
+      "recovery": [
+        "Of roughly 248,600 merge-mined blocks, 2,426 parents are canonical Bitcoin blocks (proving a real Bitcoin pool merge-mined ELCASH), three are stale Bitcoin blocks at full Bitcoin difficulty (each builds on a canonical block but lost to the canonical competitor at its height), and the rest are sub-Bitcoin-difficulty shares or Bitcoin Cash / Bitcoin SV contamination.",
+        "Current Evidence Counts below show the deployed canonical and stale split."
+      ]
+    },
+    "provenance": {
+      "source": "Recovered historical dataset from a self-synced `elcashd` node. The compact `data/elcash_validated_stales.csv` (the three stale parents) is committed; monitor ingestion of the full canonical-plus-stale classified set uses the archived `elcash_stale_blocks.csv`, matching the project's compact-committed / full-archive split.",
+      "coverage": "Self-synced ELCASH mainnet (genesis through the current tip). Admitted Bitcoin evidence is 2,426 canonical Bitcoin blocks found while merge-mining ELCASH (the merge-mining attestation, by pools including Binance) plus three mid-2021 stale parents that pass Bitcoin proof of work and build on a canonical block with a canonical competitor at their height. Bitcoin Cash and Bitcoin SV parents that share the SHA-256d algorithm are excluded as contamination."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "electric-cash chainparams.cpp",
+        "url": "https://github.com/electric-cash/electric-cash/blob/master/src/chainparams.cpp"
+      },
+      {
+        "id": 2,
+        "label": "Electric Cash source repository",
+        "url": "https://github.com/electric-cash/electric-cash"
+      },
+      {
+        "id": 3,
+        "label": "Electric Cash mining schedule (MINING.md)",
+        "url": "https://github.com/electric-cash/electric-cash/blob/master/MINING.md"
+      }
+    ]
+  },
+  "emercoin": {
+    "ticker": "EMC",
+    "chain_status": "zombie",
+    "status_detail": "Recovered historical dataset; only Emercoin PoW blocks carry Bitcoin AuxPoW evidence. The recovered window is overwhelmingly canonical attestation: 45,595 Bitcoin blocks merge-mined into the main chain from 2017 into May 2025 (F2Pool and ViaBTC prominent among the pools), alongside 96 admitted stale blocks, the last in February 2023. Bitcoin merge-mining has since fallen to a negligible tail.",
+    "tagline": "Hybrid PoW/PoS chain whose PoW blocks yielded recovered Bitcoin evidence after SHA-256d parent filtering.",
+    "byline": "2017-2025",
+    "display": {
+      "name": "Emercoin"
+    },
+    "history": {
+      "founded": "Launched in December 2013 as a Peercoin-lineage hybrid PoW/PoS chain.[^2]",
+      "merge_mining": "AuxPoW activated at Emercoin (EMC) height `219,809`; only PoW blocks carry AuxPoW evidence.[^3]",
+      "ended": "Treated here as a historical Bitcoin-evidence source. Canonical merge-mining attestation runs into May 2025; February 2023 is only the last admitted stale block, not an evidence cutoff or an Emercoin shutdown.",
+      "narrative": "Emercoin (EMC) is a hybrid PoW/PoS chain. That matters for this monitor: proof-of-stake blocks carry no AuxPoW and are outside the Bitcoin evidence path.\n\nBitcoin merge-mining activated at EMC height `219,809`, after the 0.6.0 wallet release.[^3] From that point, Emercoin PoW blocks can preserve Bitcoin parent headers and coinbase data.\n\nFor this monitor, Emercoin is a recovered historical source, and most of its value is canonical. 45,595 of its PoW blocks attest to Bitcoin main-chain blocks, spanning BTC heights `458,888`-`894,986` (2017 to May 2025), mined by Bitcoin pools with F2Pool and ViaBTC prominent among them. Against that backbone sit 96 admitted stale blocks across BTC heights `467,186`-`777,172` (May 2017 to February 2023): the rarer cases where Emercoin hashpower committed to a Bitcoin block the main chain did not keep. February 2023 bounds the stale subset, not the evidence; canonical attestation continues for two more years before the merge-mining tail thins out."
+    },
+    "technical": {
+      "mechanism": "Emercoin uses Namecoin-style AuxPoW on proof-of-work blocks. A relevant block carries a Bitcoin parent header, parent coinbase, and merkle proof. Emercoin's RPC exposes that evidence as structured `auxpow` JSON rather than a binary CAuxPoW tail.",
+      "uniqueness": "The first gate is the hybrid consensus split: PoS blocks carry no AuxPoW and must be skipped. Chain ID `666` (`0x29A`) is enforced in `src/pow.cpp` for v5+ blocks rather than as a chainparams `fStrictChainId` flag.[^6]",
+      "capture": "Emercoin is imported from a committed historical CSV, not polled live. Upstream recovery walked EMC blocks at or above height `219,809`, kept proof-of-work blocks with structured AuxPoW JSON, and reconstructed Bitcoin parent headers from that JSON. Imported rows are revalidated by Bitcoin proof of work, expected Bitcoin `nBits`, and Bitcoin Core placement.",
+      "bitcoin_relevance": "Emercoin contributes recovered Bitcoin evidence across BTC heights `458,888`-`894,986` (2017 to May 2025): 45,595 canonical blocks attesting to the Bitcoin main chain, plus 96 admitted stales (the last February 2023). The canonical body is the merge-mining attestation itself; the stales are the off-chain subset. It is especially useful as a post-fork filtering case, because SHA-256d parent headers that are valid work can still belong to BCH/BSV-family chains rather than Bitcoin.",
+      "notable": [
+        "The PoS majority is outside the Bitcoin evidence path; only PoW blocks can carry AuxPoW.",
+        "Structured `auxpow` JSON avoids binary CAuxPoW parsing, but rows still pass the same Bitcoin validation gates as other sources."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-style AuxPoW on PoW blocks"
+        },
+        {
+          "label": "Activation",
+          "value": "EMC height `219,809` (`consensus.MMHeight`), ~March 2017; enabling 0.6.0 wallet released `2017-02-13`[^3]"
+        },
+        {
+          "label": "Block cadence",
+          "value": "10 min base target; only PoW blocks carry AuxPoW, and PoW spacing can stretch between PoS blocks[^3]"
+        },
+        {
+          "label": "Hybrid filter",
+          "value": "PoS blocks skipped before AuxPoW handling"
+        },
+        {
+          "label": "Chain ID",
+          "value": "`666` (`0x29A`), version-gated in `src/pow.cpp`[^6]"
+        },
+        {
+          "label": "Recovery format",
+          "value": "Structured `auxpow` JSON from `getblock`"
+        }
+      ],
+      "recovery": [
+        "Committed dataset contributes 45,595 canonical Bitcoin blocks (BTC `458,888`-`894,986`, mined by F2Pool, ViaBTC, and other pools) and 96 admitted stale blocks (BTC `467,186`-`777,172`).",
+        "BCH/BSV-era non-Bitcoin SHA-256d parents are filtered before rows enter the Bitcoin tree."
+      ]
+    },
+    "provenance": {
+      "source": "Recovered historical dataset from a local `emercoind` node; monitor ingestion imports the full classified row set from merge-mining-research (canonical attestation and admitted stales together), not the stale subset alone.",
+      "coverage": "Canonical attestation spans BTC heights `458,888`-`894,986` (2017 to May 2025) / EMC heights `221,270`-`725,395`; the 96 admitted stales fall within BTC `467,186`-`777,172` (May 2017 to February 2023). The February 2023 endpoint bounds the stale subset, not the evidence. PoS blocks are outside the evidence path, and non-Bitcoin SHA-256d parents are rejected by admission checks."
+    },
+    "references": [
+      {
+        "id": 2,
+        "label": "BitcoinWiki - Emercoin",
+        "url": "https://bitcoinwiki.org/wiki/emercoin"
+      },
+      {
+        "id": 3,
+        "label": "Emercoin chainparams.cpp (master)",
+        "url": "https://raw.githubusercontent.com/emercoin/emercoin/master/src/chainparams.cpp"
+      },
+      {
+        "id": 6,
+        "label": "Emercoin pow.cpp (master)",
+        "url": "https://raw.githubusercontent.com/emercoin/emercoin/master/src/pow.cpp"
+      }
+    ]
+  },
+  "fractal": {
+    "ticker": "FB",
+    "chain_status": "active",
+    "status_detail": "Still active; only Cadence-mined blocks carry Bitcoin parent evidence.",
+    "tagline": "Bitcoin Core fork where every third block merge-mines Bitcoin via Namecoin-family AuxPoW.",
+    "byline": "2024 · ~30s blocks (1-in-3 merge-mined)",
+    "help": {
+      "data": "Cadence-mined Fractal headers with CAuxPoW, plus full child blocks for reward identity",
+      "pool": "BTC parent coinbase tags when the pool resolver recognizes them; child reward addresses are observed separately"
+    },
+    "display": {
+      "name": "Fractal Bitcoin",
+      "color": "#e07a3f",
+      "order": 6
+    },
+    "history": {
+      "founded": "Mainnet launched on 9 September 2024.[^2]",
+      "merge_mining": "Merge-mined from genesis, but only for every third block under Fractal's Cadence Mining design.[^3]",
+      "ended": "Still active.",
+      "narrative": "Fractal Bitcoin launched its mainnet on 9 September 2024 as a Bitcoin Core fork.[^2]\n\nIt uses Cadence Mining: one block in each three-block cycle is merge-mined against Bitcoin, while the other two are permissionlessly mined and carry no AuxPoW evidence.[^3] That makes Fractal a dense recent source, but only its Cadence-mined blocks are useful for Bitcoin parent-header recovery.\n\nFor this monitor, Fractal is a modern Namecoin-family AuxPoW witness. It preserves the Bitcoin parent header and coinbase on merge-mined blocks, so it can contribute recent stale-block evidence and Bitcoin coinbase pool attribution."
+    },
+    "technical": {
+      "mechanism": "Fractal uses Namecoin-family AuxPoW on Cadence-mined blocks. A merge-mined Fractal block carries the Bitcoin parent header, the Bitcoin coinbase transaction, a merkle proof, and the Fractal child header.",
+      "uniqueness": "Cadence Mining is the key distinction: only every third Fractal block is designed to carry AuxPoW.[^3] Fractal also has version classes that make a generic Namecoin-style AuxPoW-bit check insufficient, so the merge-mined block marker must be interpreted using Fractal's own rules.[^6]",
+      "capture": "The monitor polls a self-hosted Fractal node for current-chain blocks. Cadence-mined blocks are parsed for the AuxPoW proof; non-merge-mined blocks are skipped. The producer also fetches the full child block so reward attribution can be paired with the AuxPoW proof. Bitcoin Core places known parent hashes as canonical or stale; Core-absent candidates continue into orphan checks using `nBits` and BIP34 height when available.",
+      "bitcoin_relevance": "Fractal is the newest live AuxPoW source in this monitor. It extends parent-header recovery into a recent window that older AuxPoW chains cannot cover.",
+      "notable": [
+        "Only Cadence-mined blocks carry Bitcoin parent evidence; the other Fractal blocks are skipped for Bitcoin recovery.",
+        "The Bitcoin coinbase is preserved on merge-mined blocks, so BTC pool tags and BIP34 height evidence can be used when present."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family AuxPoW on Cadence-mined blocks"
+        },
+        {
+          "label": "Cadence",
+          "value": "Every third block is merge-mined by design[^3]"
+        },
+        {
+          "label": "Consensus marker",
+          "value": "Chain ID `0x2024` (decimal `8228`)[^6]"
+        },
+        {
+          "label": "Evidence carried",
+          "value": "Bitcoin parent header, Bitcoin coinbase, AuxPoW merkle proof, and child header"
+        }
+      ],
+      "recovery": [
+        "Cadence Mining limits evidence to one block in each three-block cycle, but that still yields frequent recent samples.",
+        "Because Fractal preserves the Bitcoin coinbase, it can support standard BTC pool-tag attribution and strict orphan checks when BIP34 height agrees."
+      ]
+    },
+    "provenance": {
+      "source": "Live self-hosted Fractal Bitcoin node over Bitcoin Core-style RPC; AuxPoW proofs and full child blocks are paired before writing evidence.",
+      "coverage": "Live and ongoing from Fractal mainnet genesis on 9 September 2024.[^2] Only Cadence-mined blocks carry AuxPoW evidence."
+    },
+    "references": [
+      {
+        "id": 2,
+        "label": "Fractal mainnet launch announcement (Sept 9 2024)",
+        "url": "https://fractalbitcoin.io/updates/fractal-mainnet-launching-september-9-2024"
+      },
+      {
+        "id": 3,
+        "label": "Fractal: Cadence Mining",
+        "url": "https://fractalbitcoin.io/learn/cadence-mining"
+      },
+      {
+        "id": 6,
+        "label": "Fractal docs: node operation / mining",
+        "url": "https://docs.fractalbitcoin.io/node-operation/mining"
+      }
+    ]
+  },
+  "geistgeld": {
+    "ticker": "GG",
+    "chain_status": "dead",
+    "status_detail": "Recovered historical source with a single admitted Bitcoin attestation. The recovered dump yields one canonical block: GeistGeld merge-mined Bitcoin main-chain block `270,741` (21 November 2013). No stale blocks were admitted, and the resolver could not attribute the Bitcoin pool from that block's coinbase. GeistGeld itself was abandoned within weeks of its 2011 launch.",
+    "tagline": "Short-lived 2011 AuxPoW experiment whose recovered parent headers fail Bitcoin admission.",
+    "byline": "2013",
+    "display": {
+      "name": "Geistgeld"
+    },
+    "history": {
+      "founded": "Announced on bitcointalk in September 2011 by Lolcust; forked from `sacarlson/MultiCoin-exp`.[^1][^2]",
+      "merge_mining": "Carried Namecoin-style AuxPoW code from the start of the recovered evidence window.[^4][^5][^6]",
+      "ended": "Treated here as a historical Bitcoin-evidence source. The chain was abandoned shortly after launch, with no live node, explorer, or public archive available.[^2][^3] What survives in this monitor is one recovered canonical attestation (Bitcoin height `270,741`, November 2013); the recovery admitted no stale blocks, so there is no off-chain subset to bound.",
+      "narrative": "Geistgeld (GG) was a short-lived 2011 experiment with very fast block targets and Namecoin-family merge-mining code.[^1][^4][^5]\n\nFor this monitor, GeistGeld is a recovered historical source, and its admitted evidence is canonical. One recovered block attests to Bitcoin main-chain block `270,741`, dated 21 November 2013: a real Bitcoin header that passes proof-of-work, difficulty, and Bitcoin Core placement checks. The Bitcoin pool behind that block could not be identified, because the parent coinbase carries only a generic `/P2SH/` marker rather than a recognizable pool tag.\n\nAgainst that single canonical attestation sit no admitted stale blocks: the rarer off-chain case, where committed GeistGeld hashpower lands a Bitcoin block the main chain did not keep, does not appear in the recovered set. The remainder of the dump is AuxPoW-looking parent headers that do not survive Bitcoin admission, which is why GeistGeld also stands as a warning case: AuxPoW structure alone is not Bitcoin evidence, and the embedded parent still has to be validated as a real Bitcoin header."
+    },
+    "technical": {
+      "mechanism": "Geistgeld uses Namecoin-family CAuxPoW. A relevant block carries a parent header, parent coinbase, and merkle evidence proving the child block commitment.[^4][^5][^6]",
+      "uniqueness": "The source does not pin the parent to Bitcoin. Chain identity is encoded in version bits and can be operator-set through `-OurChainID`; the AuxPoW check rejects self-parenting but does not prove the parent is Bitcoin.[^4][^7] Early merge-mined siblings could also serve as parents for one another.[^8]",
+      "capture": "Geistgeld is imported from a committed historical CSV, not polled live. Upstream recovery streamed Nicholas Stifter's per-block `getblock` JSON dump, reconstructed parent headers from the decoded `auxpow.parent_block` fields, filtered for Bitcoin proof of work and expected `nBits`, and classified survivors with Bitcoin Core. No stale evidence survived admission, so the committed CSV is header-only.",
+      "bitcoin_relevance": "GeistGeld contributes one canonical Bitcoin attestation, at Bitcoin height `270,741` (November 2013), with no admitted stale blocks. The canonical block is the merge-mining attestation itself; there is no off-chain (stale) subset in the recovered set. GeistGeld is also instructive as a filtering case: the rest of the recovered dump is AuxPoW-looking parent headers that fail Bitcoin admission, showing why this monitor validates every parent header instead of trusting AuxPoW shape.",
+      "notable": [
+        "Recovered evidence is documented precisely because it contributes no admitted Bitcoin stale evidence."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family CAuxPoW from decoded `getblock` JSON"
+        },
+        {
+          "label": "Parent identity",
+          "value": "Not pinned to Bitcoin; parent validation is required[^4][^7][^8]"
+        },
+        {
+          "label": "Block cadence",
+          "value": "15 s target in the bundled historical config; source code also supports configurable spacing[^7][^9]"
+        },
+        {
+          "label": "Recovery source",
+          "value": "Recovered per-block `getblock` dump; no live node or public explorer"
+        },
+        {
+          "label": "Committed result",
+          "value": "Header-only null result"
+        }
+      ],
+      "recovery": [
+        "The committed dataset contributes one canonical Bitcoin block (BTC `270,741`, November 2013); its Bitcoin pool is unidentified because the parent coinbase carries only a generic `/P2SH/` marker. No stale blocks were admitted.",
+        "Rejected-parent counts are not exposed as Bitcoin evidence; the monitor only shows rows that pass admission."
+      ]
+    },
+    "provenance": {
+      "source": "Recovered historical dataset from Nicholas Stifter's per-block `getblock` JSON dump; monitor ingestion uses the classified `data/geistgeld_validated_stales.csv` from merge-mining-research, which admits a single canonical Bitcoin attestation and no stale rows.",
+      "coverage": "Canonical attestation is a single Bitcoin block at height `270,741` (21 November 2013); no stale blocks were admitted. The remainder of the recovered dump was classified but rejected at Bitcoin admission, so only the one canonical row enters the Bitcoin tree."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "Geistgeld launch announcement (bitcointalk)",
+        "url": "https://bitcointalk.org/index.php?topic=42417.0"
+      },
+      {
+        "id": 2,
+        "label": "Lolcust/GeistGeld (GitHub repo)",
+        "url": "https://github.com/Lolcust/GeistGeld"
+      },
+      {
+        "id": 3,
+        "label": "GeistGeld repo metadata (GitHub API)",
+        "url": "https://api.github.com/repos/Lolcust/GeistGeld"
+      },
+      {
+        "id": 4,
+        "label": "GeistGeld auxpow.cpp (multimergemine2)",
+        "url": "https://raw.githubusercontent.com/Lolcust/GeistGeld/multimergemine2/src/auxpow.cpp"
+      },
+      {
+        "id": 5,
+        "label": "GeistGeld auxpow.h (multimergemine2)",
+        "url": "https://raw.githubusercontent.com/Lolcust/GeistGeld/multimergemine2/src/auxpow.h"
+      },
+      {
+        "id": 6,
+        "label": "GeistGeld README_merged-mining.md",
+        "url": "https://raw.githubusercontent.com/Lolcust/GeistGeld/multimergemine2/doc/README_merged-mining.md"
+      },
+      {
+        "id": 7,
+        "label": "GeistGeld main.cpp (multimergemine2)",
+        "url": "https://raw.githubusercontent.com/Lolcust/GeistGeld/multimergemine2/src/main.cpp"
+      },
+      {
+        "id": 8,
+        "label": "Stifter et al. 2018, Echoes of the Past (eprint)",
+        "url": "https://eprint.iacr.org/2018/1134.pdf"
+      },
+      {
+        "id": 9,
+        "label": "GeistGeld bundled geist.conf",
+        "url": "https://github.com/Lolcust/GeistGeld/blob/multimergemine2/geist.conf"
+      }
+    ]
+  },
+  "groupcoin": {
+    "ticker": "GPC",
+    "chain_status": "dead",
+    "status_detail": "Recovered historical dataset; no live node, explorer, or maintained archive. The recovered window is overwhelmingly canonical attestation: 2,123 Bitcoin blocks merge-mined into the main chain from March 2012 to March 2016 (BTC heights `170,791`-`405,121`), alongside 31 admitted stale blocks, the last in July 2015. Bitcoin pool attribution is unavailable for this early era, so the merge-mining pools are unresolved in this dataset.",
+    "tagline": "Early Namecoin-family AuxPoW chain with recovered early Bitcoin stale evidence.",
+    "byline": "2012-2016",
+    "display": {
+      "name": "Groupcoin"
+    },
+    "history": {
+      "founded": "Launched around 2011 as a predecessor and testbed for Devcoin.[^1][^2]",
+      "merge_mining": "AuxPoW activated at Groupcoin (GPC) height `17,187` on 16 February 2012, according to the recovered dump.",
+      "ended": "Treated here as a historical Bitcoin-evidence source. Canonical merge-mining attestation runs to March 2016; July 2015 is only the last admitted stale block, not an evidence cutoff. The chain itself is dead: no live node, public explorer, or community-maintained archive is available.",
+      "narrative": "Groupcoin (GPC) was an early Namecoin-family merge-mined chain, used as a predecessor and testbed for Devcoin.[^1][^2]\n\nIts Bitcoin evidence comes from one recovered archive dump rather than a live node. The monitor imports the validated rows from that recovery; anything outside those rows stays in the research archive.\n\nFor this monitor, most of Groupcoin's value is canonical. 2,123 of its merge-mined blocks attest to Bitcoin main-chain blocks, spanning BTC heights `170,791`-`405,121` (March 2012 to March 2016), mined by the early-era Bitcoin pools that merge-mined Groupcoin (pool attribution is unavailable for this window, so the pools are unresolved in this dataset). Against that backbone sit 31 admitted stale blocks across BTC heights `181,492`-`367,047` (May 2012 to July 2015): the rarer cases where Groupcoin hashpower committed to a Bitcoin block the main chain did not keep. July 2015 bounds the stale subset, not the evidence; canonical attestation continues into March 2016. The admitted rows sit in Bitcoin's early propagation era, which makes them especially useful for filling Bitcoin's stale-block record."
+    },
+    "technical": {
+      "mechanism": "Groupcoin uses Namecoin-family CAuxPoW.[^5] A relevant block carries a Bitcoin parent header, parent coinbase, and merkle evidence proving the child block commitment.",
+      "uniqueness": "The recovered dump exposes AuxPoW as decoded JSON, so recovery reconstructs the Bitcoin parent header from `auxpow.parent_block` fields. Parent-coinbase outputs are kept as raw script hex rather than trusting the dump's address decoding, because the dump uses Groupcoin address rules instead of Bitcoin mainnet address rules.",
+      "capture": "Groupcoin is imported from a committed historical CSV, not polled live. Upstream recovery streamed Nicholas Stifter's complete `getblock` JSON dump, reconstructed parent headers, filtered for Bitcoin proof of work, and classified surviving parents with Bitcoin Core. The monitor imports the committed validated stale CSV and revalidates each row before it enters the Bitcoin tree.",
+      "bitcoin_relevance": "Groupcoin contributes recovered Bitcoin evidence across BTC heights `170,791`-`405,121` (March 2012 to March 2016): 2,123 canonical blocks attesting to the Bitcoin main chain, plus 31 admitted stales (the last July 2015). The canonical body is the merge-mining attestation itself; the stales are the rarer off-chain subset. Pool attribution is unavailable for this early window, so the merge-mining pools are unresolved. Because the admitted rows predate compact-block and fast-relay improvements, recovered AuxPoW sources like this are especially useful for filling Bitcoin's early stale-block record.",
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family CAuxPoW from decoded `getblock` JSON"
+        },
+        {
+          "label": "Activation",
+          "value": "GPC height `17,187`, 16 February 2012"
+        },
+        {
+          "label": "Block cadence",
+          "value": "10 min target[^6]"
+        },
+        {
+          "label": "Recovery source",
+          "value": "Nicholas Stifter per-block `getblock` dump"
+        },
+        {
+          "label": "Committed result",
+          "value": "Validated Bitcoin stale evidence from the recovered dump"
+        }
+      ],
+      "recovery": [
+        "Committed dataset contributes 2,123 canonical Bitcoin blocks (BTC `170,791`-`405,121`) and 31 admitted stale blocks (BTC `181,492`-`367,047`); pool attribution is unavailable for this early era, so the merge-mining pools are unresolved.",
+        "Rows outside the admitted CSV remain research-archive material unless they pass the monitor's Bitcoin validation gates."
+      ]
+    },
+    "provenance": {
+      "source": "Recovered historical dataset from Nicholas Stifter's per-block `getblock` JSON dump; monitor ingestion uses the committed rows from merge-mining-research (canonical attestation and admitted stales together), not the stale subset alone.",
+      "coverage": "Canonical attestation spans BTC heights `170,791`-`405,121` (March 2012 to March 2016); the 31 admitted stales fall within BTC `181,492`-`367,047` (May 2012 to July 2015). The July 2015 endpoint bounds the stale subset, not the evidence; canonical attestation continues to March 2016. Pool attribution is unavailable for this early window. The broader dump remains a research archive, not live monitor input."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "The Merkle: top 5 coins to originally merge-mine alongside Bitcoin",
+        "url": "https://themerkle.com/top-5-coins-to-originally-merge-mine-alongside-bitcoin/"
+      },
+      {
+        "id": 2,
+        "label": "Treccia: Merge Mining to Reverse Entropy",
+        "url": "https://medium.com/@danieltreccia/merge-mining-to-reverse-entropy-d99c10313205"
+      },
+      {
+        "id": 5,
+        "label": "Bitcoin Wiki: Merged mining specification",
+        "url": "https://en.bitcoin.it/wiki/Merged_mining_specification"
+      },
+      {
+        "id": 6,
+        "label": "Groupcoin source main.cpp",
+        "url": "https://github.com/kost/groupcoin/blob/kost/src/main.cpp"
+      }
+    ]
+  },
+  "hathor": {
+    "ticker": "HTR",
+    "chain_status": "active",
+    "status_detail": "Still active; Bitcoin-side HTR merge-mining is publicly promoted by F2Pool.[^4]",
+    "tagline": "SHA-256d split-header AuxPoW chain whose merge-mined blocks may point to Bitcoin or another SHA-256d parent.",
+    "byline": "2020 · ~30s blocks",
+    "help": {
+      "data": "SHA-256d parent header reconstructed from the RFC 0006 split-header proof, then filtered for Bitcoin parents",
+      "pool": "BTC parent coinbase tags when the pool resolver recognizes them; Hathor reward outputs are observed separately"
+    },
+    "display": {
+      "name": "Hathor",
+      "color": "#3d6fb4",
+      "order": 5
+    },
+    "history": {
+      "founded": "Mainnet launched on 3 January 2020.",
+      "merge_mining": "SHA-256d merge-mining surfaced publicly in 2020 against BCH/BSV/DigiByte parents.[^2] F2Pool later listed HTR as BTC-merged.[^4]",
+      "ended": "Still active; BTC-side merge-mining remains promoted.[^4]",
+      "narrative": "Hathor mainnet launched on 3 January 2020 and added SHA-256d merge-mining later that year.\n\nHathor merge-mining is not Bitcoin-only. Early public HathorMM coverage named Bitcoin Cash, Bitcoin SV, and DigiByte parents.[^2] F2Pool later listed HTR as a BTC-merged coin.[^4]\n\nFor this monitor, Hathor is a high-frequency SHA-256d witness with an important caveat: every reconstructed parent header must still be filtered to decide whether it is really a Bitcoin parent."
+    },
+    "technical": {
+      "mechanism": "Hathor uses RFC 0006 split-header AuxPoW.[^6] The proof stores the parent header edges, the coinbase pieces, and the merkle path; the monitor recomputes the parent transaction merkle root from the coinbase and merkle path, splices it into the 80-byte header, and accepts the rebuilt SHA-256d parent header only when it hashes back to the Hathor block.",
+      "uniqueness": "The important difference from Namecoin-family AuxPoW is format and parent scope. Hathor uses the ASCII `Hath` commitment marker, RFC 0006 defines no chain ID or strict chain-ID field, and the parent can be any SHA-256d chain.[^6] Bitcoin relevance is therefore a classification result, not something assumed from the Hathor block itself.",
+      "capture": "The monitor reads Hathor through the public REST API because mainnet is permissioned for node operation. For each candidate block, it reconstructs the SHA-256d parent header from the split-header proof, verifies the reconstruction identity, checks Bitcoin proof of work, and filters non-Bitcoin SHA-256d parents through the `nBits` table. Bitcoin Core then places known parent hashes as canonical or stale; Core-absent Hathor parents are weak orphan evidence because the proof does not provide a trustworthy BIP34 Bitcoin coinbase height.",
+      "bitcoin_relevance": "Hathor is useful after filtering, not because every Hathor parent is Bitcoin. Its short block interval creates many chances to observe a BTC parent, but the recovered stale signal mostly corroborates older merge-mined sources.",
+      "notable": [
+        "A reconstructed header is admitted only after the hash identity matches; a plausible-looking header is not enough.",
+        "Hathor evidence alone supports weak orphan checks, not strict orphan checks, because no trustworthy BIP34 height is available."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "RFC 0006 split-header AuxPoW[^6]"
+        },
+        {
+          "label": "Commitment marker",
+          "value": "ASCII `Hath`; no chain ID or strict chain-ID field[^6]"
+        },
+        {
+          "label": "Parent scope",
+          "value": "Any SHA-256d parent; Bitcoin parents are selected by proof-of-work and `nBits` checks"
+        },
+        {
+          "label": "Orphan limit",
+          "value": "Weak only unless another source supplies a trustworthy Bitcoin BIP34 height"
+        }
+      ],
+      "recovery": [
+        "Non-Bitcoin SHA-256d parents are skipped before rows become Bitcoin evidence.",
+        "Rows that pass filtering are placed by Bitcoin Core; Core-absent Hathor parents remain weak orphan evidence."
+      ]
+    },
+    "provenance": {
+      "source": "Live capture from the public Hathor REST API because mainnet node operation is permissioned; RFC 0006 split-header proofs are reconstructed before writing evidence.",
+      "coverage": "Live and ongoing. Only reconstructed parents that pass Bitcoin proof of work and `nBits` checks are treated as Bitcoin evidence."
+    },
+    "references": [
+      {
+        "id": 2,
+        "label": "news.bitcoin.com - HathorMM captures 33% of BCH hashrate",
+        "url": "https://news.bitcoin.com/hathor-merge-mining-pool-captures-33-of-the-bitcoin-cash-hashrate/"
+      },
+      {
+        "id": 4,
+        "label": "Hathor blog - Merged mining with Hathor, a 2024 update",
+        "url": "https://blog.hathor.network/merged-mining-with-hathor-network-a-2024-update-11b168cd023e"
+      },
+      {
+        "id": 6,
+        "label": "Hathor RFC 0006 - Merged mining with Bitcoin",
+        "url": "https://github.com/HathorNetwork/rfcs/blob/master/text/0006-merged-mining-with-bitcoin.md"
+      }
+    ]
+  },
+  "huntercoin": {
+    "ticker": "HUC",
+    "chain_status": "dead",
+    "status_detail": "Recovered historical dataset; only the SHA-256d branch carries Bitcoin AuxPoW evidence. The archived window is overwhelmingly canonical attestation: 857 Bitcoin blocks merge-mined into the main chain across BTC heights `284,033`-`291,473` (4 February to 20 March 2014), alongside 13 admitted stale blocks, the last on 12 March 2014. No live producer; the Arweave archive only covers the early chain.",
+    "tagline": "Dual-PoW game chain whose SHA-256d branch contributes a compact early Bitcoin stale sample.",
+    "byline": "2014",
+    "display": {
+      "name": "Huntercoin"
+    },
+    "history": {
+      "founded": "Launched in February 2014 as an on-chain game built on Namecoin-family code.[^1][^2]",
+      "merge_mining": "Dual proof-of-work from launch: a SHA-256d branch merge-mines Bitcoin and a Scrypt branch merge-mines Litecoin.[^1][^3]",
+      "ended": "Superseded by Xaya; this monitor treats Huntercoin as a recovered historical source rather than a live producer.[^2] The admitted evidence is overwhelmingly canonical attestation across February-March 2014, with March 2014 only the last admitted stale block, not an evidence cutoff.",
+      "narrative": "Huntercoin (HUC) launched in February 2014 as an on-chain game, often described as \"human mining\".[^1][^2]\n\nIt used dual proof of work. Only the SHA-256d branch can carry Bitcoin-parent AuxPoW; the Scrypt/Litecoin branch is outside this monitor's Bitcoin evidence path.[^3]\n\nThe admitted Bitcoin evidence comes from an Arweave archive of roughly the first 100,000 Huntercoin blocks, not from a live node. Most of that evidence is canonical: 857 SHA-256d blocks attest to Bitcoin main-chain blocks across BTC heights `284,033`-`291,473` (4 February to 20 March 2014). The 2014-era coinbases are not resolved to named pools in this dataset. Against that backbone sit 13 admitted stale blocks across BTC heights `285,130`-`290,178`: the rarer cases where Huntercoin hashpower committed to a Bitcoin block the main chain did not keep. 12 March 2014 bounds that stale subset, not the evidence window, which runs to 20 March 2014 where the archive ends."
+    },
+    "technical": {
+      "mechanism": "Huntercoin uses Namecoin-family AuxPoW on its SHA-256d branch. A relevant block carries a Bitcoin parent header, parent coinbase, and merkle evidence proving the child block commitment. The parallel Scrypt branch merge-mines Litecoin and is out of scope for Bitcoin evidence.[^3]",
+      "uniqueness": "The chain's dual-PoW design is the main filter. Recovery keeps the SHA-256d branch and excludes Scrypt/Litecoin evidence before Bitcoin validation begins. The Bitcoin-side AuxPoW serialization is Namecoin-compatible, so the normal CAuxPoW parser applies.",
+      "capture": "Huntercoin is imported from a committed historical CSV, not polled live. Upstream recovery read the `domob1812/arblockstore` Arweave archive, which covers roughly the first 100,000 Huntercoin blocks, kept SHA-256d AuxPoW evidence only, reconstructed Bitcoin parent headers, filtered for Bitcoin proof of work, and classified surviving parents with Bitcoin Core. The monitor imports the committed validated stale CSV and revalidates each row before it enters the Bitcoin tree.",
+      "bitcoin_relevance": "Huntercoin contributes a compact early-2014 sample across BTC heights `284,033`-`291,473` (4 February to 20 March 2014): 857 canonical blocks attesting to the Bitcoin main chain, plus 13 admitted stales (the last 12 March 2014). The canonical body is the merge-mining attestation itself; the stales are the rarer off-chain subset. The window predates BCH/BSV contamination concerns and sits in the early propagation era where AuxPoW archives can recover stales missed by later datasets.",
+      "notable": [
+        "The Arweave archive only covers roughly the first 100,000 Huntercoin blocks, so this source is a narrow February-March 2014 Bitcoin evidence window.",
+        "The Scrypt/Litecoin branch is intentionally excluded before rows reach the Bitcoin tree."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family CAuxPoW on the SHA-256d branch"
+        },
+        {
+          "label": "Branch filter",
+          "value": "SHA-256d/Bitcoin branch kept; Scrypt/Litecoin branch excluded"
+        },
+        {
+          "label": "Block cadence",
+          "value": "~1 min overall; SHA-256d branch roughly ~2 min in dual-algo mining[^3][^4]"
+        },
+        {
+          "label": "Recovery source",
+          "value": "`domob1812/arblockstore` Arweave archive"
+        },
+        {
+          "label": "Committed result",
+          "value": "Validated Bitcoin stale evidence from the early archive"
+        }
+      ],
+      "recovery": [
+        "Committed dataset contributes 857 canonical Bitcoin blocks (BTC `284,033`-`291,473`) and 13 admitted stale blocks (BTC `285,130`-`290,178`) from the early Arweave archive; 2014-era coinbases are not resolved to named pools here.",
+        "Rows outside the admitted set remain research-archive material unless they pass the monitor's Bitcoin validation gates."
+      ]
+    },
+    "provenance": {
+      "source": "Recovered historical dataset from the `domob1812/arblockstore` Arweave archive; monitor ingestion imports the full classified row set from merge-mining-research (canonical attestation and admitted stales together), not the stale subset alone.",
+      "coverage": "Canonical attestation spans BTC heights `284,033`-`291,473` (4 February to 20 March 2014); the 13 admitted stales fall within BTC `285,130`-`290,178`, the last on 12 March 2014. The March 2014 stale endpoint bounds the stale subset, not the evidence. The source archive stops around Huntercoin block `100,000`, so later Huntercoin blocks are not covered by this monitor."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "Huntercoin bitcointalk ANN (snailbrain)",
+        "url": "https://bitcointalk.org/index.php?topic=435170.0"
+      },
+      {
+        "id": 2,
+        "label": "Xaya Huntercoin legacy page",
+        "url": "https://xaya.io/huntercoin-legacy"
+      },
+      {
+        "id": 3,
+        "label": "Rootstock merged-mining profitability study",
+        "url": "https://rootstock.io/blog/a-study-on-profitability-of-bitcoin-merged-mined-blockchains/"
+      },
+      {
+        "id": 4,
+        "label": "Huntercoin chainparams.cpp",
+        "url": "https://github.com/chronokings/huntercore/blob/master/src/chainparams.cpp"
+      }
+    ]
+  },
+  "i0coin": {
+    "ticker": "I0C",
+    "chain_status": "dead",
+    "status_detail": "Recovered historical dataset, not a live producer. The recovered window is overwhelmingly canonical attestation: 16,958 Bitcoin main-chain blocks merge-mined from December 2011 into January 2018 (F2Pool dominant, with BTC.TOP and Eligius also prominent among the pools), alongside 167 admitted stale blocks, the last in January 2018. Coverage comes from a January 2018 i0coin block snapshot, and no reachable explorer exposes the chain producing blocks today.",
+    "tagline": "Early 90-second AuxPoW chain with dense recovered Bitcoin stale evidence.",
+    "byline": "2011-2018",
+    "display": {
+      "name": "i0coin"
+    },
+    "history": {
+      "founded": "Launched in August 2011 as an early SHA-256d Bitcoin-family chain.[^1]",
+      "merge_mining": "Began merge-mining Bitcoin at i0coin (I0C) height `160,000` on 20 December 2011.[^2]",
+      "ended": "Treated here as a historical Bitcoin-evidence source. Recovery uses a January 2018 third-party block snapshot rather than live polling; that snapshot bounds current coverage, and the January 2018 last stale is only the last admitted off-chain block, not the limit of the canonical attestation. No public i0coin explorer is reachable today, so the chain is treated as dead for this monitor.",
+      "narrative": "i0coin (I0C) appears in the 2018 merge-mining study as one of the early SHA-256d AuxPoW chains.[^9]\n\nIts 90-second block target is the important difference for Bitcoin stale recovery. Over one ten-minute Bitcoin interval, i0coin could record roughly six or seven AuxPoW proofs, giving short-lived Bitcoin stales more chances to be preserved than on ten-minute child chains.\n\nFor this monitor, i0coin is a recovered historical source, and most of its value is canonical. 16,958 of its merge-mined blocks attest to Bitcoin main-chain blocks, spanning BTC heights `158,531`-`505,261` (December 2011 to January 2018), mined by Bitcoin pools with F2Pool dominant and BTC.TOP and Eligius also prominent. Against that backbone sit 167 admitted stale blocks across BTC heights `160,948`-`504,952` (January 2012 to January 2018): the rarer cases where i0coin hashpower committed to a Bitcoin block the main chain did not keep. January 2018 bounds the recovered snapshot, not the chain's whole history; anything after that snapshot is not represented here."
+    },
+    "technical": {
+      "mechanism": "i0coin uses Namecoin-family `CAuxPow`: a merge-mined block embeds a Bitcoin parent header, parent coinbase, and Merkle branch proving the i0coin block commitment. AuxPoW starts at I0C height `160,000`; the child chain uses strict chain ID `2`.[^2]",
+      "uniqueness": "The short block target creates dense sampling. Several i0coin blocks can point at the same Bitcoin parent work inside one Bitcoin interval, so evidence is counted by distinct Bitcoin parent header, not by child block count.",
+      "capture": "i0coin is imported from a committed historical CSV, not polled live. Recovery parsed a January 2018 third-party `blk*.dat` snapshot originally distributed through the i0coin archival site.[^3] It kept AuxPoW rows at or above I0C height `160,000`, reconstructed Bitcoin parent headers, filtered for Bitcoin proof of work, deduplicated repeated parent hashes, and classified surviving parents with Bitcoin Core. The monitor imports the committed validated stale CSV and revalidates each row before it enters the Bitcoin tree.",
+      "bitcoin_relevance": "i0coin contributes recovered Bitcoin evidence across BTC heights `158,531`-`505,261` (December 2011 to January 2018): 16,958 canonical blocks attesting to the Bitcoin main chain (F2Pool dominant, with BTC.TOP and Eligius also present), plus 167 admitted stales within BTC `160,948`-`504,952` (the last in January 2018). The canonical body is the merge-mining attestation itself; the stales are the off-chain subset. Its short 90-second cadence makes it a dense witness for short-lived stales, while the January 2018 snapshot defines the current coverage boundary.",
+      "notable": [
+        "Strict chain ID `2` distinguishes i0coin from other early Namecoin-family chains in the AuxPoW header.[^2]",
+        "The 90-second target is why duplicate Bitcoin parent headers are expected and deduplicated before classification."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family `CAuxPow`"
+        },
+        {
+          "label": "Chain ID",
+          "value": "Strict chain ID `2` (`0x0002`)[^2]"
+        },
+        {
+          "label": "AuxPoW activation",
+          "value": "I0C height `160,000`, 20 December 2011[^2]"
+        },
+        {
+          "label": "Block cadence",
+          "value": "90 s target, about 6.7 i0coin blocks per Bitcoin block[^2]"
+        }
+      ],
+      "recovery": [
+        "Committed dataset contributes 16,958 canonical Bitcoin blocks (BTC `158,531`-`505,261`, mined by F2Pool, BTC.TOP, Eligius, and other pools) and 167 admitted stale blocks (BTC `160,948`-`504,952`).",
+        "The recovered set overlaps both upstream bitcoin-data/stale-blocks and Namecoin's validated set.",
+        "Post-BCH-fork rows are admitted only when `nBits` confirms they match Bitcoin difficulty."
+      ]
+    },
+    "provenance": {
+      "source": "Recovered historical dataset from an offline parse of a January 2018 third-party i0coin `blk*.dat` snapshot; monitor ingestion uses the committed `data/i0coin_validated_stales.csv` rows.",
+      "coverage": "Canonical attestation spans BTC heights `158,531`-`505,261` (December 2011 to January 2018) / I0C child heights `161,910`-`2,358,495`; the 167 admitted stales fall within BTC `160,948`-`504,952` (January 2012 to January 2018, the last in January 2018). The January 2018 endpoint is the recovered snapshot boundary, not an Emercoin-style shutdown date; I0C blocks below `160,000` predate AuxPoW, and activity after the snapshot is not covered by the current monitor dataset."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "domob1812/i0coin (GitHub repo)",
+        "url": "https://github.com/domob1812/i0coin"
+      },
+      {
+        "id": 2,
+        "label": "i0coin chainparams.cpp (domob1812/i0coin)",
+        "url": "https://raw.githubusercontent.com/domob1812/i0coin/master/src/chainparams.cpp"
+      },
+      {
+        "id": 3,
+        "label": "izerocoin.org (archival project site)",
+        "url": "https://izerocoin.org/"
+      },
+      {
+        "id": 9,
+        "label": "Stifter et al. 2018 (merge-mining study, IACR ePrint)",
+        "url": "https://eprint.iacr.org/2018/1134.pdf"
+      }
+    ]
+  },
+  "ixcoin": {
+    "ticker": "IXC",
+    "chain_status": "zombie",
+    "status_detail": "Recovered historical dataset from an archival Ixcoin node. The recovered window is overwhelmingly canonical attestation: 46,808 Bitcoin blocks merge-mined into the main chain across BTC heights `160,089`-`500,593` (January 2012 to December 2017), with GHash.IO, F2Pool, and Eligius prominent among the pools. Against that backbone sit 480 admitted stale blocks, the last in July 2016, the rarer cases where Ixcoin hashpower committed to a Bitcoin block the main chain did not keep.",
+    "tagline": "Early strict-chain-ID AuxPoW chain with a large 2011-2016 Bitcoin stale window.",
+    "byline": "2012-2017",
+    "display": {
+      "name": "Ixcoin"
+    },
+    "history": {
+      "founded": "Launched in 2011 as a standalone SHA-256d Bitcoin-family chain.[^1]",
+      "merge_mining": "Began merge-mining Bitcoin at Ixcoin (IXC) height `45,001` on 31 December 2011.[^1][^5]",
+      "ended": "Recovered as a historical Bitcoin-evidence source; this monitor imports the admitted evidence from an archival Ixcoin sync rather than polling Ixcoin live. Canonical merge-mining attestation runs into December 2017; July 2016 is only the last admitted stale block, not an evidence cutoff.",
+      "narrative": "Ixcoin (IXC) first ran as a standalone SHA-256d chain, then adopted Namecoin-family AuxPoW at the end of 2011.[^1][^5]\n\nFor this monitor, Ixcoin is an early Bitcoin-evidence source rather than a live producer. Its admitted rows cover the period when Ixcoin miners were embedding Bitcoin-difficulty parent headers.\n\nMost of that value is canonical: 46,808 of its merge-mined blocks attest to Bitcoin main-chain blocks, spanning BTC heights `160,089`-`500,593` (January 2012 to December 2017), mined by Bitcoin pools with GHash.IO, F2Pool, and Eligius prominent among them. Against that backbone sit 480 admitted stale blocks across BTC heights `161,761`-`422,212` (January 2012 to July 2016): the rarer cases where Ixcoin hashpower committed to a Bitcoin block the main chain did not keep. July 2016 bounds the stale subset, not the evidence; canonical attestation continues into December 2017."
+    },
+    "technical": {
+      "mechanism": "Ixcoin uses Namecoin-family `CAuxPow`: a merge-mined block carries a Bitcoin parent header, parent coinbase, and Merkle branch proving the IXC block commitment.[^4]",
+      "uniqueness": "Ixcoin uses strict AuxPoW chain ID `3` (`0x0003`), enforced from the AuxPoW activation boundary.[^1] Blocks below IXC height `45,001` are standalone Ixcoin blocks and do not carry Bitcoin parent headers.",
+      "capture": "Ixcoin is imported from historical CSV evidence, not polled live. Recovery synced an archival `ixcoind`, fetched raw block hex because IXCore does not expose decoded AuxPoW JSON, parsed binary `CAuxPow` for IXC blocks at or above height `45,001`, reconstructed Bitcoin parent headers, filtered for Bitcoin proof of work, deduplicated repeated parent hashes, and classified surviving parents with Bitcoin Core. The monitor imports the generated full-evidence CSV when available, falling back to the compact stale-only CSV, and revalidates each admitted row before it enters the Bitcoin tree.",
+      "bitcoin_relevance": "Ixcoin contributes early Bitcoin merge-mining evidence across BTC heights `160,089`-`500,593` (January 2012 to December 2017): 46,808 canonical blocks attesting to the Bitcoin main chain (GHash.IO, F2Pool, and Eligius prominent among the pools), plus 480 admitted stales across BTC `161,761`-`422,212` (the last July 2016). The canonical body is the merge-mining attestation itself; the stales are the off-chain subset. The window predates the BCH fork and sits in the early propagation era where recovered AuxPoW sources are especially valuable, so this source does not exercise the post-fork contamination filter.",
+      "notable": [
+        "Strict chain ID `3` distinguishes Ixcoin from other early Namecoin-family chains in the AuxPoW header.[^1]",
+        "The direct stale set ends before BCH/BSV, so this source does not exercise the post-fork contamination filter.",
+        "Some Ixcoin blocks in the recovery range have no child reward outputs, but the AuxPoW parent evidence is still present."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family `CAuxPow`[^4]"
+        },
+        {
+          "label": "Chain ID",
+          "value": "Strict chain ID `3` (`0x0003`)[^1]"
+        },
+        {
+          "label": "AuxPoW activation",
+          "value": "IXC height `45,001`, 31 December 2011[^1][^5]"
+        },
+        {
+          "label": "Block cadence",
+          "value": "10 min target[^1]"
+        },
+        {
+          "label": "Legacy range",
+          "value": "IXC heights `0`-`45,000` have no Bitcoin parent headers"
+        }
+      ],
+      "recovery": [
+        "The compact stale-only CSV is a fallback artifact; the live monitor prefers the generated full-evidence import when it is present, which contributes 46,808 canonical Bitcoin blocks (BTC `160,089`-`500,593`, mined by GHash.IO, F2Pool, Eligius, and other pools) and 480 admitted stale blocks (BTC `161,761`-`422,212`).",
+        "That full-evidence import admits both canonical attestation and direct stale rows, so the live counts below are the authority for this deployment.",
+        "The direct stale rows predate the BCH fork and pass the persisted validation gate."
+      ]
+    },
+    "provenance": {
+      "source": "Recovered historical dataset from a local archival `ixcoind` sync; monitor ingestion uses the generated full-evidence CSV when available, with `data/ixcoin_validated_stales.csv` as the compact stale-only fallback.",
+      "coverage": "Canonical attestation spans BTC heights `160,089`-`500,593` (January 2012 to December 2017) / IXC heights `46,155`-`417,701`; the 480 admitted stales fall within BTC `161,761`-`422,212` (January 2012 to July 2016) / IXC heights `51,376`-`330,060`. The July 2016 endpoint bounds the stale subset, not the evidence; canonical attestation continues into December 2017. IXC blocks below `45,001` predate AuxPoW. Pre-BIP34 Bitcoin parent heights are inferred from `nBits` epoch and timestamp evidence."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "IXCore/IXCoin chainparams.cpp",
+        "url": "https://github.com/IXCore/IXCoin/blob/master/src/chainparams.cpp"
+      },
+      {
+        "id": 4,
+        "label": "Bitcoin Wiki Merged mining specification",
+        "url": "https://en.bitcoin.it/wiki/Merged_mining_specification"
+      },
+      {
+        "id": 5,
+        "label": "The Merkle: coins to originally merge-mine alongside Bitcoin",
+        "url": "https://themerkle.com/top-5-coins-to-originally-merge-mine-alongside-bitcoin/"
+      }
+    ]
+  },
+  "myriadcoin": {
+    "ticker": "XMY",
+    "chain_status": "zombie",
+    "status_detail": "Recovered historical dataset; only the SHA-256d branch carries Bitcoin AuxPoW evidence. The recovered window is overwhelmingly canonical attestation: 14,705 Bitcoin blocks merge-mined into the main chain from November 2015 into May 2025 (BTC-top, 1THash, and Huobi prominent among the pools), alongside 40 admitted stale blocks, the last in August 2020. Myriadcoin still produces blocks but its SHA-256 difficulty is a negligible fraction of Bitcoin, so it is no longer a full-difficulty Bitcoin merge-miner.",
+    "tagline": "Multi-algo chain whose SHA-256d branch is the Bitcoin evidence path.",
+    "byline": "2015-2025",
+    "display": {
+      "name": "Myriadcoin"
+    },
+    "history": {
+      "founded": "Launched in 2014 as a multi-algorithm Bitcoin-family chain forked from Zetacoin.[^2]",
+      "merge_mining": "SHA-256d AuxPoW activates at Myriadcoin (XMY) height `1,402,000`; the Scrypt branch separately merge-mines Litecoin/Dogecoin.[^3][^4][^5]",
+      "ended": "Treated here as a historical Bitcoin-evidence source. Canonical merge-mining attestation runs from November 2015 into May 2025; August 2020 is only the last admitted stale block, not an evidence cutoff or a Myriadcoin shutdown. The chain still produces blocks, but its SHA-256 hashpower is now far below Bitcoin difficulty.",
+      "narrative": "Myriadcoin (XMY) launched in 2014 as one of the early multi-algorithm PoW chains.[^2]\n\nFor Bitcoin evidence, only the SHA-256d branch matters. That branch can carry Bitcoin-parent AuxPoW, while the Scrypt branch merge-mines Litecoin/Dogecoin and the remaining branches are outside this monitor's Bitcoin path.[^4][^5]\n\nFor this monitor, Myriadcoin is a recovered historical source, and most of its value is canonical. 14,705 of its SHA-256d blocks attest to Bitcoin main-chain blocks, spanning BTC heights `385,325`-`895,496` (November 2015 to May 2025), mined by Bitcoin pools with BTC-top, 1THash, and Huobi prominent among them. Against that backbone sit 40 admitted stale blocks across BTC heights `467,186`-`642,669` (May 2017 to August 2020): the rarer cases where SHA-256d hashpower committed to a Bitcoin block the main chain did not keep. August 2020 bounds the stale subset, not the evidence; canonical attestation continues for nearly five more years. The admitted rows come from a SHA-256d AuxPoW window recovered from a synced node, not from a live Myriadcoin producer."
+    },
+    "technical": {
+      "mechanism": "Myriadcoin uses Namecoin-family `CAuxPow` on its SHA-256d branch. A relevant block carries a parent header, parent coinbase, and merkle evidence proving the XMY block commitment. The Scrypt branch merge-mines Litecoin/Dogecoin, and non-SHA-256d branches are not Bitcoin evidence.[^4][^5]",
+      "uniqueness": "Myriadcoin is a multi-algo source, so the first question is branch selection. The extractor keeps only blocks whose `nVersion` algorithm bits identify SHA-256d, then applies the normal `CAuxPow` parser. Chain ID `0x005A` with `fStrictChainId=false` means the SHA-256d branch can accept any SHA-256d parent, so Bitcoin proof of work, `nBits`, and Core placement decide whether a parent becomes Bitcoin evidence.[^3]",
+      "capture": "Myriadcoin is imported from committed historical CSV evidence, not polled live. Recovery synced a local `myriadcoind`, fetched raw block hex, kept only SHA-256d AuxPoW blocks, parsed the binary `CAuxPow` tail, reconstructed Bitcoin parent headers, filtered for Bitcoin proof of work and expected `nBits`, and classified surviving parents with Bitcoin Core. Current Evidence Counts below show the deployed admitted total.",
+      "bitcoin_relevance": "Myriadcoin contributes recovered Bitcoin evidence across BTC heights `385,325`-`895,496` (November 2015 to May 2025): 14,705 canonical blocks attesting to the Bitcoin main chain (BTC-top, 1THash, Huobi, and other pools), plus 40 admitted stales (the last August 2020). The canonical body is the merge-mining attestation itself; the stales are the rarer off-chain subset. Its value is corroboration across the same SHA-256d miner substrate seen by Devcoin, Namecoin, i0coin, Crown, and Unobtanium, not live Myriadcoin coverage.",
+      "notable": [
+        "Only the SHA-256d branch enters Bitcoin evidence; other Myriadcoin algorithms are excluded before AuxPoW parsing.",
+        "`fStrictChainId=false` is not a Bitcoin-parent guarantee. Parent admission still depends on Bitcoin proof of work, `nBits`, and Core placement.[^3]",
+        "The evidence window is a recovered dataset boundary, not a claim that Myriadcoin stopped producing blocks."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family `CAuxPow` on the SHA-256d branch"
+        },
+        {
+          "label": "AuxPoW activation",
+          "value": "XMY height `1,402,000`; SHA-256d branch only[^3]"
+        },
+        {
+          "label": "Block cadence",
+          "value": "60 s overall during AuxPoW start; later longblocks extend to 2/4/8 min overall, with SHA-256d one of five branches[^3]"
+        },
+        {
+          "label": "Chain ID",
+          "value": "`0x005A` (90 decimal), `fStrictChainId=false`[^3]"
+        },
+        {
+          "label": "Branch filter",
+          "value": "`nVersion` algorithm bits select SHA-256d before AuxPoW parsing"
+        }
+      ],
+      "recovery": [
+        "Committed dataset contributes 14,705 canonical Bitcoin blocks (BTC `385,325`-`895,496`, November 2015 to May 2025, mined by BTC-top, 1THash, Huobi, and other pools) and 40 admitted stale blocks (BTC `467,186`-`642,669`, May 2017 to August 2020).",
+        "The branch filter removes non-SHA-256d blocks before parent validation; the Bitcoin gates then reject any SHA-256d parent that does not match Bitcoin difficulty and placement."
+      ]
+    },
+    "provenance": {
+      "source": "Recovered historical dataset from a local `myriadcoind` sync; monitor ingestion imports the full classified row set from merge-mining-research (canonical attestation and admitted stales together), not the stale subset alone, via the committed `data/myriadcoin_validated_stales.csv` evidence.",
+      "coverage": "Canonical attestation spans BTC heights `385,325`-`895,496` (November 2015 to May 2025) / XMY heights `1,471,140`-`3,667,045`; the 40 admitted stales fall within BTC `467,186`-`642,669` (May 2017 to August 2020) / XMY heights `2,060,939`-`3,105,294`. The August 2020 endpoint bounds the stale subset, not the evidence. SHA-256d branch only; other Myriadcoin algorithms and non-Bitcoin SHA-256d parents are rejected by admission checks."
+    },
+    "references": [
+      {
+        "id": 2,
+        "label": "GitHub API: myriadcoin/myriadcoin repo",
+        "url": "https://api.github.com/repos/myriadcoin/myriadcoin"
+      },
+      {
+        "id": 3,
+        "label": "Myriadcoin chainparams.cpp (master)",
+        "url": "https://raw.githubusercontent.com/myriadcoin/myriadcoin/master/src/chainparams.cpp"
+      },
+      {
+        "id": 4,
+        "label": "Myriad team documentation",
+        "url": "https://myriadteam.github.io/"
+      },
+      {
+        "id": 5,
+        "label": "Merged Mining: Curse or Cure? (IACR eprint 2017/791)",
+        "url": "https://eprint.iacr.org/2017/791.pdf"
+      }
+    ]
+  },
+  "namecoin": {
+    "ticker": "NMC",
+    "chain_status": "active",
+    "status_detail": "Active; the first AuxPoW chain and a live source of Bitcoin parent-header evidence.",
+    "tagline": "The first merge-mined AuxPoW chain and the earliest witness for AuxPoW-recovered Bitcoin stale blocks.",
+    "byline": "2011 · ~10 min blocks",
+    "help": {
+      "data": "Bitcoin parent header, Bitcoin coinbase, and AuxPoW merkle proof",
+      "pool": "Bitcoin coinbase tags when attribution is available"
+    },
+    "display": {
+      "name": "Namecoin",
+      "color": "#8172b2",
+      "order": 1
+    },
+    "history": {
+      "founded": "Launched in April 2011 as a Bitcoin-derived naming chain; genesis was 17 April and the first release followed on 18 April.[^1]",
+      "merge_mining": "AuxPoW activated at NMC height `19,200`. The first AuxPoW block carried a Bitcoin parent at BTC height `148,553` on 8 October 2011.[^2]",
+      "ended": "Active and still merge-mined. In this monitor, Namecoin is an ongoing witness for Bitcoin parent headers, not a closed historical archive.",
+      "narrative": "Namecoin is the starting point for AuxPoW-based Bitcoin stale recovery.[^3] At NMC height `19,200`, miners began preserving Bitcoin parent headers inside Namecoin blocks. Anything earlier than October 2011 has no merge-mined child-chain witness in this monitor.\n\nFor about 11 weeks, Namecoin was the only AuxPoW witness. i0coin, Ixcoin, and Devcoin began merge-mining later, so they overlap early Bitcoin history but do not move the starting point back.\n\nNamecoin is still active and still merge-mined. Near the tip, stale recovery is naturally sparse because Bitcoin itself produces far fewer stale blocks after relay and propagation improved; that is not a sign that Namecoin stopped being useful evidence."
+    },
+    "technical": {
+      "mechanism": "Namecoin uses the original Namecoin-family AuxPoW design.[^3] A merge-mined Namecoin block embeds the Bitcoin parent header, the Bitcoin coinbase transaction, and a merkle proof showing that the Namecoin block hash was committed inside that Bitcoin coinbase.",
+      "uniqueness": "Namecoin is the first deployed AuxPoW chain. Mainnet uses chain ID `0x0001`, strict chain-ID checking, and AuxPoW activation at NMC height `19,200`, all visible in Namecoin Core consensus parameters.[^2] Its evidence includes the real Bitcoin coinbase, so post-BIP34 Core-absent candidates can sometimes be placed as strict orphans; older pre-BIP34 parents can only be placed from Bitcoin-chain context.[^4]",
+      "capture": "The monitor polls Namecoin Core for raw block bytes and extracts the embedded Bitcoin parent header, Bitcoin coinbase, and AuxPoW merkle proof. A row must satisfy Bitcoin proof of work and Namecoin's child-chain target before it is useful Bitcoin evidence. Bitcoin Core then places the parent hash as canonical or stale when it is known; only Core-absent candidates continue into the orphan checks.",
+      "bitcoin_relevance": "Namecoin starts the recoverable AuxPoW window. Its first AuxPoW block carried a Bitcoin parent at height `148,553` on 8 October 2011, earlier than any other merge-mined child chain in this monitor.[^2] That makes Namecoin the longest-running witness for Bitcoin stale blocks, especially in the early network era before systematic stale-block monitoring. Its recovered stale set begins at BTC height `149,589` and advances as live capture and Bitcoin Core classification continue.",
+      "notable": [
+        "First AuxPoW witness: NMC height `19,200` carried a Bitcoin parent at BTC height `148,553` on 8 October 2011.[^2]",
+        "Because Namecoin preserves the Bitcoin coinbase, it can support strict orphan placement for post-BIP34 Core-absent parents when the coinbase height and `nBits` epoch agree.[^4]",
+        "BCH/BSV-era SHA-256d parents are filtered out by Bitcoin proof-of-work and `nBits` checks before being treated as Bitcoin evidence.",
+        "Pool attribution comes from Bitcoin coinbase tags when the resolver recognizes them; Namecoin-native payout addresses are captured separately."
+      ],
+      "key_facts": [
+        {
+          "label": "Role",
+          "value": "First and longest-running AuxPoW witness for Bitcoin parent headers"
+        },
+        {
+          "label": "Activation",
+          "value": "NMC height `19,200`; first Bitcoin parent at BTC height `148,553` on 8 Oct 2011[^2]"
+        },
+        {
+          "label": "Consensus marker",
+          "value": "Chain ID `0x0001` with strict chain-ID checking[^2]"
+        },
+        {
+          "label": "Evidence carried",
+          "value": "Bitcoin parent header, Bitcoin coinbase, and merkle proof linking the Namecoin block to that coinbase"
+        }
+      ],
+      "recovery": [
+        "Validated Bitcoin stales recovered from Namecoin include chronologically novel rows because no earlier AuxPoW source exists.",
+        "Post-BCH-fork stale candidates must pass BCH/BSV contamination checks before being counted as Bitcoin evidence.",
+        "Multi-block fork candidates are retained only when Bitcoin Core placement and contemporaneous difficulty checks agree."
+      ]
+    },
+    "provenance": {
+      "source": "Live Namecoin Core node for child blocks, with Bitcoin Core used to place extracted parent hashes on or off Bitcoin's active chain.",
+      "coverage": "Live and ongoing from AuxPoW activation at NMC height `19,200` / BTC height `148,553` on 8 Oct 2011.[^2] Recovered Bitcoin stale parents begin at BTC height `149,589`; the upper bound advances with live capture and classification. Density thins toward the tip as Bitcoin's stale-block rate fell."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "Wikipedia - Namecoin",
+        "url": "https://en.wikipedia.org/wiki/Namecoin"
+      },
+      {
+        "id": 2,
+        "label": "namecoin-core chainparams.cpp",
+        "url": "https://github.com/namecoin/namecoin-core/blob/master/src/kernel/chainparams.cpp"
+      },
+      {
+        "id": 3,
+        "label": "Namecoin wiki - Merged Mining",
+        "url": "https://github.com/namecoin/wiki/blob/master/Merged-Mining.mediawiki"
+      },
+      {
+        "id": 4,
+        "label": "BIP34 specification (bitcoin/bips)",
+        "url": "https://github.com/bitcoin/bips/blob/master/bip-0034.mediawiki"
+      }
+    ]
+  },
+  "rsk": {
+    "ticker": "RBTC",
+    "chain_status": "active",
+    "status_detail": "Still active",
+    "tagline": "Bitcoin-merge-mined EVM sidechain whose AuxPoW discards the BTC coinbase via SHA-256 midstate compression.",
+    "byline": "2018 · ~30s blocks",
+    "help": {
+      "data": "RSK canonical blocks, RSK uncles, merge-mining hash, miner address, and opaque proof bytes",
+      "pool": "RSK miner-address registry, separate from BTC coinbase attribution"
+    },
+    "display": {
+      "name": "RSK",
+      "color": "#3aa6b9",
+      "order": 3
+    },
+    "history": {
+      "founded": "Jan 2018 (mainnet `2018-01-02`)[^1]",
+      "merge_mining": "Merge-mined from genesis in January 2018, so every supported RSK block can carry Bitcoin parent-header evidence.",
+      "ended": "Still active",
+      "narrative": "RSK (Rootstock) launched its mainnet in January 2018[^1] as an Ethereum-compatible sidechain secured by Bitcoin proof-of-work through merge-mining. For this monitor, it is a modern witness for Bitcoin parent headers rather than an early historical source like Namecoin.\n\nRootstock's Q1 2026 merge-mining report self-reports roughly 84% of Bitcoin's hashrate behind RSK merge-mining.[^2] That makes RSK useful for recent coverage while the older Namecoin-family chains carry the early AuxPoW record.\n\nRSK also has an Ethereum-style uncle/ommer mechanism, so it can expose more than the canonical block stream when uncles are present."
+    },
+    "technical": {
+      "mechanism": "RSK uses an SPV-style merge-mining proof rather than Namecoin-family CAuxPoW.[^3] Each canonical block, and each uncle when present, exposes an 80-byte Bitcoin parent header plus compressed coinbase/proof data.",
+      "uniqueness": "The Bitcoin parent header survives intact, so it can be checked against Bitcoin proof of work and placed by Bitcoin Core. The Bitcoin coinbase prefix does not survive: pool tags, BIP34 height, extranonce, and payout outputs are not available from RSK evidence. That makes RSK useful for parent-header recovery, while any strict orphan placement needs a source that preserves the real Bitcoin coinbase height.",
+      "capture": "The monitor polls a live RSKj node for canonical blocks and listed uncles. For each one, it extracts the Bitcoin parent header, opaque proof data, the compressed coinbase tail, and the RSK miner address. Bitcoin Core places known parent hashes as canonical or stale; Core-absent candidates rely on weak checks from RSK evidence alone because RSK does not provide a parseable Bitcoin coinbase height.",
+      "bitcoin_relevance": "RSK is most useful in the modern window where its short block time and uncle/ommer stream provide many chances to observe Bitcoin parent headers. It complements older Namecoin-family sources: those carry the early AuxPoW record, while RSK gives denser recent coverage.",
+      "notable": [
+        "RSK miner-address attribution is separate from Bitcoin coinbase pool attribution.",
+        "RSK evidence alone supports weak orphan checks; strict orphan evidence requires a BIP34 coinbase height from another source."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "SPV-style merge-mining proof, not Namecoin-family CAuxPoW[^3]"
+        },
+        {
+          "label": "Evidence carried",
+          "value": "Bitcoin parent header, compressed coinbase/proof data, and RSK miner address"
+        },
+        {
+          "label": "Uncles",
+          "value": "Canonical blocks and uncles can each carry distinct Bitcoin parent headers"
+        },
+        {
+          "label": "Limits",
+          "value": "No parseable Bitcoin coinbase prefix; no BTC coinbase pool tags or BIP34 height"
+        }
+      ],
+      "recovery": [
+        "Uncle traversal matters: uncles can expose Bitcoin parent headers that are not visible in the canonical RSK block stream.",
+        "RSK overlaps the Foundry-era mining landscape, which older recovered datasets cannot cover.",
+        "Core-absent RSK parents are useful investigation material, but RSK evidence alone cannot supply the BIP34 height needed for strict orphan placement."
+      ]
+    },
+    "provenance": {
+      "source": "Live RSKj archive node over Ethereum-style JSON-RPC; historical validation cross-checks come from the local merge-mining-research CSV.",
+      "coverage": "Live and ongoing from the supported merge-mining proof format. Older blocks without an extractable Bitcoin parent header are skipped. Counts and pool composition are local extraction results."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "Blockonomi: What is Rootstock",
+        "url": "https://blockonomi.com/what-is-rootstock/"
+      },
+      {
+        "id": 2,
+        "label": "Rootstock x Bitcoin Merged Mining Insights Report Q1 2026",
+        "url": "https://rootstock.io/blog/rootstock-x-bitcoin-merged-mining-insights-report-q1-2026/"
+      },
+      {
+        "id": 3,
+        "label": "Modern Merge-mining (Sergio Lerner, IOVlabs)",
+        "url": "https://medium.com/iovlabs-innovation-stories/modern-merge-mining-f294e45101a0"
+      }
+    ]
+  },
+  "syscoin": {
+    "ticker": "SYS",
+    "chain_status": "active",
+    "status_detail": "Still active and merge-mined; this monitor extracts the post-2019 Syscoin 4 chain.",
+    "tagline": "Namecoin-family AuxPoW chain merge-mining Bitcoin since 2016; monitor covers the post-2019 chain.",
+    "byline": "2016 · ~2.5 min blocks",
+    "help": {
+      "data": "Bitcoin parent header, parent coinbase, AuxPoW merkle evidence, and child target validation",
+      "pool": "BTC parent coinbase tags when the pool resolver recognizes them"
+    },
+    "display": {
+      "name": "Syscoin",
+      "color": "#c9a227",
+      "order": 2
+    },
+    "history": {
+      "founded": "Launched in 2014; current Syscoin 4 chain launched from a fresh genesis on 4 June 2019.[^1][^3]",
+      "merge_mining": "Bitcoin merge-mining began with Syscoin 2.0 in May 2016, when the chain switched from Scrypt to SHA-256d.[^1][^2] This monitor extracts the current post-2019 Syscoin chain, which merge-mines from SYS height `1`.",
+      "ended": "Still active and still merge-mined. The NEVM EVM layer went live in December 2021.[^2]",
+      "narrative": "Syscoin started in 2014 as a Litecoin-derived Scrypt chain with no Bitcoin merge-mining.[^1] In May 2016, Syscoin 2.0 switched to SHA-256d and began merge-mining with Bitcoin.[^2]\n\nThe current Syscoin chain launched from a fresh genesis on 4 June 2019.[^3] This monitor covers that chain because the producer reads live Syscoin Core blocks. The retired Syscoin 2.x/3.x chain would be a separate historical recovery against legacy Syscoin 3.x software, and prior research closed it as low expected novel yield rather than as a live-source integration.\n\nFor Bitcoin evidence, Syscoin is a modern Namecoin-family AuxPoW witness. It preserves the Bitcoin parent header and coinbase, so it can support standard Bitcoin pool-tag attribution and post-BIP34 orphan checks when the evidence is present."
+    },
+    "technical": {
+      "mechanism": "Syscoin uses Namecoin-family AuxPoW. A merge-mined Syscoin block carries the Bitcoin parent header, the Bitcoin coinbase transaction, and a merkle proof showing that the Syscoin block hash was committed inside that Bitcoin coinbase.",
+      "uniqueness": "Syscoin's AuxPoW uses chain ID `16` (`0x10`) with strict chain-ID checking.[^5][^6] It preserves the real Bitcoin coinbase, unlike RSK's compressed proof format.",
+      "capture": "The monitor polls a self-hosted Syscoin Core node for raw blocks on the current post-2019 chain and parses the Namecoin-family AuxPoW payload offline. Each candidate must satisfy Bitcoin proof of work and Syscoin's child-chain target before it is useful Bitcoin evidence. Bitcoin Core then places known parent hashes as canonical or stale; Core-absent candidates continue into orphan checks using `nBits` and BIP34 height when available.",
+      "bitcoin_relevance": "Syscoin gives a modern Bitcoin stale-block sample from a chain that preserves the Bitcoin coinbase. That makes it useful alongside RSK: RSK provides dense parent-header coverage, while Syscoin can also contribute BTC coinbase pool tags and BIP34 height evidence.",
+      "notable": [
+        "Bitcoin coinbase preservation is the practical difference from RSK: BTC pool tags and BIP34 height evidence can be used when present."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family AuxPoW"
+        },
+        {
+          "label": "Consensus marker",
+          "value": "Chain ID `16` (`0x10`) with strict chain-ID checking[^5][^6]"
+        },
+        {
+          "label": "Evidence carried",
+          "value": "Bitcoin parent header, Bitcoin coinbase, AuxPoW merkle proof, and child target check"
+        }
+      ],
+      "recovery": [
+        "Bitcoin coinbase preservation allows standard BTC pool-tag attribution and strict orphan checks when BIP34 height agrees.",
+        "Retired Syscoin 2.x/3.x is catalogued, but recovering it would be a separate legacy Syscoin 3.x historical job; prior research judged the expected novel yield low."
+      ]
+    },
+    "provenance": {
+      "source": "Live self-hosted Syscoin Core node over Bitcoin Core-style RPC; raw blocks are parsed with the shared Namecoin-family AuxPoW parser. Bitcoin Core is used for placement when configured.",
+      "coverage": "Current post-2019 Syscoin chain only. Retired Syscoin 2.x/3.x blocks would require a separate legacy recovery and are not part of this live producer."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "BitcoinWiki - Syscoin",
+        "url": "https://bitcoinwiki.org/wiki/syscoin"
+      },
+      {
+        "id": 2,
+        "label": "Messari - Understanding Syscoin",
+        "url": "https://messari.io/report/understanding-syscoin-a-comprehensive-overview"
+      },
+      {
+        "id": 3,
+        "label": "Syscoin 4.0 launch date confirmed",
+        "url": "https://syscoin.org/news/syscoin-40-launch-date-confirmed"
+      },
+      {
+        "id": 5,
+        "label": "syscoin/syscoin chainparams.cpp",
+        "url": "https://github.com/syscoin/syscoin/blob/master/src/chainparams.cpp"
+      },
+      {
+        "id": 6,
+        "label": "syscoin/syscoin auxpow_tests.cpp",
+        "url": "https://github.com/syscoin/syscoin/blob/master/src/test/auxpow_tests.cpp"
+      }
+    ]
+  },
+  "terracoin": {
+    "ticker": "TRC",
+    "chain_status": "zombie",
+    "status_detail": "Recovered historical dataset; the monitor does not poll Terracoin live. The recovered window is overwhelmingly canonical attestation: 11,258 Bitcoin blocks merge-mined into the main chain from October 2016 into 2025 (with a further winning block in May 2026), mined by BTC.TOP, 1THash, and Huobi Pool among others, alongside 35 admitted stale blocks, the last in August 2020. Real Bitcoin merge-mining has dropped to a negligible tail, but the chain still occasionally wins a full-difficulty Bitcoin block; the Terracoin chain itself keeps producing blocks, mostly at a difficulty far below Bitcoin's.",
+    "tagline": "Dash-derived SHA-256d chain with recovered Bitcoin-difficulty AuxPoW evidence.",
+    "byline": "2016-2026",
+    "display": {
+      "name": "Terracoin"
+    },
+    "history": {
+      "founded": "Launched in 2012 as a Bitcoin-derived SHA-256d chain.[^2]",
+      "merge_mining": "Namecoin-family AuxPoW starts at Terracoin (TRC) height `833,000`; chain ID `0x0032` with strict chain-ID checking.[^1][^5]",
+      "ended": "Treated here as a historical Bitcoin-evidence source. Canonical merge-mining attestation runs from October 2016 into 2025, with a sporadic winning block as recently as May 2026; August 2020 is only the last admitted stale block, not an evidence cutoff or a Terracoin shutdown.",
+      "narrative": "Terracoin (TRC) launched in 2012 as a Bitcoin-derived SHA-256d chain.[^2] A July 2013 Bitcointalk thread documents a reported 1.2 TH/s 51% attack, but that episode predates Terracoin's AuxPoW era and is not part of this monitor's recovered evidence window.[^3]\n\nThe relevant slice for this monitor is its AuxPoW era. From TRC height `833,000`, Terracoin blocks can carry a parent header, parent coinbase, and merkle proof in a decoded `auxpow` object.[^1][^5]\n\nFor this monitor, Terracoin is a recovered historical source, and most of its value is canonical. 11,258 of its blocks attest to Bitcoin main-chain blocks, spanning BTC heights `434,652`-`950,154` (October 2016 into 2026), mined by Bitcoin pools with BTC.TOP, 1THash, and Huobi Pool prominent among them. Against that backbone sit 35 admitted stale blocks across BTC heights `467,186`-`645,179` (May 2017 to August 2020): the rarer cases where Terracoin hashpower committed to a Bitcoin block the main chain did not keep. August 2020 bounds the stale subset, not the evidence; canonical attestation continues into May 2025 before the merge-mining tail thins out, even as the Terracoin chain keeps producing low-difficulty blocks."
+    },
+    "technical": {
+      "mechanism": "Terracoin exposes Namecoin-family `CAuxPow` through decoded `getblock` JSON. A relevant block carries the parent header, parent coinbase transaction, and merkle branches needed to prove the TRC block commitment.[^5]",
+      "uniqueness": "Terracoin is Dash-Core-derived rather than Bitcoin-Core-derived, but the Bitcoin evidence path is still familiar AuxPoW. Chain ID `0x0032` with `fStrictChainId=true` constrains the child-chain commitment, while Bitcoin proof of work, `nBits`, and Core placement decide whether the parent becomes Bitcoin evidence.[^1]",
+      "capture": "Terracoin is imported from committed historical CSV evidence, not polled live. Recovery synced a local `terracoind`, read decoded `auxpow` JSON for blocks at or above height `833,000`, reconstructed Bitcoin parent headers, filtered for full Bitcoin proof of work and expected `nBits`, and classified surviving parents with Bitcoin Core. Current Evidence Counts below show the deployed admitted total.",
+      "bitcoin_relevance": "Terracoin contributes recovered Bitcoin evidence across BTC heights `434,652`-`950,154` (October 2016 into 2026): 11,258 canonical blocks attesting to the Bitcoin main chain, mined by pools such as BTC.TOP, 1THash, and Huobi Pool, plus 35 admitted stales (the last August 2020). The canonical body is the merge-mining attestation itself; the stales are the off-chain subset. Because that window straddles the BCH and BSV splits, the `nBits` contamination gate is part of normal admission before a SHA-256d parent enters the Bitcoin tree.",
+      "notable": [
+        "Strict chain-ID checking constrains the TRC commitment, but it does not replace Bitcoin parent validation.",
+        "Decoded `auxpow` JSON makes recovery field-based rather than a raw binary `CAuxPow` parse.",
+        "The recovered window is an evidence boundary, not a claim that Terracoin stopped producing blocks."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family `CAuxPow` exposed as decoded `auxpow` JSON[^5]"
+        },
+        {
+          "label": "AuxPoW activation",
+          "value": "TRC height `833,000` (`nAuxpowStartHeight`)[^1]"
+        },
+        {
+          "label": "Block cadence",
+          "value": "2 min target[^1]"
+        },
+        {
+          "label": "Chain ID",
+          "value": "`0x0032` (50 decimal), `fStrictChainId=true`[^1]"
+        },
+        {
+          "label": "Admission gates",
+          "value": "Bitcoin proof of work, `nBits`, and Bitcoin Core placement"
+        }
+      ],
+      "recovery": [
+        "Committed dataset contributes 11,258 canonical Bitcoin blocks (BTC `434,652`-`950,154`, mined by BTC.TOP, 1THash, Huobi Pool, and other pools) and 35 admitted stale blocks (BTC `467,186`-`645,179`).",
+        "Legacy coinbase-output decoding matters for pool attribution, but it is not part of parent admission.",
+        "Rejected SHA-256d parent inventory stays outside the Bitcoin tree unless it passes Bitcoin difficulty and placement checks."
+      ]
+    },
+    "provenance": {
+      "source": "Recovered historical dataset from a local `terracoind` sync; monitor ingestion imports the full classified row set from merge-mining-research (canonical attestation and admitted stales together), not the stale subset alone.",
+      "coverage": "Canonical attestation spans BTC heights `434,652`-`950,154` (October 2016 to May 2026, the bulk through May 2025) / TRC heights `849,155`-`3,220,057`; the 35 admitted stales fall within BTC `467,186`-`645,179` (May 2017 to August 2020) / TRC heights `995,584`-`1,810,854`. The August 2020 endpoint bounds the stale subset, not the evidence. Pre-AuxPoW TRC history is outside this recovery, and non-Bitcoin SHA-256d parents are rejected by admission checks."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "terracoin/terracoin chainparams.cpp (source)",
+        "url": "https://raw.githubusercontent.com/terracoin/terracoin/master/src/chainparams.cpp"
+      },
+      {
+        "id": 2,
+        "label": "CoinMarketCap: Terracoin",
+        "url": "https://coinmarketcap.com/currencies/terracoin/"
+      },
+      {
+        "id": 3,
+        "label": "Bitcointalk: Terracoin 1.2 TH attack thread",
+        "url": "https://bitcointalk.org/index.php?topic=261986.180"
+      },
+      {
+        "id": 5,
+        "label": "Terracoin wiki: AuxPoW",
+        "url": "https://wiki.terracoin.io/view/Auxpow"
+      }
+    ]
+  },
+  "unobtanium": {
+    "ticker": "UNO",
+    "chain_status": "zombie",
+    "status_detail": "Recovered historical Bitcoin-evidence dataset; this monitor does not poll Unobtanium live. The recovered window is overwhelmingly canonical attestation: 14,958 Bitcoin blocks merge-mined into the main chain from May 2015 into March 2025 (btc-top, 1THash, BTC.com, Huobi Pool, and WAYI.CN prominent among the pools), alongside 44 admitted stale blocks, the last in August 2020. Bitcoin merge-mining at full difficulty has since fallen to a negligible tail.",
+    "tagline": "Bitcoin Core 0.11-era SHA-256d chain with recovered raw AuxPoW evidence.",
+    "byline": "2015-2025",
+    "display": {
+      "name": "Unobtanium"
+    },
+    "history": {
+      "founded": "Launched in 2013 as a SHA-256d Bitcoin-derived chain.[^1]",
+      "merge_mining": "Namecoin-style AuxPoW starts at Unobtanium (UNO) height `600,000` (`AUXPOW_START_MAINNET`).[^2]",
+      "ended": "Treated here as a historical Bitcoin-evidence source. Canonical merge-mining attestation runs from May 2015 into March 2025; August 2020 is only the last admitted stale block, not an evidence cutoff or an Unobtanium shutdown. The monitor imports recovered Bitcoin-difficulty evidence rather than polling Unobtanium live.",
+      "narrative": "Unobtanium (UNO) is a 2013 SHA-256d Bitcoin-derived chain.[^1]\n\nThe relevant slice for this monitor starts with its AuxPoW era. From UNO height `600,000`, blocks can carry a parent header, parent coinbase transaction, and merkle branches in a Namecoin-style `CAuxPow` structure.[^2]\n\nFor this monitor, Unobtanium is recovered historical Bitcoin evidence, not a live producer, and most of its value is canonical. 14,958 of its AuxPoW-era blocks attest to Bitcoin main-chain blocks, spanning BTC heights `356,023`-`886,688` (May 2015 to March 2025) and UNO heights `601,923`-`2,289,095`, mined by Bitcoin pools with btc-top, 1THash, BTC.com, Huobi Pool, and WAYI.CN prominent among them. Against that backbone sit 44 admitted stale blocks across BTC heights `367,047`-`645,179` and UNO heights `637,957`-`1,519,005` (July 2015 to August 2020): the rarer cases where Unobtanium hashpower committed to a Bitcoin block the main chain did not keep. August 2020 bounds the stale subset, not the evidence; canonical attestation continues for almost five more years before the full-difficulty merge-mining tail thins out."
+    },
+    "technical": {
+      "mechanism": "Unobtanium uses Namecoin-style `CAuxPow`. A post-activation child block can carry the parent header, parent coinbase transaction, and merkle branches needed to prove the UNO block commitment.[^2]",
+      "uniqueness": "Unobtanium's older Bitcoin Core 0.11 RPC does not expose decoded `auxpow` JSON, so recovery uses raw `getblock <hash> 0` block hex and a binary `CAuxPow` parser. This monitor decodes chain ID `117` (`0x75`) from the high 16 bits of the UNO header `nVersion`; that child-chain value is separate from the Bitcoin proof-of-work checks.",
+      "capture": "Unobtanium is imported from committed historical CSV evidence, not polled live. Recovery synced a local `unobtaniumd`, read raw block hex for AuxPoW-era blocks, parsed the embedded parent header, coinbase, and merkle branches, then kept only rows that passed Bitcoin proof of work, expected `nBits`, and Bitcoin Core placement checks. Current Evidence Counts below show the deployed admitted total.",
+      "bitcoin_relevance": "Unobtanium contributes recovered Bitcoin evidence across BTC heights `356,023`-`886,688` (May 2015 to March 2025): 14,958 canonical blocks attesting to the Bitcoin main chain, plus 44 admitted stales (the last August 2020). The canonical body is the merge-mining attestation itself; the stales are the off-chain subset. It overlaps the live P2P monitoring era, but the two methods sample different stale-block surfaces, so this source is complementary evidence rather than a one-for-one match.",
+      "notable": [
+        "Chain ID `117` constrains the child-chain commitment, but it does not replace Bitcoin parent validation.",
+        "Raw binary parsing is required because the older UNO RPC does not provide decoded `auxpow` JSON.",
+        "The recovered window is an evidence boundary, not a claim that Unobtanium stopped producing blocks."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-style `CAuxPow` parsed from raw block hex[^2]"
+        },
+        {
+          "label": "AuxPoW activation",
+          "value": "UNO height `600,000` (`AUXPOW_START_MAINNET`)[^2]"
+        },
+        {
+          "label": "Block cadence",
+          "value": "~3 min in the AuxPoW evidence era; chainparams spacing is stale for this purpose[^3]"
+        },
+        {
+          "label": "Chain ID",
+          "value": "`117` (`0x75`), decoded from the high 16 bits of `nVersion`"
+        },
+        {
+          "label": "Admission gates",
+          "value": "Bitcoin proof of work, expected `nBits`, and Bitcoin Core placement"
+        }
+      ],
+      "recovery": [
+        "Committed dataset contributes 14,958 canonical Bitcoin blocks (BTC `356,023`-`886,688`, mined by btc-top, 1THash, BTC.com, Huobi Pool, WAYI.CN, and other pools) and 44 admitted stale blocks (BTC `367,047`-`645,179`) for the recovered May 2015 to March 2025 window.",
+        "BCH/BSV-era contamination is handled by the `nBits` gate before a parent enters the Bitcoin tree.",
+        "Rejected SHA-256d parent inventory supports the same lesson as Terracoin: child chains can see shared non-Bitcoin-difficulty mining substrate."
+      ]
+    },
+    "provenance": {
+      "source": "Recovered historical dataset from a local `unobtaniumd` sync; monitor ingestion imports the full classified row set from merge-mining-research (canonical attestation and admitted stales together), not the stale subset alone.",
+      "coverage": "Canonical attestation spans BTC heights `356,023`-`886,688` (May 2015 to March 2025) / UNO heights `601,923`-`2,289,095`; the 44 admitted stales fall within BTC `367,047`-`645,179` and UNO `637,957`-`1,519,005` (July 2015 to August 2020). The August 2020 endpoint bounds the stale subset, not the evidence. Pre-AuxPoW history (below UNO height `600,000`) is outside this recovery, and non-Bitcoin SHA-256d parents are rejected by the `nBits` admission check."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "CoinGecko - Unobtanium",
+        "url": "https://www.coingecko.com/en/coins/unobtanium"
+      },
+      {
+        "id": 2,
+        "label": "Unobtanium auxpow.h (source)",
+        "url": "https://raw.githubusercontent.com/unobtanium-official/Unobtanium/master/src/auxpow.h"
+      },
+      {
+        "id": 3,
+        "label": "Unobtanium pow.cpp (KGW target spacing)",
+        "url": "https://github.com/unobtanium-official/Unobtanium/blob/master/src/pow.cpp"
+      }
+    ]
+  },
+  "xaya": {
+    "ticker": "CHI",
+    "chain_status": "dead",
+    "status_detail": "Recovered historical dataset from Xaya's published block dump; only SHA256D merge-mined blocks carry Bitcoin AuxPoW evidence, and this monitor does not poll Xaya live. The recovered window is overwhelmingly canonical attestation: 20,801 Bitcoin blocks merge-mined into the main chain from July 2018 into November 2024 (F2Pool dominant, with Huobi Pool and EMCD also present), alongside 40 admitted stale blocks, the last in July 2024. Legacy Xaya Core (CHI) has since been deprecated by the CHI-to-WCHI migration.",
+    "tagline": "Dual-algo chain whose SHA256D branch carries Bitcoin-parent AuxPoW.",
+    "byline": "2018-2024",
+    "display": {
+      "name": "Xaya"
+    },
+    "history": {
+      "founded": "Mainnet launched on 2018-07-13.[^2]",
+      "merge_mining": "SHA256D blocks are merge-mined from launch and carry Namecoin-style Bitcoin-parent AuxPoW; Neoscrypt blocks are solo-mined and out of scope.[^3]",
+      "ended": "Treated here as a historical Bitcoin-evidence source. Canonical merge-mining attestation runs into November 2024; July 2024 is only the last admitted stale block, not an evidence cutoff. Legacy Xaya Core (CHI) itself was later deprecated by the CHI-to-WCHI migration snapshot at Xaya Core height `7,300,000`.[^1]",
+      "narrative": "Xaya (CHI) launched its mainnet in July 2018.[^2]\n\nIts proof-of-work design combines a merge-mined SHA256D branch and a solo-mined Neoscrypt branch. Only the SHA256D branch carries Bitcoin-parent AuxPoW; Neoscrypt blocks do not attest Bitcoin work.[^3]\n\nFor this monitor, Xaya is a recovered historical source, and most of its value is canonical. 20,801 of its SHA256D blocks attest to Bitcoin main-chain blocks, spanning BTC heights `531,784`-`870,012` (July 2018 to November 2024), mined by Bitcoin pools with F2Pool dominant and Huobi Pool and EMCD also present. Against that backbone sit 40 admitted stale blocks across BTC heights `547,182`-`853,120` (October 2018 to July 2024): the rarer cases where Xaya hashpower committed to a Bitcoin block the main chain did not keep. July 2024 bounds the stale subset, not the evidence; canonical attestation continues to November 2024, near the published block dump snapshot, before legacy Xaya Core was deprecated by the CHI-to-WCHI migration.[^1][^4]"
+    },
+    "technical": {
+      "mechanism": "Xaya wraps proof data outside the 80-byte pure header. Each block header is followed by `PowData`; merge-mined SHA256D blocks use algo byte `0x81` and then a Namecoin-style `CAuxPow` payload containing the Bitcoin parent evidence.[^3]",
+      "uniqueness": "The header's own `nBits` is unused and must be zero; the target lives in `PowData`.[^3] Recovery must parse Xaya's outer `PowData` first, then parse `CAuxPow` only for merge-mined SHA256D blocks. Chain ID `1829` (`0x0725`) is the child-chain commitment; Bitcoin proof of work, expected `nBits`, and Core placement still decide whether the parent enters the Bitcoin tree.",
+      "capture": "Xaya is imported from committed historical CSV evidence, not polled live. Recovery parsed the published block dump snapshot offline, skipped blocks without the merge-mined flag, kept SHA256D merge-mined blocks, reconstructed Bitcoin parent headers from the embedded `CAuxPow`, then retained only rows that passed Bitcoin proof of work, expected `nBits`, and Bitcoin Core placement. Current Evidence Counts below show the deployed admitted total.[^4]",
+      "bitcoin_relevance": "Xaya contributes recovered Bitcoin evidence across BTC heights `531,784`-`870,012` (July 2018 to November 2024): 20,801 canonical blocks attesting to the Bitcoin main chain (F2Pool dominant, with Huobi Pool and EMCD also present), plus 40 admitted stales (the last July 2024). The canonical body is the merge-mining attestation itself; the stales are the off-chain subset. Its value is cross-confirmation across the same mining substrate seen by earlier sources, plus evidence from a chain that is no longer recoverable through normal live-node polling.",
+      "notable": [
+        "Only SHA256D merge-mined blocks are in scope; Neoscrypt blocks carry no Bitcoin parent.[^3]",
+        "The custom `PowData` wrapper is Xaya-specific, but the embedded AuxPoW payload follows the Namecoin family.[^3]",
+        "The published snapshot is an evidence boundary; it stops before the later migration snapshot height.[^1][^4]"
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-style `CAuxPow` inside Xaya `PowData`[^3]"
+        },
+        {
+          "label": "Branch filter",
+          "value": "`0x81` merge-mined SHA256D; solo Neoscrypt is ignored[^3]"
+        },
+        {
+          "label": "Block cadence",
+          "value": "~30 s overall; SHA256D branch targets ~1 min and carries Bitcoin-parent AuxPoW[^3]"
+        },
+        {
+          "label": "Chain ID",
+          "value": "`1829` (`0x0725`)[^3]"
+        },
+        {
+          "label": "Admission gates",
+          "value": "Bitcoin proof of work, expected `nBits`, and Bitcoin Core placement"
+        }
+      ],
+      "recovery": [
+        "Committed dataset contributes 20,801 canonical Bitcoin blocks (BTC `531,784`-`870,012`, mined by F2Pool, Huobi Pool, EMCD, and other pools) and 40 admitted stale blocks (BTC `547,182`-`853,120`).",
+        "BCH/BSV-era contamination is handled by the `nBits` gate before a parent enters the Bitcoin tree.",
+        "The block dump snapshot ends before height `7,300,000`, so later legacy-chain history is outside this recovery.[^1][^4]"
+      ]
+    },
+    "provenance": {
+      "source": "Recovered historical dataset from Xaya's published downloads index and block dump; monitor ingestion imports the full classified row set from merge-mining-research (canonical attestation and admitted stales together), not the stale subset alone, via the committed `data/xaya_validated_stales.csv` evidence.[^4]",
+      "coverage": "Canonical attestation spans BTC heights `531,784`-`870,012` (July 2018 to November 2024); the 40 admitted stales fall within BTC `547,182`-`853,120` (October 2018 to July 2024). The July 2024 endpoint bounds the stale subset, not the evidence; canonical attestation continues to November 2024. The published block dump snapshot is dated 2024-11-15 and stops before the later `7,300,000` migration snapshot height; Neoscrypt blocks are outside the evidence path.[^1][^4]"
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "Xaya migration announcement (CHI to WCHI)",
+        "url": "https://xaya.medium.com/action-required-xaya-migration-chi-to-wchi-506e2ab3948a"
+      },
+      {
+        "id": 2,
+        "label": "Coindar: Xaya mainnet launch",
+        "url": "https://coindar.org/en/event/huntercoin-huc-xaya-mainnet-launch-11333"
+      },
+      {
+        "id": 3,
+        "label": "Xaya mining doc (xaya/xaya)",
+        "url": "https://github.com/xaya/xaya/blob/master/doc/xaya/mining.md"
+      },
+      {
+        "id": 4,
+        "label": "Xaya downloads index",
+        "url": "https://downloads.xaya.io/"
+      }
+    ]
+  },
+  "bitcoin-stash": {
+    "display": {
+      "name": "Bitcoin Stash"
+    },
+    "ticker": "BSH",
+    "chain_status": "dormant",
+    "status_detail": "Catalogued, not recovered: a dual-parent Bitcoin Cash fork that can merge-mine Bitcoin. No chain data is recovered in this monitor, and no terminal shutdown has been verified.",
+    "tagline": "Dual-parent merge-mined fork; only its Bitcoin-parent blocks would count as Bitcoin evidence.",
+    "byline": "Catalogued, not recovered",
+    "history": {
+      "founded": "Hard-forked from Bitcoin Cash on 15 November 2018.",
+      "merge_mining": "Merge-mined from launch through a parent-coinbase commitment. The design is dual-parent: a miner can choose a Bitcoin parent block or a Bitcoin Cash parent block.",
+      "ended": "Catalogued only. No live producer is configured, no chain data has been recovered, and this monitor has not verified a terminal shutdown.",
+      "narrative": "Bitcoin Stash is a November 2018 Bitcoin Cash hard fork that supports merged mining against either Bitcoin or Bitcoin Cash. Because it is dual-parent, only the blocks whose miners chose a Bitcoin parent would yield Bitcoin evidence; Bitcoin Cash-parent blocks would be filtered out. This monitor catalogues it as a known Bitcoin-merge-mined chain, but holds no recovered chain data."
+    },
+    "technical": {
+      "mechanism": "Namecoin-style AuxPoW with a dual-parent design: the child block commits to its chosen parent through a 48-byte coinbase marker, and a per-block parent selector distinguishes a Bitcoin parent from a Bitcoin Cash parent.",
+      "capture": "Not recovered in this monitor. Recovering Bitcoin evidence would require a Bitcoin Stash node or archive plus a filter that keeps only Bitcoin-parent blocks and discards the Bitcoin Cash-parent ones.",
+      "bitcoin_relevance": "A known Bitcoin-merge-mined chain whose dual-parent design makes it a contamination case: any recovered parent must be confirmed as Bitcoin, not Bitcoin Cash, before it counts as Bitcoin evidence."
+    },
+    "provenance": {
+      "source": "Catalogued from the Bitcoin Stash merged-mining guide and chain documentation; not polled or recovered.",
+      "coverage": "No recovered Bitcoin evidence in this monitor."
+    }
+  },
+  "blast": {
+    "display": {
+      "name": "BLAST"
+    },
+    "ticker": "BLAST",
+    "chain_status": "dead",
+    "status_detail": "Catalogued, not recovered: a dead or unreachable SHA-256d AuxPoW chain with no peers and no block archive.",
+    "tagline": "SHA-256d AuxPoW chain on a Ravencoin-lineage Bitcoin Core fork; a buildable node but no reachable network.",
+    "byline": "Catalogued, not recovered",
+    "history": {
+      "founded": "Launched in December 2017 as a SHA-256d chain on a Ravencoin-lineage Bitcoin Core fork.",
+      "merge_mining": "Namecoin-family AuxPoW from block 1, with a post-launch chain-ID rotation from 6464 to 164 at height 796,000.",
+      "ended": "Catalogued only. The chain is dead or unreachable: no peers or block archive are available, so no data has been recovered.",
+      "narrative": "BLAST is a December 2017 SHA-256d merge-mined chain carrying the standard Daniel Kraft AuxPoW subsystem. A buildable node scaffold is preserved, but every network discovery path is dead, so no block data could be recovered. It is catalogued here as a known Bitcoin-merge-mined chain without recovered evidence."
+    },
+    "technical": {
+      "mechanism": "Namecoin-family AuxPoW (the 0xfabe6d6d coinbase marker), active from block 1, with consensus accepting either the launch or the rotated chain ID.",
+      "capture": "Not recovered in this monitor. A buildable node scaffold exists, but no peers or block archive are available to sync from.",
+      "bitcoin_relevance": "A known Bitcoin-merge-mined chain that would extend the recovered set if a block archive or a live peer ever surfaced."
+    },
+    "provenance": {
+      "source": "Catalogued from a buildable BLAST node scaffold and the chain source; not polled or recovered.",
+      "coverage": "No recovered Bitcoin evidence in this monitor."
+    }
+  },
+  "doichain": {
+    "display": {
+      "name": "Doichain"
+    },
+    "ticker": "DOI",
+    "chain_status": "dormant",
+    "status_detail": "Catalogued, not recovered: a Namecoin reimplementation whose AuxPoW proved fully vestigial (zero Bitcoin stales in review).",
+    "tagline": "Namecoin-reimplementation AuxPoW chain found fully vestigial for Bitcoin evidence.",
+    "byline": "Catalogued, not recovered",
+    "history": {
+      "founded": "A Namecoin reimplementation for decentralized naming; merge-mining activated in 2018.",
+      "merge_mining": "Namecoin-family AuxPoW. In review, Doichain's AuxPoW was fully vestigial: the structure is present, but the recovered parent set produced no Bitcoin stale evidence.",
+      "ended": "Catalogued only. A recovery review found zero Bitcoin stales, so no rows are admitted; the source and build material are retained for provenance.",
+      "narrative": "Doichain is a Namecoin reimplementation with merge-mining support, and the project's clearest fully-vestigial case: the AuxPoW data structures exist, but the reviewed window yielded zero Bitcoin stales. It is catalogued as a merge-mineable chain whose Bitcoin yield is, on current evidence, nil."
+    },
+    "technical": {
+      "mechanism": "Namecoin-family AuxPoW (chain ID 2). Structurally a Bitcoin merge-miner, but functionally vestigial: no Bitcoin parent was observed in the reviewed window.",
+      "capture": "Reviewed but not integrated: a recovery pass produced zero validated Bitcoin stales, so no rows enter this monitor. Source and Docker material are retained for provenance.",
+      "bitcoin_relevance": "A vestigial-AuxPoW reference case: structural evidence of Bitcoin merge-mining is not the same as functional Bitcoin-parent participation."
+    },
+    "provenance": {
+      "source": "Catalogued from Doichain source/archive material and a prior vestigial-AuxPoW review; not integrated.",
+      "coverage": "No recovered Bitcoin evidence in this monitor (reviewed: zero Bitcoin stales)."
+    }
+  },
+  "fusioncoin": {
+    "display": {
+      "name": "Fusioncoin"
+    },
+    "ticker": "FSC",
+    "chain_status": "dead",
+    "status_detail": "Catalogued, not recovered: an early SHA-256d AuxPoW branch retained as a source-preservation record only.",
+    "tagline": "Early SHA-256d AuxPoW branch; source preserved, never run for recovery.",
+    "byline": "Catalogued, not recovered",
+    "history": {
+      "founded": "An early SHA-256d Bitcoin-merge-mineable chain whose AuxPoW branch dates to around March 2014.",
+      "merge_mining": "Namecoin-style AuxPoW on a SHA-256d branch. The branch is parent-agnostic (the strict chain-ID check was disabled), so any recovered parent would need Bitcoin validation.",
+      "ended": "Catalogued only. No node run, extraction, or classifier output is canonical.",
+      "narrative": "Fusioncoin is an obscure early SHA-256d chain with a Namecoin-style AuxPoW branch. No node was run and no Bitcoin evidence was recovered. It is catalogued as a known merge-mineable chain pending any future recovery."
+    },
+    "technical": {
+      "mechanism": "Namecoin-style AuxPoW on a SHA-256d branch with a parent-agnostic (non-strict) chain-ID check, so a recovered parent must be validated as Bitcoin.",
+      "capture": "Not recovered in this monitor. No node has been run and no extraction or classification has been done.",
+      "bitcoin_relevance": "A known merge-mineable SHA-256d branch retained for provenance; it would need a node sync and Bitcoin-parent validation before contributing evidence."
+    },
+    "provenance": {
+      "source": "Catalogued from source metadata; no node run, extraction, or result is canonical.",
+      "coverage": "No recovered Bitcoin evidence in this monitor."
+    }
+  },
+  "jax-network": {
+    "display": {
+      "name": "Jax.Network"
+    },
+    "ticker": "JXN",
+    "chain_status": "dormant",
+    "status_detail": "Catalogued, not recovered: a Bitcoin-merge-mined beacon/shard chain whose node software survives but whose network is inactive.",
+    "tagline": "Bitcoin-merge-mined chain whose blocks embed a full Bitcoin parent header; node preserved, chain inactive.",
+    "byline": "Catalogued, not recovered",
+    "history": {
+      "founded": "An EVM beacon/shard network that launched its Bitcoin-merge-mined mainnet around 2020-2021.",
+      "merge_mining": "Bitcoin merge-mining verified in the node's own consensus code: the Bitcoin coinbase carries a jaxnet marker wrapping the Jax block hash, with a coinbase merkle-branch proof of inclusion.",
+      "ended": "Catalogued only. The beacon-chain explorer and sites are unreachable and development stalled around 2024, so no block data has been recovered.",
+      "narrative": "Jax.Network is a Bitcoin-merge-mined beacon/shard network whose blocks, by construction, embed a full 80-byte Bitcoin parent header plus the Bitcoin coinbase and a merkle proof. The node software is preserved, but the live network is inactive and the explorers are down, so no data is recovered. It is catalogued as a genuine Bitcoin-merge-mined chain and a strong future recovery target."
+    },
+    "technical": {
+      "mechanism": "AuxPoW-family merge-mining: the Bitcoin coinbase scriptSig carries the jaxnet marker (0x6a61786e6574) around the Jax beacon-block hash, proven under the Bitcoin block merkle root by a coinbase merkle branch. The parent is a full Bitcoin (SHA-256d) header bound to a full Bitcoin subsidy.",
+      "capture": "Not recovered in this monitor. The jaxnetd node software survives, so an archive node or snapshot sync is a plausible future recovery path.",
+      "bitcoin_relevance": "Every Jax block preserves a real Bitcoin parent header, so this is a recoverable source of Bitcoin parent-header evidence once a node or archive is synced."
+    },
+    "provenance": {
+      "source": "Catalogued from the jaxnetd node consensus code and project documentation; not polled or recovered.",
+      "coverage": "No recovered Bitcoin evidence in this monitor."
+    }
+  },
+  "jincoin": {
+    "display": {
+      "name": "Jincoin"
+    },
+    "ticker": "JIN",
+    "chain_status": "dead",
+    "status_detail": "Catalogued, not recovered: a Namecoin-lineage AuxPoW chain whose network is verified dead (all discovery paths unreachable).",
+    "tagline": "Chinese-branded Namecoin-lineage AuxPoW chain; buildable source, but the network is gone.",
+    "byline": "Catalogued, not recovered",
+    "history": {
+      "founded": "Launched in August 2016 as a Bitcoin Core fork of the Syscoin-1.x / Daniel Kraft lineage; AuxPoW shipped in v2.0 (2018).",
+      "merge_mining": "Namecoin-style AuxPoW (chain ID 186, 0x00BA) with the 0xfabe6d6d coinbase marker; a 79-second block target.",
+      "ended": "Catalogued only. All standard discovery paths (DNS seeds, project domains, hardcoded peer, explorers) were verified dead, so no block data could be recovered.",
+      "narrative": "Jincoin is a Chinese-branded 2016 Bitcoin Core fork that added Namecoin-style AuxPoW in 2018. The source builds, but every network discovery path is dead, so the daemon finds no peers. It is catalogued as a known Bitcoin-merge-mined chain whose data is currently unreachable."
+    },
+    "technical": {
+      "mechanism": "Namecoin-style AuxPoW, chain ID 186 (0x00BA), 0xfabe6d6d coinbase marker; Daniel Kraft lineage.",
+      "capture": "Not recovered in this monitor. A buildable node scaffold is preserved against a future block archive or peer discovery, but no live sync is possible.",
+      "bitcoin_relevance": "A known Bitcoin-merge-mined chain that would become recoverable if a 2018-2020 block archive or a live peer surfaced."
+    },
+    "provenance": {
+      "source": "Catalogued from a buildable Jincoin node scaffold and chain source; not polled or recovered.",
+      "coverage": "No recovered Bitcoin evidence in this monitor."
+    }
+  },
+  "lyncoin": {
+    "display": {
+      "name": "Lyncoin"
+    },
+    "ticker": "LCN",
+    "chain_status": "dormant",
+    "status_detail": "Catalogued, not recovered: a Namecoin-style AuxPoW chain whose Bitcoin-merge-mined window ran from 2022 until a 2024 fork away from SHA-256d.",
+    "tagline": "Namecoin-style AuxPoW chain whose early SHA-256d window merge-mined Bitcoin before a multi-hash fork.",
+    "byline": "Catalogued, not recovered",
+    "history": {
+      "founded": "Launched in late 2022 as a SHA-256d AuxPoW chain.",
+      "merge_mining": "Namecoin-style AuxPoW from genesis (chain ID 0x0b0d, strict), so early Lyncoin blocks embed a Bitcoin parent header. At height 260,500 the proof-of-work forked from SHA-256d to a multi-hash Flex algorithm, ending Bitcoin merge-mining.",
+      "ended": "Catalogued only. The chain is market-dead/dormant, and Bitcoin merge-mining ended at the Flex fork; no data has been recovered.",
+      "narrative": "Lyncoin launched in late 2022 as a standard SHA-256d AuxPoW chain whose blocks embedded a Bitcoin parent header. At height 260,500 (mid-2024) it switched to the Flex multi-hash algorithm to merge-mine a different coin, which ended Bitcoin merge-mining. It is catalogued as a recoverable source whose Bitcoin window is heights 0 to 260,500; a buildable node and a public explorer exist."
+    },
+    "technical": {
+      "mechanism": "Namecoin-style AuxPoW (chain ID 0x0b0d, strict chain-ID checking) over a SHA-256d parent, active from genesis to the Flex fork at height 260,500.",
+      "capture": "Not recovered in this monitor. A buildable node and a public explorer exist, so the Bitcoin-merge-mined window (heights 0 to 260,500) is a plausible future recovery; backfill must stop at the Flex fork.",
+      "bitcoin_relevance": "A recoverable modern source: pre-fork Lyncoin blocks preserve a Bitcoin parent header, while post-fork Flex blocks carry no Bitcoin parent and are out of scope."
+    },
+    "provenance": {
+      "source": "Catalogued from the Lyncoin chain source and a public explorer; not polled or recovered.",
+      "coverage": "No recovered Bitcoin evidence in this monitor (Bitcoin window: heights 0 to ~260,500)."
+    }
+  },
+  "mazacoin": {
+    "display": {
+      "name": "Mazacoin"
+    },
+    "ticker": "MZC",
+    "chain_status": "dead",
+    "status_detail": "Catalogued, not recovered: a Zetacoin-lineage SHA-256d chain retained as a source-preservation record only.",
+    "tagline": "Zetacoin-lineage SHA-256d chain; source preserved, never run for recovery.",
+    "byline": "Catalogued, not recovered",
+    "history": {
+      "founded": "A 2014 Zetacoin-lineage SHA-256d chain (originally promoted as a Native American / Lakota cryptocurrency).",
+      "merge_mining": "A SHA-256d chain in the merge-mineable family. Its AuxPoW details are not source-audited in this project.",
+      "ended": "Catalogued only. No node run, extraction, or classifier output is canonical; the source is retained for provenance.",
+      "narrative": "Mazacoin is a 2014 Zetacoin-lineage SHA-256d chain. No node was run and no Bitcoin evidence was recovered. It is catalogued as a candidate merge-mineable chain pending source verification and recovery."
+    },
+    "technical": {
+      "mechanism": "Zetacoin-lineage SHA-256d. Its precise AuxPoW and Bitcoin-parent handling are not source-audited here; the chain is retained as a catalogue candidate, not a verified Bitcoin merge-miner.",
+      "capture": "Not recovered in this monitor. No node has been run and no extraction or classification has been done.",
+      "bitcoin_relevance": "A SHA-256d catalogue candidate; its Bitcoin-parent merge-mining would need source verification and a node sync before it could contribute evidence."
+    },
+    "provenance": {
+      "source": "Catalogued from source metadata; no node run, extraction, or result is canonical.",
+      "coverage": "No recovered Bitcoin evidence in this monitor."
+    }
+  },
+  "sixeleven": {
+    "display": {
+      "name": "SixEleven"
+    },
+    "ticker": "611",
+    "chain_status": "dormant",
+    "status_detail": "Catalogued, not recovered: an early Namecoin-fork AuxPoW chain, merge-mineable with Bitcoin but not yet extracted.",
+    "tagline": "Namecoin-fork naming chain, SHA-256d AuxPoW merge-mineable with Bitcoin; not yet recovered.",
+    "byline": "Catalogued, not recovered",
+    "history": {
+      "founded": "A Namecoin fork offering decentralized, anonymous domain registration; its AuxPoW window dates to around November 2015.",
+      "merge_mining": "Namecoin-family SHA-256d AuxPoW, merge-mineable alongside Bitcoin (for example via P2Pool).",
+      "ended": "Catalogued only. The coin has been inactive since around 2023, and the project has not yet extracted its Bitcoin evidence.",
+      "narrative": "SixEleven (611) is a Namecoin fork for anonymous domain registration that is merge-mineable with Bitcoin via SHA-256d AuxPoW. The project catalogues it for chain-ID accounting but has not yet extracted its blocks, so no Bitcoin evidence is recovered. It is a plausible future recovery target."
+    },
+    "technical": {
+      "mechanism": "Namecoin-family SHA-256d AuxPoW (Bitcoin-mergeable). Tracked in the project's AuxPoW chain-ID registry but not yet source-extracted.",
+      "capture": "Not recovered in this monitor: included for AuxPoW chain-ID accounting, but its blocks have not been extracted or classified.",
+      "bitcoin_relevance": "A known Bitcoin-merge-mineable Namecoin fork that would add early evidence once its blocks are recovered."
+    },
+    "provenance": {
+      "source": "Catalogued from the project's AuxPoW chain-ID registry and the SixEleven chain documentation; not yet extracted.",
+      "coverage": "No recovered Bitcoin evidence in this monitor."
+    }
+  },
+  "vcash": {
+    "display": {
+      "name": "VCash"
+    },
+    "ticker": "VCASH",
+    "chain_status": "dormant",
+    "status_detail": "Catalogued, not recovered: a major tag-based Bitcoin merge-miner by coinbase-marker footprint, but its chain data has not been recovered.",
+    "tagline": "Tag-based (OP_RETURN) Bitcoin merge-miner whose commitment is decoded on the Bitcoin side; chain data unrecovered.",
+    "byline": "Catalogued, not recovered",
+    "history": {
+      "founded": "A Grin / MimbleWimble-based SHA-256d chain (distinct from the older Vanillacoin / XVC).",
+      "merge_mining": "Tag-based Bitcoin merge-mining: a 0xb9e11b6d OP_RETURN commitment carrying the VCash header hash is placed in the Bitcoin coinbase. Historically a first-class merged coin on several large SHA-256d pools.",
+      "ended": "Catalogued only. The Bitcoin-side commitment is decoded in research tooling, but the VCash chain data itself has not been recovered (its explorer is gone and the node could not be synced).",
+      "narrative": "VCash is a Grin/MimbleWimble-based chain that merge-mines Bitcoin through an OP_RETURN coinbase tag, and its signature appears in a large share of Bitcoin blocks, making it one of the larger Bitcoin merge-miners by coinbase-marker footprint. The Bitcoin-coinbase side of VCash is well understood, but the VCash chain blocks (needed to recover Bitcoin parent headers) have not been obtained. It is catalogued here; exposing its Bitcoin-coinbase commitment in the monitor is planned separately."
+    },
+    "technical": {
+      "mechanism": "Tag-based merge-mining (like Hathor): rather than Namecoin AuxPoW, a 0xb9e11b6d magic plus the VCash header hash is committed in the Bitcoin coinbase via OP_RETURN.",
+      "capture": "Not recovered in this monitor. The Bitcoin-side commitment is decodable from Bitcoin coinbases, but the VCash chain data (which preserves the Bitcoin parent header) has not been recovered; the explorer is offline and the node could not be synced.",
+      "bitcoin_relevance": "A top-tier Bitcoin merge-miner by on-chain footprint. Its OP_RETURN commitment marks Bitcoin blocks that merge-mined VCash; recovering the VCash chain would, like Hathor, yield Bitcoin parent-header evidence."
+    },
+    "provenance": {
+      "source": "Catalogued from the vcashorg chain source, the project's coinbase-marker census, and prior recovery research; chain data not recovered.",
+      "coverage": "No recovered Bitcoin evidence in this monitor (Bitcoin-coinbase commitment is decoded separately)."
+    }
+  }
+}

@@ -1,0 +1,141 @@
+.workspace {
+  --filters-width: 250px;
+  --drawer-width: 340px;
+  --filters-col: var(--filters-width);
+  --drawer-col: var(--drawer-width);
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--filters-col) minmax(360px, 1fr) var(--drawer-col);
+  grid-template-rows: 1fr;
+  grid-template-areas: "filters tree drawer";
+  gap: 10px;
+}
+
+/* Collapsed rail (desktop): shrink that column to a slim reopen rail. */
+@media (min-width: 1121px) {
+  .workspace[data-filters-collapsed="true"] { --filters-col: 38px; }
+  .workspace[data-drawer-collapsed="true"] { --drawer-col: 38px; }
+}
+
+.filter-rail {
+  grid-area: filters;
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.tree-card {
+  grid-area: tree;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+}
+
+.detail-drawer {
+  grid-area: drawer;
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+/* Detail drawer heading mirrors the filter rail: collapse chevron on the inner
+   edge (closest to the tree), title on the screen edge. */
+.drawer-heading h2 {
+  text-align: right;
+}
+
+/* Shared collapse/resize affordances for the filter rail and the detail drawer. */
+.rail-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  z-index: 3;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.rail-resize-handle-left { left: -6px; }
+.rail-resize-handle-right { right: -6px; }
+
+.rail-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 34px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.rail-resize-handle-left::after { left: 5px; }
+.rail-resize-handle-right::after { right: 5px; }
+
+.rail-resize-handle:hover::after,
+.rail-resize-handle:focus-visible::after {
+  opacity: 0.75;
+}
+
+.rail-reopen {
+  display: none;
+  border: 0;
+  background: transparent;
+}
+
+/* Collapsed rail: hide its content and surface a vertical reopen tab. */
+.workspace[data-filters-collapsed="true"] .filter-rail .section-heading,
+.workspace[data-filters-collapsed="true"] .filter-rail .filter-form,
+.workspace[data-filters-collapsed="true"] .filter-rail .rail-resize-handle,
+.workspace[data-drawer-collapsed="true"] .detail-drawer .section-heading,
+.workspace[data-drawer-collapsed="true"] .detail-drawer .drawer-body,
+.workspace[data-drawer-collapsed="true"] .detail-drawer .rail-resize-handle {
+  display: none;
+}
+
+.workspace[data-filters-collapsed="true"] .filter-rail,
+.workspace[data-drawer-collapsed="true"] .detail-drawer {
+  min-height: 40px;
+}
+
+.workspace[data-filters-collapsed="true"] .filter-rail .rail-reopen,
+.workspace[data-drawer-collapsed="true"] .detail-drawer .rail-reopen {
+  display: flex;
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+}
+
+.workspace[data-filters-collapsed="true"] .filter-rail .rail-reopen span,
+.workspace[data-drawer-collapsed="true"] .detail-drawer .rail-reopen span {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.workspace[data-filters-collapsed="true"] .filter-rail .rail-reopen:hover span,
+.workspace[data-drawer-collapsed="true"] .detail-drawer .rail-reopen:hover span {
+  color: var(--text);
+}
+
+@media (min-width: 1121px) {
+  .workspace[data-filters-collapsed="true"] .filter-rail .rail-reopen span,
+  .workspace[data-drawer-collapsed="true"] .detail-drawer .rail-reopen span {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+  }
+}
+

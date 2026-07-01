@@ -1,0 +1,282 @@
+.filter-form {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 10px;
+  overflow: auto;
+}
+
+fieldset {
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: grid;
+  gap: 7px;
+}
+
+legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.fieldset-hint {
+  margin: 0;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text);
+}
+
+label:has(input[type="checkbox"]) {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.grid-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.grid-form legend {
+  grid-column: 1 / -1;
+}
+
+.secondary-button {
+  grid-column: 1 / -1;
+}
+
+.grid-form label:last-child:nth-child(even) {
+  grid-column: 1 / -1;
+}
+
+.tree-lookup-form {
+  gap: 8px;
+}
+
+.nested {
+  margin-left: 18px;
+}
+
+.disabled-control {
+  color: var(--faint);
+}
+
+.stack-sm {
+  display: grid;
+  gap: 6px;
+}
+
+.source-group {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.source-group-summary {
+  display: grid;
+  gap: 3px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.source-group-summary::-webkit-details-marker {
+  display: none;
+}
+
+.source-group + .source-group {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.source-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.source-group-title {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.source-group-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+}
+
+.source-group-count {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.source-group-selected-count {
+  flex: 0 0 auto;
+  color: var(--focus);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.source-group[open] .source-group-selected-count {
+  display: none;
+}
+
+.source-group-chevron {
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  color: var(--faint);
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.source-group:not([open]) .source-group-chevron {
+  transform: translateY(1px) rotate(-45deg);
+}
+
+.source-group-meta {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.source-group-list {
+  display: grid;
+  gap: 6px;
+}
+
+.kind-option,
+.source-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Catalogued sources: greyed, non-interactive label (checkbox disabled). The
+   info button stays active so the source modal is still reachable. */
+.source-option-catalogued .source-choice {
+  opacity: 0.5;
+}
+
+.source-option-catalogued .source-choice input[disabled] {
+  cursor: not-allowed;
+}
+
+/* The "About sources" help icon inline with the Source legend. */
+.filter-legend-with-help {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.filter-legend-help {
+  width: 22px;
+  height: 22px;
+  color: var(--muted);
+}
+
+.kind-choice,
+.source-choice {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.kind-copy,
+.source-copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.kind-name,
+.source-name {
+  min-width: 0;
+  font-weight: 700;
+}
+
+.kind-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.kind-swatch {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.kind-meta,
+.source-meta {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.kind-info-button,
+.source-info-button {
+  width: 26px;
+  min-height: 26px;
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+}
+
+/* Compact inline AuxPoW help (i) buttons next to drawer values and headings. */
+.auxpow-info-button {
+  width: 18px;
+  min-height: 18px;
+  height: 18px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+  vertical-align: middle;
+}
+
+.auxpow-info-button .ui-icon {
+  width: 13px;
+  height: 13px;
+}
+
+.auxpow-info-button:hover {
+  color: var(--focus);
+  background: transparent;
+}
+
+input,
+select {
+  min-width: 0;
+  height: 30px;
+  padding: 0 7px;
+}
+
+input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}

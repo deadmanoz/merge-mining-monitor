@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-20",
+  "scope": "Elastos minerinfo identity registry for RPC-decoded child miner identity labels.",
+  "source": {
+    "name": "project-maintained Elastos minerinfo registry",
+    "notes": "Maps an Elastos minerinfo self-declared identity label to a project-stable pool slug ONLY when the label is itself a documented Bitcoin coinbase signature for the pool that the same-event BTC parent block independently reconciled to. Elastos minerinfo is RPC-decoded and NOT authenticated by the AuxPoW blob (elastos_rpc_decoded_unverified_by_auxpow); each mapping rests on documented-signature-string plus reconciled-BTC-parent agreement. Conflicted labels (e.g. 'Antpool', 'binance') and labels with no documented signature are intentionally omitted; see docs/attribution.md. Elastos reward addresses are mapped in the separate elastos_reward_address namespace (data/pools/child-identities/elastos_reward_address_registry.json), the more reliable Elastos identity key since minerinfo is spoofable."
+  },
+  "entries": [
+    {
+      "minerinfo": "🐟",
+      "pool_slug": "f2pool",
+      "pool_canonical_name": "F2Pool",
+      "evidence": {
+        "support_sources": [
+          "https://en.bitcoin.it/wiki/F2Pool"
+        ],
+        "btc_parent_pool_reconciliation": "98 of 98 active unresolved rows' same-event BTC parents reconciled to pool slug f2pool",
+        "note": "The fish emoji is F2Pool's documented Bitcoin coinbase signature; the pool's operator handle is 七彩神仙鱼 ('Discus Fish'). The minerinfo label is itself the F2Pool signature, independent of the same-event BTC parent tag."
+      }
+    },
+    {
+      "minerinfo": "Mined by ViaBTC",
+      "pool_slug": "viabtc",
+      "pool_canonical_name": "ViaBTC",
+      "evidence": {
+        "support_sources": [
+          "https://mempool.space/mining/pool/viabtc"
+        ],
+        "btc_parent_pool_reconciliation": "75 of 75 active unresolved rows' same-event BTC parents reconciled to pool slug viabtc",
+        "note": "'Mined by ViaBTC' is ViaBTC's documented Bitcoin coinbase signature. The minerinfo label is itself the ViaBTC signature, independent of the same-event BTC parent tag."
+      }
+    }
+  ]
+}

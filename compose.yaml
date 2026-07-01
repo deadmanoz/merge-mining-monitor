@@ -1,0 +1,28 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: mmm-db
+    restart: unless-stopped
+    # Postgres puts parallel-query dynamic-shared-memory segments in /dev/shm.
+    # Docker's 64MB default overflows the read-model repair's parallel hash plan
+    # (seen after the pool reclassify grew the working set), so size it up.
+    shm_size: 1gb
+    environment:
+      POSTGRES_USER: ${PGUSER:-mmm}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-mmm}
+      POSTGRES_DB: ${PGDATABASE:-mmm}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${PGPORT:-55432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  pgdata:
+    name: mmm-pgdata

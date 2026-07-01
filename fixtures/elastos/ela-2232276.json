@@ -1,0 +1,107 @@
+{
+  "hash": "d11609eec4542c346059a3e4a454397f299f4b33e8ff3fcb770d80f4e4736c27",
+  "confirmations": 540,
+  "strippedsize": 1031,
+  "size": 1031,
+  "weight": 4124,
+  "height": 2232276,
+  "version": 0,
+  "versionhex": "00000000",
+  "merkleroot": "9891df240350fccd416c9f7c9cee09fc0ca32e7be19a047d92284b1036e6ace7",
+  "tx": [
+    {
+      "txid": "e1b9a3a55c0d4cb01604a2bf4284ea3335b67c850d5e87c166872c535da16f8c",
+      "hash": "e1b9a3a55c0d4cb01604a2bf4284ea3335b67c850d5e87c166872c535da16f8c",
+      "size": 258,
+      "vsize": 258,
+      "version": 9,
+      "type": 0,
+      "payloadversion": 4,
+      "payload": {
+        "coinbasedata": ""
+      },
+      "attributes": [
+        {
+          "usage": 0,
+          "data": "9863dd8bbc75d614"
+        }
+      ],
+      "vin": [
+        {
+          "txid": "0000000000000000000000000000000000000000000000000000000000000000",
+          "vout": 65535,
+          "sequence": 4294967295
+        }
+      ],
+      "vout": [
+        {
+          "value": "0.22831050",
+          "n": 0,
+          "address": "CRASSETSXXXXXXXXXXXXXXXXXXXX2qDX5J",
+          "assetid": "a3d0eaa466df74983b5d7c543de6904f4c9418ead5ffd6d25814234a96db37b0",
+          "outputlock": 0,
+          "type": 0,
+          "payload": {}
+        },
+        {
+          "value": "0.26636225",
+          "n": 1,
+          "address": "EXm7Gqs1bS4ddry8EUrN7KZHF7oax79upR",
+          "assetid": "a3d0eaa466df74983b5d7c543de6904f4c9418ead5ffd6d25814234a96db37b0",
+          "outputlock": 0,
+          "type": 0,
+          "payload": {}
+        },
+        {
+          "value": "0.26636225",
+          "n": 2,
+          "address": "STAKEREWARDXXXXXXXXXXXXXXXXXFD5SHU",
+          "assetid": "a3d0eaa466df74983b5d7c543de6904f4c9418ead5ffd6d25814234a96db37b0",
+          "outputlock": 0,
+          "type": 0,
+          "payload": {}
+        }
+      ],
+      "locktime": 2232276,
+      "programs": [],
+      "blockhash": "d11609eec4542c346059a3e4a454397f299f4b33e8ff3fcb770d80f4e4736c27",
+      "confirmations": 540,
+      "time": 1781164295,
+      "blocktime": 1781164295
+    },
+    {
+      "txid": "9c3533dbb4ef645a094b8b9c367c7394dd378132441a42c7015c42d36bec23dd",
+      "hash": "9c3533dbb4ef645a094b8b9c367c7394dd378132441a42c7015c42d36bec23dd",
+      "size": 55,
+      "vsize": 55,
+      "version": 9,
+      "type": 102,
+      "payloadversion": 0,
+      "payload": null,
+      "attributes": [
+        {
+          "usage": 0,
+          "data": "f52f40f106afc6d9"
+        }
+      ],
+      "vin": [],
+      "vout": [],
+      "locktime": 2232276,
+      "programs": [],
+      "blockhash": "d11609eec4542c346059a3e4a454397f299f4b33e8ff3fcb770d80f4e4736c27",
+      "confirmations": 540,
+      "time": 1781164295,
+      "blocktime": 1781164295
+    }
+  ],
+  "time": 1781164295,
+  "mediantime": 1781164295,
+  "nonce": 0,
+  "bits": 387341989,
+  "difficulty": "28978337692129306",
+  "chainwork": "0000021b",
+  "previousblockhash": "6896037f0923f189dd9a4f0061aa11727c74e6254a96ac8bcfc6a181503bac4f",
+  "nextblockhash": "30d51d10946b10164e609108561c9e5ebab8a71bbda4fb84b08128ba637bc5b7",
+  "auxpow": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff5403be910e047b692a6a0cfabe6d6d12f1915052929fb83cea980553aafcaa49c552b8fff9505702a498ff4df7bfaf10000000000000001800156a1a09000000000000112f68617368706f6f6c70726f2e636f6d2f0000000002ca01a112000000001976a914fd11ccb5cae66813d96f53366fe2aaec9aac9f1f88ac0000000000000000296a27737973b6a32376564835affc74419eb256714f6fa877acf2fb586a56ff1b5d4b05f7874a662200000000001c7eeebd43e5b3bb01af5b191d73c5ed6510fb093cf10b0000000000000000000546b35abe80f1e801f905bf818229cd012178e1ad7a2a9106808fea8edc563e08ff1a83ebf067660edd4aa16d0574c2da7143b130fea29e6a95dab99997b2c40242cd813878dccf744d719d09319703cdf577215726db951a7690699822d28c58a553a049337050706230701cdb2aef9db38348373d82efd5606b5653032a702d36a6d16355827d81008030bf1178441d041f5ec6e178af78a442a67a197c07ae00000000040000000000000000000000000000000000000000000000000000000000000000e2f61c3f71d1defd3fa999dfa36953755c690689799962b48bebd836974e8cf95ce1179266c5fb6662977c80dd1b05493650124df6fc3925297360be19350604e6740fa4a0c0f850b502fe6946fe0675568d8b47ae86369a115c74962f0fabe10600000000e08d24dd7677aa14d6cdae87c89eeaa54d7e4bb1d5453fffe13c000000000000000000c5b8303522183389f15c0047e51736d13c5dcaf88fd2feff4f9b8d96f74bce727b692a6a35520218eec1ef2b",
+  "minerinfo": ""
+}

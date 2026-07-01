@@ -1,0 +1,176 @@
+{
+  "schema_version": "v1",
+  "generated_at": 1779792000,
+  "block": {
+    "hash": "abababababababababababababababababababababababababababababababab",
+    "height": 953715,
+    "kind": "stale",
+    "btc_orphan_class": null,
+    "coinbase_tag": null,
+    "header": {
+      "version": 536870912,
+      "prev_hash": "acacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacac",
+      "merkle_root": "adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad",
+      "time": 1779778000,
+      "bits": "170d21b9",
+      "nonce": 953
+    },
+    "bitcoin_miner_pool": {
+      "id": null,
+      "slug": null,
+      "name": "Unknown",
+      "known": false
+    },
+    "display_miner_pool": {
+      "id": 8,
+      "slug": "f2pool",
+      "name": "F2Pool",
+      "known": true
+    },
+    "display_miner_basis": "child_inferred",
+    "source_summary": {
+      "sources": [
+        "auxpow:rsk",
+        "live-chaintip:bitcoin:core"
+      ],
+      "distinct_sources": 2,
+      "auxpow_chain_count": 1,
+      "live_observed": true,
+      "pow_validates_btc_target": true
+    }
+  },
+  "proofs": [
+    {
+      "kind": "auxpow",
+      "source": {
+        "id": 2,
+        "code": "auxpow:rsk",
+        "kind": "auxpow",
+        "chain": "rsk",
+        "instance": null
+      },
+      "discovered_at": 1779778100,
+      "confirmed_at": 1779778100,
+      "revoked_at": null,
+      "revocation_reason": null,
+      "pow_validates_btc_target": true,
+      "evidence": {
+        "contributing_event_ids": [
+          901
+        ]
+      }
+    }
+  ],
+  "event_details": [
+    {
+      "id": 901,
+      "source": "auxpow:rsk",
+      "child_chain": "rsk",
+      "child_height": 953000,
+      "child_block_hash": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+      "child_block_time": 1779778050,
+      "btc_parent_header_hash": "abababababababababababababababababababababababababababababababab",
+      "event_parent_kind": "stale",
+      "btc_parent_coinbase_txid": null,
+      "btc_parent_coinbase_script_hex": null,
+      "btc_parent_coinbase_outputs_hex": null,
+      "child_coinbase_txid": null,
+      "child_coinbase_script_hex": null,
+      "aux_merkle_proof_hex": null,
+      "chain_id": null,
+      "slot_index": null,
+      "aux_proof": null,
+      "rsk": {
+        "block_hash": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "height": 953000,
+        "is_uncle": false,
+        "uncle_index": null,
+        "miner_address": "2222222222222222222222222222222222222222",
+        "pool_identity": {
+          "id": 22,
+          "namespace": "rsk_miner_address",
+          "identifier": "2222222222222222222222222222222222222222"
+        },
+        "merge_mining_hash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+        "merkle_proof_hex": null,
+        "coinbase_tail_hex": null,
+        "proof_format": "rskj_rpc_opaque",
+        "uncle_referencing_height": null
+      },
+      "pow_validates_btc_target": true,
+      "pow_validates_child_target": null,
+      "difficulty_epoch_ok": null,
+      "event_discovered_at": 1779778100,
+      "event_confirmed_at": 1779778100,
+      "event_revoked_at": null,
+      "event_revocation_reason": null,
+      "child_miner_pool": {
+        "id": 8,
+        "slug": "f2pool",
+        "name": "F2Pool",
+        "known": true
+      },
+      "pool_attributions": {
+        "btc_parent": [],
+        "child_block": [
+          {
+            "namespace": "rsk_miner_address",
+            "match_kind": "miner_address",
+            "matched_value": "2222222222222222222222222222222222222222",
+            "pool": {
+              "id": 8,
+              "slug": "f2pool",
+              "name": "F2Pool",
+              "known": true
+            },
+            "pool_identity": {
+              "id": 22,
+              "namespace": "rsk_miner_address",
+              "identifier": "2222222222222222222222222222222222222222"
+            },
+            "source": "rsk_miner_registry",
+            "confidence": "high",
+            "details": {}
+          }
+        ]
+      }
+    }
+  ],
+  "competition": {
+    "btc_height": 953715,
+    "stale_hash": "abababababababababababababababababababababababababababababababab",
+    "canonical_hash": "aeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae",
+    "stale_bitcoin_miner_pool": {
+      "id": null,
+      "slug": null,
+      "name": "Unknown",
+      "known": false
+    },
+    "canonical_bitcoin_miner_pool": {
+      "id": 7,
+      "slug": "antpool",
+      "name": "AntPool",
+      "known": true
+    },
+    "header_time_delta_s": 18,
+    "propagation_delta_s": null
+  },
+  "stale_branch": {
+    "branch_id": "stale-953715-abababababababababababababababababababababababababababababababab",
+    "root_hash": "abababababababababababababababababababababababababababababababab",
+    "tip_hash": "abababababababababababababababababababababababababababababababab",
+    "member_hashes": [
+      "abababababababababababababababababababababababababababababababab"
+    ],
+    "canonical_competitor_hashes": [
+      "aeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae"
+    ],
+    "btc_height_min": 953715,
+    "btc_height_max": 953715,
+    "depth": 1,
+    "position": "root_and_tip",
+    "parent_stale_hash": null,
+    "child_stale_hashes": []
+  },
+  "commitment": null
+}

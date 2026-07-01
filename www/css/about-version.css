@@ -1,0 +1,296 @@
+/* About modal: version line + credit, and the tabbed Overview / Release notes
+   layout. The Release notes pane is a scrollable stack of collapsible per-release
+   sections. The tab chrome (.modal-tab*) is shared from source-dialog.css. */
+
+.about-credit-by {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.about-credit-line,
+.about-credit-contact,
+.about-social-links {
+  display: inline-flex;
+  gap: 4px 6px;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.about-social-links {
+  gap: 4px;
+}
+
+.about-social-link {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  color: var(--focus);
+}
+
+.about-dialog-body .about-social-link:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.about-social-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+.about-version {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.about-version:not([hidden])::after {
+  content: "\00b7";
+  margin-left: 8px;
+}
+
+/* Override the shared scrolling body for the About modal only (source/kind
+   dialogs use .about-dialog-body on other elements): host the tab strip plus a
+   single active pane, with each pane managing its own scroll. */
+#about-description {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+#about-description .modal-tablist {
+  flex: 0 0 auto;
+  padding: 12px 16px 0;
+}
+
+.about-panel {
+  min-height: 0;
+}
+
+/* Overview pane: lede + explainer carousel + credit, scrolling as a whole. */
+#about-overview:not([hidden]) {
+  flex: 1 1 auto;
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  overflow: auto;
+  padding: 16px;
+}
+
+/* Release notes pane: fixed subhead + footnote framing a scrollable list. */
+#about-release-notes:not([hidden]) {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.about-notes-subhead {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px 8px;
+}
+
+.about-notes-kicker {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.about-notes-actions {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.about-notes-meta {
+  font-variant-numeric: tabular-nums;
+}
+
+.about-notes-toggle {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--focus);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  padding: 0;
+}
+
+.about-notes-toggle:hover {
+  text-decoration: underline;
+}
+
+#about-release-notes-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  padding: 4px 16px 14px;
+}
+
+.about-notes-foot {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* One collapsible release section. */
+.rel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.rel-h {
+  margin: 0;
+  font: inherit;
+}
+
+.rel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rel-head:hover {
+  background: var(--surface-alt);
+}
+
+.rel-head:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.rel-id {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+
+.rel-ver {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.rel-date {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.rel-tag {
+  align-self: center;
+  padding: 2px 7px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.rel-tag-latest {
+  color: var(--live);
+}
+
+.rel-tag-dev {
+  color: var(--near);
+}
+
+.rel-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.rel-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.rel-caret {
+  color: var(--faint);
+  transition: transform 0.15s ease;
+}
+
+.rel-head[aria-expanded="true"] .rel-caret {
+  transform: rotate(180deg);
+}
+
+.rel-body {
+  border-top: 1px solid var(--line);
+  padding: 10px 14px 12px;
+}
+
+.rel-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.rel-list li {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.rel-more {
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rel-caret {
+    transition: none;
+  }
+}

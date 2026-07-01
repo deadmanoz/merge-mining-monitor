@@ -1,0 +1,198 @@
+.drawer-body {
+  padding: 10px;
+  overflow: auto;
+}
+
+.drawer-body {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.detail-section {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.event-block {
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+
+.event-block:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+/* The AuxPoW proof (and the undecoded fallback) is a child of one auxiliary
+   block, not a sibling chain. Indent it with a tree-line so its chevron sits
+   under the chain, not aligned with the other auxiliary blocks. */
+.event-block > details.collapse {
+  margin-left: 28px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
+}
+
+/* Collapsible detail rows (event cards, raw header) use native <details>. Make
+   the summary line a clear target, with a large chevron box for state. */
+.detail-section summary {
+  position: relative;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  margin: -2px -4px 0;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.detail-section summary:hover {
+  background: var(--surface-alt);
+}
+
+.detail-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.detail-section summary::before {
+  content: "";
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.detail-section summary::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--focus);
+  border-bottom: 2px solid var(--focus);
+  transform: translate(-50%, -50%) rotate(-45deg);
+  transition: transform 0.12s ease;
+}
+
+.detail-section details[open] > summary::after {
+  left: 19px;
+  top: calc(50% - 1px);
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.detail-section summary:hover::before {
+  border-color: var(--line-strong);
+  background: var(--surface-alt);
+}
+
+.detail-section details > .kv,
+.detail-section details > .event-subhead {
+  margin-top: 6px;
+}
+
+.event-subhead {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: minmax(88px, 0.35fr) minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+  min-width: 0;
+}
+
+.kv dt {
+  color: var(--muted);
+}
+
+.kv dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.empty,
+.loading {
+  min-height: 72px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  text-align: center;
+}
+
+.copy-button {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  min-height: 22px;
+  margin-left: 4px;
+  padding: 0;
+  place-items: center;
+  vertical-align: -4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--focus);
+  cursor: pointer;
+}
+
+.copy-button:hover {
+  border-color: var(--line);
+  background: var(--surface-alt);
+}
+
+.copy-button-icon {
+  width: 15px;
+  height: 15px;
+  grid-area: 1 / 1;
+}
+
+.copy-button-icon-check {
+  display: none;
+}
+
+.copy-button[data-copied="true"] {
+  color: var(--canonical);
+}
+
+.copy-button[data-copied="true"] .copy-button-icon-copy {
+  display: none;
+}
+
+.copy-button[data-copied="true"] .copy-button-icon-check {
+  display: block;
+}
+
+.explorer-link {
+  color: var(--focus);
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.explorer-link:hover {
+  text-decoration: underline;
+}

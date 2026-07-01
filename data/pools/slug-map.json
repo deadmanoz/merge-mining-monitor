@@ -1,0 +1,7 @@
+{
+  "description": "Pinned upstream-filename -> repo-slug remap for data/pools/current.json. The slug is the stable DB key (pool.slug UNIQUE, pool.id GENERATED ALWAYS AS IDENTITY); an upstream filename rename must not silently mint a new slug. The generator keys slugs off this map and defaults to the upstream filename only for genuinely new pools. A slug rename is a deliberate one-time migration (update this map AND UPDATE pool SET slug via the safe-migration path), never a regeneration side effect.",
+  "remap": {
+    "ocean": "ocean-xyz",
+    "braiins": "braiins-pool"
+  }
+}

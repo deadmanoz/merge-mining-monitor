@@ -1,0 +1,702 @@
+{
+  "schema_version": "v1",
+  "generated_at": 1779792000,
+  "sources": [
+    {
+      "id": 1,
+      "code": "auxpow:namecoin",
+      "kind": "auxpow",
+      "chain": "namecoin",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": 1779790000,
+      "status": "fresh",
+      "counts": {
+        "events": 12,
+        "near": 4,
+        "unknown": 2,
+        "canonical": 2,
+        "stale": 2,
+        "strict_orphan": 1,
+        "weak_orphan": 1
+      },
+      "sync": {
+        "mode": "live",
+        "state": "live",
+        "progress_height": 250000,
+        "progress_updated_at": 1779790000,
+        "target_height": null,
+        "latest_evidence_at": 1779790000,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 2,
+      "code": "auxpow:rsk",
+      "kind": "auxpow",
+      "chain": "rsk",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": 1779790100,
+      "status": "fresh",
+      "counts": {
+        "events": 5,
+        "near": 2,
+        "unknown": 0,
+        "canonical": 1,
+        "stale": 1,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "live",
+        "state": "stale",
+        "progress_height": 120000,
+        "progress_updated_at": 1779784800,
+        "target_height": null,
+        "latest_evidence_at": 1779790100,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 3,
+      "code": "live-chaintip:bitcoin:core",
+      "kind": "live-chaintip",
+      "chain": "bitcoin",
+      "instance": "core",
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "bitcoin-core-backbone",
+        "state": "catching_up",
+        "progress_height": 953699,
+        "progress_updated_at": 1779791880,
+        "target_height": 953700,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 4,
+      "code": "auxpow:syscoin",
+      "kind": "auxpow",
+      "chain": "syscoin",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "live",
+        "state": "not_started",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 5,
+      "code": "auxpow:fractal",
+      "kind": "auxpow",
+      "chain": "fractal",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "live",
+        "state": "not_started",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 6,
+      "code": "auxpow:hathor",
+      "kind": "auxpow",
+      "chain": "hathor",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "live",
+        "state": "not_started",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 7,
+      "code": "auxpow:elastos",
+      "kind": "auxpow",
+      "chain": "elastos",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "live",
+        "state": "not_started",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 8,
+      "code": "auxpow:argentum",
+      "kind": "auxpow",
+      "chain": "argentum",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 9,
+      "code": "auxpow:bitcoin-vault",
+      "kind": "auxpow",
+      "chain": "bitcoin-vault",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 10,
+      "code": "auxpow:bitmark",
+      "kind": "auxpow",
+      "chain": "bitmark",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 11,
+      "code": "auxpow:coiledcoin",
+      "kind": "auxpow",
+      "chain": "coiledcoin",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 12,
+      "code": "auxpow:crown",
+      "kind": "auxpow",
+      "chain": "crown",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 13,
+      "code": "auxpow:devcoin",
+      "kind": "auxpow",
+      "chain": "devcoin",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 14,
+      "code": "auxpow:emercoin",
+      "kind": "auxpow",
+      "chain": "emercoin",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 15,
+      "code": "auxpow:geistgeld",
+      "kind": "auxpow",
+      "chain": "geistgeld",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 16,
+      "code": "auxpow:groupcoin",
+      "kind": "auxpow",
+      "chain": "groupcoin",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 17,
+      "code": "auxpow:huntercoin",
+      "kind": "auxpow",
+      "chain": "huntercoin",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 18,
+      "code": "auxpow:i0coin",
+      "kind": "auxpow",
+      "chain": "i0coin",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 19,
+      "code": "auxpow:ixcoin",
+      "kind": "auxpow",
+      "chain": "ixcoin",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 20,
+      "code": "auxpow:myriadcoin",
+      "kind": "auxpow",
+      "chain": "myriadcoin",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 21,
+      "code": "auxpow:terracoin",
+      "kind": "auxpow",
+      "chain": "terracoin",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 22,
+      "code": "auxpow:unobtanium",
+      "kind": "auxpow",
+      "chain": "unobtanium",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 23,
+      "code": "auxpow:xaya",
+      "kind": "auxpow",
+      "chain": "xaya",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 24,
+      "code": "auxpow:vcash",
+      "kind": "auxpow",
+      "chain": "vcash",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "catalogued",
+        "state": "catalogued",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-24",
+  "scope": "Namecoin child coinbase payout address -> pool identity registry for merge-mined child-miner attribution.",
+  "source": {
+    "name": "project-maintained namecoin child-payout registry",
+    "notes": "Maps a child-chain coinbase payout/reward address to a project-stable pool slug, derived from authenticated AuxPoW linkage: each address consistently co-occurs with one pool's independently-attributed Bitcoin parent coinbase across many merge-mined blocks. Pools that rotate their child payout address per block (notably ViaBTC on Namecoin/Syscoin) cannot be pinned to a single address and are intentionally omitted. Shared/protocol/relay outputs that appear across many pools are excluded."
+  },
+  "entries": [
+    {
+      "address": "nc1q2ml905jv7gx0d8z5f7kl23af0vtrjk4j0llmwr",
+      "pool_slug": "antpool",
+      "pool_canonical_name": "AntPool",
+      "evidence": {
+        "support_sources": [
+          "https://namebrow.se/block/688388/",
+          "https://namebrow.se/block/782217/"
+        ],
+        "btc_parent_pool_reconciliation": "637 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'antpool': 594, 'braiins-pool': 41, 'redrock-pool': 2} (purity 0.932).",
+        "web_verification": "corroborates",
+        "note": "operator hub: Braiins (42/42) and RedRock route 100% of their Namecoin rewards to this AntPool wallet (they run no Namecoin merge-mining of their own), so the minority BTC parents are a proxy relationship, not a conflict; see docs/attribution.md"
+      }
+    },
+    {
+      "address": "N4HYFWGfVV5baz1vJQ9BueaeP4g5gipKKG",
+      "pool_slug": "f2pool",
+      "pool_canonical_name": "F2Pool",
+      "evidence": {
+        "support_sources": [
+          "https://f2pool.zendesk.com/hc/en-us/articles/44614159451033"
+        ],
+        "btc_parent_pool_reconciliation": "383 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'f2pool': 383} (purity 1.000).",
+        "web_verification": "insufficient"
+      }
+    },
+    {
+      "address": "N3TM7vgjemxcaWeXmoBpGaDHetzqBktafu",
+      "pool_slug": "poolin",
+      "pool_canonical_name": "Poolin",
+      "evidence": {
+        "support_sources": [],
+        "btc_parent_pool_reconciliation": "10 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'poolin': 10} (purity 1.000).",
+        "web_verification": "insufficient",
+        "note": "low volume"
+      }
+    },
+    {
+      "address": "nc1qkvg5aakqn9a2lqa3p4d9cnasxfczc555lxngzu",
+      "pool_slug": "secpool",
+      "pool_canonical_name": "SecPool",
+      "evidence": {
+        "support_sources": [
+          "https://namebrow.se/address/nc1qkvg5aakqn9a2lqa3p4d9cnasxfczc555lxngzu",
+          "https://namebrow.se/block/17198b3320a983dbe9c2b5f4af201296650816af7698f0efd594e7f5fc92d69a/",
+          "https://mempool.space/mining/pool/secpool"
+        ],
+        "btc_parent_pool_reconciliation": "117 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'secpool': 117} (purity 1.000).",
+        "web_verification": "insufficient"
+      }
+    },
+    {
+      "address": "MvuMoJy1WxZLbHqUpQRFUxrKmnkCpiveBE",
+      "pool_slug": "spiderpool",
+      "pool_canonical_name": "SpiderPool",
+      "evidence": {
+        "support_sources": [],
+        "btc_parent_pool_reconciliation": "132 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'spiderpool': 132} (purity 1.000).",
+        "web_verification": "insufficient"
+      }
+    }
+  ]
+}

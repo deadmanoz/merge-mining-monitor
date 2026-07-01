@@ -1,0 +1,82 @@
+[workspace]
+# Pinned explicitly: a VIRTUAL workspace (the final state of the crate split)
+# cannot infer the resolver from a root package edition, and an unpinned
+# virtual root falls back to resolver 1. Pinning while the root is still a
+# package makes the finale flip a non-event.
+resolver = "3"
+members = ["crates/*"]
+default-members = ["crates/merge-mining-monitor"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/deadmanoz/merge-mining-monitor"
+
+[workspace.dependencies]
+# internal
+mmm-api = { path = "crates/mmm-api" }
+mmm-bitcoin-core = { path = "crates/mmm-bitcoin-core" }
+mmm-capture = { path = "crates/mmm-capture" }
+mmm-pg = { path = "crates/mmm-pg" }
+mmm-producers = { path = "crates/mmm-producers" }
+mmm-read-model = { path = "crates/mmm-read-model" }
+mmm-rpc = { path = "crates/mmm-rpc" }
+mmm-store = { path = "crates/mmm-store" }
+# external
+anyhow = "1"
+# Read API: axum routing, tower middleware, tower-http ServeDir + request
+# tracing, and a deadpool-postgres pool reusing the PgConfig connector.
+axum = "0.8"
+bitcoin = "0.32.7"
+# Powers on-demand read-model parent-header classification.
+corepc-client = { version = "0.8", features = ["client-sync"] }
+csv = "1.3"
+deadpool-postgres = "0.14"
+# Ordered-concurrency primitive (`stream::iter(..).map(..).buffered(K)`) for the
+# bounded RSK backfill prefetch pipeline. Present transitively already; pinned as
+# a direct dependency for the order-preserving fetch stage.
+futures = "0.3"
+hex = "0.4"
+jsonrpc = "0.18"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Deterministic, percent-decoding query parsing for the read-API source extractor.
+serde_urlencoded = "0.7"
+time = { version = "0.3", features = ["formatting", "parsing"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[workspace.lints.rust]
+# Preserves the #[must_use] cascade-token guarantee in read_model::mutation.
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# Pedantic (allow-by-default), so it must be enabled explicitly here.
+# Threshold comes from clippy.toml (too-many-lines-threshold = 100). Enforced
+# on every clippy run, including `just lint` (--all-features, so the
+# db-integration test targets are in scope). Red means refactor the offender,
+# never an allow-attribute or a threshold edit.
+too_many_lines = "deny"
+# Locks the repo's directory-module style by banning self-named module files
+# (e.g. api.rs alongside api/). Restriction lint, allow-by-default.
+self_named_module_files = "deny"
+# clippy::cognitive_complexity is deliberately OMITTED: it is still a nursery
+# lint and its metric churns across toolchain releases, so denying it would
+# make the gate toolchain-dependent. It runs as an advisory -W in
+# `just arch-lint` instead, with the threshold pinned in clippy.toml.
+
+# Ergonomics ONLY (cargo run -- <subcommand>, cargo run --bin gen_*).
+# Quality gates NEVER rely on this: justfile + CI pass --workspace explicitly.
+
+# Profiles are only honored at the workspace root.
+[profile.release]
+lto = "thin"
+codegen-units = 1

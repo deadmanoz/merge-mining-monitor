@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-24",
+  "scope": "Fractal Bitcoin child coinbase reward address -> pool identity registry for merge-mined child-miner attribution.",
+  "source": {
+    "name": "project-maintained fractal child-payout registry",
+    "notes": "Maps a child-chain coinbase payout/reward address to a project-stable pool slug, derived from authenticated AuxPoW linkage: each address consistently co-occurs with one pool's independently-attributed Bitcoin parent coinbase across many merge-mined blocks. Pools that rotate their child payout address per block (notably ViaBTC on Namecoin/Syscoin) cannot be pinned to a single address and are intentionally omitted. Shared/protocol/relay outputs that appear across many pools are excluded."
+  },
+  "entries": [
+    {
+      "address": "bc1q6x0l6kcm66kejy963wnaa9ueafk8y9f4uqar6u",
+      "pool_slug": "antpool",
+      "pool_canonical_name": "AntPool",
+      "evidence": {
+        "support_sources": [
+          "https://mempool.fractalbitcoin.io/api/v1/mining/pool/antpool",
+          "https://github.com/fractal-bitcoin/mining-pools",
+          "https://mempool.fractalbitcoin.io/api/address/bc1q6x0l6kcm66kejy963wnaa9ueafk8y9f4uqar6u",
+          "https://www.antpool.com/newsDetail/498"
+        ],
+        "btc_parent_pool_reconciliation": "2218 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'antpool': 2218} (purity 1.000).",
+        "web_verification": "corroborates"
+      }
+    },
+    {
+      "address": "bc1qx92xhga26l2r6k88mlyezp72e00c0qcus4344y",
+      "pool_slug": "braiins-pool",
+      "pool_canonical_name": "Braiins Pool",
+      "evidence": {
+        "support_sources": [
+          "https://mempool.fractalbitcoin.io/api/address/bc1qx92xhga26l2r6k88mlyezp72e00c0qcus4344y",
+          "https://raw.githubusercontent.com/fractal-bitcoin/mining-pools/master/pools-v2.json",
+          "https://academy.braiins.com/en/braiins-pool/rewards-and-payouts/"
+        ],
+        "btc_parent_pool_reconciliation": "175 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'braiins-pool': 175} (purity 1.000).",
+        "web_verification": "insufficient"
+      }
+    },
+    {
+      "address": "bc1qptpxl288ng4c7mg6klzu9t0are7nhqlfmtmk9k",
+      "pool_slug": "f2pool",
+      "pool_canonical_name": "F2Pool",
+      "evidence": {
+        "support_sources": [
+          "https://github.com/fractal-bitcoin/mining-pools/blob/fractal/pools-v2.json",
+          "https://f2pool.zendesk.com/hc/en-us/articles/37460449409689"
+        ],
+        "btc_parent_pool_reconciliation": "1570 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'f2pool': 1570} (purity 1.000).",
+        "web_verification": "corroborates",
+        "note": "matches existing fb-1342257 child-payout test vector"
+      }
+    },
+    {
+      "address": "bc1ps3mg5w83xz2v90vmu3yhhfec7g9j8kl63t4m4829gfpxh06tet8ssq6wqm",
+      "pool_slug": "foundry-usa",
+      "pool_canonical_name": "Foundry USA",
+      "evidence": {
+        "support_sources": [
+          "https://mempool.fractalbitcoin.io/api/v1/mining/pool/foundryusa",
+          "https://mempool.fractalbitcoin.io/api/address/bc1ps3mg5w83xz2v90vmu3yhhfec7g9j8kl63t4m4829gfpxh06tet8ssq6wqm",
+          "https://raw.githubusercontent.com/fractal-bitcoin/mining-pools/master/pools-v2.json"
+        ],
+        "btc_parent_pool_reconciliation": "2337 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'foundry-usa': 2337} (purity 1.000).",
+        "web_verification": "corroborates",
+        "note": "taproot"
+      }
+    },
+    {
+      "address": "1DfqCmgXBZEkT696Z3LTZs4VFvSxgZyxtq",
+      "pool_slug": "mining-dutch",
+      "pool_canonical_name": "Mining-Dutch",
+      "evidence": {
+        "support_sources": [
+          "https://raw.githubusercontent.com/fractal-bitcoin/mining-pools/fractal/pools-v2.json",
+          "https://mempool.fractalbitcoin.io/api/address/1DfqCmgXBZEkT696Z3LTZs4VFvSxgZyxtq",
+          "https://www.mining-dutch.nl/"
+        ],
+        "btc_parent_pool_reconciliation": "4 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'mining-dutch': 4} (purity 1.000).",
+        "web_verification": "corroborates",
+        "note": "low volume, legacy P2PKH"
+      }
+    },
+    {
+      "address": "bc1qezpw2jyv35p8yd5rc8fx6mvssmm8xkrxuzq7x8",
+      "pool_slug": "poolin",
+      "pool_canonical_name": "Poolin",
+      "evidence": {
+        "support_sources": [
+          "https://github.com/fractal-bitcoin/mining-pools"
+        ],
+        "btc_parent_pool_reconciliation": "26 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'poolin': 26} (purity 1.000).",
+        "web_verification": "insufficient"
+      }
+    },
+    {
+      "address": "bc1qa04qef4tceq4hl93kupxm7w85tvncvcjnfp3v7",
+      "pool_slug": "redrock-pool",
+      "pool_canonical_name": "RedRock Pool",
+      "evidence": {
+        "support_sources": [
+          "https://raw.githubusercontent.com/fractal-bitcoin/mining-pools/master/pools-v2.json"
+        ],
+        "btc_parent_pool_reconciliation": "5 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'redrock-pool': 5} (purity 1.000).",
+        "web_verification": "insufficient",
+        "note": "low volume"
+      }
+    },
+    {
+      "address": "bc1q93a2pa3djvwuhe24u85fca4jjsyrvx9mj9j4nv",
+      "pool_slug": "secpool",
+      "pool_canonical_name": "SecPool",
+      "evidence": {
+        "support_sources": [
+          "https://raw.githubusercontent.com/fractal-bitcoin/mining-pools/master/pools-v2.json",
+          "https://web3.okx.com/explorer/fractal-bitcoin/pool/SECPOOL"
+        ],
+        "btc_parent_pool_reconciliation": "454 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'secpool': 454} (purity 1.000).",
+        "web_verification": "insufficient"
+      }
+    },
+    {
+      "address": "19GMkd7VTydie8UnVevP4b1M6e4ixnPGZA",
+      "pool_slug": "spiderpool",
+      "pool_canonical_name": "SpiderPool",
+      "evidence": {
+        "support_sources": [],
+        "btc_parent_pool_reconciliation": "386 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'spiderpool': 386} (purity 1.000).",
+        "web_verification": "corroborates",
+        "note": "legacy P2PKH"
+      }
+    },
+    {
+      "address": "bc1qv5nkx9huw5ekjwckunnlchqxaaa8vrq7a3ullv",
+      "pool_slug": "viabtc",
+      "pool_canonical_name": "ViaBTC",
+      "evidence": {
+        "support_sources": [],
+        "btc_parent_pool_reconciliation": "1159 active merge-mined blocks carry this address; their independently BTC-coinbase-attributed parents reconcile to {'viabtc': 1159} (purity 1.000).",
+        "web_verification": "corroborates"
+      }
+    }
+  ]
+}

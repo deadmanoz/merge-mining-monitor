@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-17",
+  "scope": "Hathor reward-address attribution registry for decoded HTR reward outputs.",
+  "source": {
+    "name": "project-maintained Hathor reward-address registry",
+    "notes": "Promotes reward addresses only when local candidate generation is corroborated by external Hathor REST reward-output data and external Bitcoin coinbase tag data. Locally conflicted reward addresses are intentionally omitted."
+  },
+  "entries": [
+    {
+      "reward_address": "HH5As5aLtzFkcbmbXZmE65wSd22GqPWq2T",
+      "pool_slug": "f2pool",
+      "pool_canonical_name": "F2Pool",
+      "evidence": {
+        "support_sources": [
+          "https://blog.hathor.network/merged-mining-with-hathor-network-a-2024-update-11b168cd023e",
+          "https://f2pool.zendesk.com/hc/en-us/articles/22972592277401-Web-Merged-mining-guide"
+        ],
+        "sample": {
+          "hathor_height": 4074207,
+          "btc_height": 820754,
+          "btc_coinbase_tag": "/F2Pool/"
+        }
+      }
+    },
+    {
+      "reward_address": "HHDXRkSZorcWkZ9sHhSM6bWA9W9ozj8uxe",
+      "pool_slug": "f2pool",
+      "pool_canonical_name": "F2Pool",
+      "evidence": {
+        "support_sources": [
+          "https://blog.hathor.network/merged-mining-with-hathor-network-a-2024-update-11b168cd023e",
+          "https://f2pool.zendesk.com/hc/en-us/articles/22972592277401-Web-Merged-mining-guide"
+        ],
+        "sample": {
+          "hathor_height": 1370755,
+          "btc_height": 680753,
+          "btc_coinbase_tag": "/F2Pool/"
+        }
+      }
+    },
+    {
+      "reward_address": "HV3iKMJpuZpktXwpoBxKEUetG6NS3zfXje",
+      "pool_slug": "poolin",
+      "pool_canonical_name": "Poolin",
+      "evidence": {
+        "support_sources": [
+          "https://news.bitcoin.com/hathor-network-making-blockchain-easy-for-everyone/",
+          "https://www.reddit.com/r/HathorNetwork/comments/vt48li/my_hathor_mining_experience/"
+        ],
+        "sample": {
+          "hathor_height": 2109859,
+          "btc_height": 718005,
+          "btc_coinbase_tag": "/poolin.com/"
+        }
+      }
+    },
+    {
+      "reward_address": "HCFXQWBaRZ53mTguQ8AczhydnzyevaMHk7",
+      "pool_slug": "poolin",
+      "pool_canonical_name": "Poolin",
+      "evidence": {
+        "support_sources": [
+          "https://news.bitcoin.com/hathor-network-making-blockchain-easy-for-everyone/",
+          "https://www.reddit.com/r/HathorNetwork/comments/vt48li/my_hathor_mining_experience/"
+        ],
+        "sample": {
+          "hathor_height": 2241092,
+          "btc_height": 724824,
+          "btc_coinbase_tag": "/poolin.com/"
+        }
+      }
+    },
+    {
+      "reward_address": "HKhZyM74k2ywUcnAMiKmUQ7HXEed29UBj8",
+      "pool_slug": "poolin",
+      "pool_canonical_name": "Poolin",
+      "evidence": {
+        "support_sources": [
+          "https://news.bitcoin.com/hathor-network-making-blockchain-easy-for-everyone/",
+          "https://www.reddit.com/r/HathorNetwork/comments/vt48li/my_hathor_mining_experience/"
+        ],
+        "sample": {
+          "hathor_height": 2272682,
+          "btc_height": 726357,
+          "btc_coinbase_tag": "/poolin.com/"
+        }
+      }
+    },
+    {
+      "reward_address": "HFhvehg9Uy1YBg9bJ7eTRWwgoc6B4e1vmP",
+      "pool_slug": "zulupool",
+      "pool_canonical_name": "ZULUPooL",
+      "evidence": {
+        "support_sources": [
+          "https://blog.hathor.network/merged-mining-with-hathor-network-a-2024-update-11b168cd023e",
+          "https://beta.zulupool.com/about-public/"
+        ],
+        "sample": {
+          "hathor_height": 1143246,
+          "btc_height": 669382,
+          "btc_coinbase_tag": "ZULUPooL-BTC"
+        }
+      }
+    },
+    {
+      "reward_address": "HDTdybhsq4SDtjnQ6JFisPQFTk6P8TNUmx",
+      "pool_slug": "zulupool",
+      "pool_canonical_name": "ZULUPooL",
+      "evidence": {
+        "support_sources": [
+          "https://blog.hathor.network/merged-mining-with-hathor-network-a-2024-update-11b168cd023e",
+          "https://beta.zulupool.com/about-public/"
+        ],
+        "sample": {
+          "hathor_height": 1113890,
+          "btc_height": 667862,
+          "btc_coinbase_tag": "ZULUPooL-BTC"
+        }
+      }
+    },
+    {
+      "reward_address": "H9A6fG4JxT1HCktiaZwLQCCgsgUM7axndb",
+      "pool_slug": "zulupool",
+      "pool_canonical_name": "ZULUPooL",
+      "evidence": {
+        "support_sources": [
+          "https://blog.hathor.network/merged-mining-with-hathor-network-a-2024-update-11b168cd023e",
+          "https://beta.zulupool.com/about-public/"
+        ],
+        "sample": {
+          "hathor_height": 2932525,
+          "btc_height": 760103,
+          "btc_coinbase_tag": "ZULUPooL-BTC"
+        }
+      }
+    },
+    {
+      "reward_address": "HNe12uc2e4oxpTqQ5arhfRoRL6pnuKUEDC",
+      "pool_slug": "zulupool",
+      "pool_canonical_name": "ZULUPooL",
+      "evidence": {
+        "support_sources": [
+          "https://blog.hathor.network/merged-mining-with-hathor-network-a-2024-update-11b168cd023e",
+          "https://beta.zulupool.com/about-public/"
+        ],
+        "sample": {
+          "hathor_height": 1047018,
+          "btc_height": 664341,
+          "btc_coinbase_tag": "ZULUPooL-BTC"
+        }
+      }
+    },
+    {
+      "reward_address": "HLP9C4ifh9tivTsJC9WjtMkddgH52DCi6K",
+      "pool_slug": "zulupool",
+      "pool_canonical_name": "ZULUPooL",
+      "evidence": {
+        "support_sources": [
+          "https://blog.hathor.network/merged-mining-with-hathor-network-a-2024-update-11b168cd023e",
+          "https://beta.zulupool.com/about-public/"
+        ],
+        "sample": {
+          "hathor_height": 1553767,
+          "btc_height": 689182,
+          "btc_coinbase_tag": "ZULUPooL-BTC"
+        }
+      }
+    },
+    {
+      "reward_address": "H8gJ6y85V41X9pVY57Z2Ks5KitMfYhgeWS",
+      "pool_slug": "zulupool",
+      "pool_canonical_name": "ZULUPooL",
+      "evidence": {
+        "support_sources": [
+          "https://blog.hathor.network/merged-mining-with-hathor-network-a-2024-update-11b168cd023e",
+          "https://beta.zulupool.com/about-public/"
+        ],
+        "sample": {
+          "hathor_height": 3978658,
+          "btc_height": 815622,
+          "btc_coinbase_tag": "ZULUPooL-BTC"
+        }
+      }
+    }
+  ]
+}

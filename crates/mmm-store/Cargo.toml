@@ -1,0 +1,21 @@
+[package]
+name = "mmm-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Producer-side base-table SQL for the merge-mining monitor: event upserts, chain sidecars, poll cursor, seeding."
+
+[lints]
+workspace = true
+
+[features]
+db-integration = []
+
+[dependencies]
+mmm-capture.workspace = true
+mmm-pg.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+tokio-postgres.workspace = true

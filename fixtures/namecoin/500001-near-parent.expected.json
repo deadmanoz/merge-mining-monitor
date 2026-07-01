@@ -1,0 +1,12 @@
+{
+  "fixture": "500001-near-parent",
+  "height_hint": 500001,
+  "expected_parent_kind": "near",
+  "expected_pow_validates_btc_target": false,
+  "expected_pow_validates_child_target": false,
+  "expected_difficulty_epoch_ok": null,
+  "expected_parent_pool_slug": "foundry-usa",
+  "expected_child_height": 500001,
+  "expected_child_hash": "7a46d9735f228aac67d3b6cd717e7fdf05d69a27ba89edf1334a3851af866f55",
+  "expected_parent_hash": "81881cf406cbf97be44ddfefc9b635b53cc9ea2ea69b4de6dbec128aaf79234e"
+}

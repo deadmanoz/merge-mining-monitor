@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-05-26",
+  "scope": "RSK miner-address attribution registry for the RSK structure/capture slice.",
+  "source": {
+    "name": "project-maintained RSK miner-address registry",
+    "notes": "Maps source-backed RSK miner addresses to project-stable pool slugs. Unknown miner addresses are intentionally omitted until they have source-backed attribution."
+  },
+  "entries": [
+    {
+      "miner_address": "12d3178a62ef1f520944534ed04504609f7307a1",
+      "pool_slug": "f2pool",
+      "pool_canonical_name": "F2Pool"
+    },
+    {
+      "miner_address": "4e5dabc28e4a0f5e5b19fcb56b28c5a1989352c1",
+      "pool_slug": "antpool",
+      "pool_canonical_name": "AntPool"
+    },
+    {
+      "miner_address": "32dfc7a84f24b10a5dded1d8b24f48b96ab77373",
+      "pool_slug": "braiins-pool",
+      "pool_canonical_name": "Braiins Pool"
+    },
+    {
+      "miner_address": "1b7a75ef070ff49e6b9491a26403d799f2099ebd",
+      "pool_slug": "antpool",
+      "pool_canonical_name": "AntPool"
+    },
+    {
+      "miner_address": "8afad2f417e5132ee983b74d28600c0dedcc3e07",
+      "pool_slug": "viabtc",
+      "pool_canonical_name": "ViaBTC"
+    },
+    {
+      "miner_address": "ce7864a8b5bf360b01099502a163810cec845d4a",
+      "pool_slug": "foundry-usa",
+      "pool_canonical_name": "Foundry USA"
+    },
+    {
+      "miner_address": "07c5446adb392be116f4859a722589f3fa8223e4",
+      "pool_slug": "btc-com",
+      "pool_canonical_name": "BTC.com"
+    },
+    {
+      "miner_address": "08f6c90cfc462db10d4dd41fb1f2162ff854a462",
+      "pool_slug": "viabtc",
+      "pool_canonical_name": "ViaBTC"
+    },
+    {
+      "miner_address": "31fe561eb2c628cd32ec52573d7c4b7e4c278bfa",
+      "pool_slug": "poolin",
+      "pool_canonical_name": "Poolin"
+    },
+    {
+      "miner_address": "512bfa2264b89b91406fff40f32f90f02d79d452",
+      "pool_slug": "poolin",
+      "pool_canonical_name": "Poolin"
+    },
+    {
+      "miner_address": "0523e90dc41b6d1942cd0e0e2df270e520254612",
+      "pool_slug": "btc-com",
+      "pool_canonical_name": "BTC.com"
+    },
+    {
+      "miner_address": "93293a100338f54242f05652e137a52e0acdccf0",
+      "pool_slug": "viabtc",
+      "pool_canonical_name": "ViaBTC"
+    },
+    {
+      "miner_address": "5aee2975e2ed688f231ccb40e20ee6c10a98d507",
+      "pool_slug": "secpool",
+      "pool_canonical_name": "SecPool"
+    },
+    {
+      "miner_address": "8e8056f7913685d0d95a6c4c6db0455255930855",
+      "pool_slug": "antpool",
+      "pool_canonical_name": "AntPool"
+    },
+    {
+      "miner_address": "cf5072f792246690c75c63638e3d98bb2554ff2c",
+      "pool_slug": "luxor",
+      "pool_canonical_name": "Luxor"
+    }
+  ]
+}

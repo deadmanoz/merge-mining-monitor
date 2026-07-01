@@ -1,0 +1,17 @@
+{
+  "schema_version": "v1",
+  "generated_at": 1779792000,
+  "error": {
+    "code": "backbone_unsynced",
+    "message": "Bitcoin Core backbone is not synced for this tree window",
+    "details": {
+      "from_height": 100,
+      "to_height": 115,
+      "first_missing_height": 104,
+      "missing_count": 2,
+      "partial_count": 1,
+      "conflict_count": 0,
+      "action": "run sync-bitcoin-core"
+    }
+  }
+}

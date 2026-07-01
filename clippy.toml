@@ -1,0 +1,18 @@
+# Structural lint thresholds for the arch-lint gate (scripts/arch-lint.sh,
+# `just arch-lint`). No allow-attributes or grandfather lists anywhere: when a
+# gated lint is red, the fix is refactoring the offender.
+
+# clippy::too_many_lines (pedantic, so allow-by-default; denied workspace-wide
+# via [workspace.lints.clippy] in Cargo.toml, so every clippy run enforces it,
+# including `just lint`).
+too-many-lines-threshold = 100
+
+# clippy::cognitive_complexity (nursery; advisory -W in `just arch-lint` only,
+# never a hard gate, because the nursery metric is recalibrated across
+# toolchains).
+cognitive-complexity-threshold = 20
+
+# clippy::too_many_arguments is warn-by-default and already enforced by
+# `just lint` via -D warnings; the repo is green at the default of 7. Pinning
+# it here keeps a toolchain bump from silently moving the bar.
+too-many-arguments-threshold = 7

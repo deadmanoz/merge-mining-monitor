@@ -1,0 +1,68 @@
+[package]
+name = "merge-mining-monitor"
+version.workspace = true
+edition.workspace = true
+default-run = "merge-mining-monitor"
+rust-version.workspace = true
+description = "Captures, attests, and renders Bitcoin stale-block attribution evidence from merge-mined AuxPoW child chains and live Bitcoin Core observations."
+license.workspace = true
+readme = "../../README.md"
+repository.workspace = true
+keywords = ["bitcoin", "stale-blocks", "merge-mining", "auxpow"]
+categories = ["command-line-utilities"]
+
+[lints]
+workspace = true
+
+[features]
+default = []
+artifact-generation = [
+    "dep:mmm-capture",
+    "dep:serde_json",
+    "mmm-capture/artifact-generation",
+]
+test-support = ["dep:mmm-capture", "mmm-capture/test-support"]
+db-integration = [
+    "test-support",
+    "mmm-api/db-integration",
+    "mmm-bitcoin-core/db-integration",
+    "mmm-producers/db-integration",
+    "mmm-read-model/db-integration",
+    "mmm-store/db-integration",
+]
+
+[dependencies]
+mmm-api.workspace = true
+mmm-bitcoin-core.workspace = true
+mmm-producers.workspace = true
+mmm-read-model.workspace = true
+anyhow.workspace = true
+mmm-capture = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[[bin]]
+name = "gen_pool_snapshot"
+path = "src/bin/gen_pool_snapshot.rs"
+required-features = ["artifact-generation"]
+
+[[bin]]
+name = "gen_source_artifacts"
+path = "src/bin/gen_source_artifacts.rs"
+required-features = ["artifact-generation"]
+
+[dev-dependencies]
+bitcoin.workspace = true
+futures.workspace = true
+hex.workspace = true
+mmm-capture.workspace = true
+mmm-pg.workspace = true
+mmm-store.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio-postgres.workspace = true
+tower.workspace = true
+axum.workspace = true
+serde.workspace = true

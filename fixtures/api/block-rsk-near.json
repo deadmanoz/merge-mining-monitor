@@ -1,0 +1,195 @@
+{
+  "schema_version": "v1",
+  "generated_at": 1779792000,
+  "block": {
+    "hash": "6666666666666666666666666666666666666666666666666666666666666666",
+    "height": null,
+    "kind": "near",
+    "btc_orphan_class": null,
+    "coinbase_tag": null,
+    "header": {
+      "version": 536870912,
+      "prev_hash": "5555555555555555555555555555555555555555555555555555555555555555",
+      "merkle_root": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "time": 1779776000,
+      "bits": "170d21b9",
+      "nonce": 600
+    },
+    "bitcoin_miner_pool": {
+      "id": 7,
+      "slug": "antpool",
+      "name": "AntPool",
+      "known": true
+    },
+    "display_miner_pool": {
+      "id": 7,
+      "slug": "antpool",
+      "name": "AntPool",
+      "known": true
+    },
+    "display_miner_basis": "bitcoin_coinbase",
+    "source_summary": {
+      "sources": [
+        "auxpow:namecoin",
+        "auxpow:rsk"
+      ],
+      "distinct_sources": 2,
+      "auxpow_chain_count": 2,
+      "live_observed": false,
+      "pow_validates_btc_target": false
+    }
+  },
+  "proofs": [],
+  "event_details": [
+    {
+      "id": 701,
+      "source": "auxpow:namecoin",
+      "child_chain": "namecoin",
+      "child_height": 500012,
+      "child_block_hash": "0505050505050505050505050505050505050505050505050505050505050505",
+      "child_block_time": 1779776100,
+      "btc_parent_header_hash": "6666666666666666666666666666666666666666666666666666666666666666",
+      "event_parent_kind": "near",
+      "btc_parent_coinbase_txid": "1919191919191919191919191919191919191919191919191919191919191919",
+      "btc_parent_coinbase_script_hex": "03e4f505",
+      "btc_parent_coinbase_outputs_hex": "00",
+      "child_coinbase_txid": "2020202020202020202020202020202020202020202020202020202020202020",
+      "child_coinbase_script_hex": "04abcd",
+      "aux_merkle_proof_hex": "beadfeed",
+      "chain_id": 1,
+      "slot_index": null,
+      "aux_proof": null,
+      "rsk": null,
+      "pow_validates_btc_target": false,
+      "pow_validates_child_target": true,
+      "difficulty_epoch_ok": null,
+      "event_discovered_at": 1779776200,
+      "event_confirmed_at": 1779776200,
+      "event_revoked_at": null,
+      "event_revocation_reason": null,
+      "child_miner_pool": {
+        "id": 7,
+        "slug": "antpool",
+        "name": "AntPool",
+        "known": true
+      },
+      "pool_attributions": {
+        "btc_parent": [
+          {
+            "namespace": "btc_coinbase_tag",
+            "match_kind": "coinbase_tag",
+            "matched_value": "antpool",
+            "pool": {
+              "id": 7,
+              "slug": "antpool",
+              "name": "AntPool",
+              "known": true
+            },
+            "pool_identity": null,
+            "source": "btc_pool_snapshot",
+            "confidence": "high",
+            "details": {}
+          }
+        ],
+        "child_block": [
+          {
+            "namespace": "btc_coinbase_tag",
+            "match_kind": "coinbase_tag",
+            "matched_value": "antpool",
+            "pool": {
+              "id": 7,
+              "slug": "antpool",
+              "name": "AntPool",
+              "known": true
+            },
+            "pool_identity": null,
+            "source": "btc_pool_snapshot_legacy_child_script",
+            "confidence": "high",
+            "details": {}
+          }
+        ]
+      }
+    },
+    {
+      "id": 702,
+      "source": "auxpow:rsk",
+      "child_chain": "rsk",
+      "child_height": 810000,
+      "child_block_hash": "0606060606060606060606060606060606060606060606060606060606060606",
+      "child_block_time": 1779776300,
+      "btc_parent_header_hash": "6666666666666666666666666666666666666666666666666666666666666666",
+      "event_parent_kind": "near",
+      "btc_parent_coinbase_txid": null,
+      "btc_parent_coinbase_script_hex": null,
+      "btc_parent_coinbase_outputs_hex": null,
+      "child_coinbase_txid": null,
+      "child_coinbase_script_hex": null,
+      "aux_merkle_proof_hex": null,
+      "chain_id": null,
+      "slot_index": null,
+      "aux_proof": null,
+      "rsk": {
+        "block_hash": "0606060606060606060606060606060606060606060606060606060606060606",
+        "height": 810000,
+        "is_uncle": false,
+        "uncle_index": null,
+        "miner_address": "1111111111111111111111111111111111111111",
+        "pool_identity": {
+          "id": 21,
+          "namespace": "rsk_miner_address",
+          "identifier": "1111111111111111111111111111111111111111"
+        },
+        "merge_mining_hash": "2121212121212121212121212121212121212121212121212121212121212121",
+        "merkle_proof_hex": null,
+        "coinbase_tail_hex": null,
+        "proof_format": "rskj_rpc_opaque",
+        "uncle_referencing_height": null
+      },
+      "pow_validates_btc_target": false,
+      "pow_validates_child_target": null,
+      "difficulty_epoch_ok": null,
+      "event_discovered_at": 1779776300,
+      "event_confirmed_at": 1779776300,
+      "event_revoked_at": null,
+      "event_revocation_reason": null,
+      "child_miner_pool": {
+        "id": 9,
+        "slug": "rskpool",
+        "name": "RSKPool",
+        "known": true
+      },
+      "pool_attributions": {
+        "btc_parent": [],
+        "child_block": [
+          {
+            "namespace": "rsk_miner_address",
+            "match_kind": "miner_address",
+            "matched_value": "1111111111111111111111111111111111111111",
+            "pool": {
+              "id": 9,
+              "slug": "rskpool",
+              "name": "RSKPool",
+              "known": true
+            },
+            "pool_identity": {
+              "id": 21,
+              "namespace": "rsk_miner_address",
+              "identifier": "1111111111111111111111111111111111111111"
+            },
+            "source": "rsk_miner_registry",
+            "confidence": "high",
+            "details": {}
+          }
+        ]
+      }
+    }
+  ],
+  "competition": null,
+  "stale_branch": null,
+  "commitment": {
+    "format": "namecoin-aux",
+    "parent_coinbase_txid": "1919191919191919191919191919191919191919191919191919191919191919",
+    "parent_coinbase_script_hex": "03e4f505",
+    "marker": null
+  }
+}

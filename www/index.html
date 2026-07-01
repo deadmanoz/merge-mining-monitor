@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Merge Mining Monitor</title>
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/logo/radar-logo-dark-16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/logo/radar-logo-dark-32.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/logo/radar-logo-light-32.png" media="(prefers-color-scheme: light)" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/logo/radar-logo-dark-32.png" media="(prefers-color-scheme: dark)" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="stylesheet" href="/css/tokens.css" />
+    <link rel="stylesheet" href="/css/shell.css" />
+    <link rel="stylesheet" href="/css/dialogs.css" />
+    <link rel="stylesheet" href="/css/about-version.css?v=20260702-footer-links" />
+    <link rel="stylesheet" href="/css/source-dialog.css" />
+    <link rel="stylesheet" href="/css/layout.css" />
+    <link rel="stylesheet" href="/css/controls.css" />
+    <link rel="stylesheet" href="/css/source-status.css" />
+    <link rel="stylesheet" href="/css/tree-frame.css" />
+    <link rel="stylesheet" href="/css/drawer.css" />
+    <link rel="stylesheet" href="/css/tree-svg.css" />
+    <link rel="stylesheet" href="/css/responsive.css" />
+  </head>
+  <body data-mode="app">
+    <div id="app" class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div class="brand-copy">
+            <div class="brand-title-row">
+              <h1>Merge Mining Monitor</h1>
+              <button id="about-button" class="icon-button brand-about-button" type="button" aria-label="About this monitor" title="About this monitor">
+                <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 1 1 5.82 1c0 2-3 2-3 4" /><path d="M12 17h.01" /></svg>
+              </button>
+            </div>
+            <p class="brand-tagline">Bitcoin merge-mining attribution</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span id="last-updated" class="last-updated" aria-live="polite"></span>
+          <div class="source-status-shell">
+            <button id="source-status-button" class="source-status-button" type="button" aria-expanded="false" aria-controls="source-status-popover">
+              <span class="source-status-bead" aria-hidden="true"></span>
+              <span id="source-status-label">Sources loading</span>
+            </button>
+            <div id="source-status-popover" class="source-status-popover" role="dialog" aria-label="Source capture status" hidden>
+              <div class="source-status-popover-header">
+                <h2>Source Status</h2>
+                <span id="source-status-count" class="source-status-count"></span>
+              </div>
+              <div id="source-status-content"></div>
+            </div>
+          </div>
+          <label class="refresh-control" title="Auto-refresh interval">
+            <span>Auto</span>
+            <select id="refresh-interval" aria-label="Auto-refresh interval">
+              <option value="0">Off</option>
+              <option value="30">30s</option>
+              <option value="60">60s</option>
+              <option value="300">5m</option>
+            </select>
+          </label>
+          <button id="refresh-now" class="icon-button" type="button" aria-label="Refresh now" title="Refresh now">
+            <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></svg>
+          </button>
+          <button id="theme-button" class="icon-button" type="button" aria-label="Toggle theme" title="Toggle theme">
+            <svg class="ui-icon theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
+            <svg class="ui-icon theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" /></svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="filter-rail" aria-labelledby="filters-title">
+          <button id="filters-reopen" class="rail-reopen" type="button" aria-label="Expand tree controls" title="Expand tree controls"><span>Tree Controls</span></button>
+          <div id="filters-resize" class="rail-resize-handle rail-resize-handle-right" role="separator" aria-orientation="vertical" aria-label="Drag to resize tree controls" title="Drag to resize"></div>
+          <div class="section-heading">
+            <h2 id="filters-title">Tree Controls</h2>
+            <button id="filters-collapse" class="icon-button" type="button" aria-label="Collapse tree controls" aria-expanded="true" title="Collapse">&lsaquo;</button>
+          </div>
+          <form id="filters" class="filter-form">
+            <fieldset class="tree-lookup-form">
+              <legend>Tree</legend>
+              <label>Height <input type="number" name="treeHeight" min="0" /></label>
+              <label>UTC Date/Time <input type="datetime-local" name="treeTime" autocomplete="off" step="1" title="Interpreted as UTC" /></label>
+            </fieldset>
+
+            <fieldset>
+              <legend>Classification</legend>
+              <div id="kind-controls" class="stack-sm"></div>
+            </fieldset>
+
+            <fieldset>
+              <legend class="filter-legend-with-help">Source
+                <button class="icon-button filter-legend-help" type="button" data-sources-about="1" aria-label="About source classes" title="About source classes">
+                  <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 1 1 5.82 1c0 2-3 2-3 4" /><path d="M12 17h.01" /></svg>
+                </button>
+              </legend>
+              <div id="source-controls" class="stack-sm"></div>
+            </fieldset>
+          </form>
+        </aside>
+
+        <section class="tree-card" aria-labelledby="tree-title">
+          <div class="section-heading tree-heading">
+            <div>
+              <h2 id="tree-title">Bitcoin Header Tree</h2>
+              <div id="tree-meta" class="meta-line"></div>
+            </div>
+            <div class="tree-heading-actions">
+              <div class="tree-nav" role="group" aria-label="Tree navigation">
+                <label class="nav-goto-label" for="nav-goto">Go to</label>
+                <select id="nav-goto" class="nav-goto" aria-label="Go to navigation target">
+                  <!-- Hidden, selected prompt whose text refreshNavControls sets to the
+                       active target (Live tip / Stale / Branch / Orphans), so the select
+                       shows WHAT is being stepped. It stays the resting value so picking
+                       any rendered action (even the current target) always fires change.
+                       Action options are rendered from the navigator target registry. -->
+                  <option value="" hidden selected>Live tip</option>
+                </select>
+                <button id="nav-coarse-older" class="icon-button" type="button" aria-label="Jump older" title="Older (x100)" disabled>&laquo;</button>
+                <button id="nav-older" class="icon-button" type="button" aria-label="Older" title="Older" disabled>&lsaquo;</button>
+                <button id="nav-newer" class="icon-button" type="button" aria-label="Newer" title="Newer" disabled>&rsaquo;</button>
+                <button id="nav-coarse-newer" class="icon-button" type="button" aria-label="Jump newer" title="Newer (x100)" disabled>&raquo;</button>
+                <span id="nav-readout" class="nav-readout" aria-live="polite"></span>
+              </div>
+            </div>
+          </div>
+          <div id="tree-error" class="status-line" aria-live="polite"></div>
+          <div class="tree-canvas">
+            <svg id="tree-svg" class="tree-svg" role="img" aria-label="Bitcoin header tree"></svg>
+            <div id="tree-legend" class="tree-legend" data-collapsed="false">
+              <button id="tree-legend-toggle" class="tree-legend-toggle" type="button" aria-expanded="true" aria-controls="tree-legend-body">
+                <span class="tree-legend-title">Legend</span>
+                <span class="tree-legend-chevron" aria-hidden="true">&#9662;</span>
+              </button>
+              <div id="tree-legend-body" class="tree-legend-body"></div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="detail-drawer" aria-labelledby="drawer-title">
+          <button id="drawer-reopen" class="rail-reopen" type="button" aria-label="Expand block detail" title="Expand block detail"><span>Block Detail</span></button>
+          <div id="drawer-resize" class="rail-resize-handle rail-resize-handle-left" role="separator" aria-orientation="vertical" aria-label="Drag to resize block detail" title="Drag to resize"></div>
+          <div class="section-heading drawer-heading">
+            <button id="drawer-collapse" class="icon-button" type="button" aria-label="Collapse block detail" aria-expanded="true" title="Collapse">&rsaquo;</button>
+            <h2 id="drawer-title">Block Detail</h2>
+          </div>
+          <div id="drawer" class="drawer-body" aria-live="polite"></div>
+        </aside>
+      </main>
+    </div>
+
+    <dialog id="about-dialog" class="about-dialog" aria-labelledby="about-title" aria-describedby="about-description">
+      <div class="about-dialog-shell">
+        <header class="about-dialog-header">
+          <div>
+            <h2 id="about-title">About This Monitor</h2>
+            <p>Why merge-mined chains can reveal Bitcoin stale and orphan evidence</p>
+          </div>
+          <button id="about-close" class="icon-button" type="button" aria-label="Close about dialog" title="Close">
+            <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+          </button>
+        </header>
+        <div id="about-description" class="about-dialog-body">
+          <div id="about-tablist" class="modal-tablist" role="tablist" aria-label="About sections" hidden>
+            <button class="modal-tab" type="button" role="tab" id="about-tab-overview" data-tab="overview" aria-controls="about-overview" aria-selected="true">Overview</button>
+            <button class="modal-tab" type="button" role="tab" id="about-tab-notes" data-tab="notes" aria-controls="about-release-notes" aria-selected="false" tabindex="-1" hidden>Release notes</button>
+          </div>
+          <div id="about-overview" class="about-panel about-explainer" role="tabpanel" aria-labelledby="about-tab-overview">
+          <p class="about-lede">
+            Bitcoin occasionally mines two valid blocks at the same height. The
+            network keeps one and discards the other. Modern monitors can log
+            many recent stales as they happen, but that is a recent practice,
+            and the active Bitcoin chain keeps no durable record of the losing
+            branch. Merge-mined chains preserve their own independent evidence,
+            reaching back to before anyone was watching. Here is how.
+          </p>
+
+          <div class="explainer" role="group" aria-roledescription="carousel" aria-label="How merge mining reveals Bitcoin stale and orphan evidence">
+            <ol class="explainer-screens">
+              <li class="explainer-screen" data-screen="0" role="group" aria-roledescription="slide" aria-label="Step 1 of 4: forks happen, stales vanish">
+                <div class="screen-figure">
+                  <svg viewBox="0 0 460 150" role="img" aria-label="At one block height Bitcoin produces two blocks. One is kept on the active chain as canonical, the other becomes a discarded stale block with no durable active-chain record.">
+                    <rect class="blk k-base" x="20" y="58" width="58" height="32" rx="5" />
+                    <text class="mm-t" x="49" y="78" text-anchor="middle">N&#8722;1</text>
+                    <path class="edge e-canonical" d="M78 74 C 116 64, 132 50, 168 50" />
+                    <path class="edge e-stale e-dashed" d="M78 80 C 116 92, 132 106, 168 106" />
+                    <text class="mm-cap c-canonical" x="197" y="24" text-anchor="middle">kept</text>
+                    <rect class="blk k-canonical" x="168" y="34" width="58" height="32" rx="5" />
+                    <text class="mm-t" x="197" y="54" text-anchor="middle">N</text>
+                    <path class="edge e-canonical" d="M226 50 H 298" />
+                    <polygon class="head h-canonical" points="300,50 292,46 292,54" />
+                    <rect class="blk k-base" x="300" y="34" width="58" height="32" rx="5" />
+                    <text class="mm-t" x="329" y="54" text-anchor="middle">N+1</text>
+                    <rect class="blk k-stale" x="168" y="90" width="58" height="32" rx="5" />
+                    <text class="mm-t" x="197" y="110" text-anchor="middle">N</text>
+                    <path class="edge e-stale e-dashed" d="M226 106 H 286" />
+                    <path class="edge e-stale" d="M296 99 l 14 14 M310 99 l -14 14" />
+                    <text class="mm-cap c-stale" x="197" y="140" text-anchor="middle">stale &#183; discarded</text>
+                  </svg>
+                </div>
+                <h3 class="screen-title">1. Forks happen, stales vanish</h3>
+                <p class="screen-copy">
+                  Two miners can find a valid block at the same height at almost
+                  the same moment. Consensus keeps just one as canonical and
+                  drops the other. The dropped block is "stale". The active
+                  chain keeps no durable record of that losing branch, and before
+                  dedicated monitoring existed, most stales simply vanished.
+                </p>
+              </li>
+
+              <li class="explainer-screen" data-screen="1" role="group" aria-roledescription="slide" aria-label="Step 2 of 4: merge mining stamps a copy" hidden>
+                <div class="screen-figure">
+                  <svg viewBox="0 0 460 175" role="img" aria-label="A merge-mined child block embeds, via its merge-mining proof, an exact copy of the Bitcoin header its miner was hashing.">
+                    <text class="mm-lane" x="18" y="33">Bitcoin</text>
+                    <rect class="blk k-base" x="150" y="14" width="56" height="30" rx="5" />
+                    <text class="mm-t" x="178" y="33" text-anchor="middle">N&#8722;1</text>
+                    <path class="edge e-base" d="M206 29 H 242" />
+                    <polygon class="head h-base" points="244,29 236,25 236,33" />
+                    <rect class="blk k-unknown" x="244" y="14" width="56" height="30" rx="5" />
+                    <text class="mm-t" x="272" y="33" text-anchor="middle">N</text>
+                    <text class="mm-cap" x="314" y="25" text-anchor="start">header the</text>
+                    <text class="mm-cap" x="314" y="37" text-anchor="start">miner hashed</text>
+                    <path class="edge e-base e-dashed" d="M272 44 C 272 86, 287 86, 287 120" />
+                    <polygon class="head h-base" points="287,124 282,114 292,114" />
+                    <text class="mm-cap" x="304" y="80" text-anchor="start">embedded as</text>
+                    <text class="mm-cap" x="304" y="92" text-anchor="start">merge-mining proof</text>
+                    <text class="mm-lane" x="18" y="143">Child</text>
+                    <rect class="blk k-base" x="150" y="116" width="40" height="40" rx="5" />
+                    <text class="mm-t" x="170" y="140" text-anchor="middle">c</text>
+                    <path class="edge e-base" d="M190 136 H 226" />
+                    <polygon class="head h-base" points="228,136 220,132 220,140" />
+                    <rect class="blk k-base" x="228" y="108" width="118" height="56" rx="5" />
+                    <rect class="blk k-unknown" x="238" y="124" width="98" height="24" rx="4" />
+                    <text class="mm-t" x="287" y="140" text-anchor="middle">BTC header N</text>
+                  </svg>
+                </div>
+                <h3 class="screen-title">2. Merge mining stamps a copy</h3>
+                <p class="screen-copy">
+                  Merge-mined chains reuse Bitcoin's proof of work. Each child
+                  block carries a
+                  <a href="https://deadmanoz.xyz/posts/2026/merge-mining" target="_blank" rel="noopener noreferrer">merge-mining proof</a>
+                  that embeds the exact Bitcoin header the miner was hashing at
+                  that instant, even when that header is one Bitcoin will not
+                  keep.
+                </p>
+              </li>
+
+              <li class="explainer-screen" data-screen="2" role="group" aria-roledescription="slide" aria-label="Step 3 of 4: child chains never forget" hidden>
+                <div class="screen-figure">
+                  <svg viewBox="0 0 460 180" role="img" aria-label="Bitcoin drops the stale block from its active chain, but the merge-mined child chain durably records its embedded copy of that stale header.">
+                    <text class="mm-lane" x="18" y="31">Bitcoin</text>
+                    <rect class="blk k-base" x="92" y="12" width="56" height="30" rx="5" />
+                    <text class="mm-t" x="120" y="31" text-anchor="middle">N&#8722;1</text>
+                    <path class="edge e-canonical" d="M148 27 H 184" />
+                    <polygon class="head h-canonical" points="186,27 178,23 178,31" />
+                    <rect class="blk k-canonical" x="186" y="12" width="56" height="30" rx="5" />
+                    <text class="mm-t" x="214" y="31" text-anchor="middle">N</text>
+                    <path class="edge e-canonical" d="M242 27 H 278" />
+                    <polygon class="head h-canonical" points="280,27 272,23 272,31" />
+                    <rect class="blk k-base" x="280" y="12" width="56" height="30" rx="5" />
+                    <text class="mm-t" x="308" y="31" text-anchor="middle">N+1</text>
+                    <rect class="blk k-dropped" x="186" y="58" width="56" height="30" rx="5" />
+                    <text class="mm-t mm-faded" x="214" y="77" text-anchor="middle">N</text>
+                    <path class="edge e-stale" d="M190 61 L238 85" />
+                    <text class="mm-cap c-stale" y="104">
+                      <tspan x="205" text-anchor="end">dropped</tspan>
+                      <tspan x="214" text-anchor="middle">-</tspan>
+                      <tspan x="223" text-anchor="start">no record</tspan>
+                    </text>
+                    <text class="mm-lane" x="18" y="148">Child</text>
+                    <path class="edge e-stale e-dashed" d="M214 130 C 214 108, 214 102, 214 92" />
+                    <polygon class="head h-stale" points="214,88 209,98 219,98" />
+                    <text class="mm-cap" x="300" y="112" text-anchor="start">permanent</text>
+                    <text class="mm-cap" x="300" y="124" text-anchor="start">copy</text>
+                    <rect class="blk k-base" x="150" y="120" width="150" height="44" rx="5" />
+                    <rect class="blk k-stale" x="160" y="130" width="130" height="24" rx="4" />
+                    <text class="mm-t" x="225" y="146" text-anchor="middle">stale N header</text>
+                  </svg>
+                </div>
+                <h3 class="screen-title">3. Child chains never forget</h3>
+                <p class="screen-copy">
+                  Bitcoin drops the stale block from its active chain, but the
+                  child chain durably records its own history. The embedded
+                  Bitcoin header becomes independent, permanent evidence of a
+                  block Bitcoin no longer builds on,
+                  <strong>including stales from before anyone was monitoring</strong>.
+                </p>
+              </li>
+
+              <li class="explainer-screen" data-screen="3" role="group" aria-roledescription="slide" aria-label="Step 4 of 4: recover and classify" hidden>
+                <div class="screen-figure">
+                  <svg viewBox="0 0 460 180" role="img" aria-label="Scraping several merge-mined child chains extracts their embedded Bitcoin headers, which are checked against Bitcoin Core and shown as canonical, stale, strict orphan, and weak orphan evidence.">
+                    <rect class="blk k-base" x="14" y="18" width="54" height="22" rx="4" />
+                    <text class="mm-s" x="41" y="33" text-anchor="middle">NMC</text>
+                    <rect class="blk k-base" x="14" y="48" width="54" height="22" rx="4" />
+                    <text class="mm-s" x="41" y="63" text-anchor="middle">RSK</text>
+                    <rect class="blk k-base" x="14" y="78" width="54" height="22" rx="4" />
+                    <text class="mm-s" x="41" y="93" text-anchor="middle">SYS</text>
+                    <rect class="blk k-base" x="14" y="108" width="54" height="22" rx="4" />
+                    <text class="mm-s" x="41" y="123" text-anchor="middle">FB</text>
+                    <rect class="blk k-base" x="14" y="138" width="54" height="22" rx="4" />
+                    <text class="mm-s" x="41" y="153" text-anchor="middle">HTR</text>
+                    <path class="edge e-base" d="M68 29 C 96 50, 104 70, 122 80" />
+                    <path class="edge e-base" d="M68 59 C 96 66, 104 74, 122 82" />
+                    <path class="edge e-base" d="M68 89 H 122" />
+                    <path class="edge e-base" d="M68 119 C 96 110, 104 92, 122 86" />
+                    <path class="edge e-base" d="M68 149 C 96 110, 104 96, 122 88" />
+                    <rect class="blk k-base" x="124" y="62" width="92" height="44" rx="5" />
+                    <text class="mm-s" x="170" y="80" text-anchor="middle">extract</text>
+                    <text class="mm-s" x="170" y="94" text-anchor="middle">headers</text>
+                    <path class="edge e-base" d="M216 84 H 244" />
+                    <polygon class="head h-base" points="246,84 238,80 238,88" />
+                    <rect class="blk k-base" x="246" y="62" width="96" height="44" rx="5" />
+                    <text class="mm-s" x="294" y="80" text-anchor="middle">check vs</text>
+                    <text class="mm-s" x="294" y="94" text-anchor="middle">Bitcoin Core</text>
+                    <path class="edge e-canonical" d="M342 76 C 356 60, 360 38, 372 26" />
+                    <path class="edge e-stale" d="M342 82 C 356 74, 360 66, 372 60" />
+                    <path class="edge e-orphan-strict" d="M342 90 C 356 100, 360 112, 372 122" />
+                    <path class="edge e-orphan-weak" d="M342 96 C 356 120, 360 142, 372 156" />
+                    <rect class="blk k-canonical" x="372" y="14" width="78" height="24" rx="4" />
+                    <text class="mm-s" x="411" y="29" text-anchor="middle">canonical</text>
+                    <rect class="blk k-stale" x="372" y="50" width="78" height="24" rx="4" />
+                    <text class="mm-s" x="411" y="65" text-anchor="middle">stale</text>
+                    <rect class="blk k-orphan-strict" x="372" y="110" width="78" height="24" rx="4" />
+                    <text class="mm-s" x="411" y="125" text-anchor="middle">strict orphan</text>
+                    <rect class="blk k-orphan-weak" x="372" y="146" width="78" height="24" rx="4" />
+                    <text class="mm-s" x="411" y="161" text-anchor="middle">weak orphan</text>
+                  </svg>
+                </div>
+                <h3 class="screen-title">4. Recover and classify</h3>
+                <p class="screen-copy">
+                  This monitor scrapes the child chains, extracts every embedded
+                  Bitcoin header, and checks each one against Bitcoin Core. A
+                  header with valid Bitcoin proof of work that is not on the
+                  active chain is recovered off-chain Bitcoin evidence. Known
+                  off-chain branches are shown as stale; Core-absent candidates
+                  become strict orphans with matching BIP34 height evidence, or
+                  weak orphans with matching timestamp-selected nBits evidence.
+                </p>
+              </li>
+            </ol>
+
+            <div class="explainer-controls">
+              <button class="icon-button explainer-prev" type="button" aria-label="Previous step">
+                <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+              </button>
+              <div class="explainer-dots" role="group" aria-label="Choose a step">
+                <button class="explainer-dot" type="button" data-goto="0" aria-label="Step 1"></button>
+                <button class="explainer-dot" type="button" data-goto="1" aria-label="Step 2"></button>
+                <button class="explainer-dot" type="button" data-goto="2" aria-label="Step 3"></button>
+                <button class="explainer-dot" type="button" data-goto="3" aria-label="Step 4"></button>
+              </div>
+              <button class="icon-button explainer-next" type="button" aria-label="Next step">
+                <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+              </button>
+            </div>
+          </div>
+
+          <footer class="about-credit">
+            <p class="about-credit-kicker">Origins &amp; credit</p>
+            <p>
+              The idea behind this monitor originates with
+              <a href="https://www.sba-research.org/team/nicholas-stifter/" target="_blank" rel="noopener noreferrer">Nicholas Stifter</a>
+              (SBA Research, Vienna) and colleagues: that merge-mined chains
+              durably record the Bitcoin headers their miners hashed, stale ones
+              included. It builds directly on their 2018 paper
+              <a href="https://eprint.iacr.org/2018/1134.pdf" target="_blank" rel="noopener noreferrer">Echoes of the Past: Recovering Blockchain Metrics From Merged Mining</a>
+              and the earlier
+              <a href="https://eprint.iacr.org/2017/791.pdf" target="_blank" rel="noopener noreferrer">Merged Mining: Curse or Cure?</a>
+            </p>
+            <p class="about-credit-impl">
+              This implementation ingests evidence from several merge-mined
+              chains, classifies the embedded headers with Bitcoin Core, and
+              renders canonical, stale, strict orphan, and weak orphan evidence in
+              one header tree.
+            </p>
+            <div class="about-credit-by">
+              <div class="about-credit-line about-credit-source">
+                <span id="about-version" class="about-version" hidden></span>
+                <a href="https://github.com/deadmanoz/merge-mining-monitor" target="_blank" rel="noopener noreferrer">Source code</a>
+              </div>
+              <div class="about-credit-line about-credit-contact">
+                <span>Built by deadmanoz</span>
+                <span class="about-social-links">
+                  <a class="about-social-link" href="https://deadmanoz.xyz" target="_blank" rel="noopener noreferrer" aria-label="deadmanoz website" title="Website">
+                    <svg class="about-social-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M2 12h20" /><path d="M12 2a15.3 15.3 0 0 1 0 20" /><path d="M12 2a15.3 15.3 0 0 0 0 20" /></svg>
+                  </a>
+                  <a class="about-social-link" href="https://primal.net/deadmanoz" target="_blank" rel="noopener noreferrer" aria-label="deadmanoz on Nostr" title="Nostr">
+                    <svg class="about-social-icon" width="16" height="16" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="m155.5 253c-8.9 2-18.1 3-27.5 3-25.9 0-50-7.7-70.2-20.9-5-7.2-7.2-11.1-8.9-14-0.8-1.4-1.5-2.6-2.2-3.8-7.7-12.2-11.7-28-12.5-46.6-2.7-57.4 32.2-94 67.8-100.1 22.6-3.8 40.6 0.1 54.3 7.5-12.1-3.4-26.6-3.6-43.2 1.1-40.1 12.9-53.5 52.3-47.8 95.8 10 54.6 63.5 74.1 90.2 78zm-114.3-30.9c-7.4-13.2-14.2-33-15-51-2.9-60.9 34.4-101.6 74.5-108.3 54.7-9.3 85.1 23.1 95.6 47.1 0.4-0.3 0.6-0.9 0.3-1.4-17.2-37.4-52.8-63.2-94-63.2-46.8 0-88.5 33.6-102.6 83.4 0.2 36.9 16 70.2 41.2 93.4zm158.8 11.7c-9.2 6.3-19.3 11.5-30.1 15.2-5.1-0.9-10.9-2-14.9-2.8-1.9-0.4-3.4-0.7-4.3-0.9-24.4-4.4-67.9-20.1-77.5-71.6-2.6-20.6-0.7-39.7 6.1-54.8 6.7-14.9 18.4-26.3 36.1-32 20.6-5.6 37.7-2.9 50.3 3.9q-4.7-0.9-9.6-1c-27.4 0-49.7 23.9-49.7 53.3 0 11.7 3.6 22.5 9.6 31.3 0 0 17.2 32.5 64 29.6 41.7-2.6 63.4-40 66-53.8 1.3-7.2 2-14.6 2-22.2 0-66.3-53.7-120-120-120-50.1 0-93.1 30.8-111.1 74.4-6 7.9-11.2 16.7-15.4 26.2 9.3-61.5 62.4-108.6 126.5-108.6 70.7 0 128 57.3 128 128 0 44-22.2 82.8-56 105.8z" /></svg>
+                  </a>
+                  <a class="about-social-link" href="https://x.com/ozdeadman" target="_blank" rel="noopener noreferrer" aria-label="deadmanoz on X" title="X">
+                    <svg class="about-social-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.53 3h3.08l-6.73 7.69L21.8 21h-6.2l-4.86-6.35L5.18 21H2.1l7.2-8.23L1.7 3h6.36l4.39 5.8L17.53 3Zm-1.08 16.18h1.71L7.13 4.73H5.3l11.15 14.45Z" /></svg>
+                  </a>
+                </span>
+              </div>
+            </div>
+          </footer>
+          </div>
+          <section id="about-release-notes" class="about-panel about-notes" role="tabpanel" aria-labelledby="about-tab-notes" hidden>
+            <div class="about-notes-subhead">
+              <span class="about-notes-kicker">Release notes</span>
+              <span class="about-notes-actions">
+                <span id="about-notes-meta" class="about-notes-meta"></span>
+                <button id="about-notes-toggle-all" class="about-notes-toggle" type="button">Expand all</button>
+              </span>
+            </div>
+            <div id="about-release-notes-body" class="about-notes-list"></div>
+            <p id="about-notes-foot" class="about-notes-foot" hidden></p>
+          </section>
+        </div>
+      </div>
+    </dialog>
+
+    <div id="info-dialogs"></div>
+
+    <script src="/vendor/d3.v7.min.js"></script>
+    <script type="module" src="/js/app.js"></script>
+  </body>
+</html>

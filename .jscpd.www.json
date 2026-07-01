@@ -1,0 +1,16 @@
+{
+  "format": ["javascript"],
+  "minTokens": 70,
+  "minLines": 8,
+  "threshold": 3,
+  "pattern": "**/*.js",
+  "ignore": [
+    "**/www/vendor/**",
+    "**/www/js/source-registry.generated.js",
+    "**/node_modules/**",
+    "**/.git/**"
+  ],
+  "gitignore": true,
+  "reporters": ["console"],
+  "absolute": true
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": "v1",
+  "generated_at": 1779792000,
+  "version": "0.1.0",
+  "release_notes": {
+    "source": "RELEASE_NOTES.md",
+    "release_count": 1,
+    "truncated": false,
+    "releases": [
+      {
+        "version": "0.1.0",
+        "date": "2026-07-02",
+        "items": [
+          "Release the first source distribution of `merge-mining-monitor`.",
+          "Include the Rust workspace, Postgres schema baseline, capture/reconciliation pipeline, read API, static frontend, fixtures, provenance manifests, and local operator tooling needed to build, test, and run the monitor."
+        ],
+        "item_count": 2,
+        "truncated": false
+      }
+    ]
+  }
+}

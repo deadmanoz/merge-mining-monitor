@@ -1,0 +1,32 @@
+[package]
+name = "mmm-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Read-only HTTP projection of the merge-mining monitor's SQL read model."
+
+[lints]
+workspace = true
+
+[features]
+db-integration = []
+
+[dependencies]
+mmm-capture.workspace = true
+mmm-pg.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+bitcoin.workspace = true
+deadpool-postgres.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_urlencoded.workspace = true
+time.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true

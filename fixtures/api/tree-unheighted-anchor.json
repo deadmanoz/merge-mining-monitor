@@ -1,0 +1,195 @@
+{
+  "schema_version": "v1",
+  "generated_at": 1779792000,
+  "query": {
+    "from_height": null,
+    "to_height": null,
+    "at_height": null,
+    "at_time": null,
+    "window_mode": "unheighted_anchor",
+    "context": "exact",
+    "kinds": ["canonical", "near", "stale", "unknown"],
+    "classification": ["strict_btc_orphan", "weak_btc_orphan"],
+    "sources": [],
+    "include_near": false,
+    "min_sources": 1,
+    "include_unheighted": false,
+    "unheighted_anchor": "00000000000000000000ffeeddccbbaa00112233445566778899aabbccdd0940"
+  },
+  "window": {
+    "btc_height_min": 227924,
+    "btc_height_max": 227956,
+    "tip_height": null,
+    "defaulted_to_tip": false,
+    "empty_reason": null,
+    "hidden_linear_block_count": 0
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "hash": "00000000000000000000a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3000938",
+      "height": 227938,
+      "kind": "canonical",
+      "btc_orphan_class": null,
+      "prev_id": null,
+      "prev_hash": "00000000000000000000a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3000937",
+      "bitcoin_miner_pool": { "id": 8, "slug": "f2pool", "name": "F2Pool", "known": true },
+      "display_miner_pool": { "id": 8, "slug": "f2pool", "name": "F2Pool", "known": true },
+      "display_miner_basis": "bitcoin_coinbase",
+      "source_summary": {
+        "sources": ["live-chaintip:bitcoin:core"],
+        "distinct_sources": 1,
+        "auxpow_chain_count": 0,
+        "live_observed": true,
+        "pow_validates_btc_target": true
+      },
+      "branch": null,
+      "proof_state": {
+        "has_live_observation": true,
+        "has_auxpow_evidence": false
+      },
+      "competition": null,
+      "child_chain_evidence": []
+    },
+    {
+      "id": 2,
+      "hash": "00000000000000000000a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3000939",
+      "height": 227939,
+      "kind": "canonical",
+      "btc_orphan_class": null,
+      "prev_id": 1,
+      "prev_hash": "00000000000000000000a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3000938",
+      "bitcoin_miner_pool": { "id": 8, "slug": "f2pool", "name": "F2Pool", "known": true },
+      "display_miner_pool": { "id": 8, "slug": "f2pool", "name": "F2Pool", "known": true },
+      "display_miner_basis": "bitcoin_coinbase",
+      "source_summary": {
+        "sources": ["live-chaintip:bitcoin:core"],
+        "distinct_sources": 1,
+        "auxpow_chain_count": 0,
+        "live_observed": true,
+        "pow_validates_btc_target": true
+      },
+      "branch": null,
+      "proof_state": {
+        "has_live_observation": true,
+        "has_auxpow_evidence": false
+      },
+      "competition": null,
+      "child_chain_evidence": []
+    },
+    {
+      "id": 3,
+      "hash": "00000000000000000000a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3000940",
+      "height": 227940,
+      "kind": "canonical",
+      "btc_orphan_class": null,
+      "prev_id": 2,
+      "prev_hash": "00000000000000000000a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3000939",
+      "bitcoin_miner_pool": { "id": 8, "slug": "f2pool", "name": "F2Pool", "known": true },
+      "display_miner_pool": { "id": 8, "slug": "f2pool", "name": "F2Pool", "known": true },
+      "display_miner_basis": "bitcoin_coinbase",
+      "source_summary": {
+        "sources": ["live-chaintip:bitcoin:core"],
+        "distinct_sources": 1,
+        "auxpow_chain_count": 0,
+        "live_observed": true,
+        "pow_validates_btc_target": true
+      },
+      "branch": null,
+      "proof_state": {
+        "has_live_observation": true,
+        "has_auxpow_evidence": false
+      },
+      "competition": null,
+      "child_chain_evidence": []
+    },
+    {
+      "id": 4,
+      "hash": "00000000000000000000a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3000941",
+      "height": 227941,
+      "kind": "canonical",
+      "btc_orphan_class": null,
+      "prev_id": 3,
+      "prev_hash": "00000000000000000000a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3000940",
+      "bitcoin_miner_pool": { "id": 8, "slug": "f2pool", "name": "F2Pool", "known": true },
+      "display_miner_pool": { "id": 8, "slug": "f2pool", "name": "F2Pool", "known": true },
+      "display_miner_basis": "bitcoin_coinbase",
+      "source_summary": {
+        "sources": ["live-chaintip:bitcoin:core"],
+        "distinct_sources": 1,
+        "auxpow_chain_count": 0,
+        "live_observed": true,
+        "pow_validates_btc_target": true
+      },
+      "branch": null,
+      "proof_state": {
+        "has_live_observation": true,
+        "has_auxpow_evidence": false
+      },
+      "competition": null,
+      "child_chain_evidence": []
+    },
+    {
+      "id": 5,
+      "hash": "00000000000000000000ffeeddccbbaa00112233445566778899aabbccdd0940",
+      "height": null,
+      "kind": "unknown",
+      "btc_orphan_class": "strict_btc_orphan",
+      "prev_id": 2,
+      "prev_hash": "00000000000000000000a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3000939",
+      "bitcoin_miner_pool": { "id": 7, "slug": "antpool", "name": "AntPool", "known": true },
+      "display_miner_pool": { "id": 7, "slug": "antpool", "name": "AntPool", "known": true },
+      "display_miner_basis": "bitcoin_coinbase",
+      "source_summary": {
+        "sources": ["auxpow:namecoin"],
+        "distinct_sources": 1,
+        "auxpow_chain_count": 1,
+        "live_observed": false,
+        "pow_validates_btc_target": true
+      },
+      "branch": null,
+      "proof_state": {
+        "has_live_observation": false,
+        "has_auxpow_evidence": true
+      },
+      "competition": null,
+      "child_chain_evidence": [
+        {
+          "source": "auxpow:namecoin",
+          "child_chain": "namecoin",
+          "event_count": 1,
+          "child_height_min": 150004,
+          "child_height_max": 150004
+        }
+      ],
+      "placement_height": 227940
+    }
+  ],
+  "edges": [
+    {
+      "from_hash": "00000000000000000000a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3000938",
+      "to_hash": "00000000000000000000a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3000939",
+      "edge_kind": "canonical"
+    },
+    {
+      "from_hash": "00000000000000000000a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3000939",
+      "to_hash": "00000000000000000000a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3000940",
+      "edge_kind": "canonical"
+    },
+    {
+      "from_hash": "00000000000000000000a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3000940",
+      "to_hash": "00000000000000000000a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3000941",
+      "edge_kind": "canonical"
+    },
+    {
+      "from_hash": "00000000000000000000a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3000939",
+      "to_hash": "00000000000000000000ffeeddccbbaa00112233445566778899aabbccdd0940",
+      "edge_kind": "orphan"
+    }
+  ],
+  "branches": [],
+  "legend": {
+    "kinds": ["canonical", "stale", "unknown", "near"],
+    "edge_kinds": ["canonical", "stale_entry", "stale", "hidden", "orphan", "orphan_approx"]
+  }
+}

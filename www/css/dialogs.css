@@ -1,0 +1,375 @@
+.about-dialog {
+  width: min(620px, calc(100vw - 32px));
+  /* Grow to fit available height instead of a hard 680px cap, so the explainer
+     does not force a scroll when the viewport has the room. Content still bounds
+     the height, so the shorter kind/source dialogs stay compact. */
+  max-height: calc(100dvh - 48px);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 18px 60px rgba(24, 33, 28, 0.28);
+}
+
+[data-theme="dark"] .about-dialog {
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.58);
+}
+
+.about-dialog::backdrop {
+  background: rgba(24, 33, 28, 0.42);
+  backdrop-filter: blur(2px);
+}
+
+[data-theme="dark"] .about-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.58);
+}
+
+.about-dialog-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: inherit;
+}
+
+.about-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.about-dialog-header p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.about-dialog-body {
+  display: grid;
+  gap: 12px;
+  overflow: auto;
+  padding: 16px;
+}
+
+.about-dialog-body p {
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.about-dialog-body a {
+  color: var(--focus);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.about-dialog-body a:hover {
+  text-decoration: underline;
+}
+
+.source-dialog-subhead {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* About-modal visual explainer: a small stepped carousel of SVG screens that
+   shows why scraping merge-mined chains recovers Bitcoin stales. */
+.about-explainer {
+  gap: 14px;
+}
+
+.about-lede {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.explainer {
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.explainer-screens {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.explainer-screen {
+  display: grid;
+  gap: 10px;
+}
+
+.explainer-screen[hidden] {
+  display: none;
+}
+
+.explainer-screen.is-entering {
+  animation: explainer-fade 0.18s ease;
+}
+
+@keyframes explainer-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.screen-figure {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.screen-figure svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.screen-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.screen-copy {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.55;
+}
+
+/* SVG primitives shared across the four screens. */
+.screen-figure .blk {
+  stroke-width: 1.6;
+}
+
+.screen-figure .blk.k-base {
+  fill: var(--surface-alt);
+  stroke: var(--line-strong);
+}
+
+.screen-figure .blk.k-canonical {
+  fill: var(--canonical);
+  fill-opacity: 0.16;
+  stroke: var(--canonical);
+}
+
+.screen-figure .blk.k-stale {
+  fill: var(--stale);
+  fill-opacity: 0.16;
+  stroke: var(--stale);
+}
+
+.screen-figure .blk.k-unknown {
+  fill: var(--unknown);
+  fill-opacity: 0.16;
+  stroke: var(--unknown);
+}
+
+.screen-figure .blk.k-near {
+  fill: var(--near);
+  fill-opacity: 0.16;
+  stroke: var(--near);
+}
+
+.screen-figure .blk.k-orphan-strict {
+  fill: var(--orphan-strict);
+  fill-opacity: 0.16;
+  stroke: var(--orphan-strict);
+}
+
+.screen-figure .blk.k-orphan-weak {
+  fill: var(--orphan-weak);
+  fill-opacity: 0.16;
+  stroke: var(--orphan-weak);
+}
+
+.screen-figure .blk.k-dropped {
+  fill: var(--surface-alt);
+  fill-opacity: 0.5;
+  stroke: var(--line);
+  stroke-width: 1.4;
+  stroke-dasharray: 5 4;
+}
+
+.screen-figure .edge {
+  fill: none;
+  stroke-width: 1.6;
+}
+
+.screen-figure .edge.e-base {
+  stroke: var(--line-strong);
+}
+
+.screen-figure .edge.e-canonical {
+  stroke: var(--canonical);
+}
+
+.screen-figure .edge.e-stale {
+  stroke: var(--stale);
+}
+
+.screen-figure .edge.e-unknown {
+  stroke: var(--unknown);
+}
+
+.screen-figure .edge.e-near {
+  stroke: var(--near);
+}
+
+.screen-figure .edge.e-orphan-strict {
+  stroke: var(--orphan-strict);
+}
+
+.screen-figure .edge.e-orphan-weak {
+  stroke: var(--orphan-weak);
+}
+
+.screen-figure .edge.e-dashed {
+  stroke-dasharray: 5 4;
+}
+
+.screen-figure .head {
+  stroke: none;
+}
+
+.screen-figure .head.h-base {
+  fill: var(--line-strong);
+}
+
+.screen-figure .head.h-canonical {
+  fill: var(--canonical);
+}
+
+.screen-figure .head.h-stale {
+  fill: var(--stale);
+}
+
+.screen-figure .head.h-unknown {
+  fill: var(--unknown);
+}
+
+.screen-figure .head.h-near {
+  fill: var(--near);
+}
+
+.screen-figure .mm-t {
+  fill: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.screen-figure .mm-t.mm-faded {
+  fill: var(--muted);
+}
+
+.screen-figure .mm-s {
+  fill: var(--text);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.screen-figure .mm-cap {
+  fill: var(--muted);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.screen-figure .mm-cap.c-stale {
+  fill: var(--stale);
+}
+
+.screen-figure .mm-cap.c-canonical {
+  fill: var(--canonical);
+}
+
+.screen-figure .mm-lane {
+  fill: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.explainer-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.explainer-dots {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.explainer-dot {
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.explainer-dot[aria-current="true"] {
+  background: var(--focus);
+  border-color: var(--focus);
+}
+
+.about-credit {
+  display: grid;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.about-credit p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.about-credit-kicker {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.about-credit-impl {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.about-credit-by {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .explainer-screen.is-entering {
+    animation: none;
+  }
+
+  .explainer-dot {
+    transition: none;
+  }
+}

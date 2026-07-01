@@ -1,0 +1,13 @@
+{
+  "schema_version": "v1",
+  "generated_at": 1779792000,
+  "error": {
+    "code": "range_too_large",
+    "message": "requested tree window exceeds the first-wave limit",
+    "details": {
+      "parameter": "height_window",
+      "limit": 2016,
+      "received": 4096
+    }
+  }
+}
