@@ -4,7 +4,7 @@ function versionPayload(overrides = {}) {
   return {
     schema_version: "v1",
     generated_at: GENERATED_AT,
-    version: "0.1.0",
+    version: "0.2.0",
     release_notes: { source: "RELEASE_NOTES.md", release_count: 0, truncated: false, releases: [] },
     ...overrides,
   };

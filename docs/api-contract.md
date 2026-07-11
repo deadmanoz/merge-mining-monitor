@@ -86,9 +86,9 @@ Response fields:
   sections; currently always `false`.
 - `release_notes.releases`: every release-note section, newest first.
 - `release_notes.releases[].version`: section version, for example
-  `"0.1.0"`.
+  `"0.2.0"`.
 - `release_notes.releases[].date`: optional release date from headings like
-  `## [0.1.0] - 2026-07-02`.
+  `## [0.2.0] - 2026-07-11`.
 - `release_notes.releases[].items`: top-level bullet entries with wrapped
   Markdown lines flattened to text.
 - `release_notes.releases[].item_count`: total top-level bullet count in that
@@ -102,12 +102,23 @@ Example:
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 1,
+    "release_count": 2,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.2.0",
+        "date": "2026-07-11",
+        "items": [
+          "Recover every Lyncoin Bitcoin-merge-mined header through height 260,499 and all 999,407 available SixEleven blocks. Bitcoin Core classified 11 Lyncoin parents and 7 SixEleven parents as canonical; neither chain produced a stale winner.",
+          "Keep the recovery limits visible: VCash contributes 68 canonical mappings from archived explorer pages (not the VCash blockchain), while Doichain is a completed zero-row survey after 429,401 AuxPoW commitments produced no Bitcoin block winner.",
+          "Make source IDs permanent and retire ID 32. Mazacoin is removed because its consensus source contains no AuxPoW implementation, so it is not a Bitcoin merge-mined source."
+        ],
+        "item_count": 3,
+        "truncated": false
+      },
       {
         "version": "0.1.0",
         "date": "2026-07-02",

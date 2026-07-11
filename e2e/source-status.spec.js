@@ -256,8 +256,9 @@ function versionFixture() {
       truncated: false,
       releases: [
         {
-          version: "Unreleased",
-          items: ["Shows the running monitor version in the About dialog."],
+          version: "0.2.0",
+          date: "2026-07-11",
+          items: ["Adds recovered VCash, Lyncoin, and SixEleven evidence."],
           item_count: 1,
           truncated: false,
         },
@@ -390,7 +391,7 @@ test("renders version metadata and release notes in the about dialog", async ({ 
   const credit = dialog.locator(".about-credit-by");
   const creditLines = credit.locator(".about-credit-line");
   await expect(creditLines).toHaveCount(2);
-  await expect(creditLines.nth(0).locator("#about-version")).toHaveText("v0.1.0");
+  await expect(creditLines.nth(0).locator("#about-version")).toHaveText("v0.2.0");
   await expect(creditLines.nth(0)).toContainText("Source code");
   await expect(creditLines.nth(1)).toContainText("Built by deadmanoz");
   const identityTextBox = await creditLines.nth(1).getByText("Built by deadmanoz").boundingBox();
@@ -424,11 +425,11 @@ test("renders version metadata and release notes in the about dialog", async ({ 
   // Release notes live in their own tab as a per-release collapsible accordion.
   await dialog.getByRole("tab", { name: "Release notes" }).click();
   const notes = dialog.locator("#about-release-notes-body");
-  await expect(notes).toContainText("Unreleased");
+  await expect(notes).toContainText("v0.2.0");
   await expect(notes).toContainText("v0.1.0");
 
   // The newest section is expanded by default; older sections start collapsed.
-  await expect(notes.getByText("Shows the running monitor version")).toBeVisible();
+  await expect(notes.getByText("Adds recovered VCash, Lyncoin, and SixEleven evidence.")).toBeVisible();
   const olderEntry = notes.getByText("Released the first monitor build.");
   await expect(olderEntry).toBeHidden();
 

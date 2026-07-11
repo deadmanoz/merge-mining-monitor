@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-11
+
 - Recover every Lyncoin Bitcoin-merge-mined header through height 260,499 and
   all 999,407 available SixEleven blocks. Bitcoin Core classified 11 Lyncoin
   parents and 7 SixEleven parents as canonical; neither chain produced a stale
