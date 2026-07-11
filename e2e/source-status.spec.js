@@ -381,7 +381,7 @@ test("renders version metadata and release notes in the about dialog", async ({ 
   await page.goto("/");
   await expect(page.locator('link[href^="/css/about-version.css"]')).toHaveAttribute(
     "href",
-    "/css/about-version.css?v=20260702-footer-links",
+    "/css/about-version.css?v=0.2.0",
   );
   await page.getByRole("button", { name: "About this monitor" }).click();
 

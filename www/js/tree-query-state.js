@@ -1,5 +1,5 @@
-import { API_BASE, CLASSIFICATION_DEFAULT, classificationParam, KINDS, sameClassification, state, VISIBLE_KIND_CONTROLS } from "./frontend-state.js";
-import { inputDateTimeToUtc } from "./tree-lookup.js";
+import { API_BASE, CLASSIFICATION_DEFAULT, classificationParam, KINDS, sameClassification, state, VISIBLE_KIND_CONTROLS } from "./frontend-state.js?v=0.2.0";
+import { inputDateTimeToUtc } from "./tree-lookup.js?v=0.2.0";
 
 
 function hasExactHeightLookup() {

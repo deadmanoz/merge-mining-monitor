@@ -1,11 +1,11 @@
-import { loadTree, reconcileNavFromSelected, refreshNavControls, selectTreeNode } from "./api-client.js";
-import { showDialog } from "./dialogs.js";
-import { auxpowHelpFor, errorSummary, kvRows, renderDrawer } from "./drawer-renderer.js";
-import { $, $all, CLASSIFICATION_DEFAULT, compareSourcesForDisplay, EDGE_KINDS, esc, kindHelpFor, KINDS, readForm, SOURCE_GROUPS, sourceChain, sourceDisplayName, sourceGroupKey, sourceMeta, state, VISIBLE_KIND_CONTROLS, writeForm } from "./frontend-state.js";
-import { collectCitedReferenceIds, formatCitedText, renderSourceDialog, renderSourcesSection, sourceTagline } from "./source-dialog.js";
-import { renderSourceRailStatus } from "./source-status.js";
-import { clearTreeViewModes, syncUrl } from "./tree-query-state.js";
-import { drawSelectionOverlay, renderTree, renderTreeLegend } from "./tree-renderer.js";
+import { loadTree, reconcileNavFromSelected, refreshNavControls, selectTreeNode } from "./api-client.js?v=0.2.0";
+import { showDialog } from "./dialogs.js?v=0.2.0";
+import { auxpowHelpFor, errorSummary, kvRows, renderDrawer } from "./drawer-renderer.js?v=0.2.0";
+import { $, $all, CLASSIFICATION_DEFAULT, compareSourcesForDisplay, EDGE_KINDS, esc, kindHelpFor, KINDS, readForm, SOURCE_GROUPS, sourceChain, sourceDisplayName, sourceGroupKey, sourceMeta, state, VISIBLE_KIND_CONTROLS, writeForm } from "./frontend-state.js?v=0.2.0";
+import { collectCitedReferenceIds, formatCitedText, renderSourceDialog, renderSourcesSection, sourceTagline } from "./source-dialog.js?v=0.2.0";
+import { renderSourceRailStatus } from "./source-status.js?v=0.2.0";
+import { clearTreeViewModes, syncUrl } from "./tree-query-state.js?v=0.2.0";
+import { drawSelectionOverlay, renderTree, renderTreeLegend } from "./tree-renderer.js?v=0.2.0";
 
 
 const UI_ICONS = {
