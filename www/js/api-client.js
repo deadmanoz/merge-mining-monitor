@@ -1,14 +1,14 @@
-import { clearStoredTreeTransform, markTreeSelection, RAILS, renderSourceControls, renderTreePanel, resetTreeToTip, setRailCollapsed } from "./controls.js";
-import { renderDrawer } from "./drawer-renderer.js";
-import { $, API_BASE, CLASSIFICATION_DEFAULT, CLASSIFICATION_META, classificationParam, CLASSIFICATIONS, readForm, state, writeForm } from "./frontend-state.js";
-import { anyNavTargetBusy, applyNavigatorPayload, isNavigatorTarget, navSelectionMatches, navSelectLabelForState, navigatorItemForStep, navigatorItemView, navigatorRoute, navigatorStepperState, selectionTargetForState, setNavigatorBusy, targetState } from "./nav-targets.js";
-import { renderSourceStatus } from "./source-status.js";
-import { activateAnchorView, activateGeneratedWindow, activateHeightLookup, paramsFor, syncUrl, treePath, treeWindowError } from "./tree-query-state.js";
-import { anchorCameraOnTip, renderTree } from "./tree-renderer.js";
+import { clearStoredTreeTransform, markTreeSelection, RAILS, renderSourceControls, renderTreePanel, resetTreeToTip, setRailCollapsed } from "./controls.js?v=0.2.0";
+import { renderDrawer } from "./drawer-renderer.js?v=0.2.0";
+import { $, API_BASE, CLASSIFICATION_DEFAULT, CLASSIFICATION_META, classificationParam, CLASSIFICATIONS, readForm, state, writeForm } from "./frontend-state.js?v=0.2.0";
+import { anyNavTargetBusy, applyNavigatorPayload, isNavigatorTarget, navSelectionMatches, navSelectLabelForState, navigatorItemForStep, navigatorItemView, navigatorRoute, navigatorStepperState, selectionTargetForState, setNavigatorBusy, targetState } from "./nav-targets.js?v=0.2.0";
+import { renderSourceStatus } from "./source-status.js?v=0.2.0";
+import { activateAnchorView, activateGeneratedWindow, activateHeightLookup, paramsFor, syncUrl, treePath, treeWindowError } from "./tree-query-state.js?v=0.2.0";
+import { anchorCameraOnTip, renderTree } from "./tree-renderer.js?v=0.2.0";
 import {
   NAV_COARSE_STRIDE,
   orphanAnchorFromBlock,
-} from "./windowing.js";
+} from "./windowing.js?v=0.2.0";
 
 
 async function fetchJson(key, path) {

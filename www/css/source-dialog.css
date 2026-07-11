@@ -77,8 +77,9 @@
   letter-spacing: 0.02em;
 }
 
-/* Catalogued (not recovered): muted + dashed to signal "no recovered data". */
-.sd-chip-rel-catalogued {
+/* Non-evidentiary sources use a dashed relationship chip. */
+.sd-chip-rel-catalogued,
+.sd-chip-rel-surveyed {
   border-style: dashed;
   opacity: 0.85;
 }

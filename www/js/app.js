@@ -1,4 +1,4 @@
-import { initApp } from "./boot.js";
+import { initApp } from "./boot.js?v=0.2.0";
 
 // The static frontend is a graph of ES modules rooted here: importing boot.js
 // pulls in every leaf module through real import edges (no globalThis bus). In a

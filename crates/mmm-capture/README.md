@@ -36,7 +36,8 @@ re-export keeps that restructuring API-compatible for the six consumer crates,
 so a split is never a breaking change. Separately, a few helpers reachable only
 from tests are gated behind `#[cfg(any(test, feature = "test-support"))]`
 (`auxpow::auxpow_blob_summary`, the `nbits_table::classify_nbits_by_time` free
-function, `source_registry::{live, historical}`): they are absent from the normal
+function, `source_registry::{live, historical, partial, surveyed, catalogued}`):
+they are absent from the normal
 build intentionally and are not part of the consumer API.
 
 | Module | Responsibility |
@@ -49,7 +50,7 @@ build intentionally and are not part of the consumer API.
 | `btc_orphan` | The offline BTC orphan classifier: maps a Core-attested-absent, PoW-valid `unknown` parent into strict/weak/excluded, or pending when the committed nBits table cannot yet decide. The Core non-membership gate lives in the read model, not here. |
 | `nbits_table` | The embedded BTC nBits-by-DAA-epoch table and its strict (BIP34-height) and weak (timestamp) contamination verdicts, used to reject non-BTC (BCH/BSV) parents offline. Horizon overruns abort the poller rather than misclassify. |
 | `core_coinbase` | Bitcoin Core full-block coinbase pool resolution, shared between the Core write paths and the enrichment command. |
-| `source_registry` | `SOURCE_REGISTRY` defines every `source` row (code/chain/kind/trust/lifecycle/display) and the `*_SOURCE_CODE` constants. Bound bidirectionally to the producers' `chains::spec` table by a conformance test; feature-gated `generate` deterministically emits the seed SQL and frontend JS. |
+| `source_registry` | `SOURCE_REGISTRY` defines every `source` row (permanent id/code/chain/kind/lifecycle) and the `*_SOURCE_CODE` constants. Bound bidirectionally to the producers' `chains::spec` table by a conformance test; feature-gated `generate` deterministically emits the seed SQL and frontend JS. |
 | `pool_snapshot_gen` | The feature-gated, pure, unit-tested generator behind `data/pools/current.json` (field map, slug remap, deterministic ordering, byte-stable JSON, churn diff). The committed `current.json` is `include_str!`-embedded and never hand-edited. |
 | `test_support` | The shared, feature-gated fixture helpers (headers, fixture loaders) reused by this crate's tests and by the producer and integration-test crates. |
 

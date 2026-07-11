@@ -50,36 +50,51 @@ number of chains that merge-mined it. From it you can:
 ## The chains
 
 <p align="center">
-  <img src="docs/img/sources.png" width="820" alt="The source rail with all three tiers expanded: live producers, recovered datasets, and catalogued chains" />
+  <img src="docs/img/sources.png" width="820" alt="The source rail grouped into live sources, recovered datasets, recovered subsets, recovered surveys, and catalogued chains" />
 </p>
 
-Evidence comes from three tiers of merge-mined chains, with Bitcoin Core supplying
-canonical context:
+The source rail groups chains by the evidence we actually hold, with Bitcoin
+Core supplying canonical context:
 
 - **Live sources** (6 producers) follow their chain tips continuously: Namecoin
   (2011), Syscoin (2016), RSK (2018), Elastos (2018), Hathor (2020), and Fractal
   Bitcoin (2024). Bitcoin Core supplies the canonical backbone and classifies
   every header.
-- **Recovered datasets** (17 chains) are historical AuxPoW records from chains with
+- **Recovered datasets** (19 chains) are historical AuxPoW records from chains with
   no live producer, ingested from recovered evidence: Argentum, Bitcoin Vault,
   Bitmark, CoiledCoin, Crown, Devcoin, Electric Cash, Emercoin, Geistgeld,
-  Groupcoin, Huntercoin, i0coin, Ixcoin, Myriadcoin, Terracoin, Unobtanium, and
-  Xaya. The recovered dataset production artefacts will be made available in the
-  public [`merge-mining-research`](https://github.com/deadmanoz/merge-mining-research)
+  Groupcoin, Huntercoin, i0coin, Ixcoin, Lyncoin, Myriadcoin, SixEleven,
+  Terracoin, Unobtanium, and Xaya. Lyncoin is complete from genesis through the
+  last SHA-256d block at height 260,499 (11 canonical Bitcoin parents);
+  SixEleven is complete through its available tip at height 999,406 (seven).
+  The recovered dataset production artefacts will be made available in the public
+  [`merge-mining-research`](https://github.com/deadmanoz/merge-mining-research)
   repository; this monitor commits the provenance manifest and derived runtime
   data it needs to import and serve them.
-- **Catalogued (not recovered)** (10 chains) are known Bitcoin-merge-mined chains
+- **Recovered subsets** contains VCash. Archived vcash.tech pages preserve 767
+  child-to-parent mappings. Bitcoin Core confirms 68 parent hashes as canonical
+  and supplies their full Bitcoin headers and coinbases. Those 68 rows are
+  usable evidence, but they are not the VCash blockchain (the other 699
+  mappings remain unresolved).
+- **Recovered surveys** contains Doichain. The complete review through height
+  430,684 found 429,401 AuxPoW commitments but no canonical or stale Bitcoin
+  block winner, so a successful recovery correctly produces zero rows.
+- **Catalogued (not recovered)** (5 chains) are known Bitcoin-merge-mined chains
   with no ingested data yet, listed for completeness: Bitcoin Stash, BLAST,
-  Doichain, Fusioncoin, Jax.Network, Jincoin, Lyncoin, Mazacoin, SixEleven, and
-  VCash.
+  Fusioncoin, Jax.Network, and Jincoin.
+
+Mazacoin is no longer in the catalogue. Its consensus source contains no AuxPoW
+implementation, so treating it as a Bitcoin merge-mined recovery target was
+incorrect.
 
 Namecoin, the first merge-mined chain, is the largest single contributor, but the
 picture is cross-chain: a single Bitcoin block is often merge-mined by many
 independent chains at once.
 
 If you can help fill the gaps, that is exactly the kind of contribution this
-monitor is built to absorb: chain data for one of the catalogued chains, or a
-better archive for a recovered one, extends the record. Get in touch on X
+monitor is built to absorb. The full VCash chain would replace a 68-row sample;
+chain data for one of the five remaining catalogue entries, or a better archive
+for an existing source, would extend the record. Get in touch on X
 ([@ozdeadman](https://x.com/ozdeadman)) or Nostr
 ([deadmanoz on Primal](https://primal.net/deadmanoz)).
 

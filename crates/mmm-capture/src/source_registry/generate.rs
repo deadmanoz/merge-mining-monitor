@@ -50,11 +50,11 @@ pub fn render_seed_sql() -> String {
     }
     out.push_str(
         "--\n\
-         -- Seeds every `source` row from the Source Lifecycle Registry in registry\n\
-         -- order, so `source.id` (GENERATED ALWAYS AS IDENTITY) is assigned 1..N in\n\
-         -- that order. This is a registry-generated BASELINE seed that replaces the\n\
-         -- previously scattered per-source seed migrations; it requires a fresh /\n\
-         -- reset database. See migrations/README.md (source-registry baseline reset).\n\
+         -- Seeds every `source` row from the Source Lifecycle Registry using its\n\
+         -- explicit permanent ids. Ids may have gaps and are never reused. This\n\
+         -- registry-generated BASELINE seed replaces the previously scattered\n\
+         -- per-source seed migrations; it requires a fresh / reset database. See\n\
+         -- migrations/README.md (source-registry baseline reset).\n\
          --\n\
          -- The fail-fast guard below raises if `source` is already populated, so an\n\
          -- accidental in-place run on an un-reset database aborts cleanly (the\n\
@@ -67,12 +67,11 @@ pub fn render_seed_sql() -> String {
     );
     out.push_str("    END IF;\nEND;\n$$;\n\n");
 
-    // Reset the identity sequence so ids are exactly 1..N even if `source` is
-    // empty but the sequence had advanced (rows inserted then deleted in a
-    // non-reset database); `source.id` order is a registry contract.
-    out.push_str("ALTER TABLE source ALTER COLUMN id RESTART WITH 1;\n\n");
-
-    out.push_str("INSERT INTO source (code, kind, chain, instance, created_at)\nVALUES\n");
+    out.push_str(
+        "INSERT INTO source (id, code, kind, chain, instance, created_at)\n\
+         OVERRIDING SYSTEM VALUE\n\
+         VALUES\n",
+    );
     let last = SOURCE_REGISTRY.len() - 1;
     for (idx, s) in SOURCE_REGISTRY.iter().enumerate() {
         let instance = match s.instance {
@@ -80,6 +79,8 @@ pub fn render_seed_sql() -> String {
             None => "NULL".to_owned(),
         };
         out.push_str("    (");
+        out.push_str(&s.id.to_string());
+        out.push_str(", ");
         out.push_str(&sql_str(s.code));
         out.push_str(", ");
         out.push_str(&sql_str(s.kind.as_str()));
@@ -90,6 +91,15 @@ pub fn render_seed_sql() -> String {
         out.push_str(", extract(epoch from now())::bigint)");
         out.push_str(if idx == last { ";\n" } else { ",\n" });
     }
+    let next_id = SOURCE_REGISTRY
+        .iter()
+        .map(|source| source.id)
+        .max()
+        .expect("SOURCE_REGISTRY is non-empty")
+        + 1;
+    out.push_str(&format!(
+        "\nALTER TABLE source ALTER COLUMN id RESTART WITH {next_id};\n"
+    ));
     out
 }
 
@@ -462,18 +472,28 @@ mod tests {
         let sql = render_seed_sql();
         assert_eq!(sql, render_seed_sql(), "generation must be deterministic");
         assert!(sql.contains("RAISE EXCEPTION"), "fail-fast guard present");
-        assert!(sql.contains("RESTART WITH 1"), "identity reset present");
+        assert!(
+            sql.contains("OVERRIDING SYSTEM VALUE"),
+            "explicit identity override present"
+        );
+        assert!(sql.contains("RESTART WITH 35"), "next identity is 35");
         assert!(sql.contains("INSERT INTO source"));
         // One VALUES row per registry entry, terminated by a single `;`.
-        assert_eq!(sql.matches("    ('").count(), SOURCE_REGISTRY.len());
-        // The INSERT is the last statement and ends the file.
+        assert_eq!(
+            sql.matches("extract(epoch from now())::bigint)").count(),
+            SOURCE_REGISTRY.len()
+        );
+        // The identity restart is the last statement and ends the file.
         assert!(
-            sql.trim_end().ends_with("::bigint);"),
-            "ends with the final row"
+            sql.trim_end().ends_with("RESTART WITH 35;"),
+            "ends with the identity restart"
         );
         // the Bitcoin live source carries its instance; auxpow rows are NULL.
-        assert!(sql.contains("'live-chaintip:bitcoin:core', 'live-chaintip', 'bitcoin', 'core'"));
-        assert!(sql.contains("'auxpow:namecoin', 'auxpow', 'namecoin', NULL"));
+        assert!(
+            sql.contains("(3, 'live-chaintip:bitcoin:core', 'live-chaintip', 'bitcoin', 'core'")
+        );
+        assert!(sql.contains("(1, 'auxpow:namecoin', 'auxpow', 'namecoin', NULL"));
+        assert!(!sql.contains("auxpow:mazacoin"));
     }
 
     #[test]
@@ -511,6 +531,12 @@ mod tests {
         // rows can be separated even though both use kind=auxpow.
         assert!(js.contains("\"auxpow:namecoin\": \"live\""));
         assert!(js.contains("\"auxpow:argentum\": \"historical\""));
+        assert!(js.contains("\"auxpow:lyncoin\": \"historical\""));
+        assert!(js.contains("\"auxpow:sixeleven\": \"historical\""));
+        assert!(js.contains("\"auxpow:vcash\": \"partial\""));
+        assert!(js.contains("\"auxpow:doichain\": \"surveyed\""));
+        assert!(!js.contains("auxpow:mazacoin"));
+        assert!(!js.contains("\"mazacoin\":"));
         // CHAIN_PROFILES carries the per-chain editorial profile, keyed by slug.
         assert!(js.contains("\"namecoin\": {"));
         assert!(js.contains("\"chain_status\":"));

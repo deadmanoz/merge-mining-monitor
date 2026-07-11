@@ -21,3 +21,14 @@ unobtanium|uno_height
 xaya|child_height
 CHAINS
 }
+
+# Recovered import sources intentionally supplied through `--csv` rather than
+# the generated stale-only manifest. Keep these lifecycle rows out of the
+# manifest-vs-registry equality check without weakening it for any other source.
+explicit_recovery_source_codes() {
+    cat <<'SOURCES'
+auxpow:lyncoin
+auxpow:sixeleven
+auxpow:vcash
+SOURCES
+}

@@ -17,6 +17,9 @@ fn api_fixture_examples_are_listed_and_parse() {
     for file in listed {
         let fixture = load_json(&dir.join(&file));
         assert_fixture_envelope(&file, &fixture);
+        if file == "sources.json" {
+            assert_sources_fixture_contract(&fixture);
+        }
     }
 }
 
@@ -75,6 +78,54 @@ fn assert_fixture_envelope(file: &str, fixture: &Value) {
     );
     if file.starts_with("error-") {
         assert!(fixture["error"].is_object(), "{file} must carry error");
+    }
+}
+
+fn assert_sources_fixture_contract(fixture: &Value) {
+    let sources = fixture["sources"]
+        .as_array()
+        .expect("sources fixture must carry a sources array");
+    for (code, mode) in [
+        ("auxpow:lyncoin", "historical"),
+        ("auxpow:sixeleven", "historical"),
+        ("auxpow:vcash", "partial"),
+        ("auxpow:doichain", "surveyed"),
+        ("auxpow:bitcoin-stash", "catalogued"),
+    ] {
+        let source = sources
+            .iter()
+            .find(|source| source["code"] == code)
+            .unwrap_or_else(|| panic!("sources fixture must include {code}"));
+        assert_eq!(source["sync"]["mode"], mode);
+        assert_eq!(source["sync"]["state"], mode);
+        for field in [
+            "progress_height",
+            "progress_updated_at",
+            "target_height",
+            "latest_evidence_at",
+            "error_code",
+            "error_height",
+        ] {
+            assert!(
+                source["sync"][field].is_null(),
+                "{code} sync.{field} must be null"
+            );
+        }
+    }
+    for (code, expected_events, expected_last_seen) in [
+        ("auxpow:vcash", 68, 1_659_809_588),
+        ("auxpow:lyncoin", 11, 1_721_667_253),
+        ("auxpow:sixeleven", 7, 1_536_793_971),
+    ] {
+        let source = sources
+            .iter()
+            .find(|source| source["code"] == code)
+            .unwrap_or_else(|| panic!("sources fixture must include recovered {code}"));
+        assert_eq!(source["counts"]["events"], expected_events);
+        assert_eq!(source["counts"]["canonical"], expected_events);
+        assert_eq!(source["counts"]["stale"], 0);
+        assert_eq!(source["status"], "stale");
+        assert_eq!(source["last_seen_at"], expected_last_seen);
     }
 }
 

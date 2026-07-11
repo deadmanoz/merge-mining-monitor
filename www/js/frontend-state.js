@@ -1,5 +1,5 @@
-import { CHAIN_COLORS, CHAIN_DISPLAY_NAMES, CHAIN_PROFILES, SOURCE_DISPLAY_ORDER, SOURCE_LIFECYCLE } from "./source-registry.generated.js";
-import { inputDateTimeToUtc, utcDateTimeToInput } from "./tree-lookup.js";
+import { CHAIN_COLORS, CHAIN_DISPLAY_NAMES, CHAIN_PROFILES, SOURCE_DISPLAY_ORDER, SOURCE_LIFECYCLE } from "./source-registry.generated.js?v=0.2.0";
+import { inputDateTimeToUtc, utcDateTimeToInput } from "./tree-lookup.js?v=0.2.0";
 
 
 const API_BASE = "/api/v1";
@@ -149,6 +149,18 @@ const SOURCE_GROUPS = [
     defaultOpen: false,
   },
   {
+    key: "partial",
+    title: "Recovered subsets",
+    meta: "Ingestible evidence recovered without the complete child blockchain.",
+    defaultOpen: false,
+  },
+  {
+    key: "surveyed",
+    title: "Recovered surveys",
+    meta: "Recovered chains reviewed with no admissible Bitcoin evidence.",
+    defaultOpen: false,
+  },
+  {
     key: "catalogued",
     title: "Catalogued (not recovered)",
     meta: "Chains known to have BTC-merge-mined but with no recovered data.",
@@ -206,9 +218,8 @@ function sourceDisplayRank(source) {
 }
 
 function sourceGroupKey(source) {
-  const lifecycle = SOURCE_LIFECYCLE[sourceCode(source)];
-  if (lifecycle === "catalogued") return "catalogued";
-  if (lifecycle === "historical") return "historical";
+  const lifecycle = SOURCE_LIFECYCLE[sourceCode(source)] || source?.lifecycle;
+  if (["historical", "partial", "surveyed", "catalogued"].includes(lifecycle)) return lifecycle;
   return "live";
 }
 
@@ -506,14 +517,15 @@ function hydrateFormFromUrl() {
     if (classification.length) state.query.classification = classification;
   }
   if (params.has("sources")) {
-    // Catalogued sources are not selectable filters (no evidence; rendered
-    // disabled), so drop them from a deep link rather than pinning a checked,
-    // un-clearable source into the query.
+    // Catalogued and surveyed sources are not selectable filters, so drop them
+    // from deep links rather than pinning a checked, un-clearable source. Codes
+    // absent from the public lifecycle map are unsupported and also dropped.
     state.query.sources = params
       .get("sources")
       .split(",")
       .filter(Boolean)
-      .filter((code) => SOURCE_LIFECYCLE[code] !== "catalogued")
+      .filter((code) => SOURCE_LIFECYCLE[code])
+      .filter((code) => !["catalogued", "surveyed"].includes(SOURCE_LIFECYCLE[code]))
       .sort();
   }
   if (params.has("unheighted_anchor")) {

@@ -16,13 +16,15 @@ use tower::ServiceExt; // for `oneshot`
 
 const SOURCE_FILTERED_ROUTES: [&str; 1] = ["/api/v1/tree"];
 
-const FRONTEND_CSS_FILES: [&str; 10] = [
+const FRONTEND_CSS_FILES: [&str; 12] = [
     "www/css/tokens.css",
     "www/css/shell.css",
     "www/css/dialogs.css",
     "www/css/about-version.css",
+    "www/css/source-dialog.css",
     "www/css/layout.css",
     "www/css/controls.css",
+    "www/css/source-status.css",
     "www/css/tree-frame.css",
     "www/css/drawer.css",
     "www/css/tree-svg.css",
@@ -100,11 +102,7 @@ fn assert_frontend_stylesheet_order(html: &str) {
         let href = file
             .strip_prefix("www")
             .expect("frontend css path is under www");
-        let expected_href = if href == "/css/about-version.css" {
-            "/css/about-version.css?v=20260702-footer-links"
-        } else {
-            href
-        };
+        let expected_href = format!("{href}?v={}", env!("CARGO_PKG_VERSION"));
         let needle = format!(r#"<link rel="stylesheet" href="{expected_href}" />"#);
         let index = html.find(&needle).unwrap_or_else(|| {
             panic!("expected stylesheet link {needle:?} in HTML");
@@ -264,8 +262,35 @@ async fn static_index_is_served() {
     assert!(html.contains(r#"id="about-release-notes""#));
     assert!(html.contains(r#"name="treeHeight""#));
     assert!(html.contains(r#"name="treeTime""#));
-    assert!(html.contains("/js/app.js"));
+    let app_src = format!("/js/app.js?v={}", env!("CARGO_PKG_VERSION"));
+    assert!(html.contains(&app_src));
     assert!(html.contains("/vendor/d3.v7.min.js"));
+}
+
+#[test]
+fn frontend_module_imports_pin_the_release_version() {
+    let js_dir = test_www_dir().join("js");
+    let expected_suffix = format!(".js?v={}\";", env!("CARGO_PKG_VERSION"));
+
+    for entry in std::fs::read_dir(js_dir).expect("read frontend module directory") {
+        let path = entry.expect("read frontend module entry").path();
+        if path.extension().and_then(|value| value.to_str()) != Some("js") {
+            continue;
+        }
+
+        let source = std::fs::read_to_string(&path).expect("read frontend module");
+        for (index, line) in source.lines().enumerate() {
+            if line.contains("from \"./") || line.trim_start().starts_with("import \"./") {
+                assert!(
+                    line.ends_with(&expected_suffix),
+                    "{}:{} local import is not pinned to release {}: {line}",
+                    path.display(),
+                    index + 1,
+                    env!("CARGO_PKG_VERSION"),
+                );
+            }
+        }
+    }
 }
 
 #[tokio::test]

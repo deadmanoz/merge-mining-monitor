@@ -39,10 +39,13 @@ model would hide real differences in child-chain target validation, pool
 attribution, uncle context, opaque proof bytes, and partial merge-mined
 coverage.
 
-The same contract extends beyond the live producers. Recovered historical
-datasets from dead or dormant merge-mined chains enter the same evidence path,
-and merge-mined chains whose data has not been recovered are catalogued so the
-census of AuxPoW chains stays visible.
+The same contract extends beyond the live producers. The lifecycle describes
+the evidence held by the monitor, not merely whether a chain once merge-mined
+Bitcoin. Lyncoin's complete pre-Flex era and SixEleven's complete available
+chain are recovered datasets; VCash is a 68-row explorer sample (not a chain
+recovery); Doichain is a completed survey whose 429,401 AuxPoW commitments
+produced no Bitcoin block winner. Chains for which no data has been recovered
+remain catalogued so the gaps are visible without overstating coverage.
 
 ## Why API Contracts Over CSV Semantics
 

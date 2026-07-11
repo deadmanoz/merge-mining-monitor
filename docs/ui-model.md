@@ -150,8 +150,8 @@ Source (live section):
 - Hathor
 - Elastos
 
-Recovered-dataset and catalogued chains join the rail in their own collapsible
-sections, described below.
+Recovered datasets, recovered subsets, recovered surveys, and catalogued chains
+join the rail in their own collapsible sections, described below.
 
 The Source rail displays chain-level names, not raw source codes. Bitcoin is
 listed first because it supplies the parent-chain classification context that
@@ -163,17 +163,23 @@ source-specific caveats, such as RSK uncle evidence and Fractal Bitcoin's
 partial merge-mined coverage, authored in `data/sources/chain_profiles.json`.
 
 The rail separates source rows into **Live sources**, **Recovered datasets**,
-and **Catalogued (not recovered)** using the Source Lifecycle Registry metadata.
-Live sources include active producers plus Bitcoin Core classification context;
-recovered datasets are recovered AuxPoW dataset sources from chains with no live
-producer; catalogued (not recovered) sources are merge-mined chains with no
-recovered data, rendered greyed with a disabled checkbox (nothing to filter on)
-but an active info button that opens the source modal. Source sections are
-collapsible; the recovered and catalogued sections are collapsed by default, and
-a collapsed section summary shows when it contains active source selections.
+**Recovered subsets**, **Recovered surveys**, and **Catalogued (not recovered)**
+using the Source Lifecycle Registry metadata.
+Live sources include active producers plus Bitcoin Core classification context.
+Recovered datasets have complete in-scope coverage without a live producer:
+Lyncoin covers every Bitcoin-era height through 260,499 (the later Flex era has
+no Bitcoin parent), while SixEleven covers all 999,407 blocks through its
+available tip. Recovered subsets have filterable rows but incomplete child-chain
+coverage, as with VCash's 68 archived explorer mappings. Recovered surveys are
+completed recoveries with nothing to filter, as with Doichain's zero Bitcoin
+block winners. Catalogued sources have not been recovered at all.
+
+Surveyed and catalogued rows are disabled but retain an active info button.
+Source sections are collapsible and non-live sections default closed; a
+collapsed section summary shows when it contains active source selections.
 The topbar source-status bead and popover summarize only operational live
-sources (`live` and `bitcoin-core-backbone` sync modes); recovered and catalogued
-sources do not carry aliveness status there.
+sources (`live` and `bitcoin-core-backbone` sync modes); non-live lifecycle
+classes do not carry aliveness status there.
 
 The topbar source-status popover separates capture progress from evidence
 freshness. Status pills show the sync state only (`Live`, `Catching up`,

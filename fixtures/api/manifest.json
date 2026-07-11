@@ -59,12 +59,12 @@
     {
       "file": "sources.json",
       "endpoint_family": "/api/v1/sources",
-      "scenario": "Source registry with evidence freshness, operational progress, per-source counts including strict/weak BTC-orphan sub-counts, Namecoin, RSK, Syscoin, Fractal, Hathor, Elastos, Bitcoin Core backbone status, and a catalogued (not recovered) source with null progress"
+      "scenario": "Source registry with evidence freshness, operational progress, per-source counts including strict/weak BTC-orphan sub-counts, live and historical sources including recovered Lyncoin and SixEleven, a partial VCash subset, a surveyed Doichain recovery, and a catalogued Bitcoin Stash source"
     },
     {
       "file": "version.json",
       "endpoint_family": "/api/v1/version",
-      "scenario": "Runtime application SemVer v0.1.0 plus the complete RELEASE_NOTES.md release-note projection for the About dialog"
+      "scenario": "Runtime application SemVer v0.2.0 plus the complete RELEASE_NOTES.md release-note projection for the About dialog"
     },
     {
       "file": "error-backbone-conflict.json",
