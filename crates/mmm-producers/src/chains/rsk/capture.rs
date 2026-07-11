@@ -648,13 +648,9 @@ pub fn prepare_rsk_capture(
 /// `None` (bad hex or wrong length) maps to a malformed skip at the call site,
 /// guarding the fixed-width hash (32) and miner (20) columns.
 fn validated_byte_length(raw_hex: &str, expected_len: usize) -> Option<Vec<u8>> {
-    decode_hex_bytes(raw_hex).ok().and_then(|bytes| {
-        if bytes.len() == expected_len {
-            Some(bytes)
-        } else {
-            None
-        }
-    })
+    decode_hex_bytes(raw_hex)
+        .ok()
+        .filter(|bytes| bytes.len() == expected_len)
 }
 
 /// Decode an optional `0x`-prefixed hex string into bytes, propagating decode
