@@ -12,10 +12,16 @@ use time::Month;
 use tokio_postgres::Client;
 
 use crate::support::seed::{
-    EventSeed, day_epoch, hash_bytes, insert_block, insert_event, insert_orphan,
+    EventSeed, day_epoch, hash_bytes, insert_attestation_proof, insert_block, insert_event,
+    insert_orphan,
 };
 
 use crate::helpers::format_projection_error;
+
+const ADD_ELCASH_MIGRATION: &str =
+    include_str!("../../../../migrations/0003_add_elcash_source.sql");
+const REMOVE_MAZACOIN_MIGRATION: &str =
+    include_str!("../../../../migrations/0004_remove_mazacoin_source.sql");
 
 #[tokio::test]
 async fn sources_counts_events_without_classifier_observation_counts() -> Result<()> {
@@ -253,6 +259,40 @@ fn assert_source_sync(
     assert_eq!(source.sync.target_height, target_height);
 }
 
+fn assert_empty_registry_lifecycle(
+    payload: &SourcesPayload,
+    lifecycle: SourceLifecycle,
+    mode: &str,
+) {
+    let code = SOURCE_REGISTRY
+        .iter()
+        .find(|definition| definition.lifecycle == lifecycle)
+        .expect("lifecycle source in registry")
+        .code;
+    let source = source_row(payload, code);
+    assert_source_sync(source, mode, mode, None, None, None);
+    assert_eq!(source.sync.latest_evidence_at, None);
+    assert_eq!(source.sync.error_code, None);
+    assert_eq!(source.sync.error_height, None);
+}
+
+fn assert_registry_projection(payload: &SourcesPayload) {
+    let projected: BTreeSet<&str> = payload.sources.iter().map(|s| s.code.as_str()).collect();
+    let registry: BTreeSet<&str> = SOURCE_REGISTRY.iter().map(|source| source.code).collect();
+    assert_eq!(
+        projected, registry,
+        "/sources codes must equal the registry"
+    );
+    for (lifecycle, mode) in [
+        (SourceLifecycle::Historical, "historical"),
+        (SourceLifecycle::Partial, "partial"),
+        (SourceLifecycle::Surveyed, "surveyed"),
+        (SourceLifecycle::Catalogued, "catalogued"),
+    ] {
+        assert_empty_registry_lifecycle(payload, lifecycle, mode);
+    }
+}
+
 async fn insert_bitcoin_core_sync_state(
     client: &Client,
     source_id: i64,
@@ -310,7 +350,7 @@ async fn insert_poll_cursor(
 }
 
 /// The seeded `source` table EXACTLY equals the Source Lifecycle Registry,
-/// including the preserved id order (id = registry index + 1). This is the
+/// including each explicit permanent id and any retired gaps. This is the
 /// seed<->registry drift guard for all registered sources: it catches a typo, omission,
 /// or extra row in the generated `0002_seed_sources.sql` relative to the Rust
 /// `SOURCE_REGISTRY`, in either direction.
@@ -328,9 +368,9 @@ async fn source_table_matches_registry() -> Result<()> {
             SOURCE_REGISTRY.len(),
             "source row count vs registry"
         );
-        for (idx, (def, row)) in SOURCE_REGISTRY.iter().zip(rows.iter()).enumerate() {
+        for (def, row) in SOURCE_REGISTRY.iter().zip(rows.iter()) {
             let id: i64 = row.get(0);
-            assert_eq!(id, idx as i64 + 1, "{} id order", def.code);
+            assert_eq!(id, def.id, "{} explicit id", def.code);
             assert_eq!(row.get::<_, String>(1), def.code, "{} code", def.code);
             assert_eq!(
                 row.get::<_, String>(2),
@@ -357,59 +397,240 @@ async fn source_table_matches_registry() -> Result<()> {
             "/sources must fail closed before the first source_health rebuild"
         );
 
-        // Every registry code projects through /sources (after the required rebuild;
-        // /sources fails closed until source_health_ready).
         rebuild_source_health(&mut client).await?;
         let payload = projection::sources(&client, 1_800_000_000)
             .await
             .map_err(format_projection_error)?;
-        let projected: BTreeSet<&str> = payload.sources.iter().map(|s| s.code.as_str()).collect();
-        let registry: BTreeSet<&str> = SOURCE_REGISTRY.iter().map(|s| s.code).collect();
-        assert_eq!(
-            projected, registry,
-            "/sources codes must equal the registry"
-        );
-        let historical_code = SOURCE_REGISTRY
-            .iter()
-            .find(|def| def.lifecycle == SourceLifecycle::Historical)
-            .expect("historical source in registry")
-            .code;
-        let historical = payload
-            .sources
-            .iter()
-            .find(|source| source.code == historical_code)
-            .expect("historical source projects through /sources");
-        assert_eq!(historical.sync.mode, "historical");
-        assert_eq!(historical.sync.state, "historical");
-        assert_eq!(historical.sync.progress_height, None);
-        assert_eq!(historical.sync.progress_updated_at, None);
-        assert_eq!(historical.sync.target_height, None);
-        assert_eq!(historical.sync.latest_evidence_at, None);
-        assert_eq!(historical.sync.error_code, None);
-        assert_eq!(historical.sync.error_height, None);
-
-        // Catalogued sources mirror historical: no producer, no evidence, so they
-        // project with the catalogued sync mode/state and null progress fields.
-        let catalogued_code = SOURCE_REGISTRY
-            .iter()
-            .find(|def| def.lifecycle == SourceLifecycle::Catalogued)
-            .expect("catalogued source in registry")
-            .code;
-        let catalogued = payload
-            .sources
-            .iter()
-            .find(|source| source.code == catalogued_code)
-            .expect("catalogued source projects through /sources");
-        assert_eq!(catalogued.sync.mode, "catalogued");
-        assert_eq!(catalogued.sync.state, "catalogued");
-        assert_eq!(catalogued.sync.progress_height, None);
-        assert_eq!(catalogued.sync.progress_updated_at, None);
-        assert_eq!(catalogued.sync.target_height, None);
-        assert_eq!(catalogued.sync.latest_evidence_at, None);
-        assert_eq!(catalogued.sync.error_code, None);
-        assert_eq!(catalogued.sync.error_height, None);
+        assert_registry_projection(&payload);
 
         Ok(())
+    })
+}
+
+async fn insert_legacy_mazacoin_source(client: &Client) -> Result<()> {
+    client
+        .execute(
+            "INSERT INTO source (id, code, kind, chain, instance, created_at) \
+             OVERRIDING SYSTEM VALUE \
+             VALUES (32, 'auxpow:mazacoin', 'auxpow', 'mazacoin', NULL, 1)",
+            &[],
+        )
+        .await?;
+    Ok(())
+}
+
+async fn insert_legacy_mazacoin_state(client: &Client) -> Result<()> {
+    client
+        .batch_execute(
+            "INSERT INTO source_health (source_id) VALUES (32); \
+             INSERT INTO poll_cursor (source_id, cursor_height) VALUES (32, 7); \
+             INSERT INTO poll_pending_reconcile (source_id, height, kind) \
+                 VALUES (32, 8, 'reconcile'); \
+             INSERT INTO bitcoin_core_sync_state ( \
+                 source_id, sync_mode, created_at, updated_at \
+             ) VALUES (32, 'contiguous', 1, 1);",
+        )
+        .await?;
+    Ok(())
+}
+
+fn assert_migration_error(error: &tokio_postgres::Error, expected: &str) {
+    let message = error
+        .as_db_error()
+        .map(|error| error.message())
+        .unwrap_or_default();
+    assert!(
+        message.contains(expected),
+        "expected migration error containing {expected:?}, got {message:?}"
+    );
+}
+
+async fn assert_legacy_mazacoin_source_and_health_preserved(client: &Client) -> Result<()> {
+    let row = client
+        .query_one(
+            "SELECT \
+               (SELECT count(*) FROM source WHERE id = 32), \
+               (SELECT count(*) FROM source_health WHERE source_id = 32)",
+            &[],
+        )
+        .await?;
+    assert_eq!(row.get::<_, i64>(0), 1);
+    assert_eq!(row.get::<_, i64>(1), 1, "guard must run before cleanup");
+    Ok(())
+}
+
+#[tokio::test]
+async fn elcash_forward_migration_assigns_permanent_id_on_legacy_sequence() -> Result<()> {
+    crate::run_db_test!(client, {
+        client
+            .batch_execute(
+                "DELETE FROM source WHERE code = 'auxpow:elcash'; \
+                 ALTER TABLE source ALTER COLUMN id RESTART WITH 34;",
+            )
+            .await?;
+
+        client.batch_execute(ADD_ELCASH_MIGRATION).await?;
+        client.batch_execute(ADD_ELCASH_MIGRATION).await?;
+        let row = client
+            .query_one(
+                "SELECT id, count(*) OVER () FROM source WHERE code = 'auxpow:elcash'",
+                &[],
+            )
+            .await?;
+        assert_eq!(row.get::<_, i64>(0), 34);
+        assert_eq!(row.get::<_, i64>(1), 1, "0003 must remain idempotent");
+
+        client.batch_execute(REMOVE_MAZACOIN_MIGRATION).await?;
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn mazacoin_removal_migration_rejects_wrong_elcash_identity_before_cleanup() -> Result<()> {
+    crate::run_db_test!(client, {
+        client
+            .batch_execute(
+                "DELETE FROM source WHERE code = 'auxpow:elcash'; \
+                 ALTER TABLE source ALTER COLUMN id RESTART WITH 35;",
+            )
+            .await?;
+        client.batch_execute(ADD_ELCASH_MIGRATION).await?;
+        let wrong_id: i64 = client
+            .query_one("SELECT id FROM source WHERE code = 'auxpow:elcash'", &[])
+            .await?
+            .get(0);
+        assert_eq!(wrong_id, 35, "test setup must exercise the bad 0003 path");
+
+        insert_legacy_mazacoin_source(&client).await?;
+        insert_legacy_mazacoin_state(&client).await?;
+        let error = client
+            .batch_execute(REMOVE_MAZACOIN_MIGRATION)
+            .await
+            .expect_err("wrong Elcash identity must block migration");
+        assert_migration_error(&error, "expected auxpow:elcash at id 34");
+        assert_legacy_mazacoin_source_and_health_preserved(&client).await?;
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn mazacoin_removal_migration_cleans_state_preserves_ids_and_is_idempotent() -> Result<()> {
+    crate::run_db_test!(client, {
+        insert_legacy_mazacoin_source(&client).await?;
+        insert_legacy_mazacoin_state(&client).await?;
+
+        client.batch_execute(REMOVE_MAZACOIN_MIGRATION).await?;
+        client.batch_execute(REMOVE_MAZACOIN_MIGRATION).await?;
+
+        let row = client
+            .query_one(
+                "SELECT \
+                   (SELECT count(*) FROM source WHERE id = 32), \
+                   (SELECT count(*) FROM source_health WHERE source_id = 32), \
+                   (SELECT count(*) FROM poll_cursor WHERE source_id = 32), \
+                   (SELECT count(*) FROM poll_pending_reconcile WHERE source_id = 32), \
+                   (SELECT count(*) FROM bitcoin_core_sync_state WHERE source_id = 32)",
+                &[],
+            )
+            .await?;
+        for column in 0..5 {
+            assert_eq!(row.get::<_, i64>(column), 0, "cleanup column {column}");
+        }
+
+        let rows = client
+            .query(
+                "SELECT id, code FROM source WHERE id IN (33, 34) ORDER BY id",
+                &[],
+            )
+            .await?;
+        let preserved: Vec<(i64, String)> =
+            rows.iter().map(|row| (row.get(0), row.get(1))).collect();
+        assert_eq!(
+            preserved,
+            vec![
+                (33, "auxpow:bitcoin-stash".to_owned()),
+                (34, "auxpow:elcash".to_owned()),
+            ]
+        );
+
+        let next_id: i64 = client
+            .query_one(
+                "INSERT INTO source (code, kind, chain, instance, created_at) \
+                 VALUES ('auxpow:identity-probe', 'auxpow', 'identity-probe', NULL, 1) \
+                 RETURNING id",
+                &[],
+            )
+            .await?
+            .get(0);
+        assert_eq!(next_id, 35, "fresh-seed identity must resume after max id");
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn mazacoin_removal_migration_refuses_event_evidence_before_cleanup() -> Result<()> {
+    crate::run_db_test!(client, {
+        insert_legacy_mazacoin_source(&client).await?;
+        insert_legacy_mazacoin_state(&client).await?;
+        insert_event(
+            &client,
+            EventSeed {
+                source_id: 32,
+                child_height: 1,
+                child_hash: hash_bytes(0x3201),
+                parent_hash: hash_bytes(0x3202),
+                prev_hash: hash_bytes(0x3203),
+                parent_time: 1,
+                kind: "near",
+                pow_validates_btc_target: false,
+                btc_height: None,
+                pool_id: None,
+            },
+        )
+        .await?;
+
+        let error = client
+            .batch_execute(REMOVE_MAZACOIN_MIGRATION)
+            .await
+            .expect_err("event evidence must block source retirement");
+        assert_migration_error(&error, "merge_mining_event evidence exists");
+        assert_legacy_mazacoin_source_and_health_preserved(&client).await?;
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn mazacoin_removal_migration_refuses_attestation_evidence_before_cleanup() -> Result<()> {
+    crate::run_db_test!(client, {
+        insert_legacy_mazacoin_source(&client).await?;
+        client
+            .execute("INSERT INTO source_health (source_id) VALUES (32)", &[])
+            .await?;
+        let hash = hash_bytes(0x3211);
+        insert_block(
+            &client,
+            &hash,
+            &hash_bytes(0x3210),
+            Some(1),
+            "canonical",
+            1,
+            None,
+        )
+        .await?;
+        insert_attestation_proof(&client, &hash, 32, &[1], 1).await?;
+
+        let error = client
+            .batch_execute(REMOVE_MAZACOIN_MIGRATION)
+            .await
+            .expect_err("attestation evidence must block source retirement");
+        assert_migration_error(&error, "attestation_proof evidence exists");
+        assert_legacy_mazacoin_source_and_health_preserved(&client).await?;
+
+        Ok::<_, anyhow::Error>(())
     })
 }
 

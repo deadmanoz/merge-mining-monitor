@@ -77,10 +77,11 @@ pub(super) fn sync_for_source_code(
 }
 
 /// Pure classification of a source's `sync` status from its registry
-/// lifecycle+kind and decoded cursor/backbone progress. Historical -> empty
-/// historical; catalogued -> empty catalogued; live-chaintip -> backbone path; live auxpow -> cursor path
-/// (catching_up when below target, stale past CAPTURE_PROGRESS_STALE_THRESHOLD_SECS);
-/// everything else -> unknown. No I/O, so the inline tests pin every branch.
+/// lifecycle+kind and decoded cursor/backbone progress. Non-live lifecycle
+/// classes return their corresponding empty state; live-chaintip uses the
+/// backbone path; live AuxPoW uses the cursor path (catching_up when below
+/// target, stale past CAPTURE_PROGRESS_STALE_THRESHOLD_SECS). Everything else
+/// is unknown. No I/O, so the inline tests pin every branch.
 fn classify_source_sync(
     lifecycle: SourceLifecycle,
     kind: SourceKind,
@@ -90,6 +91,12 @@ fn classify_source_sync(
 ) -> SourceSyncStatus {
     if lifecycle == SourceLifecycle::Historical {
         return SourceSyncStatus::empty("historical", "historical");
+    }
+    if lifecycle == SourceLifecycle::Partial {
+        return SourceSyncStatus::empty("partial", "partial");
+    }
+    if lifecycle == SourceLifecycle::Surveyed {
+        return SourceSyncStatus::empty("surveyed", "surveyed");
     }
     if lifecycle == SourceLifecycle::Catalogued {
         // Catalogued chains have no producer and no recovered evidence, so they
@@ -503,6 +510,19 @@ mod tests {
             ),
             SourceSyncStatus::empty("catalogued", "catalogued")
         );
+    }
+
+    #[test]
+    fn classify_partial_and_surveyed_sources_null_progress_fields() {
+        for (lifecycle, mode) in [
+            (SourceLifecycle::Partial, "partial"),
+            (SourceLifecycle::Surveyed, "surveyed"),
+        ] {
+            assert_eq!(
+                classify_source_sync(lifecycle, SourceKind::Auxpow, Some(FRESH_CURSOR), None, NOW,),
+                SourceSyncStatus::empty(mode, mode)
+            );
+        }
     }
 
     #[test]

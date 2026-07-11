@@ -213,15 +213,16 @@ function renderInfoDialogs() {
 
 function renderSourceControlRows(entries) {
   return entries.map((source) => {
-    // Catalogued sources have no evidence to filter on, so their checkbox is
-    // disabled + the row greyed; the info button still opens the source modal.
-    const catalogued = sourceGroupKey(source) === "catalogued";
+    // Catalogued and surveyed sources have no evidence to filter on, so their
+    // checkbox is disabled and row greyed; the info button remains active.
+    const groupKey = sourceGroupKey(source);
+    const disabled = groupKey === "catalogued" || groupKey === "surveyed";
     const checked = state.query.sources.includes(source.code) ? "checked" : "";
     const name = sourceDisplayName(source);
     const status = typeof renderSourceRailStatus === "function" ? renderSourceRailStatus(source) : "";
-    return `<div class="source-option${catalogued ? " source-option-catalogued" : ""}">
+    return `<div class="source-option${disabled ? " source-option-disabled" : ""}">
     <label class="source-choice">
-      <input type="checkbox" name="source" value="${esc(source.code)}" ${checked}${catalogued ? " disabled" : ""} />
+      <input type="checkbox" name="source" value="${esc(source.code)}" ${checked}${disabled ? " disabled" : ""} />
       <span class="source-copy">
         <span class="source-name"><span class="source-name-text">${esc(name)}</span>${status}</span>
         <span class="source-meta">${esc(sourceMeta(source))}</span>
@@ -333,13 +334,15 @@ function renderKindDialog(kind) {
   ].join("");
 }
 
-// The "About sources" explainer: the four source classes + the reminder that a
+// The "About sources" explainer: source classes plus the reminder that a
 // chain's own status (active/zombie/dormant/dead) is separate from its source class.
 function renderSourcesAboutDialog() {
   const classes = kvRows([
     ["Bitcoin Core parent chain", "The live Bitcoin Core node that classifies every recovered parent header. It is the classification authority, not a merge-mined producer."],
     ["Live AuxPoW producer", "A merge-mined chain this monitor polls continuously for new Bitcoin parent-header evidence."],
     ["Recovered dataset", "A historical merge-mined chain whose Bitcoin evidence has been recovered and ingested."],
+    ["Recovered subset", "Filterable Bitcoin evidence recovered without the complete child chain. Coverage is limited to the rows described by the source."],
+    ["Recovered survey", "The child chain was recovered and checked, but no canonical or stale Bitcoin block winner was found. There are no rows to filter."],
     ["Catalogued (not recovered)", "A chain known to have Bitcoin-merge-mined, but with no recovered chain data in this monitor. Listed for completeness and greyed in the rail, since there is nothing to filter on yet."],
   ]);
   return [

@@ -676,6 +676,122 @@
       "chain": "vcash",
       "instance": null,
       "created_at": 1770000000,
+      "last_seen_at": 1659809588,
+      "status": "stale",
+      "counts": {
+        "events": 68,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 68,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "partial",
+        "state": "partial",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 25,
+      "code": "auxpow:lyncoin",
+      "kind": "auxpow",
+      "chain": "lyncoin",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": 1721667253,
+      "status": "stale",
+      "counts": {
+        "events": 11,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 11,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 27,
+      "code": "auxpow:sixeleven",
+      "kind": "auxpow",
+      "chain": "sixeleven",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": 1536793971,
+      "status": "stale",
+      "counts": {
+        "events": 7,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 7,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "historical",
+        "state": "historical",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 29,
+      "code": "auxpow:doichain",
+      "kind": "auxpow",
+      "chain": "doichain",
+      "instance": null,
+      "created_at": 1770000000,
+      "last_seen_at": null,
+      "status": "not_started",
+      "counts": {
+        "events": 0,
+        "near": 0,
+        "unknown": 0,
+        "canonical": 0,
+        "stale": 0,
+        "strict_orphan": 0,
+        "weak_orphan": 0
+      },
+      "sync": {
+        "mode": "surveyed",
+        "state": "surveyed",
+        "progress_height": null,
+        "progress_updated_at": null,
+        "target_height": null,
+        "latest_evidence_at": null,
+        "error_code": null,
+        "error_height": null
+      }
+    },
+    {
+      "id": 33,
+      "code": "auxpow:bitcoin-stash",
+      "kind": "auxpow",
+      "chain": "bitcoin-stash",
+      "instance": null,
+      "created_at": 1770000000,
       "last_seen_at": null,
       "status": "not_started",
       "counts": {

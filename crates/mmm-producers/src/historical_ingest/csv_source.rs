@@ -1,4 +1,4 @@
-//! Pure CSV-row to `ImportCandidate` parsing for the historical importer.
+//! Pure CSV-row to `ImportCandidate` parsing for the recovered-evidence importer.
 //!
 //! No DB or RPC: this layer decodes one recovered-evidence row into a standard
 //! `NormalizedEventEvidence` (the same format live producers emit), rejecting bad
@@ -175,31 +175,45 @@ fn read_relevance_filter<R: Read>(reader: R, chain: &str) -> Result<RelevanceFil
 ///
 /// Computed once per file so per-row parsing is positional. Required columns
 /// (`header_hex`, `classification`, a height column) error at construction;
-/// optional ones are `None` and silently absent. Height accepts the chain's
-/// `height_column` or a normalized `child_height`; the cross-check column accepts
-/// either `btc_header_hash` or `btc_hash`.
+/// optional ones are `None` and silently absent. The explicit VCash, Lyncoin,
+/// and SixEleven artifacts require child hash and time columns. Height accepts
+/// the chain's `height_column` or a normalized `child_height`; the cross-check
+/// column accepts either `btc_header_hash` or `btc_hash`.
 pub(super) struct CsvLayout {
     height: usize,
     child_hash: Option<usize>,
+    child_time: Option<usize>,
     header_hex: usize,
     coinbase_script: Option<usize>,
     classification: usize,
     hash_cross_check: Option<usize>,
+    requires_exact_child_fields: bool,
 }
 
 impl CsvLayout {
     /// Resolve column indices against `headers`, applying the chain-specific and
     /// fallback column-name rules. Errors if a required column is missing.
     pub(super) fn new(headers: &csv::StringRecord, spec: &HistoricalChainSpec) -> Result<Self> {
+        let requires_exact_child_fields = spec.requires_exact_child_fields();
         Ok(Self {
             height: required_header(headers, spec.height_column)
                 .or_else(|_| required_header(headers, "child_height"))?,
-            child_hash: optional_header(headers, "child_block_hash"),
+            child_hash: if requires_exact_child_fields {
+                Some(required_header(headers, "child_block_hash")?)
+            } else {
+                optional_header(headers, "child_block_hash")
+            },
+            child_time: if requires_exact_child_fields {
+                Some(required_header(headers, "child_block_time")?)
+            } else {
+                optional_header(headers, "child_block_time")
+            },
             header_hex: required_header(headers, "btc_header_hex")?,
             coinbase_script: optional_header(headers, "coinbase_scriptsig_hex"),
             classification: required_header(headers, "classification")?,
             hash_cross_check: optional_header(headers, "btc_header_hash")
                 .or_else(|| optional_header(headers, "btc_hash")),
+            requires_exact_child_fields,
         })
     }
 }
@@ -210,9 +224,9 @@ impl CsvLayout {
 /// Validation order matters: parse height and classification, deserialize the
 /// 80-byte parent header, cross-check the stated hash against the derived one,
 /// reject headers whose PoW does not meet their own target, then run the
-/// orphan-relevance gate. The child hash falls back to a deterministic
-/// `synthetic_child_hash` when the dataset omits it, so re-imports stay
-/// idempotent on the same `(source, child_height)`.
+/// orphan-relevance gate. Legacy child hashes fall back to a deterministic
+/// `synthetic_child_hash` when omitted, so re-imports stay idempotent on the
+/// same `(source, child_height)`. Explicit recovery sources reject that fallback.
 pub(super) fn candidate_from_record(
     spec: &HistoricalChainSpec,
     layout: &CsvLayout,
@@ -238,13 +252,21 @@ pub(super) fn candidate_from_record(
         relevance_selection,
         relevance,
     )?;
+    let parsed_child_hash =
+        parse_optional_hash_field(layout.child_hash.and_then(|index| record.get(index)))?;
+    let child_block_hash = match parsed_child_hash {
+        Some(hash) => hash,
+        None if layout.requires_exact_child_fields => return Err(SkipReason::EmptyField),
+        None => synthetic_child_hash(spec.chain, child_height),
+    };
     let evidence = NormalizedEventEvidence {
         child_height,
-        child_block_hash: parse_optional_hash_field(
-            layout.child_hash.and_then(|index| record.get(index)),
-        )?
-        .unwrap_or_else(|| synthetic_child_hash(spec.chain, child_height)),
-        child_block_time: header.time as i64,
+        child_block_hash,
+        child_block_time: parse_child_time(
+            layout.child_time.and_then(|index| record.get(index)),
+            header.time as i64,
+            layout.requires_exact_child_fields,
+        )?,
         btc_parent_header: header,
         pow_validates_child_target: None,
         btc_parent_coinbase_txid: None,
@@ -351,7 +373,34 @@ fn optional_header(headers: &csv::StringRecord, name: &str) -> Option<usize> {
 /// Parse the child height; empty is `EmptyField`, non-integer is `Malformed`.
 fn parse_child_height(value: Option<&str>) -> Result<i32, SkipReason> {
     let value = non_empty(value)?;
-    value.parse().map_err(|_| SkipReason::Malformed)
+    let height = value.parse().map_err(|_| SkipReason::Malformed)?;
+    if height < 0 {
+        return Err(SkipReason::Malformed);
+    }
+    Ok(height)
+}
+
+/// Parse a normalized child timestamp. Explicit recovery artifacts require an
+/// unsigned 32-bit wire timestamp; legacy datasets retain the parent-time
+/// fallback and accept their existing non-negative i64 range.
+fn parse_child_time(
+    value: Option<&str>,
+    fallback: i64,
+    requires_exact: bool,
+) -> Result<i64, SkipReason> {
+    let value = value.map(str::trim).unwrap_or_default();
+    if value.is_empty() {
+        return if requires_exact {
+            Err(SkipReason::EmptyField)
+        } else {
+            Ok(fallback)
+        };
+    }
+    let timestamp = value.parse::<i64>().map_err(|_| SkipReason::Malformed)?;
+    if timestamp < 0 || (requires_exact && timestamp > i64::from(u32::MAX)) {
+        return Err(SkipReason::Malformed);
+    }
+    Ok(timestamp)
 }
 
 /// Map the dataset's `classification` label to a `SourceClassification`. `stale`
@@ -484,6 +533,7 @@ mod tests {
             first.evidence.child_block_hash,
             second.evidence.child_block_hash
         );
+        assert_eq!(first.evidence.child_block_time, 1_231_006_505);
         assert!(first.evidence.btc_parent_coinbase_outputs.is_none());
     }
 
@@ -601,11 +651,168 @@ ixcoin,orphan,btc_stale_excluded,known_direct_stale_hash,ee\n";
     }
 
     #[test]
+    fn vcash_normalized_row_preserves_child_timestamp() {
+        let spec = historical_chain_spec("vcash").unwrap();
+        let child_hash = "11".repeat(32);
+        let input = format!(
+            "child_height,child_block_hash,child_block_time,btc_header_hex,classification,btc_header_hash\n\
+             100,{child_hash},1609556645,{GENESIS_HEADER},canonical,{GENESIS_HASH}\n"
+        );
+        let mut reader = csv::Reader::from_reader(input.as_bytes());
+        let layout = CsvLayout::new(reader.headers().unwrap(), spec).unwrap();
+        let record = reader.records().next().unwrap().unwrap();
+
+        let candidate =
+            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap();
+
+        assert_eq!(candidate.evidence.child_height, 100);
+        assert_eq!(candidate.evidence.child_block_hash, vec![0x11; 32]);
+        assert_eq!(candidate.evidence.child_block_time, 1_609_556_645);
+        assert_ne!(candidate.evidence.child_block_time, 1_231_006_505);
+    }
+
+    #[test]
+    fn lyncoin_evidence_row_preserves_exact_child_identity_and_timestamp() {
+        let spec = historical_chain_spec("lyncoin").unwrap();
+        let child_hash = "0aed171ebaa6d877d35e683af6f919f4baeefe1aa56f4b9383160046bd6ae9d4";
+        let parent_hash = "00000000000000000003ab5d3bd0aa8f157fce92de3fa88da03b2193ba858cad";
+        let parent_header = "0040be2c3f1e5c66e72b8bd9b7e345245a8f81d4da511aad46c701000000000000000000a476fd6ac358d774de8fff0e250aaf3ea61336a10fee93f963862adfa37f71066ea167655024041752b11c24";
+        let input = format!(
+            "btc_stale_height,btc_hash,btc_prev_hash,btc_time,btc_bits_hex,btc_bip34_height,btc_nonce,coinbase_scriptsig_hex,coinbase_outputs,btc_header_hex,child_height,child_block_hash,child_block_time,classification,expected_nbits,nbits_match,post_bch_fork,validation_status\n\
+             819035,{parent_hash},,1701290350,17042450,819035,605860178,,,{parent_header},69735,{child_hash},1701290106,canonical,17042450,true,true,VALID (canonical Bitcoin block)\n"
+        );
+        let mut reader = csv::Reader::from_reader(input.as_bytes());
+        let layout = CsvLayout::new(reader.headers().unwrap(), spec).unwrap();
+        let record = reader.records().next().unwrap().unwrap();
+
+        let candidate =
+            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap();
+
+        assert_eq!(
+            candidate.source_classification,
+            SourceClassification::Canonical
+        );
+        assert_eq!(candidate.btc_parent_display_hash, parent_hash);
+        assert_eq!(candidate.evidence.child_height, 69_735);
+        assert_eq!(
+            candidate.evidence.child_block_hash,
+            hex::decode(child_hash).unwrap()
+        );
+        assert_eq!(candidate.evidence.child_block_time, 1_701_290_106);
+        assert_ne!(candidate.evidence.child_block_time, 1_701_290_350);
+    }
+
+    #[test]
+    fn sixeleven_evidence_row_preserves_exact_child_identity_and_timestamp() {
+        let spec = historical_chain_spec("sixeleven").unwrap();
+        let child_hash = "3daef8f576acf6ebf0efa5701bd9e52345361e31bd5e5173559d2d6d5309ca18";
+        let parent_hash = "00000000000000000002784ca68b0876b1e5342cc2b923f69a26e46e52bb4853";
+        let parent_header = "000000205e68671b7872002ecaa6445787c425f2bf585ca6c6f139000000000000000000470a7cfc71666d022c8d8de0a666f7def4c4c531f5359600f33f4d3f335a9a12ca743d5a4596001808af1bf3";
+        let input = format!(
+            "btc_stale_height,btc_hash,btc_prev_hash,btc_time,btc_bits_hex,btc_bip34_height,btc_nonce,coinbase_scriptsig_hex,coinbase_outputs,btc_header_hex,child_height,child_block_hash,child_block_time,classification,expected_nbits,nbits_match,post_bch_fork,validation_status\n\
+             500593,{parent_hash},,1513977034,18009645,500593,4078677768,,,{parent_header},203325,{child_hash},1513976418,canonical,18009645,true,true,VALID (canonical Bitcoin block)\n"
+        );
+        let mut reader = csv::Reader::from_reader(input.as_bytes());
+        let layout = CsvLayout::new(reader.headers().unwrap(), spec).unwrap();
+        let record = reader.records().next().unwrap().unwrap();
+
+        let candidate =
+            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap();
+
+        assert_eq!(
+            candidate.source_classification,
+            SourceClassification::Canonical
+        );
+        assert_eq!(candidate.btc_parent_display_hash, parent_hash);
+        assert_eq!(candidate.evidence.child_height, 203_325);
+        assert_eq!(
+            candidate.evidence.child_block_hash,
+            hex::decode(child_hash).unwrap()
+        );
+        assert_eq!(candidate.evidence.child_block_time, 1_513_976_418);
+        assert_ne!(candidate.evidence.child_block_time, 1_513_977_034);
+    }
+
+    #[test]
+    fn explicit_recovery_layout_requires_child_hash_and_time_columns() {
+        let spec = historical_chain_spec("sixeleven").unwrap();
+        let missing_hash = csv::StringRecord::from(vec![
+            "child_height",
+            "child_block_time",
+            "btc_header_hex",
+            "classification",
+        ]);
+        let error = CsvLayout::new(&missing_hash, spec)
+            .err()
+            .expect("missing child hash must fail");
+        assert!(error.to_string().contains("child_block_hash"));
+
+        let missing_time = csv::StringRecord::from(vec![
+            "child_height",
+            "child_block_hash",
+            "btc_header_hex",
+            "classification",
+        ]);
+        let error = CsvLayout::new(&missing_time, spec)
+            .err()
+            .expect("missing child time must fail");
+        assert!(error.to_string().contains("child_block_time"));
+    }
+
+    #[test]
+    fn explicit_recovery_rows_reject_missing_or_malformed_child_fields() {
+        assert_eq!(
+            explicit_vcash_candidate("100", "", "1609556645").unwrap_err(),
+            SkipReason::EmptyField
+        );
+        assert_eq!(
+            explicit_vcash_candidate("100", &"11".repeat(32), "").unwrap_err(),
+            SkipReason::EmptyField
+        );
+        assert_eq!(
+            explicit_vcash_candidate("100", "11", "1609556645").unwrap_err(),
+            SkipReason::Malformed
+        );
+        assert_eq!(
+            explicit_vcash_candidate("100", &"11".repeat(32), "4294967296").unwrap_err(),
+            SkipReason::Malformed
+        );
+        assert_eq!(
+            explicit_vcash_candidate("100", &"11".repeat(32), "not-a-time").unwrap_err(),
+            SkipReason::Malformed
+        );
+        assert_eq!(
+            explicit_vcash_candidate("100", &"11".repeat(32), "-1").unwrap_err(),
+            SkipReason::Malformed
+        );
+        assert_eq!(
+            explicit_vcash_candidate("-1", &"11".repeat(32), "1609556645").unwrap_err(),
+            SkipReason::Malformed
+        );
+    }
+
+    #[test]
     fn synthetic_child_hash_is_source_scoped() {
         assert_ne!(
             synthetic_child_hash("devcoin", 10),
             synthetic_child_hash("ixcoin", 10)
         );
+    }
+
+    fn explicit_vcash_candidate(
+        child_height: &str,
+        child_hash: &str,
+        child_time: &str,
+    ) -> Result<ImportCandidate, SkipReason> {
+        let spec = historical_chain_spec("vcash").unwrap();
+        let input = format!(
+            "child_height,child_block_hash,child_block_time,btc_header_hex,classification,btc_header_hash\n\
+             {child_height},{child_hash},{child_time},{GENESIS_HEADER},canonical,{GENESIS_HASH}\n"
+        );
+        let mut reader = csv::Reader::from_reader(input.as_bytes());
+        let layout = CsvLayout::new(reader.headers().unwrap(), spec).unwrap();
+        let record = reader.records().next().unwrap().unwrap();
+        candidate_from_record(spec, &layout, &record, &RelevanceFilter::default())
     }
 
     fn layout_and_record(input: &str) -> (CsvLayout, csv::StringRecord) {

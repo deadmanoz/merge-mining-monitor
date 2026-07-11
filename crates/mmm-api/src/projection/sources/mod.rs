@@ -15,7 +15,8 @@ mod sync_status;
 
 /// `/api/v1/sources` success payload (fixture: fixtures/api/sources.json). Wire
 /// contract: `sources` is ordered by `source.id` ascending, one record per row
-/// in the `source` table. Re-exported and consumed by the integration-test host.
+/// in the `source` table. Source ids are permanent and may contain retired gaps.
+/// Re-exported and consumed by the integration-test host.
 #[derive(Debug, Clone, Serialize)]
 pub struct SourcesPayload {
     pub sources: Vec<SourceEndpointRecord>,
@@ -42,9 +43,10 @@ pub struct SourceEndpointRecord {
 
 /// Per-source capture-progress status nested under each `/api/v1/sources` record
 /// (fixture: sources.json). `mode` names the capture class (live,
-/// bitcoin-core-backbone, historical, catalogued, unknown) and `state` its
+/// bitcoin-core-backbone, historical, partial, surveyed, catalogued, unknown)
+/// and `state` its
 /// current phase (not_started, catching_up, live, stale, error, historical,
-/// catalogued). All fields are the locked
+/// partial, surveyed, catalogued). All fields are the locked
 /// wire contract; `&'static str` mode/state values are part of that contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SourceSyncStatus {

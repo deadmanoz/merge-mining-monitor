@@ -158,27 +158,39 @@ Lifecycle Registry with lifecycle `historical`; no live producer):
 - `auxpow:huntercoin`
 - `auxpow:i0coin`
 - `auxpow:ixcoin`
+- `auxpow:lyncoin`
 - `auxpow:myriadcoin`
+- `auxpow:sixeleven`
 - `auxpow:terracoin`
 - `auxpow:unobtanium`
 - `auxpow:xaya`
 - `auxpow:elcash`
+
+Reserved partial recovered AuxPoW source codes (lifecycle `partial`; evidence
+is ingestible, but the complete child blockchain remains unavailable):
+
+- `auxpow:vcash`
+
+Reserved surveyed AuxPoW source codes (lifecycle `surveyed`; child-chain data
+was recovered and reviewed, but no admissible Bitcoin evidence rows were found):
+
+- `auxpow:doichain`
 
 Reserved catalogued (not recovered) AuxPoW source codes (defined in the Source
 Lifecycle Registry with lifecycle `catalogued`; chains known to have
 BTC-merge-mined but with no recovered chain data, hence no producer, no
 poll-cursor, no source_health row, and zero evidence counts):
 
-- `auxpow:vcash`
-- `auxpow:lyncoin`
 - `auxpow:jax-network`
-- `auxpow:sixeleven`
 - `auxpow:blast`
-- `auxpow:doichain`
 - `auxpow:fusioncoin`
 - `auxpow:jincoin`
-- `auxpow:mazacoin`
 - `auxpow:bitcoin-stash`
+
+Source ids are permanent and never reused, so retired ids remain as gaps. Id 32
+is the first such gap: Mazacoin was removed after its consensus source showed no
+AuxPoW implementation. No Mazacoin row or source code remains in the API
+registry.
 
 The `source` query parameter accepts comma-delimited source codes. Response
 echoes use `query.sources`, sorted and deduplicated. Normalization trims ASCII
@@ -788,10 +800,10 @@ Response fields:
 
 `sync` describes source capture progress separately from evidence freshness:
 
-- `sync.mode`: `live`, `bitcoin-core-backbone`, `historical`, `catalogued`, or
-  `unknown`.
+- `sync.mode`: `live`, `bitcoin-core-backbone`, `historical`, `partial`,
+  `surveyed`, `catalogued`, or `unknown`.
 - `sync.state`: `live`, `catching_up`, `stale`, `error`, `not_started`,
-  `historical`, `catalogued`, or `unknown`.
+  `historical`, `partial`, `surveyed`, `catalogued`, or `unknown`.
 - `sync.progress_height`: the generalized progress height for live AuxPoW
   producers or the Bitcoin Core contiguous backbone, else JSON `null`.
 - `sync.progress_updated_at`: Unix seconds for the progress row's last seed or
@@ -810,9 +822,8 @@ cursor is `not_started`, an old cursor is `stale`, a fresh cursor below a known
 `target_height` is `catching_up`, and a fresh cursor with no target or at or
 above target is `live`. A fresh AuxPoW source can transiently report
 `catching_up` over its configured reorg window after the initial tip-anchored
-seed. Historical sources always report `historical` with null progress fields,
-and catalogued (not recovered) sources always report `catalogued` with null
-progress fields.
+seed. Historical, partial, surveyed, and catalogued sources report their
+lifecycle token as both mode and state with null progress fields.
 Bitcoin Core live-chaintip sources report
 `bitcoin-core-backbone` from `bitcoin_core_sync_state`: no row is `not_started`,
 `last_error_code` is `error`, a row older than one hour is `stale`, a fresh row

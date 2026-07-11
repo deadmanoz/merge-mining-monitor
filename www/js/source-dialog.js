@@ -26,6 +26,8 @@ function relationshipChip(source) {
   const lifecycle = SOURCE_LIFECYCLE[source?.code] || source?.lifecycle || "";
   if (kind === "live-chaintip") return { label: "Bitcoin Core parent chain", cls: "parent" };
   if (kind === "auxpow" && lifecycle === "catalogued") return { label: "Catalogued (not recovered)", cls: "catalogued" };
+  if (kind === "auxpow" && lifecycle === "surveyed") return { label: "Recovered survey", cls: "surveyed" };
+  if (kind === "auxpow" && lifecycle === "partial") return { label: "Recovered subset", cls: "partial" };
   if (kind === "auxpow" && lifecycle === "historical") return { label: "Recovered dataset", cls: "historical" };
   if (kind === "auxpow") return { label: "Live AuxPoW producer", cls: "live" };
   return { label: "Registered source", cls: "other" };
@@ -236,15 +238,15 @@ function capturePanel(source, profile) {
   const recovery = t.bitcoin_relevance
     ? subhead(relevanceHeading) + paras(refs, localMap, t.bitcoin_relevance) + bullets(refs, localMap, t.recovery || [])
     : "";
-  // Catalogued sources have no producer and no recovered evidence: suppress BOTH
-  // the operational block AND the (always-present, all-zero) evidence-counts
-  // table, leaving only the editorial provenance prose.
-  const catalogued = (SOURCE_LIFECYCLE[source?.code] || source?.lifecycle) === "catalogued";
-  const operational = catalogued ? "" : operationalBlock(source, help);
+  // Catalogued and surveyed sources have no admissible evidence: suppress both
+  // the operational block and the always-zero evidence-count table.
+  const lifecycle = SOURCE_LIFECYCLE[source?.code] || source?.lifecycle;
+  const hasNoEvidence = lifecycle === "catalogued" || lifecycle === "surveyed";
+  const operational = hasNoEvidence ? "" : operationalBlock(source, help);
   // Live/parent sources carry a `help` block; historical recovered-dataset
   // sources omit it and show only their operational source status.
   // Near/Unknown are deliberately not surfaced here (see CHANGELOG + e2e).
-  const counts = !catalogued && sourceChain(source) !== "bitcoin" && source.counts
+  const counts = !hasNoEvidence && sourceChain(source) !== "bitcoin" && source.counts
     ? kvRows([
         ["Events", formatScalar(source.counts.events)],
         ["Canonical", formatScalar(source.counts.canonical)],

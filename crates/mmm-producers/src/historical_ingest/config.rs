@@ -1,9 +1,9 @@
 //! CLI argument parsing and dataset-source discovery for `import-dataset`.
 //!
-//! Holds the static `HISTORICAL_CHAINS` table (the dead-chain analogue of the
-//! live `chains::spec` table) and the layered default-path search that locates a
-//! recovered-evidence CSV when `--csv` is not given. All env reads for the
-//! historical importer live here so the runner stays I/O-policy free.
+//! Holds the static `HISTORICAL_CHAINS` table (the recovered-evidence analogue
+//! of the live `chains::spec` table) and the layered default-path search that
+//! locates an evidence CSV when `--csv` is not given. All env reads for the
+//! importer live here so the runner stays I/O-policy free.
 
 use std::path::{Path, PathBuf};
 
@@ -13,7 +13,7 @@ use serde::Deserialize;
 const RESEARCH_ROOT_ENV: &str = "MERGE_MINING_RESEARCH_DIR";
 const ARCHIVE_ROOT_ENV: &str = "MERGE_MINING_ARCHIVE_DIR";
 
-/// Static per-chain row for one recovered dead merge-mined chain.
+/// Static per-chain row for one recovered full or partial merge-mining source.
 ///
 /// The historical counterpart to `chains::spec`: `source_code` is the
 /// `auxpow:<chain>` db source key the runner resolves to a `source_id`, and
@@ -26,6 +26,14 @@ pub(super) struct HistoricalChainSpec {
     pub(super) source_code: &'static str,
     /// Chain-specific child-height column name in the source CSV.
     pub(super) height_column: &'static str,
+}
+
+impl HistoricalChainSpec {
+    /// Explicit recovery artifacts carry authoritative child identity and time.
+    /// They must never fall back to a synthetic hash or Bitcoin parent time.
+    pub(super) fn requires_exact_child_fields(&self) -> bool {
+        matches!(self.chain, "vcash" | "lyncoin" | "sixeleven")
+    }
 }
 
 /// Resolved invocation parameters for one `import-dataset` run.
@@ -64,7 +72,7 @@ struct HistoricalManifestSource {
 /// Progress-log cadence and default ingest batch size when `--batch-size` is omitted.
 const DEFAULT_BATCH_SIZE: usize = 500;
 
-/// The closed set of recovered dead merge-mined chains the importer accepts.
+/// The closed set of recovered full and partial merge-mining sources accepted.
 ///
 /// Extend by adding a row here, never by cloning a module: this is the static
 /// registry `historical_chain_spec` looks up and the test asserts is complete.
@@ -153,6 +161,21 @@ const HISTORICAL_CHAINS: &[HistoricalChainSpec] = &[
         chain: "elcash",
         source_code: "auxpow:elcash",
         height_column: "elc_height",
+    },
+    HistoricalChainSpec {
+        chain: "vcash",
+        source_code: "auxpow:vcash",
+        height_column: "child_height",
+    },
+    HistoricalChainSpec {
+        chain: "lyncoin",
+        source_code: "auxpow:lyncoin",
+        height_column: "child_height",
+    },
+    HistoricalChainSpec {
+        chain: "sixeleven",
+        source_code: "auxpow:sixeleven",
+        height_column: "child_height",
     },
 ];
 
@@ -398,8 +421,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_historical_chain_has_a_height_column() {
-        assert_eq!(HISTORICAL_CHAINS.len(), 17);
+    fn every_recovered_source_has_a_height_column() {
+        assert_eq!(HISTORICAL_CHAINS.len(), 20);
         for spec in HISTORICAL_CHAINS {
             assert!(spec.source_code.starts_with("auxpow:"));
             assert!(!spec.height_column.is_empty());
@@ -411,6 +434,31 @@ mod tests {
         assert_eq!(
             historical_chain_spec("xaya").unwrap().height_column,
             "child_height"
+        );
+        assert_eq!(
+            historical_chain_spec("vcash").unwrap().source_code,
+            "auxpow:vcash"
+        );
+        assert_eq!(
+            historical_chain_spec("lyncoin").unwrap().height_column,
+            "child_height"
+        );
+        assert_eq!(
+            historical_chain_spec("sixeleven").unwrap().height_column,
+            "child_height"
+        );
+        for chain in ["vcash", "lyncoin", "sixeleven"] {
+            assert!(
+                historical_chain_spec(chain)
+                    .unwrap()
+                    .requires_exact_child_fields(),
+                "{chain} must require exact child fields"
+            );
+        }
+        assert!(
+            !historical_chain_spec("devcoin")
+                .unwrap()
+                .requires_exact_child_fields()
         );
     }
 

@@ -34,7 +34,6 @@ export const CHAIN_DISPLAY_NAMES = {
   "jax-network": "Jax.Network",
   "jincoin": "Jincoin",
   "lyncoin": "Lyncoin",
-  "mazacoin": "Mazacoin",
   "myriadcoin": "Myriadcoin",
   "namecoin": "Namecoin",
   "rsk": "RSK",
@@ -65,7 +64,7 @@ export const SOURCE_LIFECYCLE = {
   "auxpow:coiledcoin": "historical",
   "auxpow:crown": "historical",
   "auxpow:devcoin": "historical",
-  "auxpow:doichain": "catalogued",
+  "auxpow:doichain": "surveyed",
   "auxpow:elastos": "live",
   "auxpow:elcash": "historical",
   "auxpow:emercoin": "historical",
@@ -79,16 +78,15 @@ export const SOURCE_LIFECYCLE = {
   "auxpow:ixcoin": "historical",
   "auxpow:jax-network": "catalogued",
   "auxpow:jincoin": "catalogued",
-  "auxpow:lyncoin": "catalogued",
-  "auxpow:mazacoin": "catalogued",
+  "auxpow:lyncoin": "historical",
   "auxpow:myriadcoin": "historical",
   "auxpow:namecoin": "live",
   "auxpow:rsk": "live",
-  "auxpow:sixeleven": "catalogued",
+  "auxpow:sixeleven": "historical",
   "auxpow:syscoin": "live",
   "auxpow:terracoin": "historical",
   "auxpow:unobtanium": "historical",
-  "auxpow:vcash": "catalogued",
+  "auxpow:vcash": "partial",
   "auxpow:xaya": "historical",
   "live-chaintip:bitcoin:core": "live"
 };
@@ -652,23 +650,23 @@ export const CHAIN_PROFILES = {
   "doichain": {
     "ticker": "DOI",
     "chain_status": "dormant",
-    "status_detail": "Catalogued, not recovered: a Namecoin reimplementation whose AuxPoW proved fully vestigial (zero Bitcoin stales in review).",
-    "tagline": "Namecoin-reimplementation AuxPoW chain found fully vestigial for Bitcoin evidence.",
-    "byline": "Catalogued, not recovered",
+    "status_detail": "Recovered survey: all blocks through height 430,684 were reviewed. The chain contains 429,401 AuxPoW commitments, but no canonical or stale Bitcoin block winner.",
+    "tagline": "429,401 AuxPoW commitments recovered, with no Bitcoin block winner.",
+    "byline": "Recovered survey (zero rows)",
     "history": {
       "founded": "A Namecoin reimplementation for decentralized naming; merge-mining activated in 2018.",
-      "merge_mining": "Namecoin-family AuxPoW. In review, Doichain's AuxPoW was fully vestigial: the structure is present, but the recovered parent set produced no Bitcoin stale evidence.",
-      "ended": "Catalogued only. A recovery review found zero Bitcoin stales, so no rows are admitted; the source and build material are retained for provenance.",
-      "narrative": "Doichain is a Namecoin reimplementation with merge-mining support, and the project's clearest fully-vestigial case: the AuxPoW data structures exist, but the reviewed window yielded zero Bitcoin stales. It is catalogued as a merge-mineable chain whose Bitcoin yield is, on current evidence, nil."
+      "merge_mining": "Namecoin-family AuxPoW. Of 429,401 commitments, 300,646 use real Bitcoin difficulty; none of their parent headers won a canonical or stale Bitcoin block.",
+      "ended": "The recovery reaches height 430,684. It found no canonical or stale Bitcoin parent, so there is nothing to import; the monitor keeps the result as a surveyed source rather than leaving Doichain in the unrecovered catalogue.",
+      "narrative": "Doichain is a Namecoin reimplementation with genuine share-level merge mining. The recovery found 300,646 AuxPoW parents at Bitcoin difficulty, but shares are not Bitcoin blocks: none of the 429,401 commitments contained a canonical or stale Bitcoin winner. This is a complete negative result (zero monitor rows), not a failed recovery."
     },
     "technical": {
-      "mechanism": "Namecoin-family AuxPoW (chain ID 2). Structurally a Bitcoin merge-miner, but functionally vestigial: no Bitcoin parent was observed in the reviewed window.",
-      "capture": "Reviewed but not integrated: a recovery pass produced zero validated Bitcoin stales, so no rows enter this monitor. Source and Docker material are retained for provenance.",
-      "bitcoin_relevance": "A vestigial-AuxPoW reference case: structural evidence of Bitcoin merge-mining is not the same as functional Bitcoin-parent participation."
+      "mechanism": "Namecoin-family AuxPoW (chain ID 2). The recovered parents prove merge-mining activity at share level; no parent reached the Bitcoin block target.",
+      "capture": "Recovered through height 430,684: 429,401 AuxPoW commitments, including 300,646 real-difficulty parent shares, and 50,621 low-difficulty self-PoW headers. The survey found zero canonical or stale Bitcoin block winners, so it emits no rows.",
+      "bitcoin_relevance": "Doichain makes the evidence threshold explicit. Its AuxPoW proves merged-mining work, but without a Bitcoin block winner there is no block-level evidence for the monitor to ingest."
     },
     "provenance": {
-      "source": "Catalogued from Doichain source/archive material and a prior vestigial-AuxPoW review; not integrated.",
-      "coverage": "No recovered Bitcoin evidence in this monitor (reviewed: zero Bitcoin stales)."
+      "source": "Recovered Doichain node data, decoded and classified through height 430,684.",
+      "coverage": "Complete through height 430,684: 429,401 AuxPoW commitments reviewed, with zero canonical or stale Bitcoin winners."
     }
   },
   "elastos": {
@@ -1481,45 +1479,23 @@ export const CHAIN_PROFILES = {
   "lyncoin": {
     "ticker": "LCN",
     "chain_status": "dormant",
-    "status_detail": "Catalogued, not recovered: a Namecoin-style AuxPoW chain whose Bitcoin-merge-mined window ran from 2022 until a 2024 fork away from SHA-256d.",
-    "tagline": "Namecoin-style AuxPoW chain whose early SHA-256d window merge-mined Bitcoin before a multi-hash fork.",
-    "byline": "Catalogued, not recovered",
+    "status_detail": "Recovered historical dataset: every Bitcoin-merge-mined header from genesis through height 260,499 was recovered before Lyncoin's Flex fork.",
+    "tagline": "Every pre-Flex header recovered (heights 0 to 260,499); 11 canonical Bitcoin parents.",
+    "byline": "Recovered dataset",
     "history": {
       "founded": "Launched in late 2022 as a SHA-256d AuxPoW chain.",
       "merge_mining": "Namecoin-style AuxPoW from genesis (chain ID 0x0b0d, strict), so early Lyncoin blocks embed a Bitcoin parent header. At height 260,500 the proof-of-work forked from SHA-256d to a multi-hash Flex algorithm, ending Bitcoin merge-mining.",
-      "ended": "Catalogued only. The chain is market-dead/dormant, and Bitcoin merge-mining ended at the Flex fork; no data has been recovered.",
-      "narrative": "Lyncoin launched in late 2022 as a standard SHA-256d AuxPoW chain whose blocks embedded a Bitcoin parent header. At height 260,500 (mid-2024) it switched to the Flex multi-hash algorithm to merge-mine a different coin, which ended Bitcoin merge-mining. It is catalogued as a recoverable source whose Bitcoin window is heights 0 to 260,500; a buildable node and a public explorer exist."
+      "ended": "Bitcoin merge-mining ended when Lyncoin switched to Flex at height 260,500. Every preceding height is recovered; later blocks use a different proof of work and carry no Bitcoin-parent evidence.",
+      "narrative": "Lyncoin changed its proof of work at height 260,500, so the recovery stopped at 260,499 and checked the first Flex header separately (a boundary check, not an estimated cutoff). Raw P2P headers cover every earlier height, giving the monitor the complete Bitcoin-merge-mined era rather than an explorer sample."
     },
     "technical": {
-      "mechanism": "Namecoin-style AuxPoW (chain ID 0x0b0d, strict chain-ID checking) over a SHA-256d parent, active from genesis to the Flex fork at height 260,500.",
-      "capture": "Not recovered in this monitor. A buildable node and a public explorer exist, so the Bitcoin-merge-mined window (heights 0 to 260,500) is a plausible future recovery; backfill must stop at the Flex fork.",
-      "bitcoin_relevance": "A recoverable modern source: pre-fork Lyncoin blocks preserve a Bitcoin parent header, while post-fork Flex blocks carry no Bitcoin parent and are out of scope."
+      "mechanism": "Namecoin-style AuxPoW (chain ID 0x0b0d, strict chain-ID checking) over a SHA-256d parent, active from genesis through height 260,499 before the Flex fork at height 260,500.",
+      "capture": "Raw P2P recovery covers heights 0 through 260,499, with the height-260,500 Flex boundary checked separately. The 260,500 pre-Flex headers comprise 249,640 AuxPoW and 10,860 solo blocks; Bitcoin Core classified 11 of 56,653 Bitcoin-difficulty candidates as canonical, none as stale, and 56,642 as orphan.",
+      "bitcoin_relevance": "The 11 canonical rows carry exact child height, hash, and timestamp attestations. No stale winner was found; the 56,642 orphan candidates remain in the recovery data rather than being imported as block evidence."
     },
     "provenance": {
-      "source": "Catalogued from the Lyncoin chain source and a public explorer; not polled or recovered.",
-      "coverage": "No recovered Bitcoin evidence in this monitor (Bitcoin window: heights 0 to ~260,500)."
-    }
-  },
-  "mazacoin": {
-    "ticker": "MZC",
-    "chain_status": "dead",
-    "status_detail": "Catalogued, not recovered: a Zetacoin-lineage SHA-256d chain retained as a source-preservation record only.",
-    "tagline": "Zetacoin-lineage SHA-256d chain; source preserved, never run for recovery.",
-    "byline": "Catalogued, not recovered",
-    "history": {
-      "founded": "A 2014 Zetacoin-lineage SHA-256d chain (originally promoted as a Native American / Lakota cryptocurrency).",
-      "merge_mining": "A SHA-256d chain in the merge-mineable family. Its AuxPoW details are not source-audited in this project.",
-      "ended": "Catalogued only. No node run, extraction, or classifier output is canonical; the source is retained for provenance.",
-      "narrative": "Mazacoin is a 2014 Zetacoin-lineage SHA-256d chain. No node was run and no Bitcoin evidence was recovered. It is catalogued as a candidate merge-mineable chain pending source verification and recovery."
-    },
-    "technical": {
-      "mechanism": "Zetacoin-lineage SHA-256d. Its precise AuxPoW and Bitcoin-parent handling are not source-audited here; the chain is retained as a catalogue candidate, not a verified Bitcoin merge-miner.",
-      "capture": "Not recovered in this monitor. No node has been run and no extraction or classification has been done.",
-      "bitcoin_relevance": "A SHA-256d catalogue candidate; its Bitcoin-parent merge-mining would need source verification and a node sync before it could contribute evidence."
-    },
-    "provenance": {
-      "source": "Catalogued from source metadata; no node run, extraction, or result is canonical.",
-      "coverage": "No recovered Bitcoin evidence in this monitor."
+      "source": "Raw headers recovered from the live Lyncoin P2P network, decoded against the official Lyncoin v4.0.0 protocol definitions, and classified with Bitcoin Core.",
+      "coverage": "Complete Bitcoin-merge-mined window at child heights 0 through 260,499. Import artifact: 11 canonical rows, SHA-256 896c9ca07288406cc99c80f770acd5135e8b95a842091cdfa514c088b9b856d1."
     }
   },
   "myriadcoin": {
@@ -1750,23 +1726,23 @@ export const CHAIN_PROFILES = {
   "sixeleven": {
     "ticker": "611",
     "chain_status": "dormant",
-    "status_detail": "Catalogued, not recovered: an early Namecoin-fork AuxPoW chain, merge-mineable with Bitcoin but not yet extracted.",
-    "tagline": "Namecoin-fork naming chain, SHA-256d AuxPoW merge-mineable with Bitcoin; not yet recovered.",
-    "byline": "Catalogued, not recovered",
+    "status_detail": "Recovered historical dataset: all 999,407 child blocks through the available tip at height 999,406 were scanned, yielding seven canonical Bitcoin parents.",
+    "tagline": "All 999,407 available child blocks recovered; seven canonical Bitcoin parents.",
+    "byline": "Recovered dataset",
     "history": {
       "founded": "A Namecoin fork offering decentralized, anonymous domain registration; its AuxPoW window dates to around November 2015.",
       "merge_mining": "Namecoin-family SHA-256d AuxPoW, merge-mineable alongside Bitcoin (for example via P2Pool).",
-      "ended": "Catalogued only. The coin has been inactive since around 2023, and the project has not yet extracted its Bitcoin evidence.",
-      "narrative": "SixEleven (611) is a Namecoin fork for anonymous domain registration that is merge-mineable with Bitcoin via SHA-256d AuxPoW. The project catalogues it for chain-ID accounting but has not yet extracted its blocks, so no Bitcoin evidence is recovered. It is a plausible future recovery target."
+      "ended": "The pinned node synchronized to the available tip at height 999,406; the network is now dormant. The recovered datadir therefore covers every available child block from genesis.",
+      "narrative": "SixEleven (611) is a Namecoin fork that merge-mined with Bitcoin through SHA-256d AuxPoW. A pinned legacy node recovered 999,407 child blocks from genesis through height 999,406 (the available tip), so this is a full-chain recovery rather than a sampled explorer dataset."
     },
     "technical": {
-      "mechanism": "Namecoin-family SHA-256d AuxPoW (Bitcoin-mergeable). Tracked in the project's AuxPoW chain-ID registry but not yet source-extracted.",
-      "capture": "Not recovered in this monitor: included for AuxPoW chain-ID accounting, but its blocks have not been extracted or classified.",
-      "bitcoin_relevance": "A known Bitcoin-merge-mineable Namecoin fork that would add early evidence once its blocks are recovered."
+      "mechanism": "Namecoin-family SHA-256d AuxPoW with strict chain ID 1. Embedded parent headers, coinbases, and merkle proofs bind SixEleven child blocks to their Bitcoin mining work.",
+      "capture": "The 2.4 GB legacy datadir contains 999,407 child blocks through height 999,406: 969,317 AuxPoW and 30,090 solo. Bitcoin Core classified seven of 80,364 Bitcoin-difficulty candidates as canonical, none as stale, and 80,357 as orphan.",
+      "bitcoin_relevance": "The seven canonical rows carry exact child height, hash, and timestamp attestations. No stale winner was found; the 80,357 orphan candidates remain in the recovery data rather than being imported as block evidence."
     },
     "provenance": {
-      "source": "Catalogued from the project's AuxPoW chain-ID registry and the SixEleven chain documentation; not yet extracted.",
-      "coverage": "No recovered Bitcoin evidence in this monitor."
+      "source": "Recovered by synchronizing the pinned SixEleven node image to height 999,406, parsing the legacy block files, and classifying Bitcoin-difficulty parents with Bitcoin Core.",
+      "coverage": "Complete child chain through height 999,406. Import artifact: seven canonical rows, SHA-256 5ad62cab88e4ae62f1cce84b12acd7b68832b9e428ea9d386f1c05109e9871e1."
     }
   },
   "syscoin": {
@@ -1996,23 +1972,23 @@ export const CHAIN_PROFILES = {
   "vcash": {
     "ticker": "VCASH",
     "chain_status": "dormant",
-    "status_detail": "Catalogued, not recovered: a major tag-based Bitcoin merge-miner by coinbase-marker footprint, but its chain data has not been recovered.",
-    "tagline": "Tag-based (OP_RETURN) Bitcoin merge-miner whose commitment is decoded on the Bitcoin side; chain data unrecovered.",
-    "byline": "Catalogued, not recovered",
+    "status_detail": "Recovered subset: archived vcash.tech pages preserve 767 child-to-parent mappings. Bitcoin Core confirmed 68 parent hashes as canonical and supplied their full Bitcoin headers and coinbases; the VCash blockchain itself remains unrecovered.",
+    "tagline": "68 canonical mappings recovered from an archived explorer (not the VCash blockchain).",
+    "byline": "Recovered subset (68 rows)",
     "history": {
       "founded": "A Grin / MimbleWimble-based SHA-256d chain (distinct from the older Vanillacoin / XVC).",
       "merge_mining": "Tag-based Bitcoin merge-mining: a 0xb9e11b6d OP_RETURN commitment carrying the VCash header hash is placed in the Bitcoin coinbase. Historically a first-class merged coin on several large SHA-256d pools.",
-      "ended": "Catalogued only. The Bitcoin-side commitment is decoded in research tooling, but the VCash chain data itself has not been recovered (its explorer is gone and the node could not be synced).",
-      "narrative": "VCash is a Grin/MimbleWimble-based chain that merge-mines Bitcoin through an OP_RETURN coinbase tag, and its signature appears in a large share of Bitcoin blocks, making it one of the larger Bitcoin merge-miners by coinbase-marker footprint. The Bitcoin-coinbase side of VCash is well understood, but the VCash chain blocks (needed to recover Bitcoin parent headers) have not been obtained. It is catalogued here; exposing its Bitcoin-coinbase commitment in the monitor is planned separately."
+      "ended": "The full VCash chain is still unavailable. Archived vcash.tech pages yielded 767 child-to-parent mappings; Bitcoin Core confirmed 68 parent hashes as canonical and supplied the missing Bitcoin block data, while 699 unresolved hash-only mappings remain excluded.",
+      "narrative": "VCash commits its child header hash into the Bitcoin coinbase, but those commitments do not reveal the VCash block that made them useful. The surviving artifact is an archived explorer sample: 68 mappings point to canonical Bitcoin parents for which Core supplies full block evidence, while the other 699 retain only unresolved hashes. The monitor therefore exposes a 68-row subset (not a recovery of the VCash blockchain)."
     },
     "technical": {
       "mechanism": "Tag-based merge-mining (like Hathor): rather than Namecoin AuxPoW, a 0xb9e11b6d magic plus the VCash header hash is committed in the Bitcoin coinbase via OP_RETURN.",
-      "capture": "Not recovered in this monitor. The Bitcoin-side commitment is decodable from Bitcoin coinbases, but the VCash chain data (which preserves the Bitcoin parent header) has not been recovered; the explorer is offline and the node could not be synced.",
-      "bitcoin_relevance": "A top-tier Bitcoin merge-miner by on-chain footprint. Its OP_RETURN commitment marks Bitcoin blocks that merge-mined VCash; recovering the VCash chain would, like Hathor, yield Bitcoin parent-header evidence."
+      "capture": "The vcash.tech Wayback sample maps VCash height and hash to a Bitcoin parent hash. Bitcoin Core re-confirms 68 parent hashes as canonical and supplies their 80-byte headers and coinbases; 699 unresolved hash-only mappings are not emitted.",
+      "bitcoin_relevance": "The 68 rows are valid canonical attestations, but they cannot recover VCash's stale-block history. That still needs an archive node, chain snapshot, or explorer database containing the child blocks."
     },
     "provenance": {
-      "source": "Catalogued from the vcashorg chain source, the project's coinbase-marker census, and prior recovery research; chain data not recovered.",
-      "coverage": "No recovered Bitcoin evidence in this monitor (Bitcoin-coinbase commitment is decoded separately)."
+      "source": "Archived vcash.tech block pages supply the child-to-parent mappings; Bitcoin Core supplies and re-confirms the canonical parent data.",
+      "coverage": "68 canonical mappings from a 767-row explorer sample. This is not VCash chaindata; 699 unresolved parent hashes are excluded."
     }
   },
   "xaya": {

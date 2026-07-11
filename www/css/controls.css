@@ -172,13 +172,13 @@ label:has(input[type="checkbox"]) {
   min-width: 0;
 }
 
-/* Catalogued sources: greyed, non-interactive label (checkbox disabled). The
-   info button stays active so the source modal is still reachable. */
-.source-option-catalogued .source-choice {
+/* Sources with no admissible evidence: greyed, non-interactive label
+   (checkbox disabled). The info button remains active. */
+.source-option-disabled .source-choice {
   opacity: 0.5;
 }
 
-.source-option-catalogued .source-choice input[disabled] {
+.source-option-disabled .source-choice input[disabled] {
   cursor: not-allowed;
 }
 

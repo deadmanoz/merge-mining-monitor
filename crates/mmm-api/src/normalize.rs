@@ -271,7 +271,7 @@ mod tests {
     fn valid_kind_but_unregistered_is_unsupported_source() {
         // A well-formed auxpow code for a chain not in SOURCE_REGISTRY: valid
         // kind, but no such source. Synthetic so it cannot become registered by
-        // a future chain addition (doichain, the old example, is now catalogued).
+        // a future chain addition (Doichain, the old example, is now surveyed).
         assert_eq!(
             code(&normalize_sources(Some("auxpow:not-a-registered-chain")).unwrap_err()),
             "unsupported_source"
@@ -304,10 +304,8 @@ mod tests {
     }
 
     #[test]
-    fn all_reserved_codes_validate() {
-        // Every registered source code must pass the
-        // full filter ladder. Drive the input from the registry so this stays
-        // correct as the set grows and catches any malformed code.
+    fn all_registered_codes_validate() {
+        // Every registered source code must pass the full filter ladder.
         let input = source_registry::SOURCE_REGISTRY
             .iter()
             .map(|source| source.code)

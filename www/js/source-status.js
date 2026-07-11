@@ -18,6 +18,8 @@ const SOURCE_SYNC_META = {
   error: { label: "error", displayLabel: "Error", title: "The last source progress update recorded an error" },
   not_started: { label: "not started", displayLabel: "Not started", title: "No source progress recorded yet" },
   historical: { label: "historical", displayLabel: "Historical", title: "Historical archive source" },
+  partial: { label: "partial", displayLabel: "Partial", title: "Recovered evidence from an incomplete child-chain record" },
+  surveyed: { label: "surveyed", displayLabel: "Surveyed", title: "Recovery completed; no Bitcoin block winner found" },
   catalogued: { label: "catalogued", displayLabel: "Catalogued", title: "Catalogued chain; not polled or recovered" },
   unknown: { label: "unknown", displayLabel: "Unknown", title: "Source progress is unknown" },
 };
@@ -25,6 +27,8 @@ const SOURCE_SYNC_MODE_META = {
   live: "live capture",
   "bitcoin-core-backbone": "Bitcoin Core backbone",
   historical: "historical archive",
+  partial: "recovered subset",
+  surveyed: "recovered survey",
   catalogued: "catalogued",
   unknown: "unknown mode",
 };

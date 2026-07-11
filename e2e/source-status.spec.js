@@ -114,7 +114,7 @@ function sourceFixture() {
       },
       {
         ...base,
-        id: 6,
+        id: 8,
         code: "auxpow:argentum",
         chain: "argentum",
         last_seen_at: null,
@@ -133,7 +133,7 @@ function sourceFixture() {
       },
       {
         ...base,
-        id: 7,
+        id: 21,
         code: "auxpow:terracoin",
         chain: "terracoin",
         last_seen_at: null,
@@ -152,9 +152,85 @@ function sourceFixture() {
       },
       {
         ...base,
-        id: 8,
+        id: 24,
         code: "auxpow:vcash",
         chain: "vcash",
+        last_seen_at: GENERATED_AT - 604801,
+        status: "stale",
+        sync: {
+          mode: "partial",
+          state: "partial",
+          progress_height: null,
+          progress_updated_at: null,
+          target_height: null,
+          latest_evidence_at: null,
+          error_code: null,
+          error_height: null,
+        },
+        counts: { events: 68, near: 0, unknown: 0, canonical: 68, stale: 0, strict_orphan: 0, weak_orphan: 0 },
+      },
+      {
+        ...base,
+        id: 25,
+        code: "auxpow:lyncoin",
+        chain: "lyncoin",
+        last_seen_at: 1721667253,
+        status: "stale",
+        sync: {
+          mode: "historical",
+          state: "historical",
+          progress_height: null,
+          progress_updated_at: null,
+          target_height: null,
+          latest_evidence_at: null,
+          error_code: null,
+          error_height: null,
+        },
+        counts: { events: 11, near: 0, unknown: 0, canonical: 11, stale: 0, strict_orphan: 0, weak_orphan: 0 },
+      },
+      {
+        ...base,
+        id: 27,
+        code: "auxpow:sixeleven",
+        chain: "sixeleven",
+        last_seen_at: 1536793971,
+        status: "stale",
+        sync: {
+          mode: "historical",
+          state: "historical",
+          progress_height: null,
+          progress_updated_at: null,
+          target_height: null,
+          latest_evidence_at: null,
+          error_code: null,
+          error_height: null,
+        },
+        counts: { events: 7, near: 0, unknown: 0, canonical: 7, stale: 0, strict_orphan: 0, weak_orphan: 0 },
+      },
+      {
+        ...base,
+        id: 29,
+        code: "auxpow:doichain",
+        chain: "doichain",
+        last_seen_at: null,
+        status: "not_started",
+        sync: {
+          mode: "surveyed",
+          state: "surveyed",
+          progress_height: null,
+          progress_updated_at: null,
+          target_height: null,
+          latest_evidence_at: null,
+          error_code: null,
+          error_height: null,
+        },
+        counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0 },
+      },
+      {
+        ...base,
+        id: 33,
+        code: "auxpow:bitcoin-stash",
+        chain: "bitcoin-stash",
         last_seen_at: null,
         status: "not_started",
         sync: {
@@ -488,7 +564,7 @@ test("source info dialog renders three tabs and switches panels", async ({ page 
   await expect(page.locator("#sd-panel-capture")).toContainText("Recovery");
 });
 
-test("relationship chip distinguishes live AuxPoW, Bitcoin Core, and historical sources", async ({ page }) => {
+test("relationship chip distinguishes every public source lifecycle", async ({ page }) => {
   await stubCommonApi(page);
   await page.route("**/api/v1/sources", async (route) => {
     await route.fulfill({ json: sourceFixture() });
@@ -511,14 +587,55 @@ test("relationship chip distinguishes live AuxPoW, Bitcoin Core, and historical 
   // Recovered dataset (the recovered/historical group is collapsed by default;
   // the group key is still "historical", only its label changed).
   await page.locator('details[data-source-group="historical"] > summary').click();
-  await page.locator('.source-info-button[data-source-info="auxpow:argentum"]').click();
+  await page.locator('.source-info-button[data-source-info="auxpow:lyncoin"]').click();
   await expect(history).toContainText("Recovered dataset");
+  await expect(history).toContainText(/complete Bitcoin-merge-mined era/i);
+  await page.locator("#sd-tab-capture").click();
+  const lyncoinCapture = page.locator("#sd-panel-capture");
+  await expect(lyncoinCapture.locator('dt:text-is("Events") + dd')).toHaveText("11");
+  await expect(lyncoinCapture.locator('dt:text-is("Canonical") + dd')).toHaveText("11");
+  await expect(lyncoinCapture.locator('dt:text-is("Stale") + dd')).toHaveText("0");
+  await closeDialog();
+
+  await page.locator('.source-info-button[data-source-info="auxpow:sixeleven"]').click();
+  await expect(history).toContainText("Recovered dataset");
+  await expect(history).toContainText("full-chain recovery");
+  await page.locator("#sd-tab-capture").click();
+  const sixelevenCapture = page.locator("#sd-panel-capture");
+  await expect(sixelevenCapture.locator('dt:text-is("Events") + dd')).toHaveText("7");
+  await expect(sixelevenCapture.locator('dt:text-is("Canonical") + dd')).toHaveText("7");
+  await expect(sixelevenCapture.locator('dt:text-is("Stale") + dd')).toHaveText("0");
+  await closeDialog();
+
+  // Partial recovered subset: selectable, with explicit partial scope and the
+  // 68-row evidence count rather than a full-chain recovery claim.
+  await page.locator('details[data-source-group="partial"] > summary').click();
+  await page.locator('.source-info-button[data-source-info="auxpow:vcash"]').click();
+  await expect(history).toContainText("Recovered subset");
+  await page.locator("#sd-tab-capture").click();
+  const partialCapture = page.locator("#sd-panel-capture");
+  await expect(partialCapture).toContainText("Operational status");
+  await expect(partialCapture).toContainText("Current Evidence Counts");
+  await expect(partialCapture.locator('dt:text-is("Events") + dd')).toHaveText("68");
+  await closeDialog();
+
+  // Surveyed recovery: chain data was reviewed, but no admissible evidence
+  // exists, so the row is disabled and Capture omits status/count blocks.
+  await page.locator('details[data-source-group="surveyed"] > summary').click();
+  const doichainOption = sourceOptionByName(page, "Doichain");
+  await expect(doichainOption.locator('input[name="source"]')).toBeDisabled();
+  await page.locator('.source-info-button[data-source-info="auxpow:doichain"]').click();
+  await expect(history).toContainText("Recovered survey");
+  await page.locator("#sd-tab-capture").click();
+  const surveyedCapture = page.locator("#sd-panel-capture");
+  await expect(surveyedCapture).not.toContainText("Operational status");
+  await expect(surveyedCapture).not.toContainText("Current Evidence Counts");
   await closeDialog();
 
   // Catalogued (not recovered): its own greyed group; chain status is a scoped
   // row (not a chip); the Capture tab shows no operational block and no counts.
   await page.locator('details[data-source-group="catalogued"] > summary').click();
-  await page.locator('.source-info-button[data-source-info="auxpow:vcash"]').click();
+  await page.locator('.source-info-button[data-source-info="auxpow:bitcoin-stash"]').click();
   await expect(history).toContainText("Catalogued (not recovered)");
   await expect(history).toContainText("Chain status");
   await page.locator("#sd-tab-capture").click();
@@ -529,22 +646,29 @@ test("relationship chip distinguishes live AuxPoW, Bitcoin Core, and historical 
 
   // The About-sources explainer opens from the Source legend help icon.
   await page.locator(".filter-legend-help").click();
+  await expect(page.locator("#sources-about-dialog-body")).toContainText("Recovered subset");
+  await expect(page.locator("#sources-about-dialog-body")).toContainText("Recovered survey");
   await expect(page.locator("#sources-about-dialog-body")).toContainText("Catalogued (not recovered)");
 });
 
-test("deep-linked catalogued source is dropped, not pinned as a checked disabled filter", async ({ page }) => {
+test("deep links retain partial sources and drop non-selectable lifecycles", async ({ page }) => {
   await stubCommonApi(page);
   await page.route("**/api/v1/sources", async (route) => {
     await route.fulfill({ json: sourceFixture() });
   });
-  // A deep link must not pin a non-selectable catalogued source: it is sanitized
-  // out of the query, so its checkbox renders unchecked (and disabled), never a
-  // checked box the user has no way to clear.
-  await page.goto("/?sources=auxpow:vcash");
+  // Catalogued and surveyed sources are sanitized out, while the selectable
+  // partial VCash subset remains checked.
+  await page.goto("/?sources=auxpow:bitcoin-stash,auxpow:doichain,auxpow:vcash,auxpow:mazacoin");
   await page.locator('details[data-source-group="catalogued"] > summary').click();
-  const vcash = page.locator('input[name="source"][value="auxpow:vcash"]');
-  await expect(vcash).toBeDisabled();
-  await expect(vcash).not.toBeChecked();
+  const catalogued = page.locator('input[name="source"][value="auxpow:bitcoin-stash"]');
+  await expect(catalogued).toBeDisabled();
+  await expect(catalogued).not.toBeChecked();
+  await page.locator('details[data-source-group="surveyed"] > summary').click();
+  const surveyed = page.locator('input[name="source"][value="auxpow:doichain"]');
+  await expect(surveyed).toBeDisabled();
+  await expect(surveyed).not.toBeChecked();
+  await expect(page.locator('input[name="source"][value="auxpow:vcash"]')).toBeChecked();
+  await expect(page.locator('input[name="source"][value="auxpow:mazacoin"]')).toHaveCount(0);
 });
 
 test("source modal renders code formatting, citations, and a Sources list", async ({ page }) => {

@@ -109,7 +109,9 @@ if ! diff -u "${expected_chain_heights}" "${manifest_chain_heights}" >/dev/null;
     die "committed manifest chain/height_column mapping does not match shared historical chain table"
 fi
 
+registry_codes_all="${scratch}/registry-historical-auxpow-codes-all.txt"
 registry_codes="${scratch}/registry-historical-auxpow-codes.txt"
+explicit_recovery_codes="${scratch}/explicit-recovery-source-codes.txt"
 manifest_codes="${scratch}/manifest-source-codes.txt"
 awk '
     /export const SOURCE_LIFECYCLE = {/ { in_lifecycle = 1; next }
@@ -120,7 +122,9 @@ awk '
         sub(/".*$/, "", line)
         print line
     }
-' "${repo_root}/www/js/source-registry.generated.js" | sort >"${registry_codes}"
+' "${repo_root}/www/js/source-registry.generated.js" | sort >"${registry_codes_all}"
+explicit_recovery_source_codes | sort >"${explicit_recovery_codes}"
+grep -Fvx -f "${explicit_recovery_codes}" "${registry_codes_all}" >"${registry_codes}"
 sed -n 's/.*"source_code": "\(auxpow:[^"]*\)".*/\1/p' \
     "${committed_manifest}" | sort >"${manifest_codes}"
 if ! diff -u "${registry_codes}" "${manifest_codes}" >/dev/null; then
