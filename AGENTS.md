@@ -54,6 +54,8 @@ Use `just` targets, not raw commands, when a target exists:
 - Keep changes scoped to the requested work.
 - For non-trivial implementation work, use a dedicated worktree unless the user
   explicitly says to work in the current checkout.
+- Land every change to `main` through a pull request with the required checks
+  passing. Do not push commits directly to `main`.
 - Commit only when explicitly requested.
 - Commit messages use conventional format and must not include AI attribution.
 - `just arch-lint` red is fixed by refactoring, not by relaxing thresholds or
