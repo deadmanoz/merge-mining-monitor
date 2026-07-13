@@ -6,6 +6,12 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-13
+
+- Correct source-rail bylines and source-modal documentation for Bitcoin Stash,
+  BLAST, Doichain, Fusioncoin, Jax.Network, Jincoin, Lyncoin, SixEleven, and
+  VCash.
+
 ## [0.2.0] - 2026-07-11
 
 - Recover every Lyncoin Bitcoin-merge-mined header through height 260,499 and

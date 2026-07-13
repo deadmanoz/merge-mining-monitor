@@ -86,9 +86,9 @@ Response fields:
   sections; currently always `false`.
 - `release_notes.releases`: every release-note section, newest first.
 - `release_notes.releases[].version`: section version, for example
-  `"0.2.0"`.
+  `"0.2.1"`.
 - `release_notes.releases[].date`: optional release date from headings like
-  `## [0.2.0] - 2026-07-11`.
+  `## [0.2.1] - 2026-07-13`.
 - `release_notes.releases[].items`: top-level bullet entries with wrapped
   Markdown lines flattened to text.
 - `release_notes.releases[].item_count`: total top-level bullet count in that
@@ -102,12 +102,21 @@ Example:
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 2,
+    "release_count": 3,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.2.1",
+        "date": "2026-07-13",
+        "items": [
+          "Correct the source rail and source profiles for nine catalogued or recovered chains, adding historical date ranges, concise key facts, and citations in the source dialog."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
       {
         "version": "0.2.0",
         "date": "2026-07-11",

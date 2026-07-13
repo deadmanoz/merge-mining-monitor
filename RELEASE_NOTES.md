@@ -1,5 +1,11 @@
 # Release Notes
 
+## [0.2.1] - 2026-07-13
+
+- Correct the source rail and source profiles for nine catalogued or recovered
+  chains, adding historical date ranges, concise key facts, and citations in
+  the source dialog.
+
 ## [0.2.0] - 2026-07-11
 
 - Recover every Lyncoin Bitcoin-merge-mined header through height 260,499 and

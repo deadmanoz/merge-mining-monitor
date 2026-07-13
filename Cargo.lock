@@ -991,7 +991,7 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "merge-mining-monitor"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1054,7 +1054,7 @@ dependencies = [
 
 [[package]]
 name = "mmm-api"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1076,7 +1076,7 @@ dependencies = [
 
 [[package]]
 name = "mmm-bitcoin-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "bitcoin",
@@ -1089,7 +1089,7 @@ dependencies = [
 
 [[package]]
 name = "mmm-capture"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "bitcoin",
@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "mmm-pg"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "tokio",
@@ -1112,7 +1112,7 @@ dependencies = [
 
 [[package]]
 name = "mmm-producers"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "bitcoin",
@@ -1135,7 +1135,7 @@ dependencies = [
 
 [[package]]
 name = "mmm-read-model"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "bitcoin",
@@ -1151,7 +1151,7 @@ dependencies = [
 
 [[package]]
 name = "mmm-rpc"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "reqwest",
@@ -1161,7 +1161,7 @@ dependencies = [
 
 [[package]]
 name = "mmm-store"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "mmm-capture",

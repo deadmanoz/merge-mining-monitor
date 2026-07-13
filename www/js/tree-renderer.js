@@ -1,7 +1,7 @@
-import { applyTreeHighlight } from "./controls.js?v=0.2.0";
-import { $, BLOCK_H, BLOCK_W, chainColor, chainDisplayName, EDGE_KINDS, EDGE_LEGEND, esc, KINDS, ORPHAN_LEGEND, state } from "./frontend-state.js?v=0.2.0";
-import { DEFAULT_TREE_LAYOUT, layoutTreeNodes } from "./tree-layout.js?v=0.2.0";
-import { nodeFillVar, nodeLabel } from "./windowing.js?v=0.2.0";
+import { applyTreeHighlight } from "./controls.js?v=0.2.1";
+import { $, BLOCK_H, BLOCK_W, chainColor, chainDisplayName, EDGE_KINDS, EDGE_LEGEND, esc, KINDS, ORPHAN_LEGEND, state } from "./frontend-state.js?v=0.2.1";
+import { DEFAULT_TREE_LAYOUT, layoutTreeNodes } from "./tree-layout.js?v=0.2.1";
+import { nodeFillVar, nodeLabel } from "./windowing.js?v=0.2.1";
 
 
 // On-canvas legend overlay. Two groups: block kinds carry meaning through the
