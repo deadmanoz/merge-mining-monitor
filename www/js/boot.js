@@ -1,14 +1,14 @@
-import { centerCameraOnHeight, centerCameraOnNode, centerCameraOnWindowMidHeight, goTo, loadBlock, loadOrphanBranches, loadOrphansLatest, loadSources, loadTree, navSelectLabel, reconcileNavFromSelected, refreshActiveNavigatorTarget, refreshNavControls, stepNav } from "./api-client.js?v=0.2.0";
-import { applyStoredRailWidth, applyTreeHighlight, clearStoredTreeTransform, INFO_DIALOGS, openInfoDialog, RAILS, renderInfoDialogs, renderKindControls, setRailCollapsed, updateSourceGroupSelectedMarkers, wireRailResize } from "./controls.js?v=0.2.0";
-import { activateModalTab, closeDialog, showDialog, wireModalTabs } from "./dialogs.js?v=0.2.0";
-import { renderDrawer } from "./drawer-renderer.js?v=0.2.0";
-import { $, $all, API_BASE, esc, hydrateFormFromUrl, readForm, refreshRelativeTimes, startRelativeTimeTicker, state, writeForm } from "./frontend-state.js?v=0.2.0";
-import { anyNavTargetBusy, navMenuTargets, resetNavigatorTargetState } from "./nav-targets.js?v=0.2.0";
-import { wireSourceStatusPopover } from "./source-status.js?v=0.2.0";
-import { inputDateTimeToUtc } from "./tree-lookup.js?v=0.2.0";
-import { hasExplicitTreeView, hasManualTreeLookup, hasUnheightedAnchorView, syncUrl, treeWindowError } from "./tree-query-state.js?v=0.2.0";
-import { wireTreeLegend } from "./tree-renderer.js?v=0.2.0";
-import { NAV_COARSE_STRIDE } from "./windowing.js?v=0.2.0";
+import { centerCameraOnHeight, centerCameraOnNode, centerCameraOnWindowMidHeight, goTo, loadBlock, loadOrphanBranches, loadOrphansLatest, loadSources, loadTree, navSelectLabel, reconcileNavFromSelected, refreshActiveNavigatorTarget, refreshNavControls, stepNav } from "./api-client.js?v=0.2.1";
+import { applyStoredRailWidth, applyTreeHighlight, clearStoredTreeTransform, INFO_DIALOGS, openInfoDialog, RAILS, renderInfoDialogs, renderKindControls, setRailCollapsed, updateSourceGroupSelectedMarkers, wireRailResize } from "./controls.js?v=0.2.1";
+import { activateModalTab, closeDialog, showDialog, wireModalTabs } from "./dialogs.js?v=0.2.1";
+import { renderDrawer } from "./drawer-renderer.js?v=0.2.1";
+import { $, $all, API_BASE, esc, hydrateFormFromUrl, readForm, refreshRelativeTimes, startRelativeTimeTicker, state, writeForm } from "./frontend-state.js?v=0.2.1";
+import { anyNavTargetBusy, navMenuTargets, resetNavigatorTargetState } from "./nav-targets.js?v=0.2.1";
+import { wireSourceStatusPopover } from "./source-status.js?v=0.2.1";
+import { inputDateTimeToUtc } from "./tree-lookup.js?v=0.2.1";
+import { hasExplicitTreeView, hasManualTreeLookup, hasUnheightedAnchorView, syncUrl, treeWindowError } from "./tree-query-state.js?v=0.2.1";
+import { wireTreeLegend } from "./tree-renderer.js?v=0.2.1";
+import { NAV_COARSE_STRIDE } from "./windowing.js?v=0.2.1";
 
 
 async function reloadAll() {

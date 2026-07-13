@@ -3,7 +3,7 @@ import {
   orphanBranchStepperState,
   orphanStepperState,
   staleStepperState,
-} from "./windowing.js?v=0.2.0";
+} from "./windowing.js?v=0.2.1";
 
 const TARGETS = Object.freeze({
   stale: Object.freeze({
