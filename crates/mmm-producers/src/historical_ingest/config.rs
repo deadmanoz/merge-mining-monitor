@@ -48,8 +48,9 @@ pub struct HistoricalImportConfig {
     pub relevance_path: Option<PathBuf>,
     pub batch_size: usize,
     pub limit: Option<usize>,
-    /// When set, ingest non-orphan rows without a live Bitcoin Core classifier
-    /// (`BITCOIN_RPC_URL` unset). Orphan rows still require classification.
+    /// When set, ingest canonical/stale rows without a live Bitcoin Core
+    /// classifier (`BITCOIN_RPC_URL` unset). Unknown rows (admitted BTC-orphan
+    /// and known-branch rows) still require live classification.
     pub allow_unclassified: bool,
 }
 
@@ -296,8 +297,9 @@ fn resolve_default_csv_path(spec: &HistoricalChainSpec, manifest_path: &Path) ->
 }
 
 /// Build the ordered default-CSV search list, highest-confidence source first:
-/// normalized full-evidence output, then the archive's classified export, then
-/// research data drops, then any manifest-named path, then validated-stales.
+/// the research repo's committed monitor-evidence export, then normalized
+/// full-evidence output, then the archive's classified export, then research
+/// data drops, then any manifest-named path, then validated-stales.
 /// Order is precedence: `resolve_default_csv_path` takes the first that exists.
 /// Deduplicated so a repeated path is probed once.
 fn default_csv_candidates(
@@ -307,6 +309,11 @@ fn default_csv_candidates(
     let mut candidates = Vec::new();
     let research = research_root();
     if let Some(research) = &research {
+        candidates.push(
+            research
+                .join("results/monitor-evidence")
+                .join(format!("{}_monitor_evidence.csv", spec.chain)),
+        );
         candidates.push(
             research
                 .join("results/full-evidence")

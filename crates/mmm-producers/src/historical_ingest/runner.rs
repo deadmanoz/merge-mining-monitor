@@ -219,12 +219,14 @@ pub async fn run_historical_import(
 /// Decide a candidate's fate, the layer where live Core classification meets the
 /// dataset's own labels.
 ///
-/// With no classifier (`--allow-unclassified`): non-orphan rows capture
-/// unclassified, orphans are skipped. With a classifier: Canonical/Stale capture
-/// preclassified; `Near` is skipped; `Unknown` captures preclassified only when
-/// Core-absence is attested, the dataset called it an orphan, and the local
-/// orphan verdict is Strict/Weak. An attested-orphan known-branch row that did
-/// not classify becomes `KnownBranchNotClassified`; everything else,
+/// With no classifier (`--allow-unclassified`): non-unknown rows capture
+/// unclassified, unknown rows are skipped. With a classifier: Canonical/Stale
+/// capture preclassified; `Near` is skipped; `Unknown` first holds any
+/// known-branch selection as `KnownBranchNotClassified` (an externally
+/// attested stale-branch member is never persisted as a BTC orphan), then
+/// captures preclassified only when Core-absence is attested, the dataset
+/// classified it as unknown, and the local orphan verdict is Strict/Weak;
+/// everything else,
 /// `Unclassified`. Reads parent preflight by prev_blockhash in
 /// `to_byte_array` (wire) order.
 async fn import_decision(
@@ -235,7 +237,7 @@ async fn import_decision(
 ) -> Result<ImportDecision> {
     if !classifier.is_enabled() {
         if config.allow_unclassified
-            && candidate.source_classification != SourceClassification::Orphan
+            && candidate.source_classification != SourceClassification::Unknown
         {
             return Ok(ImportDecision::CaptureUnclassified);
         }
@@ -266,23 +268,28 @@ async fn import_decision(
             if !classification.core_absence_attested {
                 return Ok(ImportDecision::Skip(SkipReason::Unclassified));
             }
-            if candidate.source_classification != SourceClassification::Orphan {
+            if candidate.source_classification != SourceClassification::Unknown {
                 return Ok(ImportDecision::Skip(SkipReason::Unclassified));
             }
             if matches!(
+                candidate.relevance_selection,
+                Some(
+                    RelevanceSelection::KnownDirectStale | RelevanceSelection::KnownStaleDescendant
+                )
+            ) {
+                // Externally attested stale-branch member: hold it for Core or
+                // an imported predecessor to place. Checked BEFORE the orphan
+                // verdict so a Core-absent known-branch row whose local nBits
+                // verdict happens to be strict/weak is never persisted as a
+                // BTC orphan in contradiction of its attestation.
+                Ok(ImportDecision::Skip(SkipReason::KnownBranchNotClassified))
+            } else if matches!(
                 candidate.orphan_verdict,
                 Some(BtcOrphanVerdict::Strict | BtcOrphanVerdict::Weak)
             ) {
                 Ok(ImportDecision::CapturePreclassified(Box::new(
                     classification,
                 )))
-            } else if matches!(
-                candidate.relevance_selection,
-                Some(
-                    RelevanceSelection::KnownDirectStale | RelevanceSelection::KnownStaleDescendant
-                )
-            ) {
-                Ok(ImportDecision::Skip(SkipReason::KnownBranchNotClassified))
             } else {
                 Ok(ImportDecision::Skip(SkipReason::Unclassified))
             }

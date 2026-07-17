@@ -1588,7 +1588,7 @@ export const CHAIN_PROFILES = {
     },
     "provenance": {
       "source": "Raw headers recovered from the live Lyncoin P2P network, decoded against the official Lyncoin v4.0.0 protocol definitions, and classified with Bitcoin Core.[^1]",
-      "coverage": "Complete Bitcoin-merge-mined window at child heights 0 through 260,499. Import artifact: 11 canonical rows, SHA-256 896c9ca07288406cc99c80f770acd5135e8b95a842091cdfa514c088b9b856d1."
+      "coverage": "Complete Bitcoin-merge-mined window at child heights 0 through 260,499. Import artifact: 11 canonical rows, SHA-256 12027329ef7c19c7a8654e348138e4e462b027aa39f6744cdedd4c4e58181ae9."
     },
     "references": [
       {
@@ -1860,7 +1860,7 @@ export const CHAIN_PROFILES = {
     },
     "provenance": {
       "source": "Recovered by synchronizing the pinned SixEleven node image to height 999,406, parsing the legacy block files, and classifying Bitcoin-difficulty parents with Bitcoin Core.[^1]",
-      "coverage": "Complete child chain through height 999,406. Import artifact: seven canonical rows, SHA-256 5ad62cab88e4ae62f1cce84b12acd7b68832b9e428ea9d386f1c05109e9871e1."
+      "coverage": "Complete child chain through height 999,406. Import artifact: seven canonical rows, SHA-256 086552bd812cc6c52e334970ea4b0f466041f8b4040c0e9b7360a7ec758c32dd."
     },
     "references": [
       {

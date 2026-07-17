@@ -20,6 +20,21 @@ This changelog starts with the initial release.
   header-time-delta distribution view, which needs the whole set client-side to
   re-bin and re-window without a request per interaction.
 
+- Align the historical importer with the research repo's data-consistency
+  pass: the default CSV search now prefers the committed
+  `results/monitor-evidence/<chain>_monitor_evidence.csv` exports, whose
+  per-row `btc_stale_relevance` / `relevance_reason` columns supply
+  strict/weak verdicts without the bulky relevance inventory; the
+  `classification` column accepts `unknown` (the research repo's new name
+  for the broad evidence state, with the legacy `orphan` spelling still
+  read); and the relevance-inventory reason matching uses the vocabulary
+  the research classifier actually emits (`valid_direct_stale` /
+  `valid_stale_descendant`) instead of the never-emitted placeholder
+  strings. The explicit VCash/Lyncoin/SixEleven artifact checksums track
+  the regenerated research artifacts. The historical-source manifest
+  re-pin to the published research commit follows once that repo is
+  pushed.
+
 ## [0.2.1] - 2026-07-13
 
 - Correct source-rail bylines and source-modal documentation for Bitcoin Stash,

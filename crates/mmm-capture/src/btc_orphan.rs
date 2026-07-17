@@ -28,9 +28,9 @@ pub const BIP34_HEIGHT: i32 = 227_931;
 /// Source chains whose producers embed a REAL Bitcoin parent coinbase scriptSig
 /// (the Namecoin-family raw-AuxPoW form), so a decoded BIP34 height is usable as
 /// strict orphan evidence. Ported from the research `BTC_COINBASE_SCRIPTSIG_CHAINS`
-/// allowlist, with `fractal-bitcoin` mapped to this repo's `fractal` source
-/// chain. RSK (NULL coinbase), Hathor (reconstructed coinbase), and Xaya are
-/// deliberately absent: they are weak-only.
+/// allowlist (the research repo also uses the `fractal` chain key). RSK (NULL
+/// coinbase), Hathor (reconstructed coinbase), and Xaya are deliberately
+/// absent: they are weak-only.
 pub const STRICT_BIP34_CHAINS: &[&str] = &[
     "argentum",
     "bitcoin-vault",
