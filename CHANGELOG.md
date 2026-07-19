@@ -83,6 +83,24 @@ This changelog starts with the initial release.
   `--skip-malformed` is passed), so a corrupt file or mid-import failure
   records nothing rather than a partial membership that downstream
   empty-membership guards would treat as complete.
+- Extend `import-dataset` to the live-lifecycle chains that also publish
+  recovered historical monitor-evidence exports (namecoin, rsk, elastos,
+  syscoin, hathor, fractal). The importer's chain table stays a closed set: a
+  new `LIVE_IMPORT_CHAINS` allowlist opts these `Live` registry rows into
+  historical import alongside the existing `Historical`/`Partial` rows, and each
+  gets a `HEIGHT_COLUMNS` entry (all use the normalized `child_height` column,
+  verified against every export header). The side-table hygiene test is
+  extended to accept live-import chains, and a new test asserts every
+  `LIVE_IMPORT_CHAINS` entry names a real `Live` registry row and does not
+  overlap the Historical/Partial set. These sources also live-capture into the
+  same `source_id`; on a `(source_id, child_height, child_block_hash)`
+  collision the existing upsert only advances `confirmed_at` and coalesces the
+  child coinbase columns, never rewriting the first writer's parent-side
+  evidence, so imported historical rows and live-captured rows coexist
+  protectively (the upsert is unchanged). The stale-only historical manifest and
+  its test are unaffected: they enumerate only `historical`-lifecycle codes, and
+  live-import chains are supplied through the research monitor-evidence exports,
+  not the manifest.
 - Derive the historical importer's chain table from `mmm-capture`'s
   `SOURCE_REGISTRY` instead of hand-listing it a second time.
   `historical_ingest::config::HISTORICAL_CHAINS` now filters the registry's
