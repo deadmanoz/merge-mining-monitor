@@ -20,6 +20,31 @@ This changelog starts with the initial release.
   header-time-delta distribution view, which needs the whole set client-side to
   re-bin and re-window without a request per interaction.
 
+- Derive the historical importer's chain table from `mmm-capture`'s
+  `SOURCE_REGISTRY` instead of hand-listing it a second time.
+  `historical_ingest::config::HISTORICAL_CHAINS` now filters the registry's
+  `Historical`/`Partial` lifecycle rows and looks up only the one field the
+  registry does not carry, the CSV `height_column`, from a small local side
+  table (missing entries fail loudly at the first lookup). The derived table
+  was verified row for row against the deleted hand list before it landed;
+  a hygiene test guards the side table against orphaned or duplicate entries.
+- Add a cross-repo drift-sync test for the two hand-maintained BIP34
+  constants. `mmm-capture`'s `STRICT_BIP34_CHAINS` and `BIP34_HEIGHT` are
+  permanent ports of the merge-mining-research repo's
+  `BTC_COINBASE_SCRIPTSIG_CHAINS` and `BIP34_HEIGHT`; the new test locates the
+  research checkout (via `MERGE_MINING_RESEARCH_DIR`, falling back to the
+  sibling `../merge-mining-research` path), parses both Python sources, and
+  asserts equality. It skips cleanly when no checkout is available and fails
+  loudly if a checkout is present but either constant cannot be located.
+  `doichain` joins `STRICT_BIP34_CHAINS` in the same pass, matching the
+  published classifier's `BTC_COINBASE_SCRIPTSIG_CHAINS` allowlist.
+- Document why `ParentKind` (`mmm-capture::capture`) and `BlockKind`
+  (`mmm-bitcoin-core::parent_classifier`) stay separate enums instead of
+  merging into one: they model two different DB CHECK domains
+  (`merge_mining_event.btc_parent_kind` has four values including `near`;
+  `block.kind` has three, since a `block` row never persists a child-only
+  near-miss header). Each enum's doc comment now cross-references the other
+  and the `mmm-read-model::classify` translation boundary between them.
 - Align the historical importer with the research repo's data-consistency
   pass: the default CSV search now prefers the committed
   `results/monitor-evidence/<chain>_monitor_evidence.csv` exports, whose

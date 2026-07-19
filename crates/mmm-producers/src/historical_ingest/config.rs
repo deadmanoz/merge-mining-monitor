@@ -1,13 +1,21 @@
 //! CLI argument parsing and dataset-source discovery for `import-dataset`.
 //!
-//! Holds the static `HISTORICAL_CHAINS` table (the recovered-evidence analogue
-//! of the live `chains::spec` table) and the layered default-path search that
+//! Holds the `HISTORICAL_CHAINS` table (the recovered-evidence analogue of the
+//! live `chains::spec` table) and the layered default-path search that
 //! locates an evidence CSV when `--csv` is not given. All env reads for the
 //! importer live here so the runner stays I/O-policy free.
+//!
+//! `HISTORICAL_CHAINS` is derived from `mmm_capture::source_registry`'s
+//! `Historical`/`Partial` lifecycle rows, not hand-listed: the registry
+//! already owns `source_code` and `chain` as the single source of truth, so
+//! this module supplies only `height_column`, the one field the registry does
+//! not carry (see `HEIGHT_COLUMNS`).
 
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use anyhow::{Context, Result, bail};
+use mmm_capture::source_registry::{SOURCE_REGISTRY, SourceLifecycle};
 use serde::Deserialize;
 
 const RESEARCH_ROOT_ENV: &str = "MERGE_MINING_RESEARCH_DIR";
@@ -73,112 +81,70 @@ struct HistoricalManifestSource {
 /// Progress-log cadence and default ingest batch size when `--batch-size` is omitted.
 const DEFAULT_BATCH_SIZE: usize = 500;
 
-/// The closed set of recovered full and partial merge-mining sources accepted.
-///
-/// Extend by adding a row here, never by cloning a module: this is the static
-/// registry `historical_chain_spec` looks up and the test asserts is complete.
-const HISTORICAL_CHAINS: &[HistoricalChainSpec] = &[
-    HistoricalChainSpec {
-        chain: "argentum",
-        source_code: "auxpow:argentum",
-        height_column: "arg_height",
-    },
-    HistoricalChainSpec {
-        chain: "bitcoin-vault",
-        source_code: "auxpow:bitcoin-vault",
-        height_column: "btcv_height",
-    },
-    HistoricalChainSpec {
-        chain: "bitmark",
-        source_code: "auxpow:bitmark",
-        height_column: "btmk_height",
-    },
-    HistoricalChainSpec {
-        chain: "coiledcoin",
-        source_code: "auxpow:coiledcoin",
-        height_column: "clc_height",
-    },
-    HistoricalChainSpec {
-        chain: "crown",
-        source_code: "auxpow:crown",
-        height_column: "crown_height",
-    },
-    HistoricalChainSpec {
-        chain: "devcoin",
-        source_code: "auxpow:devcoin",
-        height_column: "dvc_height",
-    },
-    HistoricalChainSpec {
-        chain: "emercoin",
-        source_code: "auxpow:emercoin",
-        height_column: "emc_height",
-    },
-    HistoricalChainSpec {
-        chain: "geistgeld",
-        source_code: "auxpow:geistgeld",
-        height_column: "geistgeld_height",
-    },
-    HistoricalChainSpec {
-        chain: "groupcoin",
-        source_code: "auxpow:groupcoin",
-        height_column: "groupcoin_height",
-    },
-    HistoricalChainSpec {
-        chain: "huntercoin",
-        source_code: "auxpow:huntercoin",
-        height_column: "huc_height",
-    },
-    HistoricalChainSpec {
-        chain: "i0coin",
-        source_code: "auxpow:i0coin",
-        height_column: "child_height",
-    },
-    HistoricalChainSpec {
-        chain: "ixcoin",
-        source_code: "auxpow:ixcoin",
-        height_column: "ixc_height",
-    },
-    HistoricalChainSpec {
-        chain: "myriadcoin",
-        source_code: "auxpow:myriadcoin",
-        height_column: "xmy_height",
-    },
-    HistoricalChainSpec {
-        chain: "terracoin",
-        source_code: "auxpow:terracoin",
-        height_column: "trc_height",
-    },
-    HistoricalChainSpec {
-        chain: "unobtanium",
-        source_code: "auxpow:unobtanium",
-        height_column: "uno_height",
-    },
-    HistoricalChainSpec {
-        chain: "xaya",
-        source_code: "auxpow:xaya",
-        height_column: "child_height",
-    },
-    HistoricalChainSpec {
-        chain: "elcash",
-        source_code: "auxpow:elcash",
-        height_column: "elc_height",
-    },
-    HistoricalChainSpec {
-        chain: "vcash",
-        source_code: "auxpow:vcash",
-        height_column: "child_height",
-    },
-    HistoricalChainSpec {
-        chain: "lyncoin",
-        source_code: "auxpow:lyncoin",
-        height_column: "child_height",
-    },
-    HistoricalChainSpec {
-        chain: "sixeleven",
-        source_code: "auxpow:sixeleven",
-        height_column: "child_height",
-    },
+/// Chain-specific child-height CSV column name for each historical/partial
+/// source. The one field a `SOURCE_REGISTRY` row does not carry: every other
+/// `HistoricalChainSpec` field (`chain`, `source_code`) is read straight off
+/// the matching registry row in `build_historical_chains`.
+const HEIGHT_COLUMNS: &[(&str, &str)] = &[
+    ("argentum", "arg_height"),
+    ("bitcoin-vault", "btcv_height"),
+    ("bitmark", "btmk_height"),
+    ("coiledcoin", "clc_height"),
+    ("crown", "crown_height"),
+    ("devcoin", "dvc_height"),
+    ("emercoin", "emc_height"),
+    ("geistgeld", "geistgeld_height"),
+    ("groupcoin", "groupcoin_height"),
+    ("huntercoin", "huc_height"),
+    ("i0coin", "child_height"),
+    ("ixcoin", "ixc_height"),
+    ("myriadcoin", "xmy_height"),
+    ("terracoin", "trc_height"),
+    ("unobtanium", "uno_height"),
+    ("xaya", "child_height"),
+    ("elcash", "elc_height"),
+    ("vcash", "vcash_height"),
+    ("lyncoin", "child_height"),
+    ("sixeleven", "child_height"),
 ];
+
+/// Look up `chain`'s CSV column name. Panics if a `Historical`/`Partial`
+/// `SOURCE_REGISTRY` row has no matching `HEIGHT_COLUMNS` entry: a silent
+/// fallback would ship an importer that cannot find its own height column, so
+/// an incomplete side table must fail loudly at the first lookup instead.
+fn height_column_for(chain: &'static str) -> &'static str {
+    HEIGHT_COLUMNS
+        .iter()
+        .find(|(name, _)| *name == chain)
+        .map(|(_, column)| *column)
+        .unwrap_or_else(|| panic!("no height_column configured for historical chain {chain:?}"))
+}
+
+/// Build `HISTORICAL_CHAINS` from `SOURCE_REGISTRY`'s `Historical`/`Partial`
+/// lifecycle rows. Extend the accepted set by adding a `historical_auxpow` or
+/// `partial_auxpow` row to `SOURCE_REGISTRY` plus a `HEIGHT_COLUMNS` entry
+/// here, never by cloning a module.
+fn build_historical_chains() -> Vec<HistoricalChainSpec> {
+    SOURCE_REGISTRY
+        .iter()
+        .filter(|def| {
+            matches!(
+                def.lifecycle,
+                SourceLifecycle::Historical | SourceLifecycle::Partial
+            )
+        })
+        .map(|def| HistoricalChainSpec {
+            chain: def.chain,
+            source_code: def.code,
+            height_column: height_column_for(def.chain),
+        })
+        .collect()
+}
+
+/// The closed set of recovered full and partial merge-mining sources
+/// accepted, computed once from `SOURCE_REGISTRY` and cached.
+static HISTORICAL_CHAINS: LazyLock<Vec<HistoricalChainSpec>> =
+    LazyLock::new(build_historical_chains);
 
 /// Look up a chain's static spec by exact name, or `None` if unsupported.
 pub(super) fn historical_chain_spec(chain: &str) -> Option<&'static HistoricalChainSpec> {
@@ -297,11 +263,14 @@ fn resolve_default_csv_path(spec: &HistoricalChainSpec, manifest_path: &Path) ->
 }
 
 /// Build the ordered default-CSV search list, highest-confidence source first:
-/// the research repo's committed monitor-evidence export, then normalized
-/// full-evidence output, then the archive's classified export, then research
-/// data drops, then any manifest-named path, then validated-stales.
-/// Order is precedence: `resolve_default_csv_path` takes the first that exists.
-/// Deduplicated so a repeated path is probed once.
+/// the committed canonical-blocks artifact for exact-child-field chains (the
+/// compact monitor-evidence exports omit `child_block_time`, which those
+/// chains require, so monitor exports are never probed for them), then for
+/// other chains the research repo's committed monitor-evidence export, then
+/// normalized full-evidence output, then the archive's classified export,
+/// then research data drops, then any manifest-named path, then
+/// validated-stales. Order is precedence: `resolve_default_csv_path` takes the
+/// first that exists. Deduplicated so a repeated path is probed once.
 fn default_csv_candidates(
     spec: &HistoricalChainSpec,
     manifest_path: &Path,
@@ -309,11 +278,23 @@ fn default_csv_candidates(
     let mut candidates = Vec::new();
     let research = research_root();
     if let Some(research) = &research {
-        candidates.push(
-            research
-                .join("results/monitor-evidence")
-                .join(format!("{}_monitor_evidence.csv", spec.chain)),
-        );
+        if spec.requires_exact_child_fields() {
+            candidates.push(
+                research
+                    .join("data/canonical")
+                    .join(format!("{}_canonical_blocks.csv", spec.chain)),
+            );
+        } else {
+            // Monitor-evidence exports omit `child_block_time`, which the
+            // exact-child-field chains require, so those chains never probe
+            // them: a present-but-incompatible export would be selected and
+            // abort the import ahead of a compatible fallback.
+            candidates.push(
+                research
+                    .join("results/monitor-evidence")
+                    .join(format!("{}_monitor_evidence.csv", spec.chain)),
+            );
+        }
         candidates.push(
             research
                 .join("results/full-evidence")
@@ -430,7 +411,7 @@ mod tests {
     #[test]
     fn every_recovered_source_has_a_height_column() {
         assert_eq!(HISTORICAL_CHAINS.len(), 20);
-        for spec in HISTORICAL_CHAINS {
+        for spec in HISTORICAL_CHAINS.iter() {
             assert!(spec.source_code.starts_with("auxpow:"));
             assert!(!spec.height_column.is_empty());
         }
@@ -445,6 +426,10 @@ mod tests {
         assert_eq!(
             historical_chain_spec("vcash").unwrap().source_code,
             "auxpow:vcash"
+        );
+        assert_eq!(
+            historical_chain_spec("vcash").unwrap().height_column,
+            "vcash_height"
         );
         assert_eq!(
             historical_chain_spec("lyncoin").unwrap().height_column,
@@ -473,5 +458,31 @@ mod tests {
     fn historical_dataset_roots_use_merge_mining_env_names() {
         assert_eq!(RESEARCH_ROOT_ENV, "MERGE_MINING_RESEARCH_DIR");
         assert_eq!(ARCHIVE_ROOT_ENV, "MERGE_MINING_ARCHIVE_DIR");
+    }
+
+    #[test]
+    fn height_columns_side_table_has_no_orphans_or_duplicates() {
+        // The forward direction (every Historical/Partial registry row has a
+        // height column) fails loudly via `height_column_for`'s panic the
+        // moment HISTORICAL_CHAINS is built, which every test above forces.
+        // This covers the reverse: a HEIGHT_COLUMNS entry whose chain no
+        // longer exists in the registry (or is no longer Historical/Partial)
+        // is dead configuration and must be removed, and duplicate keys
+        // would make the lookup order-dependent.
+        let mut seen = std::collections::HashSet::new();
+        for (chain, _) in HEIGHT_COLUMNS {
+            assert!(
+                seen.insert(*chain),
+                "duplicate HEIGHT_COLUMNS entry: {chain:?}"
+            );
+            assert!(
+                SOURCE_REGISTRY.iter().any(|def| def.chain == *chain
+                    && matches!(
+                        def.lifecycle,
+                        SourceLifecycle::Historical | SourceLifecycle::Partial
+                    )),
+                "orphaned HEIGHT_COLUMNS entry: {chain:?} has no Historical/Partial registry row"
+            );
+        }
     }
 }

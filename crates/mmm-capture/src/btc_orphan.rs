@@ -38,6 +38,7 @@ pub const STRICT_BIP34_CHAINS: &[&str] = &[
     "coiledcoin",
     "crown",
     "devcoin",
+    "doichain",
     "elastos",
     "emercoin",
     "fractal",
