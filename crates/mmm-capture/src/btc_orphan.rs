@@ -1,7 +1,7 @@
 //! BTC orphan classification.
 //!
 //! Refines a Core-attested-absent, BTC-PoW-valid `unknown` parent header into
-//! `strict_btc_orphan` / `weak_btc_orphan` / `btc_stale_excluded`, or leaves it
+//! `strict_btc_orphan` / `weak_btc_orphan` / `excluded`, or leaves it
 //! pending when the committed nBits table cannot yet give a correct verdict.
 //!
 //! This is a faithful port of the orphan path of the research classifier
@@ -83,7 +83,7 @@ impl BtcOrphanVerdict {
         match self {
             Self::Strict => Some("strict_btc_orphan"),
             Self::Weak => Some("weak_btc_orphan"),
-            Self::Excluded => Some("btc_stale_excluded"),
+            Self::Excluded => Some("excluded"),
             Self::Pending => None,
         }
     }
@@ -386,10 +386,7 @@ mod tests {
             Some("strict_btc_orphan")
         );
         assert_eq!(BtcOrphanVerdict::Weak.as_db_str(), Some("weak_btc_orphan"));
-        assert_eq!(
-            BtcOrphanVerdict::Excluded.as_db_str(),
-            Some("btc_stale_excluded")
-        );
+        assert_eq!(BtcOrphanVerdict::Excluded.as_db_str(), Some("excluded"));
         assert_eq!(BtcOrphanVerdict::Pending.as_db_str(), None);
     }
 }

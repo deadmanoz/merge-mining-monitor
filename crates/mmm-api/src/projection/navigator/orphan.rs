@@ -238,7 +238,7 @@ async fn load_orphan_class_counts(client: &Client) -> Result<OrphanClassCounts, 
         match class.as_deref() {
             Some("strict_btc_orphan") => counts.strict = n,
             Some("weak_btc_orphan") => counts.weak = n,
-            Some("btc_stale_excluded") => counts.excluded = n,
+            Some("excluded") => counts.excluded = n,
             None => counts.pending = n,
             Some(_) => {}
         }

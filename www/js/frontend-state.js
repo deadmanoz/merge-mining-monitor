@@ -121,12 +121,12 @@ const ORPHAN_LEGEND = [
 // from `kinds=` (a client-side highlight). Strict + weak are the navigable signal
 // (default on); excluded and pending are muted refinements (off by default). The
 // order here is the canonical display order, matching the backend echo.
-const CLASSIFICATIONS = ["strict_btc_orphan", "weak_btc_orphan", "btc_stale_excluded", "pending"];
+const CLASSIFICATIONS = ["strict_btc_orphan", "weak_btc_orphan", "excluded", "pending"];
 const CLASSIFICATION_DEFAULT = ["strict_btc_orphan", "weak_btc_orphan"];
 const CLASSIFICATION_META = {
   strict_btc_orphan: { name: "Strict orphan", count: "strict" },
   weak_btc_orphan: { name: "Weak orphan", count: "weak" },
-  btc_stale_excluded: { name: "Excluded", count: "excluded" },
+  excluded: { name: "Excluded", count: "excluded" },
   pending: { name: "Pending", count: "pending" },
 };
 

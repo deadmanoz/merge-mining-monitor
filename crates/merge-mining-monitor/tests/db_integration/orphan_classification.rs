@@ -58,7 +58,7 @@ async fn core_absent_unknown_keeps_wrong_epoch_exclusion_across_transient_rechec
             .await?;
         assert_eq!(
             row.get::<_, Option<String>>(0).as_deref(),
-            Some("btc_stale_excluded"),
+            Some("excluded"),
             "a transient recheck must not flip a wrong-epoch exclusion to an orphan"
         );
         assert_eq!(
@@ -133,7 +133,7 @@ async fn core_absence_sets_orphan_class_and_canonical_promotion_clears_it() -> R
         assert!(
             matches!(
                 orphan_class.as_deref(),
-                Some("strict_btc_orphan" | "weak_btc_orphan" | "btc_stale_excluded")
+                Some("strict_btc_orphan" | "weak_btc_orphan" | "excluded")
             ),
             "Core-attested-absent unknown must be classified, got {orphan_class:?}"
         );

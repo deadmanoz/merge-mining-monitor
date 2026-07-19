@@ -34,6 +34,19 @@ This changelog starts with the initial release.
   the regenerated research artifacts. The historical-source manifest
   re-pin to the published research commit follows once that repo is
   pushed.
+- Track two further lockstep vocabulary changes landing on the research repo
+  at the same time: stale and stale-descendant rows in the monitor-evidence
+  exports now carry an empty `btc_stale_relevance` (the `relevance_reason`
+  column alone signals `valid_direct_stale` / `valid_stale_descendant`,
+  which the importer already keyed on, so old and new exports both ingest
+  without error), and the excluded verdict token is renamed from
+  `btc_stale_excluded` to `excluded` in both repos. The rename covers the
+  `block.btc_orphan_class` DB value, the `classification=` query parameter
+  and JSON response field, and the frontend's classification vocabulary and
+  fill styling. Migration `0005_rename_excluded_orphan_class.sql` rewrites
+  existing rows and replaces the CHECK constraint (the baseline schema in
+  `0001_canonical_schema.sql` is left alone, since a migration has already
+  applied to a persistent database per `migrations/README.md`).
 
 ## [0.2.1] - 2026-07-13
 

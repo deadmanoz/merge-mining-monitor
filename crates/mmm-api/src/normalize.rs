@@ -124,7 +124,7 @@ impl Classification {
         match self {
             Self::StrictBtcOrphan => "strict_btc_orphan",
             Self::WeakBtcOrphan => "weak_btc_orphan",
-            Self::BtcStaleExcluded => "btc_stale_excluded",
+            Self::BtcStaleExcluded => "excluded",
             Self::Pending => "pending",
         }
     }
@@ -135,7 +135,7 @@ impl Classification {
         match self {
             Self::StrictBtcOrphan => Some("strict_btc_orphan"),
             Self::WeakBtcOrphan => Some("weak_btc_orphan"),
-            Self::BtcStaleExcluded => Some("btc_stale_excluded"),
+            Self::BtcStaleExcluded => Some("excluded"),
             Self::Pending => None,
         }
     }
@@ -153,7 +153,7 @@ pub(crate) fn parse_classifications(raw: Option<&str>) -> Result<Vec<Classificat
         let classification = match member.trim() {
             "strict_btc_orphan" => Classification::StrictBtcOrphan,
             "weak_btc_orphan" => Classification::WeakBtcOrphan,
-            "btc_stale_excluded" => Classification::BtcStaleExcluded,
+            "excluded" => Classification::BtcStaleExcluded,
             "pending" => Classification::Pending,
             other => {
                 return Err(ApiError::invalid_query(
@@ -359,7 +359,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            parse_classifications(Some("btc_stale_excluded,pending")).unwrap(),
+            parse_classifications(Some("excluded,pending")).unwrap(),
             vec![Classification::BtcStaleExcluded, Classification::Pending]
         );
         assert_eq!(parse_classifications(None).unwrap(), Vec::new());
@@ -387,7 +387,7 @@ mod tests {
         );
         assert_eq!(
             Classification::BtcStaleExcluded.as_db_str(),
-            Some("btc_stale_excluded")
+            Some("excluded")
         );
         assert_eq!(Classification::Pending.as_db_str(), None);
         assert_eq!(Classification::Pending.as_str(), "pending");

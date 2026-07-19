@@ -116,7 +116,7 @@ pub struct TreeNode {
     pub height: Option<i32>,
     pub kind: &'static str,
     /// Derived refinement of `kind='unknown'` (see `block.btc_orphan_class`):
-    /// `strict_btc_orphan` / `weak_btc_orphan` / `btc_stale_excluded`, or `null`
+    /// `strict_btc_orphan` / `weak_btc_orphan` / `excluded`, or `null`
     /// for canonical/stale nodes and for pending/never-Core-checked unknowns.
     pub btc_orphan_class: Option<String>,
     pub prev_id: Option<usize>,

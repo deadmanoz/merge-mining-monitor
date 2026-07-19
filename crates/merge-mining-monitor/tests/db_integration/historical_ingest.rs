@@ -163,8 +163,8 @@ async fn import_dataset_persists_known_branch_attestation_when_core_classifies_s
         let csv_path = write_orphan_csv(&stale_header, &coinbase_script)?;
         let relevance_path = write_relevance_csv_with_reason(
             &stale_header.block_hash().to_string(),
-            "btc_stale_excluded",
-            "known_stale_descendant_hash",
+            "excluded",
+            "valid_stale_descendant",
         )?;
         let height = 700_002;
 
@@ -233,8 +233,8 @@ async fn import_dataset_skips_known_branch_attestation_when_core_cannot_classify
         let csv_path = write_orphan_csv(&header, &coinbase_script)?;
         let relevance_path = write_relevance_csv_with_reason(
             &header.block_hash().to_string(),
-            "btc_stale_excluded",
-            "known_direct_stale_hash",
+            "excluded",
+            "valid_direct_stale",
         )?;
 
         let import_result = async {

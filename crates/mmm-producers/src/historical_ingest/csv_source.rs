@@ -163,9 +163,12 @@ fn read_relevance_filter<R: Read>(reader: R, chain: &str) -> Result<RelevanceFil
         let selection = match (relevance, reason) {
             ("strict_btc_orphan", _) => RelevanceSelection::StrictBtcOrphan,
             ("weak_btc_orphan", _) => RelevanceSelection::WeakBtcOrphan,
-            // The research classifier's confirmed_btc_stale reasons: rows the
-            // known-stale set already attests as a direct stale or a valid
-            // stale-fork descendant.
+            // Known-stale rows: the research exporter leaves btc_stale_relevance
+            // empty here and signals the row through relevance_reason alone
+            // (already attested by the known-stale set as a direct stale or a
+            // valid stale-fork descendant). Relevance is wildcarded in these two
+            // arms, so an older export's retired confirmed_btc_stale value in
+            // that column still matches on the reason.
             (_, "valid_direct_stale") => RelevanceSelection::KnownDirectStale,
             (_, "valid_stale_descendant") => RelevanceSelection::KnownStaleDescendant,
             _ => continue,
@@ -614,7 +617,7 @@ mod tests {
 chain,btc_stale_relevance,btc_header_hash\n\
 devcoin,strict_btc_orphan,aa\n\
 devcoin,weak_btc_orphan,bb\n\
-devcoin,btc_stale_excluded,cc\n\
+devcoin,excluded,cc\n\
 devcoin|ixcoin,strict_btc_orphan,dd\n\
 ixcoin,strict_btc_orphan,ee\n";
         let filter = read_relevance_filter(csv.as_bytes(), "devcoin").unwrap();
@@ -630,11 +633,11 @@ ixcoin,strict_btc_orphan,ee\n";
     fn relevance_filter_loads_known_branch_attestation_reasons() {
         let csv = "\
 chain,source_classification,btc_stale_relevance,relevance_reason,btc_header_hash\n\
-devcoin,unknown,confirmed_btc_stale,valid_direct_stale,aa\n\
-devcoin,orphan,confirmed_btc_stale,valid_stale_descendant,bb\n\
-devcoin,orphan,btc_stale_excluded,validation_rejected,cc\n\
-devcoin,orphan,btc_stale_excluded,known_direct_stale_hash,dd\n\
-ixcoin,unknown,confirmed_btc_stale,valid_direct_stale,ee\n";
+devcoin,unknown,,valid_direct_stale,aa\n\
+devcoin,orphan,,valid_stale_descendant,bb\n\
+devcoin,orphan,excluded,validation_rejected,cc\n\
+devcoin,orphan,excluded,known_direct_stale_hash,dd\n\
+ixcoin,unknown,,valid_direct_stale,ee\n";
         let filter = read_relevance_filter(csv.as_bytes(), "devcoin").unwrap();
 
         assert_eq!(
@@ -660,7 +663,7 @@ ixcoin,unknown,confirmed_btc_stale,valid_direct_stale,ee\n";
         ));
         let csv = format!(
             "chain,btc_stale_relevance,relevance_reason,btc_header_hash\n\
-             devcoin,confirmed_btc_stale,valid_stale_descendant,{GENESIS_HASH}\n"
+             devcoin,,valid_stale_descendant,{GENESIS_HASH}\n"
         );
         let relevance = read_relevance_filter(csv.as_bytes(), "devcoin").unwrap();
 
@@ -695,7 +698,7 @@ ixcoin,unknown,confirmed_btc_stale,valid_direct_stale,ee\n";
         let spec = historical_chain_spec("devcoin").unwrap();
         let (layout, record) = layout_and_record(&format!(
             "dvc_height,btc_header_hex,coinbase_scriptsig_hex,classification,btc_header_hash,btc_stale_relevance,relevance_reason\n\
-             42,{GENESIS_HEADER},04ffff001d0104,unknown,{GENESIS_HASH},confirmed_btc_stale,valid_direct_stale\n"
+             42,{GENESIS_HEADER},04ffff001d0104,unknown,{GENESIS_HASH},,valid_direct_stale\n"
         ));
 
         let candidate =

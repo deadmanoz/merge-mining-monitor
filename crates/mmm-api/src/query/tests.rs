@@ -196,8 +196,7 @@ fn tree_classification_defaults_and_parses() {
         json!(["strict_btc_orphan", "weak_btc_orphan"])
     );
 
-    let query =
-        parse_tree_query(Some("classification=strict_btc_orphan,btc_stale_excluded")).unwrap();
+    let query = parse_tree_query(Some("classification=strict_btc_orphan,excluded")).unwrap();
     assert_eq!(
         query.classification,
         vec![
