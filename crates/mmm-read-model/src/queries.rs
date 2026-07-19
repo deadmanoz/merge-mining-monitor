@@ -476,7 +476,7 @@ pub(crate) async fn load_reconcile_candidates(
 /// that lock more than one hash MUST go through `lock_block_hashes` for ordered
 /// acquisition; calling this directly for a single, already-canonical hash is
 /// fine (see `lock_parent_hash_in_txn`).
-pub(crate) async fn lock_block_hash<C: GenericClient>(client: &C, hash: &[u8]) -> Result<()> {
+pub async fn lock_block_hash<C: GenericClient>(client: &C, hash: &[u8]) -> Result<()> {
     client
         .execute(
             "SELECT pg_advisory_xact_lock(hashtextextended(encode($1::bytea, 'hex'), $2::bigint))",
@@ -494,10 +494,7 @@ pub(crate) async fn lock_block_hash<C: GenericClient>(client: &C, hash: &[u8]) -
 /// All callers funnel the parent + prev + classification + competitor hashes
 /// through here for exactly that reason; never hand-lock a multi-hash set out
 /// of order.
-pub(crate) async fn lock_block_hashes<C: GenericClient>(
-    client: &C,
-    hashes: &[Vec<u8>],
-) -> Result<()> {
+pub async fn lock_block_hashes<C: GenericClient>(client: &C, hashes: &[Vec<u8>]) -> Result<()> {
     let mut hashes = hashes.to_vec();
     hashes.sort();
     hashes.dedup();

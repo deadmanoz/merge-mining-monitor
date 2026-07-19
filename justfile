@@ -176,6 +176,12 @@ backfill-hathor-cache csv *args:
 import-dataset chain *args:
     cargo run -- import-dataset {{chain}} {{args}}
 
+import-known-stales *args:
+    cargo run -- import-known-stales {{args}}
+
+reclassify-known-stales *args:
+    cargo run -- reclassify-known-stales {{args}}
+
 reclassify-unknown-parents *args:
     cargo run -- reclassify-unknown-parents {{args}}
 

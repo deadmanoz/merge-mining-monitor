@@ -249,6 +249,9 @@ impl<C: ChainPoller> Poller<C> {
     pub async fn new(mut chain: C, config: PollerConfig) -> Result<Self> {
         run_startup_repair(&mut chain).await?;
 
+        crate::producer_runtime::warn_if_empty_known_stale_membership(chain.client(), chain.name())
+            .await?;
+
         let effective_start =
             effective_start(config.start_height_override, chain.activation_floor());
         let source_id = chain.source_id();

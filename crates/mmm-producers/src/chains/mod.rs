@@ -107,6 +107,8 @@ where
         CommandKind::Backfill => {
             let config = backfill::BackfillConfig::from_args(spec, args)?;
             let rt = crate::producer_runtime::ProducerRuntime::from_env().await?;
+            crate::producer_runtime::warn_if_empty_known_stale_membership(&rt.pg_client, spec.slug)
+                .await?;
             run_backfill_command(rt, config).await
         }
     }
@@ -151,6 +153,8 @@ where
     let config = hathor::cache::HathorCacheConfig::from_args(args)?;
     let rt = crate::producer_runtime::ProducerRuntime::from_env().await?;
     let mut pg_client = rt.pg_client;
+    crate::producer_runtime::warn_if_empty_known_stale_membership(&pg_client, "hathor-cache")
+        .await?;
     let context = hathor::capture::HathorCaptureContext::new_with_classifier(
         &pg_client,
         rt.parent_classifier,
@@ -186,8 +190,9 @@ where
 
 /// The non-producer commands, in the order the unknown-command listing has
 /// always shown them.
-const NON_PRODUCER_COMMANDS: &str = "import-dataset, reclassify-unknown-parents, reclassify-pools, \
-                                     sync-bitcoin-core, reconcile-read-model, \
+const NON_PRODUCER_COMMANDS: &str = "import-dataset, import-known-stales, \
+                                     reclassify-known-stales, reclassify-unknown-parents, \
+                                     reclassify-pools, sync-bitcoin-core, reconcile-read-model, \
                                      revoke-merge-mining-event, restore-merge-mining-event, or serve";
 
 /// The unknown-command error, generated from the spec table so it cannot
@@ -293,7 +298,7 @@ mod tests {
 
     /// Captured byte-for-byte from the pre-consolidation binary
     /// (src/main.rs Some(other) arm). The generator must never drift from it.
-    const GOLDEN_UNKNOWN: &str = "unknown command \"bogus\"; expected poll-namecoin, poll-rsk, poll-syscoin, poll-fractal, poll-hathor, poll-elastos, backfill-namecoin, backfill-rsk, backfill-syscoin, backfill-fractal, backfill-hathor, backfill-hathor-cache, backfill-elastos, import-dataset, reclassify-unknown-parents, reclassify-pools, sync-bitcoin-core, reconcile-read-model, revoke-merge-mining-event, restore-merge-mining-event, or serve";
+    const GOLDEN_UNKNOWN: &str = "unknown command \"bogus\"; expected poll-namecoin, poll-rsk, poll-syscoin, poll-fractal, poll-hathor, poll-elastos, backfill-namecoin, backfill-rsk, backfill-syscoin, backfill-fractal, backfill-hathor, backfill-hathor-cache, backfill-elastos, import-dataset, import-known-stales, reclassify-known-stales, reclassify-unknown-parents, reclassify-pools, sync-bitcoin-core, reconcile-read-model, revoke-merge-mining-event, restore-merge-mining-event, or serve";
 
     /// Captured byte-for-byte from the pre-consolidation binary
     /// (src/main.rs None arm).

@@ -72,6 +72,11 @@ macro_rules! run_mut_db_test {
         let test_result = async $body.await;
         $crate::support::db::teardown_test_db(&$client, &schema, test_result).await
     }};
+    ($client:ident, $schema:ident, $body:block) => {{
+        let (mut $client, $schema) = $crate::support::db::new_test_db().await?;
+        let test_result = async $body.await;
+        $crate::support::db::teardown_test_db(&$client, &$schema, test_result).await
+    }};
 }
 
 /// Open an additional connection with the search path already pointing at an

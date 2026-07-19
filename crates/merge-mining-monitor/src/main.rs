@@ -26,7 +26,9 @@ async fn main() -> Result<()> {
             mmm_producers::run_hathor_cache_command(args).await?;
         }
         Some("import-dataset") => cmd_import_dataset(args).await?,
+        Some("import-known-stales") => cmd_import_known_stales(args).await?,
         Some("reclassify-unknown-parents") => cmd_reclassify_unknown_parents(args).await?,
+        Some("reclassify-known-stales") => cmd_reclassify_known_stales(args).await?,
         Some("reclassify-pools") => cmd_reclassify_pools(args).await?,
         Some("sync-bitcoin-core") => cmd_sync_bitcoin_core(args).await?,
         Some("reconcile-read-model") => cmd_reconcile_read_model(args).await?,
@@ -53,6 +55,24 @@ async fn cmd_import_dataset(args: std::env::Args) -> Result<()> {
     let mut pg_client = mmm_producers::connect_from_env().await?;
     let summary =
         mmm_producers::run_historical_import(&mut pg_client, &classifier, &config).await?;
+    summary.print();
+
+    Ok(())
+}
+
+async fn cmd_import_known_stales(args: std::env::Args) -> Result<()> {
+    let config = mmm_producers::KnownStaleImportConfig::from_args(args)?;
+    let mut pg_client = mmm_producers::connect_from_env().await?;
+    let summary = mmm_producers::run_import_known_stales(&mut pg_client, &config).await?;
+    summary.print();
+
+    Ok(())
+}
+
+async fn cmd_reclassify_known_stales(args: std::env::Args) -> Result<()> {
+    let config = mmm_read_model::ReclassifyKnownStalesConfig::from_args(args)?;
+    let mut pg_client = mmm_producers::connect_from_env().await?;
+    let summary = mmm_read_model::run_reclassify_known_stales(&mut pg_client, config).await?;
     summary.print();
 
     Ok(())

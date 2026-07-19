@@ -13,6 +13,7 @@
 
 mod chains;
 mod event;
+mod known_stale;
 mod pending_reconcile;
 mod poll_cursor;
 mod pool;
@@ -38,6 +39,7 @@ pub use event::{
     upsert_event_pool_attributions, upsert_event_pool_attributions_without_stale_cleanup,
     upsert_merge_mining_event, upsert_merge_mining_event_with_attributions,
 };
+pub use known_stale::{count_known_stale_blocks, is_known_stale_hash, upsert_known_stale_block};
 pub use pending_reconcile::{
     PendingReconcileRow, bump_pending_attempts, delete_pending_reconcile,
     delete_pending_reconcile_at, list_pending_reconcile, retag_revocation_reason,

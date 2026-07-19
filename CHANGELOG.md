@@ -30,6 +30,49 @@ This changelog starts with the initial release.
   header-time-delta distribution view, which needs the whole set client-side to
   re-bin and re-window without a request per interaction.
 
+- Consult a first-class known-stale membership before assigning
+  `block.btc_orphan_class`, so a catalogued stale is never mislabelled a
+  strict/weak BTC orphan. A known stale is absent from Bitcoin Core's active
+  chain by definition, so it passes the reconciler's PoW + BIP34 + nBits +
+  Core-absence checks and, without a membership check, the offline classifier
+  refined it into `strict_btc_orphan` / `weak_btc_orphan` (production served
+  header `000000000000000013fe26675faa8f7dccd55ce5485bb6d0373fa66345901436`,
+  height 363736, catalogued in the upstream `bitcoin-data/stale-blocks` dataset
+  for months, as a strict orphan). New migration
+  `0006_add_known_stale_block.sql` adds a minimal `known_stale_block` table
+  (hash PK in internal byte order, advisory height, source label, imported_at),
+  loaded by a new `import-known-stales` subcommand from the upstream
+  stale-blocks.csv-shaped dataset with a recorded provenance label (exposed
+  as `just import-known-stales`; the importer fails rather than record an
+  empty membership from a wrong or headerless file). The membership consulted
+  at classification time is the operator-imported table alone: a proven-stale
+  `block` row is deliberately not unioned in, since for a given hash it could
+  only match the row under classification itself, and a stale-to-unknown
+  re-derivation would then consult the very state it is replacing.
+  `mmm_read_model`'s
+  `compute_block_orphan_class` checks it before the strict/weak resolution and
+  returns `excluded`, mirroring the research classifier's
+  `known_stale_hash -> excluded` verdict. Ingest-time re-classification stays
+  (defense in depth), no DB values or columns are renamed, and the legacy
+  orphan-spelling acceptance is untouched. A new `reclassify-known-stales`
+  subcommand retroactively demotes any strict/weak `unknown` block already in
+  the membership to `excluded`, idempotently and counting demotions loudly,
+  maintaining `source_health` through the reconciler's before/after snapshot
+  diff. Following the research repo's lesson, `import-dataset` refuses to run
+  against an empty `known_stale_block` (pass `--allow-empty-known-stales` to
+  opt out), and `reclassify-unknown-parents` / `reclassify-known-stales` warn
+  prominently when the membership is empty rather than silently proceeding as
+  if it were consulted. Live pollers, bounded backfills, and the Hathor
+  cache import carry the same warning at startup, the
+  import summary buckets unknown rows by the persisted `btc_orphan_class`
+  (an excluded row reports as `excluded`, never strict/weak, whichever
+  exclusion path fired), and `--source-label` rejects blank values so every
+  membership row stays auditable. The membership import itself is atomic
+  (one transaction holding the per-parent advisory locks in the global sorted
+  order) and strict by default (any malformed row is fatal unless
+  `--skip-malformed` is passed), so a corrupt file or mid-import failure
+  records nothing rather than a partial membership that downstream
+  empty-membership guards would treat as complete.
 - Derive the historical importer's chain table from `mmm-capture`'s
   `SOURCE_REGISTRY` instead of hand-listing it a second time.
   `historical_ingest::config::HISTORICAL_CHAINS` now filters the registry's
