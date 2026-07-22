@@ -133,11 +133,11 @@ if ! diff -u "${registry_codes}" "${manifest_codes}" >/dev/null; then
 fi
 
 source_repo="${scratch}/merge-mining-research"
-mkdir -p "${source_repo}/data"
+mkdir -p "${source_repo}/data/validated-stales"
 git -C "${source_repo}" init -q
 
 while IFS='|' read -r chain height_column; do
-    csv="${source_repo}/data/${chain}_validated_stales.csv"
+    csv="${source_repo}/data/validated-stales/${chain}_validated_stales.csv"
     printf 'btc_header_hex,coinbase_scriptsig_hex,%s,classification,validation_status\n' "${height_column}" >"${csv}"
     case "${chain}" in
         argentum)
@@ -172,7 +172,7 @@ expected_zero_row_sources=$((expected_source_count - 2))
 [ "$(grep -c '"declared_stale_rows": 0,' "${manifest}")" -eq "${expected_zero_row_sources}" ] \
     || die "manifest did not preserve header-only fixtures as zero-row sources"
 
-argentum_sha="$(git -C "${source_repo}" show "${source_commit}:data/argentum_validated_stales.csv" | sha256_stream)"
+argentum_sha="$(git -C "${source_repo}" show "${source_commit}:data/validated-stales/argentum_validated_stales.csv" | sha256_stream)"
 grep -q "\"sha256\": \"${argentum_sha}\"" "${manifest}" \
     || die "manifest did not record the committed blob checksum"
 
@@ -223,8 +223,8 @@ grep -q "historical source manifest check skipped: source repo ${source_repo} do
     printf 'ee,ff,303,orphan,"VALID"\n'
     printf 'gg,hh,404,stale,INVALID\n'
     printf 'ii,jj,505,stale,VALIDATED\n'
-} >>"${source_repo}/data/argentum_validated_stales.csv"
-git -C "${source_repo}" add data/argentum_validated_stales.csv
+} >>"${source_repo}/data/validated-stales/argentum_validated_stales.csv"
+git -C "${source_repo}" add data/validated-stales/argentum_validated_stales.csv
 git -C "${source_repo}" \
     -c commit.gpgsign=false \
     -c user.name="Merge Mining Monitor Tests" \
