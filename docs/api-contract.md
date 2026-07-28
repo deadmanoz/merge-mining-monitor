@@ -86,9 +86,9 @@ Response fields:
   sections; currently always `false`.
 - `release_notes.releases`: every release-note section, newest first.
 - `release_notes.releases[].version`: section version, for example
-  `"0.2.1"`.
+  `"0.3.0"`.
 - `release_notes.releases[].date`: optional release date from headings like
-  `## [0.2.1] - 2026-07-13`.
+  `## [0.3.0] - 2026-07-28`.
 - `release_notes.releases[].items`: top-level bullet entries with wrapped
   Markdown lines flattened to text.
 - `release_notes.releases[].item_count`: total top-level bullet count in that
@@ -102,12 +102,25 @@ Example:
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.2.1",
+  "version": "0.3.0",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 3,
+    "release_count": 4,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.3.0",
+        "date": "2026-07-28",
+        "items": [
+          "Add the Header Time Delta view: how far apart each stale block and the canonical block that beat it timestamped their headers, with a focus window, outlier gutters, coverage and table tabs, and block-detail links.",
+          "Never label a catalogued known stale as a strict or weak BTC orphan: the monitor imports the `bitcoin-data/stale-blocks` membership, excludes its members from orphan classification, and retroactively corrects rows classified before the membership existed.",
+          "Match the published research vocabulary: the broad evidence state is `unknown`, and the excluded orphan-class token is now `excluded`.",
+          "Accept recovered historical evidence for the six live chains, with exact child identity required and RSK sidecar support.",
+          "Add Open Graph social cards for link sharing."
+        ],
+        "item_count": 5,
+        "truncated": false
+      },
       {
         "version": "0.2.1",
         "date": "2026-07-13",

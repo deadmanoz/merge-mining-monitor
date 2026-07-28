@@ -23,12 +23,15 @@ and the API serves those derived projections without writing capture state.
                                                  chain sidecar tables
                                                  event_pool_attribution
 
+   operator import (import-known-stales) ──────> known_stale_block
+
 2. RECONCILE        read-model rebuilds derived tables from base evidence
 ──────────────────────────────────────────────────────────────────────
    base tables ─────────┐
-                        ├──> read-model ──> block
+   known_stale_block ───┼──> read-model ──> block
    Bitcoin Core ────────┘    reconciler     attestation_proof
-   (backbone + classifier)                  source_health
+   (backbone + classifier)   (known-stale   source_health
+                              exclusion gate)
 
 3. SERVE            the API projects derived tables to the frontend
 ──────────────────────────────────────────────────────────────────────
@@ -36,6 +39,10 @@ and the API serves those derived projections without writing capture state.
 ```
 
 The key design choice is that producers write base evidence only (stage 1).
+One base table is operator-imported rather than captured: `known_stale_block`,
+the known-stale membership loaded by `import-known-stales` (written through
+`mmm-store` like every base table) and consulted by the reconciler's orphan
+classification as an exclusion gate.
 Derived state (`block`, `attestation_proof`, `source_health`) is rebuilt from
 that evidence by the read-model reconciler (stage 2), so a bad event can be
 revoked and the affected parent block recomputed. Bitcoin Core feeds the

@@ -137,6 +137,19 @@ reports changed rows. A transient `unknown` never demotes an already-proven
 `canonical` or `stale` row, so a Bitcoin Core gap costs nothing but a backlog of
 unknowns to sweep later.
 
+`just import-known-stales --csv PATH --source-label LABEL` loads the operator
+known-stale membership (`known_stale_block`) from an upstream
+`stale-blocks.csv`-shaped dataset. Load it once per database, after migrations
+and before dataset imports: `import-dataset` refuses to run against an empty
+membership, every producer entry path warns loudly when it is empty, and the
+orphan classifier excludes any member from strict/weak classification. The
+import is atomic and strict by default (any malformed row aborts unless
+`--skip-malformed` is passed). On a database that already classified rows
+before the membership existed, `just reclassify-known-stales` retroactively
+demotes contaminated strict/weak rows to `excluded`, idempotently, and
+maintains `source_health` through the reconciler. See
+`docs/historical-ingest.md` for the full fresh-database ordering.
+
 ## Live Test Deployment
 
 The `live-test-*` targets provide a local validation workflow with processed

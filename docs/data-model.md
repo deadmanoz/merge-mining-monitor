@@ -30,8 +30,14 @@ tree view from that evidence.
 - `stale` - Bitcoin Core proves the parent is a valid off-chain Bitcoin block.
 
 Orphan status is not a `btc_parent_kind`. It is the derived
-`block.btc_orphan_class`, set only after a Core-absence-attested verdict and
-the offline strict/weak orphan classifier.
+`block.btc_orphan_class` (`strict_btc_orphan`, `weak_btc_orphan`, or
+`excluded`; NULL while pending), set only after a Core-absence-attested verdict
+and the offline strict/weak orphan classifier. Before the strict/weak
+resolution runs, the classifier consults the operator-imported
+`known_stale_block` membership (loaded by `import-known-stales` from the
+upstream `bitcoin-data/stale-blocks` dataset): a catalogued stale is `excluded`
+outright, never labelled strict/weak, and `reclassify-known-stales`
+retroactively demotes rows classified before the membership was imported.
 
 ## Read-Model Rules
 

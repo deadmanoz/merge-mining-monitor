@@ -1,5 +1,20 @@
 # Release Notes
 
+## [0.3.0] - 2026-07-28
+
+- Add the Header Time Delta view: how far apart each stale block and the
+  canonical block that beat it timestamped their headers, with a focus
+  window, outlier gutters, coverage and table tabs, and block-detail links.
+- Never label a catalogued known stale as a strict or weak BTC orphan: the
+  monitor imports the `bitcoin-data/stale-blocks` membership, excludes its
+  members from orphan classification, and retroactively corrects rows
+  classified before the membership existed.
+- Match the published research vocabulary: the broad evidence state is
+  `unknown`, and the excluded orphan-class token is now `excluded`.
+- Accept recovered historical evidence for the six live chains, with exact
+  child identity required and RSK sidecar support.
+- Add Open Graph social cards for link sharing.
+
 ## [0.2.1] - 2026-07-13
 
 - Correct the source rail and source profiles for nine catalogued or recovered

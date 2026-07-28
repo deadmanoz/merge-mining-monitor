@@ -11,10 +11,10 @@
 // points, because the rail fieldsets alone would exceed its architecture
 // budget as static markup.
 
-import { centerCameraOnHeight, loadBlock, loadCompetitions } from "./api-client.js?v=0.2.1";
-import { clearSelection, updateSourceGroupSelectedMarkers } from "./controls.js?v=0.2.1";
-import { hideTip, renderContext, renderCoverage, renderHistogram } from "./delta-chart.js?v=0.2.1";
-import { applyOutliersOpen, forgetScroll, renderOutliers, revealFocusedRow } from "./delta-outliers.js?v=0.2.1";
+import { centerCameraOnHeight, loadBlock, loadCompetitions } from "./api-client.js?v=0.3.0";
+import { clearSelection, updateSourceGroupSelectedMarkers } from "./controls.js?v=0.3.0";
+import { hideTip, renderContext, renderCoverage, renderHistogram } from "./delta-chart.js?v=0.3.0";
+import { applyOutliersOpen, forgetScroll, renderOutliers, revealFocusedRow } from "./delta-outliers.js?v=0.3.0";
 import {
   binKeyFor,
   clamp,
@@ -26,9 +26,9 @@ import {
   fmtTick,
   partitionByDelta,
   quantile,
-} from "./delta-scales.js?v=0.2.1";
-import { $, esc, matchesSourceFilter, parseEra, state, writeForm } from "./frontend-state.js?v=0.2.1";
-import { activateHeightLookup, syncUrl } from "./tree-query-state.js?v=0.2.1";
+} from "./delta-scales.js?v=0.3.0";
+import { $, esc, matchesSourceFilter, parseEra, state, writeForm } from "./frontend-state.js?v=0.3.0";
+import { activateHeightLookup, syncUrl } from "./tree-query-state.js?v=0.3.0";
 
 const PRESETS = [
   { label: "±10s", half: 10 },
@@ -370,7 +370,7 @@ async function showInTree(height) {
   // would show both lookups populated and block a later Height commit, which
   // refuses when the sibling field is non-empty.
   writeForm();
-  const shell = await import("./view-shell.js?v=0.2.1");
+  const shell = await import("./view-shell.js?v=0.3.0");
   await shell.activateView("tree");
   // The load is awaited, so a gesture made during it owns the camera now.
   // Centring the superseded height would drag the camera off the user's actual

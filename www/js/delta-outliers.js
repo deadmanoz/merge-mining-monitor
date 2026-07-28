@@ -7,8 +7,8 @@
 // the scroll cache: the row sets it needs are passed in, so the dependency runs
 // one way and this module stays independently exercisable.
 
-import { fmtDelta, fmtInt, fmtUtcDate } from "./delta-scales.js?v=0.2.1";
-import { $, esc, state } from "./frontend-state.js?v=0.2.1";
+import { fmtDelta, fmtInt, fmtUtcDate } from "./delta-scales.js?v=0.3.0";
+import { $, esc, state } from "./frontend-state.js?v=0.3.0";
 
 const OUTLIER_LIMIT = 250;
 

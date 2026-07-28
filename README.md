@@ -125,13 +125,17 @@ where it attaches to the canonical chain. If the block, or the block it builds o
 links to the chain, its place in Bitcoin's history is fixed: a valid header that
 connects to the chain but sits off the active one, beaten by a competitor at its
 height, is **stale**. A valid header whose previous-block hash matches nothing
-Bitcoin Core knows cannot be anchored to the chain at all, and is a BTC **orphan**,
-the harder case. Orphans then split by how well their height can still be pinned
-from other evidence: a **strict orphan** carries the real Bitcoin coinbase, so BIP34
-fixes its height and an nBits check confirms the difficulty epoch; a **weak orphan**
-has no trustworthy coinbase height, so placement falls back to its header timestamp
-and the expected nBits. Stale competition is not always a single block, so the tree
-also renders multi-block stale and orphan branches.
+Bitcoin Core knows is **unknown**: Bitcoin Core cannot yet say where it belongs.
+When Core positively attests that such a header is absent from its chain and the
+evidence admits it, it becomes a BTC **orphan**, the harder case. Orphans split by
+how well their height can still be pinned: a **strict orphan** carries the real
+Bitcoin coinbase, so BIP34 fixes its height and an nBits check confirms the
+difficulty epoch; a **weak orphan** has no trustworthy coinbase height, so placement
+falls back to its header timestamp and the expected nBits. Unknown headers that pass
+neither gate stay unknown rather than being overclaimed, and a header already
+catalogued as a known stale is excluded from orphan classification outright. Stale
+competition is not always a single block, so the tree also renders multi-block stale
+and orphan branches.
 
 ![A multi-block stale branch forking off the canonical spine, its stale headers linked by previous-block hash](docs/img/stale-branch.png)
 
@@ -150,6 +154,19 @@ that merge-mined it. And not all of it is old: this run is as recent as
 September 2025, a month that produced 25 stale blocks against the usual handful, most
 of the attributed ones mined by Foundry USA. A spike that size, mostly from one pool,
 seems to suggest Foundry ran into some infrastructure trouble.*
+
+## Timing the races
+
+![The Header Time Delta view: a histogram of how far apart each stale block and its canonical competitor timestamped their headers, with a focus window, off-scale gutters, and a full-range log strip](docs/img/header-time-delta.png)
+
+*How close were the races? The Header Time Delta view plots, for every recovered
+stale-versus-canonical competition, the gap between the two blocks' header
+timestamps. Most races are settled within seconds (here the median sits at -3s
+across 2,200 competitions, with three quarters inside a two-minute window), while
+the hatched gutters and the log-scale strip keep the wild outliers honest, from
+same-second photo finishes to a header timestamped 78 days adrift. A Coverage tab
+answers "what share of races landed within T seconds", the Table tab is the
+accessible twin, and every outlier links back to its block detail.*
 
 ## Where the idea comes from
 
