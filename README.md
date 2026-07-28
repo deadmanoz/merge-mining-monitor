@@ -146,18 +146,21 @@ recovered intact.*
 This recovery is not confined to deep history. It runs right up to the present, and
 the busiest stretches can be the most revealing.
 
-![A tree window dense with stale and orphan markers across many Bitcoin heights](docs/img/stale-activity.png)
+![Five stale Foundry USA blocks hanging off a fifteen-height stretch of the canonical spine, 12 September 2025](docs/img/stale-activity.png)
 
-*Off-chain evidence at scale. Here stale and orphan markers cluster across a run of
-Bitcoin heights, each one a block the active chain dropped, recovered from the chains
-that merge-mined it. And not all of it is old: this run is as recent as
-September 2025, a month that produced 25 stale blocks against the usual handful, most
-of the attributed ones mined by Foundry USA. A spike that size, mostly from one pool,
-seems to suggest Foundry ran into some infrastructure trouble.*
+*Off-chain evidence at scale, and not all of it old. On 12 September 2025 Foundry USA
+lost race after race: in this fifteen-height stretch alone, five Foundry blocks fell
+off the active chain and survive here as recovered stale evidence, part of a two-day
+run of nineteen stales in a month that produced 25 against the usual handful. A spike
+that size, almost entirely from one pool, seems to suggest Foundry ran into some
+infrastructure trouble.*
 
 ## Timing the races
 
-![The Header Time Delta view: a histogram of how far apart each stale block and its canonical competitor timestamped their headers, with a focus window, off-scale gutters, and a full-range log strip](docs/img/header-time-delta.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/header-time-delta-dark.png" />
+  <img alt="The Header Time Delta view: a histogram of how far apart each stale block and its canonical competitor timestamped their headers, with a focus window, off-scale gutters, and a full-range log strip" src="docs/img/header-time-delta.png" />
+</picture>
 
 *How close were the races? The Header Time Delta view plots, for every recovered
 stale-versus-canonical competition, the gap between the two blocks' header
