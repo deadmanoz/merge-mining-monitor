@@ -1,4 +1,6 @@
-import { loadTree, refreshActiveNavigatorTarget } from "./api-client.js?v=0.2.1";
+import { loadCompetitions, loadTree, refreshActiveNavigatorTarget, renderUpdated } from "./api-client.js?v=0.2.1";
+import * as deltaView from "./delta-view.js?v=0.2.1";
+import { applyTreeHighlight, renderTreePanel } from "./controls.js?v=0.2.1";
 import { $, DEFAULTS, esc, state } from "./frontend-state.js?v=0.2.1";
 import { syncUrl } from "./tree-query-state.js?v=0.2.1";
 
@@ -44,7 +46,34 @@ registerView("tree", {
   // the only thing that recenters. Centering on any selection here would move a
   // bare `?selected=` away from the tip and discard the stored camera on every
   // return from another view.
-  render() {},
+  render() {
+    // Except for a repaint that came due while the panel was hidden: the
+    // geometry it was measured against is gone, so it has to be redone now that
+    // the panel has a size again.
+    if (state.treeRepaintPending) renderTreePanel();
+    // Otherwise reapply the shared Source filter. It can be changed from
+    // another view, where nothing touches the tree's DOM, so the cached nodes
+    // would still be dimmed by the selection in force when the user left. A
+    // repaint already carries the current highlight, hence the else.
+    else applyTreeHighlight($("#tree-svg"), state.query.sources, state.query.kinds, state.query.classification, state.selectedHash);
+  },
+});
+
+registerView("delta", {
+  label: "Distribution",
+  async load({ force = false } = {}) {
+    // Competitions change on the order of weeks, so this is a load-once view:
+    // the auto-refresh timer never comes here, and only an explicit Refresh
+    // (which forces) refetches.
+    if (state.competitions && !force) return;
+    await loadCompetitions();
+  },
+  render() {
+    // Mounting builds the rail fieldsets and the main panel; it needs the data,
+    // so it cannot run before the first load.
+    deltaView.mount();
+    deltaView.render();
+  },
 });
 
 /// The one activation path: initial boot, the switcher, cross-links, and
@@ -53,6 +82,10 @@ async function activateView(view, { force = false } = {}) {
   const target = applyViewScopes(view);
   state.query.view = target;
   syncUrl();
+  // The indicator is shared, so it has to follow the view: each carries its own
+  // last-received time, and the incoming view's is the honest one to show while
+  // its load runs.
+  renderUpdated();
   const active = VIEWS.get(target);
   if (!active) return;
   await active.load({ force });

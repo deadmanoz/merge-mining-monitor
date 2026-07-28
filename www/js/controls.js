@@ -1,7 +1,7 @@
 import { loadTree, reconcileNavFromSelected, refreshNavControls, selectTreeNode } from "./api-client.js?v=0.2.1";
 import { showDialog } from "./dialogs.js?v=0.2.1";
 import { auxpowHelpFor, errorSummary, kvRows, renderDrawer } from "./drawer-renderer.js?v=0.2.1";
-import { $, $all, CLASSIFICATION_DEFAULT, compareSourcesForDisplay, EDGE_KINDS, esc, kindHelpFor, KINDS, readForm, SOURCE_GROUPS, sourceChain, sourceDisplayName, sourceGroupKey, sourceMeta, state, VISIBLE_KIND_CONTROLS, writeForm } from "./frontend-state.js?v=0.2.1";
+import { $, $all, CLASSIFICATION_DEFAULT, compareSourcesForDisplay, DELTA_HELP, EDGE_KINDS, esc, kindHelpFor, KINDS, readForm, SOURCE_GROUPS, sourceChain, sourceDisplayName, sourceGroupKey, sourceMeta, state, VISIBLE_KIND_CONTROLS, writeForm } from "./frontend-state.js?v=0.2.1";
 import { collectCitedReferenceIds, formatCitedText, renderSourceDialog, renderSourcesSection, sourceTagline } from "./source-dialog.js?v=0.2.1";
 import { renderSourceRailStatus } from "./source-status.js?v=0.2.1";
 import { clearTreeViewModes, syncUrl } from "./tree-query-state.js?v=0.2.1";
@@ -57,6 +57,26 @@ const INFO_DIALOGS = [
     entityTitle: (source) => sourceDisplayName(source),
     entityKicker: (source) => sourceTagline(source) || sourceMeta(source),
     renderBody: (source) => renderSourceDialog(source),
+  },
+  {
+    id: "delta-dialog",
+    className: "about-dialog kind-dialog",
+    titleId: "delta-dialog-title",
+    title: "Header time delta",
+    kickerId: "delta-dialog-kicker",
+    bodyId: "delta-dialog-body",
+    bodyClassName: "about-dialog-body kind-dialog-body",
+    closeId: "delta-dialog-close",
+    closeLabel: "Close header time delta dialog",
+    // The delta view builds its own markup, so the trigger cannot be bound by
+    // a static controlsSelector the way the rail dialogs are.
+    delegateFromDocument: true,
+    dataAttr: "data-delta-info",
+    datasetKey: "deltaInfo",
+    resolve: (key) => DELTA_HELP[key],
+    entityTitle: (help) => help.name,
+    entityKicker: (help) => help.meta,
+    renderBody: (help) => help.body.map((paragraph) => `<p>${esc(paragraph)}</p>`).join(""),
   },
   {
     id: "auxpow-dialog",
@@ -403,6 +423,16 @@ function resetTreeToTip() {
 }
 
 function renderTreePanel() {
+  // A display:none panel measures 0, so painting here would lay the tree out at
+  // the 780x420 fallback and store a camera against geometry that does not
+  // exist. Every caller can arrive while another view owns the workspace: the
+  // shared rails' layout callback, and any tree load still in flight when the
+  // user switched away. Record the debt; the tree view settles it on return.
+  if (!$("#tree-svg")?.clientWidth) {
+    state.treeRepaintPending = true;
+    return;
+  }
+  state.treeRepaintPending = false;
   const error = state.errors.tree;
   const status = $("#tree-error");
   if (error) {

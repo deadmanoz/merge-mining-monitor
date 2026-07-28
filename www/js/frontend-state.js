@@ -83,6 +83,22 @@ const KIND_HELP = {
     ],
   },
 };
+// Explainer for the header-time-delta view, shown from the (i) beside its
+// title. Sign convention and the era-shaped tail are the two things a reader
+// reliably gets wrong.
+const DELTA_HELP = {
+  metric: {
+    name: "Header time delta",
+    meta: "canonical.btc_header_time \u2212 stale.btc_header_time",
+    body: [
+      "Each competition pairs a stale Bitcoin block with the canonical block that beat it at the same height. The delta subtracts the stale block's header timestamp from the winner's, so a positive delta means the STALE block carries the earlier timestamp.",
+      "These are self-reported header clocks, not observation times. Consensus only bounds them loosely: a header must beat median-time-past, and may sit up to two hours ahead of network time. That bound, not network latency, is what the tail measures.",
+      "The tail is an era artefact. Competitions beyond a couple of hours are almost all pre-2017, when miner clocks were far looser. One height, 153,211, contributes 18 stale blocks spread over weeks, the signature of a pool mining on a stuck tip with a live clock.",
+      "A delta can be unavailable when the two timestamps differ by more than a 32-bit second count. Those rows are excluded from every statistic here and reported separately, never counted as zero.",
+    ],
+  },
+};
+
 const EDGE_KINDS = ["canonical", "stale_entry", "stale", "hidden", "orphan", "orphan_approx"];
 const EDGE_LEGEND = [
   { label: "canonical chain", kinds: ["canonical"], swatch: "canonical" },
@@ -256,6 +272,8 @@ const DEFAULTS = {
   // reachable; anything else falls back to the default, so an unknown or
   // not-yet-built `view=` in a shared URL degrades to the tree.
   view: "tree",
+  // Delta-view era filter, "<from>-<to>"; empty means the full range.
+  era: "",
   treeHeight: "",
   treeTime: "",
   treeLookupContext: "compact",
@@ -284,6 +302,18 @@ const state = {
   // cross-link that retargets the tree while another view is active would
   // otherwise leave a stale (or unbuilt) tree on the next activation.
   treeDirty: false,
+  // When each view last received data, keyed by view id. The freshness
+  // indicator is shared but the views refresh independently: competitions load
+  // once and never auto-refresh, so showing the tree's timestamp beside a
+  // distribution loaded hours earlier would materially overstate it.
+  updatedAt: {},
+  // A layout change that landed while the tree panel was hidden. It could not
+  // be painted then (a display:none panel measures 0, so the layout would bake
+  // in the fallback geometry), so the tree view pays it back on return.
+  treeRepaintPending: false,
+  // The whole competition set, loaded once per delta-view activation. Null
+  // until first load; the view registry uses that to decide whether to fetch.
+  competitions: null,
   selectedHash: null,
   selectedBlock: null,
   // Consolidated navigator: the active target and how it was set. `source`
@@ -476,6 +506,8 @@ function hydrateFormFromUrl() {
   // that does not exist yet.
   const view = params.get("view");
   if (view) state.query.view = view;
+  const era = params.get("era");
+  if (/^\d{4}-\d{4}$/.test(era || "")) state.query.era = era;
   const generatedFrom = params.get("tree_from");
   const generatedTo = params.get("tree_to");
   if (
@@ -581,6 +613,7 @@ function writeForm() {
 export {
   API_BASE,
   DEFAULTS,
+  DELTA_HELP,
   KINDS,
   VISIBLE_KIND_CONTROLS,
   EDGE_KINDS,

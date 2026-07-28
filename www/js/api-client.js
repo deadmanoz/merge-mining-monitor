@@ -54,6 +54,21 @@ async function loadSources() {
   }
 }
 
+/// Load the whole competition set for the delta view.
+///
+/// One unpaginated read, by design: the set is bounded and slow-growing, so
+/// every window, bin and filter change is answered from memory rather than by
+/// another request. Returns true when the payload was applied, matching
+/// loadTree, so the view registry can tell a real load from a superseded or
+/// failed one and leave its dirty flag alone.
+async function loadCompetitions() {
+  const payload = await fetchJson("competitions", `${API_BASE}/competitions`);
+  if (!payload) return false;
+  state.competitions = payload.competitions || [];
+  markUpdated("delta");
+  return true;
+}
+
 function refreshActiveNavigatorTarget() {
   const target = state.nav.target;
   const hash = isNavigatorTarget(target) ? targetState(state, target)?.item?.primary_hash : null;
@@ -524,19 +539,29 @@ async function loadTree(view) {
   return false;
 }
 
-// Stamp the top-right freshness indicator with the current local time. Called on
-// every successful tree load (initial, refresh, auto-refresh, Live tip, height
-// change), so it reflects when the view last received data.
-function markUpdated() {
+// Record that a view just received data. Called on every successful tree load
+// (initial, refresh, auto-refresh, Live tip, height change) and on every
+// competitions load, so each view carries its own freshness.
+function markUpdated(view = "tree") {
+  state.updatedAt[view] = Date.now();
+  renderUpdated();
+}
+
+// Paint the top-right freshness indicator from the ACTIVE view's stamp. A load
+// that lands while another view is on screen updates its own view's stamp
+// without relabelling the one the user is looking at.
+function renderUpdated() {
   const el = $("#last-updated");
   if (!el) return;
-  const time = new Date().toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
-  el.textContent = `Updated ${time}`;
+  const at = state.updatedAt[state.query.view];
+  el.textContent = at
+    ? `Updated ${new Date(at).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    })}`
+    : "";
 }
 
 function staleAnchorFromBlock(payload, hash) {
@@ -587,6 +612,7 @@ async function loadBlock(hash) {
 
 export {
   loadSources,
+  renderUpdated,
   refreshActiveNavigatorTarget,
   loadOrphanBranches,
   navSelectLabel,
@@ -601,4 +627,5 @@ export {
   selectTreeNode,
   loadTree,
   loadBlock,
+  loadCompetitions,
 };
