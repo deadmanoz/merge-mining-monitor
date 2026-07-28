@@ -134,5 +134,5 @@
 .fill-context { background: var(--context); }
 .fill-strict_btc_orphan { background: var(--orphan-strict); }
 .fill-weak_btc_orphan { background: var(--orphan-weak); }
-.fill-btc_stale_excluded { background: var(--orphan-excluded); }
+.fill-excluded { background: var(--orphan-excluded); }
 .fill-pending { background: var(--orphan-pending); }

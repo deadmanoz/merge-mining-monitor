@@ -130,7 +130,7 @@ export function nodeLabel(node) {
 const ORPHAN_FILL_VAR = {
   strict_btc_orphan: "var(--orphan-strict)",
   weak_btc_orphan: "var(--orphan-weak)",
-  btc_stale_excluded: "var(--orphan-excluded)",
+  excluded: "var(--orphan-excluded)",
 };
 
 export function nodeFillVar(node) {

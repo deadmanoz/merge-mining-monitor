@@ -81,7 +81,7 @@ pub struct ApiBlock {
     pub height: Option<i32>,
     pub kind: &'static str,
     /// Derived refinement of `kind='unknown'` (see `block.btc_orphan_class`):
-    /// `strict_btc_orphan` / `weak_btc_orphan` / `btc_stale_excluded`, or `null`
+    /// `strict_btc_orphan` / `weak_btc_orphan` / `excluded`, or `null`
     /// for canonical/stale blocks and for pending/never-Core-checked unknowns.
     pub btc_orphan_class: Option<String>,
     /// Printable raw tag runs from the commitment representative's Bitcoin

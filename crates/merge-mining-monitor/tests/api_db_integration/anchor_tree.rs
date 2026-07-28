@@ -51,7 +51,7 @@ async fn anchor_tree_orphan_filter_excludes_pending_and_excluded() -> Result<()>
         }
         set_orphan_class(&client, &anchor, "strict_btc_orphan").await?;
         set_orphan_class(&client, &weak, "weak_btc_orphan").await?;
-        set_orphan_class(&client, &excluded, "btc_stale_excluded").await?;
+        set_orphan_class(&client, &excluded, "excluded").await?;
         // `pending` keeps its NULL class.
 
         let payload = project_unheighted_anchor_tree(&client, &anchor).await?;

@@ -3,9 +3,11 @@
 //! No DB or RPC: this layer decodes one recovered-evidence row into a standard
 //! `NormalizedEventEvidence` (the same format live producers emit), rejecting bad
 //! rows with a typed `SkipReason` rather than an error. It also enforces the
-//! orphan-relevance gate: orphan rows are admitted only when the relevance
-//! inventory pre-selected their parent hash, so unproven orphans never enter the
-//! pipeline. The runner layers the live Core classifier on top of this.
+//! orphan-relevance gate: unknown rows are admitted only when a relevance
+//! selection pre-selected their parent hash (from the row's own
+//! monitor-evidence columns or the relevance inventory), so unproven unknown
+//! rows never enter the pipeline. The runner layers the live Core classifier
+//! on top of this.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -24,13 +26,18 @@ use super::config::HistoricalChainSpec;
 /// The classification stated by the source dataset's `classification` column.
 ///
 /// This is the dataset's own verdict, not the project's: `Stale` folds the
-/// dataset's `stale` and `stale_descendant` labels, and `Orphan` rows are only
+/// dataset's `stale` and `stale_descendant` labels, and `Unknown` rows are only
 /// trusted after the relevance gate and (in the runner) live Core attestation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SourceClassification {
     Canonical,
     Stale,
-    Orphan,
+    /// Parent state unknown: the header resolves to neither a canonical
+    /// block nor a known stale. Research artifacts write `unknown`
+    /// (legacy exports wrote `orphan`); admission into the ingest requires
+    /// a strict/weak BTC-orphan verdict or a known-branch relevance
+    /// selection.
+    Unknown,
 }
 
 /// Why the relevance inventory pre-selected a parent hash, in priority order.
@@ -115,11 +122,6 @@ pub(super) struct RelevanceFilter {
 }
 
 impl RelevanceFilter {
-    /// Whether `display_hash` was pre-selected (orphan rows are gated on this).
-    fn allows_orphan(&self, display_hash: &str) -> bool {
-        self.selected_orphans.contains_key(display_hash)
-    }
-
     /// The winning selection reason for `display_hash`, if pre-selected.
     fn selection_for_orphan(&self, display_hash: &str) -> Option<RelevanceSelection> {
         self.selected_orphans.get(display_hash).copied()
@@ -161,8 +163,14 @@ fn read_relevance_filter<R: Read>(reader: R, chain: &str) -> Result<RelevanceFil
         let selection = match (relevance, reason) {
             ("strict_btc_orphan", _) => RelevanceSelection::StrictBtcOrphan,
             ("weak_btc_orphan", _) => RelevanceSelection::WeakBtcOrphan,
-            (_, "known_direct_stale_hash") => RelevanceSelection::KnownDirectStale,
-            (_, "known_stale_descendant_hash") => RelevanceSelection::KnownStaleDescendant,
+            // Known-stale rows: the research exporter leaves btc_stale_relevance
+            // empty here and signals the row through relevance_reason alone
+            // (already attested by the known-stale set as a direct stale or a
+            // valid stale-fork descendant). Relevance is wildcarded in these two
+            // arms, so an older export's retired confirmed_btc_stale value in
+            // that column still matches on the reason.
+            (_, "valid_direct_stale") => RelevanceSelection::KnownDirectStale,
+            (_, "valid_stale_descendant") => RelevanceSelection::KnownStaleDescendant,
             _ => continue,
         };
         let hash = required_value(&row, "btc_header_hash")?;
@@ -187,6 +195,10 @@ pub(super) struct CsvLayout {
     coinbase_script: Option<usize>,
     classification: usize,
     hash_cross_check: Option<usize>,
+    /// Per-row strict/weak verdict columns carried by the research repo's
+    /// monitor-evidence exports; absent on other datasets.
+    relevance: Option<usize>,
+    relevance_reason: Option<usize>,
     requires_exact_child_fields: bool,
 }
 
@@ -213,6 +225,8 @@ impl CsvLayout {
             classification: required_header(headers, "classification")?,
             hash_cross_check: optional_header(headers, "btc_header_hash")
                 .or_else(|| optional_header(headers, "btc_hash")),
+            relevance: optional_header(headers, "btc_stale_relevance"),
+            relevance_reason: optional_header(headers, "relevance_reason"),
             requires_exact_child_fields,
         })
     }
@@ -244,14 +258,22 @@ pub(super) fn candidate_from_record(
     let coinbase_script =
         parse_optional_hex_field(layout.coinbase_script.and_then(|index| record.get(index)))?;
     let orphan_verdict = orphan_verdict(spec.chain, &header, coinbase_script.as_deref());
-    let relevance_selection = relevance.selection_for_orphan(&display_hash);
-    filter_source_classification(
-        source_classification,
-        &display_hash,
-        orphan_verdict,
-        relevance_selection,
-        relevance,
-    )?;
+    // A monitor-evidence export carries the strict/weak verdict on the row
+    // itself; other datasets rely on the separate relevance inventory. Merge
+    // both, keeping the strongest selection.
+    let row_selection = row_relevance_selection(layout, record);
+    let inventory_selection = relevance.selection_for_orphan(&display_hash);
+    let relevance_selection = match (row_selection, inventory_selection) {
+        (Some(row), Some(inv)) => {
+            if selection_priority(row) >= selection_priority(inv) {
+                Some(row)
+            } else {
+                Some(inv)
+            }
+        }
+        (row, inv) => row.or(inv),
+    };
+    filter_source_classification(source_classification, orphan_verdict, relevance_selection)?;
     let parsed_child_hash =
         parse_optional_hash_field(layout.child_hash.and_then(|index| record.get(index)))?;
     let child_block_hash = match parsed_child_hash {
@@ -286,23 +308,20 @@ pub(super) fn candidate_from_record(
     })
 }
 
-/// The orphan-relevance gate. Non-orphan rows pass unconditionally. Orphan rows
-/// must be in the relevance filter; known-branch selections are admitted
-/// outright, while BTC-orphan selections additionally require a Strict/Weak
-/// local verdict (Excluded/Pending map to their own skip reasons). This is what
-/// keeps unproven orphans out of the ingest pipeline.
+/// The orphan-relevance gate. Canonical and stale rows pass unconditionally.
+/// Unknown rows need a relevance selection (from the row's own
+/// monitor-evidence columns or the relevance inventory); known-branch
+/// selections are admitted outright, while strict/weak BTC-orphan selections
+/// additionally require a Strict/Weak local verdict (Excluded/Pending map to
+/// their own skip reasons). This is what keeps unproven unknown rows out of
+/// the ingest pipeline.
 fn filter_source_classification(
     classification: SourceClassification,
-    display_hash: &str,
     orphan_verdict: BtcOrphanVerdict,
     relevance_selection: Option<RelevanceSelection>,
-    relevance: &RelevanceFilter,
 ) -> Result<(), SkipReason> {
-    if classification != SourceClassification::Orphan {
+    if classification != SourceClassification::Unknown {
         return Ok(());
-    }
-    if !relevance.allows_orphan(display_hash) {
-        return Err(SkipReason::OrphanNotSelected);
     }
     match relevance_selection {
         Some(RelevanceSelection::KnownDirectStale | RelevanceSelection::KnownStaleDescendant) => {
@@ -315,6 +334,31 @@ fn filter_source_classification(
         BtcOrphanVerdict::Strict | BtcOrphanVerdict::Weak => Ok(()),
         BtcOrphanVerdict::Excluded => Err(SkipReason::OrphanExcluded),
         BtcOrphanVerdict::Pending => Err(SkipReason::OrphanPending),
+    }
+}
+
+/// Read the row-level strict/weak selection from a monitor-evidence export's
+/// `btc_stale_relevance` / `relevance_reason` columns, when present.
+fn row_relevance_selection(
+    layout: &CsvLayout,
+    record: &csv::StringRecord,
+) -> Option<RelevanceSelection> {
+    let relevance = layout
+        .relevance
+        .and_then(|index| record.get(index))
+        .map(str::trim)
+        .unwrap_or_default();
+    let reason = layout
+        .relevance_reason
+        .and_then(|index| record.get(index))
+        .map(str::trim)
+        .unwrap_or_default();
+    match (relevance, reason) {
+        ("strict_btc_orphan", _) => Some(RelevanceSelection::StrictBtcOrphan),
+        ("weak_btc_orphan", _) => Some(RelevanceSelection::WeakBtcOrphan),
+        (_, "valid_direct_stale") => Some(RelevanceSelection::KnownDirectStale),
+        (_, "valid_stale_descendant") => Some(RelevanceSelection::KnownStaleDescendant),
+        _ => None,
     }
 }
 
@@ -405,12 +449,13 @@ fn parse_child_time(
 
 /// Map the dataset's `classification` label to a `SourceClassification`. `stale`
 /// and `stale_descendant` both fold to `Stale`; `near` and unrecognized labels
-/// become their own skip reasons rather than being silently treated as orphan.
+/// become their own skip reasons rather than being silently treated as unknown.
 fn parse_source_classification(value: Option<&str>) -> Result<SourceClassification, SkipReason> {
     match non_empty(value)?.trim() {
         "canonical" => Ok(SourceClassification::Canonical),
         "stale" | "stale_descendant" => Ok(SourceClassification::Stale),
-        "orphan" => Ok(SourceClassification::Orphan),
+        // Legacy research artifacts wrote "orphan" for the unknown state.
+        "unknown" | "orphan" => Ok(SourceClassification::Unknown),
         "near" => Err(SkipReason::Near),
         _ => Err(SkipReason::UnsupportedClassification),
     }
@@ -572,27 +617,27 @@ mod tests {
 chain,btc_stale_relevance,btc_header_hash\n\
 devcoin,strict_btc_orphan,aa\n\
 devcoin,weak_btc_orphan,bb\n\
-devcoin,btc_stale_excluded,cc\n\
+devcoin,excluded,cc\n\
 devcoin|ixcoin,strict_btc_orphan,dd\n\
 ixcoin,strict_btc_orphan,ee\n";
         let filter = read_relevance_filter(csv.as_bytes(), "devcoin").unwrap();
 
-        assert!(filter.allows_orphan("aa"));
-        assert!(filter.allows_orphan("bb"));
-        assert!(!filter.allows_orphan("cc"));
-        assert!(!filter.allows_orphan("dd"));
-        assert!(!filter.allows_orphan("ee"));
+        assert!(filter.selection_for_orphan("aa").is_some());
+        assert!(filter.selection_for_orphan("bb").is_some());
+        assert!(filter.selection_for_orphan("cc").is_none());
+        assert!(filter.selection_for_orphan("dd").is_none());
+        assert!(filter.selection_for_orphan("ee").is_none());
     }
 
     #[test]
     fn relevance_filter_loads_known_branch_attestation_reasons() {
         let csv = "\
 chain,source_classification,btc_stale_relevance,relevance_reason,btc_header_hash\n\
-devcoin,orphan,btc_stale_excluded,known_direct_stale_hash,aa\n\
-devcoin,unknown,btc_stale_excluded,known_stale_descendant_hash,bb\n\
-devcoin,orphan,btc_stale_excluded,validation_rejected,cc\n\
-devcoin,stale,confirmed_btc_stale,valid_direct_stale,dd\n\
-ixcoin,orphan,btc_stale_excluded,known_direct_stale_hash,ee\n";
+devcoin,unknown,,valid_direct_stale,aa\n\
+devcoin,orphan,,valid_stale_descendant,bb\n\
+devcoin,orphan,excluded,validation_rejected,cc\n\
+devcoin,orphan,excluded,known_direct_stale_hash,dd\n\
+ixcoin,unknown,,valid_direct_stale,ee\n";
         let filter = read_relevance_filter(csv.as_bytes(), "devcoin").unwrap();
 
         assert_eq!(
@@ -603,9 +648,10 @@ ixcoin,orphan,btc_stale_excluded,known_direct_stale_hash,ee\n";
             filter.selection_for_orphan("bb"),
             Some(RelevanceSelection::KnownStaleDescendant)
         );
-        assert!(!filter.allows_orphan("cc"));
-        assert!(!filter.allows_orphan("dd"));
-        assert!(!filter.allows_orphan("ee"));
+        assert!(filter.selection_for_orphan("cc").is_none());
+        // The pre-research placeholder reason strings are not honored.
+        assert!(filter.selection_for_orphan("dd").is_none());
+        assert!(filter.selection_for_orphan("ee").is_none());
     }
 
     #[test]
@@ -617,7 +663,7 @@ ixcoin,orphan,btc_stale_excluded,known_direct_stale_hash,ee\n";
         ));
         let csv = format!(
             "chain,btc_stale_relevance,relevance_reason,btc_header_hash\n\
-             devcoin,btc_stale_excluded,known_stale_descendant_hash,{GENESIS_HASH}\n"
+             devcoin,,valid_stale_descendant,{GENESIS_HASH}\n"
         );
         let relevance = read_relevance_filter(csv.as_bytes(), "devcoin").unwrap();
 
@@ -629,8 +675,64 @@ ixcoin,orphan,btc_stale_excluded,known_direct_stale_hash,ee\n";
         );
         assert_eq!(
             candidate.source_classification,
-            SourceClassification::Orphan
+            SourceClassification::Unknown
         );
+    }
+
+    #[test]
+    fn unknown_classification_rows_need_relevance_selection_like_legacy_orphan() {
+        let spec = historical_chain_spec("devcoin").unwrap();
+        let (layout, record) = layout_and_record(&format!(
+            "dvc_height,btc_header_hex,coinbase_scriptsig_hex,classification,btc_header_hash\n\
+             42,{GENESIS_HEADER},04ffff001d0104,unknown,{GENESIS_HASH}\n"
+        ));
+
+        assert_eq!(
+            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap_err(),
+            SkipReason::OrphanNotSelected
+        );
+    }
+
+    #[test]
+    fn monitor_evidence_row_level_known_branch_selection_admits_without_inventory() {
+        let spec = historical_chain_spec("devcoin").unwrap();
+        let (layout, record) = layout_and_record(&format!(
+            "dvc_height,btc_header_hex,coinbase_scriptsig_hex,classification,btc_header_hash,btc_stale_relevance,relevance_reason\n\
+             42,{GENESIS_HEADER},04ffff001d0104,unknown,{GENESIS_HASH},,valid_direct_stale\n"
+        ));
+
+        let candidate =
+            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap();
+
+        assert_eq!(
+            candidate.relevance_selection,
+            Some(RelevanceSelection::KnownDirectStale)
+        );
+        assert_eq!(
+            candidate.source_classification,
+            SourceClassification::Unknown
+        );
+    }
+
+    #[test]
+    fn monitor_evidence_row_level_strict_selection_passes_gate_with_local_verdict() {
+        let spec = historical_chain_spec("devcoin").unwrap();
+        // A row-level strict/weak selection goes through the same gate as an
+        // inventory selection: the locally recomputed verdict must itself be
+        // Strict or Weak. The genesis header's bits match Bitcoin's at its
+        // timestamp, so the local verdict is Weak and the row is admitted.
+        let (layout, record) = layout_and_record(&format!(
+            "dvc_height,btc_header_hex,coinbase_scriptsig_hex,classification,btc_header_hash,btc_stale_relevance,relevance_reason\n\
+             42,{GENESIS_HEADER},04ffff001d0104,unknown,{GENESIS_HASH},strict_btc_orphan,strict_height_nbits_match\n"
+        ));
+
+        let candidate =
+            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap();
+        assert_eq!(
+            candidate.relevance_selection,
+            Some(RelevanceSelection::StrictBtcOrphan)
+        );
+        assert_eq!(candidate.orphan_verdict, Some(BtcOrphanVerdict::Weak));
     }
 
     #[test]

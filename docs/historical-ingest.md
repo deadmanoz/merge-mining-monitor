@@ -13,22 +13,26 @@ the stored events otherwise follow the same derived-state rules as live events.
 `vcash`, and `xaya`.
 
 VCash is a 68-row canonical subset recovered from archived explorer pages, not
-the VCash blockchain. Supply its 68-row CSV with `--csv`; it is not part of
-the compact validated-stale manifest.
+the VCash blockchain. The default CSV search resolves it to the research
+repo's committed `data/canonical/vcash_canonical_blocks.csv` (see Known-Stale
+Membership and Import below); it is not part of the compact validated-stale
+manifest.
 
 Lyncoin is complete for its Bitcoin-merge-mined era at child heights 0 through
 260,499 (the Flex fork begins at 260,500). Its 11-row import artifact is the
 canonical subset of 56,653 Bitcoin-difficulty candidates, with exact child
 height, hash, and time.
-Supply it explicitly with `--csv`; like VCash, it is not added to the generated
-validated-stale manifest.
+The default CSV search resolves it to the committed
+`data/canonical/lyncoin_canonical_blocks.csv`; like VCash, it is not added to
+the generated validated-stale manifest.
 
 SixEleven is complete through its available tip: 999,407 child blocks from
 genesis through height 999,406. Its seven-row import artifact is the canonical
 subset of 80,364 Bitcoin-difficulty candidates, with exact child height, hash,
 and time.
-Supply it explicitly with `--csv`; it also remains outside the generated
-validated-stale manifest.
+The default CSV search resolves it to the committed
+`data/canonical/sixeleven_canonical_blocks.csv`; it also remains outside the
+generated validated-stale manifest.
 
 ## Provenance
 
@@ -45,11 +49,18 @@ supplied inputs.
 
 The importer prefers richer local inputs when present:
 
-1. generated full-evidence CSVs
-2. local classified archive CSVs
-3. compact stale-block CSVs
-4. the manifest path
-5. compact validated-stale CSVs
+1. for the exact-child-field chains (VCash, Lyncoin, SixEleven), the research
+   repo's committed `data/canonical/<chain>_canonical_blocks.csv` artifacts;
+   for every other chain, its committed monitor-evidence export
+   (`results/monitor-evidence/<chain>_monitor_evidence.csv`, which carries
+   per-row `btc_stale_relevance` / `relevance_reason` verdicts, so no
+   separate relevance inventory is needed). Monitor-evidence exports omit
+   `child_block_time`, so the exact-child-field chains never probe them.
+2. generated full-evidence CSVs
+3. local classified archive CSVs
+4. compact stale-block CSVs
+5. the manifest path
+6. compact validated-stale CSVs
 
 Use `MERGE_MINING_RESEARCH_DIR`, `MERGE_MINING_ARCHIVE_DIR`, `--csv`,
 `--manifest`, or `--relevance` to control input paths. Because the raw datasets
@@ -74,22 +85,28 @@ Import one chain:
 just import-dataset devcoin
 ```
 
-Import the explicit recovered artifacts:
+Import the explicit recovered artifacts. These exact-child-field chains need
+the authoritative child hash and time that the compact monitor-evidence
+exports omit, so the default CSV search resolves them to the research repo's
+committed `data/canonical/<chain>_canonical_blocks.csv` artifacts instead and
+no `--csv` override is needed:
 
 ```bash
-just import-dataset lyncoin --csv "$MERGE_MINING_RESEARCH_DIR/results/recovery/lyncoin_evidence.csv"
-just import-dataset sixeleven --csv "$MERGE_MINING_RESEARCH_DIR/results/recovery/sixeleven_evidence.csv"
-just import-dataset vcash --csv "$MERGE_MINING_RESEARCH_DIR/results/recovery/vcash_canonical_partial.csv"
+just import-dataset lyncoin
+just import-dataset sixeleven
+just import-dataset vcash
 ```
 
 Verify explicit inputs before import:
 
 - VCash's 68-row artifact has SHA-256
-  `37f5739a899d6d9856008e8dadcb512e6dcbef5f8eef38a433c14933271c1956`.
+  `4ad387246b5730c05af9216df5c82e80d64fec6cbe2e8db40487dfac3514f801`.
 - Lyncoin's 11-row artifact has SHA-256
-  `896c9ca07288406cc99c80f770acd5135e8b95a842091cdfa514c088b9b856d1`.
+  `12027329ef7c19c7a8654e348138e4e462b027aa39f6744cdedd4c4e58181ae9`.
 - SixEleven's seven-row artifact has SHA-256
-  `5ad62cab88e4ae62f1cce84b12acd7b68832b9e428ea9d386f1c05109e9871e1`.
+  `086552bd812cc6c52e334970ea4b0f466041f8b4040c0e9b7360a7ec758c32dd`.
+  (Hashes track the published research history, whose data-consistency pass
+  normalized these artifacts to the shared vocabulary and schema.)
 
 The command requires Bitcoin Core classification by default. Use
 `--allow-unclassified` only for local dry-run checks; production imports should

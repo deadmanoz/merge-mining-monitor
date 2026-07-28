@@ -54,6 +54,19 @@ impl HeightSource {
     }
 }
 
+/// Persisted state stored on `block.kind`. Looks like a near-duplicate of
+/// `mmm_capture::capture::ParentKind`, but the two model different DB CHECK
+/// domains, not the same vocabulary twice: `block.kind` (this enum) allows
+/// only `'canonical'|'stale'|'unknown'`, while `merge_mining_event.
+/// btc_parent_kind` (`ParentKind`) additionally allows `'near'`, because a
+/// `block` row only ever tracks a real BTC-PoW-valid header (a `Near` header
+/// is a child-chain artifact, never persisted as `block` state).
+/// `mmm-read-model::classify` is the translation boundary that folds
+/// `ParentKind::Near` into `BlockKind::Unknown`. Keep both: collapsing them
+/// would either let `Near` typecheck where the schema forbids it, or push a
+/// runtime disallow-`Near` check onto every call site here that currently
+/// relies on exhaustive 3-way matching (see the `unreachable!()` arms in
+/// `core.rs` and `mmm-read-model::classify`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockKind {
     Canonical,

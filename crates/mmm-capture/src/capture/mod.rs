@@ -79,6 +79,21 @@ pub const RSK_RPC_MINER_SOURCE: &str = "rsk_rpc_miner";
 /// available yet; `Canonical`/`Stale` require an external height proof.
 /// Orphan status is the derived `block.btc_orphan_class`, set only on a
 /// Core-absence verdict.
+///
+/// Looks like a near-duplicate of `mmm_bitcoin_core::parent_classifier::
+/// BlockKind`, but the two model different DB CHECK domains, not the same
+/// vocabulary twice: `merge_mining_event.btc_parent_kind` (this enum) allows
+/// `'canonical'|'stale'|'near'|'unknown'`, while `block.kind` (`BlockKind`)
+/// allows only `'canonical'|'stale'|'unknown'`, because a `block` row only
+/// ever tracks a real BTC-PoW-valid header (a `Near` header is a child-chain
+/// artifact, never persisted as `block` state). `mmm-read-model::classify` is
+/// the translation boundary that folds `Near` into `Unknown` when deriving
+/// `block.kind` from a `ParentKind`. Keep both: collapsing them would either
+/// let `Near` typecheck where the schema forbids it, or push a runtime
+/// disallow-`Near` check onto every `BlockKind` call site that currently
+/// relies on exhaustive 3-way matching (see the `unreachable!()` arms in
+/// `mmm-bitcoin-core::parent_classifier::core` and
+/// `mmm-read-model::classify`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParentKind {
     Canonical,

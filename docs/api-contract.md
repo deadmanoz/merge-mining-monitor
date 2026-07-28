@@ -493,7 +493,7 @@ bounds). The placement-height derivation and `orphan` / `orphan_approx` edge
 attachment rules are described in `docs/tree-semantics.md`.
 
 `classification` is a comma-delimited filter over the orphan classes
-(`strict_btc_orphan`, `weak_btc_orphan`, `btc_stale_excluded`, `pending`),
+(`strict_btc_orphan`, `weak_btc_orphan`, `excluded`, `pending`),
 defaulting to `strict_btc_orphan,weak_btc_orphan`. It is a SEPARATE parameter from
 `kinds` (the structural parent kinds): the orphan classes are the derived
 refinement of `kind='unknown'` (see `block.btc_orphan_class`) and are never
@@ -525,7 +525,7 @@ Each tree node has:
 - `id`: response-local integer layout ID;
 - `hash`, `height`, `kind`, `prev_id`, `prev_hash`;
 - `btc_orphan_class`: the derived refinement of `kind='unknown'`
-  (`strict_btc_orphan` / `weak_btc_orphan` / `btc_stale_excluded`), or `null` for
+  (`strict_btc_orphan` / `weak_btc_orphan` / `excluded`), or `null` for
   canonical/stale nodes and for pending/never-Core-checked unknowns. `kind` stays
   the structural evidence state; `btc_orphan_class` is the refinement the UI
   renders. It is a per-node detail field, not a navigable bucket;
@@ -612,7 +612,7 @@ Response fields:
 
 - `block` with `hash`, nullable `height`, `kind`, nullable `btc_orphan_class`
   (the derived refinement of `kind='unknown'`: `strict_btc_orphan` /
-  `weak_btc_orphan` / `btc_stale_excluded`, else `null`), nullable
+  `weak_btc_orphan` / `excluded`, else `null`), nullable
   `coinbase_tag` (for Core-attested canonical rows with stored Core coinbase
   evidence, extracted from `block.btc_coinbase_script`; otherwise extracted
   from the representative Bitcoin coinbase script in
@@ -745,7 +745,7 @@ Query parameters:
 - `anchor_hash`: mutually exclusive with `cursor`.
 - `classification`: accepted only by `orphan` and `orphan-branch`, defaulting to
   `strict_btc_orphan,weak_btc_orphan`. The valid classes are
-  `strict_btc_orphan`, `weak_btc_orphan`, `btc_stale_excluded`, and `pending`.
+  `strict_btc_orphan`, `weak_btc_orphan`, `excluded`, and `pending`.
 
 Supplying any other parameter, mixing `cursor` with `anchor_hash`, supplying only
 one of `cursor` / `direction`, or passing `classification` to a stale target is

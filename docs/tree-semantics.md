@@ -107,7 +107,7 @@ yield the same response. The backend produces the collapsed-context fields
 ## Where BTC Orphan Classes Appear
 
 The orphan classes (`strict_btc_orphan`, `weak_btc_orphan`,
-`btc_stale_excluded`, `pending`) split `kind='unknown'` into more specific states
+`excluded`, `pending`) split `kind='unknown'` into more specific states
 and appear consistently across endpoints:
 
 - `/api/v1/navigator/orphan`, `/api/v1/navigator/orphan-branch`, and

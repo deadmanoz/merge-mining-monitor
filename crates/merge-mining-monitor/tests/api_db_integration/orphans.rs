@@ -83,7 +83,7 @@ async fn orphans_classifies_real_header_weak_then_strict_and_tracks_revocation()
         // era nBits plus BIP34 coinbase evidence - every committed AuxPoW
         // fixture's parent is a sub-BTC-target share (pow false, forced
         // near), and crafted regtest-bits headers classify
-        // btc_stale_excluded. The fake verdict's absence attestation is what
+        // excluded. The fake verdict's absence attestation is what
         // makes the (in reality canonical) header an orphan candidate here.
         let parent: Header = deserialize(&hex::decode(BTC_400000_HEADER_HEX)?)?;
         let parent_hash = header_hash_bytes(&parent);
@@ -361,7 +361,7 @@ async fn orphans_filter_by_classification() -> Result<()> {
         }
         set_orphan_class(&client, &strict, "strict_btc_orphan").await?;
         set_orphan_class(&client, &weak, "weak_btc_orphan").await?;
-        set_orphan_class(&client, &excluded, "btc_stale_excluded").await?;
+        set_orphan_class(&client, &excluded, "excluded").await?;
         // `pending` keeps its NULL class.
 
         // Default (strict+weak): only the strict and weak rows, newest-first.
@@ -382,7 +382,7 @@ async fn orphans_filter_by_classification() -> Result<()> {
 
         // Excluded-only filter returns just the excluded row.
         let excluded_page =
-            fetch_orphans_page(&client, "classification=btc_stale_excluded&limit=100").await?;
+            fetch_orphans_page(&client, "classification=excluded&limit=100").await?;
         assert_eq!(orphan_hashes(&excluded_page), vec![display_hash(&excluded)]);
         assert_eq!(excluded_page.total, 1);
 
@@ -395,7 +395,7 @@ async fn orphans_filter_by_classification() -> Result<()> {
         // All four classes selected returns every PoW-valid unknown.
         let all = fetch_orphans_page(
             &client,
-            "classification=strict_btc_orphan,weak_btc_orphan,btc_stale_excluded,pending&limit=100",
+            "classification=strict_btc_orphan,weak_btc_orphan,excluded,pending&limit=100",
         )
         .await?;
         assert_eq!(all.total, 4);

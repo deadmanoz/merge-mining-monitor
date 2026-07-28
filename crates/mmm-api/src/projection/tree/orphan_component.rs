@@ -24,7 +24,7 @@ pub(super) const ANCHOR_PLACEMENT_RADIUS: i32 = 16;
 
 /// Derive a fork placement height for an anchor orphan, gated by its class:
 /// `strict_btc_orphan` places by its validated BIP34 coinbase height (exact);
-/// `weak_btc_orphan` / `btc_stale_excluded` / pending place by the
+/// `weak_btc_orphan` / `excluded` / pending place by the
 /// timestamp-selected DAA-epoch first-block height (approximate, `~`). The epoch
 /// lookup is monotonic by construction and RPC-free, reusing the weak classifier's
 /// own committed nBits table rather than binary-searching non-monotonic header

@@ -1,7 +1,7 @@
 //! BTC orphan classification.
 //!
 //! Refines a Core-attested-absent, BTC-PoW-valid `unknown` parent header into
-//! `strict_btc_orphan` / `weak_btc_orphan` / `btc_stale_excluded`, or leaves it
+//! `strict_btc_orphan` / `weak_btc_orphan` / `excluded`, or leaves it
 //! pending when the committed nBits table cannot yet give a correct verdict.
 //!
 //! This is a faithful port of the orphan path of the research classifier
@@ -28,9 +28,9 @@ pub const BIP34_HEIGHT: i32 = 227_931;
 /// Source chains whose producers embed a REAL Bitcoin parent coinbase scriptSig
 /// (the Namecoin-family raw-AuxPoW form), so a decoded BIP34 height is usable as
 /// strict orphan evidence. Ported from the research `BTC_COINBASE_SCRIPTSIG_CHAINS`
-/// allowlist, with `fractal-bitcoin` mapped to this repo's `fractal` source
-/// chain. RSK (NULL coinbase), Hathor (reconstructed coinbase), and Xaya are
-/// deliberately absent: they are weak-only.
+/// allowlist (the research repo also uses the `fractal` chain key). RSK (NULL
+/// coinbase), Hathor (reconstructed coinbase), and Xaya are deliberately
+/// absent: they are weak-only.
 pub const STRICT_BIP34_CHAINS: &[&str] = &[
     "argentum",
     "bitcoin-vault",
@@ -38,6 +38,7 @@ pub const STRICT_BIP34_CHAINS: &[&str] = &[
     "coiledcoin",
     "crown",
     "devcoin",
+    "doichain",
     "elastos",
     "emercoin",
     "fractal",
@@ -83,7 +84,7 @@ impl BtcOrphanVerdict {
         match self {
             Self::Strict => Some("strict_btc_orphan"),
             Self::Weak => Some("weak_btc_orphan"),
-            Self::Excluded => Some("btc_stale_excluded"),
+            Self::Excluded => Some("excluded"),
             Self::Pending => None,
         }
     }
@@ -386,10 +387,7 @@ mod tests {
             Some("strict_btc_orphan")
         );
         assert_eq!(BtcOrphanVerdict::Weak.as_db_str(), Some("weak_btc_orphan"));
-        assert_eq!(
-            BtcOrphanVerdict::Excluded.as_db_str(),
-            Some("btc_stale_excluded")
-        );
+        assert_eq!(BtcOrphanVerdict::Excluded.as_db_str(), Some("excluded"));
         assert_eq!(BtcOrphanVerdict::Pending.as_db_str(), None);
     }
 }
