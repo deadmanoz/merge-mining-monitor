@@ -38,6 +38,9 @@
           </div>
         </div>
         <div class="topbar-actions">
+          <!-- Buttons are rendered from the view-shell registry, one per
+               registered view, so adding a view adds no markup here. -->
+          <div id="view-switcher" class="view-switcher" role="tablist" aria-label="View" hidden></div>
           <span id="last-updated" class="last-updated" aria-live="polite"></span>
           <div class="source-status-shell">
             <button id="source-status-button" class="source-status-button" type="button" aria-expanded="false" aria-controls="source-status-popover">
@@ -80,6 +83,7 @@
             <button id="filters-collapse" class="icon-button" type="button" aria-label="Collapse tree controls" aria-expanded="true" title="Collapse">&lsaquo;</button>
           </div>
           <form id="filters" class="filter-form">
+            <div data-view-scope="tree">
             <fieldset class="tree-lookup-form">
               <legend>Tree</legend>
               <label>Height <input type="number" name="treeHeight" min="0" /></label>
@@ -90,6 +94,7 @@
               <legend>Classification</legend>
               <div id="kind-controls" class="stack-sm"></div>
             </fieldset>
+            </div>
 
             <fieldset>
               <legend class="filter-legend-with-help">Source
@@ -99,10 +104,12 @@
               </legend>
               <div id="source-controls" class="stack-sm"></div>
             </fieldset>
+            <div id="delta-controls" data-view-scope="delta"></div>
           </form>
         </aside>
 
-        <section class="tree-card" aria-labelledby="tree-title">
+        <div id="delta-main" data-view-scope="delta"></div>
+        <section class="tree-card" data-view-scope="tree" aria-labelledby="tree-title">
           <div class="section-heading tree-heading">
             <div>
               <h2 id="tree-title">Bitcoin Header Tree</h2>

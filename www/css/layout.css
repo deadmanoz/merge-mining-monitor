@@ -35,6 +35,36 @@
   grid-template-rows: auto auto 1fr;
 }
 
+/* Each view owns the same central grid slot; only the active one is laid out,
+   so the inactive panel neither overlaps nor keeps focusable controls alive. */
+#delta-main {
+  grid-area: tree;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* A view-scope wrapper inside the rail must not change the rail's spacing:
+   .filter-form's grid gap only reaches its direct children, so wrapping two
+   fieldsets would otherwise collapse the gap between them (fieldset carries no
+   margin). Re-establish the same grid on the wrapper so scoping stays purely
+   structural. */
+.filter-form > [data-view-scope] {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+/* View scoping. The switcher stamps data-view on .workspace; anything tagged
+   for a different view is removed from layout entirely (display:none, not
+   visibility), so its inputs drop out of the tab order. Controls shared by
+   every view - the Source filter - carry no data-view-scope and always show.
+   This rule comes last so hiding beats the grid above. */
+.workspace[data-view="tree"] [data-view-scope="delta"],
+.workspace[data-view="delta"] [data-view-scope="tree"] {
+  display: none;
+}
+
 .detail-drawer {
   grid-area: drawer;
   position: relative;
