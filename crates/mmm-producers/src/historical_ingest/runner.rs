@@ -382,16 +382,20 @@ async fn import_candidate(
     // `auxpow:rsk` event without its sidecar row). Elastos routes through its
     // reactivating writer so a conflict with a live row auto-revoked
     // `ELASTOS_REVOKE_NON_BTC` clears that reversible, evidence-based
-    // revocation, exactly as a live re-Valid capture would (every imported
-    // row is PoW-target-gated BTC evidence); sticky and manual revocations
-    // stay untouched. Hathor deliberately stays on the generic upsert: its
+    // revocation, exactly as a live re-Valid capture would -- but ONLY on the
+    // Core-attested (preclassified) path: an `--allow-unclassified` run gates
+    // rows on nothing stronger than the header's own encoded target, which is
+    // weaker than the Elastos producer's validity gate, so it must never
+    // resurrect a revoked row. Sticky and manual revocations stay untouched
+    // either way. Hathor deliberately stays on the generic upsert: its
     // reversible revocations (voided/superseded) track CURRENT child-DAG
     // state that a historical observation must not resurrect, and its writer
     // requires the RFC 0006 sidecar the exports cannot supply. Every other
     // chain writes the event alone. `pool_identity_id` stays NULL here --
     // the `reclassify-pools` late-fill path resolves it from the registry.
     let rsk_evidence = candidate.rsk_evidence.as_ref();
-    let use_elastos_writer = context.chain == "elastos";
+    let use_elastos_writer =
+        context.chain == "elastos" && matches!(decision, ImportDecision::CapturePreclassified(_));
     let upsert = async |txn: &tokio_postgres::Transaction<'_>,
                         source_id: i64,
                         payload: &mmm_capture::capture::MergeMiningEventPayload| {
