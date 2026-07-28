@@ -1,15 +1,10 @@
 import { clearStoredTreeTransform, markTreeSelection, RAILS, renderSourceControls, renderTreePanel, resetTreeToTip, setRailCollapsed } from "./controls.js?v=0.2.1";
 import { renderDrawer } from "./drawer-renderer.js?v=0.2.1";
 import { $, API_BASE, CLASSIFICATION_DEFAULT, CLASSIFICATION_META, classificationParam, CLASSIFICATIONS, readForm, state, writeForm } from "./frontend-state.js?v=0.2.1";
-import { anyNavTargetBusy, applyNavigatorPayload, isNavigatorTarget, navSelectionMatches, navSelectLabelForState, navigatorItemForStep, navigatorItemView, navigatorRoute, navigatorStepperState, selectionTargetForState, setNavigatorBusy, targetState } from "./nav-targets.js?v=0.2.1";
+import { anyNavTargetBusy, applyNavigatorPayload, isNavigatorTarget, navSelectionMatches, navSelectLabelForState, navigatorItemForStep, navigatorItemView, navigatorRoute, navigatorStepperState, orphanAnchorFromBlock, selectionTargetForState, setNavigatorBusy, targetState } from "./nav-targets.js?v=0.2.1";
 import { renderSourceStatus } from "./source-status.js?v=0.2.1";
 import { activateAnchorView, activateGeneratedWindow, activateHeightLookup, paramsFor, syncUrl, treePath, treeWindowError } from "./tree-query-state.js?v=0.2.1";
 import { anchorCameraOnTip, renderTree } from "./tree-renderer.js?v=0.2.1";
-import {
-  NAV_COARSE_STRIDE,
-  orphanAnchorFromBlock,
-} from "./windowing.js?v=0.2.1";
-
 
 async function fetchJson(key, path) {
   const seq = (state.seq[key] || 0) + 1;
@@ -73,14 +68,6 @@ function refreshActiveNavigatorTarget() {
   const target = state.nav.target;
   const hash = isNavigatorTarget(target) ? targetState(state, target)?.item?.primary_hash : null;
   return hash ? hydrateNavigatorAnchor(target, hash) : Promise.resolve();
-}
-
-function loadStaleBranches() {
-  return loadNavigatorLatest("branch");
-}
-
-function loadOrphanBranches() {
-  return loadNavigatorLatest("orphanBranch");
 }
 
 // The label shown in the Go-to select's (hidden, selected) prompt so it names the
@@ -168,8 +155,7 @@ function goTo(target) {
   if (isNavigatorTarget(target)) loadNavigatorLatest(target);
 }
 
-// The shared << < > >> stepper dispatches to the active target. `direction` is
-// "older" or "newer"; `stride` is 1 (inner) or NAV_COARSE_STRIDE (outer).
+// The shared << < > >> stepper dispatches to the active target.
 function stepNav(direction, stride) {
   state.navEpoch += 1;
   if (isNavigatorTarget(state.nav.target)) stepNavigator(state.nav.target, direction, stride);
@@ -292,7 +278,7 @@ function navigatorUrl(target, params = {}) {
   return `${API_BASE}/navigator/${route}${query ? `?${query}` : ""}`;
 }
 
-async function loadNavigatorLatest(target) {
+export async function loadNavigatorLatest(target) {
   const epoch = state.navEpoch;
   state.nav = { target, source: "navigator" };
   setNavigatorBusy(state, target, true);
@@ -447,14 +433,6 @@ function navigationErrorForTree(error = {}) {
       action: error.action || "run sync-bitcoin-core",
     },
   };
-}
-
-function loadStalesLatest() {
-  return loadNavigatorLatest("stale");
-}
-
-function loadOrphansLatest() {
-  return loadNavigatorLatest("orphan");
 }
 
 // Tree node click dispatch (renderTree passes only the hash). An orphan-class
@@ -614,7 +592,6 @@ export {
   loadSources,
   renderUpdated,
   refreshActiveNavigatorTarget,
-  loadOrphanBranches,
   navSelectLabel,
   refreshNavControls,
   reconcileNavFromSelected,
@@ -623,7 +600,6 @@ export {
   centerCameraOnNode,
   centerCameraOnHeight,
   centerCameraOnWindowMidHeight,
-  loadOrphansLatest,
   selectTreeNode,
   loadTree,
   loadBlock,

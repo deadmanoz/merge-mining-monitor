@@ -2,6 +2,7 @@
 //! kind/classification normalization.
 
 use super::*;
+use crate::normalize::lowercase_hex_64;
 
 /// Render a `Date` as the `YYYY-MM-DD` string used in the unheighted-window
 /// query echo (the tree.json wire form).
@@ -176,14 +177,12 @@ pub(crate) fn optional_usize(
 /// `normalize::normalize_hash` (which yields `invalid_hash` for the path-hash
 /// route), a malformed query parameter is `invalid_query`.
 pub(crate) fn validate_hash_param(key: &str, raw: &str) -> Result<String, ApiError> {
-    if raw.len() == 64 && raw.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        Ok(raw.to_ascii_lowercase())
-    } else {
-        Err(ApiError::invalid_query(
+    lowercase_hex_64(raw).ok_or_else(|| {
+        ApiError::invalid_query(
             format!("{key} must be a 64-character hex hash"),
             json!({ key: raw }),
-        ))
-    }
+        )
+    })
 }
 
 /// Parse an optional strict `true`/`false` param (include_near,
@@ -221,20 +220,15 @@ pub(crate) fn normalized_kinds(raw: Option<&str>) -> Result<Vec<ParentKind>, Api
     } else {
         parsed
     };
-    let mut by_name = BTreeSet::new();
-    for kind in values {
-        by_name.insert(kind_as_str(kind));
-    }
-    Ok(by_name
-        .into_iter()
-        .map(|name| match name {
-            "canonical" => ParentKind::Canonical,
-            "near" => ParentKind::Near,
-            "stale" => ParentKind::Stale,
-            "unknown" => ParentKind::Unknown,
-            _ => unreachable!("inserted from known enum"),
-        })
-        .collect())
+    Ok([
+        ParentKind::Canonical,
+        ParentKind::Near,
+        ParentKind::Stale,
+        ParentKind::Unknown,
+    ]
+    .into_iter()
+    .filter(|kind| values.contains(kind))
+    .collect())
 }
 
 /// Default the orphan-class filter to the navigable signal (strict+weak) when the

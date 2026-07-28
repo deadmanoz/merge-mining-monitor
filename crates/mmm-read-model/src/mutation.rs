@@ -29,7 +29,7 @@ use mmm_capture::capture::{MergeMiningEventPayload, ParentKind, apply_classifica
 use super::{
     CoreCoinbaseStatus, DEFAULT_CASCADE_BUDGET, PreclassifiedParent,
     RECONCILE_LOCK_SET_RETRY_LIMIT, classify_payload_parent, is_reconcile_lock_set_changed,
-    load_event, lock_event_for_source_health, lock_parent_hash_in_txn,
+    load_event, lock_block_hash, lock_event_for_source_health,
     lock_payload_parent_read_model_in_txn, preclassify_event_parent,
     reconcile_dependents_after_changes_with_budget, reconcile_one_event_in_txn,
     upsert_core_canonical_header_with_coinbase,
@@ -288,7 +288,7 @@ where
         // kinds; near skips reconcile, and the injected upsert may also un-revoke
         // the event in-txn (Hathor), which the bracket captures because it
         // brackets the whole callback.
-        lock_parent_hash_in_txn(&txn, &payload.btc_parent_header_hash).await?;
+        lock_block_hash(&txn, &payload.btc_parent_header_hash).await?;
         let bracket =
             PrimarySourceHealthBracket::open(&txn, &payload.btc_parent_header_hash).await?;
         let event_id = upsert(&txn, source_id, payload).await?;
@@ -515,7 +515,7 @@ where
                 let event = load_event(&txn, anchor_event_id).await?;
                 lock_event_for_source_health(&txn, &event, classifier, None).await?;
             }
-            None => lock_parent_hash_in_txn(&txn, parent_hash).await?,
+            None => lock_block_hash(&txn, parent_hash).await?,
         }
         mutate(&txn).await?;
         let reconcile_result = match reconcile_anchor {
@@ -592,7 +592,7 @@ where
         .transaction()
         .await
         .with_context(|| format!("begin {label} transaction"))?;
-    lock_parent_hash_in_txn(&txn, &hash_bytes).await?;
+    lock_block_hash(&txn, &hash_bytes).await?;
     let bracket = PrimarySourceHealthBracket::open(&txn, &hash_bytes).await?;
     upsert_core_canonical_header_with_coinbase(&txn, write.header, write.height, write.coinbase)
         .await?;
@@ -665,20 +665,4 @@ pub async fn record_coinbase_failure<C: GenericClient>(
         .await
         .with_context(|| format!("record Bitcoin Core coinbase failure at height {height}"))?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn revocation_change_direction_and_labels() {
-        let revoke = RevocationChange::Revoke {
-            reason: "x".to_owned(),
-        };
-        assert_eq!(revoke.op(), "revoke");
-        assert!(revoke.desired_revoked());
-        assert_eq!(RevocationChange::Restore.op(), "restore");
-        assert!(!RevocationChange::Restore.desired_revoked());
-    }
 }

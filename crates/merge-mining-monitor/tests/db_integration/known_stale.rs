@@ -8,10 +8,7 @@
 //! imported (the production bug: a catalogued stale served as strict_btc_orphan).
 
 use anyhow::Result;
-use bitcoin::block::Header;
-use bitcoin::consensus::deserialize;
 use bitcoin::hashes::Hash as _;
-use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier};
 use mmm_capture::source_registry::SYSCOIN_SOURCE_CODE;
 use mmm_read_model::{
     ReclassifyKnownStalesConfig, compute_source_health_from_base,
@@ -21,22 +18,13 @@ use mmm_store::{get_source_id, upsert_known_stale_block};
 use tokio_postgres::Client;
 
 use crate::support::scenario::{ChildEvidence, capture_child_event, orphan_candidate_verdict};
+use crate::support::{absent_classifier, btc_400000_coinbase_script, btc_400000_header};
 
 // Real Bitcoin block 400000 header + coinbase scriptSig: genuine BTC PoW and era
 // nBits, so the offline classifier renders a real strict/weak verdict (a crafted
 // regtest-bits header would classify excluded). The coinbase carries the BIP34
 // height, so a syscoin (strict-eligible) parent with it lands strict, and
 // without it lands weak.
-const BTC_400000_HEADER_HEX: &str = "0400000039fa821848781f027a2e6dfabbf6bda920d9ae61b63400030000000000000000ecae536a304042e3154be0e3e9a8220e5568c3433a9ab49ac4cbb74f8df8e8b0cc2acf569fb9061806652c27";
-const BTC_400000_COINBASE_SCRIPTSIG_HEX: &str = "03801a060004cc2acf560433c30f37085d4a39ad543b0c000a425720537570706f727420384d200a666973686572206a696e78696e092f425720506f6f6c2f";
-
-fn btc_400000_header() -> Result<Header> {
-    Ok(deserialize(&hex::decode(BTC_400000_HEADER_HEX)?)?)
-}
-
-fn absent_classifier(header: &Header) -> ConfiguredParentClassifier {
-    ConfiguredParentClassifier::Fake(FakeParentClassifier::new(orphan_candidate_verdict(header)))
-}
 
 async fn block_kind_and_class(client: &Client, hash: &[u8]) -> Result<(String, Option<String>)> {
     let row = client
@@ -78,7 +66,7 @@ async fn membership_hash_is_excluded_never_strict_or_weak() -> Result<()> {
                 orphan_candidate_verdict(&parent),
                 1_000,
             )
-            .with_parent_coinbase_script(hex::decode(BTC_400000_COINBASE_SCRIPTSIG_HEX)?),
+            .with_parent_coinbase_script(btc_400000_coinbase_script()?),
         )
         .await?;
         assert_eq!(

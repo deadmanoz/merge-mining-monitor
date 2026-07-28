@@ -2,10 +2,10 @@ const { expect, test } = require("@playwright/test");
 const {
   GENERATED_AT,
   competitionsPayload,
+  liveSourcesPayload,
   makeCompetition,
   makeNode,
   moduleUrl,
-  sourcesPayload,
   stubApi,
   treeEnvelope,
 } = require("./support/api-stubs");
@@ -27,31 +27,9 @@ const COMPETITIONS = [
   makeCompetition("e".repeat(64), 700004, null, { stale_header_time: Y2024 }),
 ];
 
-const SOURCE_BASE = {
-  kind: "auxpow",
-  instance: null,
-  created_at: 1_700_000_000,
-  last_seen_at: GENERATED_AT - 60,
-  status: "fresh",
-  sync: {
-    mode: "live",
-    state: "live",
-    progress_height: 700000,
-    progress_updated_at: GENERATED_AT - 60,
-    target_height: 700000,
-    latest_evidence_at: GENERATED_AT - 60,
-    error_code: null,
-    error_height: null,
-  },
-  counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0 },
-};
-
 const withCompetitions = (rows = COMPETITIONS) => ({
   competitionsPayload: () => competitionsPayload(rows),
-  sourcesPayload: () => sourcesPayload([
-    { ...SOURCE_BASE, id: 1, code: "auxpow:namecoin", chain: "namecoin" },
-    { ...SOURCE_BASE, id: 2, code: "auxpow:rsk", chain: "rsk" },
-  ]),
+  sourcesPayload: liveSourcesPayload,
 });
 
 async function openDelta(page, rows) {

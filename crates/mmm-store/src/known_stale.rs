@@ -1,11 +1,8 @@
 //! `known_stale_block` membership: operator-imported known-stale reads/writes.
 //!
 //! The `known_stale_block` table is a base table (operator-imported from the
-//! upstream stale-blocks dataset), so its writer lives here in mmm-store like
-//! the other base-table SQL. The membership CONSULTED at `btc_orphan_class`
-//! derivation is this operator-imported table alone; see
-//! `is_known_stale_hash` for why proven-stale `block` rows are deliberately
-//! not unioned in.
+//! upstream stale-blocks dataset), so its writer lives here in mmm-store.
+//! See `is_known_stale_hash` for the membership boundary.
 
 use anyhow::{Context, Result};
 use tokio_postgres::GenericClient;

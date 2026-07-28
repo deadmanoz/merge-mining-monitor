@@ -53,8 +53,7 @@ pub struct HistoricalImportSummary {
     pub excluded: u64,
     /// Ingested unknown rows whose persisted class is still NULL (beyond the
     /// committed nBits table horizon, or a row reconciliation left without a
-    /// block row). Counted here, never as a skip, so
-    /// rows_seen = ingested + sum(skipped) holds.
+    /// block row).
     pub pending: u64,
     pub known_direct_branch_attestations: u64,
     pub known_descendant_branch_attestations: u64,
@@ -95,10 +94,8 @@ impl HistoricalImportSummary {
     /// retain an existing canonical/stale row when a later classification is
     /// unknown (`effective_classification`), and the read-model's known-stale
     /// membership gate can persist `excluded` for a row whose offline verdict
-    /// was strict/weak. The summary reports what was stored. An ingested row
-    /// never also counts as a skip, so rows_seen = ingested + sum(skipped)
-    /// holds. Call exactly once per persisted row, paired with
-    /// `ingested += 1`.
+    /// was strict/weak. The summary reports what was stored. Call exactly once
+    /// per persisted row, paired with `ingested += 1`.
     fn record_persisted(
         &mut self,
         persisted: Option<(BlockKind, Option<String>)>,

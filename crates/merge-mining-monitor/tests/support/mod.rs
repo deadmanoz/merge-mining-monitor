@@ -11,8 +11,12 @@
 #[cfg(feature = "db-integration")]
 use {
     anyhow::Result,
-    bitcoin::{block::Header, consensus::serialize, hashes::Hash as _},
-    mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification},
+    bitcoin::{
+        block::Header,
+        consensus::{deserialize, serialize},
+        hashes::Hash as _,
+    },
+    mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier, ParentClassification},
     mmm_capture::{
         auxpow::ParsedAuxpowBlock,
         capture::{
@@ -53,6 +57,29 @@ pub type NamecoinFixture = (
     i64,
     Box<ParsedAuxpowBlock>,
 );
+
+#[cfg(feature = "db-integration")]
+const BTC_400000_HEADER_HEX: &str = "0400000039fa821848781f027a2e6dfabbf6bda920d9ae61b63400030000000000000000ecae536a304042e3154be0e3e9a8220e5568c3433a9ab49ac4cbb74f8df8e8b0cc2acf569fb9061806652c27";
+
+#[cfg(feature = "db-integration")]
+const BTC_400000_COINBASE_SCRIPTSIG_HEX: &str = "03801a060004cc2acf560433c30f37085d4a39ad543b0c000a425720537570706f727420384d200a666973686572206a696e78696e092f425720506f6f6c2f";
+
+#[cfg(feature = "db-integration")]
+pub fn btc_400000_header() -> Result<Header> {
+    Ok(deserialize(&hex::decode(BTC_400000_HEADER_HEX)?)?)
+}
+
+#[cfg(feature = "db-integration")]
+pub fn btc_400000_coinbase_script() -> Result<Vec<u8>> {
+    Ok(hex::decode(BTC_400000_COINBASE_SCRIPTSIG_HEX)?)
+}
+
+#[cfg(feature = "db-integration")]
+pub fn absent_classifier(header: &Header) -> ConfiguredParentClassifier {
+    ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+        scenario::orphan_candidate_verdict(header),
+    ))
+}
 
 #[cfg(feature = "db-integration")]
 pub async fn default_pool_snapshot(client: &Client) -> Result<DefaultPoolSnapshot> {

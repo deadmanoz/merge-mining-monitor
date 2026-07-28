@@ -6,7 +6,6 @@
 // scale, selection) and returns nothing; state lives in delta-view.js.
 
 import {
-  SYMLOG_T,
   SYM_TICKS,
   clamp,
   countAxis,
@@ -570,4 +569,4 @@ function startDrag(svg, event, onMove) {
   window.addEventListener("pointerup", up);
 }
 
-export { hideTip, outlierTip, renderContext, renderCoverage, renderHistogram };
+export { hideTip, renderContext, renderCoverage, renderHistogram };

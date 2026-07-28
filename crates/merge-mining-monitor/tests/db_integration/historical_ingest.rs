@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use bitcoin::block::Header;
-use bitcoin::consensus::{deserialize, serialize};
+use bitcoin::consensus::serialize;
 use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier};
 use mmm_capture::auxpow::parse_bip34_height;
@@ -11,14 +11,12 @@ use mmm_capture::btc_orphan::{BtcOrphanVerdict, classify_btc_orphan};
 use mmm_producers::{HistoricalImportConfig, HistoricalImportSummary, run_historical_import};
 use mmm_store::get_source_id;
 
-use crate::support::header_meeting_bits;
 use crate::support::scenario::{
-    canonical_verdict, orphan_candidate_verdict, stale_verdict_with_competitor_header,
-    unknown_verdict,
+    canonical_verdict, stale_verdict_with_competitor_header, unknown_verdict,
 };
-
-const BTC_400000_HEADER_HEX: &str = "0400000039fa821848781f027a2e6dfabbf6bda920d9ae61b63400030000000000000000ecae536a304042e3154be0e3e9a8220e5568c3433a9ab49ac4cbb74f8df8e8b0cc2acf569fb9061806652c27";
-const BTC_400000_COINBASE_SCRIPTSIG_HEX: &str = "03801a060004cc2acf560433c30f37085d4a39ad543b0c000a425720537570706f727420384d200a666973686572206a696e78696e092f425720506f6f6c2f";
+use crate::support::{
+    absent_classifier, btc_400000_coinbase_script, btc_400000_header, header_meeting_bits,
+};
 
 fn assert_single_row_import(summary: &HistoricalImportSummary, candidates: u64, ingested: u64) {
     assert_eq!(summary.rows_seen, 1);
@@ -120,10 +118,10 @@ async fn import_refuses_without_known_stale_membership() -> Result<()> {
 }
 
 #[tokio::test]
-async fn import_dataset_requires_source_label_then_persists_core_attested_orphan() -> Result<()> {
+async fn import_dataset_persists_core_attested_orphan() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        let header: Header = deserialize(&hex::decode(BTC_400000_HEADER_HEX)?)?;
-        let coinbase_script = hex::decode(BTC_400000_COINBASE_SCRIPTSIG_HEX)?;
+        let header = btc_400000_header()?;
+        let coinbase_script = btc_400000_coinbase_script()?;
         let display_hash = header.block_hash().to_string();
         let verdict = classify_btc_orphan(
             header.time as i64,
@@ -290,10 +288,6 @@ async fn import_dataset_skips_known_branch_attestation_when_core_cannot_classify
     })
 }
 
-fn absent_classifier(header: &Header) -> ConfiguredParentClassifier {
-    ConfiguredParentClassifier::Fake(FakeParentClassifier::new(orphan_candidate_verdict(header)))
-}
-
 fn devcoin_import_config(csv_path: &Path, relevance_path: Option<&Path>) -> HistoricalImportConfig {
     HistoricalImportConfig {
         chain: "devcoin".to_owned(),
@@ -393,8 +387,8 @@ fn temp_csv_path() -> Result<PathBuf> {
 #[tokio::test]
 async fn import_summary_reports_persisted_kind_when_replay_diverges() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        let header: Header = deserialize(&hex::decode(BTC_400000_HEADER_HEX)?)?;
-        let coinbase_script = hex::decode(BTC_400000_COINBASE_SCRIPTSIG_HEX)?;
+        let header = btc_400000_header()?;
+        let coinbase_script = btc_400000_coinbase_script()?;
         let canonical_csv = write_classified_csv(&header, &coinbase_script, "canonical")?;
         let stale_csv = write_classified_csv(&header, &coinbase_script, "stale")?;
 

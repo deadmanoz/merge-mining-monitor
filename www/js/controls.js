@@ -1,7 +1,7 @@
 import { loadTree, reconcileNavFromSelected, refreshNavControls, selectTreeNode } from "./api-client.js?v=0.2.1";
 import { showDialog } from "./dialogs.js?v=0.2.1";
 import { auxpowHelpFor, errorSummary, kvRows, renderDrawer } from "./drawer-renderer.js?v=0.2.1";
-import { $, $all, CLASSIFICATION_DEFAULT, compareSourcesForDisplay, DELTA_HELP, EDGE_KINDS, esc, kindHelpFor, KINDS, readForm, SOURCE_GROUPS, sourceChain, sourceDisplayName, sourceGroupKey, sourceMeta, state, VISIBLE_KIND_CONTROLS, writeForm } from "./frontend-state.js?v=0.2.1";
+import { $, $all, CLASSIFICATION_DEFAULT, compareSourcesForDisplay, DELTA_HELP, EDGE_KINDS, esc, kindHelpFor, KINDS, matchesSourceFilter, readForm, SOURCE_GROUPS, sourceChain, sourceDisplayName, sourceGroupKey, sourceMeta, state, VISIBLE_KIND_CONTROLS, writeForm } from "./frontend-state.js?v=0.2.1";
 import { collectCitedReferenceIds, formatCitedText, renderSourceDialog, renderSourcesSection, sourceTagline } from "./source-dialog.js?v=0.2.1";
 import { renderSourceRailStatus } from "./source-status.js?v=0.2.1";
 import { clearTreeViewModes, syncUrl } from "./tree-query-state.js?v=0.2.1";
@@ -473,23 +473,32 @@ function updateHeightPlaceholders(window) {
 // Clicking empty canvas deselects: drop the selected block, clear the tree
 // highlight/overlay, and collapse the detail drawer so the merge-mining card
 // does not linger on stale data.
-function clearTreeSelection() {
+function clearSelection({
+  clearOrphanAnchor = false,
+  resetSelectionNavigator = false,
+} = {}) {
   // A background deselect is a navigation gesture: bump the epoch so an in-flight
   // jump awaiting loadTree does not resume and reselect/recenter the old target
   // after the user has clicked away.
   state.navEpoch += 1;
   state.selectedHash = null;
   state.selectedBlock = null;
-  // Deselecting drops the per-target cursors and the orphan stepper anchor
-  // (nothing selected -> not stepping), but KEEPS the tree-view anchor so the
-  // orphan strip stays in view; only "Go to -> Tip" leaves the anchor view.
-  state.orphan.anchor = null;
+  if (clearOrphanAnchor) state.orphan.anchor = null;
+  if (resetSelectionNavigator && state.nav.source === "selection") {
+    state.nav = { target: "tip", source: "selection" };
+  }
   reconcileNavFromSelected();
   refreshNavControls();
   renderDrawer();
   markTreeSelection();
   setRailCollapsed(RAILS.drawer, true);
   syncUrl();
+}
+
+function clearTreeSelection() {
+  // Nothing selected means the orphan target has no stepper anchor. The tree
+  // view anchor remains intact, so only "Go to -> Tip" leaves the strip.
+  clearSelection({ clearOrphanAnchor: true });
 }
 
 // Update the highlighted node and its chain overlay in place without re-laying
@@ -517,10 +526,12 @@ function markTreeSelection() {
 // non-matching block (plus edges between two non-matching blocks) fades back.
 // Neither refetches the tree nor changes per-block counts.
 function nodeMatchesSources(node, sources) {
-  if (!sources || !sources.length) return true;
   const nodeSources = node?.source_summary?.sources || [];
-  if (nodeSources.some((code) => sources.includes(code))) return true;
-  return (node?.child_chain_evidence || []).some((item) => sources.includes(item.source));
+  return matchesSourceFilter(nodeSources, sources)
+    || matchesSourceFilter(
+      (node?.child_chain_evidence || []).map((item) => item.source),
+      sources,
+    );
 }
 
 function nodeMatchesHeaderSignal(node, kinds, classifications) {
@@ -673,6 +684,7 @@ export {
   markTreeSelection,
   applyTreeHighlight,
   clearStoredTreeTransform,
+  clearSelection,
   RAILS,
   setRailCollapsed,
   applyStoredRailWidth,

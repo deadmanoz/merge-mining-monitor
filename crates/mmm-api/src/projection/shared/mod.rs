@@ -58,6 +58,22 @@ pub(super) fn split_height_windows(windows: &[(i32, i32)]) -> (Vec<i32>, Vec<i32
     (from_heights, to_heights)
 }
 
+pub(super) fn admit_observed_bitcoin_source<T>(
+    records: &mut Vec<T>,
+    source: Option<T>,
+    observed: bool,
+    same_source: impl Fn(&T, &T) -> bool,
+) -> bool {
+    if observed
+        && let Some(source) = source
+        && !records.iter().any(|record| same_source(record, &source))
+    {
+        records.push(source);
+        return true;
+    }
+    false
+}
+
 /// Wire-DTO: a Bitcoin miner pool reference. `known=false` with null id/slug
 /// and name "Unknown" is the unresolved sentinel (see unknown_pool). Serde
 /// field names are the locked contract (pinned by tree.json and block-*.json).

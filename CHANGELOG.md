@@ -6,6 +6,11 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Consolidate the Header Time Delta, API projection, historical-ingest, and
+  known-stale implementation paths added after v0.2.0, removing shallow
+  wrappers, duplicate helpers and fixtures, dead exports, write-only frontend
+  state, and the standalone windowing facade without changing public behavior.
+
 - Add a Header Time Delta view, reachable from a new top-level view switcher,
   plotting how far apart a stale block and the canonical block that beat it
   timestamped their headers. One focus window drives a linear histogram of the

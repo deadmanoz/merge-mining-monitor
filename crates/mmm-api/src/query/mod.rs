@@ -2,7 +2,7 @@
 //!
 //! These helpers keep full query validation in front of the DB checkout path.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 use time::format_description::well_known::Rfc3339;

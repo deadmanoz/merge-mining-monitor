@@ -272,11 +272,7 @@ function quantile(sorted, p) {
 }
 
 export {
-  BIN_STEPS,
-  MAX_BINS,
-  SYMLOG_T,
   SYM_TICKS,
-  binWidth,
   clamp,
   binKeyFor,
   computeBins,
@@ -292,7 +288,6 @@ export {
   fmtUtc,
   fmtUtcDate,
   linearTicks,
-  niceStep,
   partitionByDelta,
   quantile,
   symexp,

@@ -454,13 +454,6 @@ pub(crate) async fn lock_payload_parent_read_model_in_txn<C: GenericClient>(
 /// before/after bracket is serialized at the parent grain, and for block-grain
 /// Core canonical writes. Re-entrant: harmless to call when the parent is
 /// already locked.
-pub(crate) async fn lock_parent_hash_in_txn<C: GenericClient>(
-    client: &C,
-    hash: &[u8],
-) -> Result<()> {
-    lock_block_hash(client, hash).await
-}
-
 /// Re-run parent classification over `unknown`-kind parents and count genuine
 /// transitions. Requires a Core-enabled classifier (else bails). Keyset-paginates
 /// distinct parent headers; a parent already orphan-classified
@@ -808,8 +801,8 @@ mod writers;
 
 pub use classify::load_parent_preflight;
 pub(crate) use classify::*;
+pub use competition::load_persisted_kind_and_orphan_class;
 pub(crate) use competition::*;
-pub use competition::{load_persisted_kind_and_orphan_class, load_persisted_orphan_class};
 pub(crate) use queries::*;
 pub use queries::{lock_block_hash, lock_block_hashes};
 pub use reconcile::reconcile_dependents_after_change;

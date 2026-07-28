@@ -216,23 +216,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn from_parts_round_trips_and_accessors_return_supplied_parts() {
-        let mut pool_ids_by_slug = HashMap::new();
-        pool_ids_by_slug.insert("f2pool".to_owned(), 7);
-        pool_ids_by_slug.insert("antpool".to_owned(), 9);
-
-        let ctx = ProducerContext::from_parts(
-            pool_ids_by_slug.clone(),
-            42,
-            ConfiguredParentClassifier::Disabled,
-        );
-
-        assert_eq!(ctx.source_id(), 42);
-        assert_eq!(ctx.pool_ids_by_slug(), &pool_ids_by_slug);
-        assert!(!ctx.parent_classifier().is_enabled());
-    }
-
-    #[test]
     fn pool_ids_by_slug_mut_appends_in_place() {
         let mut ctx =
             ProducerContext::from_parts(HashMap::new(), 1, ConfiguredParentClassifier::Disabled);

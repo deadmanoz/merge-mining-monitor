@@ -13,8 +13,8 @@ use tokio_postgres::Client;
 
 use super::ProjectionError;
 use super::shared::{
-    COMPETITION_DELTA_SQL, COMPETITION_FROM_SQL, PoolObject, display_hash, load_sources,
-    pool_from_columns,
+    COMPETITION_DELTA_SQL, COMPETITION_FROM_SQL, PoolObject, admit_observed_bitcoin_source,
+    display_hash, load_sources, pool_from_columns,
 };
 
 /// `/api/v1/competitions` success payload (fixture:
@@ -50,8 +50,6 @@ pub struct CompetitionRecord {
 /// evidence-summarised.
 pub async fn competitions(client: &Client) -> Result<CompetitionsPayload, ProjectionError> {
     let registry = load_sources(client).await?;
-    // Mirror `source_summary_for_block`: the synthetic Bitcoin source is only
-    // admitted when the registry actually carries it.
     let bitcoin_source = registry
         .get(BITCOIN_SOURCE_CODE)
         .map(|source| source.code.clone());
@@ -95,16 +93,14 @@ async fn load_competition_records(
             let live_observed: bool = row.get(11);
             let proof_sources: Option<Vec<String>> = row.get(12);
             let mut sources = proof_sources.unwrap_or_default();
-            // `attestation_proof` only ever holds AuxPoW proofs, so a
-            // Core-attested or live-observed stale would otherwise be missing
-            // the Bitcoin source that the tree and block projections report for
-            // the same block, and the shared Source filter would disagree
-            // between views.
-            if let Some(code) = bitcoin_source
-                && (core_attested || live_observed)
-                && !sources.iter().any(|existing| existing == code)
-            {
-                sources.push(code.to_owned());
+            let observed = core_attested || live_observed;
+            let bitcoin_added = admit_observed_bitcoin_source(
+                &mut sources,
+                bitcoin_source.map(str::to_owned),
+                observed,
+                |existing, bitcoin| existing == bitcoin,
+            );
+            if bitcoin_added {
                 sources.sort();
             }
             Ok(CompetitionRecord {
