@@ -30,6 +30,11 @@ This changelog starts with the initial release.
   header-time-delta distribution view, which needs the whole set client-side to
   re-bin and re-window without a request per interaction.
 
+- Follow the research repo's published public history: the committed
+  historical-source manifest is re-pinned from research commit `39cb7af` to
+  `e1e72d4` (the published tip), picking up the nested `data/validated-stales/`
+  layout and the release-prep data refresh (total declared stale rows 1482 to
+  1461; every imported row is still re-proven against Bitcoin Core on ingest).
 - Consult a first-class known-stale membership before assigning
   `block.btc_orphan_class`, so a catalogued stale is never mislabelled a
   strict/weak BTC orphan. A known stale is absent from Bitcoin Core's active
@@ -109,9 +114,7 @@ This changelog starts with the initial release.
   the research classifier actually emits (`valid_direct_stale` /
   `valid_stale_descendant`) instead of the never-emitted placeholder
   strings. The explicit VCash/Lyncoin/SixEleven artifact checksums track
-  the regenerated research artifacts. The historical-source manifest
-  re-pin to the published research commit follows once that repo is
-  pushed.
+  the regenerated research artifacts.
 - Track two further lockstep vocabulary changes landing on the research repo
   at the same time: stale and stale-descendant rows in the monitor-evidence
   exports now carry an empty `btc_stale_relevance` (the `relevance_reason`

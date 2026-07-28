@@ -285,8 +285,19 @@ fn default_csv_candidates(
     spec: &HistoricalChainSpec,
     manifest_path: &Path,
 ) -> Result<Vec<PathBuf>> {
+    default_csv_candidates_with_roots(spec, manifest_path, research_root(), archive_root())
+}
+
+/// Pure candidate-list construction with the roots injected, so tests can
+/// assert the search paths (notably the nested `data/validated-stales/`
+/// fallback) without mutating the process environment.
+fn default_csv_candidates_with_roots(
+    spec: &HistoricalChainSpec,
+    manifest_path: &Path,
+    research: Option<PathBuf>,
+    archive: Option<PathBuf>,
+) -> Result<Vec<PathBuf>> {
     let mut candidates = Vec::new();
-    let research = research_root();
     if let Some(research) = &research {
         if spec.requires_exact_child_fields() {
             candidates.push(
@@ -311,7 +322,7 @@ fn default_csv_candidates(
                 .join(format!("{}_evidence.csv", spec.chain)),
         );
     }
-    if let Some(archive) = archive_root() {
+    if let Some(archive) = &archive {
         candidates.push(
             archive
                 .join("chains")
@@ -333,9 +344,12 @@ fn default_csv_candidates(
         candidates.push(path);
     }
     if let Some(research) = &research {
+        // The research repo nested its committed validated-stale loader inputs
+        // under data/validated-stales/ (the layout the re-pinned manifest
+        // records); probe the nested path, not the retired flat one.
         candidates.push(
             research
-                .join("data")
+                .join("data/validated-stales")
                 .join(format!("{}_validated_stales.csv", spec.chain)),
         );
     }
@@ -468,6 +482,32 @@ mod tests {
     fn historical_dataset_roots_use_merge_mining_env_names() {
         assert_eq!(RESEARCH_ROOT_ENV, "MERGE_MINING_RESEARCH_DIR");
         assert_eq!(ARCHIVE_ROOT_ENV, "MERGE_MINING_ARCHIVE_DIR");
+    }
+
+    #[test]
+    fn research_root_fallback_probes_nested_validated_stales_path() {
+        // The research repo nested its committed validated-stale loader inputs
+        // under data/validated-stales/; the importer's own candidate list must
+        // follow (the manifest scripts are covered by their shell self-test,
+        // this covers the importer's independent path construction).
+        let spec = historical_chain_spec("devcoin").expect("devcoin spec");
+        let research = PathBuf::from("/research-root");
+        let candidates = default_csv_candidates_with_roots(
+            spec,
+            Path::new("/manifest/historical-source-manifest.json"),
+            Some(research.clone()),
+            None,
+        )
+        .expect("candidate construction");
+        assert!(
+            candidates
+                .contains(&research.join("data/validated-stales/devcoin_validated_stales.csv")),
+            "nested validated-stales fallback missing: {candidates:?}"
+        );
+        assert!(
+            !candidates.contains(&research.join("data/devcoin_validated_stales.csv")),
+            "retired flat validated-stales path must not be probed: {candidates:?}"
+        );
     }
 
     #[test]

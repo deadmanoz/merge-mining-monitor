@@ -239,7 +239,7 @@ set_csv_file() {
 
 total_rows=0
 while IFS='|' read -r chain height_column; do
-    csv_path="data/${chain}_validated_stales.csv"
+    csv_path="data/validated-stales/${chain}_validated_stales.csv"
     set_csv_file "${chain}" "${csv_path}"
     [ -f "${file}" ] || die "missing ${file}"
     header="$(head -n 1 "${file}" | tr -d '\r')"
@@ -279,7 +279,7 @@ EOF
     # git commit hex, and SHA-256 hex, so no JSON escaping is required here.
     while IFS='|' read -r chain height_column; do
         index=$((index + 1))
-        csv_path="data/${chain}_validated_stales.csv"
+        csv_path="data/validated-stales/${chain}_validated_stales.csv"
         set_csv_file "${chain}" "${csv_path}"
         rows="$(validated_stale_row_count_for "${file}")" \
             || die "${csv_path} contains rows outside the validated stale scope"
