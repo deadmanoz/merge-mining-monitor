@@ -2,22 +2,60 @@
 
 > Current shipped state: the live first screen is the Bitcoin header tree and
 > the block detail drawer, flanked by collapsible, drag-resizable rails. The
-> left "Tree Controls" rail starts with direct Height and native UTC Date/Time
+> left Controls rail starts with direct Height and native UTC Date/Time
 > tree lookup controls, followed by Classification and Source controls.
 > Canonical and stale are client-side highlights that fade non-matching blocks
 > rather than refetch; strict and weak orphan are the server-side orphan
 > signal. The detail drawer starts collapsed and auto-expands on selection.
+> A topbar switcher selects between the header tree and the Header Time Delta
+> distribution.
 
 ## Primary Layout
 
-The first screen is an analytical workspace:
+The workspace is a three-column analytical screen:
 
-- filter rail on the left;
-- Bitcoin header tree in the main canvas;
+- controls rail on the left;
+- the active view in the main canvas;
 - detail drawer on the right.
 
 The screen should preserve context while drilling in: selecting a block or
 branch opens the drawer and centers the camera on it without replacing the tree.
+
+### Views
+
+Two top-level views share that workspace, selected by a topbar switcher and by
+the `view` query parameter (`tree` is the default and is never written to the
+URL). Only the rail controls and the main canvas swap; the Source filter and
+the block detail drawer are shared, so a selection and a source selection both
+survive a view change.
+
+- `tree`: the Bitcoin header tree. Owns the Height / UTC Date/Time lookup, the
+  Classification controls, and the tree navigator.
+- `delta`: the Header Time Delta distribution over every stale-vs-canonical
+  competition, read from `/api/v1/competitions`. Owns a focus window, bin
+  width, count scale, and an Era range (`era=<from>-<to>`, written only when
+  narrowed).
+
+An unregistered `view` value falls back to `tree` and is cleared from the URL,
+so a link to a view that does not exist yet degrades rather than rendering an
+empty workspace.
+
+The delta view answers one question that a single linear axis cannot: the
+middle half of the distribution sits inside about a minute while the extremes
+run to weeks. One focus window therefore drives three panels. A linear,
+zero-centred histogram shows the core; hatched off-scale gutters at each window
+edge carry the counts it excludes, on the same count axis and flat-topped when
+they overflow it; and an always-visible symmetric-log strip (linear within
+plus or minus ten seconds, decades beyond) shows the whole range, with a
+draggable brush for the window and one rug tick per excluded record. A Coverage
+tab plots the share within plus or minus T on a log axis, and a Table tab is
+the accessible twin, including the off-scale rows.
+
+Deltas the API cannot express (a difference outside a 32-bit second count)
+are excluded from every statistic and reported as an unavailable count, never
+counted as zero. A selection that the Source or Era filter excludes keeps its
+marker on the strip and is named in the outlier panel, but contributes to no
+count; navigation never silently resets a filter.
 
 The topbar includes a compact About affordance beside the product name. It
 opens a modal with a step-through visual explainer of why merge-mined AuxPoW

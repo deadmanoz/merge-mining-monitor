@@ -18,6 +18,26 @@ function sourcesPayload(sources = []) {
   };
 }
 
+// One competition row in the /api/v1/competitions shape. Defaults give a
+// small in-window delta; override `header_time_delta_s` with null to exercise
+// the unavailable-delta path.
+function makeCompetition(hash, height, deltaSeconds, overrides = {}) {
+  return {
+    btc_height: height,
+    stale_hash: hash,
+    header_time_delta_s: deltaSeconds,
+    stale_header_time: 1_700_000_000 + height,
+    stale_bitcoin_miner_pool: { id: 7, slug: "antpool", name: "AntPool", known: true },
+    canonical_bitcoin_miner_pool: { id: 8, slug: "f2pool", name: "F2Pool", known: true },
+    sources: ["auxpow:namecoin"],
+    ...overrides,
+  };
+}
+
+function competitionsPayload(competitions = []) {
+  return { schema_version: "v1", generated_at: GENERATED_AT, competitions };
+}
+
 function makeNode(hash, height, prevHash, kind = "canonical", overrides = {}) {
   return {
     id: height,
@@ -152,6 +172,11 @@ async function stubApi(page, treeRequests = [], options = {}) {
       : options.navigator?.[target];
     await route.fulfill({ json: payload || navigatorPayload(target) });
   });
+  await page.route("**/api/v1/competitions", async (route) => {
+    await route.fulfill({
+      json: resolvePayload(options.competitionsPayload, route) || competitionsPayload(),
+    });
+  });
   await page.route("**/api/v1/block/**", async (route) => {
     const hash = route.request().url().split("/").at(-1);
     const payload = options.blockPayloads?.[hash] || resolvePayload(options.blockPayload, hash, route);
@@ -161,6 +186,8 @@ async function stubApi(page, treeRequests = [], options = {}) {
 
 module.exports = {
   GENERATED_AT,
+  competitionsPayload,
+  makeCompetition,
   makeNode,
   sourcesPayload,
   stubApi,

@@ -81,6 +81,8 @@ function syncUrl() {
   // Only non-default views are written, so every existing tree URL round-trips
   // byte-identically to before the view parameter existed.
   if (q.view && q.view !== DEFAULTS.view) params.set("view", q.view);
+  // Owned by the delta view; written here so one function builds the URL.
+  if (q.era) params.set("era", q.era);
   if (hasUnheightedAnchorView()) {
     params.set("unheighted_anchor", q.unheightedAnchor);
   } else if (hasGeneratedTreeWindow()) {

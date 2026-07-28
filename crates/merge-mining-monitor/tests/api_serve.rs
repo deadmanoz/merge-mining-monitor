@@ -16,7 +16,7 @@ use tower::ServiceExt; // for `oneshot`
 
 const SOURCE_FILTERED_ROUTES: [&str; 1] = ["/api/v1/tree"];
 
-const FRONTEND_CSS_FILES: [&str; 12] = [
+const FRONTEND_CSS_FILES: [&str; 14] = [
     "www/css/tokens.css",
     "www/css/shell.css",
     "www/css/dialogs.css",
@@ -28,6 +28,8 @@ const FRONTEND_CSS_FILES: [&str; 12] = [
     "www/css/tree-frame.css",
     "www/css/drawer.css",
     "www/css/tree-svg.css",
+    "www/css/chart.css",
+    "www/css/delta-view.css",
     "www/css/responsive.css",
 ];
 

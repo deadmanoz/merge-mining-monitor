@@ -6,6 +6,14 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Add a Header Time Delta view, reachable from a new top-level view switcher,
+  plotting how far apart a stale block and the canonical block that beat it
+  timestamped their headers. One focus window drives a linear histogram of the
+  core, hatched off-scale gutters for what it excludes, and a symmetric-log
+  strip of the whole range; a Coverage tab answers "what share is within
+  plus or minus T" and a Table tab is the accessible twin. Selecting an outlier
+  opens the usual block detail, and the Source filter is shared with the tree.
+
 - Add the read-only `GET /api/v1/competitions` endpoint, serving every
   derivable stale-vs-canonical competition with its header-time delta, both
   miner pools, and its active evidence sources. It backs a forthcoming

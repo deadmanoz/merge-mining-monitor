@@ -1,0 +1,319 @@
+/* Chart primitives: the SVG mark, axis and overlay vocabulary shared by any
+   plotted view. Layout belongs to the view's own stylesheet. */
+
+:root {
+  /* The sign of a delta is a polarity, so it gets a diverging pair with a
+     neutral zero. Light mode reuses the shipped --stale and --proof tokens;
+     dark mode steps the same two hues into the dark-mode lightness band.
+
+     The obvious --stale / --canonical (red/green) pair was rejected: it
+     separates by only dE 5.5 under deuteranopia. Both pairs below pass
+     lightness band, chroma floor, CVD separation, normal-vision floor and
+     contrast against the plot surface. Position (left or right of zero) is
+     the primary encoding; colour reinforces it. */
+  --delta-stale-earlier: #b13f3a;
+  --delta-canonical-earlier: #1f6feb;
+  --delta-tied: #7b877f;
+  --delta-brush: rgba(31, 111, 235, 0.1);
+}
+
+[data-theme="dark"] {
+  --delta-stale-earlier: #d65c55;
+  --delta-canonical-earlier: #6b92e8;
+  --delta-tied: #99a69e;
+  --delta-brush: rgba(107, 146, 232, 0.16);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.delta-canvas {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-alt);
+  overflow: hidden;
+}
+
+.delta-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ── Axes and grid ─────────────────────────────────────────────────────── */
+
+.grid-line {
+  stroke: var(--line);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.axis-line {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.zero-line {
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+  shape-rendering: crispEdges;
+}
+
+.axis-text {
+  fill: var(--muted);
+  font-family: var(--sans);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.axis-title {
+  fill: var(--faint);
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.annot-text {
+  fill: var(--text);
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.annot-line {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+/* ── Marks ─────────────────────────────────────────────────────────────── */
+
+.bar-neg { fill: var(--delta-canonical-earlier); }
+.bar-pos { fill: var(--delta-stale-earlier); }
+.bar-zero { fill: var(--delta-tied); }
+
+.bar-hit {
+  fill: transparent;
+  cursor: crosshair;
+}
+
+ /* The hit rect is appended after its own mark so it paints above and takes
+    the pointer, which means `+` from the hit reaches the NEXT bin's mark. CSS
+    has no previous-sibling combinator, so select the mark and look forward. */
+.bar-mark:has(+ .bar-hit:hover),
+.bar-mark:has(+ .bar-hit:focus-visible) {
+  filter: brightness(1.15);
+}
+
+/* Off-scale gutters: everything past the window edge, drawn on the same count
+   axis but hatched so it never reads as an in-range bin. */
+.gutter-mark {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+
+.gutter-panel {
+  fill: var(--surface);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.coverage-line {
+  fill: none;
+  stroke: var(--delta-canonical-earlier);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.coverage-area {
+  fill: var(--delta-canonical-earlier);
+  opacity: 0.1;
+}
+
+.coverage-dot {
+  fill: var(--delta-canonical-earlier);
+  stroke: var(--surface-alt);
+  stroke-width: 2;
+}
+
+.rug-tick {
+  stroke-width: 1.5;
+  shape-rendering: crispEdges;
+  cursor: pointer;
+}
+
+.rug-neg { stroke: var(--delta-canonical-earlier); }
+.rug-pos { stroke: var(--delta-stale-earlier); }
+
+.rug-tick.is-selected {
+  stroke: var(--focus);
+  stroke-width: 3;
+}
+
+/* ── Brush ─────────────────────────────────────────────────────────────── */
+
+.brush-window {
+  fill: var(--delta-brush);
+  stroke: var(--focus);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.brush-veil {
+  fill: var(--bg);
+  opacity: 0.42;
+}
+
+.brush-handle {
+  fill: var(--focus);
+  cursor: ew-resize;
+}
+
+/* The window is always symmetric about zero, so dragging the band resizes it
+   rather than panning; the cursor should say so. */
+.brush-body {
+  fill: transparent;
+  cursor: ew-resize;
+}
+
+.brush-label {
+  fill: var(--focus);
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Overlays ──────────────────────────────────────────────────────────── */
+
+/* A static row above the plot rather than an overlay: at narrow windows the
+   off-scale gutters run the full height, and an overlay legend would sit on
+   top of their counts. */
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.chart-legend[hidden] {
+  display: none;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.4;
+}
+
+.legend-swatch {
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+}
+
+/* Mirrors the SVG hatch used in the off-scale gutters. */
+.legend-swatch-hatch {
+  border: 1px solid var(--line);
+  background: repeating-linear-gradient(
+    45deg,
+    var(--surface-alt) 0 2px,
+    var(--line-strong) 2px 4px
+  );
+}
+
+.chart-tooltip {
+  position: absolute;
+  z-index: 4;
+  max-width: 260px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+
+.chart-tooltip strong {
+  display: block;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.chart-tooltip span {
+  color: var(--muted);
+}
+
+/* ── Tabular twin ──────────────────────────────────────────────────────── */
+
+.table-panel {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.table-scroll {
+  height: 100%;
+  overflow: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table th,
+.data-table td {
+  padding: 5px 9px;
+  text-align: right;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.data-table th:first-child,
+.data-table td:first-child {
+  text-align: left;
+}
+
+.data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.data-table tbody tr[data-outside="true"] td {
+  color: var(--muted);
+  font-style: italic;
+}

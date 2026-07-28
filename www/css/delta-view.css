@@ -1,0 +1,314 @@
+/* Layout for the header-time-delta view: the rail controls it adds, the stat
+   row, the plot/outlier split, and the full-range strip. Mark and axis styling
+   lives in chart.css. */
+
+/* Class, not id: an ID selector outranks the [data-view-scope] hide rule in
+   layout.css, which would leave the inactive panel laid out over the tree. */
+.delta-main {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+/* ── Rail controls ─────────────────────────────────────────────────────── */
+
+.delta-controls {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.preset-button {
+  min-height: 28px;
+  padding: 0 4px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.preset-button[aria-pressed="true"] {
+  border-color: var(--focus);
+  background: var(--surface-alt);
+  color: var(--focus);
+  font-weight: 700;
+}
+
+/* controls.css styles `label:has(input[type="checkbox"])` at (0,1,2); the
+   doubled class outranks it so radio rows keep their inline layout. */
+label.radio-row.radio-row {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+}
+
+.radio-row input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+
+.grid-form-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+/* ── Stat row ──────────────────────────────────────────────────────────── */
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(98px, 1fr));
+  gap: 1px;
+  border-bottom: 1px solid var(--line);
+  background: var(--line);
+}
+
+.stat-tile {
+  display: grid;
+  gap: 2px;
+  align-content: start;
+  padding: 8px 10px;
+  background: var(--surface);
+}
+
+.stat-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.stat-value {
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+/* Two-value tiles (a range, a min/max pair) step down so they stay on one line
+   at the narrow end of the auto-fit grid. */
+.stat-tile[data-wide="true"] .stat-value {
+  font-size: 15px;
+}
+
+.stat-sub {
+  color: var(--faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Plot and outlier split ────────────────────────────────────────────── */
+
+.delta-body {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 240px);
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "plot outliers"
+    "strip strip";
+  gap: 8px;
+  padding: 8px 10px 4px;
+}
+
+.delta-plot {
+  grid-area: plot;
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 6px;
+}
+
+/* Pin the rows: hiding the legend removes it as a grid item, and without
+   explicit placement the canvas would slide up into the auto row and collapse
+   to its content height. */
+#delta-legend { grid-row: 1; }
+#delta-canvas,
+#delta-table-panel { grid-row: 2; }
+
+.delta-panel {
+  min-height: 0;
+  min-width: 0;
+}
+
+/* The outlier list is chart navigation, not block detail, so it lives beside
+   the plot rather than in the shared drawer. */
+.outlier-panel {
+  grid-area: outliers;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.outlier-panel > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.outlier-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.outlier-count {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+#delta-outlier-body {
+  min-height: 0;
+  padding: 7px;
+  overflow: auto;
+}
+
+.outlier-list {
+  display: grid;
+  gap: 4px;
+}
+
+.outlier-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.outlier-row:hover {
+  border-color: var(--line);
+  background: var(--surface-alt);
+}
+
+.outlier-row[aria-current="true"] {
+  border-color: var(--focus);
+  background: var(--surface-alt);
+}
+
+.outlier-primary {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.outlier-delta {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.outlier-delta[data-sign="neg"] { color: var(--delta-canonical-earlier); }
+.outlier-delta[data-sign="pos"] { color: var(--delta-stale-earlier); }
+
+.outlier-meta {
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.outlier-height {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.drawer-note {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+/* A selection the filters exclude is still marked on the strip but counted
+   nowhere, so it needs saying plainly. */
+.hidden-selection {
+  margin-bottom: 6px;
+  padding: 6px 7px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--focus);
+  border-radius: 4px;
+  background: var(--surface-alt);
+}
+
+.hidden-selection .secondary-button {
+  margin-top: 5px;
+  min-height: 24px;
+  font-size: 11px;
+}
+
+/* ── Full-range strip ──────────────────────────────────────────────────── */
+
+.context-strip {
+  grid-area: strip;
+  display: grid;
+  gap: 5px;
+}
+
+.context-canvas {
+  height: 118px;
+}
+
+.context-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.context-heading h3 {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.context-heading .meta-line {
+  margin-top: 0;
+}
+
+/* ── Narrow ────────────────────────────────────────────────────────────── */
+
+@media (max-width: 1120px) {
+  .delta-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "plot" "outliers" "strip";
+  }
+
+  /* #delta-canvas, not .delta-canvas: the context strip carries that class as
+     well, and this rule sits after .context-canvas so it was overriding the
+     strip's 118px at every width below the breakpoint. */
+  #delta-canvas {
+    height: 380px;
+  }
+
+  #delta-outlier-body {
+    max-height: 240px;
+  }
+}

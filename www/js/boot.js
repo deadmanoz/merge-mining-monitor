@@ -68,6 +68,12 @@ async function scheduledRefresh() {
   const pending = [loadSources()];
   if (state.query.view === "tree") {
     pending.push(loadTree(), refreshActiveNavigatorTarget());
+  } else {
+    // Skipping the tree while another view is active means the cached tree is
+    // now older than the refresh interval. Without this the view's own loader
+    // sees `state.tree` present and not dirty, so switching back would show a
+    // tree that never refreshes for as long as the tab stays open.
+    state.treeDirty = true;
   }
   await Promise.all(pending);
   // Advance the open block detail's "how long ago" labels too.
