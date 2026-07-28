@@ -20,6 +20,11 @@ pub(crate) use backbone::{
     load_backbone_window_coverage_for_windows, load_max_complete_canonical_height,
 };
 
+mod competition;
+pub(crate) use competition::{
+    COMPETITION_DELTA_SQL, COMPETITION_FROM_SQL, CompetitionCore, competition_core_select,
+};
+
 /// Split an orphan-class filter into the concrete `block.btc_orphan_class` db
 /// values and whether `pending` (the SQL `NULL` transient) is included. Every
 /// orphan-class-filtered query binds these two params and splices the STATIC

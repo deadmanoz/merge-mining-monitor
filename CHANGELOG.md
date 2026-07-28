@@ -6,6 +6,12 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Add the read-only `GET /api/v1/competitions` endpoint, serving every
+  derivable stale-vs-canonical competition with its header-time delta, both
+  miner pools, and its active evidence sources. It backs a forthcoming
+  header-time-delta distribution view, which needs the whole set client-side to
+  re-bin and re-window without a request per interaction.
+
 ## [0.2.1] - 2026-07-13
 
 - Correct source-rail bylines and source-modal documentation for Bitcoin Stash,

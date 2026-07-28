@@ -8,6 +8,7 @@ import { wireSourceStatusPopover } from "./source-status.js?v=0.2.1";
 import { inputDateTimeToUtc } from "./tree-lookup.js?v=0.2.1";
 import { hasExplicitTreeView, hasManualTreeLookup, hasUnheightedAnchorView, syncUrl, treeWindowError } from "./tree-query-state.js?v=0.2.1";
 import { wireTreeLegend } from "./tree-renderer.js?v=0.2.1";
+import { activateView, applyViewScopes, wireViewSwitcher } from "./view-shell.js?v=0.2.1";
 import { NAV_COARSE_STRIDE } from "./windowing.js?v=0.2.1";
 
 
@@ -16,37 +17,60 @@ async function reloadAll() {
   syncUrl();
   clearStoredTreeTransform();
   renderDrawer();
-  // Sources, tree, and the active navigator target are independent reads. Load
-  // them concurrently so a slow aggregate never delays first tree paint. loadTree
-  // stamps the freshness indicator on success.
-  await Promise.all([loadSources(), loadTree(), refreshActiveNavigatorTarget()]);
+  // Sources are view-independent (the topbar freshness indicator), so they load
+  // alongside whichever view is being activated rather than inside it. The view
+  // itself owns what else it needs; activateView falls back to the tree when the
+  // URL names a view that is not registered.
+  state.treeDirty = true;
+  await Promise.all([loadSources(), activateView(state.query.view)]);
   // Shared-link restore: when the URL pinned a window, center the camera on the
   // focus block (the tree tip-anchors by default). The focus is the selection if
   // any, else the orphan anchor, so a deselected orphan-strip URL still centers
   // on its anchor. A bare ?selected= with no explicit window stays tip-anchored.
   const focus = state.selectedHash
     || (hasUnheightedAnchorView() ? state.query.unheightedAnchor : null);
-  if (hasExplicitTreeView() && focus) {
+  if (state.query.view === "tree" && hasExplicitTreeView() && focus) {
     centerCameraOnNode(focus);
   }
 }
 
-// In-place refresh used by the manual refresh button and the auto-refresh timer:
-// reload tree and source data WITHOUT clearing the stored pan/zoom, so a refresh
-// never moves the camera. "Live tip" stays the explicit re-anchor.
-async function softRefresh() {
-  // Skip while a navigator jump is in flight: softRefresh's loadTree() uses the
-  // still-committed (pre-jump) state.query and shares the "tree" seq key, so it
-  // would overtake the jump's deferred view load and abort the jump. The jump is
-  // sub-second; the next tick refreshes. Also skip while a pointer is pressed on the
-  // tree: a re-render between a node press and its click would orphan the clicked
-  // <g> and drop the selection.
-  if (anyNavTargetBusy(state) || state.treePointerActive) return;
-  // Re-fetch the active navigator target too; softRefresh preserves the stored
-  // transform, so the camera never moves on refresh.
-  await Promise.all([loadSources(), loadTree(), refreshActiveNavigatorTarget()]);
-  // Advance the open block detail's "how long ago" labels too: softRefresh
-  // backs both the auto-refresh timer and the manual refresh button.
+// Skip guard shared by both refresh entry points. A navigator jump in flight
+// must not be overtaken: a refresh's loadTree() uses the still-committed
+// (pre-jump) state.query and shares the "tree" seq key, so it would abort the
+// jump. The jump is sub-second; the next tick refreshes. A pressed pointer on
+// the tree is also excluded, because a re-render between a node press and its
+// click would orphan the clicked <g> and drop the selection.
+function refreshBlocked() {
+  return anyNavTargetBusy(state) || state.treePointerActive;
+}
+
+// The manual Refresh button: reload sources, then force-reload whichever view
+// is active. Forcing preserves the stored pan/zoom, so the camera never moves.
+// "Live tip" stays the explicit re-anchor.
+async function manualRefresh() {
+  if (refreshBlocked()) return;
+  // Concurrent, not sequential. Awaiting sources first would leave a window in
+  // which a navigator jump starts, and then this refresh's tree load runs after
+  // it: loadTree is sequence-guarded, so the later refresh would supersede the
+  // user's jump and restore the pre-jump window.
+  await Promise.all([loadSources(), activateView(state.query.view, { force: true })]);
+  refreshRelativeTimes();
+}
+
+// The auto-refresh timer. Deliberately NOT the same path as the button: only
+// tree data ages on a minute-to-minute scale, so a tick refreshes sources (the
+// topbar freshness indicator, which every view shows) and the tree, and leaves
+// other views to their own load-once-on-activation policy.
+async function scheduledRefresh() {
+  if (refreshBlocked()) return;
+  // Same concurrency requirement as manualRefresh, and the same shape the
+  // single softRefresh had before the split.
+  const pending = [loadSources()];
+  if (state.query.view === "tree") {
+    pending.push(loadTree(), refreshActiveNavigatorTarget());
+  }
+  await Promise.all(pending);
+  // Advance the open block detail's "how long ago" labels too.
   refreshRelativeTimes();
 }
 
@@ -57,7 +81,7 @@ function setRefreshInterval(seconds) {
     clearInterval(refreshTimer);
     refreshTimer = null;
   }
-  if (seconds > 0) refreshTimer = setInterval(softRefresh, seconds * 1000);
+  if (seconds > 0) refreshTimer = setInterval(scheduledRefresh, seconds * 1000);
 }
 
 function wireRefreshControls() {
@@ -71,7 +95,7 @@ function wireRefreshControls() {
       setRefreshInterval(Number(select.value));
     });
   }
-  $("#refresh-now")?.addEventListener("click", softRefresh);
+  $("#refresh-now")?.addEventListener("click", manualRefresh);
 }
 
 function wireAboutDialog() {
@@ -465,7 +489,15 @@ function wireEvents() {
     // without refetching or moving the view. Every other control refetches.
     if (event.target && (event.target.name === "source" || event.target.name === "kind")) {
       if (event.target.name === "source") updateSourceGroupSelectedMarkers();
-      applyTreeHighlight($("#tree-svg"), state.query.sources, state.query.kinds, state.query.classification, state.selectedHash);
+      // Source is the one filter shared across views, and each view applies it
+      // differently: the tree dims non-matching nodes in place, while other
+      // views re-derive from the filtered set. Re-render the active view rather
+      // than assuming the tree is on screen.
+      if (state.query.view === "tree") {
+        applyTreeHighlight($("#tree-svg"), state.query.sources, state.query.kinds, state.query.classification, state.selectedHash);
+      } else {
+        activateView(state.query.view);
+      }
     } else if (event.target && event.target.name === "classification") {
       // The orphan-class filter is a SERVER-side filter for the navigator/anchor,
       // not a client highlight: re-drive the navigator so it lands on and steps
@@ -475,6 +507,7 @@ function wireEvents() {
     }
   });
   wireRefreshControls();
+  wireViewSwitcher();
   wireAboutDialog();
   INFO_DIALOGS.forEach(wireInfoDialog);
   wireModalTabs($("#source-dialog"));
@@ -522,6 +555,10 @@ function wireEvents() {
 async function initApp() {
   document.documentElement.dataset.theme = localStorage.getItem("mmm-theme") || "";
   hydrateFormFromUrl();
+  // Stamp the view scope before anything paints. reloadAll's activateView does
+  // this too, but only after its first await; until data-view is set, neither
+  // scope rule matches and both view panels occupy the same grid slot.
+  applyViewScopes(state.query.view);
   renderKindControls();
   renderInfoDialogs();
   writeForm();

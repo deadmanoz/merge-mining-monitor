@@ -4,6 +4,7 @@ use super::error::ApiError;
 
 mod block;
 mod branch_summary;
+mod competitions;
 mod materialize;
 mod navigator;
 mod shared;
@@ -12,12 +13,14 @@ mod stale_navigation;
 mod tree;
 
 pub use block::block;
+pub use competitions::competitions;
 pub use navigator::navigator;
 pub use sources::sources;
 pub use tree::tree;
 #[cfg(feature = "db-integration")]
 pub use {
     block::{BlockPayload, EventDetail},
+    competitions::{CompetitionRecord, CompetitionsPayload},
     navigator::{
         NavigatorBranch, NavigatorItem, NavigatorOrphan, NavigatorPayload, NavigatorPosition,
         NavigatorView, OrphanClassCounts,

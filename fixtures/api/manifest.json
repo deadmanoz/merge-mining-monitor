@@ -62,6 +62,11 @@
       "scenario": "Source registry with evidence freshness, operational progress, per-source counts including strict/weak BTC-orphan sub-counts, live and historical sources including recovered Lyncoin and SixEleven, a partial VCash subset, a surveyed Doichain recovery, and a catalogued Bitcoin Stash source"
     },
     {
+      "file": "competitions.json",
+      "endpoint_family": "/api/v1/competitions",
+      "scenario": "Every derivable stale-vs-canonical competition: the three tree.json competitions plus a second stale at height 700,005 pinning the height-then-lexicographic-stale_hash tie-break, an AuxPoW-only source list beside Core-attested lists carrying the synthetic live-chaintip:bitcoin:core source, an Unknown miner pool on each side, and a null header_time_delta_s for a timestamp difference outside i32"
+    },
+    {
       "file": "version.json",
       "endpoint_family": "/api/v1/version",
       "scenario": "Runtime application SemVer v0.2.0 plus the complete RELEASE_NOTES.md release-note projection for the About dialog"

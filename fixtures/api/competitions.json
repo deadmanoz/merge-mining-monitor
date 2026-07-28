@@ -1,0 +1,105 @@
+{
+  "schema_version": "v1",
+  "generated_at": 1779792000,
+  "competitions": [
+    {
+      "btc_height": 700004,
+      "stale_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "header_time_delta_s": 25,
+      "stale_header_time": 1779700000,
+      "stale_bitcoin_miner_pool": {
+        "id": 7,
+        "slug": "antpool",
+        "name": "AntPool",
+        "known": true
+      },
+      "canonical_bitcoin_miner_pool": {
+        "id": 8,
+        "slug": "f2pool",
+        "name": "F2Pool",
+        "known": true
+      },
+      "sources": ["auxpow:namecoin", "live-chaintip:bitcoin:core"]
+    },
+    {
+      "btc_height": 700005,
+      "stale_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "header_time_delta_s": 18,
+      "stale_header_time": 1779700600,
+      "stale_bitcoin_miner_pool": {
+        "id": 8,
+        "slug": "f2pool",
+        "name": "F2Pool",
+        "known": true
+      },
+      "canonical_bitcoin_miner_pool": {
+        "id": 8,
+        "slug": "f2pool",
+        "name": "F2Pool",
+        "known": true
+      },
+      "sources": [
+        "auxpow:namecoin",
+        "auxpow:rsk",
+        "live-chaintip:bitcoin:core"
+      ]
+    },
+    {
+      "btc_height": 700005,
+      "stale_hash": "99999999999999999999999999999999999999999999999999999999999999aa",
+      "header_time_delta_s": -3,
+      "stale_header_time": 1779700640,
+      "stale_bitcoin_miner_pool": {
+        "id": null,
+        "slug": null,
+        "name": "Unknown",
+        "known": false
+      },
+      "canonical_bitcoin_miner_pool": {
+        "id": 8,
+        "slug": "f2pool",
+        "name": "F2Pool",
+        "known": true
+      },
+      "sources": ["auxpow:namecoin"]
+    },
+    {
+      "btc_height": 700006,
+      "stale_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "header_time_delta_s": 19,
+      "stale_header_time": 1779701200,
+      "stale_bitcoin_miner_pool": {
+        "id": 8,
+        "slug": "f2pool",
+        "name": "F2Pool",
+        "known": true
+      },
+      "canonical_bitcoin_miner_pool": {
+        "id": 8,
+        "slug": "f2pool",
+        "name": "F2Pool",
+        "known": true
+      },
+      "sources": ["auxpow:namecoin", "live-chaintip:bitcoin:core"]
+    },
+    {
+      "btc_height": 700007,
+      "stale_hash": "77777777777777777777777777777777777777777777777777777777777777bb",
+      "header_time_delta_s": null,
+      "stale_header_time": 1779701800,
+      "stale_bitcoin_miner_pool": {
+        "id": 7,
+        "slug": "antpool",
+        "name": "AntPool",
+        "known": true
+      },
+      "canonical_bitcoin_miner_pool": {
+        "id": null,
+        "slug": null,
+        "name": "Unknown",
+        "known": false
+      },
+      "sources": ["auxpow:namecoin"]
+    }
+  ]
+}

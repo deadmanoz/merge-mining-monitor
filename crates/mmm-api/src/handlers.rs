@@ -66,6 +66,19 @@ pub(crate) async fn sources(State(state): State<AppState>) -> Response {
     }
 }
 
+/// `/api/v1/competitions` has NO query validation per the contract: it serves
+/// the whole competition set and the client filters locally.
+pub(crate) async fn competitions(State(state): State<AppState>) -> Response {
+    match competitions_response(&state).await {
+        Ok(response) => response,
+        Err(EndpointError::Api(err)) => err.into_response(),
+        Err(EndpointError::Internal(err)) => {
+            error!(error = %err, "competitions endpoint failed");
+            internal_error_response()
+        }
+    }
+}
+
 /// `/api/v1/version` serves compile-time application version metadata and the
 /// full release-note projection. It never checks out a database connection.
 pub(crate) async fn version_metadata() -> Response {
@@ -201,6 +214,20 @@ async fn sources_response(state: &AppState) -> Result<Response, EndpointError> {
     let generated_at = now_epoch_secs();
     let client = db_client(state).await?;
     let payload = projection::sources(&client, generated_at).await?;
+    Ok(Json(SuccessEnvelope::with_generated_at(
+        payload,
+        None,
+        generated_at,
+    ))
+    .into_response())
+}
+
+/// Fallible body of the competitions handler. No query to validate, so it goes
+/// straight to a pooled client.
+async fn competitions_response(state: &AppState) -> Result<Response, EndpointError> {
+    let generated_at = now_epoch_secs();
+    let client = db_client(state).await?;
+    let payload = projection::competitions(&client).await?;
     Ok(Json(SuccessEnvelope::with_generated_at(
         payload,
         None,

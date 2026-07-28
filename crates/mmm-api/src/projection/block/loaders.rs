@@ -6,7 +6,8 @@ use anyhow::{Context, Result, bail};
 use tokio_postgres::Client;
 
 use super::super::shared::{
-    PoolObject, SourceRecord, TreeCompetition, display_hash, parent_kind_from_db, pool_from_columns,
+    COMPETITION_FROM_SQL, CompetitionCore, PoolObject, SourceRecord, TreeCompetition,
+    competition_core_select, display_hash, parent_kind_from_db, pool_from_columns,
 };
 use super::detail::first_contributing_id;
 use super::{
@@ -415,35 +416,26 @@ pub(super) async fn load_competition_detail(
     client: &Client,
     block: &BlockDetailRow,
 ) -> Result<Option<TreeCompetition>> {
+    let sql = format!(
+        "{select} {from} AND stale.btc_header_hash = $1",
+        select = competition_core_select(),
+        from = COMPETITION_FROM_SQL,
+    );
     let Some(row) = client
-        .query_opt(
-            "SELECT stale.btc_header_hash, canonical.btc_header_hash, \
-                    CASE WHEN canonical.btc_header_time - stale.btc_header_time \
-                               BETWEEN -2147483648 AND 2147483647 \
-                         THEN (canonical.btc_header_time - stale.btc_header_time)::int \
-                         ELSE NULL END AS header_time_delta_s, \
-                    sp.id, sp.slug, sp.canonical_name, cp.id, cp.slug, cp.canonical_name \
-             FROM block stale \
-             JOIN block canonical ON canonical.btc_header_hash = stale.canonical_competitor_hash \
-             LEFT JOIN pool sp ON sp.id = stale.bitcoin_miner_pool_id \
-             LEFT JOIN pool cp ON cp.id = canonical.bitcoin_miner_pool_id \
-             WHERE stale.btc_header_hash = $1 \
-               AND stale.kind = 'stale' \
-               AND canonical.kind = 'canonical'",
-            &[&block.hash],
-        )
+        .query_opt(&sql, &[&block.hash])
         .await
         .context("derive stale competition detail")?
     else {
         return Ok(None);
     };
+    let core = CompetitionCore::from_row(&row);
     Ok(Some(TreeCompetition {
         btc_height: block.height.unwrap_or_default(),
-        stale_hash: display_hash(&row.get::<_, Vec<u8>>(0))?,
-        canonical_hash: display_hash(&row.get::<_, Vec<u8>>(1))?,
-        stale_bitcoin_miner_pool: pool_from_columns(row.get(3), row.get(4), row.get(5)),
-        canonical_bitcoin_miner_pool: pool_from_columns(row.get(6), row.get(7), row.get(8)),
-        header_time_delta_s: row.get(2),
+        stale_hash: display_hash(&core.stale_hash)?,
+        canonical_hash: display_hash(&core.canonical_hash)?,
+        stale_bitcoin_miner_pool: core.stale_bitcoin_miner_pool,
+        canonical_bitcoin_miner_pool: core.canonical_bitcoin_miner_pool,
+        header_time_delta_s: core.header_time_delta_s,
         // No read-model column exists for this until the competition timing
         // slice lands.
         propagation_delta_s: None,

@@ -252,6 +252,10 @@ function kindHelpFor(kind) {
 }
 
 const DEFAULTS = {
+  // Active top-level view. Only views registered in view-shell.js are
+  // reachable; anything else falls back to the default, so an unknown or
+  // not-yet-built `view=` in a shared URL degrades to the tree.
+  view: "tree",
   treeHeight: "",
   treeTime: "",
   treeLookupContext: "compact",
@@ -275,6 +279,11 @@ const state = {
   sources: null,
   sourceGroupOpen: {},
   tree: null,
+  // Set by every tree-query mutator that changes WHICH window the tree should
+  // show without fetching it. Query mutators only rewrite state.query, so a
+  // cross-link that retargets the tree while another view is active would
+  // otherwise leave a stale (or unbuilt) tree on the next activation.
+  treeDirty: false,
   selectedHash: null,
   selectedBlock: null,
   // Consolidated navigator: the active target and how it was set. `source`
@@ -462,6 +471,11 @@ function readForm({ source = "form" } = {}) {
 
 function hydrateFormFromUrl() {
   const params = new URLSearchParams(window.location.search);
+  // The view is only recorded here; view-shell.js validates it against the
+  // registry on activation and falls back to the default when it names a view
+  // that does not exist yet.
+  const view = params.get("view");
+  if (view) state.query.view = view;
   const generatedFrom = params.get("tree_from");
   const generatedTo = params.get("tree_to");
   if (
@@ -566,6 +580,7 @@ function writeForm() {
 
 export {
   API_BASE,
+  DEFAULTS,
   KINDS,
   VISIBLE_KIND_CONTROLS,
   EDGE_KINDS,

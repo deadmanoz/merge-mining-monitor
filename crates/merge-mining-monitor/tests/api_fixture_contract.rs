@@ -20,6 +20,9 @@ fn api_fixture_examples_are_listed_and_parse() {
         if file == "sources.json" {
             assert_sources_fixture_contract(&fixture);
         }
+        if file == "competitions.json" {
+            assert_competitions_fixture_contract(&fixture);
+        }
     }
 }
 
@@ -79,6 +82,114 @@ fn assert_fixture_envelope(file: &str, fixture: &Value) {
     if file.starts_with("error-") {
         assert!(fixture["error"].is_object(), "{file} must carry error");
     }
+}
+
+/// The competitions fixture pins the wire contract the delta view reads: the
+/// documented ordering, the nullable delta, and source lists that agree with
+/// what the tree and block projections report for the same block.
+fn assert_competitions_fixture_contract(fixture: &Value) {
+    let competitions = fixture["competitions"]
+        .as_array()
+        .expect("competitions fixture must carry a competitions array");
+    assert!(
+        competitions.len() >= 2,
+        "competitions fixture must exercise more than one row"
+    );
+
+    // Ordering: ascending btc_height, then lexicographic stale_hash. The
+    // fixture deliberately carries two stales at one height so the tie-break is
+    // pinned, not merely implied.
+    let keys = competitions
+        .iter()
+        .map(|row| {
+            let height = row["btc_height"]
+                .as_i64()
+                .expect("btc_height must be numeric");
+            let hash = row["stale_hash"]
+                .as_str()
+                .expect("stale_hash must be a string")
+                .to_owned();
+            (height, hash)
+        })
+        .collect::<Vec<_>>();
+    let mut sorted = keys.clone();
+    sorted.sort();
+    assert_eq!(
+        keys, sorted,
+        "competitions must be ordered by btc_height then lexicographic stale_hash"
+    );
+    let duplicate_height = keys
+        .windows(2)
+        .any(|pair| pair[0].0 == pair[1].0 && pair[0].1 != pair[1].1);
+    assert!(
+        duplicate_height,
+        "competitions fixture must include two stales at one height to pin the tie-break"
+    );
+
+    let mut saw_null_delta = false;
+    let mut saw_bitcoin_source = false;
+    let mut saw_auxpow_only = false;
+    for row in competitions {
+        // Absence of the key, not a null value: indexing a missing key yields
+        // Value::Null, so an is_null() check would also accept a fixture that
+        // added "canonical_hash": null and quietly broke the documented shape.
+        assert!(
+            !row.as_object()
+                .expect("competition row is an object")
+                .contains_key("canonical_hash"),
+            "canonical_hash is deliberately not part of this payload"
+        );
+        assert!(
+            row["stale_header_time"].as_i64().is_some(),
+            "stale_header_time must be numeric"
+        );
+        for side in ["stale_bitcoin_miner_pool", "canonical_bitcoin_miner_pool"] {
+            assert!(row[side].is_object(), "{side} must be a pool object");
+            assert!(row[side]["known"].is_boolean(), "{side}.known must be bool");
+        }
+        let delta = &row["header_time_delta_s"];
+        assert!(
+            delta.is_null() || delta.as_i64().is_some(),
+            "header_time_delta_s must be null or numeric"
+        );
+        saw_null_delta |= delta.is_null();
+
+        let sources = row["sources"]
+            .as_array()
+            .expect("sources must be an array")
+            .iter()
+            .map(|value| value.as_str().expect("source code is a string").to_owned())
+            .collect::<Vec<_>>();
+        // Deliberately NOT asserting a non-empty list: a competition whose only
+        // proof has been revoked is still a competition, and
+        // competitions_sources_match_block_evidence_semantics pins that it is
+        // served with sources: []. Requiring evidence here would contradict the
+        // runtime contract and teach clients to assume something untrue.
+        let mut sorted_sources = sources.clone();
+        sorted_sources.sort();
+        sorted_sources.dedup();
+        assert_eq!(sources, sorted_sources, "sources must be sorted and unique");
+        if sources
+            .iter()
+            .any(|code| code == "live-chaintip:bitcoin:core")
+        {
+            saw_bitcoin_source = true;
+        } else if !sources.is_empty() {
+            saw_auxpow_only = true;
+        }
+    }
+    assert!(
+        saw_null_delta,
+        "fixture must pin a null header_time_delta_s (i32-overflow case)"
+    );
+    assert!(
+        saw_bitcoin_source,
+        "fixture must pin the synthetic live-chaintip:bitcoin:core source"
+    );
+    assert!(
+        saw_auxpow_only,
+        "fixture must pin an AuxPoW-only source list so the synthetic source is not assumed"
+    );
 }
 
 fn assert_sources_fixture_contract(fixture: &Value) {

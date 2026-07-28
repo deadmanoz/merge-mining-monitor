@@ -1,4 +1,4 @@
-import { API_BASE, CLASSIFICATION_DEFAULT, classificationParam, KINDS, sameClassification, state, VISIBLE_KIND_CONTROLS } from "./frontend-state.js?v=0.2.1";
+import { API_BASE, CLASSIFICATION_DEFAULT, classificationParam, DEFAULTS, KINDS, sameClassification, state, VISIBLE_KIND_CONTROLS } from "./frontend-state.js?v=0.2.1";
 import { inputDateTimeToUtc } from "./tree-lookup.js?v=0.2.1";
 
 
@@ -29,6 +29,7 @@ function hasExplicitTreeView() {
 }
 
 function clearGeneratedWindowState() {
+  state.treeDirty = true;
   state.query.treeWindow = "";
   state.query.treeFrom = "";
   state.query.treeTo = "";
@@ -36,6 +37,7 @@ function clearGeneratedWindowState() {
 }
 
 function activateHeightLookup(height, { context = "compact" } = {}) {
+  state.treeDirty = true;
   state.query.treeHeight = String(height);
   state.query.treeTime = "";
   state.query.treeLookupContext = context;
@@ -44,6 +46,7 @@ function activateHeightLookup(height, { context = "compact" } = {}) {
 }
 
 function activateAnchorView(hash) {
+  state.treeDirty = true;
   state.query.unheightedAnchor = hash;
   state.query.treeHeight = "";
   state.query.treeTime = "";
@@ -52,6 +55,7 @@ function activateAnchorView(hash) {
 }
 
 function activateGeneratedWindow({ treeFrom, treeTo, targetHeight } = {}) {
+  state.treeDirty = true;
   state.query.treeWindow = "generated";
   state.query.treeFrom = String(treeFrom);
   state.query.treeTo = String(treeTo);
@@ -63,6 +67,7 @@ function activateGeneratedWindow({ treeFrom, treeTo, targetHeight } = {}) {
 }
 
 function clearTreeViewModes() {
+  state.treeDirty = true;
   state.query.treeHeight = "";
   state.query.treeTime = "";
   state.query.treeLookupContext = "compact";
@@ -73,6 +78,9 @@ function clearTreeViewModes() {
 function syncUrl() {
   const params = new URLSearchParams();
   const q = state.query;
+  // Only non-default views are written, so every existing tree URL round-trips
+  // byte-identically to before the view parameter existed.
+  if (q.view && q.view !== DEFAULTS.view) params.set("view", q.view);
   if (hasUnheightedAnchorView()) {
     params.set("unheighted_anchor", q.unheightedAnchor);
   } else if (hasGeneratedTreeWindow()) {

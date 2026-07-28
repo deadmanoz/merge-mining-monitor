@@ -280,3 +280,42 @@ input[type="checkbox"] {
   height: 16px;
   padding: 0;
 }
+
+/* Top-level view switcher. Rendered from the view-shell registry and hidden
+   while only one view is registered, so it costs nothing until a second view
+   exists. */
+.view-switcher {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-alt);
+}
+
+.view-switcher[hidden] {
+  display: none;
+}
+
+.view-tab {
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.view-tab:hover {
+  color: var(--text);
+}
+
+.view-tab[aria-selected="true"] {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 700;
+}
