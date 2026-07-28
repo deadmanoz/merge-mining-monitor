@@ -26,14 +26,7 @@ use super::version;
 /// `source`/`window` query). Validates query params before DB checkout;
 /// payload pinned by fixtures/api/tree.json and tree-unheighted-anchor.json.
 pub(crate) async fn tree(State(state): State<AppState>, RawQuery(query): RawQuery) -> Response {
-    match tree_response(&state, query).await {
-        Ok(response) => response,
-        Err(EndpointError::Api(err)) => err.into_response(),
-        Err(EndpointError::Internal(err)) => {
-            error!(error = %err, "tree endpoint failed");
-            internal_error_response()
-        }
-    }
+    respond("tree", tree_response(&state, query).await)
 }
 
 /// `/api/v1/navigator/{target}` is the unified navigator index for stale
@@ -44,39 +37,21 @@ pub(crate) async fn navigator(
     Path(target): Path<String>,
     RawQuery(query): RawQuery,
 ) -> Response {
-    match navigator_response(&state, &target, query).await {
-        Ok(response) => response,
-        Err(EndpointError::Api(err)) => err.into_response(),
-        Err(EndpointError::Internal(err)) => {
-            error!(error = %err, "navigator endpoint failed");
-            internal_error_response()
-        }
-    }
+    respond(
+        "navigator",
+        navigator_response(&state, &target, query).await,
+    )
 }
 
 /// `/api/v1/sources` has NO query validation per the contract.
 pub(crate) async fn sources(State(state): State<AppState>) -> Response {
-    match sources_response(&state).await {
-        Ok(response) => response,
-        Err(EndpointError::Api(err)) => err.into_response(),
-        Err(EndpointError::Internal(err)) => {
-            error!(error = %err, "sources endpoint failed");
-            internal_error_response()
-        }
-    }
+    respond("sources", sources_response(&state).await)
 }
 
 /// `/api/v1/competitions` has NO query validation per the contract: it serves
 /// the whole competition set and the client filters locally.
 pub(crate) async fn competitions(State(state): State<AppState>) -> Response {
-    match competitions_response(&state).await {
-        Ok(response) => response,
-        Err(EndpointError::Api(err)) => err.into_response(),
-        Err(EndpointError::Internal(err)) => {
-            error!(error = %err, "competitions endpoint failed");
-            internal_error_response()
-        }
-    }
+    respond("competitions", competitions_response(&state).await)
 }
 
 /// `/api/v1/version` serves compile-time application version metadata and the
@@ -120,85 +95,54 @@ pub(crate) async fn block(
             return ApiError::invalid_hash(raw).into_response();
         }
     };
-    match block_response(&state, &hash).await {
+    respond("block", block_response(&state, &hash).await)
+}
+
+fn respond(endpoint: &'static str, result: Result<Response, ProjectionError>) -> Response {
+    match result {
         Ok(response) => response,
-        Err(EndpointError::Api(err)) => err.into_response(),
-        Err(EndpointError::Internal(err)) => {
-            error!(error = %err, "block endpoint failed");
+        Err(ProjectionError::Api(err)) => err.into_response(),
+        Err(ProjectionError::Internal(err)) => {
+            error!(error = %err, "{endpoint} endpoint failed");
             internal_error_response()
         }
     }
 }
 
-/// Handler-local split: `Api` errors render the typed client envelope as-is;
-/// `Internal` errors are logged then masked behind the generic 500
-/// (`internal_error_response`) so no internal detail leaks.
-enum EndpointError {
-    Api(ApiError),
-    Internal(anyhow::Error),
-}
-
-impl From<ApiError> for EndpointError {
-    fn from(err: ApiError) -> Self {
-        Self::Api(err)
-    }
-}
-
-impl From<ProjectionError> for EndpointError {
-    fn from(err: ProjectionError) -> Self {
-        match err {
-            ProjectionError::Api(err) => Self::Api(err),
-            ProjectionError::Internal(err) => Self::Internal(err),
-        }
-    }
-}
-
-async fn db_client(state: &AppState) -> Result<Object, EndpointError> {
+async fn db_client(state: &AppState) -> Result<Object, ProjectionError> {
     state
         .pool()
         .get()
         .await
-        .map_err(|err| EndpointError::Internal(err.into()))
+        .map_err(|err| ProjectionError::Internal(err.into()))
 }
 
 fn success_response<T: Serialize>(payload: T, query: Option<Value>) -> Response {
     Json(SuccessEnvelope::new(payload, query)).into_response()
 }
 
-/// Fallible body of the matching handler: validate/parse the query first, THEN
-/// check out a pooled client, so a malformed request 400s without consuming a
-/// connection. (sources_response additionally threads one `generated_at` into
-/// both envelope and payload.)
 async fn tree_response(
     state: &AppState,
     raw_query: Option<String>,
-) -> Result<Response, EndpointError> {
+) -> Result<Response, ProjectionError> {
     let query = parse_tree_query(raw_query.as_deref())?;
     let client = db_client(state).await?;
     let payload = projection::tree(&client, &query).await?;
     Ok(success_response(payload, Some(query.query)))
 }
 
-/// Fallible body of the matching handler: validate/parse the query first, THEN
-/// check out a pooled client, so a malformed request 400s without consuming a
-/// connection. (sources_response additionally threads one `generated_at` into
-/// both envelope and payload.)
-async fn block_response(state: &AppState, hash: &str) -> Result<Response, EndpointError> {
+async fn block_response(state: &AppState, hash: &str) -> Result<Response, ProjectionError> {
     let hash = normalize_hash(hash)?;
     let client = db_client(state).await?;
     let payload = projection::block(&client, &hash).await?;
     Ok(success_response(payload, None))
 }
 
-/// Fallible body of the matching handler: validate/parse the query first, THEN
-/// check out a pooled client, so a malformed request 400s without consuming a
-/// connection. (sources_response additionally threads one `generated_at` into
-/// both envelope and payload.)
 async fn navigator_response(
     state: &AppState,
     raw_target: &str,
     raw_query: Option<String>,
-) -> Result<Response, EndpointError> {
+) -> Result<Response, ProjectionError> {
     let target = NavigatorTarget::parse(raw_target)?;
     let query = parse_navigator_query(target, raw_query.as_deref())?;
     let client = db_client(state).await?;
@@ -206,11 +150,8 @@ async fn navigator_response(
     Ok(success_response(payload, Some(query.query)))
 }
 
-/// Fallible body of the matching handler: validate/parse the query first, THEN
-/// check out a pooled client, so a malformed request 400s without consuming a
-/// connection. (sources_response additionally threads one `generated_at` into
-/// both envelope and payload.)
-async fn sources_response(state: &AppState) -> Result<Response, EndpointError> {
+/// Threads one timestamp into both the payload and envelope.
+async fn sources_response(state: &AppState) -> Result<Response, ProjectionError> {
     let generated_at = now_epoch_secs();
     let client = db_client(state).await?;
     let payload = projection::sources(&client, generated_at).await?;
@@ -224,7 +165,7 @@ async fn sources_response(state: &AppState) -> Result<Response, EndpointError> {
 
 /// Fallible body of the competitions handler. No query to validate, so it goes
 /// straight to a pooled client.
-async fn competitions_response(state: &AppState) -> Result<Response, EndpointError> {
+async fn competitions_response(state: &AppState) -> Result<Response, ProjectionError> {
     let generated_at = now_epoch_secs();
     let client = db_client(state).await?;
     let payload = projection::competitions(&client).await?;

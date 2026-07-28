@@ -38,8 +38,6 @@ use mmm_pg::PgConfig;
 
 #[cfg(feature = "db-integration")]
 pub use error::ApiError;
-#[cfg(feature = "db-integration")]
-pub use normalize::Classification;
 
 /// The schema version echoed in every envelope.
 pub const SCHEMA_VERSION: &str = "v1";

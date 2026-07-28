@@ -1,17 +1,15 @@
-import { centerCameraOnHeight, centerCameraOnNode, centerCameraOnWindowMidHeight, goTo, loadBlock, loadOrphanBranches, loadOrphansLatest, loadSources, loadTree, navSelectLabel, reconcileNavFromSelected, refreshActiveNavigatorTarget, refreshNavControls, stepNav } from "./api-client.js?v=0.2.1";
+import { centerCameraOnHeight, centerCameraOnNode, centerCameraOnWindowMidHeight, goTo, loadBlock, loadNavigatorLatest, loadSources, loadTree, navSelectLabel, reconcileNavFromSelected, refreshActiveNavigatorTarget, refreshNavControls, stepNav } from "./api-client.js?v=0.2.1";
 import { applyStoredRailWidth, applyTreeHighlight, clearStoredTreeTransform, INFO_DIALOGS, openInfoDialog, RAILS, renderInfoDialogs, renderKindControls, setRailCollapsed, updateSourceGroupSelectedMarkers, wireRailResize } from "./controls.js?v=0.2.1";
 import { activateModalTab, closeDialog, showDialog, wireModalTabs } from "./dialogs.js?v=0.2.1";
 import { renderDrawer } from "./drawer-renderer.js?v=0.2.1";
 import { $, $all, API_BASE, esc, hydrateFormFromUrl, readForm, refreshRelativeTimes, startRelativeTimeTicker, state, writeForm } from "./frontend-state.js?v=0.2.1";
-import { anyNavTargetBusy, navMenuTargets, resetNavigatorTargetState } from "./nav-targets.js?v=0.2.1";
+import { anyNavTargetBusy, NAV_COARSE_STRIDE, navMenuTargets, resetNavigatorTargetState } from "./nav-targets.js?v=0.2.1";
 import { wireSourceStatusPopover } from "./source-status.js?v=0.2.1";
 import { inputDateTimeToUtc } from "./tree-lookup.js?v=0.2.1";
 import { hasExplicitTreeView, hasManualTreeLookup, hasUnheightedAnchorView, syncUrl, treeWindowError } from "./tree-query-state.js?v=0.2.1";
 import { wireTreeLegend } from "./tree-renderer.js?v=0.2.1";
-import { prepareFocus } from "./delta-view.js?v=0.2.1";
-import { activateView, applyViewScopes, wireViewSwitcher } from "./view-shell.js?v=0.2.1";
-import { NAV_COARSE_STRIDE } from "./windowing.js?v=0.2.1";
-
+import { prepareFocus, registerDeltaView } from "./delta-view.js?v=0.2.1";
+import { activateView, applyViewScopes, registerView, wireViewSwitcher } from "./view-shell.js?v=0.2.1";
 
 async function reloadAll() {
   readForm();
@@ -372,9 +370,9 @@ function handleClassificationFilterChange() {
     refreshNavControls();
     loadTree();
   } else if (state.nav.target === "orphanBranch") {
-    loadOrphanBranches();
+    loadNavigatorLatest("orphanBranch");
   } else if (hasUnheightedAnchorView() || state.nav.target === "orphan") {
-    loadOrphansLatest();
+    loadNavigatorLatest("orphan");
   } else {
     refreshNavControls();
   }
@@ -569,6 +567,7 @@ function wireEvents() {
 async function initApp() {
   document.documentElement.dataset.theme = localStorage.getItem("mmm-theme") || "";
   hydrateFormFromUrl();
+  registerDeltaView(registerView);
   // Stamp the view scope before anything paints. reloadAll's activateView does
   // this too, but only after its first await; until data-view is set, neither
   // scope rule matches and both view panels occupy the same grid slot.

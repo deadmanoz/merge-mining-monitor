@@ -20,12 +20,8 @@ pub use tree::tree;
 #[cfg(feature = "db-integration")]
 pub use {
     block::{BlockPayload, EventDetail},
-    competitions::{CompetitionRecord, CompetitionsPayload},
-    navigator::{
-        NavigatorBranch, NavigatorItem, NavigatorOrphan, NavigatorPayload, NavigatorPosition,
-        NavigatorView, OrphanClassCounts,
-    },
-    shared::{ChildChainEvidence, PoolObject, ProofState, SourceSummary, TreeCompetition},
+    competitions::CompetitionsPayload,
+    navigator::{NavigatorItem, NavigatorPayload, NavigatorView, OrphanClassCounts},
     sources::{SourceEndpointRecord, SourcesPayload},
     tree::{TreeEdge, TreePayload},
 };

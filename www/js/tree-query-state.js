@@ -1,4 +1,4 @@
-import { API_BASE, CLASSIFICATION_DEFAULT, classificationParam, DEFAULTS, KINDS, sameClassification, state, VISIBLE_KIND_CONTROLS } from "./frontend-state.js?v=0.2.1";
+import { API_BASE, CLASSIFICATION_DEFAULT, classificationParam, DEFAULTS, KINDS, sameSet, state, VISIBLE_KIND_CONTROLS } from "./frontend-state.js?v=0.2.1";
 import { inputDateTimeToUtc } from "./tree-lookup.js?v=0.2.1";
 
 
@@ -95,20 +95,14 @@ function syncUrl() {
   } else if (hasExactTimeLookup()) {
     params.set("tree_time", q.treeTime);
   }
-  if (!sameKindSelection(q.kinds, VISIBLE_KIND_CONTROLS)) params.set("kinds", q.kinds.join(","));
-  if (!sameClassification(q.classification, CLASSIFICATION_DEFAULT)) {
+  if (!sameSet(q.kinds, VISIBLE_KIND_CONTROLS)) params.set("kinds", q.kinds.join(","));
+  if (!sameSet(q.classification, CLASSIFICATION_DEFAULT)) {
     params.set("classification", q.classification.join(","));
   }
   if (q.sources.length) params.set("sources", q.sources.join(","));
   if (state.selectedHash) params.set("selected", state.selectedHash);
   const url = `${window.location.pathname}?${params.toString()}`;
   window.history.replaceState(null, "", url);
-}
-
-function sameKindSelection(a, b) {
-  if (a.length !== b.length) return false;
-  const set = new Set(a);
-  return b.every((value) => set.has(value));
 }
 
 function paramsFor(base) {

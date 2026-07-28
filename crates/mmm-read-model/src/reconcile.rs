@@ -101,20 +101,6 @@ pub(crate) async fn drain_reconcile_queue(
     Ok(stats)
 }
 
-pub(crate) async fn reconcile_dependents_after_changes(
-    client: &mut Client,
-    hashes: &[Vec<u8>],
-    classifier: &ConfiguredParentClassifier,
-) -> Result<()> {
-    reconcile_dependents_after_changes_with_budget(
-        client,
-        hashes,
-        classifier,
-        DEFAULT_CASCADE_BUDGET,
-    )
-    .await
-}
-
 /// `reconcile_dependents_after_changes` with an explicit cascade budget. The
 /// mutation module uses this to apply the standard per-change cascade bound.
 pub(crate) async fn reconcile_dependents_after_changes_with_budget(
@@ -157,7 +143,13 @@ pub async fn reconcile_dependents_after_change(
     hash: &[u8],
     classifier: &ConfiguredParentClassifier,
 ) -> Result<()> {
-    reconcile_dependents_after_changes(client, &[hash.to_vec()], classifier).await
+    reconcile_dependents_after_changes_with_budget(
+        client,
+        &[hash.to_vec()],
+        classifier,
+        DEFAULT_CASCADE_BUDGET,
+    )
+    .await
 }
 
 /// Append every derived row that depends on `hash` to the cascade queue.

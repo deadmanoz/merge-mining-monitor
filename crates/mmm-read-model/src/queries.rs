@@ -475,7 +475,7 @@ pub(crate) async fn load_reconcile_candidates(
 /// same parent so the source_health before/after bracket is consistent. Callers
 /// that lock more than one hash MUST go through `lock_block_hashes` for ordered
 /// acquisition; calling this directly for a single, already-canonical hash is
-/// fine (see `lock_parent_hash_in_txn`).
+/// fine (see `lock_block_hash`).
 pub async fn lock_block_hash<C: GenericClient>(client: &C, hash: &[u8]) -> Result<()> {
     client
         .execute(

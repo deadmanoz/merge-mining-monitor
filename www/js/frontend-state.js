@@ -333,10 +333,10 @@ const state = {
   // Navigator targets: each stores the current server-owned item cursor,
   // filtered total, edge flags, and a busy guard. Stale/orphan keep an `anchor`
   // mirror for the existing readout helpers.
-  stale: { item: null, anchor: null, total: null, hasOlder: false, hasNewer: false, busy: false, loaded: false },
-  branch: { item: null, total: null, hasOlder: false, hasNewer: false, busy: false, loaded: false },
-  orphan: { item: null, anchor: null, total: null, counts: null, hasOlder: false, hasNewer: false, busy: false, loaded: false },
-  orphanBranch: { item: null, total: null, hasOlder: false, hasNewer: false, busy: false, loaded: false },
+  stale: { item: null, anchor: null, total: null, hasOlder: false, hasNewer: false, busy: false },
+  branch: { item: null, total: null, hasOlder: false, hasNewer: false, busy: false },
+  orphan: { item: null, anchor: null, total: null, counts: null, hasOlder: false, hasNewer: false, busy: false },
+  orphanBranch: { item: null, total: null, hasOlder: false, hasNewer: false, busy: false },
   // True while a pointer is pressed on the tree SVG. The auto-refresh timer skips
   // its re-render while set, so a renderTree() cannot remove the pressed node's <g>
   // (and its click handler) between the press and the resulting click.
@@ -452,10 +452,19 @@ function classificationParam() {
 
 // Set-equality for an orphan-class selection (order-independent), so the default
 // strict+weak set is not echoed to the URL regardless of toggle order.
-function sameClassification(a, b) {
+function sameSet(a, b) {
   if (a.length !== b.length) return false;
   const set = new Set(a);
   return b.every((value) => set.has(value));
+}
+
+function matchesSourceFilter(values, selected) {
+  return !selected?.length || values?.some((value) => selected.includes(value));
+}
+
+function parseEra(value) {
+  const match = /^(\d{4})-(\d{4})$/.exec(value || "");
+  return match ? [Number(match[1]), Number(match[2])] : null;
 }
 
 function selectedSources(root = document) {
@@ -507,7 +516,7 @@ function hydrateFormFromUrl() {
   const view = params.get("view");
   if (view) state.query.view = view;
   const era = params.get("era");
-  if (/^\d{4}-\d{4}$/.test(era || "")) state.query.era = era;
+  if (parseEra(era)) state.query.era = era;
   const generatedFrom = params.get("tree_from");
   const generatedTo = params.get("tree_to");
   if (
@@ -653,7 +662,9 @@ export {
   startRelativeTimeTicker,
   formatScalar,
   classificationParam,
-  sameClassification,
+  matchesSourceFilter,
+  parseEra,
+  sameSet,
   readForm,
   hydrateFormFromUrl,
   writeForm,

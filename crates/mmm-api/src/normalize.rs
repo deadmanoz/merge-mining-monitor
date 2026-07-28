@@ -61,11 +61,12 @@ pub(crate) fn normalize_sources(raw: Option<&str>) -> Result<Vec<String>, ApiErr
 
 /// Normalize a 64-hex block hash to lowercase, or reject as invalid_hash.
 pub(crate) fn normalize_hash(raw: &str) -> Result<String, ApiError> {
-    if raw.len() == 64 && raw.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        Ok(raw.to_ascii_lowercase())
-    } else {
-        Err(ApiError::invalid_hash(raw))
-    }
+    lowercase_hex_64(raw).ok_or_else(|| ApiError::invalid_hash(raw))
+}
+
+pub(crate) fn lowercase_hex_64(raw: &str) -> Option<String> {
+    (raw.len() == 64 && raw.chars().all(|ch| ch.is_ascii_hexdigit()))
+        .then(|| raw.to_ascii_lowercase())
 }
 
 /// The parent-kind enum used by `kinds=` filters. Distinct from the source-code

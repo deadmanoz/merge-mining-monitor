@@ -272,15 +272,7 @@ fn resolve_default_csv_path(spec: &HistoricalChainSpec, manifest_path: &Path) ->
         })
 }
 
-/// Build the ordered default-CSV search list, highest-confidence source first:
-/// the committed canonical-blocks artifact for exact-child-field chains (the
-/// compact monitor-evidence exports omit `child_block_time`, which those
-/// chains require, so monitor exports are never probed for them), then for
-/// other chains the research repo's committed monitor-evidence export, then
-/// normalized full-evidence output, then the archive's classified export,
-/// then research data drops, then any manifest-named path, then
-/// validated-stales. Order is precedence: `resolve_default_csv_path` takes the
-/// first that exists. Deduplicated so a repeated path is probed once.
+/// Build the ordered, deduplicated default-CSV search list.
 fn default_csv_candidates(
     spec: &HistoricalChainSpec,
     manifest_path: &Path,
@@ -435,9 +427,26 @@ mod tests {
     #[test]
     fn every_recovered_source_has_a_height_column() {
         assert_eq!(HISTORICAL_CHAINS.len(), 20);
+        let mut seen = std::collections::HashSet::new();
         for spec in HISTORICAL_CHAINS.iter() {
             assert!(spec.source_code.starts_with("auxpow:"));
             assert!(!spec.height_column.is_empty());
+            assert!(
+                seen.insert(spec.chain),
+                "duplicate historical chain: {:?}",
+                spec.chain
+            );
+        }
+        let mut height_columns_seen = std::collections::HashSet::new();
+        for (chain, _) in HEIGHT_COLUMNS {
+            assert!(
+                seen.contains(chain),
+                "orphaned HEIGHT_COLUMNS entry: {chain:?} has no Historical/Partial registry row"
+            );
+            assert!(
+                height_columns_seen.insert(chain),
+                "duplicate HEIGHT_COLUMNS entry: {chain:?}"
+            );
         }
         assert_eq!(
             historical_chain_spec("i0coin").unwrap().height_column,
@@ -479,12 +488,6 @@ mod tests {
     }
 
     #[test]
-    fn historical_dataset_roots_use_merge_mining_env_names() {
-        assert_eq!(RESEARCH_ROOT_ENV, "MERGE_MINING_RESEARCH_DIR");
-        assert_eq!(ARCHIVE_ROOT_ENV, "MERGE_MINING_ARCHIVE_DIR");
-    }
-
-    #[test]
     fn research_root_fallback_probes_nested_validated_stales_path() {
         // The research repo nested its committed validated-stale loader inputs
         // under data/validated-stales/; the importer's own candidate list must
@@ -508,31 +511,5 @@ mod tests {
             !candidates.contains(&research.join("data/devcoin_validated_stales.csv")),
             "retired flat validated-stales path must not be probed: {candidates:?}"
         );
-    }
-
-    #[test]
-    fn height_columns_side_table_has_no_orphans_or_duplicates() {
-        // The forward direction (every Historical/Partial registry row has a
-        // height column) fails loudly via `height_column_for`'s panic the
-        // moment HISTORICAL_CHAINS is built, which every test above forces.
-        // This covers the reverse: a HEIGHT_COLUMNS entry whose chain no
-        // longer exists in the registry (or is no longer Historical/Partial)
-        // is dead configuration and must be removed, and duplicate keys
-        // would make the lookup order-dependent.
-        let mut seen = std::collections::HashSet::new();
-        for (chain, _) in HEIGHT_COLUMNS {
-            assert!(
-                seen.insert(*chain),
-                "duplicate HEIGHT_COLUMNS entry: {chain:?}"
-            );
-            assert!(
-                SOURCE_REGISTRY.iter().any(|def| def.chain == *chain
-                    && matches!(
-                        def.lifecycle,
-                        SourceLifecycle::Historical | SourceLifecycle::Partial
-                    )),
-                "orphaned HEIGHT_COLUMNS entry: {chain:?} has no Historical/Partial registry row"
-            );
-        }
     }
 }

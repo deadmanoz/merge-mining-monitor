@@ -1,9 +1,90 @@
-import {
-  branchStepperState,
-  orphanBranchStepperState,
-  orphanStepperState,
-  staleStepperState,
-} from "./windowing.js?v=0.2.1";
+export const NAV_COARSE_STRIDE = 100;
+
+function formatNavHeight(height) {
+  const h = Number(height);
+  return Number.isFinite(h) ? `#${h.toLocaleString("en-US")}` : null;
+}
+
+function totalLabel(total) {
+  return total != null && Number.isFinite(Number(total))
+    ? `${Number(total).toLocaleString("en-US")} total`
+    : null;
+}
+
+function itemStepperState(
+  { item = null, total = null, hasOlder = false, hasNewer = false } = {},
+  labelForItem,
+) {
+  const currentLabel = item ? labelForItem(item) : null;
+  const readout = [currentLabel, totalLabel(total)].filter(Boolean).join(" · ");
+  return { olderEnabled: !!item && !!hasOlder, newerEnabled: !!item && !!hasNewer, readout };
+}
+
+function formatOrphanDate(epochSeconds) {
+  const epoch = Number(epochSeconds);
+  return Number.isFinite(epoch) ? new Date(epoch * 1000).toISOString().slice(0, 10) : null;
+}
+
+function branchStepperState(
+  { item = null, total = null, hasOlder = false, hasNewer = false } = {},
+) {
+  return itemStepperState({ item, total, hasOlder, hasNewer }, (current) => {
+    const min = Number(current.position?.min);
+    const max = Number(current.position?.max);
+    const depth = Number(current.branch?.depth);
+    const heightLabel = Number.isFinite(min) && Number.isFinite(max)
+      ? min === max ? formatNavHeight(min) : `${formatNavHeight(min)}-${max.toLocaleString("en-US")}`
+      : null;
+    const depthLabel = Number.isFinite(depth) ? `depth ${depth}` : null;
+    return [heightLabel, depthLabel].filter(Boolean).join(" · ") || null;
+  });
+}
+
+function orphanBranchStepperState(
+  { item = null, total = null, hasOlder = false, hasNewer = false } = {},
+) {
+  return itemStepperState({ item, total, hasOlder, hasNewer }, (current) => {
+    const date = formatOrphanDate(current.position?.max);
+    const depth = Number(current.branch?.depth);
+    const depthLabel = Number.isFinite(depth) ? `depth ${depth}` : null;
+    return [date, depthLabel].filter(Boolean).join(" · ") || null;
+  });
+}
+
+function orphanStepperState(
+  { anchor = null, total = null, hasOlder = false, hasNewer = false } = {},
+) {
+  if (!anchor) return { olderEnabled: false, newerEnabled: false, readout: "" };
+  const count = total != null && Number.isFinite(Number(total))
+    ? Number(total).toLocaleString("en-US")
+    : null;
+  return {
+    olderEnabled: !!hasOlder,
+    newerEnabled: !!hasNewer,
+    readout: [formatOrphanDate(anchor.btc_header_time), count].filter(Boolean).join(" · "),
+  };
+}
+
+function staleStepperState(
+  { anchor = null, total = null, hasOlder = false, hasNewer = false } = {},
+) {
+  if (!anchor) return { olderEnabled: false, newerEnabled: false, readout: "" };
+  return {
+    olderEnabled: !!hasOlder,
+    newerEnabled: !!hasNewer,
+    readout: [formatNavHeight(anchor.btc_height), totalLabel(total)].filter(Boolean).join(" · "),
+  };
+}
+
+export function orphanAnchorFromBlock(payload, hash, classification = null) {
+  const block = payload?.block;
+  if (!block || block.kind !== "unknown") return null;
+  if (Array.isArray(classification)) {
+    const cls = block.btc_orphan_class ?? "pending";
+    if (!classification.includes(cls)) return null;
+  }
+  return { btc_header_time: block.header?.time, hash };
+}
 
 const TARGETS = Object.freeze({
   stale: Object.freeze({
@@ -85,7 +166,6 @@ export function resetNavigatorTargetState(state, targetId) {
   slot.total = null;
   slot.hasOlder = false;
   slot.hasNewer = false;
-  slot.loaded = false;
 }
 
 export function anyNavTargetBusy(state) {
@@ -100,7 +180,6 @@ export function applyNavigatorPayload(state, targetId, payload, item) {
   slot.total = payload?.total ?? (selected ? slot.total : 0);
   slot.hasOlder = !!payload?.next_cursor;
   slot.hasNewer = !!payload?.prev_cursor;
-  slot.loaded = !!payload;
   if (targetId === "stale") {
     slot.anchor = selected ? {
       btc_height: selected.position?.max,

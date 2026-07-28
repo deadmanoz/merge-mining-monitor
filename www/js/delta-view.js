@@ -11,9 +11,8 @@
 // points, because the rail fieldsets alone would exceed its architecture
 // budget as static markup.
 
-import { centerCameraOnHeight, loadBlock, reconcileNavFromSelected, refreshNavControls } from "./api-client.js?v=0.2.1";
-import { markTreeSelection, RAILS, setRailCollapsed, updateSourceGroupSelectedMarkers } from "./controls.js?v=0.2.1";
-import { renderDrawer } from "./drawer-renderer.js?v=0.2.1";
+import { centerCameraOnHeight, loadBlock, loadCompetitions } from "./api-client.js?v=0.2.1";
+import { clearSelection, updateSourceGroupSelectedMarkers } from "./controls.js?v=0.2.1";
 import { hideTip, renderContext, renderCoverage, renderHistogram } from "./delta-chart.js?v=0.2.1";
 import { applyOutliersOpen, forgetScroll, renderOutliers, revealFocusedRow } from "./delta-outliers.js?v=0.2.1";
 import {
@@ -28,7 +27,7 @@ import {
   partitionByDelta,
   quantile,
 } from "./delta-scales.js?v=0.2.1";
-import { $, esc, state, writeForm } from "./frontend-state.js?v=0.2.1";
+import { $, esc, matchesSourceFilter, parseEra, state, writeForm } from "./frontend-state.js?v=0.2.1";
 import { activateHeightLookup, syncUrl } from "./tree-query-state.js?v=0.2.1";
 
 const PRESETS = [
@@ -52,12 +51,43 @@ const view = {
 };
 
 let mounted = false;
+let lastSelectionRefetch = null;
 
 // ── Data selection ──────────────────────────────────────────────────────────
 
 const rows = () => state.competitions ?? [];
 
 const absMax = (usable) => usable.reduce((max, row) => Math.max(max, Math.abs(row.header_time_delta_s)), 1);
+
+function snapshotPredatesSelection() {
+  const hash = state.selectedHash;
+  if (!hash || hash === lastSelectionRefetch) return false;
+  const detail = state.selectedBlock;
+  if (detail && detail.block?.hash === hash && !detail.competition) return false;
+  return !state.competitions?.some((row) => row.stale_hash === hash);
+}
+
+function repairSettled(hash) {
+  if (state.competitions?.some((row) => row.stale_hash === hash)) return true;
+  const detail = state.selectedBlock;
+  return Boolean(detail && detail.block?.hash === hash && !detail.competition);
+}
+
+function registerDeltaView(registerView) {
+  registerView("delta", {
+    label: "Distribution",
+    async load({ force = false } = {}) {
+      if (state.competitions && !force && !snapshotPredatesSelection()) return;
+      const hash = state.selectedHash;
+      await loadCompetitions();
+      lastSelectionRefetch = hash && repairSettled(hash) ? hash : null;
+    },
+    render() {
+      mount();
+      render();
+    },
+  });
+}
 
 // Bitcoin's first block. No stale competition can predate it, so a timestamp
 // outside this window is a data fault rather than an era.
@@ -84,7 +114,7 @@ function filtered() {
   const sources = state.query.sources ?? [];
   const all = rows();
   return all.filter((row) => {
-    if (sources.length && !row.sources.some((code) => sources.includes(code))) return false;
+    if (!matchesSourceFilter(row.sources, sources)) return false;
     const year = yearOf(row);
     // An undateable row cannot be placed in an era, so it is never hidden by
     // one; dropping it would make a bad timestamp look like missing evidence.
@@ -101,7 +131,7 @@ function mount() {
   if (mounted) return;
   syncEraBounds();
   // A shared link may have named an era before the data existed to validate it.
-  const [from, to] = (/^(\d{4})-(\d{4})$/.exec(state.query.era || "") ?? []).slice(1).map(Number);
+  const [from, to] = parseEra(state.query.era) ?? [];
   view.yearFrom = clamp(from ?? view.yearMin, view.yearMin, view.yearMax);
   view.yearTo = clamp(to ?? view.yearMax, view.yearFrom, view.yearMax);
   // Clamping can move the era away from what the link asked for (?era=2010-2011
@@ -351,33 +381,14 @@ async function showInTree(height) {
 }
 
 function selectRow(hash) {
-  // Same invariant the tree's own selection keeps: a navigation gesture bumps
-  // the epoch so a navigator request still in flight discards its result
-  // instead of overwriting this selection, the URL and the drawer.
-  state.navEpoch += 1;
   if (state.selectedHash === hash) {
-    // Deselecting has to undo everything selecting did. loadBlock owns the
-    // select path (detail, drawer, tree overlay, URL); clearing only
-    // selectedHash would leave stale block detail on screen and the node still
-    // highlighted in the tree behind this view.
-    state.selectedHash = null;
-    state.selectedBlock = null;
-    // loadBlock hydrates the navigator from the selection, so a target derived
-    // that way has to go with it. A target the user picked from the Go-to menu
-    // is theirs and survives.
-    if (state.nav.source === "selection") state.nav = { target: "tip", source: "selection" };
-    reconcileNavFromSelected();
-    refreshNavControls();
-    syncUrl();
-    markTreeSelection();
-    renderDrawer();
-    // Selecting expanded the drawer, so deselecting gives the width back rather
-    // than leaving the plot narrowed by a column reading "No block selected".
-    // This is what clearTreeSelection does on the tree's own deselect path.
-    setRailCollapsed(RAILS.drawer, true);
+    clearSelection({ resetSelectionNavigator: true });
     render();
     return;
   }
+  // Same invariant the tree's own selection keeps: a navigation gesture bumps
+  // the epoch so a navigator request still in flight discards its result.
+  state.navEpoch += 1;
   loadBlock(hash);
   render();
 }
@@ -606,7 +617,7 @@ function revealSelection() {
   }
 
   const sources = state.query.sources ?? [];
-  const hiddenBySource = sources.length && !row.sources.some((code) => sources.includes(code));
+  const hiddenBySource = !matchesSourceFilter(row.sources, sources);
   if (!hiddenBySource) {
     if (eraWidened) render();
     return;
@@ -656,4 +667,4 @@ function prepareFocus() {
   forgetScroll();
 }
 
-export { hideTip, mount, prepareFocus, render, view };
+export { mount, prepareFocus, registerDeltaView, render, view };

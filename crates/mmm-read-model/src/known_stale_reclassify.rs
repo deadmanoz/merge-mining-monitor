@@ -14,8 +14,8 @@ use anyhow::{Context, Result, bail};
 use tokio_postgres::Client;
 use tracing::warn;
 
-use crate::source_health_sql::{apply_source_health_diff, snapshot_parent_contribution};
-use crate::{cli_args, lock_parent_hash_in_txn};
+use crate::mutation::PrimarySourceHealthBracket;
+use crate::{cli_args, lock_block_hash};
 
 const DEFAULT_BATCH_SIZE: i64 = 100;
 
@@ -147,8 +147,8 @@ async fn demote_one(client: &mut Client, hash: &[u8]) -> Result<u64> {
         .transaction()
         .await
         .context("begin known-stale demotion transaction")?;
-    lock_parent_hash_in_txn(&txn, hash).await?;
-    let before = snapshot_parent_contribution(&txn, hash).await?;
+    lock_block_hash(&txn, hash).await?;
+    let health = PrimarySourceHealthBracket::open(&txn, hash).await?;
     let demoted = txn
         .execute(
             "UPDATE block \
@@ -161,8 +161,7 @@ async fn demote_one(client: &mut Client, hash: &[u8]) -> Result<u64> {
         )
         .await
         .context("demote known-stale orphan block to excluded")?;
-    let after = snapshot_parent_contribution(&txn, hash).await?;
-    apply_source_health_diff(&txn, &before, &after).await?;
+    health.close(&txn).await?;
     txn.commit()
         .await
         .context("commit known-stale demotion transaction")?;

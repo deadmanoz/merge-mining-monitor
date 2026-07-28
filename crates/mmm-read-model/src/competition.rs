@@ -60,17 +60,8 @@ pub(crate) async fn compute_block_orphan_class<C: GenericClient>(
     if !classification.core_absence_attested {
         return load_persisted_orphan_class(client, hash).await;
     }
-    // Known-stale membership gate (defense in depth). A header catalogued as a
-    // known stale is absent from Core's active chain by definition, so it passes
-    // the Core-absence gate above and would otherwise be refined into a
-    // strict/weak orphan by the offline classifier. Consult the membership first
-    // and exclude it, mirroring the research classifier's
-    // `known_stale_hash -> excluded` verdict (checked BEFORE the strict/weak
-    // resolution). The membership is the operator-imported known_stale_block
-    // set alone: a proven-stale `block` row is deliberately not unioned in,
-    // since for a given hash it could only match the row under classification
-    // itself and a stale-to-unknown re-derivation would then consult the very
-    // state it is replacing.
+    // Check operator-imported membership before strict/weak refinement. The
+    // membership boundary and self-reference rationale live in mmm-store.
     if mmm_store::is_known_stale_hash(client, hash).await? {
         debug!(
             hash = %hex::encode(hash),
@@ -130,7 +121,7 @@ pub async fn load_persisted_kind_and_orphan_class<C: GenericClient>(
 /// pass carries no fresh Core-absence verdict, the stored class is reused so a
 /// Core-off or transient run never wipes a real orphan class. `None` when the
 /// row or column is NULL.
-pub async fn load_persisted_orphan_class<C: GenericClient>(
+pub(crate) async fn load_persisted_orphan_class<C: GenericClient>(
     client: &C,
     hash: &[u8],
 ) -> Result<Option<String>> {

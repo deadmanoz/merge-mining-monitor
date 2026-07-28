@@ -6,8 +6,9 @@ use anyhow::Result;
 
 use super::shared::{
     BlockRow, ChildChainEvidence, DisplayMinerBasis, EventRow, PoolObject, ProofState,
-    SourceOnlyRow, SourceRecord, SourceSummary, TreeCompetition, display_hash,
-    ensure_unknown_btc_target, group_events, group_sources, resolve_display_miner, unknown_pool,
+    SourceOnlyRow, SourceRecord, SourceSummary, TreeCompetition, admit_observed_bitcoin_source,
+    display_hash, ensure_unknown_btc_target, group_events, group_sources, resolve_display_miner,
+    unknown_pool,
 };
 use crate::normalize::ParentKind;
 use mmm_capture::source_registry::BITCOIN_SOURCE_CODE;
@@ -193,15 +194,15 @@ pub(super) fn source_summary_for_block(
         .map(|event| event.source.clone())
         .collect::<Vec<_>>();
     records.extend(proofs.iter().map(|proof| proof.source.clone()));
-    if source_filter_allows(source_filter, BITCOIN_SOURCE_CODE)
-        && let (true, Some(source)) = (
-            block.core_attested || block.live_observed,
-            sources.get(BITCOIN_SOURCE_CODE),
-        )
-        && !records.iter().any(|record| record.id == source.id)
-    {
-        records.push(source.clone());
-    }
+    let _ = admit_observed_bitcoin_source(
+        &mut records,
+        source_filter_allows(source_filter, BITCOIN_SOURCE_CODE)
+            .then(|| sources.get(BITCOIN_SOURCE_CODE))
+            .flatten()
+            .cloned(),
+        block.core_attested || block.live_observed,
+        |existing, bitcoin| existing.id == bitcoin.id,
+    );
     source_summary_from_sources(
         records.iter(),
         block.pow_validated || block.kind != ParentKind::Unknown,

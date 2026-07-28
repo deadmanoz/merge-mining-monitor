@@ -40,6 +40,40 @@ function versionPayload(overrides = {}) {
   };
 }
 
+const LIVE_SOURCE_BASE = {
+  kind: "auxpow",
+  instance: null,
+  created_at: 1_700_000_000,
+  last_seen_at: GENERATED_AT - 60,
+  status: "fresh",
+  sync: {
+    mode: "live",
+    state: "live",
+    progress_height: 700000,
+    progress_updated_at: GENERATED_AT - 60,
+    target_height: 700000,
+    latest_evidence_at: GENERATED_AT - 60,
+    error_code: null,
+    error_height: null,
+  },
+  counts: {
+    events: 0,
+    near: 0,
+    unknown: 0,
+    canonical: 0,
+    stale: 0,
+    strict_orphan: 0,
+    weak_orphan: 0,
+  },
+};
+
+function liveSourcesPayload() {
+  return sourcesPayload([
+    { ...LIVE_SOURCE_BASE, id: 1, code: "auxpow:namecoin", chain: "namecoin" },
+    { ...LIVE_SOURCE_BASE, id: 2, code: "auxpow:rsk", chain: "rsk" },
+  ]);
+}
+
 function sourcesPayload(sources = []) {
   return {
     schema_version: "v1",
@@ -236,6 +270,7 @@ module.exports = {
   blockCompetition,
   blockPayload,
   competitionsPayload,
+  liveSourcesPayload,
   makeCompetition,
   makeNode,
   moduleUrl,

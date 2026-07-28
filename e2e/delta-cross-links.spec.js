@@ -4,10 +4,10 @@ const {
   blockCompetition,
   blockPayload,
   competitionsPayload,
+  liveSourcesPayload,
   makeCompetition,
   makeNode,
   moduleUrl,
-  sourcesPayload,
   stubApi,
   treeEnvelope,
 } = require("./support/api-stubs");
@@ -19,30 +19,6 @@ const {
 const STALE = "a".repeat(64);
 const OTHER = "b".repeat(64);
 
-const SOURCE_BASE = {
-  kind: "auxpow",
-  instance: null,
-  created_at: 1_700_000_000,
-  last_seen_at: GENERATED_AT - 60,
-  status: "fresh",
-  sync: {
-    mode: "live",
-    state: "live",
-    progress_height: 700000,
-    progress_updated_at: GENERATED_AT - 60,
-    target_height: 700000,
-    latest_evidence_at: GENERATED_AT - 60,
-    error_code: null,
-    error_height: null,
-  },
-  counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0 },
-};
-
-const sources = () => sourcesPayload([
-  { ...SOURCE_BASE, id: 1, code: "auxpow:namecoin", chain: "namecoin" },
-  { ...SOURCE_BASE, id: 2, code: "auxpow:rsk", chain: "rsk" },
-]);
-
 /// A tree holding the stale block, plus the competitions and block payloads that
 /// go with it. `delta` is the stale block's own header time delta.
 function scenario({ delta = 90000, rows = null, competitionOverrides = {} } = {}) {
@@ -51,7 +27,7 @@ function scenario({ delta = 90000, rows = null, competitionOverrides = {} } = {}
     makeNode(OTHER, 700001, STALE, "canonical", { id: 2, prev_id: 1 }),
   ];
   return {
-    sourcesPayload: sources,
+    sourcesPayload: liveSourcesPayload,
     treePayload: (params) => treeEnvelope(params, { nodes }),
     competitionsPayload: () => competitionsPayload(rows ?? [
       makeCompetition(STALE, 700000, delta),

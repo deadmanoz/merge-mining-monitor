@@ -160,18 +160,8 @@ fn read_relevance_filter<R: Read>(reader: R, chain: &str) -> Result<RelevanceFil
             .get("relevance_reason")
             .map(|value| value.trim())
             .unwrap_or_default();
-        let selection = match (relevance, reason) {
-            ("strict_btc_orphan", _) => RelevanceSelection::StrictBtcOrphan,
-            ("weak_btc_orphan", _) => RelevanceSelection::WeakBtcOrphan,
-            // Known-stale rows: the research exporter leaves btc_stale_relevance
-            // empty here and signals the row through relevance_reason alone
-            // (already attested by the known-stale set as a direct stale or a
-            // valid stale-fork descendant). Relevance is wildcarded in these two
-            // arms, so an older export's retired confirmed_btc_stale value in
-            // that column still matches on the reason.
-            (_, "valid_direct_stale") => RelevanceSelection::KnownDirectStale,
-            (_, "valid_stale_descendant") => RelevanceSelection::KnownStaleDescendant,
-            _ => continue,
+        let Some(selection) = selection_from_labels(relevance, reason) else {
+            continue;
         };
         let hash = required_value(&row, "btc_header_hash")?;
         insert_selection(&mut selected_orphans, hash.to_owned(), selection);
@@ -353,9 +343,15 @@ fn row_relevance_selection(
         .and_then(|index| record.get(index))
         .map(str::trim)
         .unwrap_or_default();
+    selection_from_labels(relevance, reason)
+}
+
+fn selection_from_labels(relevance: &str, reason: &str) -> Option<RelevanceSelection> {
     match (relevance, reason) {
         ("strict_btc_orphan", _) => Some(RelevanceSelection::StrictBtcOrphan),
         ("weak_btc_orphan", _) => Some(RelevanceSelection::WeakBtcOrphan),
+        // Known-stale exports signal direct stale rows and valid stale-fork
+        // descendants through relevance_reason alone.
         (_, "valid_direct_stale") => Some(RelevanceSelection::KnownDirectStale),
         (_, "valid_stale_descendant") => Some(RelevanceSelection::KnownStaleDescendant),
         _ => None,
