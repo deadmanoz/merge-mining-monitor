@@ -1,10 +1,40 @@
+const fs = require("node:fs");
+const path = require("node:path");
+
 const GENERATED_AT = 1779792000;
+
+// The served frontend reports env!("CARGO_PKG_VERSION") (cache-busting query on
+// every asset URL, plus the /api/v1/version payload). Read the same workspace
+// version here so stubbed payloads and version assertions follow a release bump
+// instead of pinning a literal that goes stale on the next one.
+function readWorkspaceVersion() {
+  const manifestPath = path.join(__dirname, "..", "..", "Cargo.toml");
+  const manifest = fs.readFileSync(manifestPath, "utf8");
+  const section = manifest.split(/^\[workspace\.package\][ \t]*$/m)[1];
+  if (section === undefined) {
+    throw new Error(`no [workspace.package] section in ${manifestPath}`);
+  }
+  const version = section.split(/^\[/m)[0].match(/^version\s*=\s*"([^"]+)"/m);
+  if (!version) {
+    throw new Error(`no workspace.package version in ${manifestPath}`);
+  }
+  return version[1];
+}
+
+const RELEASE_VERSION = readWorkspaceVersion();
+
+// Reaching into a frontend module from a test means importing the exact URL
+// boot.js used: a differing cache-busting query is a separate module record
+// with its own state, so the test would inspect a second, inert copy.
+function moduleUrl(name) {
+  return `/js/${name}?v=${RELEASE_VERSION}`;
+}
 
 function versionPayload(overrides = {}) {
   return {
     schema_version: "v1",
     generated_at: GENERATED_AT,
-    version: "0.2.0",
+    version: RELEASE_VERSION,
     release_notes: { source: "RELEASE_NOTES.md", release_count: 0, truncated: false, releases: [] },
     ...overrides,
   };
@@ -186,9 +216,11 @@ async function stubApi(page, treeRequests = [], options = {}) {
 
 module.exports = {
   GENERATED_AT,
+  RELEASE_VERSION,
   competitionsPayload,
   makeCompetition,
   makeNode,
+  moduleUrl,
   sourcesPayload,
   stubApi,
   treeEnvelope,

@@ -4,10 +4,13 @@ const {
   competitionsPayload,
   makeCompetition,
   makeNode,
+  moduleUrl,
   sourcesPayload,
   stubApi,
   treeEnvelope,
 } = require("./support/api-stubs");
+
+const STATE_MODULE = moduleUrl("frontend-state.js");
 
 // Two eras so the Era control has something to narrow to, and two sources so
 // the shared Source filter has something to select.
@@ -347,10 +350,10 @@ test("a hidden unavailable-delta selection is not shown as a tie", async ({ page
   ]);
 
   // Select the unavailable-delta row, then filter it out.
-  await page.evaluate(async () => {
-    const state = (await import("/js/frontend-state.js?v=0.2.1")).state;
+  await page.evaluate(async (stateModule) => {
+    const state = (await import(stateModule)).state;
     state.selectedHash = "b".repeat(64);
-  });
+  }, STATE_MODULE);
   await page.locator('input[name="source"][value="auxpow:namecoin"]').check();
 
   const notice = page.locator(".hidden-selection");
@@ -406,12 +409,14 @@ test("deselecting clears selection-derived navigator state", async ({ page }) =>
   await page.locator("#delta-outlier-body .outlier-row").first().click();
   await expect(page.locator("#drawer")).toContainText("Parent block");
   const derived = await page.evaluate(
-    async () => (await import("/js/frontend-state.js?v=0.2.1")).state.nav,
+    async (stateModule) => (await import(stateModule)).state.nav,
+    STATE_MODULE,
   );
 
   await page.locator("#delta-outlier-body .outlier-row").first().click();
   const cleared = await page.evaluate(
-    async () => (await import("/js/frontend-state.js?v=0.2.1")).state.nav,
+    async (stateModule) => (await import(stateModule)).state.nav,
+    STATE_MODULE,
   );
   // A target the selection produced must not outlive it.
   if (derived.source === "selection") expect(cleared.target).toBe("tip");
@@ -742,16 +747,12 @@ test("Show in tree does not center a superseded height", async ({ page }) => {
 
   await page.locator(".hidden-selection [data-action='tree']").click();
   await expect(page.locator(".workspace")).toHaveAttribute("data-view", "tree");
-  await page.evaluate(async () => {
-    const [api, query, shared] = await Promise.all([
-      import("/js/api-client.js?v=0.2.1"),
-      import("/js/tree-query-state.js?v=0.2.1"),
-      import("/js/frontend-state.js?v=0.2.1"),
-    ]);
+  await page.evaluate(async (modules) => {
+    const [api, query, shared] = await Promise.all(modules.map((url) => import(url)));
     query.activateHeightLookup(700005);
     shared.state.navEpoch += 1;
     await api.loadTree();
-  });
+  }, [moduleUrl("api-client.js"), moduleUrl("tree-query-state.js"), STATE_MODULE]);
   release();
   await expect(page.locator("g.tree-node")).toHaveCount(6);
 

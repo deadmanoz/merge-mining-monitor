@@ -1,5 +1,7 @@
 const { expect, test } = require("@playwright/test");
-const { GENERATED_AT, makeNode, stubApi, treeEnvelope } = require("./support/api-stubs");
+const { GENERATED_AT, makeNode, moduleUrl, stubApi, treeEnvelope } = require("./support/api-stubs");
+
+const VIEW_SHELL_MODULE = moduleUrl("view-shell.js");
 
 // Shell-level coverage for the top-level view mechanism. Two views are now
 // registered, so these assert the switcher, the scope swap and the URL
@@ -17,7 +19,8 @@ test("both views are registered and the tree is the default", async ({ page }) =
   await expect(page.locator("#view-switcher")).toBeVisible();
   await expect(page.locator(".view-tab")).toHaveCount(2);
   const registered = await page.evaluate(
-    () => import("/js/view-shell.js?v=0.2.1").then((module) => module.registeredViews()),
+    (moduleUrl) => import(moduleUrl).then((module) => module.registeredViews()),
+    VIEW_SHELL_MODULE,
   );
   expect(registered).toEqual(["tree", "delta"]);
 });
@@ -29,15 +32,15 @@ test("every registered view activates without error", async ({ page }) => {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
 
-  const activated = await page.evaluate(async () => {
-    const shell = await import("/js/view-shell.js?v=0.2.1");
+  const activated = await page.evaluate(async (moduleUrl) => {
+    const shell = await import(moduleUrl);
     const seen = [];
     for (const id of shell.registeredViews()) {
       await shell.activateView(id);
       seen.push(document.querySelector(".workspace").dataset.view);
     }
     return seen;
-  });
+  }, VIEW_SHELL_MODULE);
 
   expect(activated).toEqual(["tree", "delta"]);
   expect(errors).toEqual([]);

@@ -1,6 +1,7 @@
 const { expect, test } = require("@playwright/test");
 const {
   GENERATED_AT,
+  RELEASE_VERSION,
   sourcesPayload,
   stubApi,
   treeEnvelope,
@@ -256,7 +257,9 @@ function versionFixture() {
       truncated: false,
       releases: [
         {
-          version: "0.2.0",
+          // The real RELEASE_NOTES.md always carries an entry for the shipped
+          // version, so the newest fixture release tracks it too.
+          version: RELEASE_VERSION,
           date: "2026-07-11",
           items: ["Adds recovered VCash, Lyncoin, and SixEleven evidence."],
           item_count: 1,
@@ -381,7 +384,7 @@ test("renders version metadata and release notes in the about dialog", async ({ 
   await page.goto("/");
   await expect(page.locator('link[href^="/css/about-version.css"]')).toHaveAttribute(
     "href",
-    "/css/about-version.css?v=0.2.0",
+    `/css/about-version.css?v=${RELEASE_VERSION}`,
   );
   await page.getByRole("button", { name: "About this monitor" }).click();
 
@@ -391,7 +394,7 @@ test("renders version metadata and release notes in the about dialog", async ({ 
   const credit = dialog.locator(".about-credit-by");
   const creditLines = credit.locator(".about-credit-line");
   await expect(creditLines).toHaveCount(2);
-  await expect(creditLines.nth(0).locator("#about-version")).toHaveText("v0.2.0");
+  await expect(creditLines.nth(0).locator("#about-version")).toHaveText(`v${RELEASE_VERSION}`);
   await expect(creditLines.nth(0)).toContainText("Source code");
   await expect(creditLines.nth(1)).toContainText("Built by deadmanoz");
   const identityTextBox = await creditLines.nth(1).getByText("Built by deadmanoz").boundingBox();
@@ -425,7 +428,7 @@ test("renders version metadata and release notes in the about dialog", async ({ 
   // Release notes live in their own tab as a per-release collapsible accordion.
   await dialog.getByRole("tab", { name: "Release notes" }).click();
   const notes = dialog.locator("#about-release-notes-body");
-  await expect(notes).toContainText("v0.2.0");
+  await expect(notes).toContainText(`v${RELEASE_VERSION}`);
   await expect(notes).toContainText("v0.1.0");
 
   // The newest section is expanded by default; older sections start collapsed.
