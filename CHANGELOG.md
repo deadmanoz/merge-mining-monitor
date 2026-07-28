@@ -6,170 +6,37 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
-- Consolidate the Header Time Delta, API projection, historical-ingest, and
-  known-stale implementation paths added after v0.2.0, removing shallow
-  wrappers, duplicate helpers and fixtures, dead exports, write-only frontend
-  state, and the standalone windowing facade without changing public behavior.
+## [0.3.0] - 2026-07-28
 
-- Add a Header Time Delta view, reachable from a new top-level view switcher,
-  plotting how far apart a stale block and the canonical block that beat it
-  timestamped their headers. One focus window drives a linear histogram of the
-  core, hatched off-scale gutters for what it excludes, and a symmetric-log
-  strip of the whole range; a Coverage tab answers "what share is within
-  plus or minus T" and a Table tab is the accessible twin. Selecting an outlier
-  opens the usual block detail, and the Source filter is shared with the tree.
-
-- Cross-link the block detail and the Header Time Delta view through the shared
-  selection: a stale block's Header Time Delta opens the distribution focused on
-  that competition, and the distribution names the current selection and can
-  show it in the tree, retargeting the tree window on its height. A selection
-  the filters hide can be revealed by clearing only the filters that hide it.
-
-- Fix the Header Time Delta view's outlier list growing to its full content
-  height and being clipped by its panel instead of scrolling, which made most
-  rows unreachable whenever the window excluded more than a screenful.
-
-- Add the read-only `GET /api/v1/competitions` endpoint, serving every
-  derivable stale-vs-canonical competition with its header-time delta, both
-  miner pools, and its active evidence sources. It backs a forthcoming
-  header-time-delta distribution view, which needs the whole set client-side to
-  re-bin and re-window without a request per interaction.
-
-- Follow the research repo's published public history: the committed
-  historical-source manifest is re-pinned from research commit `39cb7af` to
-  `e1e72d4` (the published tip), picking up the nested `data/validated-stales/`
-  layout and the release-prep data refresh (total declared stale rows 1482 to
-  1461; every imported row is still re-proven against Bitcoin Core on ingest).
-- Consult a first-class known-stale membership before assigning
-  `block.btc_orphan_class`, so a catalogued stale is never mislabelled a
-  strict/weak BTC orphan. A known stale is absent from Bitcoin Core's active
-  chain by definition, so it passes the reconciler's PoW + BIP34 + nBits +
-  Core-absence checks and, without a membership check, the offline classifier
-  refined it into `strict_btc_orphan` / `weak_btc_orphan` (production served
-  header `000000000000000013fe26675faa8f7dccd55ce5485bb6d0373fa66345901436`,
-  height 363736, catalogued in the upstream `bitcoin-data/stale-blocks` dataset
-  for months, as a strict orphan). New migration
-  `0006_add_known_stale_block.sql` adds a minimal `known_stale_block` table
-  (hash PK in internal byte order, advisory height, source label, imported_at),
-  loaded by a new `import-known-stales` subcommand from the upstream
-  stale-blocks.csv-shaped dataset with a recorded provenance label (exposed
-  as `just import-known-stales`; the importer fails rather than record an
-  empty membership from a wrong or headerless file). The membership consulted
-  at classification time is the operator-imported table alone: a proven-stale
-  `block` row is deliberately not unioned in, since for a given hash it could
-  only match the row under classification itself, and a stale-to-unknown
-  re-derivation would then consult the very state it is replacing.
-  `mmm_read_model`'s
-  `compute_block_orphan_class` checks it before the strict/weak resolution and
-  returns `excluded`, mirroring the research classifier's
-  `known_stale_hash -> excluded` verdict. Ingest-time re-classification stays
-  (defense in depth), no DB values or columns are renamed, and the legacy
-  orphan-spelling acceptance is untouched. A new `reclassify-known-stales`
-  subcommand retroactively demotes any strict/weak `unknown` block already in
-  the membership to `excluded`, idempotently and counting demotions loudly,
-  maintaining `source_health` through the reconciler's before/after snapshot
-  diff. Following the research repo's lesson, `import-dataset` refuses to run
-  against an empty `known_stale_block` (pass `--allow-empty-known-stales` to
-  opt out), and `reclassify-unknown-parents` / `reclassify-known-stales` warn
-  prominently when the membership is empty rather than silently proceeding as
-  if it were consulted. Live pollers, bounded backfills, and the Hathor
-  cache import carry the same warning at startup, the
-  import summary buckets unknown rows by the persisted `btc_orphan_class`
-  (an excluded row reports as `excluded`, never strict/weak, whichever
-  exclusion path fired), and `--source-label` rejects blank values so every
-  membership row stays auditable. The membership import itself is atomic
-  (one transaction holding the per-parent advisory locks in the global sorted
-  order) and strict by default (any malformed row is fatal unless
-  `--skip-malformed` is passed), so a corrupt file or mid-import failure
-  records nothing rather than a partial membership that downstream
-  empty-membership guards would treat as complete.
-- Extend `import-dataset` to the live-lifecycle chains that also publish
-  recovered historical monitor-evidence exports (namecoin, rsk, elastos,
-  syscoin, hathor, fractal). The importer's chain table stays a closed set: a
-  new `LIVE_IMPORT_CHAINS` allowlist opts these `Live` registry rows into
-  historical import alongside the existing `Historical`/`Partial` rows, and each
-  gets a `HEIGHT_COLUMNS` entry (all use the normalized `child_height` column,
-  verified against every export header). The side-table hygiene test is
-  extended to accept live-import chains, and a new test asserts every
-  `LIVE_IMPORT_CHAINS` entry names a real `Live` registry row and does not
-  overlap the Historical/Partial set. These sources also live-capture into the
-  same `source_id`; on a `(source_id, child_height, child_block_hash)`
-  collision the existing upsert only advances `confirmed_at` and coalesces the
-  child coinbase columns, never rewriting the first writer's parent-side
-  evidence, so imported historical rows and live-captured rows coexist
-  protectively (the upsert is unchanged). The stale-only historical manifest and
-  its test are unaffected: they enumerate only `historical`-lifecycle codes, and
-  live-import chains are supplied through the research monitor-evidence exports,
-  not the manifest.
-- Require exact child identity for the live-import chains and construct the
-  RSK sidecar at import. The research exports now publish node-verified
-  `child_block_hash` / `child_block_time` for all six chains (internal byte
-  order for the Bitcoin-family chains and Hathor, forward for RSK, matching
-  live storage), so the six join `requires_exact_child_fields`: a blank child
-  cell skips as `empty_field` instead of minting a synthetic
-  `sha256d("mmm-dataset:...")` hash that could never deduplicate against a
-  live-captured row, and `child_block_time` gains the exact-chain `u32` bound
-  instead of silently falling back to the Bitcoin parent's nTime. The RSK
-  export additionally carries the seven `rsk_merge_mining_evidence` columns
-  (miner, merge-mining hash, uncle placement, merkle proof, coinbase tail); a
-  new `rsk_sidecar` module parses them into the same `RskEvidencePayload` the
-  live poller writes and the runner routes RSK rows through
-  `write_rsk_capture_in_txn`, so every imported `auxpow:rsk` event lands with
-  the 1:1 sidecar row `mmm-api`'s block-detail projection requires.
-  `pool_identity_id` is left NULL for the `reclassify-pools` late-fill path.
-  The default CSV search now resolves live-import chains to their
-  monitor-evidence exports (the exact-child-field carve-out to
-  `data/canonical/` stays scoped to VCash/Lyncoin/SixEleven).
-- Derive the historical importer's chain table from `mmm-capture`'s
-  `SOURCE_REGISTRY` instead of hand-listing it a second time.
-  `historical_ingest::config::HISTORICAL_CHAINS` now filters the registry's
-  `Historical`/`Partial` lifecycle rows and looks up only the one field the
-  registry does not carry, the CSV `height_column`, from a small local side
-  table (missing entries fail loudly at the first lookup). The derived table
-  was verified row for row against the deleted hand list before it landed;
-  a hygiene test guards the side table against orphaned or duplicate entries.
-- Add a cross-repo drift-sync test for the two hand-maintained BIP34
-  constants. `mmm-capture`'s `STRICT_BIP34_CHAINS` and `BIP34_HEIGHT` are
-  permanent ports of the merge-mining-research repo's
-  `BTC_COINBASE_SCRIPTSIG_CHAINS` and `BIP34_HEIGHT`; the new test locates the
-  research checkout (via `MERGE_MINING_RESEARCH_DIR`, falling back to the
-  sibling `../merge-mining-research` path), parses both Python sources, and
-  asserts equality. It skips cleanly when no checkout is available and fails
-  loudly if a checkout is present but either constant cannot be located.
-  `doichain` joins `STRICT_BIP34_CHAINS` in the same pass, matching the
-  published classifier's `BTC_COINBASE_SCRIPTSIG_CHAINS` allowlist.
-- Document why `ParentKind` (`mmm-capture::capture`) and `BlockKind`
-  (`mmm-bitcoin-core::parent_classifier`) stay separate enums instead of
-  merging into one: they model two different DB CHECK domains
-  (`merge_mining_event.btc_parent_kind` has four values including `near`;
-  `block.kind` has three, since a `block` row never persists a child-only
-  near-miss header). Each enum's doc comment now cross-references the other
-  and the `mmm-read-model::classify` translation boundary between them.
-- Align the historical importer with the research repo's data-consistency
-  pass: the default CSV search now prefers the committed
-  `results/monitor-evidence/<chain>_monitor_evidence.csv` exports, whose
-  per-row `btc_stale_relevance` / `relevance_reason` columns supply
-  strict/weak verdicts without the bulky relevance inventory; the
-  `classification` column accepts `unknown` (the research repo's new name
-  for the broad evidence state, with the legacy `orphan` spelling still
-  read); and the relevance-inventory reason matching uses the vocabulary
-  the research classifier actually emits (`valid_direct_stale` /
-  `valid_stale_descendant`) instead of the never-emitted placeholder
-  strings. The explicit VCash/Lyncoin/SixEleven artifact checksums track
-  the regenerated research artifacts.
-- Track two further lockstep vocabulary changes landing on the research repo
-  at the same time: stale and stale-descendant rows in the monitor-evidence
-  exports now carry an empty `btc_stale_relevance` (the `relevance_reason`
-  column alone signals `valid_direct_stale` / `valid_stale_descendant`,
-  which the importer already keyed on, so old and new exports both ingest
-  without error), and the excluded verdict token is renamed from
-  `btc_stale_excluded` to `excluded` in both repos. The rename covers the
-  `block.btc_orphan_class` DB value, the `classification=` query parameter
-  and JSON response field, and the frontend's classification vocabulary and
-  fill styling. Migration `0005_rename_excluded_orphan_class.sql` rewrites
-  existing rows and replaces the CHECK constraint (the baseline schema in
-  `0001_canonical_schema.sql` is left alone, since a migration has already
-  applied to a persistent database per `migrations/README.md`).
+- Add the Header Time Delta view: a distribution of how far apart each stale
+  block and its canonical competitor timestamped their headers, with a focus
+  window, off-scale gutters, a symmetric-log full-range strip, Coverage and
+  Table tabs, and block-detail cross-links. Backed by the new read-only
+  `GET /api/v1/competitions` endpoint.
+- Exclude known stales from strict/weak BTC-orphan classification. Migration
+  0006 adds the operator-imported `known_stale_block` membership, loaded by
+  `import-known-stales` (atomic, strict by default) from the upstream
+  `bitcoin-data/stale-blocks` dataset; the classifier excludes members
+  outright, `reclassify-known-stales` retroactively demotes contaminated
+  rows, `import-dataset` refuses an empty membership, and every producer
+  entry path warns when it is empty.
+- Align vocabulary and ingest with the published merge-mining-research
+  history: the importer prefers the committed monitor-evidence exports, the
+  broad evidence state is spelled `unknown` (legacy `orphan` still read on
+  ingest), the excluded verdict token is renamed from `btc_stale_excluded` to
+  `excluded` across DB, API, and frontend (migration 0005), and the
+  historical-source manifest is re-pinned to the published research commit.
+- Extend `import-dataset` to the six live chains, requiring exact child
+  identity and constructing the RSK evidence sidecar during import; the
+  non-live exact-child-field chains (VCash, Lyncoin, SixEleven) resolve to
+  the research repo's committed canonical-blocks artifacts.
+- Derive the historical importer's chain table from the shared source
+  registry, add a cross-repo BIP34 drift guard against the research checkout
+  (`doichain` joins the strict set), and document the ParentKind/BlockKind
+  enum boundary.
+- Add Open Graph and Twitter social cards.
+- Consolidate the code landed since 0.2.0 into shared API, read-model, and
+  frontend helpers: net 250 fewer lines with no behavior change.
 
 ## [0.2.1] - 2026-07-13
 

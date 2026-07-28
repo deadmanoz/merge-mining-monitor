@@ -23,7 +23,46 @@ fn api_fixture_examples_are_listed_and_parse() {
         if file == "competitions.json" {
             assert_competitions_fixture_contract(&fixture);
         }
+        if file == "version.json" {
+            assert_version_fixture_contract(&fixture);
+        }
     }
+}
+
+/// The version fixture must track the workspace release: its top-level
+/// version and newest release-note section both pin `CARGO_PKG_VERSION`, and
+/// the projection's own counters agree with the payload shape, so a release
+/// bump cannot land without regenerating this fixture (and, via the shared
+/// manifest walk above, its manifest scenario).
+fn assert_version_fixture_contract(fixture: &Value) {
+    let workspace_version = env!("CARGO_PKG_VERSION");
+    assert_eq!(
+        fixture["version"].as_str(),
+        Some(workspace_version),
+        "version fixture must pin the workspace release version"
+    );
+    let notes = &fixture["release_notes"];
+    let releases = notes["releases"]
+        .as_array()
+        .expect("version fixture must carry a releases array");
+    assert_eq!(
+        notes["release_count"].as_u64(),
+        Some(releases.len() as u64),
+        "release_count must match the releases array"
+    );
+    let newest = releases
+        .first()
+        .expect("version fixture must carry at least one release");
+    assert_eq!(
+        newest["version"].as_str(),
+        Some(workspace_version),
+        "the newest release-note section must be the released version"
+    );
+    assert_eq!(
+        newest["item_count"].as_u64(),
+        Some(newest["items"].as_array().expect("items array").len() as u64),
+        "item_count must match the items array"
+    );
 }
 
 fn fixture_dir() -> PathBuf {

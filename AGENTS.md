@@ -34,8 +34,10 @@ Use `just` targets, not raw commands, when a target exists:
   base tables, `mmm-read-model` writes derived tables, `mmm-producers` owns
   engines, and `mmm-api` serves read-only HTTP views.
 - Producers write only `merge_mining_event` plus 1:1 chain sidecars and
-  attribution rows. `block`, `attestation_proof`, and `source_health` are
-  derived through `mmm-read-model`.
+  attribution rows. The one further base table, `known_stale_block`, is
+  operator-imported via `import-known-stales` (written through `mmm-store`,
+  never by capture producers). `block`, `attestation_proof`, and
+  `source_health` are derived through `mmm-read-model`.
 - Do not copy a sibling chain module to add a Namecoin-family source. Extend
   the shared source registry, chain spec, config, AuxPoW-family parser, poller,
   and write paths.

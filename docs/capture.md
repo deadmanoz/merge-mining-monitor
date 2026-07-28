@@ -17,7 +17,9 @@ validation first, then Bitcoin Core placement. Target failures become `near`;
 Core-known parents become `canonical` or `stale`; Core-absent but target-valid
 parents remain `unknown` until a later `reclassify-unknown-parents` pass can
 upgrade them. BTC orphan status is a later refinement of Core-absent `unknown`
-parents, not a separate parent kind.
+parents, not a separate parent kind, and it is gated by the operator-imported
+`known_stale_block` membership: a header catalogued as a known stale is
+`excluded` from strict/weak orphan classification rather than overclaimed.
 
 ## Live Sources
 
