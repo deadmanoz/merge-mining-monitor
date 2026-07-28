@@ -21,6 +21,8 @@ Use `just` targets, not raw commands, when a target exists:
 - `just serve` - read API plus static `www/` frontend.
 - `just poll-CHAIN` / `just backfill-CHAIN START END` - chain capture for
   `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
+- `just import-known-stales` / `just reclassify-known-stales` - known-stale
+  membership import and retroactive demotion.
 - `just reclassify-unknown-parents`, `just reclassify-pools`,
   `just reconcile-read-model` - repair and enrichment commands.
 

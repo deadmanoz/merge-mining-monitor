@@ -69,6 +69,40 @@ recovered CSVs at one of these paths; the manifest lets you verify a supplied
 file matches the recorded provenance checksum. There is no implicit
 home-directory fallback; set local roots in `.env`.
 
+## Known-Stale Membership
+
+`import-dataset` refuses to run while the `known_stale_block` table is empty
+(pass `--allow-empty-known-stales` to opt out): without the membership, a
+catalogued stale that Bitcoin Core attests absent would be mislabelled a
+strict/weak BTC orphan. Load the membership once per database, after
+migrations, from an upstream `stale-blocks.csv`-shaped dataset (the
+`bitcoin-data/stale-blocks` repository's file, with a `hash` column of display
+block hashes and an optional `height`):
+
+```bash
+just import-known-stales --csv path/to/stale-blocks.csv --source-label "bitcoin-data/stale-blocks@<commit>"
+```
+
+The `--source-label` records the dataset's provenance on every imported row.
+The import is idempotent and atomic (all rows commit in one transaction, or
+nothing does), and it fails rather than record a partial or empty membership:
+a missing `hash` column, zero usable rows, or ANY malformed row aborts the
+run, since downstream guards only test membership emptiness and a corrupt
+dataset must not count as initialized. Pass `--skip-malformed` to import the
+valid subset of a file with known-bad rows. The summary prints
+inserted/already-present/skipped counts. On a database that already holds
+classified rows, follow up with:
+
+```bash
+just reclassify-known-stales
+```
+
+which retroactively demotes any strict/weak `unknown` block already in the
+membership to `excluded`, idempotently, maintaining `source_health` through
+the reconciler. The full fresh-database ordering is: migrations, then
+`import-known-stales`, then `reclassify-known-stales` (a no-op when nothing
+was classified yet), then `import-dataset`.
+
 ## Import
 
 Prepare the DB and Bitcoin Core classifier:

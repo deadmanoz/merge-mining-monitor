@@ -10,6 +10,7 @@ pub mod chains;
 #[cfg(not(any(test, feature = "db-integration")))]
 mod chains;
 mod historical_ingest;
+mod known_stale_import;
 mod live_loop;
 mod poller;
 mod producer_runtime;
@@ -29,6 +30,9 @@ pub use chains::{
 };
 pub use historical_ingest::{
     HistoricalImportConfig, HistoricalImportSummary, run_historical_import,
+};
+pub use known_stale_import::{
+    KnownStaleImportConfig, KnownStaleImportSummary, run_import_known_stales,
 };
 #[cfg(any(test, feature = "db-integration"))]
 pub use poller::{ChainPoller, ChainPollerState, HeightProgress, Poller, PollerConfig};

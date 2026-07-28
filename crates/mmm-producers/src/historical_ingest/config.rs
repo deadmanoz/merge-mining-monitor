@@ -60,6 +60,12 @@ pub struct HistoricalImportConfig {
     /// classifier (`BITCOIN_RPC_URL` unset). Unknown rows (admitted BTC-orphan
     /// and known-branch rows) still require live classification.
     pub allow_unclassified: bool,
+    /// When set, run even though the `known_stale_block` membership is empty.
+    /// The default refusal follows the research repo's lesson: without the
+    /// upstream stale-blocks dataset a known stale cannot be excluded and may be
+    /// mislabelled strict/weak, so the importer stops rather than ingest against
+    /// a membership it cannot consult.
+    pub allow_empty_known_stales: bool,
 }
 
 /// On-disk schema of `data/historical/historical-source-manifest.json`: a list of per-chain CSV
@@ -172,6 +178,7 @@ impl HistoricalImportConfig {
         let mut batch_size = DEFAULT_BATCH_SIZE;
         let mut limit = None;
         let mut allow_unclassified = false;
+        let mut allow_empty_known_stales = false;
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -186,6 +193,7 @@ impl HistoricalImportConfig {
                 }
                 "--limit" => limit = Some(next_usize(&mut args, "--limit")?),
                 "--allow-unclassified" => allow_unclassified = true,
+                "--allow-empty-known-stales" => allow_empty_known_stales = true,
                 "-h" | "--help" => bail!(usage_message()),
                 other => bail!(
                     "unknown import-dataset argument {other:?}\n{}",
@@ -206,6 +214,7 @@ impl HistoricalImportConfig {
             batch_size,
             limit,
             allow_unclassified,
+            allow_empty_known_stales,
         })
     }
 }
@@ -230,7 +239,8 @@ fn next_usize(args: &mut std::env::Args, flag: &str) -> Result<usize> {
 /// The single usage string surfaced on `--help` and on any arg error.
 fn usage_message() -> &'static str {
     "usage: import-dataset <chain> [--csv PATH] [--manifest PATH] \
-     [--relevance PATH] [--batch-size N] [--limit N] [--allow-unclassified]"
+     [--relevance PATH] [--batch-size N] [--limit N] [--allow-unclassified] \
+     [--allow-empty-known-stales]"
 }
 
 /// Pick the first existing CSV from the ordered `default_csv_candidates` list,

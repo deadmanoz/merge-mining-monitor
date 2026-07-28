@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{Context, Result, bail};
 use bitcoin::hashes::Hash as _;
-use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
+use mmm_bitcoin_core::{BlockKind, ConfiguredParentClassifier, ParentClassification};
 use mmm_capture::btc_orphan::BtcOrphanVerdict;
 use mmm_capture::capture::{
     ClassificationProof, ParentKind, ResolvedPoolAttributions, build_event_payload_from_evidence,
@@ -46,6 +46,16 @@ pub struct HistoricalImportSummary {
     pub stale: u64,
     pub strict_orphans: u64,
     pub weak_orphans: u64,
+    /// Unknown rows whose PERSISTED `btc_orphan_class` is `excluded`, from
+    /// either exclusion path: the known-stale membership gate or the
+    /// wrong-difficulty-epoch check, both of which can override a local
+    /// strict/weak verdict at write time.
+    pub excluded: u64,
+    /// Ingested unknown rows whose persisted class is still NULL (beyond the
+    /// committed nBits table horizon, or a row reconciliation left without a
+    /// block row). Counted here, never as a skip, so
+    /// rows_seen = ingested + sum(skipped) holds.
+    pub pending: u64,
     pub known_direct_branch_attestations: u64,
     pub known_descendant_branch_attestations: u64,
     pub skipped: BTreeMap<&'static str, u64>,
@@ -80,20 +90,30 @@ impl HistoricalImportSummary {
 
     /// Bump the per-kind and per-attestation counters after a successful persist.
     ///
-    /// Partitions an ingested row by its persisted `ParentKind` (a `Near` here
-    /// would contradict the decision gate and is recorded defensively as a
-    /// skip), then layers on any known-branch attestation tally. Call exactly
-    /// once per persisted row, paired with `ingested += 1`.
-    fn record_persisted(&mut self, payload_kind: ParentKind, candidate: &ImportCandidate) {
-        match payload_kind {
-            ParentKind::Canonical => self.canonical += 1,
-            ParentKind::Stale => self.stale += 1,
-            ParentKind::Near => self.skip(SkipReason::TargetInvalid),
-            ParentKind::Unknown => match candidate.orphan_verdict {
-                Some(BtcOrphanVerdict::Strict) => self.strict_orphans += 1,
-                Some(BtcOrphanVerdict::Weak) => self.weak_orphans += 1,
-                _ => self.skip(SkipReason::Unclassified),
+    /// Buckets by the PERSISTED `block.kind` and `btc_orphan_class` read back
+    /// after the write, never the incoming payload: capture reconciliation can
+    /// retain an existing canonical/stale row when a later classification is
+    /// unknown (`effective_classification`), and the read-model's known-stale
+    /// membership gate can persist `excluded` for a row whose offline verdict
+    /// was strict/weak. The summary reports what was stored. An ingested row
+    /// never also counts as a skip, so rows_seen = ingested + sum(skipped)
+    /// holds. Call exactly once per persisted row, paired with
+    /// `ingested += 1`.
+    fn record_persisted(
+        &mut self,
+        persisted: Option<(BlockKind, Option<String>)>,
+        candidate: &ImportCandidate,
+    ) {
+        match persisted {
+            Some((BlockKind::Canonical, _)) => self.canonical += 1,
+            Some((BlockKind::Stale, _)) => self.stale += 1,
+            Some((BlockKind::Unknown, class)) => match class.as_deref() {
+                Some("strict_btc_orphan") => self.strict_orphans += 1,
+                Some("weak_btc_orphan") => self.weak_orphans += 1,
+                Some("excluded") => self.excluded += 1,
+                _ => self.pending += 1,
             },
+            None => self.pending += 1,
         }
         match candidate.relevance_selection {
             Some(RelevanceSelection::KnownDirectStale) => {
@@ -111,7 +131,7 @@ impl HistoricalImportSummary {
     /// report; the `skipped` map renders as comma-joined `reason:count` pairs).
     pub fn print(&self) {
         println!(
-            "historical import: rows_seen={} candidates={} ingested={} canonical={} stale={} strict_btc_orphan={} weak_btc_orphan={} known_direct_branch_attestations={} known_descendant_branch_attestations={} skipped={}",
+            "historical import: rows_seen={} candidates={} ingested={} canonical={} stale={} strict_btc_orphan={} weak_btc_orphan={} excluded={} pending={} known_direct_branch_attestations={} known_descendant_branch_attestations={} skipped={}",
             self.rows_seen,
             self.candidates,
             self.ingested,
@@ -119,6 +139,8 @@ impl HistoricalImportSummary {
             self.stale,
             self.strict_orphans,
             self.weak_orphans,
+            self.excluded,
+            self.pending,
             self.known_direct_branch_attestations,
             self.known_descendant_branch_attestations,
             self.skipped
@@ -148,6 +170,24 @@ pub async fn run_historical_import(
             "BITCOIN_RPC_URL is required for import-dataset unless --allow-unclassified is passed"
         );
     }
+    // Known-stale membership guard (research repo's lesson: refuse to run without
+    // the upstream stale-blocks dataset). An empty membership means the
+    // compute_block_orphan_class gate cannot exclude a known stale, so any orphan
+    // row this import ingests could be mislabelled strict/weak. Refuse by default;
+    // --allow-empty-known-stales opts out for a deliberately membership-free run.
+    let known_stale_count = mmm_store::count_known_stale_blocks(client).await?;
+    if known_stale_count == 0 && !config.allow_empty_known_stales {
+        bail!(
+            "known_stale_block is empty: import the upstream stale-blocks dataset with \
+             import-known-stales before import-dataset, or pass --allow-empty-known-stales to \
+             run without known-stale exclusion (known stales may be mislabelled strict/weak)"
+        );
+    }
+    info!(
+        chain = %config.chain,
+        known_stale_count,
+        "starting historical import with known-stale membership"
+    );
     let spec = historical_chain_spec(&config.chain)
         .ok_or_else(|| anyhow::anyhow!("unsupported historical chain {:?}", config.chain))?;
     let source_id = mmm_store::get_source_id(client, spec.source_code).await?;
@@ -371,6 +411,15 @@ async fn import_candidate(
         )
     })?;
     summary.ingested += 1;
-    summary.record_persisted(payload.btc_parent_kind, &candidate);
+    let parent_hash = candidate
+        .evidence
+        .btc_parent_header
+        .block_hash()
+        .to_byte_array()
+        .to_vec();
+    let persisted = mmm_read_model::load_persisted_kind_and_orphan_class(client, &parent_hash)
+        .await
+        .context("read back persisted block kind and orphan class for the import summary")?;
+    summary.record_persisted(persisted, &candidate);
     Ok(())
 }

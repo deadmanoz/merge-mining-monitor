@@ -93,6 +93,33 @@ async fn import_dataset_persists_core_classified_rows_and_skips_unattested_unkno
 }
 
 #[tokio::test]
+async fn import_refuses_without_known_stale_membership() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let header = header_meeting_bits(0x207f_ffff, 1_700_000_000, 1);
+        let csv_path = write_historical_csv(&header, &header)?;
+        let result = async {
+            // Enabled classifier so the run reaches the membership guard (not the
+            // BITCOIN_RPC_URL guard), and the guard is opted INTO (the default).
+            let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+                unknown_verdict(&header),
+            ));
+            let mut config = devcoin_import_config(&csv_path, None);
+            config.allow_empty_known_stales = false;
+            let err = run_historical_import(&mut client, &classifier, &config)
+                .await
+                .expect_err("import must refuse when known_stale_block is empty");
+            assert!(
+                err.to_string().contains("known_stale_block is empty"),
+                "unexpected error: {err}"
+            );
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        finish_import_with_cleanup(result, &[&csv_path])
+    })
+}
+
+#[tokio::test]
 async fn import_dataset_requires_source_label_then_persists_core_attested_orphan() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let header: Header = deserialize(&hex::decode(BTC_400000_HEADER_HEX)?)?;
@@ -275,6 +302,11 @@ fn devcoin_import_config(csv_path: &Path, relevance_path: Option<&Path>) -> Hist
         batch_size: 10,
         limit: None,
         allow_unclassified: false,
+        // These decision-logic tests run against an empty known_stale_block and
+        // opt out of the membership guard explicitly; the guard itself is
+        // covered by `import_refuses_without_known_stale_membership` and the
+        // dedicated known_stale suite.
+        allow_empty_known_stales: true,
     }
 }
 
@@ -356,4 +388,66 @@ fn temp_csv_path() -> Result<PathBuf> {
         "merge-mining-monitor-historical-ingest-{}-{suffix}.csv",
         std::process::id()
     )))
+}
+
+#[tokio::test]
+async fn import_summary_reports_persisted_kind_when_replay_diverges() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let header: Header = deserialize(&hex::decode(BTC_400000_HEADER_HEX)?)?;
+        let coinbase_script = hex::decode(BTC_400000_COINBASE_SCRIPTSIG_HEX)?;
+        let canonical_csv = write_classified_csv(&header, &coinbase_script, "canonical")?;
+        let stale_csv = write_classified_csv(&header, &coinbase_script, "stale")?;
+
+        let import_result = async {
+            let height = 400_000;
+            let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+                canonical_verdict(&header, height),
+            ));
+            let config = devcoin_import_config(&canonical_csv, None);
+            let first = run_historical_import(&mut client, &classifier, &config).await?;
+            assert_eq!(first.canonical, 1);
+
+            // Replay the same parent with a DIVERGING stale classification. The
+            // summary must report whatever kind reconciliation actually kept,
+            // and the ingested row must never double-count as a skip.
+            let competitor = header_meeting_bits(0x207f_ffff, 1_700_000_010, 77);
+            let competitor_hash = competitor.block_hash().to_byte_array().to_vec();
+            let stale_classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+                stale_verdict_with_competitor_header(&header, height, competitor, competitor_hash),
+            ));
+            let config = devcoin_import_config(&stale_csv, None);
+            let second = run_historical_import(&mut client, &stale_classifier, &config).await?;
+            assert_eq!(second.ingested, 1);
+            assert!(
+                second.skipped.is_empty(),
+                "an ingested row must not also count as skipped: {:?}",
+                second.skipped
+            );
+
+            let persisted_kind: String = client
+                .query_one(
+                    "SELECT kind FROM block WHERE btc_header_hash = $1",
+                    &[&header.block_hash().to_byte_array().to_vec()],
+                )
+                .await?
+                .get(0);
+            match persisted_kind.as_str() {
+                "canonical" => assert_eq!(
+                    (second.canonical, second.stale),
+                    (1, 0),
+                    "summary must mirror the persisted canonical kind"
+                ),
+                "stale" => assert_eq!(
+                    (second.canonical, second.stale),
+                    (0, 1),
+                    "summary must mirror the persisted stale kind"
+                ),
+                other => panic!("unexpected persisted kind {other:?}"),
+            }
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+
+        finish_import_with_cleanup(import_result, &[&canonical_csv, &stale_csv])
+    })
 }

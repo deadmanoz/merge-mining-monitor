@@ -11,10 +11,14 @@
 //! retry policy, and post-commit dependent cascades.
 
 mod cli_args;
+mod known_stale_reclassify;
 mod mutation;
 mod source_health_sql;
 
 pub use cli_args::{ArgCursor, drive_args, require_positive};
+pub use known_stale_reclassify::{
+    KnownStaleReclassifySummary, ReclassifyKnownStalesConfig, run_reclassify_known_stales,
+};
 pub use mutation::{
     CommittedParentMutation, CoreCanonicalWrite, capture_in_txn, capture_preclassified_in_txn,
     record_coinbase_failure, restore_merge_mining_event, revoke_merge_mining_event,
@@ -473,6 +477,18 @@ pub async fn run_reclassify_unknown_parents(
     if !classifier.is_enabled() {
         bail!("reclassify-unknown-parents requires BITCOIN_RPC_URL");
     }
+    // Degraded-state guard (research repo's lesson): with an EMPTY known-stale
+    // membership the compute_block_orphan_class gate cannot exclude a known stale,
+    // so this pass may label known stales strict/weak. Warn loudly rather than
+    // silently proceeding as if membership were consulted; import it with
+    // import-known-stales.
+    if mmm_store::count_known_stale_blocks(client).await? == 0 {
+        tracing::warn!(
+            "reclassify-unknown-parents: known_stale_block is EMPTY; known stales cannot be \
+             excluded and may be labelled strict/weak. Import the upstream stale-blocks dataset \
+             with import-known-stales."
+        );
+    }
     let mut changed = 0;
     let mut cursor: Option<(i32, i64)> = None;
     loop {
@@ -576,6 +592,18 @@ pub async fn run_reconcile_read_model(
         // after source_health_ready has already been set. Run a separate
         // reconcile-read-model invocation when a read-model scan is also wanted.
         return Ok(0);
+    }
+
+    // Degraded-state guard: a Core-enabled scan assigns btc_orphan_class, and an
+    // empty known-stale membership means the exclusion gate cannot fire, so a
+    // catalogued stale could be labelled strict/weak. Warn once per run (only
+    // when Core is enabled: a Core-off reconcile does not fresh-classify).
+    if classifier.is_enabled() && mmm_store::count_known_stale_blocks(client).await? == 0 {
+        tracing::warn!(
+            "reconcile-read-model: known_stale_block is EMPTY; known stales cannot be excluded \
+             and may be labelled strict/weak. Import the upstream stale-blocks dataset with \
+             import-known-stales."
+        );
     }
 
     if !config.missing_only {
@@ -781,7 +809,9 @@ mod writers;
 pub use classify::load_parent_preflight;
 pub(crate) use classify::*;
 pub(crate) use competition::*;
+pub use competition::{load_persisted_kind_and_orphan_class, load_persisted_orphan_class};
 pub(crate) use queries::*;
+pub use queries::{lock_block_hash, lock_block_hashes};
 pub use reconcile::reconcile_dependents_after_change;
 pub(crate) use reconcile::*;
 pub(crate) use writers::*;

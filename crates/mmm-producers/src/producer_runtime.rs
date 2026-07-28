@@ -191,6 +191,26 @@ pub(crate) fn warn_backfill_classifier_enabled(
     }
 }
 
+/// Degraded-state guard shared by every producer entry path (live pollers,
+/// bounded backfills, and the Hathor cache import): warn loudly when the
+/// known-stale membership is empty, since capture/classification can then
+/// label a catalogued stale strict/weak. Mirrors the reclassify/reconcile
+/// warnings; import the upstream dataset with import-known-stales.
+pub(crate) async fn warn_if_empty_known_stale_membership<C: tokio_postgres::GenericClient>(
+    client: &C,
+    context: &str,
+) -> anyhow::Result<()> {
+    if mmm_store::count_known_stale_blocks(client).await? == 0 {
+        warn!(
+            context,
+            "known_stale_block is EMPTY; known stales cannot be excluded and may be \
+             labelled strict/weak. Import the upstream stale-blocks dataset with \
+             import-known-stales."
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
