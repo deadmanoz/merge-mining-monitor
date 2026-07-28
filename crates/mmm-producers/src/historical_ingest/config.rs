@@ -6,10 +6,13 @@
 //! importer live here so the runner stays I/O-policy free.
 //!
 //! `HISTORICAL_CHAINS` is derived from `mmm_capture::source_registry`'s
-//! `Historical`/`Partial` lifecycle rows, not hand-listed: the registry
-//! already owns `source_code` and `chain` as the single source of truth, so
-//! this module supplies only `height_column`, the one field the registry does
-//! not carry (see `HEIGHT_COLUMNS`).
+//! `Historical`/`Partial` lifecycle rows PLUS the closed `LIVE_IMPORT_CHAINS`
+//! set of live-lifecycle chains that also publish recovered historical
+//! monitor-evidence exports. It is not hand-listed: the registry already owns
+//! `source_code` and `chain` as the single source of truth, so this module
+//! supplies only `height_column`, the one field the registry does not carry
+//! (see `HEIGHT_COLUMNS`), plus the `LIVE_IMPORT_CHAINS` allowlist that keeps
+//! the live-chain import a closed set rather than an open floodgate.
 
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -20,6 +23,20 @@ use serde::Deserialize;
 
 const RESEARCH_ROOT_ENV: &str = "MERGE_MINING_RESEARCH_DIR";
 const ARCHIVE_ROOT_ENV: &str = "MERGE_MINING_ARCHIVE_DIR";
+
+/// Live-lifecycle chains that ALSO publish recovered historical monitor-evidence
+/// exports and are therefore importable through `import-dataset`. These chains
+/// live-capture into the same `source_id`, so importing their historical
+/// evidence coexists with live rows under the `(source_id, child_height,
+/// child_block_hash)` upsert. This is an explicit closed allowlist, not an open
+/// floodgate: a live chain becomes importable only by being added here AND
+/// getting a `HEIGHT_COLUMNS` entry, exactly like a Historical/Partial source.
+const LIVE_IMPORT_CHAINS: &[&str] = &["namecoin", "rsk", "elastos", "syscoin", "hathor", "fractal"];
+
+/// Whether a Live-lifecycle registry row is opted into historical import.
+fn is_live_import_chain(chain: &str) -> bool {
+    LIVE_IMPORT_CHAINS.contains(&chain)
+}
 
 /// Static per-chain row for one recovered full or partial merge-mining source.
 ///
@@ -37,10 +54,21 @@ pub(super) struct HistoricalChainSpec {
 }
 
 impl HistoricalChainSpec {
-    /// Explicit recovery artifacts carry authoritative child identity and time.
-    /// They must never fall back to a synthetic hash or Bitcoin parent time.
+    /// Chains whose import rows must carry authoritative child identity and
+    /// time, never falling back to a synthetic hash or Bitcoin parent time:
+    /// the explicit recovery artifacts (vcash/lyncoin/sixeleven) and every
+    /// live-import chain. For live-import chains this is what makes an
+    /// imported row collide with a live-captured one under the
+    /// `(source_id, child_height, child_block_hash)` upsert -- a synthetic
+    /// hash would mint a permanent duplicate of any row live capture also
+    /// observes.
     pub(super) fn requires_exact_child_fields(&self) -> bool {
-        matches!(self.chain, "vcash" | "lyncoin" | "sixeleven")
+        matches!(self.chain, "vcash" | "lyncoin" | "sixeleven") || is_live_import_chain(self.chain)
+    }
+
+    /// Whether this spec is a live-lifecycle chain opted into import.
+    pub(super) fn is_live_import(&self) -> bool {
+        is_live_import_chain(self.chain)
     }
 }
 
@@ -112,12 +140,21 @@ const HEIGHT_COLUMNS: &[(&str, &str)] = &[
     ("vcash", "vcash_height"),
     ("lyncoin", "child_height"),
     ("sixeleven", "child_height"),
+    // Live-import chains: their monitor-evidence exports use the normalized
+    // `child_height` column (verified against each export header).
+    ("namecoin", "child_height"),
+    ("rsk", "child_height"),
+    ("elastos", "child_height"),
+    ("syscoin", "child_height"),
+    ("hathor", "child_height"),
+    ("fractal", "child_height"),
 ];
 
 /// Look up `chain`'s CSV column name. Panics if a `Historical`/`Partial`
-/// `SOURCE_REGISTRY` row has no matching `HEIGHT_COLUMNS` entry: a silent
-/// fallback would ship an importer that cannot find its own height column, so
-/// an incomplete side table must fail loudly at the first lookup instead.
+/// `SOURCE_REGISTRY` row -- or a `LIVE_IMPORT_CHAINS`-opted `Live` row -- has
+/// no matching `HEIGHT_COLUMNS` entry: a silent fallback would ship an
+/// importer that cannot find its own height column, so an incomplete side
+/// table must fail loudly at the first lookup instead.
 fn height_column_for(chain: &'static str) -> &'static str {
     HEIGHT_COLUMNS
         .iter()
@@ -127,9 +164,10 @@ fn height_column_for(chain: &'static str) -> &'static str {
 }
 
 /// Build `HISTORICAL_CHAINS` from `SOURCE_REGISTRY`'s `Historical`/`Partial`
-/// lifecycle rows. Extend the accepted set by adding a `historical_auxpow` or
-/// `partial_auxpow` row to `SOURCE_REGISTRY` plus a `HEIGHT_COLUMNS` entry
-/// here, never by cloning a module.
+/// lifecycle rows PLUS the `LIVE_IMPORT_CHAINS`-opted `Live` rows. Extend the
+/// accepted set by adding a `historical_auxpow`/`partial_auxpow` row (or a
+/// `LIVE_IMPORT_CHAINS` entry for a live chain) to `SOURCE_REGISTRY` plus a
+/// `HEIGHT_COLUMNS` entry here, never by cloning a module.
 fn build_historical_chains() -> Vec<HistoricalChainSpec> {
     SOURCE_REGISTRY
         .iter()
@@ -137,7 +175,7 @@ fn build_historical_chains() -> Vec<HistoricalChainSpec> {
             matches!(
                 def.lifecycle,
                 SourceLifecycle::Historical | SourceLifecycle::Partial
-            )
+            ) || (def.lifecycle == SourceLifecycle::Live && is_live_import_chain(def.chain))
         })
         .map(|def| HistoricalChainSpec {
             chain: def.chain,
@@ -291,17 +329,23 @@ fn default_csv_candidates_with_roots(
 ) -> Result<Vec<PathBuf>> {
     let mut candidates = Vec::new();
     if let Some(research) = &research {
-        if spec.requires_exact_child_fields() {
+        if spec.requires_exact_child_fields() && !spec.is_live_import() {
+            // Explicit-recovery chains (vcash/lyncoin/sixeleven): the
+            // committed canonical-blocks artifact is the only source carrying
+            // their child identity and time; their monitor-evidence exports
+            // predate the child_block_time column, so probing them first
+            // would select a present-but-incompatible export and abort the
+            // import ahead of a compatible fallback.
             candidates.push(
                 research
                     .join("data/canonical")
                     .join(format!("{}_canonical_blocks.csv", spec.chain)),
             );
         } else {
-            // Monitor-evidence exports omit `child_block_time`, which the
-            // exact-child-field chains require, so those chains never probe
-            // them: a present-but-incompatible export would be selected and
-            // abort the import ahead of a compatible fallback.
+            // Live-import chains take this branch too: their monitor-evidence
+            // exports carry hydrated child_block_hash / child_block_time (and
+            // RSK's sidecar columns), which requires_exact_child_fields
+            // demands of them.
             candidates.push(
                 research
                     .join("results/monitor-evidence")
@@ -426,7 +470,8 @@ mod tests {
 
     #[test]
     fn every_recovered_source_has_a_height_column() {
-        assert_eq!(HISTORICAL_CHAINS.len(), 20);
+        // 20 Historical/Partial rows + 6 LIVE_IMPORT_CHAINS rows.
+        assert_eq!(HISTORICAL_CHAINS.len(), 26);
         let mut seen = std::collections::HashSet::new();
         for spec in HISTORICAL_CHAINS.iter() {
             assert!(spec.source_code.starts_with("auxpow:"));
@@ -441,12 +486,21 @@ mod tests {
         for (chain, _) in HEIGHT_COLUMNS {
             assert!(
                 seen.contains(chain),
-                "orphaned HEIGHT_COLUMNS entry: {chain:?} has no Historical/Partial registry row"
+                "orphaned HEIGHT_COLUMNS entry: {chain:?} has no Historical/Partial registry \
+                 row and is not a live-import chain"
             );
             assert!(
                 height_columns_seen.insert(chain),
                 "duplicate HEIGHT_COLUMNS entry: {chain:?}"
             );
+        }
+        // Every live-import chain is present and uses the normalized child_height
+        // column from its monitor-evidence export.
+        for chain in LIVE_IMPORT_CHAINS {
+            let spec = historical_chain_spec(chain)
+                .unwrap_or_else(|| panic!("live-import chain {chain} must be importable"));
+            assert_eq!(spec.height_column, "child_height");
+            assert_eq!(spec.source_code, format!("auxpow:{chain}"));
         }
         assert_eq!(
             historical_chain_spec("i0coin").unwrap().height_column,
@@ -472,13 +526,24 @@ mod tests {
             historical_chain_spec("sixeleven").unwrap().height_column,
             "child_height"
         );
+        // Explicit-recovery chains and every live-import chain require exact
+        // child fields; live-import chains would otherwise mint synthetic
+        // hashes that permanently duplicate live-captured rows.
         for chain in ["vcash", "lyncoin", "sixeleven"] {
+            let spec = historical_chain_spec(chain).unwrap();
             assert!(
-                historical_chain_spec(chain)
-                    .unwrap()
-                    .requires_exact_child_fields(),
+                spec.requires_exact_child_fields(),
                 "{chain} must require exact child fields"
             );
+            assert!(!spec.is_live_import());
+        }
+        for chain in LIVE_IMPORT_CHAINS {
+            let spec = historical_chain_spec(chain).unwrap();
+            assert!(
+                spec.requires_exact_child_fields(),
+                "{chain} must require exact child fields"
+            );
+            assert!(spec.is_live_import());
         }
         assert!(
             !historical_chain_spec("devcoin")
@@ -511,5 +576,31 @@ mod tests {
             !candidates.contains(&research.join("data/devcoin_validated_stales.csv")),
             "retired flat validated-stales path must not be probed: {candidates:?}"
         );
+    }
+
+    #[test]
+    fn live_import_chains_are_all_live_lifecycle_and_registered() {
+        // Every LIVE_IMPORT_CHAINS entry must name a real Live registry row (a
+        // typo or a chain that changed lifecycle would silently drop it from the
+        // import surface).
+        for chain in LIVE_IMPORT_CHAINS {
+            assert!(
+                SOURCE_REGISTRY
+                    .iter()
+                    .any(|def| def.chain == *chain && def.lifecycle == SourceLifecycle::Live),
+                "LIVE_IMPORT_CHAINS entry {chain:?} has no Live registry row"
+            );
+        }
+        // No overlap with Historical/Partial (those are already accepted).
+        for chain in LIVE_IMPORT_CHAINS {
+            assert!(
+                !SOURCE_REGISTRY.iter().any(|def| def.chain == *chain
+                    && matches!(
+                        def.lifecycle,
+                        SourceLifecycle::Historical | SourceLifecycle::Partial
+                    )),
+                "LIVE_IMPORT_CHAINS entry {chain:?} overlaps a Historical/Partial row"
+            );
+        }
     }
 }

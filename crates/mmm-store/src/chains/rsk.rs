@@ -84,7 +84,15 @@ async fn upsert_rsk_evidence<C: GenericClient>(
                 ), \
                 is_uncle = EXCLUDED.is_uncle, \
                 uncle_index = EXCLUDED.uncle_index, \
-                uncle_parent_height = EXCLUDED.uncle_parent_height",
+                uncle_parent_height = EXCLUDED.uncle_parent_height, \
+                merkle_proof = COALESCE( \
+                    rsk_merge_mining_evidence.merkle_proof, \
+                    EXCLUDED.merkle_proof \
+                ), \
+                coinbase_tail = COALESCE( \
+                    rsk_merge_mining_evidence.coinbase_tail, \
+                    EXCLUDED.coinbase_tail \
+                )",
             &[
                 &event_id,
                 &evidence.rsk_block_hash,

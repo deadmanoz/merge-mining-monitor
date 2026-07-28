@@ -83,6 +83,43 @@ This changelog starts with the initial release.
   `--skip-malformed` is passed), so a corrupt file or mid-import failure
   records nothing rather than a partial membership that downstream
   empty-membership guards would treat as complete.
+- Extend `import-dataset` to the live-lifecycle chains that also publish
+  recovered historical monitor-evidence exports (namecoin, rsk, elastos,
+  syscoin, hathor, fractal). The importer's chain table stays a closed set: a
+  new `LIVE_IMPORT_CHAINS` allowlist opts these `Live` registry rows into
+  historical import alongside the existing `Historical`/`Partial` rows, and each
+  gets a `HEIGHT_COLUMNS` entry (all use the normalized `child_height` column,
+  verified against every export header). The side-table hygiene test is
+  extended to accept live-import chains, and a new test asserts every
+  `LIVE_IMPORT_CHAINS` entry names a real `Live` registry row and does not
+  overlap the Historical/Partial set. These sources also live-capture into the
+  same `source_id`; on a `(source_id, child_height, child_block_hash)`
+  collision the existing upsert only advances `confirmed_at` and coalesces the
+  child coinbase columns, never rewriting the first writer's parent-side
+  evidence, so imported historical rows and live-captured rows coexist
+  protectively (the upsert is unchanged). The stale-only historical manifest and
+  its test are unaffected: they enumerate only `historical`-lifecycle codes, and
+  live-import chains are supplied through the research monitor-evidence exports,
+  not the manifest.
+- Require exact child identity for the live-import chains and construct the
+  RSK sidecar at import. The research exports now publish node-verified
+  `child_block_hash` / `child_block_time` for all six chains (internal byte
+  order for the Bitcoin-family chains and Hathor, forward for RSK, matching
+  live storage), so the six join `requires_exact_child_fields`: a blank child
+  cell skips as `empty_field` instead of minting a synthetic
+  `sha256d("mmm-dataset:...")` hash that could never deduplicate against a
+  live-captured row, and `child_block_time` gains the exact-chain `u32` bound
+  instead of silently falling back to the Bitcoin parent's nTime. The RSK
+  export additionally carries the seven `rsk_merge_mining_evidence` columns
+  (miner, merge-mining hash, uncle placement, merkle proof, coinbase tail); a
+  new `rsk_sidecar` module parses them into the same `RskEvidencePayload` the
+  live poller writes and the runner routes RSK rows through
+  `write_rsk_capture_in_txn`, so every imported `auxpow:rsk` event lands with
+  the 1:1 sidecar row `mmm-api`'s block-detail projection requires.
+  `pool_identity_id` is left NULL for the `reclassify-pools` late-fill path.
+  The default CSV search now resolves live-import chains to their
+  monitor-evidence exports (the exact-child-field carve-out to
+  `data/canonical/` stays scoped to VCash/Lyncoin/SixEleven).
 - Derive the historical importer's chain table from `mmm-capture`'s
   `SOURCE_REGISTRY` instead of hand-listing it a second time.
   `historical_ingest::config::HISTORICAL_CHAINS` now filters the registry's
