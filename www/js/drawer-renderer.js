@@ -369,13 +369,22 @@ function renderCompetition(competition) {
   ]);
 }
 
+/// A derivable delta doubles as a cross-link into the distribution view, which
+/// shows where this competition sits among all of them. An absent or
+/// unrepresentable one stays plain text: it has no position on the symlog strip,
+/// no bin and no outlier row, so the link would land on a view that cannot place
+/// it. The selection is already in `state.selectedHash`, so the target view
+/// needs no argument beyond the view id.
 function formatHeaderTimeDelta(value) {
   if (value === null || value === undefined) return formatScalar(value);
   const seconds = Number(value);
   if (!Number.isFinite(seconds)) return formatScalar(value);
-  if (seconds === 0) return "winning and stale block header timestamps are equal to the second";
-  const direction = seconds > 0 ? "after" : "before";
-  return `winning block header timestamp is ${Math.abs(seconds)}s ${direction} the stale block header timestamp`;
+  const prose = seconds === 0
+    ? "winning and stale block header timestamps are equal to the second"
+    : `winning block header timestamp is ${Math.abs(seconds)}s `
+      + `${seconds > 0 ? "after" : "before"} the stale block header timestamp`;
+  return `<button class="kv-link" type="button" data-action="delta"`
+    + ` title="Show this competition in the distribution">${prose}</button>`;
 }
 
 function renderStaleBranch(branch, selectedHash = null) {

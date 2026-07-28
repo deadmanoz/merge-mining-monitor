@@ -59,14 +59,55 @@ registerView("tree", {
   },
 });
 
+// The hash a repair has already SETTLED for: the refreshed snapshot carried it,
+// or the loaded block detail says there is nothing to carry. Anything else stays
+// retryable, because it is a state the backend can still resolve: a failed
+// request, or a read model that lags the block detail and returns 200 without
+// the row yet. Retiring on a bare successful response would give up on those
+// permanently, leaving the advertised focused state missing until a manual
+// Refresh; retrying costs one request per user-initiated activation.
+let lastSelectionRefetch = null;
+
+/// True when the selection is missing from the cached snapshot and worth
+/// refetching for. The tree refreshes on a timer while competitions load once,
+/// so a stale block discovered after the first load would otherwise cross-link
+/// into a view that cannot mark, bin or list it.
+///
+/// The block detail has three states here and they are not interchangeable. Not
+/// loaded yet is UNKNOWN, and must be treated as worth trying: it arrives from
+/// its own request, so a selection crossed over before it lands would otherwise
+/// read as having no competition, skip the repair, and have nothing to retry
+/// once it resolved. Loaded and carrying no competition is a definite no, and
+/// skipping it matters because activateView also runs on every Source-filter
+/// change: a canonical selection would otherwise refetch the whole unpaginated
+/// endpoint each time.
+function snapshotPredatesSelection() {
+  const hash = state.selectedHash;
+  if (!hash || hash === lastSelectionRefetch) return false;
+  const detail = state.selectedBlock;
+  if (detail && detail.block?.hash === hash && !detail.competition) return false;
+  return !state.competitions?.some((row) => row.stale_hash === hash);
+}
+
+/// Whether there is nothing left for a repair to achieve for `hash`: the
+/// snapshot now holds its competition, or the block detail has loaded and
+/// conclusively has none.
+function repairSettled(hash) {
+  if (state.competitions?.some((row) => row.stale_hash === hash)) return true;
+  const detail = state.selectedBlock;
+  return Boolean(detail && detail.block?.hash === hash && !detail.competition);
+}
+
 registerView("delta", {
   label: "Distribution",
   async load({ force = false } = {}) {
     // Competitions change on the order of weeks, so this is a load-once view:
     // the auto-refresh timer never comes here, and only an explicit Refresh
     // (which forces) refetches.
-    if (state.competitions && !force) return;
+    if (state.competitions && !force && !snapshotPredatesSelection()) return;
+    const hash = state.selectedHash;
     await loadCompetitions();
+    lastSelectionRefetch = hash && repairSettled(hash) ? hash : null;
   },
   render() {
     // Mounting builds the rail fieldsets and the main panel; it needs the data,

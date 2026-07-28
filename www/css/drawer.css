@@ -130,6 +130,26 @@
   overflow-wrap: anywhere;
 }
 
+/* A value that doubles as a cross-link. Styled as a link rather than a button,
+   because it sits inline in a definition list where a button chrome would read
+   as a separate control rather than as the value itself. */
+.kv-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--focus);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.kv-link:hover {
+  text-decoration-style: solid;
+}
+
 .empty,
 .loading {
   min-height: 72px;

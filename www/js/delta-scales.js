@@ -183,6 +183,17 @@ function binWidth(half, explicit) {
  *
  * `rows` must already be delta-usable (see `partitionByDelta`).
  */
+/// The bin a delta belongs to, by the same rule computeBins used to count it.
+/// Callers that need to point AT a bin (marking the selection, say) have to
+/// agree with the pass that filled them, so both go through binIndex and the
+/// same clamp rather than re-deriving the arithmetic.
+function binKeyFor({ w, half }, delta) {
+  if (!Number.isFinite(delta)) return null;
+  if (Math.abs(delta) > half) return null;
+  const kMax = Math.floor(half / w);
+  return clamp(binIndex(delta, w), -kMax, kMax);
+}
+
 function computeBins(rows, half, explicitWidth) {
   const w = binWidth(half, explicitWidth);
   // floor, not round: rounding up puts the outermost bin CENTRE beyond the
@@ -267,6 +278,7 @@ export {
   SYM_TICKS,
   binWidth,
   clamp,
+  binKeyFor,
   computeBins,
   countAxis,
   countScale,

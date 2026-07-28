@@ -8,6 +8,7 @@ import { wireSourceStatusPopover } from "./source-status.js?v=0.2.1";
 import { inputDateTimeToUtc } from "./tree-lookup.js?v=0.2.1";
 import { hasExplicitTreeView, hasManualTreeLookup, hasUnheightedAnchorView, syncUrl, treeWindowError } from "./tree-query-state.js?v=0.2.1";
 import { wireTreeLegend } from "./tree-renderer.js?v=0.2.1";
+import { prepareFocus } from "./delta-view.js?v=0.2.1";
 import { activateView, applyViewScopes, wireViewSwitcher } from "./view-shell.js?v=0.2.1";
 import { NAV_COARSE_STRIDE } from "./windowing.js?v=0.2.1";
 
@@ -542,6 +543,13 @@ function wireEvents() {
   $("#drawer-reopen").addEventListener("click", () => setRailCollapsed(RAILS.drawer, false));
   $("#filters-collapse").addEventListener("click", () => setRailCollapsed(RAILS.filters, true));
   $("#filters-reopen").addEventListener("click", () => setRailCollapsed(RAILS.filters, false));
+  // The drawer is re-rendered from HTML strings on every selection, so its
+  // cross-link is delegated rather than bound per render.
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest('[data-action="delta"]')) return;
+    prepareFocus();
+    activateView("delta");
+  });
   document.addEventListener("click", async (event) => {
     const copy = event.target.closest("[data-copy]");
     if (!copy) return;

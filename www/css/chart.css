@@ -121,6 +121,14 @@
   filter: brightness(1.15);
 }
 
+/* The bin holding the current selection. An outline rather than a fill change:
+   the fill already carries the sign, and brightness is taken by hover. */
+.bar-mark.is-selected {
+  stroke: var(--focus);
+  stroke-width: 2;
+  paint-order: stroke;
+}
+
 /* Off-scale gutters: everything past the window edge, drawn on the same count
    axis but hatched so it never reads as an in-range bin. */
 .gutter-mark {

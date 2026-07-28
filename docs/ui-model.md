@@ -55,7 +55,19 @@ Deltas the API cannot express (a difference outside a 32-bit second count)
 are excluded from every statistic and reported as an unavailable count, never
 counted as zero. A selection that the Source or Era filter excludes keeps its
 marker on the strip and is named in the outlier panel, but contributes to no
-count; navigation never silently resets a filter.
+count; navigation never silently resets a filter, and that notice instead offers
+to clear only the filters actually hiding the record.
+
+The two views cross-link through the shared selection. In the block detail, a
+stale block's Header Time Delta is a link into the distribution, which arrives
+focused on that competition: marked on the strip, and either marked on the
+histogram bin that holds it or scrolled to and flagged in the outlier panel when
+it sits past the window edge. A delta the API could not express is not a link,
+because it has no position, no bin and no outlier row. In the other direction,
+the outlier panel names the current selection and offers to show it in the tree,
+which retargets the tree window on its height rather than merely switching
+views. Both directions preserve `selected`, so `?view=delta&selected=<hash>`
+restores the view, the selection, the focused state and the open detail panel.
 
 The topbar includes a compact About affordance beside the product name. It
 opens a modal with a step-through visual explainer of why merge-mined AuxPoW

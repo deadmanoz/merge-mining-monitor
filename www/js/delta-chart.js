@@ -130,8 +130,9 @@ function renderHistogram(svg, container, view, binning) {
     const bx = x0 + GAP / 2;
     const by = y(bin.count);
     const cls = bin.centre === 0 ? "bar-zero" : bin.centre < 0 ? "bar-neg" : "bar-pos";
+    const isSelected = view.selectedBinK != null && bin.k === view.selectedBinK;
     g.appendChild(el("rect", {
-      class: `bar-mark ${cls}`,
+      class: `bar-mark ${cls}${isSelected ? " is-selected" : ""}`,
       x: bx,
       y: by,
       width: barW,
@@ -147,7 +148,8 @@ function renderHistogram(svg, container, view, binning) {
         : w === 1 ? "timestamps tied to the second" : "bin spans zero";
     wireTip(hit, container,
       `<strong>${range}</strong>${fmtInt(bin.count)} competition${bin.count === 1 ? "" : "s"} `
-      + `(${fmtPct(bin.count / Math.max(1, inWindow))} of the window)<br /><span>${sense}</span>`);
+      + `(${fmtPct(bin.count / Math.max(1, inWindow))} of the window)<br /><span>${sense}</span>`
+      + (isSelected ? `<br /><span>holds the selected competition</span>` : ""));
     g.appendChild(hit);
   }
 

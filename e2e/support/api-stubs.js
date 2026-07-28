@@ -64,6 +64,22 @@ function makeCompetition(hash, height, deltaSeconds, overrides = {}) {
   };
 }
 
+// The `competition` block a /api/v1/block payload carries, which is what the
+// drawer's Competition section renders. Shaped for the drawer rather than for
+// /api/v1/competitions: it names the winning block, which that endpoint omits.
+function blockCompetition(hash, height, deltaSeconds, overrides = {}) {
+  return {
+    btc_height: height,
+    stale_hash: hash,
+    canonical_hash: "f".repeat(64),
+    stale_bitcoin_miner_pool: { id: 7, slug: "antpool", name: "AntPool", known: true },
+    canonical_bitcoin_miner_pool: { id: 8, slug: "f2pool", name: "F2Pool", known: true },
+    header_time_delta_s: deltaSeconds,
+    propagation_delta_s: null,
+    ...overrides,
+  };
+}
+
 function competitionsPayload(competitions = []) {
   return { schema_version: "v1", generated_at: GENERATED_AT, competitions };
 }
@@ -217,6 +233,8 @@ async function stubApi(page, treeRequests = [], options = {}) {
 module.exports = {
   GENERATED_AT,
   RELEASE_VERSION,
+  blockCompetition,
+  blockPayload,
   competitionsPayload,
   makeCompetition,
   makeNode,
