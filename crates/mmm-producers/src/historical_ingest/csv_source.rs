@@ -19,9 +19,10 @@ use bitcoin::consensus::deserialize;
 use bitcoin::hashes::{Hash as _, sha256d};
 use mmm_capture::auxpow::{parse_bip34_height, validates_target};
 use mmm_capture::btc_orphan::{BtcOrphanVerdict, classify_btc_orphan, is_strict_bip34_chain};
-use mmm_capture::capture::NormalizedEventEvidence;
+use mmm_capture::capture::{NormalizedEventEvidence, RskEvidencePayload};
 
 use super::config::HistoricalChainSpec;
+use super::rsk_sidecar::{RskSidecarColumns, parse_rsk_sidecar};
 
 /// The classification stated by the source dataset's `classification` column.
 ///
@@ -69,6 +70,9 @@ pub(super) struct ImportCandidate {
     pub(super) btc_parent_display_hash: String,
     pub(super) orphan_verdict: Option<BtcOrphanVerdict>,
     pub(super) relevance_selection: Option<RelevanceSelection>,
+    /// The 1:1 `rsk_merge_mining_evidence` payload, present exactly when the
+    /// dataset is RSK (see the `rsk_sidecar` module).
+    pub(super) rsk_evidence: Option<RskEvidencePayload>,
 }
 
 /// Typed reason a row is dropped instead of ingested.
@@ -190,6 +194,8 @@ pub(super) struct CsvLayout {
     relevance: Option<usize>,
     relevance_reason: Option<usize>,
     requires_exact_child_fields: bool,
+    /// RSK's seven sidecar columns, resolved (and required) only for RSK.
+    rsk_sidecar: Option<RskSidecarColumns>,
 }
 
 impl CsvLayout {
@@ -218,6 +224,11 @@ impl CsvLayout {
             relevance: optional_header(headers, "btc_stale_relevance"),
             relevance_reason: optional_header(headers, "relevance_reason"),
             requires_exact_child_fields,
+            rsk_sidecar: if spec.chain == "rsk" {
+                Some(RskSidecarColumns::new(headers)?)
+            } else {
+                None
+            },
         })
     }
 }
@@ -271,6 +282,11 @@ pub(super) fn candidate_from_record(
         None if layout.requires_exact_child_fields => return Err(SkipReason::EmptyField),
         None => synthetic_child_hash(spec.chain, child_height),
     };
+    let rsk_evidence = layout
+        .rsk_sidecar
+        .as_ref()
+        .map(|columns| parse_rsk_sidecar(columns, record, child_height, &child_block_hash))
+        .transpose()?;
     let evidence = NormalizedEventEvidence {
         child_height,
         child_block_hash,
@@ -295,6 +311,7 @@ pub(super) fn candidate_from_record(
         btc_parent_display_hash: display_hash,
         orphan_verdict: Some(orphan_verdict),
         relevance_selection,
+        rsk_evidence,
     })
 }
 
@@ -400,7 +417,7 @@ fn orphan_verdict(
 }
 
 /// Locate a required column index, erroring (aborting the import) if absent.
-fn required_header(headers: &csv::StringRecord, name: &str) -> Result<usize> {
+pub(super) fn required_header(headers: &csv::StringRecord, name: &str) -> Result<usize> {
     optional_header(headers, name)
         .ok_or_else(|| anyhow::anyhow!("CSV missing required column {name}"))
 }
@@ -468,12 +485,12 @@ fn parse_parent_header(value: Option<&str>) -> Result<Header, SkipReason> {
 }
 
 /// Decode a required hex field; empty is `EmptyField`, bad hex is `Malformed`.
-fn parse_hex_field(value: Option<&str>) -> Result<Vec<u8>, SkipReason> {
+pub(super) fn parse_hex_field(value: Option<&str>) -> Result<Vec<u8>, SkipReason> {
     hex::decode(non_empty(value)?).map_err(|_| SkipReason::Malformed)
 }
 
 /// Decode an optional hex field: missing/blank yields `Ok(None)`, bad hex is `Malformed`.
-fn parse_optional_hex_field(value: Option<&str>) -> Result<Option<Vec<u8>>, SkipReason> {
+pub(super) fn parse_optional_hex_field(value: Option<&str>) -> Result<Option<Vec<u8>>, SkipReason> {
     let value = value.map(str::trim).unwrap_or_default();
     if value.is_empty() {
         Ok(None)
@@ -498,7 +515,7 @@ fn parse_optional_hash_field(value: Option<&str>) -> Result<Option<Vec<u8>>, Ski
 }
 
 /// Trim and require a non-empty value, mapping blank/missing to `EmptyField`.
-fn non_empty(value: Option<&str>) -> Result<&str, SkipReason> {
+pub(super) fn non_empty(value: Option<&str>) -> Result<&str, SkipReason> {
     let value = value.map(str::trim).unwrap_or_default();
     if value.is_empty() {
         Err(SkipReason::EmptyField)
@@ -894,6 +911,61 @@ ixcoin,unknown,,valid_direct_stale,ee\n";
         assert_ne!(
             synthetic_child_hash("devcoin", 10),
             synthetic_child_hash("ixcoin", 10)
+        );
+    }
+
+    const RSK_CHILD_HASH: &str = "863002b6ad9a940f191f3ed3289e42e8eee107a769b6ecdfdaaad747f70c981d";
+    const RSK_MINER: &str = "32dfc7a84f24b10a5dded1d8b24f48b96ab77373";
+    const RSK_MM_HASH: &str = "f0d9129c65b3b91a89355b9ccf975e55c29229d78d4a66201b83d409ae001f73";
+
+    fn rsk_candidate(
+        is_uncle: &str,
+        uncle_index: &str,
+        uncle_parent_height: &str,
+    ) -> Result<ImportCandidate, SkipReason> {
+        let spec = historical_chain_spec("rsk").unwrap();
+        let input = format!(
+            "child_height,child_block_hash,child_block_time,btc_header_hex,classification,\
+             btc_header_hash,rsk_miner,merge_mining_hash,is_uncle,uncle_index,\
+             uncle_parent_height,rsk_merkle_proof,rsk_coinbase_tail\n\
+             263443,{RSK_CHILD_HASH},1521456575,{GENESIS_HEADER},stale,{GENESIS_HASH},\
+             {RSK_MINER},{RSK_MM_HASH},{is_uncle},{uncle_index},{uncle_parent_height},0405,\n"
+        );
+        let mut reader = csv::Reader::from_reader(input.as_bytes());
+        let layout = CsvLayout::new(reader.headers().unwrap(), spec).unwrap();
+        let record = reader.records().next().unwrap().unwrap();
+        candidate_from_record(spec, &layout, &record, &RelevanceFilter::default())
+    }
+
+    #[test]
+    fn rsk_rows_parse_the_sidecar_payload() {
+        // Field parsing is covered in rsk_sidecar; this pins the seam: an RSK
+        // candidate carries the payload, keyed by the event's child identity.
+        let block = rsk_candidate("0", "", "").unwrap();
+        let evidence = block.rsk_evidence.expect("rsk rows carry sidecar evidence");
+        assert_eq!(evidence.rsk_block_hash, block.evidence.child_block_hash);
+        assert_eq!(evidence.rsk_height, block.evidence.child_height);
+        assert!(!evidence.is_uncle);
+
+        let uncle = rsk_candidate("1", "0", "417924").unwrap();
+        assert!(uncle.rsk_evidence.unwrap().is_uncle);
+    }
+
+    #[test]
+    fn live_import_rows_reject_missing_child_identity() {
+        // A live-import chain must never fall back to a synthetic child hash
+        // or the Bitcoin parent time: a blank cell is a skip, not a mint.
+        let spec = historical_chain_spec("namecoin").unwrap();
+        let input = format!(
+            "child_height,child_block_hash,child_block_time,btc_header_hex,classification,btc_header_hash\n\
+             30902,,,{GENESIS_HEADER},stale,{GENESIS_HASH}\n"
+        );
+        let mut reader = csv::Reader::from_reader(input.as_bytes());
+        let layout = CsvLayout::new(reader.headers().unwrap(), spec).unwrap();
+        let record = reader.records().next().unwrap().unwrap();
+        assert_eq!(
+            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap_err(),
+            SkipReason::EmptyField
         );
     }
 

@@ -54,10 +54,21 @@ pub(super) struct HistoricalChainSpec {
 }
 
 impl HistoricalChainSpec {
-    /// Explicit recovery artifacts carry authoritative child identity and time.
-    /// They must never fall back to a synthetic hash or Bitcoin parent time.
+    /// Chains whose import rows must carry authoritative child identity and
+    /// time, never falling back to a synthetic hash or Bitcoin parent time:
+    /// the explicit recovery artifacts (vcash/lyncoin/sixeleven) and every
+    /// live-import chain. For live-import chains this is what makes an
+    /// imported row collide with a live-captured one under the
+    /// `(source_id, child_height, child_block_hash)` upsert -- a synthetic
+    /// hash would mint a permanent duplicate of any row live capture also
+    /// observes.
     pub(super) fn requires_exact_child_fields(&self) -> bool {
-        matches!(self.chain, "vcash" | "lyncoin" | "sixeleven")
+        matches!(self.chain, "vcash" | "lyncoin" | "sixeleven") || is_live_import_chain(self.chain)
+    }
+
+    /// Whether this spec is a live-lifecycle chain opted into import.
+    pub(super) fn is_live_import(&self) -> bool {
+        is_live_import_chain(self.chain)
     }
 }
 
@@ -140,9 +151,10 @@ const HEIGHT_COLUMNS: &[(&str, &str)] = &[
 ];
 
 /// Look up `chain`'s CSV column name. Panics if a `Historical`/`Partial`
-/// `SOURCE_REGISTRY` row has no matching `HEIGHT_COLUMNS` entry: a silent
-/// fallback would ship an importer that cannot find its own height column, so
-/// an incomplete side table must fail loudly at the first lookup instead.
+/// `SOURCE_REGISTRY` row -- or a `LIVE_IMPORT_CHAINS`-opted `Live` row -- has
+/// no matching `HEIGHT_COLUMNS` entry: a silent fallback would ship an
+/// importer that cannot find its own height column, so an incomplete side
+/// table must fail loudly at the first lookup instead.
 fn height_column_for(chain: &'static str) -> &'static str {
     HEIGHT_COLUMNS
         .iter()
@@ -317,17 +329,23 @@ fn default_csv_candidates_with_roots(
 ) -> Result<Vec<PathBuf>> {
     let mut candidates = Vec::new();
     if let Some(research) = &research {
-        if spec.requires_exact_child_fields() {
+        if spec.requires_exact_child_fields() && !spec.is_live_import() {
+            // Explicit-recovery chains (vcash/lyncoin/sixeleven): the
+            // committed canonical-blocks artifact is the only source carrying
+            // their child identity and time; their monitor-evidence exports
+            // predate the child_block_time column, so probing them first
+            // would select a present-but-incompatible export and abort the
+            // import ahead of a compatible fallback.
             candidates.push(
                 research
                     .join("data/canonical")
                     .join(format!("{}_canonical_blocks.csv", spec.chain)),
             );
         } else {
-            // Monitor-evidence exports omit `child_block_time`, which the
-            // exact-child-field chains require, so those chains never probe
-            // them: a present-but-incompatible export would be selected and
-            // abort the import ahead of a compatible fallback.
+            // Live-import chains take this branch too: their monitor-evidence
+            // exports carry hydrated child_block_hash / child_block_time (and
+            // RSK's sidecar columns), which requires_exact_child_fields
+            // demands of them.
             candidates.push(
                 research
                     .join("results/monitor-evidence")
@@ -508,13 +526,24 @@ mod tests {
             historical_chain_spec("sixeleven").unwrap().height_column,
             "child_height"
         );
+        // Explicit-recovery chains and every live-import chain require exact
+        // child fields; live-import chains would otherwise mint synthetic
+        // hashes that permanently duplicate live-captured rows.
         for chain in ["vcash", "lyncoin", "sixeleven"] {
+            let spec = historical_chain_spec(chain).unwrap();
             assert!(
-                historical_chain_spec(chain)
-                    .unwrap()
-                    .requires_exact_child_fields(),
+                spec.requires_exact_child_fields(),
                 "{chain} must require exact child fields"
             );
+            assert!(!spec.is_live_import());
+        }
+        for chain in LIVE_IMPORT_CHAINS {
+            let spec = historical_chain_spec(chain).unwrap();
+            assert!(
+                spec.requires_exact_child_fields(),
+                "{chain} must require exact child fields"
+            );
+            assert!(spec.is_live_import());
         }
         assert!(
             !historical_chain_spec("devcoin")

@@ -10,7 +10,26 @@ the stored events otherwise follow the same derived-state rules as live events.
 `argentum`, `bitcoin-vault`, `bitmark`, `coiledcoin`, `crown`, `devcoin`,
 `elcash`, `emercoin`, `geistgeld`, `groupcoin`, `huntercoin`, `i0coin`,
 `ixcoin`, `lyncoin`, `myriadcoin`, `sixeleven`, `terracoin`, `unobtanium`,
-`vcash`, and `xaya`.
+`vcash`, and `xaya`, plus the six live-lifecycle chains that also publish
+recovered historical monitor-evidence exports: `namecoin`, `rsk`, `elastos`,
+`syscoin`, `hathor`, and `fractal` (the closed `LIVE_IMPORT_CHAINS`
+allowlist).
+
+Live-import chains capture into the same `source_id` as their live pollers,
+so their rows must carry the exact node-verified `child_block_hash` /
+`child_block_time` the research exports publish: that identity is what lets
+an imported row collide with a live-captured one under the
+`(source_id, child_height, child_block_hash)` upsert (which never rewrites
+the first writer's parent evidence) instead of duplicating it. A blank child
+cell skips as `empty_field`; the synthetic-hash fallback is reserved for the
+legacy historical chains that recovered no child identity. RSK rows
+additionally construct the 1:1 `rsk_merge_mining_evidence` sidecar from the
+export's seven sidecar columns (miner, merge-mining hash, uncle placement,
+merkle proof, coinbase tail) in the same transaction as the event -- the API's
+block-detail projection refuses an `auxpow:rsk` event without one. The
+sidecar's `pool_identity_id` is left NULL at import; run
+`just reclassify-pools` afterwards to late-fill it from the RSK miner
+registry.
 
 VCash is a 68-row canonical subset recovered from archived explorer pages, not
 the VCash blockchain. The default CSV search resolves it to the research
@@ -49,13 +68,15 @@ supplied inputs.
 
 The importer prefers richer local inputs when present:
 
-1. for the exact-child-field chains (VCash, Lyncoin, SixEleven), the research
-   repo's committed `data/canonical/<chain>_canonical_blocks.csv` artifacts;
-   for every other chain, its committed monitor-evidence export
+1. for the explicit-recovery chains (VCash, Lyncoin, SixEleven), the research
+   repo's committed `data/canonical/<chain>_canonical_blocks.csv` artifacts,
+   whose monitor-evidence exports predate the `child_block_time` column those
+   chains require; for every other chain -- including the live-import chains,
+   whose exports carry hydrated `child_block_hash` / `child_block_time` and
+   RSK's sidecar columns -- its committed monitor-evidence export
    (`results/monitor-evidence/<chain>_monitor_evidence.csv`, which carries
    per-row `btc_stale_relevance` / `relevance_reason` verdicts, so no
-   separate relevance inventory is needed). Monitor-evidence exports omit
-   `child_block_time`, so the exact-child-field chains never probe them.
+   separate relevance inventory is needed).
 2. generated full-evidence CSVs
 3. local classified archive CSVs
 4. compact stale-block CSVs
@@ -129,6 +150,17 @@ no `--csv` override is needed:
 just import-dataset lyncoin
 just import-dataset sixeleven
 just import-dataset vcash
+```
+
+Import a live-import chain. The default CSV search resolves it to the research
+repo's committed monitor-evidence export, which carries the node-verified
+child identity these chains require; RSK also writes its
+`rsk_merge_mining_evidence` sidecar per event, then late-fills pool identity:
+
+```bash
+just import-dataset namecoin
+just import-dataset rsk
+just reclassify-pools --only rsk
 ```
 
 Verify explicit inputs before import:

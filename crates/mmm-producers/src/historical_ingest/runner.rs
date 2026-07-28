@@ -3,8 +3,9 @@
 //!
 //! This is the only I/O layer of the importer. It pairs the pure `csv_source`
 //! parse with the live Core `ConfiguredParentClassifier` to decide each row,
-//! then writes only `merge_mining_event` (plus the 1:1 sidecar) via
-//! `mmm_store`, routing through `read_model::mutation` so the derived tables
+//! then writes only `merge_mining_event` (plus, for RSK, the 1:1
+//! `rsk_merge_mining_evidence` sidecar) via `mmm_store`, routing through
+//! `read_model::mutation` so the derived tables
 //! follow the same path as live producers. Per-row failures are tallied as
 //! skips, never aborts; only setup failures and capture errors propagate.
 
@@ -20,7 +21,10 @@ use mmm_capture::capture::{
 };
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::{capture_in_txn, capture_preclassified_in_txn};
-use mmm_store::{upsert_merge_mining_event_with_attributions, upsert_pool_snapshot};
+use mmm_store::{
+    upsert_merge_mining_event_with_attributions, upsert_pool_snapshot,
+    write_elastos_capture_in_txn, write_rsk_capture_in_txn,
+};
 use tokio_postgres::Client;
 use tracing::info;
 
@@ -76,6 +80,7 @@ enum ImportDecision {
 /// and slug-to-id map rather than recomputing them.
 struct ImportContext<'a> {
     source_id: i64,
+    chain: &'a str,
     classifier: &'a ConfiguredParentClassifier,
     resolver: &'a PoolResolver,
     pool_ids_by_slug: &'a HashMap<String, i64>,
@@ -227,6 +232,7 @@ pub async fn run_historical_import(
             client,
             &ImportContext {
                 source_id,
+                chain: spec.chain,
                 classifier,
                 resolver: &resolver,
                 pool_ids_by_slug: &pool_ids_by_slug,
@@ -371,6 +377,32 @@ async fn import_candidate(
         ClassificationProof::default(),
         now_epoch_seconds()?,
     )?;
+    // RSK rows carry a 1:1 `rsk_merge_mining_evidence` payload that must land
+    // in the same transaction as the event (mmm-api hard-errors on any
+    // `auxpow:rsk` event without its sidecar row). Elastos routes through its
+    // reactivating writer so a conflict with a live row auto-revoked
+    // `ELASTOS_REVOKE_NON_BTC` clears that reversible, evidence-based
+    // revocation, exactly as a live re-Valid capture would (every imported
+    // row is PoW-target-gated BTC evidence); sticky and manual revocations
+    // stay untouched. Hathor deliberately stays on the generic upsert: its
+    // reversible revocations (voided/superseded) track CURRENT child-DAG
+    // state that a historical observation must not resurrect, and its writer
+    // requires the RFC 0006 sidecar the exports cannot supply. Every other
+    // chain writes the event alone. `pool_identity_id` stays NULL here --
+    // the `reclassify-pools` late-fill path resolves it from the registry.
+    let rsk_evidence = candidate.rsk_evidence.as_ref();
+    let use_elastos_writer = context.chain == "elastos";
+    let upsert = async |txn: &tokio_postgres::Transaction<'_>,
+                        source_id: i64,
+                        payload: &mmm_capture::capture::MergeMiningEventPayload| {
+        match rsk_evidence {
+            Some(evidence) => write_rsk_capture_in_txn(txn, source_id, payload, evidence).await,
+            None if use_elastos_writer => {
+                write_elastos_capture_in_txn(txn, source_id, payload).await
+            }
+            None => upsert_merge_mining_event_with_attributions(txn, source_id, payload).await,
+        }
+    };
     match decision {
         ImportDecision::CaptureUnclassified => {
             capture_in_txn(
@@ -379,9 +411,7 @@ async fn import_candidate(
                 context.classifier,
                 &mut payload,
                 "Historical dataset",
-                async |txn, source_id, payload| {
-                    upsert_merge_mining_event_with_attributions(txn, source_id, payload).await
-                },
+                upsert,
             )
             .await
         }
@@ -393,9 +423,7 @@ async fn import_candidate(
                 &mut payload,
                 *parent_classification,
                 "Historical dataset",
-                async |txn, source_id, payload| {
-                    upsert_merge_mining_event_with_attributions(txn, source_id, payload).await
-                },
+                upsert,
             )
             .await
         }

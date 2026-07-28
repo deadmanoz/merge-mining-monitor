@@ -7,6 +7,7 @@
 
 mod config;
 mod csv_source;
+mod rsk_sidecar;
 mod runner;
 
 pub use config::HistoricalImportConfig;
