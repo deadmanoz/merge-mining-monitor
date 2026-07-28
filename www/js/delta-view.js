@@ -12,10 +12,12 @@
 // budget as static markup.
 
 import { centerCameraOnHeight, loadBlock, reconcileNavFromSelected, refreshNavControls } from "./api-client.js?v=0.2.1";
-import { markTreeSelection, RAILS, setRailCollapsed } from "./controls.js?v=0.2.1";
+import { markTreeSelection, RAILS, setRailCollapsed, updateSourceGroupSelectedMarkers } from "./controls.js?v=0.2.1";
 import { renderDrawer } from "./drawer-renderer.js?v=0.2.1";
 import { hideTip, renderContext, renderCoverage, renderHistogram } from "./delta-chart.js?v=0.2.1";
+import { applyOutliersOpen, forgetScroll, renderOutliers, revealFocusedRow } from "./delta-outliers.js?v=0.2.1";
 import {
+  binKeyFor,
   clamp,
   computeBins,
   fmtDelta,
@@ -23,7 +25,6 @@ import {
   fmtPct,
   fmtSpan,
   fmtTick,
-  fmtUtcDate,
   partitionByDelta,
   quantile,
 } from "./delta-scales.js?v=0.2.1";
@@ -219,10 +220,22 @@ function buildMain() {
           </div>
         </div>
       </div>
-      <details id="delta-outliers" class="outlier-panel" open>
-        <summary>Outside window <span id="delta-outlier-count" class="outlier-count"></span></summary>
+      <!-- Deliberately not <details>: Chromium slots details content into an
+           anonymous ::details-content box, so the panel's row template never
+           reaches the list, which then grew to its full
+           content height and was silently clipped by the panel instead of
+           scrolling. With real data the default window leaves hundreds of
+           outliers, so most of the list was unreachable. A button with
+           aria-expanded is the disclosure pattern the rails already use. -->
+      <section id="delta-outliers" class="outlier-panel" data-open="true">
+        <h3 class="outlier-summary">
+          <button id="delta-outliers-toggle" class="outlier-toggle" type="button"
+                  aria-expanded="true" aria-controls="delta-outlier-body">
+            Outside window <span id="delta-outlier-count" class="outlier-count"></span>
+          </button>
+        </h3>
         <div id="delta-outlier-body"></div>
-      </details>
+      </section>
       <div class="context-strip">
         <div class="context-heading">
           <h3>Full range</h3>
@@ -287,8 +300,21 @@ function wireControls() {
       showInTree(Number(button.dataset.height));
       return;
     }
+    if (button.dataset.action === "reveal") {
+      revealSelection();
+      return;
+    }
     selectRow(button.dataset.hash);
   });
+  $("#delta-outliers-toggle").addEventListener("click", () => {
+    view.outliersOpen = !view.outliersOpen;
+    applyOutliersOpen(view.outliersOpen !== false);
+    // A collapsed list could not scroll to the focused row, so opening retries.
+    revealFocusedRow();
+    // The plot gains or loses the list's width, so the SVGs need re-measuring.
+    renderCharts();
+  });
+  applyOutliersOpen(view.outliersOpen !== false);
   // The strip and canvas resize with the rail and drawer, not the window.
   const observer = new ResizeObserver(() => renderCharts());
   observer.observe($("#delta-canvas"));
@@ -375,11 +401,12 @@ function render() {
   // instead would shade records as outside a window that counted them.
   const context = { ...view, half: binning.half, selectedHash: state.selectedHash };
 
+  applyOutliersOpen(view.outliersOpen !== false);
   syncPresets();
   renderStats(usable, unavailable, binning);
   renderMeta(binning);
   renderStatus(usable, unavailable, binning);
-  renderOutliers(binning);
+  renderOutliers(binning, { all: rows(), visible: filtered() });
 
   const showTable = view.tab === "table";
   $("#delta-canvas").hidden = showTable;
@@ -399,7 +426,17 @@ function renderCharts(context, usable, binning) {
     context = { ...view, half: binning.half, selectedHash: state.selectedHash };
   }
   const selected = usable.find((row) => row.stale_hash === state.selectedHash);
-  context.selectedDelta = selected ? null : selectedDeltaOutsideFilter();
+  // The strip marks the selection regardless of the active window, so it needs
+  // the delta for an in-window selection too: renderContext's per-record rug
+  // covers only what the window excludes, so an in-window row has no tick of its
+  // own to mark and would go unmarked there.
+  context.selectedDelta = selected
+    ? (Number.isFinite(selected.header_time_delta_s) ? selected.header_time_delta_s : null)
+    : selectedDeltaOutsideFilter();
+  // Inside the window the selection belongs to a bin, so mark the bin. Past the
+  // edge it belongs to a gutter and an outlier row instead, and binKeyFor
+  // returns null there rather than picking the nearest bin.
+  context.selectedBinK = selected ? binKeyFor(binning, selected.header_time_delta_s) : null;
 
   const canvas = $("#delta-canvas");
   const svg = $("#delta-chart");
@@ -548,54 +585,48 @@ function renderTable(usable, unavailable, { bins, below, above, edgeLo, edgeHi }
     || `<tr><td colspan="5">${esc(empty)}</td></tr>`;
 }
 
-const OUTLIER_LIMIT = 250;
+/// Clear ONLY the filters that hide the selection, then let the normal
+/// filter-change path re-render. Clearing both would throw away a narrowing the
+/// user made for their own reasons, and resetting everything on navigation is
+/// exactly what the hidden-selection notice exists to avoid.
+function revealSelection() {
+  const row = rows().find((candidate) => candidate.stale_hash === state.selectedHash);
+  if (!row) return;
 
-function renderOutliers(binning) {
-  const outside = [...binning.outside]
-    .sort((a, b) => Math.abs(b.header_time_delta_s) - Math.abs(a.header_time_delta_s));
-  const shown = outside.slice(0, OUTLIER_LIMIT);
-  $("#delta-outlier-count").textContent = outside.length ? fmtInt(outside.length) : "";
+  // Era first: it is delta-only, so widening it needs no shared-filter round
+  // trip, and doing it before the Source dispatch means one render, not two.
+  const year = yearOf(row);
+  let eraWidened = false;
+  if (year !== null && (year < view.yearFrom || year > view.yearTo)) {
+    view.yearFrom = Math.min(view.yearFrom, year);
+    view.yearTo = Math.max(view.yearTo, year);
+    rebuildYearOptions();
+    syncEraParam();
+    eraWidened = true;
+  }
 
-  const hidden = hiddenSelectionNotice();
-  if (!outside.length) {
-    $("#delta-outlier-body").innerHTML = hidden
-      + `<p class="empty">Nothing outside the window.</p>`;
+  const sources = state.query.sources ?? [];
+  const hiddenBySource = sources.length && !row.sources.some((code) => sources.includes(code));
+  if (!hiddenBySource) {
+    if (eraWidened) render();
     return;
   }
-  $("#delta-outlier-body").innerHTML = hidden
-    + `<p class="drawer-note">Sorted by magnitude${outside.length > shown.length ? `; showing the ${fmtInt(shown.length)} largest of ${fmtInt(outside.length)}` : ""}.</p>`
-    + `<div class="outlier-list">${shown.map(outlierRow).join("")}</div>`;
-}
-
-/// A selection the Source or Era filter excludes is still marked on the strip,
-/// but it contributes to no statistic. Say so, and offer the one-click escape,
-/// rather than silently resetting the user's filters on navigation.
-function hiddenSelectionNotice() {
-  if (!state.selectedHash) return "";
-  if (filtered().some((row) => row.stale_hash === state.selectedHash)) return "";
-  const row = rows().find((candidate) => candidate.stale_hash === state.selectedHash);
-  if (!row) return "";
-  // Not `?? 0`: an unavailable delta is not a tie, and saying "0s" here would
-  // contradict every other unavailable-delta path in this view.
-  const delta = Number.isFinite(row.header_time_delta_s)
-    ? esc(fmtDelta(row.header_time_delta_s))
-    : "delta unavailable";
-  return `<p class="drawer-note hidden-selection">`
-    + `Selected competition (${delta}, height ${fmtInt(row.btc_height)}) `
-    + `is hidden by the active Source or Era filter, and is excluded from every count here. `
-    + `<button class="secondary-button" type="button" data-outlier-index="-1" data-action="tree" data-height="${row.btc_height}">Show in tree</button></p>`;
-}
-
-function outlierRow(row, index) {
-  const delta = row.header_time_delta_s;
-  const selected = row.stale_hash === state.selectedHash;
-  return `<button class="outlier-row" type="button" data-outlier-index="${index}" data-hash="${esc(row.stale_hash)}"`
-    + `${selected ? ' aria-current="true"' : ""}>`
-    + `<span class="outlier-primary">`
-    + `<span class="outlier-delta" data-sign="${delta < 0 ? "neg" : "pos"}">${esc(fmtDelta(delta))}</span>`
-    + `<span class="outlier-meta">${esc(fmtUtcDate(row.stale_header_time))} · `
-    + `${esc(row.stale_bitcoin_miner_pool.name)} vs ${esc(row.canonical_bitcoin_miner_pool.name)}</span>`
-    + `</span><span class="outlier-height">${fmtInt(row.btc_height)}</span></button>`;
+  // Uncheck the boxes and dispatch the same change the user's own click makes,
+  // so the shared handler owns readForm, the URL, the group markers and the
+  // active view's re-render instead of this view reimplementing all five.
+  const boxes = [...document.querySelectorAll('#source-controls input[name="source"]:checked')];
+  if (boxes.length) {
+    for (const box of boxes) box.checked = false;
+    updateSourceGroupSelectedMarkers();
+    boxes[0].dispatchEvent(new Event("change", { bubbles: true }));
+    return;
+  }
+  // No checkboxes to uncheck, yet the filter is active: a shared link can carry
+  // sources= while /api/v1/sources failed, so the rail rendered nothing. Clear
+  // the query state directly rather than leaving the advertised button inert.
+  state.query.sources = [];
+  syncUrl();
+  render();
 }
 
 function syncPresets() {
@@ -616,4 +647,13 @@ function syncEraParam() {
   syncUrl();
 }
 
-export { hideTip, mount, render, view };
+/// Prepare the view for an explicit focus navigation: the cross-link names a
+/// competition and promises to show it, so the panel that names, flags and
+/// scrolls to it has to be open, and the scroll it owes is a fresh one even for
+/// the selection already held.
+function prepareFocus() {
+  view.outliersOpen = true;
+  forgetScroll();
+}
+
+export { hideTip, mount, prepareFocus, render, view };

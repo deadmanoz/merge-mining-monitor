@@ -591,7 +591,15 @@ function hydrateFormFromUrl() {
     state.query.treeTargetHeight = "";
     state.nav = { target: "orphan", source: "navigator" };
   }
-  if (params.has("selected")) state.selectedHash = params.get("selected");
+  // Lower-cased: the API accepts uppercase hex but every payload returns
+  // lowercase, and the selection is compared by string equality against tree
+  // nodes, competition rows and block detail alike. Keeping the URL's spelling
+  // would load the drawer and match nothing else. Anything that is not 64 hex
+  // characters is left untouched for the existing validation to reject.
+  if (params.has("selected")) {
+    const selected = params.get("selected");
+    state.selectedHash = /^[0-9a-fA-F]{64}$/.test(selected) ? selected.toLowerCase() : selected;
+  }
 }
 
 function writeForm() {

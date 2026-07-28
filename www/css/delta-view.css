@@ -151,21 +151,48 @@ label.radio-row.radio-row {
   overflow: hidden;
 }
 
-.outlier-panel > summary {
+.outlier-panel[data-open="false"] {
+  grid-template-rows: auto;
+}
+
+/* Collapsing has to give the column back, not just the rows: the plot is
+   re-rendered on toggle precisely so it can use the width, and a reserved 240px
+   of blank sidebar would make that pointless. */
+.delta-body:has(.outlier-panel[data-open="false"]) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.outlier-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  width: 100%;
   padding: 7px 9px;
+  border: 0;
   border-bottom: 1px solid var(--line);
-  cursor: pointer;
+  background: none;
+  color: inherit;
+  font: inherit;
   font-size: 12px;
   font-weight: 700;
-  list-style: none;
+  text-align: left;
+  cursor: pointer;
 }
 
-.outlier-panel > summary::-webkit-details-marker {
-  display: none;
+.outlier-toggle::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg);
+}
+
+.outlier-panel[data-open="false"] .outlier-toggle::after {
+  transform: rotate(-45deg);
 }
 
 .outlier-count {
@@ -245,8 +272,10 @@ label.radio-row.radio-row {
   line-height: 1.45;
 }
 
-/* A selection the filters exclude is still marked on the strip but counted
-   nowhere, so it needs saying plainly. */
+/* What the panel says about the current selection: the route back to the tree
+   for any selection, plus, for one the filters exclude, that it is marked on the
+   strip but counted nowhere. */
+.selection-note,
 .hidden-selection {
   margin-bottom: 6px;
   padding: 6px 7px;
@@ -256,8 +285,10 @@ label.radio-row.radio-row {
   background: var(--surface-alt);
 }
 
-.hidden-selection .secondary-button {
+.hidden-selection .secondary-button,
+.selection-note .secondary-button {
   margin-top: 5px;
+  margin-right: 4px;
   min-height: 24px;
   font-size: 11px;
 }

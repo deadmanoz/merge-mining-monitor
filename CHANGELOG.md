@@ -14,6 +14,16 @@ This changelog starts with the initial release.
   plus or minus T" and a Table tab is the accessible twin. Selecting an outlier
   opens the usual block detail, and the Source filter is shared with the tree.
 
+- Cross-link the block detail and the Header Time Delta view through the shared
+  selection: a stale block's Header Time Delta opens the distribution focused on
+  that competition, and the distribution names the current selection and can
+  show it in the tree, retargeting the tree window on its height. A selection
+  the filters hide can be revealed by clearing only the filters that hide it.
+
+- Fix the Header Time Delta view's outlier list growing to its full content
+  height and being clipped by its panel instead of scrolling, which made most
+  rows unreachable whenever the window excluded more than a screenful.
+
 - Add the read-only `GET /api/v1/competitions` endpoint, serving every
   derivable stale-vs-canonical competition with its header-time delta, both
   miner pools, and its active evidence sources. It backs a forthcoming
