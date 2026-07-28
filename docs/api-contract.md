@@ -53,8 +53,8 @@ Successful responses include:
 - `query`: normalized query echo for endpoints with query parameters.
 
 Endpoints that take no query parameters omit the `query` field:
-`/api/v1/version`, `/api/v1/block/:hash` (a path hash only), and
-`/api/v1/sources`.
+`/api/v1/version`, `/api/v1/block/:hash` (a path hash only),
+`/api/v1/sources`, and `/api/v1/competitions`.
 `/api/v1/tree` and `/api/v1/navigator/{target}` have bounded query contracts
 and therefore include a `query` echo.
 
@@ -262,6 +262,8 @@ Response arrays use stable ordering:
 - `tree.branches`: ascending `btc_height_min`, then lexicographic `root_hash`.
   Orphan branches sort among stale branches by their placement `btc_height_min`.
 - `tree.branches[].member_hashes`: root-to-tip order.
+- `competitions`: ascending `btc_height`, then lexicographic `stale_hash`.
+- `competitions[].sources`: ascending source code, unique.
 - `block.proofs`: ascending `source.code`, then smallest
   `evidence.contributing_event_ids` value.
 - `block.event_details`: `event_confirmed_at`, `source`, `child_height`,
@@ -872,6 +874,51 @@ backfills before `/sources` is trusted. The
 same internal-error guard fires if any active unknown parent fails its Bitcoin
 target (a corrupt invariant).
 
+### `/api/v1/competitions`
+
+```
+GET /api/v1/competitions
+```
+
+Purpose: serve every derivable stale-vs-canonical competition in one read, so a
+client can bin, window and filter the header-time-delta distribution without a
+request per interaction. There are no query parameters; the set is small and
+slow-growing, and all selection is client-side.
+
+Response fields:
+
+- `competitions[]` ordered by ascending `btc_height`, then lexicographic
+  `stale_hash` (the same rule as `tree.nodes`). Height alone is not a stable
+  key: one Bitcoin height can carry many stale blocks.
+
+Per row:
+
+- `btc_height`, `stale_hash`, `stale_header_time`;
+- `header_time_delta_s`: `canonical.btc_header_time - stale.btc_header_time`.
+  Positive means the stale block carries the earlier timestamp. JSON `null`
+  when the difference falls outside i32; consumers must treat `null` as
+  unavailable and exclude it from aggregates, never coerce it to `0`;
+- `stale_bitcoin_miner_pool` and `canonical_bitcoin_miner_pool`: the same pool
+  objects the tree and block endpoints serve;
+- `sources[]`: sorted, unique active evidence source codes for the stale block.
+  These are the non-revoked `attestation_proof` source codes plus the synthetic
+  `live-chaintip:bitcoin:core` when the stale block is Core-attested or
+  live-observed, matching what `block.source_summary.sources` reports for the
+  same block so a shared Source filter selects the same rows in both views.
+
+A row appears only when the stale block's `canonical_competitor_hash` resolves
+to a block that is both `canonical` and at the **same** `btc_height`. Those
+predicates are load-bearing: the column is only a foreign key to `block` with a
+not-self check, so nothing in the schema prevents it pointing at a
+non-canonical row, or at a canonical row from another height. Two blocks at
+different heights never raced, so such a pair is not a competition: its delta
+and pool pair would be meaningless, and `canonical_hash` would not be
+recoverable from the reported `btc_height` as described below.
+
+`canonical_hash` is deliberately not served here. It is reachable from
+`btc_height` through `/api/v1/tree`, and a second 64-character hash per row
+roughly doubles the payload for a value this endpoint's clients do not need.
+
 ## Nullability By Parent Kind
 
 | Field | near | unknown | canonical | stale |
@@ -1044,6 +1091,7 @@ Expected 4xx cases:
   `backbone_unsynced`, `backbone_conflict`.
 - `/api/v1/navigator/{target}`: `invalid_query`, `range_too_large`.
 - `/api/v1/sources`: no query validation for the base endpoint.
+- `/api/v1/competitions`: no query validation.
 - `/api/v1/version`: no query validation and no database checkout.
 
 ## Bounds

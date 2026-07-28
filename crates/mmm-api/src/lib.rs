@@ -137,6 +137,7 @@ pub fn router(state: AppState, www_dir: impl AsRef<Path>) -> Router {
         .route("/api/v1/block/{hash}", get(handlers::block))
         .route("/api/v1/navigator/{target}", get(handlers::navigator))
         .route("/api/v1/sources", get(handlers::sources))
+        .route("/api/v1/competitions", get(handlers::competitions))
         .route("/api/v1/version", get(handlers::version_metadata))
         .route("/health", get(handlers::health))
         .route("/ready", get(handlers::ready))

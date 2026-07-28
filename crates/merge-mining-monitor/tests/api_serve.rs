@@ -162,6 +162,7 @@ async fn valid_or_queryless_routes_reach_the_db_path() {
         "/api/v1/navigator/orphan-branch?classification=strict_btc_orphan".to_owned(),
         "/api/v1/tree".to_owned(),
         format!("/api/v1/tree?unheighted_anchor={anchor}"),
+        "/api/v1/competitions".to_owned(),
     ] {
         assert_route_error(&uri, StatusCode::INTERNAL_SERVER_ERROR, "internal_error").await;
     }

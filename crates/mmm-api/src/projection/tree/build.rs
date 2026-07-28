@@ -7,23 +7,13 @@ use anyhow::{Context, Result, bail};
 use tokio_postgres::Client;
 
 use super::super::materialize::ParentProjection;
-use super::super::shared::pool_from_columns;
-use super::super::shared::{PoolObject, TreeCompetition, display_hash, projection_invariant_error};
+use super::super::shared::{
+    COMPETITION_FROM_SQL, CompetitionCore, TreeCompetition, competition_core_select, display_hash,
+    projection_invariant_error,
+};
 use super::{TreeBranch, TreeEdge, TreeNode, TreeNodeBranch};
 use crate::normalize::ParentKind;
 use crate::query::{TreeQuery, kind_as_str, kind_selected};
-
-/// One stale-to-canonical competitor relationship hydrated with both pool
-/// objects, the raw input to `attach_competitions`. Internal to build.rs; the
-/// wire-facing object is `TreeCompetition` (shared.rs), not this.
-#[derive(Debug, Clone)]
-pub(super) struct CompetitionRow {
-    pub(super) stale_hash: Vec<u8>,
-    pub(super) canonical_hash: Vec<u8>,
-    pub(super) stale_bitcoin_miner_pool: PoolObject,
-    pub(super) canonical_bitcoin_miner_pool: PoolObject,
-    pub(super) header_time_delta_s: Option<i32>,
-}
 
 /// Derive competition relationships touching any of `block_hashes` (as stale OR
 /// canonical side), with both miner pools joined. Feeds `attach_competitions`;
@@ -32,38 +22,19 @@ pub(super) struct CompetitionRow {
 pub(super) async fn load_competitions_for_hashes(
     client: &Client,
     block_hashes: &[Vec<u8>],
-) -> Result<Vec<CompetitionRow>> {
+) -> Result<Vec<CompetitionCore>> {
+    let sql = format!(
+        "{select} {from} \
+           AND (stale.btc_header_hash = ANY($1::bytea[]) \
+                OR stale.canonical_competitor_hash = ANY($1::bytea[]))",
+        select = competition_core_select(),
+        from = COMPETITION_FROM_SQL,
+    );
     let rows = client
-        .query(
-            "SELECT stale.btc_header_hash, canonical.btc_header_hash, \
-                    CASE WHEN canonical.btc_header_time - stale.btc_header_time \
-                               BETWEEN -2147483648 AND 2147483647 \
-                         THEN (canonical.btc_header_time - stale.btc_header_time)::int \
-                         ELSE NULL END AS header_time_delta_s, \
-                    sp.id, sp.slug, sp.canonical_name, \
-                    cp.id, cp.slug, cp.canonical_name \
-             FROM block stale \
-             JOIN block canonical ON canonical.btc_header_hash = stale.canonical_competitor_hash \
-             LEFT JOIN pool sp ON sp.id = stale.bitcoin_miner_pool_id \
-             LEFT JOIN pool cp ON cp.id = canonical.bitcoin_miner_pool_id \
-             WHERE stale.kind = 'stale' \
-               AND canonical.kind = 'canonical' \
-               AND (stale.btc_header_hash = ANY($1::bytea[]) \
-                    OR stale.canonical_competitor_hash = ANY($1::bytea[]))",
-            &[&block_hashes],
-        )
+        .query(&sql, &[&block_hashes])
         .await
         .context("derive competition relationships")?;
-    Ok(rows
-        .into_iter()
-        .map(|row| CompetitionRow {
-            stale_hash: row.get(0),
-            canonical_hash: row.get(1),
-            header_time_delta_s: row.get(2),
-            stale_bitcoin_miner_pool: pool_from_columns(row.get(3), row.get(4), row.get(5)),
-            canonical_bitcoin_miner_pool: pool_from_columns(row.get(6), row.get(7), row.get(8)),
-        })
-        .collect())
+    Ok(rows.iter().map(CompetitionCore::from_row).collect())
 }
 
 /// Decorate each stale projection with its `TreeCompetition` (the canonical it
@@ -72,7 +43,7 @@ pub(super) async fn load_competitions_for_hashes(
 /// the competition fields in fixtures/api/tree.json.
 pub(super) fn attach_competitions(
     projections: &mut [ParentProjection],
-    competitions: &[CompetitionRow],
+    competitions: &[CompetitionCore],
 ) {
     let hash_by_bytes = projections
         .iter()
