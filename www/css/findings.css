@@ -23,6 +23,14 @@
   overflow-y: auto;
   padding: 14px;
   display: grid;
+  /* One centered content column. Without the drawer track the canvas spans
+     the whole viewport on wide screens, and unbounded feed cards (or a
+     left-hugging article) read terribly there. A single minmax column keeps
+     every child on a shared left edge inside a centered, bounded column;
+     elements with their own narrower caps (article prose, figures) align to
+     that edge rather than centering individually. */
+  grid-template-columns: minmax(0, 900px);
+  justify-content: center;
   gap: 10px;
   align-content: start;
 }
