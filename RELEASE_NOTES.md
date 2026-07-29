@@ -1,5 +1,9 @@
 # Release Notes
 
+## [0.4.1] - 2026-07-29
+
+- Bound and center the Findings feed and article on wide screens.
+
 ## [0.4.0] - 2026-07-29
 
 - Add the Findings view: evidence-backed stories the monitor's own data

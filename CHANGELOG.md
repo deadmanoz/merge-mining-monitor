@@ -6,6 +6,12 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-29
+
+- Bound and center the findings canvas in a single minmax(0, 900px)
+  column so wide screens keep readable card widths and a shared left edge
+  across the feed and article states.
+
 ## [0.4.0] - 2026-07-29
 
 - Add the findings content pipeline: one hand-authored JSON file per finding

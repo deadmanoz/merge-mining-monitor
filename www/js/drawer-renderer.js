@@ -1,5 +1,5 @@
-import { blockExplorer } from "./explorer-links.js?v=0.4.0";
-import { $, chainDisplayName, CLASSIFICATION_META, esc, formatEpoch, formatScalar, formatSourceList, formatSourceRef, state } from "./frontend-state.js?v=0.4.0";
+import { blockExplorer } from "./explorer-links.js?v=0.4.1";
+import { $, chainDisplayName, CLASSIFICATION_META, esc, formatEpoch, formatScalar, formatSourceList, formatSourceRef, state } from "./frontend-state.js?v=0.4.1";
 
 
 // Contextual help for the esoteric AuxPoW and merge-mining concepts in the
