@@ -102,12 +102,22 @@ Example:
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 4,
+    "release_count": 5,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.4.0",
+        "date": "2026-07-29",
+        "items": [
+          "Add the Findings view: evidence-backed stories the monitor's own data surfaces, presented as a month-grouped feed of cited articles with data-drawn evidence figures and anchors that jump to the header tree or open source details.",
+          "Seed six findings: the September 2025 Foundry stale cluster that no observer recorded (20 full-difficulty blocks, roughly 46.9 BTC foregone), Hathor's June 2026 merge-mining hashrate collapse, Foundry USA's single-block entry and exit from RSK and Fractal merge mining, the Elastos July 2026 exploit halt, and Terracoin's May 2026 full-difficulty win."
+        ],
+        "item_count": 2,
+        "truncated": false
+      },
       {
         "version": "0.3.0",
         "date": "2026-07-28",
