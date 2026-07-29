@@ -10,7 +10,7 @@ nothing.
 ## The invariant
 
 `mmm-capture` is PURE. Its entire dependency list is `anyhow`, `bitcoin`, `hex`,
-`serde`, `serde_json`, and `tracing`. It links no `tokio-postgres`, no `reqwest`,
+`serde`, `serde_json`, `time`, and `tracing`. It links no `tokio-postgres`, no `reqwest`,
 no `corepc`, and no chain adapter, and the workspace dependency graph enforces
 that (checked with `cargo tree -e normal`). This purity is the crate's core
 boundary: the six crates built on top supply the I/O and call pure functions
@@ -52,6 +52,7 @@ build intentionally and are not part of the consumer API.
 | `core_coinbase` | Bitcoin Core full-block coinbase pool resolution, shared between the Core write paths and the enrichment command. |
 | `source_registry` | `SOURCE_REGISTRY` defines every `source` row (permanent id/code/chain/kind/lifecycle) and the `*_SOURCE_CODE` constants. Bound bidirectionally to the producers' `chains::spec` table by a conformance test; feature-gated `generate` deterministically emits the seed SQL and frontend JS. |
 | `pool_snapshot_gen` | The feature-gated, pure, unit-tested generator behind `data/pools/current.json` (field map, slug remap, deterministic ordering, byte-stable JSON, churn diff). The committed `current.json` is `include_str!`-embedded and never hand-edited. |
+| `findings_registry` | The feature-gated loader/validator/renderer behind `www/js/findings.generated.js`: reads the hand-authored per-finding JSON corpus in `data/findings/`, enforces content and citation invariants (registered source codes, real calendar dates, every `[^N]` marker resolving, no orphan references), and deterministically emits the frontend `FINDINGS` module. |
 | `test_support` | The shared, feature-gated fixture helpers (headers, fixture loaders) reused by this crate's tests and by the producer and integration-test crates. |
 
 ## See also

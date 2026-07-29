@@ -1,0 +1,29 @@
+{
+  "slug": "foundry-begins-rsk-fractal-2025-04",
+  "title": "Foundry begins merge-mining RSK and Fractal",
+  "category": "dataset-note",
+  "status": "concluded",
+  "observed_at": "2025-04-22",
+  "published_at": "2026-07-29",
+  "affected_sources": ["auxpow:rsk", "auxpow:fractal"],
+  "summary": "Foundry's first merge-mined parents appear on RSK and Fractal on the same day - and in the same Bitcoin block, height 893,543 - opening the ~14-month window that the June 2026 pool-exit finding closes.",
+  "body": "Foundry USA's first merge-mined parent on RSK and on Fractal is the same Bitcoin block: height `893,543`, mined on April 22, 2025.[^2] The pool announced Rootstock merged mining publicly, and its Fractal participation began in the same template.[^1]\n\nThe window this opens runs ~14 months and closes the same way it opened - with a single Bitcoin block merge-mining both chains (height `955,218`, June 24, 2026). Paired findings like these give a pool's merge-mining tenure a precise, evidence-backed start and end.",
+  "anchors": [
+    { "kind": "btc-height", "value": "893543", "label": "first Foundry merge-mined parent" },
+    { "kind": "source", "value": "auxpow:rsk" },
+    { "kind": "source", "value": "auxpow:fractal" },
+    { "kind": "pool", "value": "Foundry USA" }
+  ],
+  "references": [
+    {
+      "id": 1,
+      "label": "Rootstock - Bitcoin Mining 2.0: Foundry Now Merge Mines Rootstock",
+      "url": "https://rootstock.io/blog/bitcoin-mining-2-0-foundry-now-merge-mines-rootstock/"
+    },
+    {
+      "id": 2,
+      "label": "mempool.space - Bitcoin block 893,543",
+      "url": "https://mempool.space/block/893543"
+    }
+  ]
+}

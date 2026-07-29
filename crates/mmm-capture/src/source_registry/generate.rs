@@ -229,8 +229,10 @@ struct KeyFact {
 }
 
 /// Extract the ids from `[^N]` citation markers in `text` (N = ASCII digits).
-/// Keeps prose markers and the `references` list in sync in [`load_chain_profiles`].
-fn citation_ids(text: &str) -> Vec<u32> {
+/// Keeps prose markers and the `references` list in sync in
+/// [`load_chain_profiles`]; the findings registry reuses it for the same
+/// marker convention.
+pub(crate) fn citation_ids(text: &str) -> Vec<u32> {
     let bytes = text.as_bytes();
     let mut ids = Vec::new();
     let mut i = 0;

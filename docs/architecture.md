@@ -70,7 +70,7 @@ that annotate those rows.
 ```text
 crates/            # Rust workspace members (see the crate table above)
 data/              # committed release-domain data
-                   #   (pools/, consensus/, sources/, historical/)
+                   #   (pools/, consensus/, sources/, findings/, historical/)
 migrations/        # squashed schema baseline (0001_) plus generated source seed (0002_)
 fixtures/          # shared JSON API fixtures and per-chain parser samples
 www/               # static frontend served by the read API (index.html, css/, js/, vendor/, assets/)
@@ -100,3 +100,7 @@ justfile           # db, build, test, lint, serve, sync, poll, and backfill targ
 - Generated source metadata is owned by `crates/mmm-capture/src/source_registry`
   and emitted into `migrations/0002_seed_sources.sql` and
   `www/js/source-registry.generated.js`.
+- The generated findings corpus is owned by
+  `crates/mmm-capture/src/findings_registry.rs`, which validates the
+  hand-authored `data/findings/` files and emits
+  `www/js/findings.generated.js`.

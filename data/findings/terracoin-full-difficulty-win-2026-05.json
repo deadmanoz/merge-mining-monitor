@@ -1,0 +1,22 @@
+{
+  "slug": "terracoin-full-difficulty-win-2026-05",
+  "title": "Terracoin wins a full-difficulty Bitcoin block, a year after \"collapse\"",
+  "category": "dataset-note",
+  "status": "monitoring",
+  "observed_at": "2026-05-20",
+  "published_at": "2026-07-29",
+  "affected_sources": ["auxpow:terracoin"],
+  "summary": "One new canonical parent at Bitcoin height 950,154 shows Terracoin still sporadically clears the full Bitcoin target, keeping its merge-mining window open.",
+  "body": "A single new canonical parent at Bitcoin height `950,154` shows Terracoin still sporadically clears the full Bitcoin target, a year after its merge-mining activity was thought to have collapsed.[^1]\n\nIts merge-mining window therefore stays open, and the live classifier's proof-of-work target check - not a leading-zero proxy, which over-counts sub-difficulty shares - remains the authority on which candidates count.",
+  "anchors": [
+    { "kind": "btc-height", "value": "950154", "label": "recovered canonical parent" },
+    { "kind": "source", "value": "auxpow:terracoin" }
+  ],
+  "references": [
+    {
+      "id": 1,
+      "label": "mempool.space - Bitcoin block 950,154",
+      "url": "https://mempool.space/block/950154"
+    }
+  ]
+}

@@ -49,9 +49,9 @@ Use `just` targets, not raw commands, when a target exists:
   new migration; do not edit historical migrations.
 - Real database migrations go only through `just db-migrate-dev` or
   `just db-migrate-deploy`.
-- Never hand-edit generated runtime artifacts such as `data/pools/current.json`
-  or `www/js/source-registry.generated.js`; regenerate them through the
-  documented `just` targets.
+- Never hand-edit generated runtime artifacts such as `data/pools/current.json`,
+  `www/js/source-registry.generated.js`, or `www/js/findings.generated.js`;
+  regenerate them through the documented `just` targets.
 
 ## Repository Etiquette
 

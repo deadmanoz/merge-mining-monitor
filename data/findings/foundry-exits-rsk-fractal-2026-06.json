@@ -1,0 +1,29 @@
+{
+  "slug": "foundry-exits-rsk-fractal-2026-06",
+  "title": "Foundry USA stops merge-mining RSK and Fractal in a single block",
+  "category": "pool-exit",
+  "status": "concluded",
+  "observed_at": "2026-06-24",
+  "published_at": "2026-07-29",
+  "affected_sources": ["auxpow:rsk", "auxpow:fractal"],
+  "summary": "Foundry USA's last merge-mined parent on RSK and on Fractal is the same Bitcoin block: height 955,218, mined 2026-06-24 19:54:41 UTC. One block merge-mining both chains, then never again.",
+  "body": "Foundry USA's last merge-mined parent on RSK and on Fractal is the same Bitcoin block: height `955,218`, mined at 19:54:41 UTC on June 24.[^2] One block merge-mining both chains, then never again - a single-cut operational shutdown, not a wind-down.\n\nBefore the exit Foundry contributed roughly a quarter of each chain's attributed parents, matching its share of the Bitcoin network - it merge-mined with essentially its whole pool. Since June 24 both chains continue at normal rates on the remaining pools.\n\nNo public reporting of the exit exists; Rootstock's own Q1 2026 merged-mining report still listed Foundry as a top contributor.[^1] This dataset appears to be the first documentation.",
+  "anchors": [
+    { "kind": "btc-height", "value": "955218", "label": "last Foundry merge-mined parent" },
+    { "kind": "source", "value": "auxpow:rsk" },
+    { "kind": "source", "value": "auxpow:fractal" },
+    { "kind": "pool", "value": "Foundry USA" }
+  ],
+  "references": [
+    {
+      "id": 1,
+      "label": "Rootstock - Merged Mining Insights Report Q1 2026",
+      "url": "https://rootstock.io/blog/rootstock-x-bitcoin-merged-mining-insights-report-q1-2026/"
+    },
+    {
+      "id": 2,
+      "label": "mempool.space - Bitcoin block 955,218",
+      "url": "https://mempool.space/block/955218"
+    }
+  ]
+}
