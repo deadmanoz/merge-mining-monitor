@@ -102,12 +102,21 @@ Example:
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.4.0",
+  "version": "0.4.1",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 5,
+    "release_count": 6,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.4.1",
+        "date": "2026-07-29",
+        "items": [
+          "Bound and center the Findings feed and article on wide screens."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
       {
         "version": "0.4.0",
         "date": "2026-07-29",
