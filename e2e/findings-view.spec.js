@@ -213,6 +213,34 @@ test("the card title opener is a button and opens the article", async ({ page })
   await expect(page.locator(".finding-article-title")).toHaveText("Mid shift");
 });
 
+test("wide screens bound and center the findings column", async ({ page }) => {
+  await page.setViewportSize({ width: 2400, height: 1100 });
+  await openFindings(page);
+
+  // Without the drawer track the canvas spans the viewport; cards must not
+  // stretch with it, and the column must sit centered rather than hug the
+  // rail edge.
+  const feed = await page.evaluate(() => {
+    const card = document.querySelector(".finding-card").getBoundingClientRect();
+    const canvas = document.querySelector("#findings-main").getBoundingClientRect();
+    return { cardWidth: card.width, leftGap: card.left - canvas.left, rightGap: canvas.right - card.right };
+  });
+  expect(feed.cardWidth).toBeLessThanOrEqual(920);
+  expect(Math.abs(feed.leftGap - feed.rightGap)).toBeLessThan(40);
+  expect(feed.leftGap).toBeGreaterThan(100);
+
+  // The article shares the same centered column with a common left edge.
+  await page.locator('article.finding-card[data-finding="newest-incident"]').click();
+  const article = await page.evaluate(() => {
+    const head = document.querySelector(".finding-article-head").getBoundingClientRect();
+    const nav = document.querySelector(".finding-article-nav").getBoundingClientRect();
+    const canvas = document.querySelector("#findings-main").getBoundingClientRect();
+    return { headLeft: head.left, navLeft: nav.left, leftGap: head.left - canvas.left };
+  });
+  expect(article.headLeft).toBe(article.navLeft);
+  expect(article.leftGap).toBeGreaterThan(100);
+});
+
 test("mobile widths collapse findings to a single column", async ({ page }) => {
   await page.setViewportSize({ width: 700, height: 900 });
   await openFindings(page);
