@@ -1,11 +1,13 @@
-//! Generate (or `--check`) the registry-derived artifacts from
-//! `src/source_registry`: the baseline source-seed SQL and the frontend
-//! chain-metadata ES module. Thin IO around `source_registry::generate`.
+//! Generate (or `--check`) the curated-data artifacts: the baseline
+//! source-seed SQL and the frontend chain-metadata ES module (both from
+//! `src/source_registry`), and the frontend findings ES module (from
+//! `data/findings/` via `src/findings_registry`). Thin IO around
+//! `source_registry::generate` and `findings_registry`.
 //!
 //! Usage:
 //!   gen-source-artifacts            write the artifacts
 //!   gen-source-artifacts --check    verify the committed artifacts match the
-//!                                   registry (CI drift gate); writes nothing
+//!                                   curated data (CI drift gate); writes nothing
 //!
 //! Paths are resolved relative to the current directory, so run from the repo
 //! root (the `just gen-source-artifacts` target does).
@@ -14,15 +16,20 @@ use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
+use mmm_capture::findings_registry::{
+    FINDINGS_DATA_DIR, FINDINGS_JS_PATH, load_findings, render_findings_js,
+};
 use mmm_capture::source_registry::generate::{
     FRONTEND_JS_PATH, SEED_SQL_PATH, render_frontend_js, render_seed_sql,
 };
 
 fn main() -> ExitCode {
     let check = std::env::args().skip(1).any(|a| a == "--check");
+    let findings = load_findings(Path::new(FINDINGS_DATA_DIR));
     let artifacts = [
         (SEED_SQL_PATH, render_seed_sql()),
         (FRONTEND_JS_PATH, render_frontend_js()),
+        (FINDINGS_JS_PATH, render_findings_js(&findings)),
     ];
 
     let mut drift = false;
@@ -32,7 +39,7 @@ fn main() -> ExitCode {
                 Ok(on_disk) if &on_disk == content => println!("ok: {path}"),
                 Ok(_) => {
                     eprintln!(
-                        "DRIFT: {path} does not match the source registry. Run `just gen-source-artifacts`."
+                        "DRIFT: {path} does not match the curated data. Run `just gen-source-artifacts`."
                     );
                     drift = true;
                 }

@@ -7,6 +7,7 @@
   "ignore": [
     "**/www/vendor/**",
     "**/www/js/source-registry.generated.js",
+    "**/www/js/findings.generated.js",
     "**/node_modules/**",
     "**/.git/**"
   ],

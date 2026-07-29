@@ -1,0 +1,60 @@
+{
+  "slug": "hathor-hashrate-collapse-2026-06",
+  "title": "Hathor merge-mining hashrate collapses ~3,500x",
+  "category": "hashrate-shift",
+  "status": "monitoring",
+  "observed_at": "2026-06-10",
+  "published_at": "2026-07-29",
+  "affected_sources": ["auxpow:hathor"],
+  "summary": "Hathor's chain difficulty fell roughly 3,500-fold within two days of 2026-06-10. F2Pool still merge-mines Hathor with a residual hashrate slice, but parents that clear Bitcoin's target are no longer expected.",
+  "body": "Between 12:00 and 14:30 UTC on June 10, Hathor's chain difficulty fell off a cliff: block weight (log2 difficulty) dropped from ~68.7, where it had sat all year, to a floor near 56.9 two days later, a roughly 3,500-fold reduction in per-block work.[^1]\n\nEvery Bitcoin-difficulty Hathor parent this monitor has ever attributed was mined by F2Pool, and F2Pool has not left: current Hathor blocks still carry `/F2Pool/` parent coinbases built on live Bitcoin templates. What changed is scale. At the residual ~5-7 PH/s, a parent that clears Bitcoin's target is expected roughly once every few years, against ~40 per month before the collapse.[^2]\n\nThe capture pipeline was verified end-to-end against this window; the source's stale badge is a faithful description of the chain, not a monitor fault. The last captured parent (Hathor height `6,631,349`, Bitcoin height `953,043`) landed about ten hours before the collapse began.",
+  "anchors": [
+    { "kind": "btc-height", "value": "953043", "label": "last parent's Bitcoin block" },
+    { "kind": "child-height", "value": "6631349", "label": "last Hathor parent" },
+    { "kind": "source", "value": "auxpow:hathor" },
+    { "kind": "pool", "value": "F2Pool" }
+  ],
+  "figures": [
+    {
+      "kind": "line-series",
+      "caption": "Hathor block weight, February to July 2026",
+      "y_label": "block weight (log2 difficulty)",
+      "points": [
+        { "t": "2026-02-14", "v": 67.86 },
+        { "t": "2026-03-21", "v": 68.19 },
+        { "t": "2026-04-25", "v": 68.09 },
+        { "t": "2026-05-12", "v": 68.03 },
+        { "t": "2026-05-30", "v": 69.08 },
+        { "t": "2026-06-06", "v": 68.84 },
+        { "t": "2026-06-08", "v": 68.78 },
+        { "t": "2026-06-10T01:20", "v": 68.68 },
+        { "t": "2026-06-10T11:44", "v": 68.66 },
+        { "t": "2026-06-10T12:30", "v": 66.21 },
+        { "t": "2026-06-10T13:12", "v": 64.04 },
+        { "t": "2026-06-10T13:48", "v": 62.10 },
+        { "t": "2026-06-10T14:23", "v": 60.30 },
+        { "t": "2026-06-12", "v": 56.91 },
+        { "t": "2026-06-24", "v": 56.91 },
+        { "t": "2026-07-07", "v": 56.91 },
+        { "t": "2026-07-21", "v": 56.91 },
+        { "t": "2026-07-29", "v": 56.91 }
+      ],
+      "markers": [
+        { "t": "2026-06-10T12:00", "label": "collapse begins" }
+      ],
+      "note": "Sampled per height window from the Hathor public node API, 2026-07-29."
+    }
+  ],
+  "references": [
+    {
+      "id": 1,
+      "label": "Hathor mainnet public node API (block weight series)",
+      "url": "https://node1.mainnet.hathor.network/v1a/status"
+    },
+    {
+      "id": 2,
+      "label": "mempool.space - F2Pool mined blocks",
+      "url": "https://mempool.space/mining/pool/f2pool"
+    }
+  ]
+}

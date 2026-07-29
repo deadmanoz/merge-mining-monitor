@@ -16,6 +16,9 @@ directories.
   Regenerate with `scripts/gen-nbits-table.py` when extending offline coverage.
 - `sources/chain_profiles.json` - hand-authored source profile data used by
   `just gen-source-artifacts`.
+- `findings/` - hand-authored evidence-backed findings, one JSON file per
+  finding (filename matches the slug). Compiled into
+  `www/js/findings.generated.js` by `just gen-source-artifacts`.
 - `historical/historical-source-manifest.json` - generated provenance manifest
   for historical stale-block CSV inputs. Regenerate with
   `just gen-historical-source-manifest`.

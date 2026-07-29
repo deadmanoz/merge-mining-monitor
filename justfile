@@ -121,10 +121,11 @@ gen-pool-snapshot *args="":
     fi; \
     cargo run --features artifact-generation --bin gen_pool_snapshot -- "$pools_dir" "$@"
 
-# Regenerate (or --check) the registry-derived artifacts from src/source_registry:
-# the source-seed SQL (migrations/0002_seed_sources.sql) and the frontend metadata
-# (www/js/source-registry.generated.js). `--check` is the drift gate (also run by
-# `cargo test`).
+# Regenerate (or --check) the curated-data artifacts: the source-seed SQL
+# (migrations/0002_seed_sources.sql) and frontend metadata
+# (www/js/source-registry.generated.js) from src/source_registry, and the
+# frontend findings corpus (www/js/findings.generated.js) from data/findings/.
+# `--check` is the drift gate (also run by `cargo test`).
 gen-source-artifacts *args="":
     cargo run --quiet --features artifact-generation --bin gen_source_artifacts -- {{args}}
 

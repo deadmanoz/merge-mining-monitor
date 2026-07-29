@@ -6,6 +6,19 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Add the findings content pipeline: hand-authored, evidence-backed findings
+  live as one JSON file per finding in `data/findings/`, validated by the new
+  feature-gated `mmm-capture::findings_registry` (content invariants, real
+  calendar dates, registered source codes, and full `[^N]` citation
+  integrity) and compiled deterministically into
+  `www/js/findings.generated.js` by `just gen-source-artifacts`, with a
+  drift gate in `cargo test`. Seeds the corpus with five findings: the
+  2026-06-10 Hathor merge-mining hashrate collapse, Foundry USA's
+  single-block exit from RSK+Fractal merge-mining (2026-06-24) and its
+  matching single-block entry (2025-04-22), the 2026-07-20 Elastos
+  exploit halt, and Terracoin's 2026-05-20 full-difficulty win. The
+  frontend Findings view that renders this corpus lands separately.
+
 ## [0.3.0] - 2026-07-28
 
 - Add the Header Time Delta view: a distribution of how far apart each stale

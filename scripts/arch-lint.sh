@@ -68,7 +68,7 @@ while IFS= read -r -d '' file; do
         continue
     fi
     case "$file" in
-        www/vendor/*|www/js/source-registry.generated.js)
+        www/vendor/*|www/js/source-registry.generated.js|www/js/findings.generated.js)
             continue
             ;;
     esac
