@@ -15,6 +15,7 @@ pub mod query;
 #[cfg(not(feature = "db-integration"))]
 mod query;
 mod version;
+pub use version::payload_json as version_payload_json;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};

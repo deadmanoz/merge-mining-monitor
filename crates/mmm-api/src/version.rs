@@ -50,6 +50,16 @@ pub(crate) fn payload() -> VersionPayload {
     }
 }
 
+/// The served version projection as a JSON value: the exact `version` and
+/// `release_notes` subtree `/api/v1/version` responds with (envelope fields
+/// excluded). A test seam so the committed version fixture can be asserted
+/// deep-equal to what the code actually serves, making a release bump that
+/// edits `RELEASE_NOTES.md` without regenerating the fixture a test failure
+/// rather than silent drift.
+pub fn payload_json() -> serde_json::Value {
+    serde_json::to_value(payload()).expect("version payload serializes")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedReleaseNotes {
     releases: Vec<ReleaseNote>,

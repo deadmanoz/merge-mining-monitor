@@ -30,10 +30,13 @@ fn api_fixture_examples_are_listed_and_parse() {
 }
 
 /// The version fixture must track the workspace release: its top-level
-/// version and newest release-note section both pin `CARGO_PKG_VERSION`, and
-/// the projection's own counters agree with the payload shape, so a release
-/// bump cannot land without regenerating this fixture (and, via the shared
-/// manifest walk above, its manifest scenario).
+/// version and newest release-note section both pin `CARGO_PKG_VERSION`, the
+/// projection's own counters agree with the payload shape, and the whole
+/// `version` + `release_notes` projection is deep-equal to what the code
+/// actually serves (`mmm_api::version_payload_json`, which parses the
+/// embedded `RELEASE_NOTES.md`). A release bump, a notes edit, or a parser
+/// change therefore cannot land without regenerating this fixture (and, via
+/// the shared manifest walk above, its manifest scenario).
 fn assert_version_fixture_contract(fixture: &Value) {
     let workspace_version = env!("CARGO_PKG_VERSION");
     assert_eq!(
@@ -62,6 +65,21 @@ fn assert_version_fixture_contract(fixture: &Value) {
         newest["item_count"].as_u64(),
         Some(newest["items"].as_array().expect("items array").len() as u64),
         "item_count must match the items array"
+    );
+
+    // Deep equality against the served projection: the fixture is a capture of
+    // /api/v1/version minus the envelope, so `version` and the entire
+    // `release_notes` subtree (dates and item prose included) must match the
+    // code's own payload byte for byte.
+    let served = mmm_api::version_payload_json();
+    assert_eq!(
+        fixture["version"], served["version"],
+        "fixture version must equal the served payload"
+    );
+    assert_eq!(
+        fixture["release_notes"], served["release_notes"],
+        "fixture release_notes must equal the served projection; regenerate \
+         the fixture from /api/v1/version after editing RELEASE_NOTES.md"
     );
 }
 
