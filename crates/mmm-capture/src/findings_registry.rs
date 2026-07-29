@@ -270,7 +270,14 @@ fn validate_finding(file_stem: &str, f: &Finding) -> Result<(), String> {
     }
 
     let observed_at = parse_date(&f.observed_at).map_err(|e| ctx(format!("observed_at: {e}")))?;
-    parse_date(&f.published_at).map_err(|e| ctx(format!("published_at: {e}")))?;
+    let published_at =
+        parse_date(&f.published_at).map_err(|e| ctx(format!("published_at: {e}")))?;
+    if published_at < observed_at {
+        return Err(ctx(format!(
+            "published_at {} precedes observed_at {}",
+            f.published_at, f.observed_at
+        )));
+    }
     if let Some(until) = &f.observed_until {
         let observed_until = parse_date(until).map_err(|e| ctx(format!("observed_until: {e}")))?;
         if observed_until < observed_at {
@@ -353,8 +360,11 @@ fn validate_finding_citations(ctx: &impl Fn(String) -> String, f: &Finding) -> R
         if r.label.trim().is_empty() {
             return Err(ctx(format!("reference {} has an empty label", r.id)));
         }
-        if !r.url.starts_with("http") {
-            return Err(ctx(format!("reference {} url must start with http", r.id)));
+        if !(r.url.starts_with("http://") || r.url.starts_with("https://")) {
+            return Err(ctx(format!(
+                "reference {} url must start with http:// or https://",
+                r.id
+            )));
         }
     }
     let mut cited: BTreeSet<u32> = BTreeSet::new();
@@ -684,11 +694,19 @@ mod tests {
 
     #[test]
     fn non_http_reference_url_is_rejected() {
+        // "httpss://" is the sneaky case: a bare starts_with("http") accepts it.
+        for bad in ["ftp://example.com", "httpss://example.com", "example.com"] {
+            let mut v = valid_finding_json();
+            v["references"] = serde_json::json!([{ "id": 1, "label": "Example", "url": bad }]);
+            expect_err(v, "url must start with http:// or https://");
+        }
+    }
+
+    #[test]
+    fn published_before_observed_is_rejected() {
         let mut v = valid_finding_json();
-        v["references"] = serde_json::json!([
-            { "id": 1, "label": "Example", "url": "ftp://example.com" }
-        ]);
-        expect_err(v, "url must start with http");
+        v["published_at"] = serde_json::json!("2026-06-09");
+        expect_err(v, "precedes observed_at");
     }
 
     #[test]
