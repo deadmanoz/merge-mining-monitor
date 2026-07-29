@@ -274,6 +274,10 @@ const DEFAULTS = {
   view: "tree",
   // Delta-view era filter, "<from>-<to>"; empty means the full range.
   era: "",
+  // Findings-view open article slug; empty means the feed. Kept in memory
+  // across view switches (so returning to findings restores the article) but
+  // serialized to the URL only while findings is the active view.
+  finding: "",
   treeHeight: "",
   treeTime: "",
   treeLookupContext: "compact",
@@ -314,6 +318,13 @@ const state = {
   // The whole competition set, loaded once per delta-view activation. Null
   // until first load; the view registry uses that to decide whether to fetch.
   competitions: null,
+  // The findings corpus (from the generated module). Null until the findings
+  // view first activates; the registry uses that to decide whether to seed.
+  findings: null,
+  // Findings-local UI state, deliberately not URL-persisted in this slice:
+  // category/status filter exclusions and the feed scroll position the
+  // article state restores on back.
+  findingsUi: { hideCategories: [], hideStatuses: [], feedScroll: 0 },
   selectedHash: null,
   selectedBlock: null,
   // Consolidated navigator: the active target and how it was set. `source`
@@ -517,6 +528,12 @@ function hydrateFormFromUrl() {
   if (view) state.query.view = view;
   const era = params.get("era");
   if (parseEra(era)) state.query.era = era;
+  // `finding=` only means anything on the findings view; hydrating it under
+  // another view would silently re-open an article the URL never showed.
+  // Slug validity is the findings view's job at activation (an unknown slug
+  // degrades to the feed there).
+  const finding = params.get("finding");
+  if (finding && state.query.view === "findings") state.query.finding = finding;
   const generatedFrom = params.get("tree_from");
   const generatedTo = params.get("tree_to");
   if (

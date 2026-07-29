@@ -3,11 +3,12 @@ const { GENERATED_AT, makeNode, moduleUrl, stubApi, treeEnvelope } = require("./
 
 const VIEW_SHELL_MODULE = moduleUrl("view-shell.js");
 
-// Shell-level coverage for the top-level view mechanism. Two views are now
+// Shell-level coverage for the top-level view mechanism. Three views are now
 // registered, so these assert the switcher, the scope swap and the URL
-// contract; behaviour specific to the distribution lives in delta-view.spec.js.
+// contract; behaviour specific to the distribution lives in delta-view.spec.js
+// and to the findings feed in findings-view.spec.js.
 
-test("both views are registered and the tree is the default", async ({ page }) => {
+test("every view is registered and the tree is the default", async ({ page }) => {
   const treeRequests = [];
   await stubApi(page, treeRequests);
   await page.goto("/");
@@ -17,12 +18,12 @@ test("both views are registered and the tree is the default", async ({ page }) =
   expect(treeRequests.length).toBeGreaterThan(0);
 
   await expect(page.locator("#view-switcher")).toBeVisible();
-  await expect(page.locator(".view-tab")).toHaveCount(2);
+  await expect(page.locator(".view-tab")).toHaveCount(3);
   const registered = await page.evaluate(
     (moduleUrl) => import(moduleUrl).then((module) => module.registeredViews()),
     VIEW_SHELL_MODULE,
   );
-  expect(registered).toEqual(["tree", "delta"]);
+  expect(registered).toEqual(["tree", "delta", "findings"]);
 });
 
 test("every registered view activates without error", async ({ page }) => {
@@ -42,7 +43,7 @@ test("every registered view activates without error", async ({ page }) => {
     return seen;
   }, VIEW_SHELL_MODULE);
 
-  expect(activated).toEqual(["tree", "delta"]);
+  expect(activated).toEqual(["tree", "delta", "findings"]);
   expect(errors).toEqual([]);
 });
 

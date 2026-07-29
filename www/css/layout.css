@@ -38,7 +38,8 @@
 /* Each view owns the same central grid slot; only the active one is laid out,
    so the inactive panel neither overlaps nor keeps focusable controls alive. */
 #delta-main.delta-main,
-#delta-main {
+#delta-main,
+#findings-main {
   grid-area: tree;
   min-width: 0;
   min-height: 0;
@@ -60,9 +61,24 @@
    for a different view is removed from layout entirely (display:none, not
    visibility), so its inputs drop out of the tab order. Controls shared by
    every view - the Source filter - carry no data-view-scope and always show.
-   This rule comes last so hiding beats the grid above. */
-.workspace[data-view="tree"] [data-view-scope="delta"],
-.workspace[data-view="delta"] [data-view-scope="tree"] {
+   One linear :not() rule per view (not a pairwise matrix) so adding a view
+   adds one line. These rules come after the grid above so hiding beats it. */
+.workspace:not([data-view="tree"]) [data-view-scope="tree"],
+.workspace:not([data-view="delta"]) [data-view-scope="delta"],
+.workspace:not([data-view="findings"]) [data-view-scope="findings"] {
+  display: none;
+}
+
+/* The findings view has no third pane: the article replaces the feed and the
+   block-detail drawer stays out entirely. Remove the drawer track (not just
+   the drawer) so the canvas gets the full width; drawer DOM and the current
+   selection are untouched and reappear as-was on returning to tree/delta. */
+.workspace[data-view="findings"] {
+  grid-template-columns: var(--filters-col) minmax(360px, 1fr);
+  grid-template-areas: "filters tree";
+}
+
+.workspace[data-view="findings"] .detail-drawer {
   display: none;
 }
 

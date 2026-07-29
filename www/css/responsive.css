@@ -14,6 +14,12 @@
       "drawer drawer";
   }
 
+  /* Findings has no drawer: drop its stacked row so the hidden drawer's
+     named area does not leave a stray grid gap under the canvas. */
+  .workspace[data-view="findings"] {
+    grid-template-areas: "filters tree";
+  }
+
   .tree-card {
     min-height: 360px;
   }
@@ -48,6 +54,12 @@
       "filters"
       "tree"
       "drawer";
+  }
+
+  .workspace[data-view="findings"] {
+    grid-template-areas:
+      "filters"
+      "tree";
   }
 
   .grid-form {

@@ -590,6 +590,7 @@ async function loadBlock(hash) {
 
 export {
   loadSources,
+  markUpdated,
   renderUpdated,
   refreshActiveNavigatorTarget,
   navSelectLabel,

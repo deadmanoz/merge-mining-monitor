@@ -1,0 +1,367 @@
+/* Findings view: the rail filter groups it adds, the feed cards, the article,
+   and the evidence figures. Class selectors only: an ID selector would outrank
+   the [data-view-scope] hide rule in layout.css and leave the inactive panel
+   laid out over the tree (see delta-view.css for the precedent note). Shared
+   primitives (tokens, cards, fieldsets, sd-cite/sd-sources citation styling)
+   come from the sheets loaded before this one. */
+
+.findings-main {
+  display: grid;
+}
+
+.findings-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  min-height: 0;
+  display: grid;
+}
+
+.findings-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+/* ── Rail filters ─────────────────────────────────────────── */
+
+.finding-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.finding-filter-row input {
+  accent-color: var(--focus);
+  margin: 0;
+}
+
+.finding-cat-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+  background: var(--cat);
+}
+
+/* ── Feed ─────────────────────────────────────────────────── */
+
+.findings-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.findings-head-sub {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.findings-month {
+  color: var(--faint);
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+}
+
+.findings-empty {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.finding-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.finding-card:hover {
+  border-color: var(--focus);
+}
+
+.finding-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.finding-cat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--cat);
+  border: 1px solid color-mix(in srgb, var(--cat) 45%, transparent);
+  background: color-mix(in srgb, var(--cat) 9%, transparent);
+}
+
+.finding-cat::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--cat);
+}
+
+.finding-card-date {
+  color: var(--faint);
+  font-size: 12px;
+  margin-left: auto;
+  font-family: var(--mono);
+}
+
+.finding-card-title {
+  font-size: 14.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-wrap: balance;
+}
+
+.finding-card-summary {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.finding-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+}
+
+.finding-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1.5px 8px;
+  color: var(--muted);
+  background: var(--surface-alt);
+}
+
+.finding-chip-count {
+  font-family: var(--mono);
+}
+
+.finding-status {
+  border-radius: 999px;
+  padding: 1.5px 8px;
+  font-weight: 700;
+  font-size: 11.5px;
+}
+
+.finding-status-stale {
+  color: var(--stale);
+  border: 1px solid color-mix(in srgb, var(--stale) 50%, transparent);
+  background: color-mix(in srgb, var(--stale) 10%, transparent);
+}
+
+.finding-status-near {
+  color: var(--near);
+  border: 1px solid color-mix(in srgb, var(--near) 50%, transparent);
+  background: color-mix(in srgb, var(--near) 10%, transparent);
+}
+
+.finding-status-canonical {
+  color: var(--canonical);
+  border: 1px solid color-mix(in srgb, var(--canonical) 50%, transparent);
+  background: color-mix(in srgb, var(--canonical) 10%, transparent);
+}
+
+/* ── Article ──────────────────────────────────────────────── */
+
+.finding-article-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.finding-nav-group {
+  display: flex;
+  gap: 6px;
+}
+
+.finding-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 5px 10px;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.finding-nav-btn:hover:not([disabled]) {
+  border-color: var(--focus);
+  color: var(--text);
+}
+
+.finding-nav-btn[disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.finding-article-head {
+  display: grid;
+  gap: 8px;
+  max-width: 70ch;
+}
+
+.finding-article-title {
+  font-size: 19px;
+  line-height: 1.25;
+  text-transform: none;
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+
+.finding-article-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.fa-sep {
+  color: var(--line-strong);
+}
+
+.fa-value {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.finding-article-body {
+  display: grid;
+  gap: 10px;
+  max-width: 62ch;
+}
+
+.finding-article-body p {
+  line-height: 1.55;
+  font-size: 13.5px;
+}
+
+/* ── Figures ──────────────────────────────────────────────── */
+
+.finding-figure {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-alt);
+  padding: 12px 12px 8px;
+  display: grid;
+  gap: 6px;
+  max-width: 640px;
+  margin: 0;
+}
+
+.finding-figure svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.finding-figure .fig-tick {
+  font-size: 9.5px;
+  fill: var(--faint);
+  font-family: var(--mono);
+}
+
+.finding-figure figcaption {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.fig-ylabel {
+  color: var(--faint);
+}
+
+.fig-note {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+/* ── Anchors and sources ──────────────────────────────────── */
+
+.finding-anchors {
+  display: grid;
+  gap: 8px;
+}
+
+.finding-anchor-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.finding-anchor {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 6px 10px;
+  font-size: 12.5px;
+  color: var(--text);
+  font: inherit;
+}
+
+button.finding-anchor {
+  cursor: pointer;
+}
+
+button.finding-anchor:hover {
+  border-color: var(--focus);
+}
+
+.fa-kind {
+  color: var(--faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.fa-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.fa-go {
+  color: var(--focus);
+  font-weight: 700;
+}
+
+.finding-sources {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  max-width: 70ch;
+}

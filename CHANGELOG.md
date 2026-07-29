@@ -6,6 +6,17 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Add the Findings view: a third top-level view (`?view=findings`) presenting
+  the evidence-backed findings corpus as a month-grouped, newest-first feed
+  with category/status rail filters and shared Source-filter narrowing. An
+  article state replaces the feed (`finding=<slug>`, written only while
+  findings is active, so switching views never leaks the slug), rendering
+  cited prose, theme-aware line-series evidence figures with event markers,
+  and typed evidence anchors that jump to the tree at a Bitcoin height or
+  open the source detail dialog. The findings layout collapses the
+  block-detail drawer column entirely; drawer state is preserved for return
+  to the other views. The tree-jump gesture is extracted into a shared
+  module reused by the delta view unchanged.
 - Add the findings content pipeline: hand-authored, evidence-backed findings
   live as one JSON file per finding in `data/findings/`, validated by the new
   feature-gated `mmm-capture::findings_registry` (content invariants, real
