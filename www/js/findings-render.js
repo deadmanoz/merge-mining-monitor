@@ -16,6 +16,7 @@ import {
 const CATEGORIES = {
   "hashrate-shift": { label: "Hashrate shift", color: "var(--near)" },
   "pool-exit": { label: "Pool exit", color: "var(--unknown)" },
+  "pool-incident": { label: "Pool incident", color: "var(--orphan-strict)" },
   "chain-incident": { label: "Chain incident", color: "var(--stale)" },
   "dataset-note": { label: "Dataset note", color: "var(--context)" },
 };

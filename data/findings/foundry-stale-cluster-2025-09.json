@@ -1,0 +1,65 @@
+{
+  "slug": "foundry-stale-cluster-2025-09",
+  "title": "Foundry stales 20 full-difficulty blocks in 17 hours, invisible to the network",
+  "category": "pool-incident",
+  "status": "concluded",
+  "observed_at": "2025-09-11",
+  "observed_until": "2025-09-12",
+  "published_at": "2026-07-29",
+  "affected_sources": ["auxpow:rsk", "auxpow:fractal"],
+  "summary": "Across September 11 and 12, 2025, Foundry USA produced 20 full-difficulty Bitcoin blocks at 16 heights (914,261 to 914,373) that all went stale, foregoing roughly 46.9 BTC. No network observer recorded them; the evidence survives only in RSK and Fractal AuxPoW captures.",
+  "body": "Across roughly 17 hours spanning September 11 and 12, 2025, Foundry USA produced 20 full-difficulty Bitcoin blocks at 16 distinct heights (`914,261` to `914,373`) that all went stale. Thirteen carry Foundry's coinbase tags directly; the other seven are tied to Foundry through the RSK reward-address registry on their AuxPoW evidence. Foundry won one of the 16 height races itself (a self-race at `914,261`); the other 15 went to competing pools, putting the foregone reward at roughly 46.9 BTC in subsidy plus fees.[^1]\n\nThe timing profile points at the pool layer rather than a propagation race. The stale headers carry timestamps 6 to 1,621 seconds before their canonical winners (median about 600 seconds): these blocks were found first, by a wide margin, and lost anyway. Each one builds on a canonical parent and none chain onto each other, which is the signature of a block-submission failure recurring across the window, not of a chain split.[^1]\n\nNothing on the Bitcoin network side saw it happen. ForkMonitor and the other network observers carry no record of these blocks, which appear never to have reached the network at all.[^2] The episode surfaced only because merge-mined child chains embed every Bitcoin parent template they see: the RSK and Fractal captures preserved all 20 headers. Foundry later left merge mining entirely in June 2026, closing the evidence channel that made this incident visible.",
+  "anchors": [
+    { "kind": "btc-height", "value": "914261", "label": "first stale, a self-race Foundry won" },
+    { "kind": "btc-height", "value": "914344", "label": "largest deficit, 1,621s" },
+    { "kind": "btc-height", "value": "914373", "label": "last stale of the cluster" },
+    { "kind": "source", "value": "auxpow:rsk" },
+    { "kind": "source", "value": "auxpow:fractal" },
+    { "kind": "pool", "value": "Foundry USA" }
+  ],
+  "figures": [
+    {
+      "kind": "line-series",
+      "caption": "Header-time deficit of each Foundry stale against its canonical winner",
+      "y_label": "seconds found before the winner",
+      "points": [
+        { "t": "2025-09-11T17:48", "v": 0 },
+        { "t": "2025-09-11T21:18", "v": 963 },
+        { "t": "2025-09-11T21:25", "v": 549 },
+        { "t": "2025-09-11T23:54", "v": 6 },
+        { "t": "2025-09-12T04:37", "v": 135 },
+        { "t": "2025-09-12T04:46", "v": 616 },
+        { "t": "2025-09-12T05:52", "v": 1301 },
+        { "t": "2025-09-12T06:22", "v": 745 },
+        { "t": "2025-09-12T06:44", "v": 1454 },
+        { "t": "2025-09-12T07:01", "v": 421 },
+        { "t": "2025-09-12T07:23", "v": 203 },
+        { "t": "2025-09-12T08:28", "v": 559 },
+        { "t": "2025-09-12T09:01", "v": 1621 },
+        { "t": "2025-09-12T09:11", "v": 1016 },
+        { "t": "2025-09-12T10:34", "v": 302 },
+        { "t": "2025-09-12T11:52", "v": 596 },
+        { "t": "2025-09-12T12:05", "v": 711 },
+        { "t": "2025-09-12T12:13", "v": 207 },
+        { "t": "2025-09-12T13:35", "v": 731 },
+        { "t": "2025-09-12T13:58", "v": 465 }
+      ],
+      "markers": [
+        { "t": "2025-09-11T21:18", "label": "cluster begins" }
+      ],
+      "note": "One point per stale block, from this monitor's competition data, queried 2026-07-29."
+    }
+  ],
+  "references": [
+    {
+      "id": 1,
+      "label": "bnoc.xyz - Introducing the Merge Mining Monitor",
+      "url": "https://bnoc.xyz/t/introducing-the-merge-mining-monitor/146"
+    },
+    {
+      "id": 2,
+      "label": "ForkMonitor (no record of these blocks)",
+      "url": "https://forkmonitor.info/"
+    }
+  ]
+}
