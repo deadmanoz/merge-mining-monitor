@@ -149,6 +149,9 @@ function mount() {
   });
 
   $("#findings-main").addEventListener("click", (event) => {
+    // A citation link inside a card summary is its own gesture: let it act
+    // without also treating the click as card activation.
+    if (event.target.closest("a")) return;
     const card = event.target.closest("[data-finding]");
     if (card) {
       openFinding(card.dataset.finding);

@@ -93,7 +93,7 @@ test("the drawer column is absent on findings and intact on return", async ({ pa
 test("a card click opens the article and writes finding=", async ({ page }) => {
   await openFindings(page);
 
-  await page.locator('[data-finding="mid-shift"]').click();
+  await page.locator('article.finding-card[data-finding="mid-shift"]').click();
   await expect(page.locator(".finding-article-title")).toHaveText("Mid shift");
   expect(new URL(page.url()).searchParams.get("finding")).toBe("mid-shift");
   // The feed is replaced, not stacked beside or below the article.
@@ -103,7 +103,7 @@ test("a card click opens the article and writes finding=", async ({ page }) => {
 test("the back control returns to the feed and clears finding=", async ({ page }) => {
   await openFindings(page);
 
-  await page.locator('[data-finding="newest-incident"]').click();
+  await page.locator('article.finding-card[data-finding="newest-incident"]').click();
   await page.locator('[data-action="findings-back"]').click();
   await expect(page.locator(".finding-card")).toHaveCount(3);
   expect(new URL(page.url()).searchParams.get("finding")).toBeNull();
@@ -182,8 +182,52 @@ test("a line-series figure renders with its marker and caption", async ({ page }
 
   const figure = page.locator(".finding-figure");
   await expect(figure.locator("svg path")).toHaveCount(1);
-  await expect(figure.locator("svg text").filter({ hasText: "halt" })).toBeVisible();
+  const marker = figure.locator("svg text").filter({ hasText: "halt" });
+  await expect(marker).toBeVisible();
+  // The marker sits on the final sample: a center anchor would clip its label
+  // outside the viewBox, so edge markers re-anchor inward.
+  await expect(marker).toHaveAttribute("text-anchor", "end");
   await expect(figure.locator("figcaption")).toContainText("Weekly captures");
+});
+
+test("a citation click in a card summary does not open the article", async ({ page }) => {
+  await openFindings(page);
+
+  // Citation links open externally (target=_blank); the card must not also
+  // activate. Nested-interactive markup is ruled out structurally: the card
+  // is not a button, the title opener is.
+  const popup = page.waitForEvent("popup");
+  await page.locator(".finding-card-summary sup.sd-cite a").first().click();
+  await (await popup).close();
+  await expect(page.locator(".finding-article-title")).toHaveCount(0);
+  await expect(page.locator(".finding-card")).toHaveCount(3);
+});
+
+test("the card title opener is a button and opens the article", async ({ page }) => {
+  await openFindings(page);
+
+  const opener = page.locator('.finding-card-open[data-finding="mid-shift"]');
+  expect(await opener.evaluate((el) => el.tagName)).toBe("BUTTON");
+  await opener.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".finding-article-title")).toHaveText("Mid shift");
+});
+
+test("mobile widths collapse findings to a single column", async ({ page }) => {
+  await page.setViewportSize({ width: 700, height: 900 });
+  await openFindings(page);
+
+  // The base findings grid override outranks the breakpoint's plain
+  // .workspace rule, so the breakpoint must restate the columns; without
+  // that, a phantom 250px filter track squeezes the stacked canvas.
+  const layout = await page.evaluate(() => {
+    const rail = document.querySelector(".filter-rail").getBoundingClientRect();
+    const main = document.querySelector("#findings-main").getBoundingClientRect();
+    const workspace = document.querySelector(".workspace").getBoundingClientRect();
+    return { stacked: main.top >= rail.bottom, mainWidth: main.width, workspaceWidth: workspace.width };
+  });
+  expect(layout.stacked).toBe(true);
+  expect(layout.mainWidth).toBeGreaterThan(layout.workspaceWidth * 0.9);
 });
 
 test("the article renders cited prose and a Sources list", async ({ page }) => {

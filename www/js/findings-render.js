@@ -58,8 +58,10 @@ function statusPill(status) {
   return `<span class="finding-status finding-status-${esc(meta.tone)}">${esc(meta.label)}</span>`;
 }
 
-/// One feed card. The whole card is a button; the view's delegated handler
-/// reads `data-finding` to open it.
+/// One feed card. NOT a button: summaries carry live citation links, and an
+/// interactive element may not nest another. The card is a plain container
+/// the delegated handler opens by `data-finding` (ignoring clicks that land
+/// on a link), and the title is the dedicated keyboard-reachable opener.
 function findingCard(finding) {
   const chains = finding.affected_sources
     .map((code) => `<span class="finding-chip">${esc(chainOf(code))}</span>`)
@@ -72,15 +74,17 @@ function findingCard(finding) {
     extras.push(`<span class="finding-chip finding-chip-count">${finding.figures.length} figure${finding.figures.length > 1 ? "s" : ""}</span>`);
   }
   return `
-    <button type="button" class="finding-card" data-finding="${esc(finding.slug)}">
+    <article class="finding-card" data-finding="${esc(finding.slug)}">
       <span class="finding-card-top">
         ${categoryChip(finding.category)}
         <span class="finding-card-date">${esc(finding.observed_at)}</span>
       </span>
-      <span class="finding-card-title">${esc(finding.title)}</span>
+      <button type="button" class="finding-card-open" data-finding="${esc(finding.slug)}">
+        <span class="finding-card-title">${esc(finding.title)}</span>
+      </button>
       <span class="finding-card-summary">${formatCitedText(finding.summary, finding.references, null)}</span>
       <span class="finding-card-meta">${statusPill(finding.status)}${chains}${extras.join("")}</span>
-    </button>`;
+    </article>`;
 }
 
 /// The feed: cards in corpus order (newest-first), grouped under month labels
@@ -163,10 +167,15 @@ function renderFigure(figure) {
     .join("");
   const markers = (figure.markers || [])
     .map((m) => {
-      const x = px(instantMs(m.t)).toFixed(1);
-      return `<line x1="${x}" y1="${PAD.top - 4}" x2="${x}" y2="${H - PAD.bottom}"
+      const x = px(instantMs(m.t));
+      // A center-anchored label at either plot edge would clip outside the
+      // viewBox (the Elastos halt marker sits on the final sample); re-anchor
+      // near the boundaries so the text stays inside the chart.
+      const EDGE = 60;
+      const anchor = x < PAD.left + EDGE ? "start" : x > W - PAD.right - EDGE ? "end" : "middle";
+      return `<line x1="${x.toFixed(1)}" y1="${PAD.top - 4}" x2="${x.toFixed(1)}" y2="${H - PAD.bottom}"
           stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
-        <text x="${x}" y="${PAD.top - 7}" text-anchor="middle" class="fig-tick">${esc(m.label)}</text>`;
+        <text x="${x.toFixed(1)}" y="${PAD.top - 7}" text-anchor="${anchor}" class="fig-tick">${esc(m.label)}</text>`;
     })
     .join("");
   const last = figure.points[figure.points.length - 1];

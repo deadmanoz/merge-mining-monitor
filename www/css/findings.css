@@ -87,12 +87,22 @@
   border-radius: 8px;
   background: var(--surface);
   cursor: pointer;
-  font: inherit;
-  color: inherit;
 }
 
 .finding-card:hover {
   border-color: var(--focus);
+}
+
+/* The dedicated opener: visually just the title line, but a real button so
+   the card is keyboard-reachable without nesting links inside a button. */
+.finding-card-open {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
 }
 
 .finding-card-top {
