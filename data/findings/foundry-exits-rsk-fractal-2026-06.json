@@ -7,12 +7,34 @@
   "published_at": "2026-07-29",
   "affected_sources": ["auxpow:rsk", "auxpow:fractal"],
   "summary": "Foundry USA's last merge-mined parent on RSK and on Fractal is the same Bitcoin block: height 955,218, mined 2026-06-24 19:54:41 UTC. One block merge-mining both chains, then never again.",
-  "body": "Foundry USA's last merge-mined parent on RSK and on Fractal is the same Bitcoin block: height `955,218`, mined at 19:54:41 UTC on June 24.[^2] One block merge-mining both chains, then never again - a single-cut operational shutdown, not a wind-down.\n\nBefore the exit Foundry contributed roughly a quarter of each chain's attributed parents, matching its share of the Bitcoin network - it merge-mined with essentially its whole pool. Since June 24 both chains continue at normal rates on the remaining pools.\n\nNo public reporting of the exit exists; Rootstock's own Q1 2026 merged-mining report still listed Foundry as a top contributor.[^1] This dataset appears to be the first documentation.",
+  "body": "Foundry USA's last merge-mined parent on RSK and on Fractal is the same Bitcoin block: height `955,218`, mined at 19:54:41 UTC on June 24.[^2] One block merge-mining both chains, then never again: a single-cut operational shutdown, not a wind-down.\n\nBefore the exit Foundry contributed roughly a quarter of each chain's attributed parents, matching its share of the Bitcoin network; it merge-mined with essentially its whole pool. Since June 24 both chains continue at normal rates on the remaining pools.\n\nNo public reporting of the exit exists; Rootstock's own Q1 2026 merged-mining report still listed Foundry as a top contributor.[^1] This dataset appears to be the first documentation.",
   "anchors": [
     { "kind": "btc-height", "value": "955218", "label": "last Foundry merge-mined parent" },
     { "kind": "source", "value": "auxpow:rsk" },
     { "kind": "source", "value": "auxpow:fractal" },
     { "kind": "pool", "value": "Foundry USA" }
+  ],
+  "figures": [
+    {
+      "kind": "line-series",
+      "caption": "Foundry-attributed merge-mined parents per week, RSK and Fractal combined",
+      "y_label": "attributed parents / week",
+      "points": [
+        { "t": "2026-06-01", "v": 213 },
+        { "t": "2026-06-08", "v": 292 },
+        { "t": "2026-06-15", "v": 397 },
+        { "t": "2026-06-22", "v": 188 },
+        { "t": "2026-06-29", "v": 0 },
+        { "t": "2026-07-06", "v": 0 },
+        { "t": "2026-07-13", "v": 0 },
+        { "t": "2026-07-20", "v": 0 },
+        { "t": "2026-07-27", "v": 0 }
+      ],
+      "markers": [
+        { "t": "2026-06-24", "label": "last parent, BTC 955,218" }
+      ],
+      "note": "Weekly Foundry USA parent attributions from this monitor's event data, queried 2026-07-29."
+    }
   ],
   "references": [
     {

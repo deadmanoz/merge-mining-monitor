@@ -85,6 +85,51 @@ pub struct Reference {
     url: String,
 }
 
+/// Figure kinds the frontend renderer supports. `line-series` is a single
+/// time series with optional event markers (the collapse/exit/halt shapes the
+/// evidence keeps producing). Bitmap `image` figures are deliberately absent:
+/// structured data stays theme-aware and validated; add an image kind only
+/// when a finding needs an irreducible graphic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FigureKind {
+    LineSeries,
+}
+
+/// One time-series sample. `t` is an ISO `YYYY-MM-DD` date or
+/// `YYYY-MM-DDTHH:MM` UTC datetime; `v` is the plotted value.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FigurePoint {
+    t: String,
+    v: f64,
+}
+
+/// One labeled vertical event marker inside a figure's time range.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FigureMarker {
+    t: String,
+    label: String,
+}
+
+/// One structured evidence figure, rendered client-side from data (never a
+/// committed bitmap) so it stays theme-aware and drift-gated with the rest of
+/// the corpus.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Figure {
+    kind: FigureKind,
+    caption: String,
+    /// Axis label for the plotted value (e.g. `block weight (log2 difficulty)`).
+    y_label: String,
+    points: Vec<FigurePoint>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    markers: Vec<FigureMarker>,
+    /// Data-provenance note shown under the caption.
+    note: String,
+}
+
 /// One curated finding. Field declaration order is the emitted JSON order
 /// (kept deterministic for the drift gate). `deny_unknown_fields` catches
 /// typo'd keys; content invariants live in [`validate_finding`].
@@ -110,6 +155,8 @@ pub struct Finding {
     body: String,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     anchors: Vec<Anchor>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    figures: Vec<Figure>,
     references: Vec<Reference>,
 }
 
@@ -119,6 +166,69 @@ fn parse_date(value: &str) -> Result<Date, String> {
     let format =
         time::format_description::parse("[year]-[month]-[day]").expect("static date format parses");
     Date::parse(value, &format).map_err(|err| format!("invalid calendar date {value:?}: {err}"))
+}
+
+/// Parse a figure instant: an ISO `YYYY-MM-DD` date (midnight) or a
+/// `YYYY-MM-DDTHH:MM` UTC datetime, as a comparable `PrimitiveDateTime`.
+fn parse_instant(value: &str) -> Result<time::PrimitiveDateTime, String> {
+    if let Ok(date) = parse_date(value) {
+        return Ok(date.midnight());
+    }
+    let format = time::format_description::parse("[year]-[month]-[day]T[hour]:[minute]")
+        .expect("static datetime format parses");
+    time::PrimitiveDateTime::parse(value, &format).map_err(|err| {
+        format!("invalid instant {value:?} (want YYYY-MM-DD or YYYY-MM-DDTHH:MM): {err}")
+    })
+}
+
+/// Validate one figure: non-empty caption/axis/note, at least two finite
+/// points in strictly increasing time order, and markers that land inside the
+/// plotted range.
+fn validate_figure(ctx: &impl Fn(String) -> String, figure: &Figure) -> Result<(), String> {
+    for (label, value) in [
+        ("figure caption", &figure.caption),
+        ("figure y_label", &figure.y_label),
+        ("figure note", &figure.note),
+    ] {
+        if value.trim().is_empty() {
+            return Err(ctx(format!("empty {label}")));
+        }
+    }
+    if figure.points.len() < 2 {
+        return Err(ctx("figure needs at least two points".into()));
+    }
+    let mut instants = Vec::with_capacity(figure.points.len());
+    for point in &figure.points {
+        if !point.v.is_finite() {
+            return Err(ctx(format!(
+                "figure point {:?} has a non-finite value",
+                point.t
+            )));
+        }
+        instants.push(parse_instant(&point.t).map_err(|e| ctx(format!("figure point: {e}")))?);
+    }
+    if instants.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(ctx(
+            "figure points must be strictly increasing in time".into()
+        ));
+    }
+    let (first, last) = (instants[0], *instants.last().expect("two or more points"));
+    for marker in &figure.markers {
+        if marker.label.trim().is_empty() {
+            return Err(ctx(format!(
+                "figure marker {:?} has an empty label",
+                marker.t
+            )));
+        }
+        let at = parse_instant(&marker.t).map_err(|e| ctx(format!("figure marker: {e}")))?;
+        if at < first || at > last {
+            return Err(ctx(format!(
+                "figure marker {:?} is outside the plotted range",
+                marker.t
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Whether `slug` is non-empty kebab-case: lowercase ASCII alphanumerics and
@@ -216,6 +326,10 @@ fn validate_finding(file_stem: &str, f: &Finding) -> Result<(), String> {
         {
             return Err(ctx(format!("anchor {:?} has an empty label", anchor.value)));
         }
+    }
+
+    for figure in &f.figures {
+        validate_figure(&ctx, figure)?;
     }
 
     validate_finding_citations(&ctx, f)
@@ -480,6 +594,67 @@ mod tests {
             { "kind": "btc-height", "value": "953043", "label": "  " }
         ]);
         expect_err(v, "empty label");
+    }
+
+    fn valid_figure_json() -> serde_json::Value {
+        serde_json::json!({
+            "kind": "line-series",
+            "caption": "Test series",
+            "y_label": "value",
+            "points": [
+                { "t": "2026-06-01", "v": 1.0 },
+                { "t": "2026-06-10T12:00", "v": 2.0 }
+            ],
+            "markers": [{ "t": "2026-06-05", "label": "event" }],
+            "note": "test data"
+        })
+    }
+
+    #[test]
+    fn valid_figure_passes() {
+        let mut v = valid_finding_json();
+        v["figures"] = serde_json::json!([valid_figure_json()]);
+        let finding = parse(v);
+        validate_finding("test-finding", &finding).expect("valid figure");
+    }
+
+    #[test]
+    fn single_point_figure_is_rejected() {
+        let mut fig = valid_figure_json();
+        fig["points"] = serde_json::json!([{ "t": "2026-06-01", "v": 1.0 }]);
+        let mut v = valid_finding_json();
+        v["figures"] = serde_json::json!([fig]);
+        expect_err(v, "at least two points");
+    }
+
+    #[test]
+    fn unsorted_figure_points_are_rejected() {
+        let mut fig = valid_figure_json();
+        fig["points"] = serde_json::json!([
+            { "t": "2026-06-10", "v": 1.0 },
+            { "t": "2026-06-01", "v": 2.0 }
+        ]);
+        let mut v = valid_finding_json();
+        v["figures"] = serde_json::json!([fig]);
+        expect_err(v, "strictly increasing");
+    }
+
+    #[test]
+    fn out_of_range_figure_marker_is_rejected() {
+        let mut fig = valid_figure_json();
+        fig["markers"] = serde_json::json!([{ "t": "2026-07-01", "label": "late" }]);
+        let mut v = valid_finding_json();
+        v["figures"] = serde_json::json!([fig]);
+        expect_err(v, "outside the plotted range");
+    }
+
+    #[test]
+    fn malformed_figure_instant_is_rejected() {
+        let mut fig = valid_figure_json();
+        fig["points"][0]["t"] = serde_json::json!("June 1st");
+        let mut v = valid_finding_json();
+        v["figures"] = serde_json::json!([fig]);
+        expect_err(v, "invalid instant");
     }
 
     #[test]

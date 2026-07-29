@@ -12,8 +12,8 @@ export const FINDINGS = [
     "affected_sources": [
       "auxpow:elastos"
     ],
-    "summary": "A consensus-level int64 output-sum overflow halted the Elastos main chain on 2026-07-20. Block production stopped at height 2,260,595 - the exact tip this monitor's node froze on - and a rollback to the pre-exploit state is planned.",
-    "body": "On July 20 a consensus-level exploit hit the Elastos main chain: a transaction whose outputs summed past the signed 64-bit range wrapped around and passed monetary validation. The first affected block was `2,260,451`; block production stopped 145 blocks later at `2,260,595` - the exact height this monitor's node froze on, minutes after our last captured AuxPoW parent.[^1]\n\nElastos plans to roll the chain back to the last valid pre-exploit state and resume under corrected rules, with AuxPoW explicitly part of recovery testing. Until then no AuxPoW blocks are being produced, and this source reads stale.\n\nTwenty-two captured events sit inside the exploit window. When the rollback lands they become orphaned child blocks and the affected range will be re-reconciled - a rare case where a child-chain reorg is announced in advance.",
+    "summary": "A consensus-level int64 output-sum overflow halted the Elastos main chain on 2026-07-20. Block production stopped at height 2,260,595, the exact tip this monitor's node froze on, and a rollback to the pre-exploit state is planned.",
+    "body": "On July 20 a consensus-level exploit hit the Elastos main chain: a transaction whose outputs summed past the signed 64-bit range wrapped around and passed monetary validation. The first affected block was `2,260,451`; block production stopped 145 blocks later at `2,260,595`, the exact height this monitor's node froze on, minutes after our last captured AuxPoW parent.[^1]\n\nElastos plans to roll the chain back to the last valid pre-exploit state and resume under corrected rules, with AuxPoW explicitly part of recovery testing. Until then no AuxPoW blocks are being produced, and this source reads stale.\n\nTwenty-two captured events sit inside the exploit window. When the rollback lands they become orphaned child blocks and the affected range will be re-reconciled: a rare case where a child-chain reorg is announced in advance.",
     "anchors": [
       {
         "kind": "child-height",
@@ -28,6 +28,50 @@ export const FINDINGS = [
       {
         "kind": "source",
         "value": "auxpow:elastos"
+      }
+    ],
+    "figures": [
+      {
+        "kind": "line-series",
+        "caption": "Elastos AuxPoW events captured per week, June to July 2026",
+        "y_label": "captured events / week",
+        "points": [
+          {
+            "t": "2026-06-08",
+            "v": 475.0
+          },
+          {
+            "t": "2026-06-15",
+            "v": 508.0
+          },
+          {
+            "t": "2026-06-22",
+            "v": 540.0
+          },
+          {
+            "t": "2026-06-29",
+            "v": 480.0
+          },
+          {
+            "t": "2026-07-06",
+            "v": 478.0
+          },
+          {
+            "t": "2026-07-13",
+            "v": 538.0
+          },
+          {
+            "t": "2026-07-20",
+            "v": 68.0
+          }
+        ],
+        "markers": [
+          {
+            "t": "2026-07-20",
+            "label": "chain halts at 2,260,595"
+          }
+        ],
+        "note": "Weekly captured AuxPoW events from this monitor's event data, queried 2026-07-29."
       }
     ],
     "references": [
@@ -50,7 +94,7 @@ export const FINDINGS = [
       "auxpow:fractal"
     ],
     "summary": "Foundry USA's last merge-mined parent on RSK and on Fractal is the same Bitcoin block: height 955,218, mined 2026-06-24 19:54:41 UTC. One block merge-mining both chains, then never again.",
-    "body": "Foundry USA's last merge-mined parent on RSK and on Fractal is the same Bitcoin block: height `955,218`, mined at 19:54:41 UTC on June 24.[^2] One block merge-mining both chains, then never again - a single-cut operational shutdown, not a wind-down.\n\nBefore the exit Foundry contributed roughly a quarter of each chain's attributed parents, matching its share of the Bitcoin network - it merge-mined with essentially its whole pool. Since June 24 both chains continue at normal rates on the remaining pools.\n\nNo public reporting of the exit exists; Rootstock's own Q1 2026 merged-mining report still listed Foundry as a top contributor.[^1] This dataset appears to be the first documentation.",
+    "body": "Foundry USA's last merge-mined parent on RSK and on Fractal is the same Bitcoin block: height `955,218`, mined at 19:54:41 UTC on June 24.[^2] One block merge-mining both chains, then never again: a single-cut operational shutdown, not a wind-down.\n\nBefore the exit Foundry contributed roughly a quarter of each chain's attributed parents, matching its share of the Bitcoin network; it merge-mined with essentially its whole pool. Since June 24 both chains continue at normal rates on the remaining pools.\n\nNo public reporting of the exit exists; Rootstock's own Q1 2026 merged-mining report still listed Foundry as a top contributor.[^1] This dataset appears to be the first documentation.",
     "anchors": [
       {
         "kind": "btc-height",
@@ -68,6 +112,58 @@ export const FINDINGS = [
       {
         "kind": "pool",
         "value": "Foundry USA"
+      }
+    ],
+    "figures": [
+      {
+        "kind": "line-series",
+        "caption": "Foundry-attributed merge-mined parents per week, RSK and Fractal combined",
+        "y_label": "attributed parents / week",
+        "points": [
+          {
+            "t": "2026-06-01",
+            "v": 213.0
+          },
+          {
+            "t": "2026-06-08",
+            "v": 292.0
+          },
+          {
+            "t": "2026-06-15",
+            "v": 397.0
+          },
+          {
+            "t": "2026-06-22",
+            "v": 188.0
+          },
+          {
+            "t": "2026-06-29",
+            "v": 0.0
+          },
+          {
+            "t": "2026-07-06",
+            "v": 0.0
+          },
+          {
+            "t": "2026-07-13",
+            "v": 0.0
+          },
+          {
+            "t": "2026-07-20",
+            "v": 0.0
+          },
+          {
+            "t": "2026-07-27",
+            "v": 0.0
+          }
+        ],
+        "markers": [
+          {
+            "t": "2026-06-24",
+            "label": "last parent, BTC 955,218"
+          }
+        ],
+        "note": "Weekly Foundry USA parent attributions from this monitor's event data, queried 2026-07-29."
       }
     ],
     "references": [
@@ -94,7 +190,7 @@ export const FINDINGS = [
       "auxpow:hathor"
     ],
     "summary": "Hathor's chain difficulty fell roughly 3,500-fold within two days of 2026-06-10. F2Pool still merge-mines Hathor with a residual hashrate slice, but parents that clear Bitcoin's target are no longer expected.",
-    "body": "Between 12:00 and 14:30 UTC on June 10, Hathor's chain difficulty fell off a cliff: block weight (log2 difficulty) dropped from ~68.7, where it had sat all year, and bottomed out near 56.9 two days later - a roughly 3,500-fold reduction in per-block work.[^1]\n\nEvery Bitcoin-difficulty Hathor parent this monitor has ever attributed was mined by F2Pool, and F2Pool has not left: current Hathor blocks still carry `/F2Pool/` parent coinbases built on live Bitcoin templates. What changed is scale. At the residual ~5-7 PH/s, a parent that clears Bitcoin's target is expected roughly once every few years, against ~40 per month before the collapse.[^2]\n\nThe capture pipeline was verified end-to-end against this window; the source's stale badge is a faithful description of the chain, not a monitor fault. The last captured parent (Hathor height `6,631,349`, Bitcoin height `953,043`) landed about ten hours before the collapse began.",
+    "body": "Between 12:00 and 14:30 UTC on June 10, Hathor's chain difficulty fell off a cliff: block weight (log2 difficulty) dropped from ~68.7, where it had sat all year, to a floor near 56.9 two days later, a roughly 3,500-fold reduction in per-block work.[^1]\n\nEvery Bitcoin-difficulty Hathor parent this monitor has ever attributed was mined by F2Pool, and F2Pool has not left: current Hathor blocks still carry `/F2Pool/` parent coinbases built on live Bitcoin templates. What changed is scale. At the residual ~5-7 PH/s, a parent that clears Bitcoin's target is expected roughly once every few years, against ~40 per month before the collapse.[^2]\n\nThe capture pipeline was verified end-to-end against this window; the source's stale badge is a faithful description of the chain, not a monitor fault. The last captured parent (Hathor height `6,631,349`, Bitcoin height `953,043`) landed about ten hours before the collapse began.",
     "anchors": [
       {
         "kind": "btc-height",
@@ -113,6 +209,94 @@ export const FINDINGS = [
       {
         "kind": "pool",
         "value": "F2Pool"
+      }
+    ],
+    "figures": [
+      {
+        "kind": "line-series",
+        "caption": "Hathor block weight, February to July 2026",
+        "y_label": "block weight (log2 difficulty)",
+        "points": [
+          {
+            "t": "2026-02-14",
+            "v": 67.86
+          },
+          {
+            "t": "2026-03-21",
+            "v": 68.19
+          },
+          {
+            "t": "2026-04-25",
+            "v": 68.09
+          },
+          {
+            "t": "2026-05-12",
+            "v": 68.03
+          },
+          {
+            "t": "2026-05-30",
+            "v": 69.08
+          },
+          {
+            "t": "2026-06-06",
+            "v": 68.84
+          },
+          {
+            "t": "2026-06-08",
+            "v": 68.78
+          },
+          {
+            "t": "2026-06-10T01:20",
+            "v": 68.68
+          },
+          {
+            "t": "2026-06-10T11:44",
+            "v": 68.66
+          },
+          {
+            "t": "2026-06-10T12:30",
+            "v": 66.21
+          },
+          {
+            "t": "2026-06-10T13:12",
+            "v": 64.04
+          },
+          {
+            "t": "2026-06-10T13:48",
+            "v": 62.1
+          },
+          {
+            "t": "2026-06-10T14:23",
+            "v": 60.3
+          },
+          {
+            "t": "2026-06-12",
+            "v": 56.91
+          },
+          {
+            "t": "2026-06-24",
+            "v": 56.91
+          },
+          {
+            "t": "2026-07-07",
+            "v": 56.91
+          },
+          {
+            "t": "2026-07-21",
+            "v": 56.91
+          },
+          {
+            "t": "2026-07-29",
+            "v": 56.91
+          }
+        ],
+        "markers": [
+          {
+            "t": "2026-06-10T12:00",
+            "label": "collapse begins"
+          }
+        ],
+        "note": "Sampled per height window from the Hathor public node API, 2026-07-29."
       }
     ],
     "references": [
@@ -139,7 +323,7 @@ export const FINDINGS = [
       "auxpow:terracoin"
     ],
     "summary": "One new canonical parent at Bitcoin height 950,154 shows Terracoin still sporadically clears the full Bitcoin target, keeping its merge-mining window open.",
-    "body": "A single new canonical parent at Bitcoin height `950,154` shows Terracoin still sporadically clears the full Bitcoin target, a year after its merge-mining activity was thought to have collapsed.[^1]\n\nIts merge-mining window therefore stays open, and the live classifier's proof-of-work target check - not a leading-zero proxy, which over-counts sub-difficulty shares - remains the authority on which candidates count.",
+    "body": "A single new canonical parent at Bitcoin height `950,154` shows Terracoin still sporadically clears the full Bitcoin target, a year after its merge-mining activity was thought to have collapsed.[^1]\n\nThe rate arithmetic makes the sparseness legible. At the difficulty Terracoin's network reported at the time of writing (about `4.77e9`, implying roughly 150 PH/s at its observed ~2 minute block cadence), a full-difficulty Bitcoin block is expected about every six weeks.[^2] The observed record is roughly ten times sparser than that, which says the hashrate behind Terracoin arrives in bursts: the expectation only accrues while a pool is actually pointing hashrate at the chain.\n\nIts merge-mining window therefore stays open, and the live classifier's proof-of-work target check remains the authority on which candidates count (a leading-zero proxy over-counts sub-difficulty shares).",
     "anchors": [
       {
         "kind": "btc-height",
@@ -156,6 +340,11 @@ export const FINDINGS = [
         "id": 1,
         "label": "mempool.space - Bitcoin block 950,154",
         "url": "https://mempool.space/block/950154"
+      },
+      {
+        "id": 2,
+        "label": "Terracoin Insight explorer (network difficulty)",
+        "url": "https://insight.terracoin.io/api/status"
       }
     ]
   },
@@ -170,8 +359,8 @@ export const FINDINGS = [
       "auxpow:rsk",
       "auxpow:fractal"
     ],
-    "summary": "Foundry's first merge-mined parents appear on RSK and Fractal on the same day - and in the same Bitcoin block, height 893,543 - opening the ~14-month window that the June 2026 pool-exit finding closes.",
-    "body": "Foundry USA's first merge-mined parent on RSK and on Fractal is the same Bitcoin block: height `893,543`, mined on April 22, 2025.[^2] The pool announced Rootstock merged mining publicly, and its Fractal participation began in the same template.[^1]\n\nThe window this opens runs ~14 months and closes the same way it opened - with a single Bitcoin block merge-mining both chains (height `955,218`, June 24, 2026). Paired findings like these give a pool's merge-mining tenure a precise, evidence-backed start and end.",
+    "summary": "Foundry's first merge-mined parents appear on RSK and Fractal on the same day, in the same Bitcoin block (height 893,543), opening the ~14-month window that the June 2026 pool-exit finding closes.",
+    "body": "Foundry USA's first merge-mined parent on RSK and on Fractal is the same Bitcoin block: height `893,543`, mined on April 22, 2025.[^2] The pool announced Rootstock merged mining publicly, and its Fractal participation began in the same template.[^1]\n\nThe window this opens runs ~14 months and closes the same way it opened, with a single Bitcoin block merge-mining both chains (height `955,218`, June 24, 2026). Paired findings like these give a pool's merge-mining tenure a precise, evidence-backed start and end.",
     "anchors": [
       {
         "kind": "btc-height",
