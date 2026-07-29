@@ -1,9 +1,13 @@
 # Merge Mining Monitor
 
 A live monitor and historical record of Bitcoin merge-mining: the pools and child
-chains behind each block, and the stale and orphan blocks that evidence recovers.
+chains behind each block, and the stale and orphan blocks recovered from their
+evidence.
 
-![The Merge Mining Monitor header tree: the recent Bitcoin chain, each block labelled with its mining pool and the number of chains that merge-mined it](docs/img/hero.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/hero-dark.png" />
+  <img alt="The Merge Mining Monitor header tree: the recent Bitcoin chain, each block labelled with its mining pool and the number of chains that merge-mined it" src="docs/img/hero.png" />
+</picture>
 
 Bitcoin's proof of work secures more than Bitcoin. Merge-mined chains reuse it: a
 miner hashing a Bitcoin block can, at no extra work, commit that same proof to
@@ -12,30 +16,34 @@ which chains rode along, though. That record lives on the child chains, where ea
 merge-mined block holds an [AuxPoW proof](https://deadmanoz.xyz/posts/2026/merge-mining)
 pointing back at its Bitcoin block.
 
-Merge Mining Monitor reconstructs it. Reading across the ecosystem (live producers
-and long-dead chains alike), it ties each Bitcoin block to the pool that mined it
-and the child chains that merge-mined it, and renders the whole header tree, from
-genesis to the current tip, through that lens.
+Merge Mining Monitor reconstructs it. From live producers and long-dead chains
+alike, it ties each Bitcoin block to the pool that mined it and the child chains
+that merge-mined it, and renders the whole header tree from genesis to the
+current tip. The recovery work behind the historical datasets lives in the
+companion [`merge-mining-research`](https://github.com/deadmanoz/merge-mining-research)
+repository.
 
 Because that evidence is durable and independent, it also preserves Bitcoin blocks
 the active chain discarded: valid Bitcoin blocks that lost the race to be accepted
 by the network and never made the canonical chain. Alongside that chain the monitor
-recovers **2,200 stale blocks (and counting)**, spanning 2011 to today, most of them
+recovers **2,204 stale blocks (and counting)**, spanning 2011 to today, most of them
 with no durable record left on the Bitcoin network.
 
 ## Attribution for every block
 
-![Bitcoin block 676,726 selected, its detail drawer resolving the mining pool and the nine chains that merge-mined it](docs/img/merge-mining-detail.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/merge-mining-detail-dark.png" />
+  <img alt="Bitcoin block 676,726 selected, its detail drawer resolving the mining pool and the nine chains that merge-mined it" src="docs/img/merge-mining-detail.png" />
+</picture>
 
-*One Bitcoin block, many chains. Block 676,726 (28 March 2021), mined by Mining-Dutch, carried the
-proof of work for nine merge-mined chains at once (Argentum, Bitmark, Emercoin,
-Myriadcoin, Namecoin, Syscoin, Terracoin, Unobtanium, and Xaya). The Block Detail
-drawer resolves the pool, the decoded AuxPoW commitment, and every child block that
-rode along.*
+*Block 676,726 (28 March 2021), mined by Mining-Dutch, carried the proof of work
+for nine merge-mined chains at once (Argentum, Bitmark, Emercoin, Myriadcoin,
+Namecoin, Syscoin, Terracoin, Unobtanium, and Xaya). The Block Detail drawer
+resolves the pool, the decoded AuxPoW commitment, and each chain's child block.*
 
-The first screen is where the work happens. A windowed Bitcoin header tree
-renders the canonical spine, each block labelled with its pool and a badge for the
-number of chains that merge-mined it. From it you can:
+The main view is a windowed Bitcoin header tree: the canonical spine, each block
+labelled with its pool and a badge for the number of chains that merge-mined it.
+From it you can:
 
 - **Browse the whole chain** from the genesis block to the current tip, or jump
   straight to any height or UTC timestamp.
@@ -44,14 +52,15 @@ number of chains that merge-mined it. From it you can:
   external explorer links.
 - **Filter by source** to see which headers a given chain touched, and by
   classification to isolate canonical, stale, or orphan blocks.
-- **Walk the record** with a single navigator across the latest stale blocks,
-  stale branches, orphans, and orphan branches.
+- **Step through the record** with a single navigator across the latest stale
+  blocks, stale branches, orphans, and orphan branches.
 
 ## The chains
 
-<p align="center">
-  <img src="docs/img/sources.png" width="820" alt="The source rail grouped into live sources, recovered datasets, recovered subsets, recovered surveys, and catalogued chains" />
-</p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/sources-dark.png" />
+  <img alt="The source rail grouped into live sources, recovered datasets, recovered subsets, recovered surveys, and catalogued chains" src="docs/img/sources.png" />
+</picture>
 
 The source rail groups chains by the evidence we actually hold, with Bitcoin
 Core supplying canonical context:
@@ -67,7 +76,7 @@ Core supplying canonical context:
   Terracoin, Unobtanium, and Xaya. Lyncoin is complete from genesis through the
   last SHA-256d block at height 260,499 (11 canonical Bitcoin parents);
   SixEleven is complete through its available tip at height 999,406 (seven).
-  The recovered dataset production artefacts will be made available in the public
+  The recovered dataset production artefacts live in the companion
   [`merge-mining-research`](https://github.com/deadmanoz/merge-mining-research)
   repository; this monitor commits the provenance manifest and derived runtime
   data it needs to import and serve them.
@@ -91,12 +100,11 @@ Namecoin, the first merge-mined chain, is the largest single contributor, but th
 picture is cross-chain: a single Bitcoin block is often merge-mined by many
 independent chains at once.
 
-If you can help fill the gaps, that is exactly the kind of contribution this
-monitor is built to absorb. The full VCash chain would replace a 68-row sample;
-chain data for one of the five remaining catalogue entries, or a better archive
-for an existing source, would extend the record. Get in touch on X
+If you can help fill the gaps, get in touch on X
 ([@ozdeadman](https://x.com/ozdeadman)) or Nostr
-([deadmanoz on Primal](https://primal.net/deadmanoz)).
+([deadmanoz on Primal](https://primal.net/deadmanoz)): the full VCash chain would
+replace a 68-row sample, and chain data for any of the five remaining catalogue
+entries, or a better archive for an existing source, would extend the record.
 
 ## Recovering stale and orphan blocks
 
@@ -105,20 +113,21 @@ drops. A node that received one as a competing tip may still hold it, but that
 copy is local and lost to a prune or a resync. Merge-mined chains record it
 regardless: the commitment in each child block carries the Bitcoin header its
 miner hashed, stale ones included. Every stale block shown here is recovered from
-those child-chain records, not from watching the Bitcoin network. That distinction
-matters. A live fork observer such as [fork-observer](https://fork.observer) can
-only capture a stale block if a node happens to see it at the tip as it happens, so
-its record starts when the observer does; this monitor reconstructs stales after the
-fact from the child chains, which is why the evidence reaches back to 2011, long
-before any systematic, long-term effort to observe and record activity on the
-Bitcoin network existed.
+those child-chain records, not from watching the Bitcoin network. A live fork
+observer such as [fork-observer](https://fork.observer) can only capture a stale
+block if one of its nodes sees it at the tip in real time, so its record starts
+when the observer does; this monitor reconstructs stales after the fact from the
+child chains, which is why the evidence reaches back to 2011, long before anyone
+was systematically recording fork activity on the Bitcoin network.
 
-![A stale Bitcoin block selected, with the detail drawer showing its classification, miner, and merge-mining evidence](docs/img/stale-block-detail.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/stale-block-detail-dark.png" />
+  <img alt="A stale Bitcoin block selected, with the detail drawer showing its classification, miner, and merge-mining evidence" src="docs/img/stale-block-detail.png" />
+</picture>
 
-*One block Bitcoin forgot, up close. Bitcoin block 955,546 was mined by ViaBTC but
-lost the race to MARA Pool's block at the same height. Four merge-mined chains
-recorded its header, so it survives here as proven stale evidence, one of 2,200 such
-blocks.*
+*Bitcoin block 959,137 was mined by Binance Pool but lost the race to Foundry
+USA's block at the same height. Four merge-mined chains recorded its header, so
+it survives here as proven stale evidence, one of 2,204 such blocks.*
 
 The monitor checks every recovered header against Bitcoin Core and classifies it by
 where it attaches to the canonical chain. If the block, or the block it builds on,
@@ -137,43 +146,68 @@ catalogued as a known stale is excluded from orphan classification outright. Sta
 competition is not always a single block, so the tree also renders multi-block stale
 and orphan branches.
 
-![A multi-block stale branch forking off the canonical spine, its stale headers linked by previous-block hash](docs/img/stale-branch.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/stale-branch-dark.png" />
+  <img alt="A multi-block stale branch forking off the canonical spine, its stale headers linked by previous-block hash" src="docs/img/stale-branch.png" />
+</picture>
 
-*Stale competition is not always one block. Here a multi-block stale branch, stale
-headers linked by their previous-block hashes, forks off the canonical spine and is
-recovered intact.*
+*A multi-block stale branch forks off the canonical spine and is recovered intact,
+its headers linked by their previous-block hashes.*
 
-This recovery is not confined to deep history. It runs right up to the present, and
-the busiest stretches can be the most revealing.
+Nor is the record only historical: recovery runs right up to the present.
 
-![Five stale Foundry USA blocks hanging off a fifteen-height stretch of the canonical spine, 12 September 2025](docs/img/stale-activity.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/stale-activity-dark.png" />
+  <img alt="Five stale Foundry USA blocks hanging off a fifteen-height stretch of the canonical spine, 12 September 2025" src="docs/img/stale-activity.png" />
+</picture>
 
-*Off-chain evidence at scale, and not all of it old. On 12 September 2025 Foundry USA
-lost race after race: in this fifteen-height stretch alone, five Foundry blocks fell
-off the active chain and survive here as recovered stale evidence, part of a two-day
-run of nineteen stales in a month that produced 25 against the usual handful. A spike
-that size, almost entirely from one pool, seems to suggest Foundry ran into some
-infrastructure trouble.*
+*On 12 September 2025 Foundry USA lost race after race: five Foundry blocks in
+this fifteen-height stretch alone fell off the active chain and survive here as
+recovered stale evidence, part of a two-day run of nineteen stales in a month
+that produced 25 against the usual handful. A spike that size, almost entirely
+from one pool, points to infrastructure trouble at Foundry.*
 
 ## Timing the races
+
+The Header Time Delta view (the Distribution toggle in the header) plots, for
+every recovered stale-versus-canonical competition, the gap between the two
+blocks' header timestamps. Most races are settled within seconds: the median
+sits at -3s across 2,204 competitions, and three quarters land inside a
+two-minute window. The hatched gutters and the log-scale strip keep the
+extremes visible, from same-second finishes to a header timestamped 78 days
+adrift, and every outlier links back to its block detail.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/header-time-delta-dark.png" />
   <img alt="The Header Time Delta view: a histogram of how far apart each stale block and its canonical competitor timestamped their headers, with a focus window, off-scale gutters, and a full-range log strip" src="docs/img/header-time-delta.png" />
 </picture>
 
-*How close were the races? The Header Time Delta view plots, for every recovered
-stale-versus-canonical competition, the gap between the two blocks' header
-timestamps. Most races are settled within seconds (here the median sits at -3s
-across 2,200 competitions, with three quarters inside a two-minute window), while
-the hatched gutters and the log-scale strip keep the wild outliers honest, from
-same-second photo finishes to a header timestamped 78 days adrift. A Coverage tab
-answers "what share of races landed within T seconds", the Table tab is the
-accessible twin, and every outlier links back to its block detail.*
+*The distribution around zero: races the canonical header timestamped first in
+blue, races the stale header timestamped first in red, and the off-scale racers
+stacked in the hatched gutters.*
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/header-time-delta-coverage-dark.png" />
+  <img alt="The Coverage tab: a cumulative curve answering what share of races landed within T seconds, annotated at the 50, 90, and 99 percent marks" src="docs/img/header-time-delta-coverage.png" />
+</picture>
+
+*The Coverage tab answers "what share of races landed within T seconds": half
+inside ±33s, 90% within ±12m, 99% within ±5.1d.*
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/header-time-delta-table-dark.png" />
+  <img alt="The Table tab: the same distribution as a text table of bins with counts, shares, and cumulative percentages" src="docs/img/header-time-delta-table.png" />
+</picture>
+
+*The Table tab carries the same distribution as text: per-bin counts, shares,
+and cumulative coverage.*
 
 ## Where the idea comes from
 
-![The built-in About dialog, explaining how merge-mined chains preserve Bitcoin stale and orphan evidence](docs/img/about.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/about-dark.png" />
+  <img alt="The built-in About dialog, explaining how merge-mined chains preserve Bitcoin stale and orphan evidence" src="docs/img/about.png" />
+</picture>
 
 The insight that merge-mined chains durably record the Bitcoin headers their miners
 hashed, stale ones included, originates with Nicholas Stifter (SBA Research,
@@ -213,6 +247,9 @@ Human-focused documentation lives in [`docs/`](docs/README.md):
 
 ## Related projects
 
+- [`merge-mining-research`](https://github.com/deadmanoz/merge-mining-research) -
+  the companion repository: the per-chain recovery work and the recovered AuxPoW
+  datasets this monitor imports.
 - [`fork-observer`](https://fork.observer) ([code](https://github.com/0xB10C/fork-observer)) -
   the fork-tree UI that inspired this frontend.
 
