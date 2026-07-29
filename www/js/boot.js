@@ -9,6 +9,7 @@ import { inputDateTimeToUtc } from "./tree-lookup.js?v=0.3.0";
 import { hasExplicitTreeView, hasManualTreeLookup, hasUnheightedAnchorView, syncUrl, treeWindowError } from "./tree-query-state.js?v=0.3.0";
 import { wireTreeLegend } from "./tree-renderer.js?v=0.3.0";
 import { prepareFocus, registerDeltaView } from "./delta-view.js?v=0.3.0";
+import { registerFindingsView } from "./findings-view.js?v=0.3.0";
 import { activateView, applyViewScopes, registerView, wireViewSwitcher } from "./view-shell.js?v=0.3.0";
 
 async function reloadAll() {
@@ -568,6 +569,7 @@ async function initApp() {
   document.documentElement.dataset.theme = localStorage.getItem("mmm-theme") || "";
   hydrateFormFromUrl();
   registerDeltaView(registerView);
+  registerFindingsView(registerView);
   // Stamp the view scope before anything paints. reloadAll's activateView does
   // this too, but only after its first await; until data-view is set, neither
   // scope rule matches and both view panels occupy the same grid slot.

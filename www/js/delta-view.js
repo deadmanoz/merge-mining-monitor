@@ -11,7 +11,7 @@
 // points, because the rail fieldsets alone would exceed its architecture
 // budget as static markup.
 
-import { centerCameraOnHeight, loadBlock, loadCompetitions } from "./api-client.js?v=0.3.0";
+import { loadBlock, loadCompetitions } from "./api-client.js?v=0.3.0";
 import { clearSelection, updateSourceGroupSelectedMarkers } from "./controls.js?v=0.3.0";
 import { hideTip, renderContext, renderCoverage, renderHistogram } from "./delta-chart.js?v=0.3.0";
 import { applyOutliersOpen, forgetScroll, renderOutliers, revealFocusedRow } from "./delta-outliers.js?v=0.3.0";
@@ -27,8 +27,9 @@ import {
   partitionByDelta,
   quantile,
 } from "./delta-scales.js?v=0.3.0";
-import { $, esc, matchesSourceFilter, parseEra, state, writeForm } from "./frontend-state.js?v=0.3.0";
-import { activateHeightLookup, syncUrl } from "./tree-query-state.js?v=0.3.0";
+import { $, esc, matchesSourceFilter, parseEra, state } from "./frontend-state.js?v=0.3.0";
+import { syncUrl } from "./tree-query-state.js?v=0.3.0";
+import { showInTree } from "./tree-jump.js?v=0.3.0";
 
 const PRESETS = [
   { label: "±10s", half: 10 },
@@ -349,35 +350,6 @@ function wireControls() {
   const observer = new ResizeObserver(() => renderCharts());
   observer.observe($("#delta-canvas"));
   observer.observe($("#delta-context-canvas"));
-}
-
-/// Cross-link to the tree at a height.
-///
-/// activateHeightLookup only rewrites query state, so on its own this would
-/// leave the Height box empty and the camera wherever it was: renderTree
-/// reapplies the stored pan/zoom, so after any earlier tree use the target can
-/// land off-screen. Mirror the rail's own commit instead: fill the control,
-/// activate (which loads, because the mutator marked the tree dirty), then
-/// centre once the window exists.
-async function showInTree(height) {
-  // A navigation gesture, so it takes the epoch with it: a navigator request
-  // still in flight has to discard its result rather than overwrite this jump.
-  state.navEpoch += 1;
-  const epoch = state.navEpoch;
-  activateHeightLookup(height);
-  // writeForm, not a direct assignment: activateHeightLookup also clears
-  // treeTime in query state, and leaving the old Date/Time value in the input
-  // would show both lookups populated and block a later Height commit, which
-  // refuses when the sibling field is non-empty.
-  writeForm();
-  const shell = await import("./view-shell.js?v=0.3.0");
-  await shell.activateView("tree");
-  // The load is awaited, so a gesture made during it owns the camera now.
-  // Centring the superseded height would drag the camera off the user's actual
-  // target, and that transform is stored and survives into the winning render.
-  if (state.navEpoch !== epoch) return;
-  if (state.query.view !== "tree" || state.query.treeHeight !== String(height)) return;
-  centerCameraOnHeight(String(height));
 }
 
 function selectRow(hash) {

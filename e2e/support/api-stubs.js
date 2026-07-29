@@ -225,6 +225,40 @@ function resolvePayload(payload, ...args) {
   return typeof payload === "function" ? payload(...args) : payload;
 }
 
+// One findings-corpus entry with every render-critical field present, so a
+// spec only overrides what it is exercising. Mirrors the generated shape
+// (findings_registry.rs), not the authoring shape: newest-first ordering is
+// the caller's job, like the generator's.
+function makeFinding(overrides = {}) {
+  return {
+    slug: "test-finding",
+    title: "A test finding",
+    category: "dataset-note",
+    status: "concluded",
+    observed_at: "2026-06-10",
+    published_at: "2026-07-29",
+    affected_sources: ["auxpow:namecoin"],
+    summary: "Summary prose.[^1]",
+    body: "Body prose.[^1]\n\nSecond paragraph with `code`.",
+    anchors: [{ kind: "btc-height", value: "700000" }],
+    references: [{ id: 1, label: "Example", url: "https://example.com" }],
+    ...overrides,
+  };
+}
+
+// Serve a spec-controlled corpus as the generated findings module. The real
+// committed module is a static import in the app graph, so this must be
+// routed before page.goto; the exact ?v= URL matters (a different URL would
+// be a second, inert module record - see moduleUrl).
+async function stubFindings(page, findings) {
+  await page.route(`**/js/findings.generated.js?v=${RELEASE_VERSION}`, async (route) => {
+    await route.fulfill({
+      contentType: "text/javascript",
+      body: `export const FINDINGS = ${JSON.stringify(findings, null, 2)};\n`,
+    });
+  });
+}
+
 async function stubApi(page, treeRequests = [], options = {}) {
   await page.route("**/api/v1/version", async (route) => {
     await route.fulfill({
@@ -272,8 +306,10 @@ module.exports = {
   competitionsPayload,
   liveSourcesPayload,
   makeCompetition,
+  makeFinding,
   makeNode,
   moduleUrl,
+  stubFindings,
   sourcesPayload,
   stubApi,
   treeEnvelope,

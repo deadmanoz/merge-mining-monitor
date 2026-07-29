@@ -7,8 +7,8 @@
 > Canonical and stale are client-side highlights that fade non-matching blocks
 > rather than refetch; strict and weak orphan are the server-side orphan
 > signal. The detail drawer starts collapsed and auto-expands on selection.
-> A topbar switcher selects between the header tree and the Header Time Delta
-> distribution.
+> A topbar switcher selects between the header tree, the Header Time Delta
+> distribution, and the Findings feed of evidence-backed editorial stories.
 
 ## Primary Layout
 
@@ -23,11 +23,11 @@ branch opens the drawer and centers the camera on it without replacing the tree.
 
 ### Views
 
-Two top-level views share that workspace, selected by a topbar switcher and by
-the `view` query parameter (`tree` is the default and is never written to the
-URL). Only the rail controls and the main canvas swap; the Source filter and
-the block detail drawer are shared, so a selection and a source selection both
-survive a view change.
+Three top-level views share that workspace, selected by a topbar switcher and
+by the `view` query parameter (`tree` is the default and is never written to
+the URL). Only the rail controls and the main canvas swap; the Source filter
+and the block detail drawer are shared, so a selection and a source selection
+both survive a view change.
 
 - `tree`: the Bitcoin header tree. Owns the Height / UTC Date/Time lookup, the
   Classification controls, and the tree navigator.
@@ -35,6 +35,12 @@ survive a view change.
   competition, read from `/api/v1/competitions`. Owns a focus window, bin
   width, count scale, and an Era range (`era=<from>-<to>`, written only when
   narrowed).
+- `findings`: the evidence-backed editorial feed over the generated findings
+  corpus. Owns Category and Status filters and an open-article slug
+  (`finding=<slug>`, written only while an article is open). The one layout
+  exception: findings collapses the drawer column entirely (drawer state is
+  preserved for return), because the article replaces the feed in the canvas
+  and has no third pane.
 
 An unregistered `view` value falls back to `tree` and is cleared from the URL,
 so a link to a view that does not exist yet degrades rather than rendering an
@@ -68,6 +74,23 @@ the outlier panel names the current selection and offers to show it in the tree,
 which retargets the tree window on its height rather than merely switching
 views. Both directions preserve `selected`, so `?view=delta&selected=<hash>`
 restores the view, the selection, the focused state and the open detail panel.
+
+The findings view has two canvas states. The feed lists findings newest-first
+as cards grouped under month labels, each carrying a category chip, status
+pill, observed date, summary with live citations, affected-chain chips, and
+anchor/figure counts. Opening a card replaces the feed with the article
+(back control plus newer/older navigation over corpus order); the browser
+Back button does not close it, because the app is replaceState-only
+throughout. Articles render cited prose paragraphs, structured evidence
+figures (theme-aware line-series SVGs with event markers, drawn from data in
+the generated corpus, never committed bitmaps), typed evidence anchors, and a
+Sources list. A `btc-height` anchor jumps to the tree at that height and
+carries no `finding=` into the tree URL; a `source` anchor opens the source
+detail dialog; `child-height` and `pool` anchors are informational chips. An
+unknown `finding=` slug degrades to the feed and clears the parameter, and a
+`finding=` supplied with a non-findings `view=` is dropped at hydration. The
+Category and Status rail filters are findings-local and not URL-persisted;
+the shared Source filter narrows the feed by each finding's affected sources.
 
 The topbar includes a compact About affordance beside the product name. It
 opens a modal with a step-through visual explainer of why merge-mined AuxPoW

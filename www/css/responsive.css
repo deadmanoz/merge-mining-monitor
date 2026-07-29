@@ -14,6 +14,16 @@
       "drawer drawer";
   }
 
+  /* Findings has no drawer: drop its stacked row so the hidden drawer's
+     named area does not leave a stray grid gap under the canvas. Columns must
+     be restated too: the base findings override outranks this breakpoint's
+     plain .workspace rule, so without them findings would keep the desktop
+     250px + minmax(360px) tracks at tablet widths. */
+  .workspace[data-view="findings"] {
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+    grid-template-areas: "filters tree";
+  }
+
   .tree-card {
     min-height: 360px;
   }
@@ -48,6 +58,13 @@
       "filters"
       "tree"
       "drawer";
+  }
+
+  .workspace[data-view="findings"] {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "filters"
+      "tree";
   }
 
   .grid-form {

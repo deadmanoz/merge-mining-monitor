@@ -35,6 +35,7 @@
     <link rel="stylesheet" href="/css/tree-svg.css?v=0.3.0" />
     <link rel="stylesheet" href="/css/chart.css?v=0.3.0" />
     <link rel="stylesheet" href="/css/delta-view.css?v=0.3.0" />
+    <link rel="stylesheet" href="/css/findings.css?v=0.3.0" />
     <link rel="stylesheet" href="/css/responsive.css?v=0.3.0" />
   </head>
   <body data-mode="app">
@@ -120,10 +121,12 @@
               <div id="source-controls" class="stack-sm"></div>
             </fieldset>
             <div id="delta-controls" class="delta-controls" data-view-scope="delta"></div>
+            <div id="findings-controls" class="findings-controls" data-view-scope="findings"></div>
           </form>
         </aside>
 
         <div id="delta-main" class="delta-main" data-view-scope="delta"></div>
+        <div id="findings-main" class="findings-main" data-view-scope="findings"></div>
         <section class="tree-card" data-view-scope="tree" aria-labelledby="tree-title">
           <div class="section-heading tree-heading">
             <div>
