@@ -1,5 +1,18 @@
 # Release Notes
 
+## [0.4.0] - 2026-07-29
+
+- Add the Findings view: evidence-backed stories the monitor's own data
+  surfaces, presented as a month-grouped feed of cited articles with
+  data-drawn evidence figures and anchors that jump to the header tree or
+  open source details.
+- Seed six findings: the September 2025 Foundry stale cluster that no
+  observer recorded (20 full-difficulty blocks, roughly 46.9 BTC foregone),
+  Hathor's June 2026 merge-mining hashrate collapse, Foundry USA's
+  single-block entry and exit from RSK and Fractal merge mining, the
+  Elastos July 2026 exploit halt, and Terracoin's May 2026 full-difficulty
+  win.
+
 ## [0.3.0] - 2026-07-28
 
 - Add the Header Time Delta view: how far apart each stale block and the
