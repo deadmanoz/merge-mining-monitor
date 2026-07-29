@@ -6,6 +6,12 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Add the Foundry September 2025 stale-cluster finding: 20 full-difficulty
+  Bitcoin blocks at 16 heights (914,261 to 914,373) staled across 17 hours,
+  roughly 46.9 BTC foregone, headers stamped a median ~600 seconds before
+  their canonical winners, with no record on any network observer; the
+  evidence survives only in RSK and Fractal AuxPoW captures. Adds the
+  `pool-incident` finding category for pool-layer failures.
 - Add the Findings view: a third top-level view (`?view=findings`) presenting
   the evidence-backed findings corpus as a month-grouped, newest-first feed
   with category/status rail filters and shared Source-filter narrowing. An

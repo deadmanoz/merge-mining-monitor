@@ -1,0 +1,152 @@
+{
+  "slug": "foundry-stale-cluster-2025-09",
+  "title": "Foundry stales 20 full-difficulty Bitcoin blocks that no observer saw",
+  "category": "pool-incident",
+  "status": "concluded",
+  "observed_at": "2025-09-11",
+  "observed_until": "2025-09-12",
+  "published_at": "2026-07-29",
+  "affected_sources": [
+    "auxpow:rsk",
+    "auxpow:fractal"
+  ],
+  "summary": "Across September 11 and 12, 2025, Foundry USA produced 20 full-difficulty Bitcoin blocks at 16 heights (914,261 to 914,373) that all went stale, foregoing roughly 46.9 BTC. No public fork observer holds a record of them; the evidence survives only in RSK and Fractal AuxPoW captures.",
+  "body": "It began with a self-race: at height `914,261` on September 11, Foundry staled a block against its own canonical winner. About three and a half hours later the cluster proper started, and over roughly 17 hours Foundry staled 19 more full-difficulty blocks at 15 further heights, through `914,373`. Thirteen of the twenty carry Foundry's coinbase tags directly; the other seven are tied to Foundry through the RSK reward-address registry on their AuxPoW evidence. The 15 height races lost to competing pools put the foregone reward at roughly 46.9 BTC in subsidy plus fees.[^1]\n\nThe timing profile points at the pool layer rather than a propagation race. Within the cluster, the stale headers carry timestamps 6 to 1,621 seconds earlier than their canonical winners (median about 600 seconds). Header clocks are self-reported and are not observation times, so they cannot prove which block was found first; what they do show is Foundry repeatedly stamping templates well before the blocks that beat them. Each stale builds on a canonical parent and none chain onto each other, the signature of a recurring failure in the block-submission path rather than a chain split.[^1]\n\nNo public record of these blocks exists outside merge mining. ForkMonitor and its peers hold nothing for them, and a fork observer only captures a stale that one of its own nodes saw in real time; Bitcoin keeps no durable network-wide stale record. The strongest available statement from observers alone is that if these blocks propagated at all, nobody watching recorded it; taken together with the timing profile, the most plausible reading is an internal failure at the pool, blocks assembled and stamped that never propagated to the network.[^2] The episode is visible today only because merge-mined child chains embed every Bitcoin parent template they see: the RSK and Fractal captures preserved all 20 headers. Foundry later left merge mining entirely in June 2026, closing the channel that made this incident observable.",
+  "anchors": [
+    {
+      "kind": "btc-height",
+      "value": "914261",
+      "label": "first stale, a self-race Foundry won"
+    },
+    {
+      "kind": "btc-height",
+      "value": "914344",
+      "label": "largest deficit, 1,621s"
+    },
+    {
+      "kind": "btc-height",
+      "value": "914373",
+      "label": "last stale of the cluster"
+    },
+    {
+      "kind": "source",
+      "value": "auxpow:rsk"
+    },
+    {
+      "kind": "source",
+      "value": "auxpow:fractal"
+    },
+    {
+      "kind": "pool",
+      "value": "Foundry USA"
+    }
+  ],
+  "figures": [
+    {
+      "kind": "line-series",
+      "caption": "Header-time deficit of each Foundry stale against its canonical winner",
+      "y_label": "header-time deficit vs winner (s)",
+      "points": [
+        {
+          "t": "2025-09-11T17:48",
+          "v": 0
+        },
+        {
+          "t": "2025-09-11T21:18",
+          "v": 963
+        },
+        {
+          "t": "2025-09-11T21:25",
+          "v": 549
+        },
+        {
+          "t": "2025-09-11T23:54",
+          "v": 6
+        },
+        {
+          "t": "2025-09-12T04:37",
+          "v": 135
+        },
+        {
+          "t": "2025-09-12T04:46",
+          "v": 616
+        },
+        {
+          "t": "2025-09-12T05:52",
+          "v": 1301
+        },
+        {
+          "t": "2025-09-12T06:22",
+          "v": 745
+        },
+        {
+          "t": "2025-09-12T06:44",
+          "v": 1454
+        },
+        {
+          "t": "2025-09-12T07:01",
+          "v": 421
+        },
+        {
+          "t": "2025-09-12T07:23",
+          "v": 203
+        },
+        {
+          "t": "2025-09-12T08:28",
+          "v": 559
+        },
+        {
+          "t": "2025-09-12T09:01",
+          "v": 1621
+        },
+        {
+          "t": "2025-09-12T09:11",
+          "v": 1016
+        },
+        {
+          "t": "2025-09-12T10:34",
+          "v": 302
+        },
+        {
+          "t": "2025-09-12T11:52",
+          "v": 596
+        },
+        {
+          "t": "2025-09-12T12:05",
+          "v": 711
+        },
+        {
+          "t": "2025-09-12T12:13",
+          "v": 207
+        },
+        {
+          "t": "2025-09-12T13:35",
+          "v": 731
+        },
+        {
+          "t": "2025-09-12T13:58",
+          "v": 465
+        }
+      ],
+      "markers": [
+        {
+          "t": "2025-09-11T21:18",
+          "label": "cluster proper begins"
+        }
+      ],
+      "note": "One point per stale block, from this monitor's competition data, queried 2026-07-29."
+    }
+  ],
+  "references": [
+    {
+      "id": 1,
+      "label": "bnoc.xyz - Introducing the Merge Mining Monitor",
+      "url": "https://bnoc.xyz/t/introducing-the-merge-mining-monitor/146"
+    },
+    {
+      "id": 2,
+      "label": "ForkMonitor (no record of these blocks)",
+      "url": "https://forkmonitor.info/"
+    }
+  ]
+}
