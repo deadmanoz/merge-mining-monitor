@@ -6,35 +6,26 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
-- Add the Foundry September 2025 stale-cluster finding: 20 full-difficulty
-  Bitcoin blocks at 16 heights (914,261 to 914,373) staled across 17 hours,
-  roughly 46.9 BTC foregone, headers stamped a median ~600 seconds before
-  their canonical winners, with no record on any network observer; the
-  evidence survives only in RSK and Fractal AuxPoW captures. Adds the
-  `pool-incident` finding category for pool-layer failures.
-- Add the Findings view: a third top-level view (`?view=findings`) presenting
-  the evidence-backed findings corpus as a month-grouped, newest-first feed
-  with category/status rail filters and shared Source-filter narrowing. An
-  article state replaces the feed (`finding=<slug>`, written only while
-  findings is active, so switching views never leaks the slug), rendering
-  cited prose, theme-aware line-series evidence figures with event markers,
-  and typed evidence anchors that jump to the tree at a Bitcoin height or
-  open the source detail dialog. The findings layout collapses the
-  block-detail drawer column entirely; drawer state is preserved for return
-  to the other views. The tree-jump gesture is extracted into a shared
-  module reused by the delta view unchanged.
-- Add the findings content pipeline: hand-authored, evidence-backed findings
-  live as one JSON file per finding in `data/findings/`, validated by the new
-  feature-gated `mmm-capture::findings_registry` (content invariants, real
-  calendar dates, registered source codes, and full `[^N]` citation
-  integrity) and compiled deterministically into
-  `www/js/findings.generated.js` by `just gen-source-artifacts`, with a
-  drift gate in `cargo test`. Seeds the corpus with five findings: the
-  2026-06-10 Hathor merge-mining hashrate collapse, Foundry USA's
-  single-block exit from RSK+Fractal merge-mining (2026-06-24) and its
-  matching single-block entry (2025-04-22), the 2026-07-20 Elastos
-  exploit halt, and Terracoin's 2026-05-20 full-difficulty win. The
-  frontend Findings view that renders this corpus lands separately.
+## [0.4.0] - 2026-07-29
+
+- Add the findings content pipeline: one hand-authored JSON file per finding
+  in `data/findings/`, validated by the feature-gated
+  `mmm-capture::findings_registry` (content invariants, calendar dates,
+  registered source codes, `[^N]` citation integrity) and compiled into
+  `www/js/findings.generated.js` by `just gen-source-artifacts`, drift-gated
+  in `cargo test`.
+- Add the Findings view (`?view=findings`): the corpus as a month-grouped
+  feed with category, status, and shared Source filtering. Opening a card
+  replaces the feed with a cited article (`finding=<slug>`, serialized only
+  while findings is active), with theme-aware line-series evidence figures
+  and typed anchors that jump to the header tree or open source details.
+  The drawer column collapses on this view; its state survives for return.
+- Seed six findings: the September 2025 Foundry stale cluster (20
+  full-difficulty blocks at 16 heights, ~46.9 BTC foregone, unseen by any
+  observer; new `pool-incident` category), Hathor's ~3,500x hashrate
+  collapse (2026-06-10), Foundry's single-block entry (2025-04-22) and exit
+  (2026-06-24) from RSK and Fractal, the Elastos exploit halt (2026-07-20),
+  and Terracoin's full-difficulty win (2026-05-20).
 
 ## [0.3.0] - 2026-07-28
 

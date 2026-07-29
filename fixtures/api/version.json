@@ -1,14 +1,14 @@
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
     "release_count": 4,
     "truncated": false,
     "releases": [
       {
-        "version": "0.3.0",
+        "version": "0.4.0",
         "date": "2026-07-28",
         "items": [
           "Add the Header Time Delta view: how far apart each stale block and the canonical block that beat it timestamped their headers, with a focus window, outlier gutters, coverage and table tabs, and block-detail links.",
