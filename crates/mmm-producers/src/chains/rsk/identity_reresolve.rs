@@ -207,15 +207,17 @@ pub(crate) async fn reresolve_rsk_miner_identities(
 /// page), each joined to its single `rsk_miner_address` attribution via a
 /// LATERAL count so the caller can diff against [`ExistingRskMinerAttribution`].
 /// Ordered by `event_id` so the last id seeds the next page.
-async fn load_rsk_miner_batch(
-    client: &Client,
-    rsk_source_id: i64,
-    cursor: Option<i64>,
-    batch_size: i64,
-) -> Result<Vec<ReplayRow>> {
-    let rows = client
-        .query(
-            r"
+///
+/// The keyset predicate is applied to BOTH join sides. `r.event_id > $3` is
+/// logically implied by the join condition and changes no results, but without
+/// it the planner can only bound the `merge_mining_event` side: the evidence
+/// side becomes an unbounded index scan that re-walks
+/// `rsk_evidence_event_unique` from the start of the index on every page, so
+/// per-page cost grows with cursor depth and the whole pass becomes quadratic
+/// (measured on production at 18.4M events: ~11.6M index rows read per page
+/// and ~63 hours projected, against 500 rows per page and under an hour with
+/// the predicate present).
+const RSK_MINER_BATCH_SQL: &str = r"
 SELECT e.id,
        encode(r.rsk_miner, 'hex') AS miner,
        r.pool_identity_id AS sidecar_pool_identity_id,
@@ -245,8 +247,19 @@ LEFT JOIN LATERAL (
 WHERE e.source_id = $1
   AND e.revoked_at IS NULL
   AND ($3::bigint IS NULL OR e.id > $3)
+  AND ($3::bigint IS NULL OR r.event_id > $3)
 ORDER BY e.id
-LIMIT $4",
+LIMIT $4";
+
+async fn load_rsk_miner_batch(
+    client: &Client,
+    rsk_source_id: i64,
+    cursor: Option<i64>,
+    batch_size: i64,
+) -> Result<Vec<ReplayRow>> {
+    let rows = client
+        .query(
+            RSK_MINER_BATCH_SQL,
             &[
                 &rsk_source_id,
                 &RSK_MINER_ADDRESS_NAMESPACE,
@@ -450,6 +463,34 @@ mod tests {
     use super::*;
 
     const RSK_MINER: &str = "12d3178a62ef1f520944534ed04504609f7307a1";
+
+    /// The keyset predicate must bound BOTH sides of the evidence-to-event
+    /// join. `r.event_id > $3` is implied by the join and changes no rows, but
+    /// without it the planner cannot bound the evidence-side index scan, which
+    /// then re-walks `rsk_evidence_event_unique` from the start of the index on
+    /// every page and makes the pass quadratic (production: ~11.6M index rows
+    /// per page and a ~63-hour projection, versus 500 rows per page once
+    /// bounded).
+    ///
+    /// This asserts the query text rather than an `EXPLAIN` plan deliberately.
+    /// A plan assertion looked attractive and is what I tried first, but on a
+    /// small fixture corpus the planner picks a different shape (a nested loop
+    /// whose own `Index Cond: (event_id = e.id)` satisfies a naive "is it
+    /// bounded" check), so that test passed with the predicate deleted. Pinning
+    /// the text is blunt but actually fails when the guard is removed.
+    #[test]
+    fn rsk_batch_sql_bounds_the_keyset_on_both_join_sides() {
+        assert!(
+            RSK_MINER_BATCH_SQL.contains("e.id > $3"),
+            "event-side keyset predicate missing"
+        );
+        assert!(
+            RSK_MINER_BATCH_SQL.contains("r.event_id > $3"),
+            "evidence-side keyset predicate missing: without it every page \
+             re-walks the whole rsk_evidence_event_unique index and the RSK \
+             pass degrades from minutes to days"
+        );
+    }
 
     fn rsk_attr(
         pool_id: Option<i64>,
