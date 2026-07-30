@@ -148,12 +148,14 @@ async fn rsk_capture_reconciles_read_model_in_transaction() -> Result<()> {
 async fn writes_pre_floor_full_header_event() -> Result<()> {
     crate::run_mut_db_test!(client, {
         // RSK height 112,829 is below the 139,999 acquisition floor. The
-        // durable regression pin: the capture path must WRITE this event, not
-        // silently revert to the floor as a start boundary.
+        // durable regression pin: the capture/write path must not height-gate
+        // this event. (The floor as a start boundary lives in the poller's
+        // activation_floor in spec.rs and is not exercised here.)
         let block = load_rsk_block_fixture("canonical-pre-floor-full-header");
         let header = btc_header_from_fixture(&block);
         let parent_hash = header.block_hash().to_byte_array().to_vec();
         let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+            // Height is arbitrary: the verdict is never consulted (see below).
             canonical_verdict(&header, 490_000),
         ));
         let context = rsk_context_with_known_miner(&client, classifier).await?;
@@ -171,10 +173,12 @@ async fn writes_pre_floor_full_header_event() -> Result<()> {
             )
             .await?;
         // The pre-floor RSK header is merge-mining work evidence whose hash
-        // does not meet BTC's own target (the RSK miner solved RSK's lower
-        // difficulty). Capture maps pow_validates_btc_target == false to
-        // ParentKind::Near before the classifier verdict is consulted, so
-        // `near` is the correct stored kind for this fixture.
+        // does not meet the target declared in its own nBits — for this real
+        // fixture that IS BTC's era target, which the RSK miner did not solve
+        // (RSK's difficulty is lower). Capture maps
+        // pow_validates_btc_target == false to ParentKind::Near before the
+        // classifier verdict is consulted, so `near` is the correct stored
+        // kind for this fixture.
         assert_eq!(row.get::<_, String>(0), "near");
         assert_eq!(row.get::<_, Vec<u8>>(1), parent_hash);
 
