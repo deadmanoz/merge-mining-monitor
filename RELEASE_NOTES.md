@@ -1,5 +1,9 @@
 # Release Notes
 
+## [0.4.2] - 2026-07-30
+
+- Make the RSK pool-reclassification pass complete in minutes instead of days.
+
 ## [0.4.1] - 2026-07-29
 
 - Bound and center the Findings feed and article on wide screens.

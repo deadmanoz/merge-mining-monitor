@@ -102,12 +102,21 @@ Example:
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.4.1",
+  "version": "0.4.2",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 6,
+    "release_count": 7,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.4.2",
+        "date": "2026-07-30",
+        "items": [
+          "Make the RSK pool-reclassification pass complete in minutes instead of days."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
       {
         "version": "0.4.1",
         "date": "2026-07-29",
