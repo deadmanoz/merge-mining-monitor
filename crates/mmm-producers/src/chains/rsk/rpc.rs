@@ -64,8 +64,9 @@ pub struct RskBlock {
     /// `0x`-prefixed hex-encoded integer difficulty.
     #[serde(default)]
     pub difficulty: Option<String>,
-    /// `0x`-prefixed 80-byte Bitcoin parent header. Pre-RSKIP-92 blocks
-    /// return a non-80-byte payload here; callers must validate the length.
+    /// `0x`-prefixed 80-byte Bitcoin parent header. Early blocks return
+    /// either a complete 80-byte header or a shorter pre-Orchid/RSKIP-92
+    /// fallback-signature payload here; callers must validate the length.
     #[serde(rename = "bitcoinMergedMiningHeader", default)]
     pub bitcoin_merged_mining_header: Option<String>,
     /// `0x`-prefixed coinbase transaction tail (RSKIP-92 midstate scheme).

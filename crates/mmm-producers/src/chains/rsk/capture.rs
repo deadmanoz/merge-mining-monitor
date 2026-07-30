@@ -151,8 +151,8 @@ pub enum BlockOutcome {
 }
 
 /// Inputs ready for transactional RSK capture. Produced by
-/// [`prepare_rsk_capture`] when the block parses cleanly and the BTC parent
-/// header is post-RSKIP-92.
+/// [`prepare_rsk_capture`] when the block parses cleanly and carries a
+/// complete 80-byte BTC parent header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RskCaptureInputs {
     pub payload: MergeMiningEventPayload,
@@ -161,8 +161,8 @@ pub struct RskCaptureInputs {
 
 /// Decision produced by [`prepare_rsk_capture`]. Either the block is ready
 /// to write (with its `(payload, evidence)` pair) or a structural property
-/// of the RPC response prevents writing (pre-RSKIP-92 era or malformed
-/// fields).
+/// of the RPC response prevents writing (no complete 80-byte BTC parent
+/// header, or malformed fields).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureDecision {
     Ready(Box<RskCaptureInputs>),
