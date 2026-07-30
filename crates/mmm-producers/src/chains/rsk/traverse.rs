@@ -407,4 +407,50 @@ mod tests {
 
         assert_eq!(observed, (200_000_i64..=200_009).collect::<Vec<_>>());
     }
+
+    #[test]
+    fn backfill_fetch_pipeline_fetches_below_floor_heights_unclamped() {
+        use futures::StreamExt;
+
+        // Regression pin for the acquisition-floor correction: the bounded
+        // backfill must fetch its configured range verbatim. Heights below
+        // the poller's 139,999 acquisition floor are reachable history —
+        // pre-floor blocks carrying a complete 80-byte BTC parent header
+        // capture fine — so no `start.max(floor)` clamp may enter the
+        // backfill fetch/traverse path (the floor is applied only by the
+        // poller's `effective_start`). `run_rsk_backfill` itself needs a
+        // live RPC endpoint and a DB handle, so this drives the same
+        // `stream::iter(range).map(fetch_rsk_height_bundle).buffered(K)`
+        // pipeline its fetch stage runs.
+        let floor = i64::from(crate::chains::by_id(crate::chains::ChainId::Rsk).activation_floor);
+        let (start, end) = (112_829_i64, 112_830_i64);
+        assert!(
+            end < floor,
+            "test range {start}..={end} must sit below the {floor} acquisition floor"
+        );
+
+        // The real pre-floor block (RSK 112,829, complete 80-byte BTC parent
+        // header); 112,830 stands in as a legitimately absent height.
+        let block = load_rsk_block_fixture("canonical-pre-floor-full-header");
+        let source =
+            FakeRskSource::default().with_canonical(start, FakeResponse::block(block.clone()));
+
+        let observed = block_on(async {
+            let mut fetches = futures::stream::iter(start..=end)
+                .map(|height| fetch_rsk_height_bundle(source.clone(), height))
+                .buffered(2);
+            let mut bundles = Vec::new();
+            while let Some(bundle) = fetches.next().await {
+                bundles.push(bundle.unwrap());
+            }
+            bundles
+        });
+
+        // Both below-floor heights were fetched: the present canonical
+        // arrives verbatim and the absent height yields an empty bundle —
+        // the range was not clamped away.
+        assert_eq!(observed.len(), 2);
+        assert_eq!(observed[0].canonical.as_ref(), Some(&block));
+        assert!(observed[1].canonical.is_none());
+    }
 }
