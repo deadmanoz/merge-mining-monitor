@@ -85,3 +85,10 @@ Use `just` targets, not raw commands, when a target exists:
 When API fixtures change, update `fixtures/api/manifest.json`,
 `docs/api-contract.md`, and
 `crates/merge-mining-monitor/tests/api_fixture_contract.rs` together.
+
+A release version bump is the one exception to the test half of that rule.
+`fixtures/api/version.json` is asserted deep-equal to the payload the code
+actually serves (`mmm_api::version_payload_json`), so regenerating the fixture
+from `/api/v1/version` is sufficient and the contract test needs no edit; it is
+what catches a fixture that was not regenerated. Hand-editing per-release
+expectations into that test would defeat the guard.

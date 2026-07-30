@@ -6,6 +6,16 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-07-30
+
+- Bound the RSK miner-identity keyset scan on both sides of the
+  evidence-to-event join. The cursor previously constrained only
+  `merge_mining_event`, leaving the evidence-side index scan unbounded so
+  every page re-walked `rsk_evidence_event_unique` from the start and the
+  pass ran quadratic in corpus size (production: ~11.6M index rows per page
+  and a ~63-hour projection, against 500 rows per page and under an hour
+  once bounded).
+
 ## [0.4.1] - 2026-07-29
 
 - Bound and center the findings canvas in a single minmax(0, 900px)
