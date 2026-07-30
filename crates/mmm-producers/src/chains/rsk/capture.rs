@@ -141,8 +141,9 @@ impl RskCaptureContext {
 pub enum BlockOutcome {
     /// Block decoded cleanly and its `(event, evidence)` pair committed.
     Written,
-    /// Block predates RSKIP-92: no (or short) 80-byte BTC parent header, so
-    /// nothing is written. Retryable-clean, not an error.
+    /// Block carries no complete 80-byte BTC parent header (absent, empty, or
+    /// a shorter pre-Orchid fallback signature), so nothing is written.
+    /// Retryable-clean, not an error.
     PreRskip92Skipped,
     /// A merge-mining field was undecodable (bad hex, wrong byte length, height
     /// overflow). Skipped so one bad block never aborts the backfill.
@@ -357,7 +358,7 @@ fn decode_rsk_parent_header(block: &RskBlock) -> Result<Result<Header, CaptureDe
         }
     };
     if header_bytes.len() != 80 {
-        // Pre-RSKIP-92 blocks have shorter merge-mining payloads.
+        // Blocks without a complete 80-byte header (early fallback-signature payloads) land here.
         return Ok(Err(CaptureDecision::PreRskip92Skipped));
     }
     let header: Header = match deserialize(&header_bytes) {

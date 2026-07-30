@@ -17,8 +17,13 @@ use mmm_capture::source_registry::{
     RSK_SOURCE_CODE, SYSCOIN_SOURCE_CODE,
 };
 
-/// RSKIP-92 activated at this RSK height; earlier blocks do not carry an
-/// 80-byte BTC parent header and are skipped by the producer.
+/// Historical acquisition floor for the live poller. RSK history below this
+/// height predates the monitor's acquisition and contains a mix of full
+/// 80-byte BTC parent headers and 69/70-byte fallback signatures; the
+/// backfill command captures the former and cleanly skips the latter.
+/// (The RSKIP-92 merge-mining format change is at RSK height 729,000, well
+/// above this floor.) The floor exists so the poller never rescans the
+/// backfilled static range on startup.
 const RSK_FIRST_AUXPOW_HEIGHT: i32 = 139_999;
 /// Current Syscoin chain-2 begins carrying AuxPoW evidence at this height.
 const SYSCOIN_FIRST_AUXPOW_HEIGHT: i32 = 1_973;
