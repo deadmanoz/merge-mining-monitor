@@ -145,6 +145,44 @@ async fn rsk_capture_reconciles_read_model_in_transaction() -> Result<()> {
 }
 
 #[tokio::test]
+async fn writes_pre_floor_full_header_event() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        // RSK height 112,829 is below the 139,999 acquisition floor. The
+        // durable regression pin: the capture path must WRITE this event, not
+        // silently revert to the floor as a start boundary.
+        let block = load_rsk_block_fixture("canonical-pre-floor-full-header");
+        let header = btc_header_from_fixture(&block);
+        let parent_hash = header.block_hash().to_byte_array().to_vec();
+        let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+            canonical_verdict(&header, 490_000),
+        ));
+        let context = rsk_context_with_known_miner(&client, classifier).await?;
+        let inputs = ready_inputs(&context, &block, false, None, None);
+
+        let outcome = capture_ready_rsk_inputs_for_test(&mut client, &context, inputs).await?;
+        assert_eq!(outcome, BlockOutcome::Written);
+
+        let row = client
+            .query_one(
+                "SELECT btc_parent_kind, btc_parent_header_hash \
+                 FROM merge_mining_event \
+                 WHERE source_id = $1 AND child_height = $2",
+                &[&context.source_id(), &112_829_i32],
+            )
+            .await?;
+        // The pre-floor RSK header is merge-mining work evidence whose hash
+        // does not meet BTC's own target (the RSK miner solved RSK's lower
+        // difficulty). Capture maps pow_validates_btc_target == false to
+        // ParentKind::Near before the classifier verdict is consulted, so
+        // `near` is the correct stored kind for this fixture.
+        assert_eq!(row.get::<_, String>(0), "near");
+        assert_eq!(row.get::<_, Vec<u8>>(1), parent_hash);
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn rsk_role_flip_replay_refreshes_sidecar_role() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let context =
