@@ -88,6 +88,11 @@ mod tests {
             ("uncle-valid", "0xc3501", KNOWN_MINER_HEX),
             ("canonical-with-uncles", "0xb1fa9", KNOWN_MINER_HEX),
             ("uncle-second-miner", "0xb200d", SECOND_MINER_HEX),
+            (
+                "canonical-pre-floor-full-header",
+                "0x1b8bd",
+                "1c070e00b0d3739795b22e0ee036a3ef9cc7cdc0",
+            ),
         ] {
             let block = load_rsk_block_fixture(name);
             assert_eq!(block.number, number, "{name} number");

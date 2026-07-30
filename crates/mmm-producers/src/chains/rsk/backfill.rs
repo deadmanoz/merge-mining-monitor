@@ -67,7 +67,7 @@ pub(crate) async fn backfill(rt: ProducerRuntime, config: BackfillConfig) -> Res
 
 /// Run the bounded RSK backfill over `[start_height, end_height]`. Bails if the
 /// requested end exceeds the observed tip; warns (but does not stop) when the
-/// start precedes RSKIP-92. The network-bound bundle prefetch runs
+/// start precedes the RSK acquisition floor. The network-bound bundle prefetch runs
 /// `fetch_concurrency`-wide while a single `&mut Client` writer consumes bundles
 /// in strict ascending height order; the lowest-height fetch error surfaces
 /// first via `?` because `buffered` yields in input order. The backfill never
@@ -97,7 +97,7 @@ pub(crate) async fn run_rsk_backfill(
         warn!(
             start_height = config.start_height,
             first_auxpow_height = config.spec.activation_floor,
-            "start-height precedes RSKIP-92; pre-RSKIP-92 RSK blocks have no 80-byte BTC parent header and will be skipped"
+            "start-height precedes the RSK acquisition floor; below-floor blocks without a complete 80-byte BTC parent header (fallback-signature payloads) will be skipped"
         );
     }
 

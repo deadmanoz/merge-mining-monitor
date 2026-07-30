@@ -142,7 +142,7 @@ pub enum BlockOutcome {
     /// Block decoded cleanly and its `(event, evidence)` pair committed.
     Written,
     /// Block carries no complete 80-byte BTC parent header (absent, empty, or
-    /// a shorter pre-Orchid fallback signature), so nothing is written.
+    /// a shorter pre-Orchid/RSKIP-92 fallback signature), so nothing is written.
     /// Retryable-clean, not an error.
     PreRskip92Skipped,
     /// A merge-mining field was undecodable (bad hex, wrong byte length, height
@@ -358,7 +358,8 @@ fn decode_rsk_parent_header(block: &RskBlock) -> Result<Result<Header, CaptureDe
         }
     };
     if header_bytes.len() != 80 {
-        // Blocks without a complete 80-byte header (early fallback-signature payloads) land here.
+        // Blocks without a complete 80-byte header (pre-Orchid/RSKIP-92
+        // fallback-signature payloads) land here.
         return Ok(Err(CaptureDecision::PreRskip92Skipped));
     }
     let header: Header = match deserialize(&header_bytes) {
@@ -880,7 +881,7 @@ mod tests {
         assert_eq!(block.number, "0x1b8bd");
 
         let decision =
-            prepare_rsk_capture(&fixture_context(), &block, false, None, None, 490_000).unwrap();
+            prepare_rsk_capture(&fixture_context(), &block, false, None, None, 9_999_999).unwrap();
         let inputs = match decision {
             CaptureDecision::Ready(inputs) => *inputs,
             other => panic!("expected Ready, got {other:?}"),
