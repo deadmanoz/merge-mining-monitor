@@ -874,6 +874,39 @@ mod tests {
     }
 
     #[test]
+    fn pre_floor_full_header_block_is_ready() {
+        let block = load_rsk_block_fixture("canonical-pre-floor-full-header");
+        // RSK height 112,829 is below the 139,999 acquisition floor.
+        assert_eq!(block.number, "0x1b8bd");
+
+        let decision =
+            prepare_rsk_capture(&fixture_context(), &block, false, None, None, 490_000).unwrap();
+        let inputs = match decision {
+            CaptureDecision::Ready(inputs) => *inputs,
+            other => panic!("expected Ready, got {other:?}"),
+        };
+
+        // The captured BTC parent header hash (wire order) is the real block's
+        // double-SHA256 hash, proving the gate keys on byte shape, not height.
+        assert_eq!(
+            hex::encode(&inputs.payload.btc_parent_header_hash),
+            "cd4251720c9b476be332ee0db5307d75d4fc927a924f676ffe02000000000000"
+        );
+    }
+
+    #[test]
+    fn pre_floor_fallback_signature_block_skips() {
+        let mut block = load_rsk_block_fixture("canonical-pre-floor-full-header");
+        block.number = "0x1b800".to_owned();
+        // A 69-byte pre-Orchid fallback signature, not a complete header.
+        block.bitcoin_merged_mining_header = Some(format!("0x{}", "ab".repeat(69)));
+
+        let decision =
+            prepare_rsk_capture(&fixture_context(), &block, false, None, None, 0).unwrap();
+        assert_eq!(decision, CaptureDecision::PreRskip92Skipped);
+    }
+
+    #[test]
     fn malformed_rsk_block_fields_are_skipped_not_propagated() {
         // 19 bytes instead of 20.
         assert_mutated_canonical_skips(|block| {
