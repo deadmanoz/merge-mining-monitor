@@ -110,11 +110,13 @@ async fn insert_fractal_event_without_child_coinbase(
         ClassificationProof::default(),
         1_800_000_000,
     )?;
-    payload.child_block_hash = fractal_reward_child_hash().to_byte_array().to_vec();
+    payload.child_block_hash = Some(fractal_reward_child_hash().to_byte_array().to_vec());
     payload.child_coinbase_txid = None;
     payload.child_coinbase_script = None;
     payload.child_coinbase_outputs = None;
-    upsert_merge_mining_event(client, source_id, &payload).await
+    Ok(upsert_merge_mining_event(client, source_id, &payload)
+        .await?
+        .event_id)
 }
 
 async fn set_child_coinbase_outputs(

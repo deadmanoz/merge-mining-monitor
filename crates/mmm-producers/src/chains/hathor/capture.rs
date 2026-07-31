@@ -406,9 +406,21 @@ async fn write_valid_capture(
     built: BuiltCapture,
 ) -> Result<HathorHeightOutcome> {
     let now = now_epoch_seconds()?;
+    let current_parent_hash = built
+        .evidence
+        .btc_parent_header
+        .block_hash()
+        .to_byte_array()
+        .to_vec();
     let superseded: Vec<i64> = prior
         .iter()
-        .filter(|e| e.is_active && e.child_block_hash != current_hash)
+        .filter(|event| {
+            event.is_active
+                && match event.child_block_hash.as_deref() {
+                    Some(hash) => hash != current_hash,
+                    None => event.btc_parent_header_hash != current_parent_hash,
+                }
+        })
         .map(|e| e.event_id)
         .collect();
 
@@ -453,7 +465,7 @@ async fn write_valid_capture(
         Ok(_event_id) => {
             // Y now exists: revoke the superseded priors, then clear the marker.
             if !superseded.is_empty() {
-                revoke_superseded(client, context, prior, current_hash).await?;
+                revoke_event_ids(client, context, &superseded, HATHOR_REVOKE_SUPERSEDED).await?;
                 delete_pending_reconcile_at(
                     client,
                     context.source_id(),
@@ -495,6 +507,20 @@ async fn write_valid_capture(
     }
 }
 
+async fn revoke_event_ids(
+    client: &mut Client,
+    context: &HathorCaptureContext,
+    event_ids: &[i64],
+    reason: &str,
+) -> Result<()> {
+    for &event_id in event_ids {
+        revoke_merge_mining_event(client, event_id, reason, context.parent_classifier())
+            .await
+            .with_context(|| format!("revoke Hathor event {event_id} ({reason})"))?;
+    }
+    Ok(())
+}
+
 /// Revoke active prior events at a height whose hash differs from the current
 /// canonical hash (a supersession).
 async fn revoke_superseded(
@@ -507,7 +533,7 @@ async fn revoke_superseded(
         client,
         context,
         prior,
-        |hash| hash != current_hash,
+        |hash| hash != Some(current_hash),
         HATHOR_REVOKE_SUPERSEDED,
     )
     .await
@@ -528,7 +554,7 @@ async fn revoke_current_and_superseded(
         client,
         context,
         prior,
-        |hash| hash == current_hash,
+        |hash| hash == Some(current_hash),
         current_reason,
     )
     .await?;
@@ -536,7 +562,7 @@ async fn revoke_current_and_superseded(
         client,
         context,
         prior,
-        |hash| hash != current_hash,
+        |hash| hash != Some(current_hash),
         HATHOR_REVOKE_SUPERSEDED,
     )
     .await
@@ -552,10 +578,10 @@ async fn revoke_matching<F>(
     reason: &str,
 ) -> Result<()>
 where
-    F: Fn(&[u8]) -> bool,
+    F: Fn(Option<&[u8]>) -> bool,
 {
     for event in prior {
-        if event.is_active && should_revoke(&event.child_block_hash) {
+        if event.is_active && should_revoke(event.child_block_hash.as_deref()) {
             revoke_merge_mining_event(client, event.event_id, reason, context.parent_classifier())
                 .await
                 .with_context(|| format!("revoke Hathor event {} ({reason})", event.event_id))?;
@@ -640,10 +666,12 @@ fn build_hathor_capture(
     let pool_attributions = ResolvedPoolAttributions { attributions };
 
     let evidence = NormalizedEventEvidence {
-        child_height: hathor_height,
+        child_height: Some(hathor_height),
         // The Hathor block hash IS the reconstructed BTC parent header hash.
-        child_block_hash: block_hash_bytes.clone(),
-        child_block_time: tx.timestamp,
+        child_block_hash: Some(block_hash_bytes.clone()),
+        child_header_bytes: None,
+        child_block_time: Some(tx.timestamp),
+        child_nbits: None,
         btc_parent_header: recon.header,
         // Hathor has no consensus-grade child nBits target in the REST payload;
         // leave the child-target verdict NULL like RSK.
@@ -651,6 +679,8 @@ fn build_hathor_capture(
         btc_parent_coinbase_txid: Some(coinbase_txid.to_byte_array().to_vec()),
         btc_parent_coinbase_script: Some(script_sig),
         btc_parent_coinbase_outputs: Some(serialize(&coinbase.output)),
+        btc_parent_coinbase_outputs_text: None,
+        btc_parent_coinbase_tx_bytes: None,
         child_coinbase_txid: None,
         child_coinbase_script: None,
         child_coinbase_outputs: None,
@@ -872,14 +902,18 @@ mod tests {
         let _ = (&resolver, &funds_graph, height);
 
         let evidence = NormalizedEventEvidence {
-            child_height: height,
-            child_block_hash: recon.header.block_hash().to_byte_array().to_vec(),
-            child_block_time: tx.timestamp,
+            child_height: Some(height),
+            child_block_hash: Some(recon.header.block_hash().to_byte_array().to_vec()),
+            child_header_bytes: None,
+            child_block_time: Some(tx.timestamp),
+            child_nbits: None,
             btc_parent_header: recon.header,
             pow_validates_child_target: None,
             btc_parent_coinbase_txid: Some(coinbase.compute_txid().to_byte_array().to_vec()),
             btc_parent_coinbase_script: Some(coinbase.input[0].script_sig.as_bytes().to_vec()),
             btc_parent_coinbase_outputs: Some(serialize(&coinbase.output)),
+            btc_parent_coinbase_outputs_text: None,
+            btc_parent_coinbase_tx_bytes: None,
             child_coinbase_txid: None,
             child_coinbase_script: None,
             child_coinbase_outputs: None,

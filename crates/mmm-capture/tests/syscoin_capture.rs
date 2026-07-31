@@ -53,7 +53,7 @@ fn parses_real_syscoin_auxpow_fixtures() {
             1_700_000_000,
         )
         .unwrap();
-        assert_eq!(event.child_height, fixture.height);
+        assert_eq!(event.child_height, Some(fixture.height));
         assert_eq!(event.pow_validates_child_target, Some(true));
     }
 }

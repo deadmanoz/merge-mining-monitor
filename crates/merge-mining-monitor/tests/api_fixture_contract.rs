@@ -26,7 +26,57 @@ fn api_fixture_examples_are_listed_and_parse() {
         if file == "version.json" {
             assert_version_fixture_contract(&fixture);
         }
+        if file.starts_with("block-") {
+            assert_block_fixture_contract(&file, &fixture);
+        }
     }
+}
+
+fn assert_block_fixture_contract(file: &str, fixture: &Value) {
+    let events = fixture["event_details"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{file} must carry an event_details array"));
+    for event in events {
+        let object = event
+            .as_object()
+            .unwrap_or_else(|| panic!("{file} event detail must be an object"));
+        for field in ["child_header_hex", "child_nbits"] {
+            assert!(
+                object.contains_key(field),
+                "{file} event detail must include nullable {field}"
+            );
+        }
+        if let Some(header) = event["child_header_hex"].as_str() {
+            assert_lower_hex(header, 160, file, "child_header_hex");
+        } else {
+            assert!(
+                event["child_header_hex"].is_null(),
+                "{file} child_header_hex must be null or a string"
+            );
+        }
+        if let Some(nbits) = event["child_nbits"].as_str() {
+            assert_lower_hex(nbits, 8, file, "child_nbits");
+        } else {
+            assert!(
+                event["child_nbits"].is_null(),
+                "{file} child_nbits must be null or a string"
+            );
+        }
+    }
+}
+
+fn assert_lower_hex(value: &str, len: usize, file: &str, field: &str) {
+    assert_eq!(
+        value.len(),
+        len,
+        "{file} {field} must contain exactly {len} hexadecimal characters"
+    );
+    assert!(
+        value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        "{file} {field} must be lowercase hexadecimal"
+    );
 }
 
 /// The version fixture must track the workspace release: its top-level

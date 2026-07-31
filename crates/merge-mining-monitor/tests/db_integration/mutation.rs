@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use bitcoin::block::Header;
 use bitcoin::hashes::Hash as _;
@@ -11,7 +13,9 @@ use mmm_capture::capture::{
 use mmm_capture::source_registry::NAMECOIN_SOURCE_CODE;
 use mmm_capture::test_support::header_meeting_bits_with_prev;
 use mmm_read_model::{
-    CoreCanonicalWrite, rebuild_source_health, update_parent_events, write_core_canonical,
+    CoreCanonicalWrite, drain_historical_reconcile_queue,
+    drain_historical_reconcile_queue_with_budget_for_test, rebuild_source_health,
+    update_parent_events, write_core_canonical,
 };
 use mmm_read_model::{restore_merge_mining_event, revoke_merge_mining_event};
 use mmm_store::{get_source_id, upsert_event_pool_attributions};
@@ -22,6 +26,7 @@ use crate::source_health::{assert_source_health_matches_recompute, read_source_h
 use crate::support::scenario::{
     canonical_verdict, stale_verdict_with_competitor_header, unknown_verdict,
 };
+use crate::support::seed::insert_block;
 use crate::support::{
     DefaultPoolSnapshot, NamecoinEventFixture, capture_test_payload, classified_proof,
     default_pool_snapshot,
@@ -100,14 +105,18 @@ fn crafted_unknown_payload(
     observed_at: i64,
 ) -> Result<MergeMiningEventPayload> {
     let evidence = NormalizedEventEvidence {
-        child_height,
-        child_block_hash: vec![child_seed; 32],
-        child_block_time: observed_at,
+        child_height: Some(child_height),
+        child_block_hash: Some(vec![child_seed; 32]),
+        child_header_bytes: None,
+        child_block_time: Some(observed_at),
+        child_nbits: None,
         btc_parent_header: parent_header,
         pow_validates_child_target: Some(true),
         btc_parent_coinbase_txid: None,
         btc_parent_coinbase_script: None,
         btc_parent_coinbase_outputs: None,
+        btc_parent_coinbase_outputs_text: None,
+        btc_parent_coinbase_tx_bytes: None,
         child_coinbase_txid: None,
         child_coinbase_script: None,
         child_coinbase_outputs: None,
@@ -124,6 +133,63 @@ fn crafted_unknown_payload(
 // These tests exercise read_model::mutation transaction entry points: capture,
 // revoke/restore, Core writes, and event-pool cascade updates. Each scenario
 // pairs table assertions with the source_health recompute oracle.
+
+#[tokio::test]
+async fn historical_cascade_failure_retains_durable_seeds_for_resume() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let changed_hash = vec![0x31; 32];
+        let child_hash = vec![0x32; 32];
+        insert_block(
+            &client,
+            &child_hash,
+            &changed_hash,
+            None,
+            "unknown",
+            1_700_000_000,
+            None,
+        )
+        .await?;
+        client
+            .execute(
+                "INSERT INTO historical_reconcile_queue ( \
+                    btc_parent_header_hash, primary_pending, changed_hashes, generation \
+                 ) VALUES ($1, FALSE, ARRAY[$1::bytea], 2)",
+                &[&changed_hash],
+            )
+            .await?;
+
+        let classifier = ConfiguredParentClassifier::Disabled;
+        let classifications = HashMap::new();
+        drain_historical_reconcile_queue_with_budget_for_test(
+            &mut client,
+            &classifier,
+            &classifications,
+            0,
+        )
+        .await
+        .expect_err("zero cascade budget must interrupt dependent work");
+
+        let retained: (bool, Vec<Vec<u8>>) = client
+            .query_one(
+                "SELECT primary_pending, changed_hashes \
+                 FROM historical_reconcile_queue \
+                 WHERE btc_parent_header_hash = $1",
+                &[&changed_hash],
+            )
+            .await
+            .map(|row| (row.get(0), row.get(1)))?;
+        assert!(!retained.0);
+        assert_eq!(retained.1, vec![changed_hash.clone()]);
+
+        drain_historical_reconcile_queue(&mut client, &classifier, &classifications).await?;
+        let queued: i64 = client
+            .query_one("SELECT count(*) FROM historical_reconcile_queue", &[])
+            .await?
+            .get(0);
+        assert_eq!(queued, 0);
+        Ok::<_, anyhow::Error>(())
+    })
+}
 
 #[tokio::test]
 async fn mutation_capture_changed_then_unchanged_is_idempotent() -> Result<()> {

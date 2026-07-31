@@ -427,9 +427,11 @@ async fn write_valid_capture(
     let pool_attributions = ResolvedPoolAttributions { attributions };
 
     let evidence = NormalizedEventEvidence {
-        child_height: recon.height,
-        child_block_hash: recon.block_hash.to_byte_array().to_vec(),
-        child_block_time: i64::from(recon.time),
+        child_height: Some(recon.height),
+        child_block_hash: Some(recon.block_hash.to_byte_array().to_vec()),
+        child_header_bytes: None,
+        child_block_time: Some(i64::from(recon.time)),
+        child_nbits: None,
         btc_parent_header: parsed.parent_header.header,
         // The own-node child-target check, GATED true to reach this path.
         pow_validates_child_target: Some(validates_target(
@@ -439,6 +441,8 @@ async fn write_valid_capture(
         btc_parent_coinbase_txid: Some(parsed.parent_coinbase_txid.to_byte_array().to_vec()),
         btc_parent_coinbase_script: Some(parsed.parent_coinbase_script.clone()),
         btc_parent_coinbase_outputs: Some(serialize(&parsed.parent_coinbase_outputs)),
+        btc_parent_coinbase_outputs_text: None,
+        btc_parent_coinbase_tx_bytes: None,
         // Child coinbase absent (the Elastos Go-RPC tx is not coerced into TxOut).
         child_coinbase_txid: None,
         child_coinbase_script: None,

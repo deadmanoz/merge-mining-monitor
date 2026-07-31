@@ -366,11 +366,13 @@ The drawer is consolidated around the AuxPoW record. Its sections are:
   parents, or a format-only `rsk-opaque` / `hathor-rfc0006` entry with no marker;
 - Sources & capture: the source summary, distinct source count, and AuxPoW chain
   count;
-- Auxiliary blocks: the hydrated per-child events with the real child block time,
-  `slot_index` / `chain_id`, the `parent_target` / `aux_target` PoW checks, RSK
-  sidecar evidence for RSK rows, and a collapsed AuxPoW proof section that decodes
-  `aux_proof` into its `coinbase_branch` / `blockchain_branch` sibling hashes (the
-  raw `aux_merkle_proof_hex` bytes are only shown as a compact byte-count-plus-copy
+- Auxiliary blocks: the hydrated per-child events with child height, hash,
+  header, time, and `nBits` shown when the source authenticated each value, plus
+  an explicit unavailable state otherwise; `slot_index` / `chain_id`; the
+  `parent_target` / `aux_target` PoW checks; RSK sidecar evidence for RSK rows;
+  and a collapsed AuxPoW proof section that decodes `aux_proof` into its
+  `coinbase_branch` / `blockchain_branch` sibling hashes (the raw
+  `aux_merkle_proof_hex` bytes are only shown as a compact byte-count-plus-copy
   fallback when the blob does not decode, never as an inline hex wall);
 - competition context;
 - stale-branch context.

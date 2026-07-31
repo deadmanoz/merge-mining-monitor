@@ -161,3 +161,77 @@ async fn in_table_valid_writes_the_event_end_to_end() -> Result<()> {
         Ok(())
     })
 }
+
+#[tokio::test]
+async fn live_capture_promotes_a_hashless_historical_row_without_revoking_it() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (height, rpc) = hathor_1971823_fixture();
+        let context = hathor_context(
+            &client,
+            ConfiguredParentClassifier::Fake(
+                FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(955_609),
+            ),
+        )
+        .await?;
+        assert_eq!(
+            process_hathor_height(&mut client, &rpc, &context, height).await?,
+            HathorHeightOutcome::AuxpowWritten
+        );
+        let event_id: i64 = client
+            .query_one(
+                "SELECT id FROM merge_mining_event \
+                 WHERE source_id = $1 AND child_height = $2",
+                &[&context.source_id(), &height],
+            )
+            .await?
+            .get(0);
+
+        client
+            .execute(
+                "DELETE FROM hathor_merge_mining_evidence WHERE event_id = $1",
+                &[&event_id],
+            )
+            .await?;
+        client
+            .execute(
+                "UPDATE merge_mining_event SET child_block_hash = NULL WHERE id = $1",
+                &[&event_id],
+            )
+            .await?;
+
+        assert_eq!(
+            process_hathor_height(&mut client, &rpc, &context, height).await?,
+            HathorHeightOutcome::AuxpowWritten
+        );
+        let row = client
+            .query_one(
+                "SELECT id, child_block_hash, revoked_at, \
+                        EXISTS (SELECT 1 FROM hathor_merge_mining_evidence h WHERE h.event_id = e.id) \
+                 FROM merge_mining_event e \
+                 WHERE source_id = $1 AND child_height = $2",
+                &[&context.source_id(), &height],
+            )
+            .await?;
+        assert_eq!(
+            row.get::<_, i64>(0),
+            event_id,
+            "the partial row is promoted in place"
+        );
+        assert!(row.get::<_, Option<Vec<u8>>>(1).is_some());
+        assert_eq!(
+            row.get::<_, Option<i64>>(2),
+            None,
+            "the promoted row stays active"
+        );
+        assert!(row.get::<_, bool>(3), "the live sidecar is attached");
+        let pending: i64 = client
+            .query_one(
+                "SELECT count(*) FROM poll_pending_reconcile WHERE source_id = $1",
+                &[&context.source_id()],
+            )
+            .await?
+            .get(0);
+        assert_eq!(pending, 0);
+        Ok::<_, anyhow::Error>(())
+    })
+}

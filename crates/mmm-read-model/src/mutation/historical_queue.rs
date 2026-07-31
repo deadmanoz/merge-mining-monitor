@@ -1,0 +1,294 @@
+//! Durable, bounded read-model work for historical publication imports.
+
+use std::collections::HashMap;
+
+use anyhow::{Context, Result, bail};
+use tokio_postgres::{Client, GenericClient};
+
+use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
+
+use super::{PrimaryDiff, cascade_changed};
+use crate::{
+    DEFAULT_CASCADE_BUDGET, PreclassifiedParent, RECONCILE_LOCK_SET_RETRY_LIMIT,
+    find_anchor_event_for_block, is_reconcile_lock_set_changed, load_block_cascade_state,
+    lock_block_hash, preclassify_event_parent, rebuild_parent_read_model,
+    reconcile_one_event_in_txn,
+};
+
+/// Drain durable historical parent work to completion.
+///
+/// Each primary parent rebuild commits independently. Its exact changed-hash
+/// seeds are stored in the queue in the same transaction before the dependent
+/// cascade runs. The queue row is deleted only after that cascade succeeds, so
+/// rerunning an interrupted import resumes either the primary rebuild or the
+/// already-recorded cascade without relying on an idempotent rebuild to emit the
+/// same change a second time. `classifications` supplies the verdicts already
+/// authenticated during this import; queue entries left by an interrupted
+/// earlier run fall back to the configured classifier.
+pub async fn drain_historical_reconcile_queue(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    classifications: &HashMap<Vec<u8>, ParentClassification>,
+) -> Result<()> {
+    drain_historical_reconcile_queue_with_budget(
+        client,
+        classifier,
+        classifications,
+        DEFAULT_CASCADE_BUDGET,
+    )
+    .await
+}
+
+#[cfg(feature = "db-integration")]
+#[doc(hidden)]
+pub async fn drain_historical_reconcile_queue_with_budget_for_test(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    classifications: &HashMap<Vec<u8>, ParentClassification>,
+    cascade_budget: usize,
+) -> Result<()> {
+    drain_historical_reconcile_queue_with_budget(
+        client,
+        classifier,
+        classifications,
+        cascade_budget,
+    )
+    .await
+}
+
+async fn drain_historical_reconcile_queue_with_budget(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    classifications: &HashMap<Vec<u8>, ParentClassification>,
+    cascade_budget: usize,
+) -> Result<()> {
+    loop {
+        let Some(row) = client
+            .query_opt(
+                "SELECT btc_parent_header_hash, primary_pending, changed_hashes, generation \
+                 FROM historical_reconcile_queue \
+                 ORDER BY enqueued_at, btc_parent_header_hash \
+                 LIMIT 1",
+                &[],
+            )
+            .await
+            .context("load historical reconcile work")?
+        else {
+            return Ok(());
+        };
+        let parent_hash: Vec<u8> = row.get(0);
+        let primary_pending: bool = row.get(1);
+        let changed_hashes: Vec<Vec<u8>> = row.get(2);
+        let generation: i64 = row.get(3);
+
+        if primary_pending {
+            reconcile_historical_primary(
+                client,
+                classifier,
+                &parent_hash,
+                generation,
+                classifications.get(&parent_hash).cloned(),
+            )
+            .await?;
+            continue;
+        }
+
+        cascade_changed(client, classifier, changed_hashes.clone(), cascade_budget)
+            .await
+            .with_context(|| {
+                format!(
+                    "cascade durable historical parent {}",
+                    hex::encode(&parent_hash)
+                )
+            })?;
+        client
+            .execute(
+                "DELETE FROM historical_reconcile_queue \
+                 WHERE btc_parent_header_hash = $1 \
+                   AND primary_pending = FALSE \
+                   AND generation = $2 \
+                   AND changed_hashes = $3",
+                &[&parent_hash, &generation, &changed_hashes],
+            )
+            .await
+            .context("complete historical reconcile work")?;
+    }
+}
+
+pub(super) async fn enqueue_historical_parent<C: GenericClient>(
+    client: &C,
+    parent_hash: &[u8],
+) -> Result<()> {
+    client
+        .execute(
+            "INSERT INTO historical_reconcile_queue (btc_parent_header_hash) \
+             VALUES ($1) \
+             ON CONFLICT (btc_parent_header_hash) DO UPDATE SET \
+                primary_pending = TRUE, \
+                generation = historical_reconcile_queue.generation + 1, \
+                updated_at = now()",
+            &[&parent_hash],
+        )
+        .await
+        .context("enqueue historical parent reconcile")?;
+    Ok(())
+}
+
+async fn reconcile_historical_primary(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    parent_hash: &[u8],
+    generation: i64,
+    classification: Option<ParentClassification>,
+) -> Result<()> {
+    let anchor = find_anchor_event_for_block(client, parent_hash).await?;
+    match anchor {
+        Some(event_id) => {
+            let trusted = classification.map(PreclassifiedParent::trusted);
+            for attempt in 0..RECONCILE_LOCK_SET_RETRY_LIMIT {
+                let preclassified = match &trusted {
+                    Some(preclassified) => Some(preclassified.clone()),
+                    None => preclassify_event_parent(client, event_id, classifier).await?,
+                };
+                let txn = client
+                    .transaction()
+                    .await
+                    .context("begin historical parent reconcile")?;
+                // Base writers lock the event before they enqueue its parent.
+                // Match that order so a concurrent replay cannot hold the
+                // queue row while waiting on an event row the replay owns.
+                if !lock_historical_anchor_event(&txn, event_id).await? {
+                    txn.rollback()
+                        .await
+                        .context("rollback missing historical reconcile anchor")?;
+                    return Ok(());
+                }
+                if !lock_current_historical_primary(&txn, parent_hash, generation).await? {
+                    txn.rollback()
+                        .await
+                        .context("rollback superseded historical parent reconcile")?;
+                    return Ok(());
+                }
+                match reconcile_one_event_in_txn(
+                    &txn,
+                    event_id,
+                    classifier,
+                    preclassified,
+                    PrimaryDiff::BulkImport,
+                )
+                .await
+                {
+                    Ok(changed_hashes) => {
+                        persist_historical_primary(&txn, parent_hash, generation, &changed_hashes)
+                            .await?;
+                        txn.commit()
+                            .await
+                            .context("commit historical parent reconcile")?;
+                        return Ok(());
+                    }
+                    Err(err)
+                        if is_reconcile_lock_set_changed(&err)
+                            && attempt + 1 < RECONCILE_LOCK_SET_RETRY_LIMIT =>
+                    {
+                        txn.rollback()
+                            .await
+                            .context("rollback historical reconcile after lock-set change")?;
+                    }
+                    Err(err) => {
+                        let _ = txn.rollback().await;
+                        return Err(err);
+                    }
+                }
+            }
+            unreachable!("historical reconcile retry loop always returns")
+        }
+        None => {
+            let txn = client
+                .transaction()
+                .await
+                .context("begin historical orphaned-block reconcile")?;
+            if !lock_current_historical_primary(&txn, parent_hash, generation).await? {
+                txn.rollback()
+                    .await
+                    .context("rollback superseded historical orphaned-block reconcile")?;
+                return Ok(());
+            }
+            lock_block_hash(&txn, parent_hash).await?;
+            let before = load_block_cascade_state(&txn, parent_hash).await?;
+            rebuild_parent_read_model(&txn, parent_hash, None).await?;
+            let after = load_block_cascade_state(&txn, parent_hash).await?;
+            let changed_hashes = if before != after {
+                vec![parent_hash.to_vec()]
+            } else {
+                Vec::new()
+            };
+            persist_historical_primary(&txn, parent_hash, generation, &changed_hashes).await?;
+            txn.commit()
+                .await
+                .context("commit historical orphaned-block reconcile")
+        }
+    }
+}
+
+async fn lock_historical_anchor_event<C: GenericClient>(client: &C, event_id: i64) -> Result<bool> {
+    Ok(client
+        .query_opt(
+            "SELECT 1 FROM merge_mining_event WHERE id = $1 FOR UPDATE",
+            &[&event_id],
+        )
+        .await
+        .context("lock historical reconcile anchor event")?
+        .is_some())
+}
+
+async fn lock_current_historical_primary<C: GenericClient>(
+    client: &C,
+    parent_hash: &[u8],
+    generation: i64,
+) -> Result<bool> {
+    Ok(client
+        .query_opt(
+            "SELECT 1 FROM historical_reconcile_queue \
+             WHERE btc_parent_header_hash = $1 \
+               AND primary_pending = TRUE \
+               AND generation = $2 \
+             FOR UPDATE",
+            &[&parent_hash, &generation],
+        )
+        .await
+        .context("lock historical primary reconcile work")?
+        .is_some())
+}
+
+async fn persist_historical_primary<C: GenericClient>(
+    client: &C,
+    parent_hash: &[u8],
+    generation: i64,
+    changed_hashes: &[Vec<u8>],
+) -> Result<()> {
+    let affected = client
+        .execute(
+            "UPDATE historical_reconcile_queue q SET \
+                primary_pending = FALSE, \
+                changed_hashes = ARRAY( \
+                    SELECT DISTINCT value \
+                    FROM unnest(q.changed_hashes || $3::bytea[]) AS hashes(value) \
+                    ORDER BY value \
+                ), \
+                generation = q.generation + 1, \
+                updated_at = now() \
+             WHERE q.btc_parent_header_hash = $1 \
+               AND q.primary_pending = TRUE \
+               AND q.generation = $2",
+            &[&parent_hash, &generation, &changed_hashes],
+        )
+        .await
+        .context("persist historical primary reconcile result")?;
+    if affected != 1 {
+        bail!(
+            "historical reconcile queue generation changed while locked for parent {}",
+            hex::encode(parent_hash)
+        );
+    }
+    Ok(())
+}

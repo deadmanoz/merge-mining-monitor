@@ -129,8 +129,8 @@ gen-pool-snapshot *args="":
 gen-source-artifacts *args="":
     cargo run --quiet --features artifact-generation --bin gen_source_artifacts -- {{args}}
 
-# Regenerate (or --check) data/historical/historical-source-manifest.json from the local
-# merge-mining-research validated stale CSVs for the historical-only chains.
+# Regenerate the pinned normalized monitor-evidence manifest from the local
+# research publication commit and Git LFS object metadata.
 gen-historical-source-manifest *args="":
     ./scripts/gen-historical-source-manifest.sh {{args}}
 
@@ -176,6 +176,9 @@ backfill-hathor-cache csv *args:
 
 import-dataset chain *args:
     cargo run -- import-dataset {{chain}} {{args}}
+
+import-all *args:
+    cargo run -- import-all {{args}}
 
 import-known-stales *args:
     cargo run -- import-known-stales {{args}}

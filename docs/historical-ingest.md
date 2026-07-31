@@ -1,190 +1,248 @@
 # Historical Ingest
 
-Historical ingest sends recovered full-chain and partial evidence through the
-same producer and read-model path as live capture. Source codes retain the
-`auxpow:<chain>` form for compatibility, including VCash's tag-based evidence;
-the stored events otherwise follow the same derived-state rules as live events.
+Historical ingest consumes the normalized monitor publication from
+`merge-mining-research` and sends every observation through the same store and
+read-model rules as live capture. The pinned publication is merge commit
+`2146c204a8a203c59534a1b23b04f447a47b499e`.
 
-## Supported Chains
+## Publication Contract
 
-`argentum`, `bitcoin-vault`, `bitmark`, `coiledcoin`, `crown`, `devcoin`,
-`elcash`, `emercoin`, `geistgeld`, `groupcoin`, `huntercoin`, `i0coin`,
-`ixcoin`, `lyncoin`, `myriadcoin`, `sixeleven`, `terracoin`, `unobtanium`,
-`vcash`, and `xaya`, plus the six live-lifecycle chains that also publish
-recovered historical monitor-evidence exports: `namecoin`, `rsk`, `elastos`,
-`syscoin`, `hathor`, and `fractal` (the closed `LIVE_IMPORT_CHAINS`
-allowlist).
+The publication contains 576,662 event rows across 27 uniform per-chain files:
 
-Live-import chains capture into the same `source_id` as their live pollers,
-so their rows must carry the exact node-verified `child_block_hash` /
-`child_block_time` the research exports publish: that identity is what lets
-an imported row collide with a live-captured one under the
-`(source_id, child_height, child_block_hash)` upsert (which never rewrites
-the first writer's parent evidence) instead of duplicating it. A blank child
-cell skips as `empty_field`; the synthetic-hash fallback is reserved for the
-legacy historical chains that recovered no child identity. RSK rows
-additionally construct the 1:1 `rsk_merge_mining_evidence` sidecar from the
-export's seven sidecar columns (miner, merge-mining hash, uncle placement,
-merkle proof, coinbase tail) in the same transaction as the event -- the API's
-block-detail projection refuses an `auxpow:rsk` event without one. The
-sidecar's `pool_identity_id` is left NULL at import; run
-`just reclassify-pools` afterwards to late-fill it from the RSK miner
-registry.
+```text
+results/monitor-evidence/<chain>_monitor_evidence.csv
+```
 
-VCash is a 68-row canonical subset recovered from archived explorer pages, not
-the VCash blockchain. The default CSV search resolves it to the research
-repo's committed `data/canonical/vcash_canonical_blocks.csv` (see Known-Stale
-Membership and Import below); it is not part of the compact validated-stale
-manifest.
+Doichain participates through the same path with a valid zero-row file. The
+separate 20-row `stale-descendants` file is an aggregate view, not an event
+source, because its contributing chain observations already exist in the
+per-chain files.
 
-Lyncoin is complete for its Bitcoin-merge-mined era at child heights 0 through
-260,499 (the Flex fork begins at 260,500). Its 11-row import artifact is the
-canonical subset of 56,653 Bitcoin-difficulty candidates, with exact child
-height, hash, and time.
-The default CSV search resolves it to the committed
-`data/canonical/lyncoin_canonical_blocks.csv`; like VCash, it is not added to
-the generated validated-stale manifest.
+`data/historical/historical-source-manifest.json` pins each event payload by
+path, byte size, SHA-256, row count, and classification counts. It also pins the
+research publication manifest and source commit. Before any database mutation,
+the importer verifies:
 
-SixEleven is complete through its available tip: 999,407 child blocks from
-genesis through height 999,406. Its seven-row import artifact is the canonical
-subset of 80,364 Bitcoin-difficulty candidates, with exact child height, hash,
-and time.
-The default CSV search resolves it to the committed
-`data/canonical/sixeleven_canonical_blocks.csv`; it also remains outside the
-generated validated-stale manifest.
+- the complete manifest and source-registry inventory;
+- the research checkout commit, unless `--artifact-root` supplies
+  content-addressed files explicitly;
+- every file's size, checksum, normalized header, row count, and classification
+  counts;
+- every row's schema, hashes, compact targets, parent header, proof of work,
+  taxonomy, and available child-header corroboration.
 
-## Provenance
+Each event artifact remains open after verification. Classification and
+mutation rewind that same verified file handle, so replacing a checkout path
+during a long preclassification pass cannot substitute unverified bytes.
 
-`data/historical/historical-source-manifest.json` records the compact
-validated-stale input set for its manifest-backed chains: source commit,
-per-chain CSV path, child-height column, row count, and SHA-256. The explicit
-VCash, Lyncoin, and SixEleven recovery artifacts remain outside that generated
-stale-only manifest.
-The raw CSVs, full-evidence inventories, and dataset production artefacts are not
-committed to this repo. They will be made available in the public
-[`merge-mining-research`](https://github.com/deadmanoz/merge-mining-research)
-repository; this repo keeps the manifest and checksums needed to verify the
-supplied inputs.
+Git LFS must materialize the CSV payloads. If the importer finds pointer text,
+recover the files with:
 
-The importer prefers richer local inputs when present:
+```bash
+git lfs pull --include="results/monitor-evidence/*_monitor_evidence.csv"
+```
 
-1. for the explicit-recovery chains (VCash, Lyncoin, SixEleven), the research
-   repo's committed `data/canonical/<chain>_canonical_blocks.csv` artifacts,
-   whose monitor-evidence exports predate the `child_block_time` column those
-   chains require; for every other chain -- including the live-import chains,
-   whose exports carry hydrated `child_block_hash` / `child_block_time` and
-   RSK's sidecar columns -- its committed monitor-evidence export
-   (`results/monitor-evidence/<chain>_monitor_evidence.csv`, which carries
-   per-row `btc_stale_relevance` / `relevance_reason` verdicts, so no
-   separate relevance inventory is needed).
-2. generated full-evidence CSVs
-3. local classified archive CSVs
-4. compact stale-block CSVs
-5. the manifest path
-6. compact validated-stale CSVs
+## Child Evidence
 
-Use `MERGE_MINING_RESEARCH_DIR`, `MERGE_MINING_ARCHIVE_DIR`, `--csv`,
-`--manifest`, or `--relevance` to control input paths. Because the raw datasets
-are not distributed with this repository, running an import requires supplying
-recovered CSVs at one of these paths; the manifest lets you verify a supplied
-file matches the recorded provenance checksum. There is no implicit
-home-directory fallback; set local roots in `.env`.
+The normalized columns are uniform across chains, but authenticated values can
+be unavailable. These fields are independent:
+
+- `child_height`
+- `child_block_hash`
+- `child_header_hex`
+- `child_block_time`
+- `child_nbits`
+
+Empty cells remain SQL `NULL`, except that an 80-byte child header derives its
+exact SHA256d child hash when the hash cell is empty. This is authenticated
+identity from the supplied header, not a placeholder. The importer never
+substitutes a scan counter, Bitcoin parent time, zero, or another synthetic
+value. An individual event must have a child hash, child height, or child
+header. When a child hash, timestamp, or `nBits` is also present, the header
+must authenticate that companion independently. Xaya is the documented
+exception to the header-field `nBits` comparison because its authenticated
+effective target lives in `PowData`.
+
+When `child_nbits` is present, the importer compares the imported Bitcoin
+parent hash with that compact target and persists the result as
+`pow_validates_child_target`. This is the same target test used by live
+Namecoin-family capture, including Xaya's authenticated effective target.
+
+A real child hash is exact identity: `(source_id, child_block_hash)`. A hashless
+row uses `(source_id, child_height, btc_parent_header_hash)` as partial identity.
+Later exact evidence promotes one unambiguous partial row in place. A partial
+row already represented by one exact event attaches its historical provenance
+to that exact event instead of creating a duplicate. Contradictory or ambiguous
+evidence fails the chain transaction.
+
+An exact identity represents the one child-ledger block exposed under that
+hash, including the parent proof retained by the child node. A later row with
+the same source and child hash but a different Bitcoin parent is contradictory
+source evidence, not a second event, and fails closed. The pinned publication
+contains 243,970 non-null child hashes with no duplicate
+`(chain, child_block_hash)` identities.
+
+`child_block_hash` encodes the exact bytes stored by live capture. For
+SHA256d child headers this is lowercase hex of the raw
+`sha256d::Hash::to_byte_array()` bytes, not the reversed display/RPC form.
+Bitcoin parent hash columns are different: they are display-order
+cross-checks, while the stored parent identity is derived from
+`btc_header_hex`.
+
+`expected_nbits` is the publication validator's expected Bitcoin target for an
+admitted row. When populated, it must equal the `nBits` encoded in
+`btc_header_hex`; disagreement is contradictory evidence and fails closed.
+All 3,672 populated values in the pinned publication satisfy this invariant.
+
+`historical_event_provenance` retains every imported source row. Its
+`publication_ref` is the pinned research commit for manifest-backed imports and
+`operator-csv` for an unpinned override. Chain, original path and row number,
+source classification, validation result, and stale relevance axes remain
+separate from the monitor's derived Bitcoin block state. Several source rows
+can refine to one event without losing their individual provenance.
+
+The importer also retains both parent-coinbase publication fields.
+`full_coinbase_hex`, when present, is decoded and corroborated against the
+published scriptSig before its raw bytes, txid, script, and value-complete
+outputs are stored. `coinbase_outputs` is preserved verbatim because the
+research publication legitimately contains raw scriptPubKey, address, and
+value-paired forms. Recognizable Bitcoin payout addresses participate in
+capture-time attribution, and `reclassify-pools` can replay from the stored
+text later.
+
+## Source Lifecycles And Existing Data
+
+The shared source registry controls reconciliation:
+
+- `Historical` and `Partial` sources use the checksum-verified manifest as
+  their authoritative snapshot. After a complete successful manifest import,
+  source events absent from the pinned publication are deleted, including rows
+  created by the retired synthetic importer.
+- `Live` sources are additive. Historical publication rows can fill or refine
+  a matching live event, but absence from the publication never deletes a
+  live-captured event.
+- `Surveyed` sources must publish zero rows. Doichain completes preflight and
+  performs no database writes.
+
+Each chain writes its complete base/provenance snapshot, removes obsolete
+authoritative rows, and enqueues affected parents in one transaction. A failure
+before that commit rolls back the whole chain. After commit, the importer drains
+the durable queue in bounded per-parent transactions. Primary reconcile results
+store their changed-hash cascade seeds in the same transaction, and queue work
+is removed only after its dependent cascade succeeds. An interruption at
+either boundary therefore resumes without losing cascade work. `import-all`
+also enqueues its final targeted stale-branch pass before rebuilding any parent,
+so a failure after a fresh stale promotion resumes its dependent cascade.
+`import-all` takes the exclusive source-health lock at the end of each
+non-surveyed chain transaction, then commits its base evidence, durable queue,
+and unready flag atomically. A concurrent rebuild either finishes before that
+invalidation or observes pending historical work and refuses to mark the
+aggregate ready. The importer rebuilds once after all chains and targeted stale
+branches have reconciled. A partial multi-chain import therefore never exposes
+counters from the previous complete snapshot.
+
+The schema migration retains existing child values and makes the child evidence
+columns nullable. Before changing the schema, it fails closed if the legacy
+database contains more than one row for the new exact identity
+`(source_id, child_block_hash)`. Run the audit query in `docs/operations.md` and
+resolve any conflict from authenticated source evidence; the migration never
+guesses which legacy row to keep. The subsequent authoritative import is what
+removes obsolete historical-source rows. It does not clear the database or
+replace live-source data.
 
 ## Known-Stale Membership
 
-`import-dataset` refuses to run while the `known_stale_block` table is empty
-(pass `--allow-empty-known-stales` to opt out): without the membership, a
-catalogued stale that Bitcoin Core attests absent would be mislabelled a
-strict/weak BTC orphan. Load the membership once per database, after
-migrations, from an upstream `stale-blocks.csv`-shaped dataset (the
-`bitcoin-data/stale-blocks` repository's file, with a `hash` column of display
-block hashes and an optional `height`):
+Import known Bitcoin stale membership once per database before the publication:
 
 ```bash
-just import-known-stales --csv path/to/stale-blocks.csv --source-label "bitcoin-data/stale-blocks@<commit>"
-```
-
-The `--source-label` records the dataset's provenance on every imported row.
-The import is idempotent and atomic (all rows commit in one transaction, or
-nothing does), and it fails rather than record a partial or empty membership:
-a missing `hash` column, zero usable rows, or ANY malformed row aborts the
-run, since downstream guards only test membership emptiness and a corrupt
-dataset must not count as initialized. Pass `--skip-malformed` to import the
-valid subset of a file with known-bad rows. The summary prints
-inserted/already-present/skipped counts. On a database that already holds
-classified rows, follow up with:
-
-```bash
+just import-known-stales \
+  --csv path/to/stale-blocks.csv \
+  --source-label "bitcoin-data/stale-blocks@<commit>"
 just reclassify-known-stales
 ```
 
-which retroactively demotes any strict/weak `unknown` block already in the
-membership to `excluded`, idempotently, maintaining `source_health` through
-the reconciler. The full fresh-database ordering is: migrations, then
-`import-known-stales`, then `reclassify-known-stales` (a no-op when nothing
-was classified yet), then `import-dataset`.
+`import-dataset` and `import-all` refuse an empty `known_stale_block` table by
+default. Without it, a catalogued stale could be labelled a strict or weak BTC
+orphan. Published direct-stale and stale-descendant provenance is also an
+exclusion from strict/weak classification, including while its branch awaits
+derived placement.
+
+`--allow-empty-known-stales` and `--allow-unclassified` exist for disposable
+diagnostic databases. They are not production cutover options. A manifest
+import using `--allow-unclassified` is additive because its skipped unknown rows
+make it incomplete; it never clears provenance or removes rows from the prior
+authoritative snapshot. `--limit` must be greater than zero.
 
 ## Import
 
-Prepare the DB and Bitcoin Core classifier:
+Prepare the database and research artifacts:
 
 ```bash
 just db-up
 just db-migrate-dev
 set -a; source .env; set +a
+git -C "$MERGE_MINING_RESEARCH_DIR" lfs pull \
+  --include="results/monitor-evidence/*_monitor_evidence.csv"
 ```
 
-Import one chain:
+Import the complete publication:
+
+```bash
+just import-all
+```
+
+The command preflights all artifacts before importing the first chain, processes
+chains in deterministic order, shares a Bitcoin-parent classification cache,
+combines candidate parsing, validation, and preclassification into one stream,
+and runs targeted stale-branch reconciliation after all sources are present.
+Digest verification, manifest-count inspection, and database mutation still
+read the artifact separately.
+Its per-chain and total summaries report expected, ingested, inserted, updated,
+promoted, exact-satisfied, removed, classification, relevance, and skip counts.
+A pinned publication import fails on an unexplained skip. Write-disposition
+counters come from the store's exact/partial identity decision rather than a
+second importer-side identity query.
+
+Import one chain when diagnosing or resuming a specific source:
 
 ```bash
 just import-dataset devcoin
-```
-
-Import the explicit recovered artifacts. These exact-child-field chains need
-the authoritative child hash and time that the compact monitor-evidence
-exports omit, so the default CSV search resolves them to the research repo's
-committed `data/canonical/<chain>_canonical_blocks.csv` artifacts instead and
-no `--csv` override is needed:
-
-```bash
-just import-dataset lyncoin
-just import-dataset sixeleven
-just import-dataset vcash
-```
-
-Import a live-import chain. The default CSV search resolves it to the research
-repo's committed monitor-evidence export, which carries the node-verified
-child identity these chains require; RSK also writes its
-`rsk_merge_mining_evidence` sidecar per event, then late-fills pool identity:
-
-```bash
 just import-dataset namecoin
 just import-dataset rsk
-just reclassify-pools --only rsk
 ```
 
-Verify explicit inputs before import:
+`import-dataset` commits only the named chain and does not run the cross-source
+stale-branch reconciliation pass. Use `import-all` to establish the complete
+publication state; the single-chain command is for diagnostics and recovery.
 
-- VCash's 68-row artifact has SHA-256
-  `4ad387246b5730c05af9216df5c82e80d64fec6cbe2e8db40487dfac3514f801`.
-- Lyncoin's 11-row artifact has SHA-256
-  `12027329ef7c19c7a8654e348138e4e462b027aa39f6744cdedd4c4e58181ae9`.
-- SixEleven's seven-row artifact has SHA-256
-  `086552bd812cc6c52e334970ea4b0f466041f8b4040c0e9b7360a7ec758c32dd`.
-  (Hashes track the published research history, whose data-consistency pass
-  normalized these artifacts to the shared vocabulary and schema.)
+`--csv PATH` is an explicit fixture or operator override. It must still use the
+normalized schema, but it has no monitor-manifest checksum expectation. It is
+always additive, carries `operator-csv` rather than the pinned research commit
+in provenance, and never removes events absent from the supplied file.
+Authoritative replacement is reserved for the checksum-verified manifest path.
 
-The command requires Bitcoin Core classification by default. Use
-`--allow-unclassified` only for local dry-run checks; production imports should
-prove parent state through Core.
-
-After bulk imports:
+After the full import, refresh attribution:
 
 ```bash
-just rebuild-source-health
 just reclassify-pools
 ```
 
-Run historical chains twice on a fresh database when importing branch
-attestations: the second pass can classify stale-descendant rows whose
-predecessor branch block was imported during the first pass.
+`import-all` already rebuilds source health and performs the targeted
+stale-branch pass. A second full import is an idempotence check, not a required
+classification phase.
+
+## Production Cutover
+
+Stop live pollers for the cutover, then:
+
+1. Run `just db-backup`.
+2. Apply migration 0007 through `just db-migrate-deploy`.
+3. Confirm `known_stale_block` is populated.
+4. Run `just import-all`.
+5. Run `just reclassify-pools`.
+6. Verify per-source event totals, API block details, orphan exclusions, and
+   poller health.
+
+Retain the backup until the post-import audit is accepted. Never run the
+migration or publication import directly against a persistent database without
+the repository's backup-first workflow.

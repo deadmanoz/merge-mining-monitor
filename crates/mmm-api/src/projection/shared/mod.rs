@@ -159,7 +159,7 @@ pub(super) struct SourceRecord {
 pub(super) struct EventRow {
     pub(super) id: i64,
     pub(super) source: SourceRecord,
-    pub(super) child_height: i32,
+    pub(super) child_height: Option<i32>,
     pub(super) parent_hash: Vec<u8>,
     pub(super) prev_hash: Vec<u8>,
     pub(super) header_time: i64,

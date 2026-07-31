@@ -7,8 +7,8 @@
 
 use std::collections::HashMap;
 
-use anyhow::{Context, Result};
-use tokio_postgres::{Client, GenericClient};
+use anyhow::{Context, Result, bail};
+use tokio_postgres::{Client, GenericClient, Transaction};
 
 // ---------------------------------------------------------------------------
 // source_health: precomputed per-source rollup counters.
@@ -448,52 +448,105 @@ pub async fn rebuild_source_health(client: &mut Client) -> Result<()> {
         .transaction()
         .await
         .context("begin source_health rebuild transaction")?;
-    txn.execute(
-        "SELECT pg_advisory_xact_lock($1, $2)",
-        &[&SOURCE_HEALTH_LOCK_CLASS, &SOURCE_HEALTH_LOCK_OBJ],
-    )
-    .await
-    .context("acquire exclusive source_health advisory lock")?;
+    rebuild_source_health_in_transaction(&txn).await?;
+    txn.commit().await.context("commit source_health rebuild")?;
+    Ok(())
+}
 
-    let computed = compute_source_health_from_base(&txn).await?;
+/// Serialize a historical base/queue commit after any concurrent rebuild, then
+/// prevent the sources API from serving the prior aggregate.
+///
+/// Call this at the end of the historical transaction, immediately before
+/// commit. The exclusive transaction lock makes the staged base evidence,
+/// durable queue rows, and `source_health_ready = FALSE` visible atomically.
+pub async fn invalidate_source_health_in_transaction(client: &Transaction<'_>) -> Result<()> {
+    client
+        .execute(
+            "SELECT pg_advisory_xact_lock($1, $2)",
+            &[&SOURCE_HEALTH_LOCK_CLASS, &SOURCE_HEALTH_LOCK_OBJ],
+        )
+        .await
+        .context("acquire source_health lock for historical invalidation")?;
+    let now = mmm_capture::capture::now_epoch_seconds()?;
+    client
+        .execute(
+            "UPDATE read_model_invariant \
+             SET source_health_ready = FALSE, updated_at = $1 \
+             WHERE id = TRUE",
+            &[&now],
+        )
+        .await
+        .context("invalidate source_health before historical import")?;
+    Ok(())
+}
+
+/// Rebuild source health inside a caller-owned transaction.
+///
+/// Historical snapshot replacement uses this after all event upserts and
+/// removals so base evidence and its aggregate become visible atomically.
+pub(crate) async fn rebuild_source_health_in_transaction<C: GenericClient>(
+    client: &C,
+) -> Result<()> {
+    client
+        .execute(
+            "SELECT pg_advisory_xact_lock($1, $2)",
+            &[&SOURCE_HEALTH_LOCK_CLASS, &SOURCE_HEALTH_LOCK_OBJ],
+        )
+        .await
+        .context("acquire exclusive source_health advisory lock")?;
+
+    let historical_work_pending: bool = client
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM historical_reconcile_queue)",
+            &[],
+        )
+        .await
+        .context("check pending historical reconciliation before source_health rebuild")?
+        .get(0);
+    if historical_work_pending {
+        bail!("cannot rebuild source_health while historical reconciliation is pending");
+    }
+
+    let computed = compute_source_health_from_base(client).await?;
     let now = mmm_capture::capture::now_epoch_seconds()?;
 
-    txn.execute("DELETE FROM source_health", &[])
+    client
+        .execute("DELETE FROM source_health", &[])
         .await
         .context("clear source_health for rebuild")?;
     for row in &computed.rows {
-        txn.execute(
-            "INSERT INTO source_health ( \
+        client
+            .execute(
+                "INSERT INTO source_health ( \
                  source_id, events, last_event_seen, near_parents, \
                  unknown_parents, canonical_parents, stale_parents, \
                  strict_orphan_parents, weak_orphan_parents, updated_at \
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-            &[
-                &row.source_id,
-                &row.events,
-                &row.last_event_seen,
-                &row.near_parents,
-                &row.unknown_parents,
-                &row.canonical_parents,
-                &row.stale_parents,
-                &row.strict_orphan_parents,
-                &row.weak_orphan_parents,
-                &now,
-            ],
-        )
-        .await
-        .context("insert rebuilt source_health row")?;
+                &[
+                    &row.source_id,
+                    &row.events,
+                    &row.last_event_seen,
+                    &row.near_parents,
+                    &row.unknown_parents,
+                    &row.canonical_parents,
+                    &row.stale_parents,
+                    &row.strict_orphan_parents,
+                    &row.weak_orphan_parents,
+                    &now,
+                ],
+            )
+            .await
+            .context("insert rebuilt source_health row")?;
     }
 
-    txn.execute(
-        "UPDATE read_model_invariant \
+    client
+        .execute(
+            "UPDATE read_model_invariant \
             SET invalid_unknown_parents = $1, source_health_ready = TRUE, updated_at = $2 \
           WHERE id = TRUE",
-        &[&computed.invalid_unknown_parents, &now],
-    )
-    .await
-    .context("set read_model_invariant on rebuild")?;
-
-    txn.commit().await.context("commit source_health rebuild")?;
+            &[&computed.invalid_unknown_parents, &now],
+        )
+        .await
+        .context("set read_model_invariant on rebuild")?;
     Ok(())
 }

@@ -100,7 +100,10 @@ fn parses_raw_namecoin_auxpow_fixtures() {
         )
         .unwrap();
 
-        assert_eq!(event.child_height, expected.expected_child_height.unwrap());
+        assert_eq!(
+            event.child_height,
+            Some(expected.expected_child_height.unwrap())
+        );
         assert_eq!(
             event.btc_parent_kind.as_db_str(),
             expected.expected_parent_kind.unwrap()
@@ -126,7 +129,7 @@ fn parses_raw_namecoin_auxpow_fixtures() {
         // to_byte_array(), never reversed.
         assert_eq!(
             event.child_block_hash,
-            parsed.child_header.hash().to_byte_array().to_vec()
+            Some(parsed.child_header.hash().to_byte_array().to_vec())
         );
         assert_eq!(
             event.btc_parent_header_hash,

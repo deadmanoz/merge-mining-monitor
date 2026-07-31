@@ -25,6 +25,13 @@ use crate::source_health_sql::ParentContribution;
 use mmm_bitcoin_core::BitcoinCoreBlockCoinbase;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
 use mmm_capture::capture::{MergeMiningEventPayload, ParentKind, apply_classification_proof};
+use mmm_store::EventWriteOutcome;
+
+mod historical_queue;
+pub use historical_queue::drain_historical_reconcile_queue;
+#[cfg(feature = "db-integration")]
+pub use historical_queue::drain_historical_reconcile_queue_with_budget_for_test;
+use historical_queue::enqueue_historical_parent;
 
 use super::{
     CoreCoinbaseStatus, DEFAULT_CASCADE_BUDGET, PreclassifiedParent,
@@ -101,6 +108,10 @@ pub(crate) enum PrimaryDiff<'a> {
     /// repair, and reclassify paths, where the reconcile's `before` is
     /// genuinely pre-mutation).
     Reconcile,
+    /// A caller-owned bulk transaction rebuilds source health from base tables
+    /// after all event changes, so this reconcile skips its incremental primary
+    /// diff.
+    BulkImport,
     /// A wrapper opened a bracket BEFORE its own base mutation and owns the
     /// primary diff; the reconcile must not diff the primary hash (it would
     /// double-apply or use a post-mutation `before`). The reconcile still owns
@@ -191,9 +202,9 @@ pub async fn capture_in_txn<F>(
     upsert: F,
 ) -> Result<i64>
 where
-    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<i64>,
+    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
 {
-    capture_event(
+    let outcome = capture_event(
         client,
         source_id,
         classifier,
@@ -202,7 +213,8 @@ where
         upsert,
         CaptureEventOptions::default(),
     )
-    .await
+    .await?;
+    Ok(outcome.event_id)
 }
 
 /// [`capture_in_txn`] variant for callers that already had to classify the
@@ -221,9 +233,9 @@ pub async fn capture_preclassified_in_txn<F>(
     upsert: F,
 ) -> Result<i64>
 where
-    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<i64>,
+    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
 {
-    capture_event(
+    let outcome = capture_event(
         client,
         source_id,
         classifier,
@@ -234,7 +246,130 @@ where
             parent_classification: Some(parent_classification),
         },
     )
+    .await?;
+    Ok(outcome.event_id)
+}
+
+/// Write one historical observation inside a caller-owned chain transaction.
+///
+/// Historical publication imports intentionally stop at base evidence here.
+/// The affected parent is enqueued durably in the same transaction, then
+/// [`drain_historical_reconcile_queue`] rebuilds parent and dependent read-model
+/// state after the chain snapshot commits. Keeping advisory read-model locks out
+/// of the chain transaction prevents a broad import from retaining one lock per
+/// parent until commit.
+pub async fn write_historical_base_in_transaction<F>(
+    txn: &Transaction<'_>,
+    source_id: i64,
+    classifier: &ConfiguredParentClassifier,
+    payload: &mut MergeMiningEventPayload,
+    parent_classification: Option<ParentClassification>,
+    upsert: F,
+) -> Result<EventWriteOutcome>
+where
+    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
+{
+    match parent_classification {
+        Some(classification) => {
+            apply_classification_proof(payload, classification.to_proof())?;
+        }
+        None => {
+            classify_payload_parent(txn, payload, classifier).await?;
+        }
+    }
+    let outcome = upsert(txn, source_id, payload).await?;
+    enqueue_historical_parent(txn, &payload.btc_parent_header_hash).await?;
+    Ok(outcome)
+}
+
+/// Durably enqueue a historical parent for a fresh primary reconcile.
+///
+/// Callers that discover additional historical repair work after the base
+/// import must enqueue it before attempting the primary rebuild. The queue
+/// retains both an unfinished primary and its committed dependent-cascade
+/// seeds across process failures.
+pub async fn enqueue_historical_parent_reconcile<C: GenericClient>(
+    client: &C,
+    parent_hash: &[u8],
+) -> Result<()> {
+    enqueue_historical_parent(client, parent_hash).await
+}
+
+/// Remove authoritative-source events absent from the current publication and
+/// durably enqueue every affected parent in the same transaction.
+pub async fn reconcile_authoritative_historical_source_in_transaction(
+    txn: &Transaction<'_>,
+    source_id: i64,
+    publication_ref: &str,
+    chain: &str,
+) -> Result<u64> {
+    let rows = txn
+        .query(
+            "SELECT DISTINCT e.btc_parent_header_hash \
+             FROM merge_mining_event e \
+             WHERE e.source_id = $1 \
+               AND NOT EXISTS ( \
+                    SELECT 1 FROM historical_event_provenance p \
+                    WHERE p.event_id = e.id \
+                      AND p.publication_ref = $2 \
+                      AND p.chain = $3 \
+               ) \
+             ORDER BY e.btc_parent_header_hash",
+            &[&source_id, &publication_ref, &chain],
+        )
+        .await
+        .context("load authoritative historical removals")?;
+    for row in rows {
+        let hash: Vec<u8> = row.get(0);
+        enqueue_historical_parent(txn, &hash).await?;
+    }
+
+    let removed = txn
+        .execute(
+            "DELETE FROM merge_mining_event e \
+             WHERE e.source_id = $1 \
+               AND NOT EXISTS ( \
+                    SELECT 1 FROM historical_event_provenance p \
+                    WHERE p.event_id = e.id \
+                      AND p.publication_ref = $2 \
+                      AND p.chain = $3 \
+               )",
+            &[&source_id, &publication_ref, &chain],
+        )
+        .await
+        .context("remove events absent from authoritative historical snapshot")?;
+    Ok(removed)
+}
+
+/// Replace the current provenance view for one complete authoritative snapshot.
+///
+/// The delete and all replacement provenance rows share the caller's chain
+/// transaction, so a failed import restores the previous snapshot intact.
+pub async fn clear_authoritative_historical_provenance_in_transaction(
+    txn: &Transaction<'_>,
+    publication_ref: &str,
+    chain: &str,
+) -> Result<()> {
+    txn.execute(
+        "DELETE FROM historical_event_provenance \
+         WHERE publication_ref = $1 AND chain = $2",
+        &[&publication_ref, &chain],
+    )
     .await
+    .context("clear prior authoritative historical provenance snapshot")?;
+    Ok(())
+}
+
+/// Recompute source-health state after all durable historical work has drained.
+pub async fn rebuild_historical_source_health(client: &mut Client) -> Result<()> {
+    let txn = client
+        .transaction()
+        .await
+        .context("begin historical source-health rebuild")?;
+    crate::source_health_sql::rebuild_source_health_in_transaction(&txn).await?;
+    txn.commit()
+        .await
+        .context("commit historical source-health rebuild")
 }
 
 /// Capture one merge-mining event: the shared per-block transactional sequence
@@ -264,9 +399,9 @@ async fn capture_event<F>(
     chain_label: &str,
     upsert: F,
     options: CaptureEventOptions,
-) -> Result<i64>
+) -> Result<EventWriteOutcome>
 where
-    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<i64>,
+    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
 {
     let preclassified = match options.parent_classification {
         Some(classification) => {
@@ -276,7 +411,7 @@ where
         None => classify_payload_parent(client, payload, classifier).await?,
     };
     let mut attempts = 0;
-    let (event_id, changed_hashes) = loop {
+    let (outcome, changed_hashes) = loop {
         let txn = client
             .transaction()
             .await
@@ -291,11 +426,11 @@ where
         lock_block_hash(&txn, &payload.btc_parent_header_hash).await?;
         let bracket =
             PrimarySourceHealthBracket::open(&txn, &payload.btc_parent_header_hash).await?;
-        let event_id = upsert(&txn, source_id, payload).await?;
+        let outcome = upsert(&txn, source_id, payload).await?;
         let reconcile_result = if payload.btc_parent_kind != ParentKind::Near {
             reconcile_one_event_in_txn(
                 &txn,
-                event_id,
+                outcome.event_id,
                 classifier,
                 preclassified.clone().map(PreclassifiedParent::trusted),
                 PrimaryDiff::Wrapper(&bracket),
@@ -310,7 +445,7 @@ where
                 txn.commit()
                     .await
                     .with_context(|| format!("commit {chain_label} capture transaction"))?;
-                break (event_id, changed_hashes);
+                break (outcome, changed_hashes);
             }
             Err(err) if is_reconcile_lock_set_changed(&err) && attempts + 1 < retry_attempts() => {
                 txn.rollback().await.with_context(|| {
@@ -325,7 +460,7 @@ where
         }
     };
     cascade_changed(client, classifier, changed_hashes, DEFAULT_CASCADE_BUDGET).await?;
-    Ok(event_id)
+    Ok(outcome)
 }
 
 /// The two directions of `set_event_revocation`.

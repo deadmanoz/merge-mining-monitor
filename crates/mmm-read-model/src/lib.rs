@@ -19,11 +19,17 @@ pub use cli_args::{ArgCursor, drive_args, require_positive};
 pub use known_stale_reclassify::{
     KnownStaleReclassifySummary, ReclassifyKnownStalesConfig, run_reclassify_known_stales,
 };
+#[cfg(feature = "db-integration")]
+pub use mutation::drain_historical_reconcile_queue_with_budget_for_test;
 pub use mutation::{
     CommittedParentMutation, CoreCanonicalWrite, capture_in_txn, capture_preclassified_in_txn,
-    record_coinbase_failure, restore_merge_mining_event, revoke_merge_mining_event,
-    update_parent_events, write_core_canonical,
+    clear_authoritative_historical_provenance_in_transaction, drain_historical_reconcile_queue,
+    enqueue_historical_parent_reconcile, rebuild_historical_source_health,
+    reconcile_authoritative_historical_source_in_transaction, record_coinbase_failure,
+    restore_merge_mining_event, revoke_merge_mining_event, update_parent_events,
+    write_core_canonical, write_historical_base_in_transaction,
 };
+pub use source_health_sql::invalidate_source_health_in_transaction;
 #[cfg(any(test, feature = "db-integration"))]
 pub use source_health_sql::{compute_source_health_from_base, rebuild_source_health};
 
@@ -223,9 +229,11 @@ pub struct ReconcileStats {
 
 /// Config for the `run_reconcile_read_model` driver. `missing_only` (the default)
 /// scans only rows whose derived state is absent/stale and iterates to a fixpoint;
-/// `--all` does a bounded full rescan from a height/source window. `batch_size` and
-/// `max_iterations` bound work per pass and overall; exhausting them raises
-/// `ReconcileBudgetExhausted` rather than looping forever.
+/// `--all` does a bounded full rescan from a height/source window. A child-height
+/// bound selects only rows with an authenticated child height; exact events with
+/// `NULL` height participate only in an unbounded or source-only scan.
+/// `batch_size` and `max_iterations` bound work per pass and overall; exhausting
+/// them raises `ReconcileBudgetExhausted` rather than looping forever.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReconcileReadModelConfig {
     pub missing_only: bool,
@@ -483,7 +491,7 @@ pub async fn run_reclassify_unknown_parents(
         );
     }
     let mut changed = 0;
-    let mut cursor: Option<(i32, i64)> = None;
+    let mut cursor: Option<(i64, i64)> = None;
     loop {
         let cursor_height = cursor.map(|(child_height, _)| child_height);
         let cursor_id = cursor.map(|(_, id)| id);
@@ -496,21 +504,22 @@ pub async fn run_reclassify_unknown_parents(
         // eligible so a later table regen picks them up.
         let rows = client
             .query(
-                "SELECT id, child_height, before_class \
+                "SELECT id, sort_child_height, before_class \
                  FROM ( \
                      SELECT DISTINCT ON (e.btc_parent_header_hash) \
-                            e.id, e.child_height, b.btc_orphan_class AS before_class \
+                            e.id, COALESCE(e.child_height::bigint, 2147483648::bigint) AS sort_child_height, \
+                            b.btc_orphan_class AS before_class \
                      FROM merge_mining_event e \
                      LEFT JOIN block b ON b.btc_header_hash = e.btc_parent_header_hash \
                      WHERE e.btc_parent_kind = 'unknown' \
                        AND e.pow_validates_btc_target \
                        AND e.revoked_at IS NULL \
                        AND ($4 OR b.btc_orphan_class IS NULL) \
-                     ORDER BY e.btc_parent_header_hash, e.child_height, e.id \
+                     ORDER BY e.btc_parent_header_hash, e.child_height NULLS LAST, e.id \
                  ) candidates \
-                 WHERE $2::integer IS NULL \
-                    OR (child_height, id) > ($2::integer, $3::bigint) \
-                 ORDER BY child_height, id \
+                 WHERE $2::bigint IS NULL \
+                    OR (sort_child_height, id) > ($2::bigint, $3::bigint) \
+                 ORDER BY sort_child_height, id \
                  LIMIT $1",
                 &[
                     &config.batch_size,
@@ -527,7 +536,7 @@ pub async fn run_reclassify_unknown_parents(
 
         for row in rows {
             let event_id: i64 = row.get(0);
-            let child_height: i32 = row.get(1);
+            let child_height: i64 = row.get(1);
             // The parent's orphan class BEFORE this pass reconciles it. Captured at
             // scan time so progress counts a REAL transition, not merely an
             // already-classified parent re-included by --recheck-orphans (DISTINCT
@@ -639,8 +648,10 @@ async fn run_reconcile_missing_read_model(
 
 /// `--all` mode: bounded full rescan of every non-`near` event in the optional
 /// height/source window, keyset-paginated by `(child_height, id)` and reconciled
-/// one event at a time. Raises `ReconcileBudgetExhausted` if `max_iterations`
-/// pages are consumed without draining the window.
+/// one event at a time. Any child-height bound deliberately excludes events
+/// whose authenticated child height is unavailable; an unbounded/source-only
+/// scan includes them after height-bearing rows. Raises `ReconcileBudgetExhausted`
+/// if `max_iterations` pages are consumed without draining the window.
 async fn run_reconcile_all_read_model(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -651,21 +662,21 @@ async fn run_reconcile_all_read_model(
         None => None,
     };
     let mut repaired = 0;
-    let mut cursor: Option<(i32, i64)> = None;
+    let mut cursor: Option<(i64, i64)> = None;
 
     for iteration in 0..config.max_iterations {
         let cursor_height = cursor.map(|(child_height, _)| child_height);
         let cursor_id = cursor.map(|(_, id)| id);
         let rows = client
             .query(
-                "SELECT id, child_height \
+                "SELECT id, COALESCE(child_height::bigint, 2147483648::bigint) AS sort_child_height \
                  FROM merge_mining_event \
                  WHERE btc_parent_kind <> 'near' \
                    AND ($1::int IS NULL OR child_height >= $1) \
                    AND ($2::int IS NULL OR child_height <= $2) \
                    AND ($3::bigint IS NULL OR source_id = $3) \
-                   AND ($5::integer IS NULL OR (child_height, id) > ($5::integer, $6::bigint)) \
-                 ORDER BY child_height, id \
+                   AND ($5::bigint IS NULL OR (COALESCE(child_height::bigint, 2147483648::bigint), id) > ($5::bigint, $6::bigint)) \
+                 ORDER BY child_height NULLS LAST, id \
                  LIMIT $4",
                 &[
                     &config.start_height,
@@ -688,7 +699,7 @@ async fn run_reconcile_all_read_model(
 
         for row in rows {
             let event_id: i64 = row.get(0);
-            let child_height: i32 = row.get(1);
+            let child_height: i64 = row.get(1);
             cursor = Some((child_height, event_id));
             reconcile_from_merge_mining_event(client, event_id, classifier, None).await?;
             repaired += 1;

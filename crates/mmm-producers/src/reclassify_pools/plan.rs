@@ -13,7 +13,8 @@ use tracing::warn;
 use mmm_capture::attribution_policy::{ExistingAttributionSet, WritePolicy};
 use mmm_capture::auxpow::TxOut;
 use mmm_capture::capture::{
-    EventPoolAttribution, resolve_child_payout_attributions,
+    EventPoolAttribution, published_parent_coinbase_output_addresses,
+    resolve_child_payout_attributions, resolve_parent_pool_attribution_from_coinbase,
     resolve_parent_pool_attribution_from_serialized_coinbase_outputs,
 };
 use mmm_capture::child_payout::{PoolIdentityLookup, params_for_source_code};
@@ -40,6 +41,7 @@ struct CandidateRow {
     child_payout_attributions: ExistingAttributionSet,
     btc_parent_coinbase_script: Option<Vec<u8>>,
     btc_parent_coinbase_outputs: Option<Vec<u8>>,
+    btc_parent_coinbase_outputs_text: Option<String>,
     child_coinbase_script: Option<Vec<u8>>,
     child_coinbase_outputs: Option<Vec<u8>>,
     /// Event confirmation timestamp, reused as the `observed_at` of any rows
@@ -119,53 +121,81 @@ pub(super) struct ParentUpdateGroup {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct ParentResolution {
     attribution: Option<EventPoolAttribution>,
-    /// True when the stored `btc_parent_coinbase_outputs` blob failed to
-    /// deserialize and the address fallback was skipped for this row.
+    /// True when the stored structured `btc_parent_coinbase_outputs` blob
+    /// failed to deserialize. Preserved publication text may still resolve it.
     corrupt_outputs: bool,
 }
 
 /// Resolve the parent BTC pool attribution for one row from its stored coinbase
-/// script (tags) and, failing that, its stored coinbase outputs (payout
+/// script (tags) and its independently stored coinbase outputs (payout
 /// addresses).
 /// Address derivation reuses the live parser's `output_addresses` so historical
 /// and capture-time attribution agree.
 ///
 /// Best-effort: a corrupt or schema-legacy `btc_parent_coinbase_outputs` blob
-/// does NOT abort the whole offline pass. The address fallback is skipped for
-/// that row (it stays unresolved, which replay handles safely by never writing
-/// NULL) and is flagged so the caller can count/log it.
+/// does NOT abort the whole offline pass. The resolver tries preserved
+/// publication text and flags the structured blob so the caller can count/log
+/// it.
 fn resolve_parent_pool(
     row: &CandidateRow,
     resolver: &PoolResolver,
     pool_ids_by_slug: &HashMap<String, i64>,
 ) -> ParentResolution {
-    let Some(script) = &row.btc_parent_coinbase_script else {
-        return ParentResolution::default();
-    };
-
+    let script = row
+        .btc_parent_coinbase_script
+        .as_deref()
+        .unwrap_or_default();
     match resolve_parent_pool_attribution_from_serialized_coinbase_outputs(
         script,
         row.btc_parent_coinbase_outputs.as_deref(),
         resolver,
         pool_ids_by_slug,
     ) {
-        Ok(attribution) => ParentResolution {
-            attribution,
+        Ok(Some(attribution)) => ParentResolution {
+            attribution: Some(attribution),
+            corrupt_outputs: false,
+        },
+        Ok(None) => ParentResolution {
+            attribution: resolve_parent_pool_from_published_text(
+                row,
+                script,
+                resolver,
+                pool_ids_by_slug,
+            ),
             corrupt_outputs: false,
         },
         Err(err) => {
             warn!(
                 event_id = row.id,
                 error = %err,
-                "skipping corrupt btc_parent_coinbase_outputs for address fallback; \
-                 leaving pool attribution unresolved for this row"
+                "btc_parent_coinbase_outputs is corrupt; \
+                 trying preserved publication text"
             );
             ParentResolution {
-                attribution: None,
+                attribution: resolve_parent_pool_from_published_text(
+                    row,
+                    script,
+                    resolver,
+                    pool_ids_by_slug,
+                ),
                 corrupt_outputs: true,
             }
         }
     }
+}
+
+fn resolve_parent_pool_from_published_text(
+    row: &CandidateRow,
+    script: &[u8],
+    resolver: &PoolResolver,
+    pool_ids_by_slug: &HashMap<String, i64>,
+) -> Option<EventPoolAttribution> {
+    let addresses = row
+        .btc_parent_coinbase_outputs_text
+        .as_deref()
+        .map(published_parent_coinbase_output_addresses)
+        .unwrap_or_default();
+    resolve_parent_pool_attribution_from_coinbase(script, &addresses, resolver, pool_ids_by_slug)
 }
 
 /// Resolve the child pool attribution for one row from its stored child
@@ -293,14 +323,15 @@ pub(super) fn plan_batch_updates(
             child_payout_attributions: ExistingAttributionSet::from_json(&row.get(19)),
             btc_parent_coinbase_script: row.get(20),
             btc_parent_coinbase_outputs: row.get(21),
-            child_coinbase_script: row.get(22),
-            child_coinbase_outputs: row.get(23),
-            event_confirmed_at: row.get(24),
+            btc_parent_coinbase_outputs_text: row.get(22),
+            child_coinbase_script: row.get(23),
+            child_coinbase_outputs: row.get(24),
+            event_confirmed_at: row.get(25),
         };
 
         let resolved_parent = resolve_parent_pool(&candidate, resolver, pool_ids_by_slug);
         if resolved_parent.corrupt_outputs {
-            stats.corrupt_outputs_skipped += 1;
+            stats.corrupt_parent_outputs += 1;
         }
         let resolved_child = resolve_child_pool(&candidate, resolver, pool_ids_by_slug);
         let resolved_child_payout =
@@ -491,6 +522,7 @@ mod tests {
             child_payout_attributions: ExistingAttributionSet::default(),
             btc_parent_coinbase_script: script,
             btc_parent_coinbase_outputs: outputs,
+            btc_parent_coinbase_outputs_text: None,
             child_coinbase_script: None,
             child_coinbase_outputs: None,
             event_confirmed_at: 1_000,
@@ -517,9 +549,30 @@ mod tests {
     }
 
     #[test]
+    fn payout_only_published_text_resolves_without_a_coinbase_script() {
+        let resolver = PoolResolver::from_default_snapshot().unwrap();
+        let mut pool_ids_by_slug = HashMap::new();
+        pool_ids_by_slug.insert("1hash".to_owned(), 17);
+        let mut row = candidate_with_outputs(None, None);
+        row.btc_parent_coinbase_outputs_text =
+            Some("1F1xcRt8H8Wa623KqmkEontwAAVqDSAWCV:5000000000".to_owned());
+
+        let resolution = resolve_parent_pool(&row, &resolver, &pool_ids_by_slug);
+
+        assert_eq!(
+            resolution
+                .attribution
+                .as_ref()
+                .and_then(|attribution| attribution.pool_id),
+            Some(17)
+        );
+        assert!(!resolution.corrupt_outputs);
+    }
+
+    #[test]
     fn well_formed_unmatched_outputs_are_not_flagged_corrupt() {
         // A valid (empty) outputs blob that resolves to no pool is unresolved
-        // but NOT corrupt, so it must not inflate `corrupt_outputs_skipped`.
+        // but NOT corrupt, so it must not inflate `corrupt_parent_outputs`.
         let resolver = PoolResolver::from_default_snapshot().unwrap();
         let pool_ids_by_slug: HashMap<String, i64> = HashMap::new();
         let empty_outputs = bitcoin::consensus::serialize(&Vec::<TxOut>::new());
@@ -534,12 +587,14 @@ mod tests {
     }
 
     #[test]
-    fn missing_parent_script_resolves_to_none_without_touching_outputs() {
+    fn missing_parent_script_still_validates_independent_outputs() {
         let resolver = PoolResolver::from_default_snapshot().unwrap();
         let pool_ids_by_slug: HashMap<String, i64> = HashMap::new();
-        // No coinbase script at all: nothing to resolve, outputs are ignored.
+        // Parent output evidence is independent of the optional script. A
+        // malformed blob is still detected when the script is absent.
         let row = candidate_with_outputs(None, Some(vec![0xffu8, 0xff, 0xff]));
         let resolution = resolve_parent_pool(&row, &resolver, &pool_ids_by_slug);
-        assert_eq!(resolution, ParentResolution::default());
+        assert_eq!(resolution.attribution, None);
+        assert!(resolution.corrupt_outputs);
     }
 }

@@ -14,27 +14,27 @@
     {
       "file": "block-one-block-stale.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "One-block stale branch detail"
+      "scenario": "One-block stale branch detail with nullable authenticated child header and nBits evidence"
     },
     {
       "file": "block-multi-block-stale-branch.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "Multi-block stale branch root detail"
+      "scenario": "Multi-block stale branch root detail with nullable authenticated child header and nBits evidence"
     },
     {
       "file": "block-rsk-near.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "RSK canonical evidence plus Namecoin evidence for the same near parent"
+      "scenario": "RSK canonical evidence plus Namecoin evidence for the same near parent, including nullable authenticated child header and nBits evidence"
     },
     {
       "file": "block-stale-rsk-inferred.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "RSK-only stale block with no recoverable Bitcoin coinbase: bitcoin_miner_pool is Unknown while display_miner_pool resolves the merge-miner from the RSK miner address (display_miner_basis child_inferred)"
+      "scenario": "RSK-only stale block with nullable authenticated child header and nBits evidence and no recoverable Bitcoin coinbase: bitcoin_miner_pool is Unknown while display_miner_pool resolves the merge-miner from the RSK miner address (display_miner_basis child_inferred)"
     },
     {
       "file": "block-rsk-uncle-near.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "RSK uncle evidence for a near parent"
+      "scenario": "RSK uncle evidence for a near parent with nullable authenticated child header and nBits evidence"
     },
     {
       "file": "navigator-stale.json",

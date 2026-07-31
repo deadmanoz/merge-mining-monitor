@@ -23,6 +23,8 @@ Use `just` targets, not raw commands, when a target exists:
   `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
 - `just import-known-stales` / `just reclassify-known-stales` - known-stale
   membership import and retroactive demotion.
+- `just import-all` / `just import-dataset CHAIN` - pinned normalized
+  historical publication import.
 - `just reclassify-unknown-parents`, `just reclassify-pools`,
   `just reconcile-read-model` - repair and enrichment commands.
 
@@ -34,10 +36,22 @@ Use `just` targets, not raw commands, when a target exists:
   base tables, `mmm-read-model` writes derived tables, `mmm-producers` owns
   engines, and `mmm-api` serves read-only HTTP views.
 - Producers write only `merge_mining_event` plus 1:1 chain sidecars and
-  attribution rows. The one further base table, `known_stale_block`, is
-  operator-imported via `import-known-stales` (written through `mmm-store`,
-  never by capture producers). `block`, `attestation_proof`, and
-  `source_health` are derived through `mmm-read-model`.
+  attribution rows. Historical ingest also attaches
+  `historical_event_provenance`. The further base table,
+  `known_stale_block`, is operator-imported via `import-known-stales`
+  (written through `mmm-store`, never by capture producers). `block`,
+  `attestation_proof`, and `source_health` are derived through
+  `mmm-read-model`.
+- Treat child height, hash, header, time, and `nBits` as independent optional
+  evidence. Never store a scan counter, placeholder hash, parent timestamp, or
+  zero in place of unavailable child evidence.
+- Historical and partial source imports are authoritative snapshots. Live
+  source publication imports are additive. Keep this lifecycle distinction in
+  the shared source registry, not in per-chain schema branches.
+- Historical base/provenance writes enqueue affected parents in the same
+  transaction. Drain `historical_reconcile_queue` in bounded parent
+  transactions and retain changed-hash seeds until dependent cascades succeed;
+  never hold every parent advisory lock across a chain import.
 - Do not copy a sibling chain module to add a Namecoin-family source. Extend
   the shared source registry, chain spec, config, AuxPoW-family parser, poller,
   and write paths.

@@ -6,6 +6,42 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Import the pinned 576,662-row research publication through one normalized
+  27-chain contract, with complete checksum/schema/count preflight, Git LFS
+  diagnostics, deterministic `import-all`, shared Bitcoin-parent
+  classification caching, and no legacy artifact fallbacks.
+- Preserve authenticated child height, hash, header, time, and `nBits` as
+  independent nullable evidence. Use exact child-hash identity or partial
+  height-plus-parent identity, derive exact identity from a header when needed,
+  promote partial observations in place, and reject ambiguous or contradictory
+  refinement. Keep live state reads and child-target verdict refinement safe
+  for hashless historical rows. Fail the upgrade before schema changes if
+  legacy rows conflict with the stronger exact identity.
+- Reconcile manifest-backed historical and partial sources as authoritative
+  snapshots while keeping live-source and operator CSV imports additive.
+  Commit each base/provenance snapshot
+  atomically, then drain parent and dependent read-model work through a durable
+  resumable queue without retaining one advisory lock per imported parent.
+  Retain source taxonomy and all published parent-coinbase evidence without
+  collapsing distinct source rows, and treat Doichain's zero-row survey as a
+  database no-op.
+- Keep incomplete `--allow-unclassified` diagnostics additive, reject a zero
+  import limit before mutation, derive the child-target verdict from published
+  `nBits`, and route the targeted stale-branch pass through the durable parent
+  and dependent reconciliation queue.
+- Serialize historical source-health invalidation against rebuilds, refuse to
+  mark source health ready while durable historical work remains, preserve a
+  Hathor row promoted from hashless identity, and reject contradictory immutable
+  RSK sidecar evidence before provenance can commit.
+- Expose nullable child evidence through block detail and render unavailable
+  fields explicitly instead of zero or placeholder values.
+- Report historical write outcomes from the store's exact/partial identity
+  decision instead of re-querying identities in the importer, and combine
+  candidate parsing, validation, and preclassification into one stream. Bind
+  classification and mutation reads to the already-verified artifact handle,
+  preflight the required aggregate, and fail source health closed until the
+  final multi-chain rebuild succeeds.
+
 ## [0.4.2] - 2026-07-30
 
 - Bound the RSK miner-identity keyset scan on both sides of the

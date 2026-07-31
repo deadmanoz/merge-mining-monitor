@@ -20,18 +20,25 @@ use mmm_capture::capture::{
     now_epoch_seconds, resolve_parent_pool_attribution_from_coinbase,
 };
 use mmm_capture::pool_resolver::PoolResolver;
-use mmm_read_model::{capture_in_txn, capture_preclassified_in_txn};
+use mmm_read_model::{
+    clear_authoritative_historical_provenance_in_transaction, drain_historical_reconcile_queue,
+    enqueue_historical_parent_reconcile, invalidate_source_health_in_transaction,
+    rebuild_historical_source_health, reconcile_authoritative_historical_source_in_transaction,
+    write_historical_base_in_transaction,
+};
 use mmm_store::{
-    upsert_merge_mining_event_with_attributions, upsert_pool_snapshot,
+    EventWriteDisposition, upsert_merge_mining_event_with_attributions, upsert_pool_snapshot,
     write_elastos_capture_in_txn, write_rsk_capture_in_txn,
 };
-use tokio_postgres::Client;
+use tokio_postgres::{Client, GenericClient, Transaction};
 use tracing::info;
 
 use super::config::{HistoricalImportConfig, historical_chain_spec};
 use super::csv_source::{
-    CsvLayout, ImportCandidate, RelevanceSelection, SkipReason, SourceClassification,
-    candidate_from_record, load_relevance_filter,
+    ImportCandidate, RelevanceSelection, SkipReason, SourceClassification, candidate_from_record,
+};
+use super::publication::{
+    ArtifactPreflight, preflight_artifact, preflight_required_aggregate_artifacts,
 };
 
 /// Running tallies for one import, surfaced to the operator via `print`.
@@ -43,9 +50,20 @@ use super::csv_source::{
 /// rows_seen = ingested + sum(skipped).
 #[derive(Debug, Default, Clone)]
 pub struct HistoricalImportSummary {
+    pub expected_rows: u64,
+    pub published_canonical: u64,
+    pub published_stale: u64,
+    pub published_stale_descendant: u64,
+    pub published_strict_orphans: u64,
+    pub published_weak_orphans: u64,
     pub rows_seen: u64,
     pub candidates: u64,
     pub ingested: u64,
+    pub inserted: u64,
+    pub updated: u64,
+    pub promoted: u64,
+    pub satisfied_by_existing_exact: u64,
+    pub removed: u64,
     pub canonical: u64,
     pub stale: u64,
     pub strict_orphans: u64,
@@ -62,6 +80,12 @@ pub struct HistoricalImportSummary {
     pub known_direct_branch_attestations: u64,
     pub known_descendant_branch_attestations: u64,
     pub skipped: BTreeMap<&'static str, u64>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct HistoricalImportAllSummary {
+    pub chains: Vec<(String, HistoricalImportSummary)>,
+    pub stale_branches_reconciled: u64,
 }
 
 /// The per-row verdict from `import_decision`, deciding which capture path (if
@@ -86,6 +110,16 @@ struct ImportContext<'a> {
     pool_ids_by_slug: &'a HashMap<String, i64>,
 }
 
+struct ChainImportContext<'a> {
+    source_id: i64,
+    spec: &'a super::config::HistoricalChainSpec,
+    config: &'a HistoricalImportConfig,
+    classifier: &'a ConfiguredParentClassifier,
+    resolver: &'a PoolResolver,
+    pool_ids_by_slug: &'a HashMap<String, i64>,
+    classifications: &'a mut HashMap<Vec<u8>, ParentClassification>,
+}
+
 impl HistoricalImportSummary {
     /// Increment the drop count for `reason`, keyed by its stable string.
     fn skip(&mut self, reason: SkipReason) {
@@ -101,22 +135,21 @@ impl HistoricalImportSummary {
     /// membership gate can persist `excluded` for a row whose offline verdict
     /// was strict/weak. The summary reports what was stored. Call exactly once
     /// per persisted row, paired with `ingested += 1`.
-    fn record_persisted(
-        &mut self,
-        persisted: Option<(BlockKind, Option<String>)>,
-        candidate: &ImportCandidate,
-    ) {
+    fn record_persisted(&mut self, persisted: Option<(BlockKind, Option<String>)>, count: u64) {
         match persisted {
-            Some((BlockKind::Canonical, _)) => self.canonical += 1,
-            Some((BlockKind::Stale, _)) => self.stale += 1,
+            Some((BlockKind::Canonical, _)) => self.canonical += count,
+            Some((BlockKind::Stale, _)) => self.stale += count,
             Some((BlockKind::Unknown, class)) => match class.as_deref() {
-                Some("strict_btc_orphan") => self.strict_orphans += 1,
-                Some("weak_btc_orphan") => self.weak_orphans += 1,
-                Some("excluded") => self.excluded += 1,
-                _ => self.pending += 1,
+                Some("strict_btc_orphan") => self.strict_orphans += count,
+                Some("weak_btc_orphan") => self.weak_orphans += count,
+                Some("excluded") => self.excluded += count,
+                _ => self.pending += count,
             },
-            None => self.pending += 1,
+            None => self.pending += count,
         }
+    }
+
+    fn record_attestation(&mut self, candidate: &ImportCandidate) {
         match candidate.relevance_selection {
             Some(RelevanceSelection::KnownDirectStale) => {
                 self.known_direct_branch_attestations += 1;
@@ -133,10 +166,21 @@ impl HistoricalImportSummary {
     /// report; the `skipped` map renders as comma-joined `reason:count` pairs).
     pub fn print(&self) {
         println!(
-            "historical import: rows_seen={} candidates={} ingested={} canonical={} stale={} strict_btc_orphan={} weak_btc_orphan={} excluded={} pending={} known_direct_branch_attestations={} known_descendant_branch_attestations={} skipped={}",
+            "historical import: expected_rows={} published_canonical={} published_stale={} published_stale_descendant={} published_strict_btc_orphan={} published_weak_btc_orphan={} rows_seen={} candidates={} ingested={} inserted={} updated={} promoted={} satisfied_by_existing_exact={} removed={} canonical={} stale={} strict_btc_orphan={} weak_btc_orphan={} excluded={} pending={} known_direct_branch_attestations={} known_descendant_branch_attestations={} skipped={}",
+            self.expected_rows,
+            self.published_canonical,
+            self.published_stale,
+            self.published_stale_descendant,
+            self.published_strict_orphans,
+            self.published_weak_orphans,
             self.rows_seen,
             self.candidates,
             self.ingested,
+            self.inserted,
+            self.updated,
+            self.promoted,
+            self.satisfied_by_existing_exact,
+            self.removed,
             self.canonical,
             self.stale,
             self.strict_orphans,
@@ -154,57 +198,176 @@ impl HistoricalImportSummary {
     }
 }
 
+impl HistoricalImportAllSummary {
+    pub fn print(&self) {
+        for (chain, summary) in &self.chains {
+            print!("chain={chain} ");
+            summary.print();
+        }
+        println!(
+            "historical import-all: chains={} expected_rows={} ingested={} inserted={} updated={} promoted={} satisfied_by_existing_exact={} removed={} stale_branches_reconciled={}",
+            self.chains.len(),
+            self.chains
+                .iter()
+                .map(|(_, value)| value.expected_rows)
+                .sum::<u64>(),
+            self.chains
+                .iter()
+                .map(|(_, value)| value.ingested)
+                .sum::<u64>(),
+            self.chains
+                .iter()
+                .map(|(_, value)| value.inserted)
+                .sum::<u64>(),
+            self.chains
+                .iter()
+                .map(|(_, value)| value.updated)
+                .sum::<u64>(),
+            self.chains
+                .iter()
+                .map(|(_, value)| value.promoted)
+                .sum::<u64>(),
+            self.chains
+                .iter()
+                .map(|(_, value)| value.satisfied_by_existing_exact)
+                .sum::<u64>(),
+            self.chains
+                .iter()
+                .map(|(_, value)| value.removed)
+                .sum::<u64>(),
+            self.stale_branches_reconciled,
+        );
+    }
+}
+
 /// Stream the configured CSV and persist accepted rows, returning the tallies.
 ///
 /// Refuses to run without a live classifier unless `--allow-unclassified` is set
 /// (the orphan-import safety guard). Resolves the `source_id`, upserts the
-/// embedded pool snapshot, loads the relevance filter, then iterates rows:
-/// parse, decide, and capture, skipping (not aborting) on per-row failure.
-/// Honors `--limit` (caps `ingested`) and logs progress every `batch_size`
-/// ingests. Setup failures and capture errors propagate.
+/// embedded pool snapshot, validates and classifies the complete input before
+/// opening the chain transaction, then iterates rows to capture them. Honors
+/// `--limit` (caps `ingested`) and logs progress every `batch_size` ingests.
+/// Setup, validation, and capture errors propagate.
 pub async fn run_historical_import(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
     config: &HistoricalImportConfig,
 ) -> Result<HistoricalImportSummary> {
-    if !classifier.is_enabled() && !config.allow_unclassified {
-        bail!(
-            "BITCOIN_RPC_URL is required for import-dataset unless --allow-unclassified is passed"
-        );
+    let mut classifications = HashMap::new();
+    run_historical_import_with_cache(client, classifier, config, &mut classifications, None, true)
+        .await
+}
+
+async fn run_historical_import_with_cache(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    config: &HistoricalImportConfig,
+    classifications: &mut HashMap<Vec<u8>, ParentClassification>,
+    preflighted_artifact: Option<ArtifactPreflight>,
+    rebuild_source_health_after_import: bool,
+) -> Result<HistoricalImportSummary> {
+    if config.limit == Some(0) {
+        bail!("--limit must be greater than zero");
     }
-    // Known-stale membership guard (research repo's lesson: refuse to run without
-    // the upstream stale-blocks dataset). An empty membership means the
-    // compute_block_orphan_class gate cannot exclude a known stale, so any orphan
-    // row this import ingests could be mislabelled strict/weak. Refuse by default;
-    // --allow-empty-known-stales opts out for a deliberately membership-free run.
-    let known_stale_count = mmm_store::count_known_stale_blocks(client).await?;
-    if known_stale_count == 0 && !config.allow_empty_known_stales {
-        bail!(
-            "known_stale_block is empty: import the upstream stale-blocks dataset with \
-             import-known-stales before import-dataset, or pass --allow-empty-known-stales to \
-             run without known-stale exclusion (known stales may be mislabelled strict/weak)"
-        );
-    }
-    info!(
-        chain = %config.chain,
-        known_stale_count,
-        "starting historical import with known-stale membership"
-    );
     let spec = historical_chain_spec(&config.chain)
-        .ok_or_else(|| anyhow::anyhow!("unsupported historical chain {:?}", config.chain))?;
+        .ok_or_else(|| anyhow::anyhow!("unsupported published chain {:?}", config.chain))?;
+    let candidates_prepared = preflighted_artifact.is_some();
+    let mut artifact = match preflighted_artifact {
+        Some(artifact) => artifact,
+        None => preflight_artifact(config, spec)?,
+    };
+    if !candidates_prepared {
+        let import_configs = (!matches!(
+            spec.lifecycle,
+            mmm_capture::source_registry::SourceLifecycle::Surveyed
+        ))
+        .then_some(config);
+        ensure_import_environment(client, classifier, import_configs.as_slice()).await?;
+        preflight_and_classify_candidates(
+            client,
+            classifier,
+            config,
+            spec,
+            &mut artifact,
+            classifications,
+        )
+        .await?;
+    }
+    if spec.lifecycle == mmm_capture::source_registry::SourceLifecycle::Surveyed {
+        return Ok(HistoricalImportSummary {
+            expected_rows: artifact.row_count,
+            rows_seen: artifact.row_count,
+            ..HistoricalImportSummary::default()
+        });
+    }
     let source_id = mmm_store::get_source_id(client, spec.source_code).await?;
     let resolver = PoolResolver::from_default_snapshot().context("load embedded pool snapshot")?;
-    let pool_ids_by_slug = upsert_pool_snapshot(client, resolver.snapshot()).await?;
-    let relevance = load_relevance_filter(config.relevance_path.as_deref(), spec.chain)?;
-    let file = std::fs::File::open(&config.csv_path)
-        .with_context(|| format!("open historical CSV {}", config.csv_path.display()))?;
-    let mut reader = csv::Reader::from_reader(file);
-    let headers = reader
-        .headers()
-        .context("read historical CSV header")?
-        .clone();
-    let layout = CsvLayout::new(&headers, spec)?;
-    let mut summary = HistoricalImportSummary::default();
+
+    let txn = client
+        .transaction()
+        .await
+        .with_context(|| format!("begin {} historical chain transaction", spec.chain))?;
+    let pool_ids_by_slug = upsert_pool_snapshot(&txn, resolver.snapshot()).await?;
+    if config.is_authoritative_snapshot(spec) {
+        clear_authoritative_historical_provenance_in_transaction(
+            &txn,
+            super::config::PINNED_RESEARCH_COMMIT,
+            spec.chain,
+        )
+        .await?;
+    }
+    let (mut summary, parent_counts) = import_rows_in_transaction(
+        &txn,
+        &mut ChainImportContext {
+            source_id,
+            spec,
+            config,
+            classifier,
+            resolver: &resolver,
+            pool_ids_by_slug: &pool_ids_by_slug,
+            classifications,
+        },
+        artifact,
+    )
+    .await?;
+
+    if config.is_authoritative_snapshot(spec) {
+        summary.removed = reconcile_authoritative_historical_source_in_transaction(
+            &txn,
+            source_id,
+            super::config::PINNED_RESEARCH_COMMIT,
+            spec.chain,
+        )
+        .await?;
+    }
+    invalidate_source_health_in_transaction(&txn).await?;
+    txn.commit()
+        .await
+        .with_context(|| format!("commit {} historical chain transaction", spec.chain))?;
+    drain_historical_reconcile_queue(client, classifier, classifications).await?;
+    record_persisted_parent_counts(client, &mut summary, parent_counts).await?;
+    if rebuild_source_health_after_import {
+        rebuild_historical_source_health(client).await?;
+    }
+    Ok(summary)
+}
+
+async fn import_rows_in_transaction(
+    txn: &Transaction<'_>,
+    context: &mut ChainImportContext<'_>,
+    mut artifact: ArtifactPreflight,
+) -> Result<(HistoricalImportSummary, HashMap<Vec<u8>, u64>)> {
+    let mut summary = HistoricalImportSummary {
+        expected_rows: artifact.row_count,
+        published_canonical: artifact.counts.canonical,
+        published_stale: artifact.counts.stale,
+        published_stale_descendant: artifact.counts.stale_descendant,
+        published_strict_orphans: artifact.counts.strict_btc_orphan,
+        published_weak_orphans: artifact.counts.weak_btc_orphan,
+        ..HistoricalImportSummary::default()
+    };
+    let mut parent_counts = HashMap::new();
+    let (mut reader, layout) = artifact.open_reader(context.spec)?;
 
     for record in reader.records() {
         summary.rows_seen += 1;
@@ -215,48 +378,326 @@ pub async fn run_historical_import(
                 continue;
             }
         };
-        let candidate = match candidate_from_record(spec, &layout, &record, &relevance) {
+        let candidate = match candidate_from_record(
+            context.spec,
+            &layout,
+            &record,
+            context.config.publication_ref(),
+        ) {
             Ok(candidate) => candidate,
             Err(reason) => {
                 summary.skip(reason);
                 continue;
             }
         };
-        let decision = import_decision(client, classifier, config, &candidate).await?;
+        let decision = import_decision(
+            txn,
+            context.classifier,
+            context.config,
+            &candidate,
+            context.classifications,
+        )
+        .await?;
         if let ImportDecision::Skip(reason) = decision {
             summary.skip(reason);
             continue;
         }
         summary.candidates += 1;
         import_candidate(
-            client,
+            txn,
             &ImportContext {
-                source_id,
-                chain: spec.chain,
-                classifier,
-                resolver: &resolver,
-                pool_ids_by_slug: &pool_ids_by_slug,
+                source_id: context.source_id,
+                chain: context.spec.chain,
+                classifier: context.classifier,
+                resolver: context.resolver,
+                pool_ids_by_slug: context.pool_ids_by_slug,
             },
             &mut summary,
             candidate,
             decision,
         )
-        .await?;
-        if let Some(limit) = config.limit
+        .await
+        .map(|parent_hash| *parent_counts.entry(parent_hash).or_default() += 1)?;
+        if let Some(limit) = context.config.limit
             && summary.ingested as usize >= limit
         {
             break;
         }
-        if summary.ingested > 0 && summary.ingested.is_multiple_of(config.batch_size as u64) {
+        if summary.ingested > 0
+            && summary
+                .ingested
+                .is_multiple_of(context.config.batch_size as u64)
+        {
             info!(
-                chain = spec.chain,
+                chain = context.spec.chain,
                 ingested = summary.ingested,
                 rows_seen = summary.rows_seen,
                 "historical import progress"
             );
         }
     }
+    Ok((summary, parent_counts))
+}
+
+/// Preflight the complete pinned publication, then import every event artifact
+/// in deterministic chain order with one shared parent-classification cache.
+pub async fn run_historical_import_all(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    config: &super::config::HistoricalImportAllConfig,
+) -> Result<HistoricalImportAllSummary> {
+    preflight_required_aggregate_artifacts(config)?;
+    let configs = config.chain_configs()?;
+    run_historical_import_configs(client, classifier, configs).await
+}
+
+async fn run_historical_import_configs(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    mut configs: Vec<HistoricalImportConfig>,
+) -> Result<HistoricalImportAllSummary> {
+    configs.sort_by(|left, right| left.chain.cmp(&right.chain));
+    let mut preflighted_artifacts = Vec::with_capacity(configs.len());
+    for chain_config in &configs {
+        let spec = historical_chain_spec(&chain_config.chain)
+            .expect("chain configs are built from the source registry");
+        let artifact = preflight_artifact(chain_config, spec)?;
+        preflighted_artifacts.push(artifact);
+    }
+
+    let mut classifications = HashMap::new();
+    let import_configs = configs
+        .iter()
+        .filter(|config| {
+            historical_chain_spec(&config.chain).is_some_and(|spec| {
+                spec.lifecycle != mmm_capture::source_registry::SourceLifecycle::Surveyed
+            })
+        })
+        .collect::<Vec<_>>();
+    ensure_import_environment(client, classifier, &import_configs).await?;
+    for (chain_config, artifact) in configs.iter().zip(&mut preflighted_artifacts) {
+        let spec = historical_chain_spec(&chain_config.chain)
+            .expect("chain configs are built from the source registry");
+        preflight_and_classify_candidates(
+            client,
+            classifier,
+            chain_config,
+            spec,
+            artifact,
+            &mut classifications,
+        )
+        .await?;
+    }
+
+    let mut summary = HistoricalImportAllSummary::default();
+    for (index, (chain_config, artifact)) in configs.iter().zip(preflighted_artifacts).enumerate() {
+        info!(
+            chain = %chain_config.chain,
+            current = index + 1,
+            total = configs.len(),
+            "importing historical publication chain"
+        );
+        let chain_summary = run_historical_import_with_cache(
+            client,
+            classifier,
+            chain_config,
+            &mut classifications,
+            Some(artifact),
+            false,
+        )
+        .await?;
+        summary
+            .chains
+            .push((chain_config.chain.clone(), chain_summary));
+    }
+    summary.stale_branches_reconciled =
+        reconcile_published_stale_branches(client, classifier).await?;
+    rebuild_historical_source_health(client).await?;
     Ok(summary)
+}
+
+/// Exercise the production multi-chain orchestration with explicit normalized
+/// fixture configs. Only exposed to the database integration test feature.
+#[cfg(feature = "db-integration")]
+#[doc(hidden)]
+pub async fn run_historical_import_configs_for_test(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    configs: Vec<HistoricalImportConfig>,
+) -> Result<HistoricalImportAllSummary> {
+    run_historical_import_configs(client, classifier, configs).await
+}
+
+/// Exercise manifest-to-chain config resolution plus the production
+/// manifest-backed import path without requiring a full 27-chain fixture.
+#[cfg(feature = "db-integration")]
+#[doc(hidden)]
+pub async fn run_manifest_historical_import_for_test(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    config: &super::config::HistoricalImportAllConfig,
+    chain: &str,
+) -> Result<HistoricalImportSummary> {
+    let chain_config = config
+        .chain_configs()?
+        .into_iter()
+        .find(|candidate| candidate.chain == chain)
+        .ok_or_else(|| anyhow::anyhow!("manifest has no event artifact for {chain:?}"))?;
+    run_historical_import(client, classifier, &chain_config).await
+}
+
+async fn reconcile_published_stale_branches(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+) -> Result<u64> {
+    let queued = enqueue_published_stale_branches(client).await?;
+    let fresh_classifications = HashMap::new();
+    drain_historical_reconcile_queue(client, classifier, &fresh_classifications).await?;
+    Ok(queued)
+}
+
+async fn enqueue_published_stale_branches(client: &mut Client) -> Result<u64> {
+    let rows = client
+        .query(
+            "SELECT DISTINCT e.btc_parent_header_hash \
+             FROM merge_mining_event e \
+             JOIN historical_event_provenance p ON p.event_id = e.id \
+             LEFT JOIN block b ON b.btc_header_hash = e.btc_parent_header_hash \
+             WHERE e.revoked_at IS NULL \
+               AND p.relevance_reason IN ('valid_direct_stale', 'valid_stale_descendant') \
+               AND (b.kind IS NULL OR b.kind = 'unknown') \
+             ORDER BY e.btc_parent_header_hash",
+            &[],
+        )
+        .await
+        .context("load published stale branches for targeted reconciliation")?;
+    let queued = u64::try_from(rows.len()).context("targeted stale branch count exceeds u64")?;
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let txn = client
+        .transaction()
+        .await
+        .context("begin targeted stale-branch queue transaction")?;
+    for row in rows {
+        let parent_hash: Vec<u8> = row.get(0);
+        enqueue_historical_parent_reconcile(&txn, &parent_hash).await?;
+    }
+    invalidate_source_health_in_transaction(&txn).await?;
+    txn.commit()
+        .await
+        .context("commit targeted stale-branch queue transaction")?;
+    Ok(queued)
+}
+
+#[cfg(feature = "db-integration")]
+#[doc(hidden)]
+pub async fn enqueue_published_stale_branches_for_test(client: &mut Client) -> Result<u64> {
+    enqueue_published_stale_branches(client).await
+}
+
+/// Validate every normalized candidate and resolve parent classifications before
+/// the chain transaction begins.
+///
+/// Positive Core classifications and Core-absence results are cached by parent
+/// hash so repeated observations across a chain do not repeat RPC work. The
+/// mutation pass reuses this cache and therefore performs no Bitcoin Core calls
+/// while holding the chain transaction open. Parsing and classification share
+/// one stream so the complete artifact is not reopened for two identical parse
+/// passes. Candidates are deliberately reparsed during mutation rather than
+/// retained for the whole publication: the extra sequential read keeps memory
+/// bounded while classification remains outside the transaction.
+async fn preflight_and_classify_candidates<C: GenericClient>(
+    client: &C,
+    classifier: &ConfiguredParentClassifier,
+    config: &HistoricalImportConfig,
+    spec: &super::config::HistoricalChainSpec,
+    artifact: &mut ArtifactPreflight,
+    classifications: &mut HashMap<Vec<u8>, ParentClassification>,
+) -> Result<()> {
+    let expected_rows = artifact.row_count;
+    let (mut reader, layout) = artifact.open_reader(spec)?;
+    let mut rows = 0_u64;
+    for (offset, record) in reader.records().enumerate() {
+        let record = record.with_context(|| {
+            format!(
+                "parse normalized artifact {} row {}",
+                config.csv_path.display(),
+                offset + 2
+            )
+        })?;
+        rows += 1;
+        let candidate =
+            match candidate_from_record(spec, &layout, &record, config.publication_ref()) {
+                Ok(candidate) => candidate,
+                Err(_) if config.manifest_path.is_none() => continue,
+                Err(reason) => {
+                    bail!(
+                        "normalized artifact {} row {} failed {}",
+                        config.csv_path.display(),
+                        offset + 2,
+                        reason.as_str()
+                    );
+                }
+            };
+        if classifier.is_enabled() {
+            let decision =
+                import_decision(client, classifier, config, &candidate, classifications).await?;
+            if config.manifest_path.is_some()
+                && let ImportDecision::Skip(reason) = decision
+            {
+                bail!(
+                    "published artifact {} row {} would be skipped as {}",
+                    config.csv_path.display(),
+                    offset + 2,
+                    reason.as_str()
+                );
+            }
+        }
+    }
+    if rows != expected_rows {
+        bail!(
+            "normalized artifact {} changed during preflight: expected {expected_rows} rows, parsed {rows}",
+            config.csv_path.display()
+        );
+    }
+    Ok(())
+}
+
+/// Validate the shared classifier and known-stale prerequisites once for the
+/// set of non-surveyed chains that will be imported.
+async fn ensure_import_environment(
+    client: &Client,
+    classifier: &ConfiguredParentClassifier,
+    configs: &[&HistoricalImportConfig],
+) -> Result<()> {
+    if configs.is_empty() {
+        return Ok(());
+    }
+    if !classifier.is_enabled() && configs.iter().any(|config| !config.allow_unclassified) {
+        bail!(
+            "BITCOIN_RPC_URL is required for historical import unless --allow-unclassified is passed"
+        );
+    }
+    // An empty membership means the orphan-class gate cannot exclude a known
+    // stale. Refuse by default; the flag is only for disposable diagnostics.
+    let known_stale_count = mmm_store::count_known_stale_blocks(client).await?;
+    if known_stale_count == 0
+        && configs
+            .iter()
+            .any(|config| !config.allow_empty_known_stales)
+    {
+        bail!(
+            "known_stale_block is empty: import the upstream stale-blocks dataset with \
+             import-known-stales before historical import, or pass --allow-empty-known-stales to \
+             run without known-stale exclusion (known stales may be mislabelled strict/weak)"
+        );
+    }
+    info!(
+        chains = configs.len(),
+        known_stale_count, "starting historical import with known-stale membership"
+    );
+    Ok(())
 }
 
 /// Decide a candidate's fate, the layer where live Core classification meets the
@@ -265,18 +706,20 @@ pub async fn run_historical_import(
 /// With no classifier (`--allow-unclassified`): non-unknown rows capture
 /// unclassified, unknown rows are skipped. With a classifier: Canonical/Stale
 /// capture preclassified; `Near` is skipped; `Unknown` first holds any
-/// known-branch selection as `KnownBranchNotClassified` (an externally
-/// attested stale-branch member is never persisted as a BTC orphan), then
-/// captures preclassified only when Core-absence is attested, the dataset
+/// known-branch selection as an excluded unknown pending targeted
+/// reconciliation (an externally attested stale-branch member is never
+/// persisted as a BTC orphan), then captures preclassified only when
+/// Core-absence is attested, the dataset
 /// classified it as unknown, and the local orphan verdict is Strict/Weak;
 /// everything else,
 /// `Unclassified`. Reads parent preflight by prev_blockhash in
 /// `to_byte_array` (wire) order.
-async fn import_decision(
-    client: &Client,
+async fn import_decision<C: GenericClient>(
+    client: &C,
     classifier: &ConfiguredParentClassifier,
     config: &HistoricalImportConfig,
     candidate: &ImportCandidate,
+    classifications: &mut HashMap<Vec<u8>, ParentClassification>,
 ) -> Result<ImportDecision> {
     if !classifier.is_enabled() {
         if config.allow_unclassified
@@ -286,46 +729,75 @@ async fn import_decision(
         }
         return Ok(ImportDecision::Skip(SkipReason::Unclassified));
     }
+    let parent_hash = candidate
+        .evidence
+        .btc_parent_header
+        .block_hash()
+        .to_byte_array()
+        .to_vec();
     let prev_hash = candidate
         .evidence
         .btc_parent_header
         .prev_blockhash
         .to_byte_array()
         .to_vec();
-    let preflight = mmm_read_model::load_parent_preflight(client, &prev_hash).await?;
-    let classification = classifier
-        .classify_parent(&candidate.evidence.btc_parent_header, preflight)
-        .await
-        .with_context(|| {
-            format!(
-                "preclassify historical parent {}",
-                candidate.btc_parent_display_hash
-            )
-        })?;
+    let classification = if let Some(classification) = classifications.get(&parent_hash) {
+        classification.clone()
+    } else {
+        let preflight = mmm_read_model::load_parent_preflight(client, &prev_hash).await?;
+        let classification = classifier
+            .classify_parent(&candidate.evidence.btc_parent_header, preflight)
+            .await
+            .with_context(|| {
+                format!(
+                    "preclassify historical parent {}",
+                    candidate.btc_parent_display_hash
+                )
+            })?;
+        classifications.insert(parent_hash, classification.clone());
+        classification
+    };
     match classification.kind {
-        ParentKind::Canonical | ParentKind::Stale => Ok(ImportDecision::CapturePreclassified(
-            Box::new(classification),
-        )),
+        ParentKind::Canonical
+            if candidate.source_classification == SourceClassification::Canonical =>
+        {
+            Ok(ImportDecision::CapturePreclassified(Box::new(
+                classification,
+            )))
+        }
+        ParentKind::Stale
+            if matches!(
+                candidate.source_classification,
+                SourceClassification::Stale | SourceClassification::StaleDescendant
+            ) || matches!(
+                candidate.relevance_selection,
+                Some(
+                    RelevanceSelection::KnownDirectStale | RelevanceSelection::KnownStaleDescendant
+                )
+            ) =>
+        {
+            Ok(ImportDecision::CapturePreclassified(Box::new(
+                classification,
+            )))
+        }
+        ParentKind::Canonical | ParentKind::Stale => {
+            Ok(ImportDecision::Skip(SkipReason::ClassificationMismatch))
+        }
         ParentKind::Near => Ok(ImportDecision::Skip(SkipReason::Unclassified)),
         ParentKind::Unknown => {
-            if !classification.core_absence_attested {
-                return Ok(ImportDecision::Skip(SkipReason::Unclassified));
-            }
-            if candidate.source_classification != SourceClassification::Unknown {
-                return Ok(ImportDecision::Skip(SkipReason::Unclassified));
-            }
             if matches!(
                 candidate.relevance_selection,
                 Some(
                     RelevanceSelection::KnownDirectStale | RelevanceSelection::KnownStaleDescendant
                 )
             ) {
-                // Externally attested stale-branch member: hold it for Core or
-                // an imported predecessor to place. Checked BEFORE the orphan
-                // verdict so a Core-absent known-branch row whose local nBits
-                // verdict happens to be strict/weak is never persisted as a
-                // BTC orphan in contradiction of its attestation.
-                Ok(ImportDecision::Skip(SkipReason::KnownBranchNotClassified))
+                let mut known_branch = classification;
+                known_branch.core_absence_attested = false;
+                Ok(ImportDecision::CapturePreclassified(Box::new(known_branch)))
+            } else if !classification.core_absence_attested
+                || candidate.source_classification != SourceClassification::Unknown
+            {
+                Ok(ImportDecision::Skip(SkipReason::Unclassified))
             } else if matches!(
                 candidate.orphan_verdict,
                 Some(BtcOrphanVerdict::Strict | BtcOrphanVerdict::Weak)
@@ -343,33 +815,28 @@ async fn import_decision(
 /// Persist one decided candidate through the shared producer write path.
 ///
 /// Resolves pool attribution from the parent coinbase, builds the standard event
-/// payload, then routes to `capture_in_txn` (unclassified) or
-/// `capture_preclassified_in_txn` (Core-attested) so the single transaction
-/// writes `merge_mining_event` via `upsert_merge_mining_event_with_attributions`
-/// and lets the read model derive the rest. `Skip` is unreachable here by
-/// construction (the caller filters it out first). On success bumps `ingested`
-/// and records the persisted kind.
+/// payload, then writes it and durably enqueues the affected parent inside the
+/// caller-owned chain transaction. The bounded read-model reconcile drains
+/// after commit. `Skip` is unreachable here by construction.
 async fn import_candidate(
-    client: &mut Client,
+    txn: &Transaction<'_>,
     context: &ImportContext<'_>,
     summary: &mut HistoricalImportSummary,
     candidate: ImportCandidate,
     decision: ImportDecision,
-) -> Result<()> {
-    let attributions = candidate
-        .evidence
-        .btc_parent_coinbase_script
-        .as_deref()
-        .and_then(|script| {
-            resolve_parent_pool_attribution_from_coinbase(
-                script,
-                &[],
-                context.resolver,
-                context.pool_ids_by_slug,
-            )
-        })
-        .into_iter()
-        .collect();
+) -> Result<Vec<u8>> {
+    let attributions = resolve_parent_pool_attribution_from_coinbase(
+        candidate
+            .evidence
+            .btc_parent_coinbase_script
+            .as_deref()
+            .unwrap_or_default(),
+        &candidate.parent_output_addresses,
+        context.resolver,
+        context.pool_ids_by_slug,
+    )
+    .into_iter()
+    .collect();
     let pool_attributions = ResolvedPoolAttributions { attributions };
     let mut payload = build_event_payload_from_evidence(
         candidate.evidence.clone(),
@@ -377,6 +844,7 @@ async fn import_candidate(
         ClassificationProof::default(),
         now_epoch_seconds()?,
     )?;
+    payload.historical_provenance = Some(candidate.historical_provenance.clone());
     // RSK rows carry a 1:1 `rsk_merge_mining_evidence` payload that must land
     // in the same transaction as the event (mmm-api hard-errors on any
     // `auxpow:rsk` event without its sidecar row). Elastos routes through its
@@ -395,7 +863,7 @@ async fn import_candidate(
     // the `reclassify-pools` late-fill path resolves it from the registry.
     let rsk_evidence = candidate.rsk_evidence.as_ref();
     let use_elastos_writer =
-        context.chain == "elastos" && matches!(decision, ImportDecision::CapturePreclassified(_));
+        context.chain == "elastos" && matches!(&decision, ImportDecision::CapturePreclassified(_));
     let upsert = async |txn: &tokio_postgres::Transaction<'_>,
                         source_id: i64,
                         payload: &mmm_capture::capture::MergeMiningEventPayload| {
@@ -407,32 +875,20 @@ async fn import_candidate(
             None => upsert_merge_mining_event_with_attributions(txn, source_id, payload).await,
         }
     };
-    match decision {
-        ImportDecision::CaptureUnclassified => {
-            capture_in_txn(
-                client,
-                context.source_id,
-                context.classifier,
-                &mut payload,
-                "Historical dataset",
-                upsert,
-            )
-            .await
-        }
-        ImportDecision::CapturePreclassified(parent_classification) => {
-            capture_preclassified_in_txn(
-                client,
-                context.source_id,
-                context.classifier,
-                &mut payload,
-                *parent_classification,
-                "Historical dataset",
-                upsert,
-            )
-            .await
-        }
+    let parent_classification = match decision {
+        ImportDecision::CaptureUnclassified => None,
+        ImportDecision::CapturePreclassified(parent_classification) => Some(*parent_classification),
         ImportDecision::Skip(_) => unreachable!("skip decisions do not reach import_candidate"),
-    }
+    };
+    let outcome = write_historical_base_in_transaction(
+        txn,
+        context.source_id,
+        context.classifier,
+        &mut payload,
+        parent_classification,
+        upsert,
+    )
+    .await
     .with_context(|| {
         format!(
             "capture historical parent {}",
@@ -440,15 +896,51 @@ async fn import_candidate(
         )
     })?;
     summary.ingested += 1;
+    match outcome.disposition {
+        EventWriteDisposition::Inserted => summary.inserted += 1,
+        EventWriteDisposition::Updated => summary.updated += 1,
+        EventWriteDisposition::Promoted => summary.promoted += 1,
+        EventWriteDisposition::SatisfiedByExistingExact => {
+            summary.satisfied_by_existing_exact += 1;
+        }
+    }
     let parent_hash = candidate
         .evidence
         .btc_parent_header
         .block_hash()
         .to_byte_array()
         .to_vec();
-    let persisted = mmm_read_model::load_persisted_kind_and_orphan_class(client, &parent_hash)
-        .await
-        .context("read back persisted block kind and orphan class for the import summary")?;
-    summary.record_persisted(persisted, &candidate);
+    summary.record_attestation(&candidate);
+    Ok(parent_hash)
+}
+
+async fn record_persisted_parent_counts(
+    client: &Client,
+    summary: &mut HistoricalImportSummary,
+    parent_counts: HashMap<Vec<u8>, u64>,
+) -> Result<()> {
+    let parent_hashes = parent_counts.keys().cloned().collect::<Vec<_>>();
+    let mut persisted = HashMap::with_capacity(parent_hashes.len());
+    for chunk in parent_hashes.chunks(1_000) {
+        let hashes = chunk.to_vec();
+        for row in client
+            .query(
+                "SELECT btc_header_hash, kind, btc_orphan_class \
+                 FROM block \
+                 WHERE btc_header_hash = ANY($1::bytea[])",
+                &[&hashes],
+            )
+            .await
+            .context("load persisted historical parent classifications")?
+        {
+            let hash: Vec<u8> = row.get(0);
+            let kind: String = row.get(1);
+            let orphan_class: Option<String> = row.get(2);
+            persisted.insert(hash, (BlockKind::from_db_str(&kind)?, orphan_class));
+        }
+    }
+    for (hash, count) in parent_counts {
+        summary.record_persisted(persisted.remove(&hash), count);
+    }
     Ok(())
 }

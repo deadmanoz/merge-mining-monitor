@@ -33,8 +33,8 @@ impl PoolIdentitySeed {
 /// (the snapshot owns the BTC attribution fields, unlike
 /// [`upsert_registry_only_pools`] which preserves them). Returns the resulting
 /// slug -> pool.id map that the identity upserts key into.
-pub async fn upsert_pool_snapshot(
-    client: &Client,
+pub async fn upsert_pool_snapshot<C: GenericClient>(
+    client: &C,
     snapshot: &PoolSnapshot,
 ) -> Result<HashMap<String, i64>> {
     let mut ids = HashMap::new();

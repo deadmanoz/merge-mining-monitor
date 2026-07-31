@@ -297,7 +297,9 @@ async fn insert_unknown_parent_event(client: &Client) -> Result<UnknownParentFix
         ClassificationProof::default(),
         1_000,
     )?;
-    let event_id = upsert_merge_mining_event(client, source_id, &payload).await?;
+    let event_id = upsert_merge_mining_event(client, source_id, &payload)
+        .await?
+        .event_id;
     Ok(UnknownParentFixture {
         event_id,
         parent_hash: parsed.parent_header.hash().to_byte_array().to_vec(),

@@ -49,6 +49,11 @@ stay unresolved.
 embedded registries. It is fill-null-only by default; pass `--overwrite` only
 when intentionally re-attributing existing registry-backed rows.
 
+Historical Bitcoin-parent replay uses structured serialized outputs when a
+full coinbase transaction supplied their values. It otherwise falls back to the
+publication's preserved output text, decoding raw Bitcoin scriptPubKeys and
+using published payout addresses without requiring a scriptSig marker.
+
 Use `--only` or `--skip-*` flags to limit expensive phases when only one
 registry changed.
 

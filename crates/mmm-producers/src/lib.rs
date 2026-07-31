@@ -29,7 +29,13 @@ pub use chains::{
     unknown_command_message,
 };
 pub use historical_ingest::{
-    HistoricalImportConfig, HistoricalImportSummary, run_historical_import,
+    HistoricalImportAllConfig, HistoricalImportAllSummary, HistoricalImportConfig,
+    HistoricalImportSummary, run_historical_import, run_historical_import_all,
+};
+#[cfg(feature = "db-integration")]
+pub use historical_ingest::{
+    enqueue_published_stale_branches_for_test, run_historical_import_configs_for_test,
+    run_manifest_historical_import_for_test,
 };
 pub use known_stale_import::{
     KnownStaleImportConfig, KnownStaleImportSummary, run_import_known_stales,

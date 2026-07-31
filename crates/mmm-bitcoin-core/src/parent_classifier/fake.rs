@@ -18,6 +18,7 @@ pub struct FakeParentClassifier {
 #[cfg(any(test, feature = "db-integration"))]
 pub(crate) struct FakeParentClassifierState {
     results: VecDeque<ParentClassification>,
+    calls: u64,
 }
 
 #[cfg(any(test, feature = "db-integration"))]
@@ -45,6 +46,7 @@ impl FakeParentClassifier {
         Self {
             state: Arc::new(tokio::sync::Mutex::new(FakeParentClassifierState {
                 results,
+                calls: 0,
             })),
             first_call_gate: None,
             synced_tip_height: None,
@@ -144,6 +146,7 @@ impl FakeParentClassifier {
         }
 
         let mut state = self.state.lock().await;
+        state.calls += 1;
         if state.results.len() > 1 {
             Ok(state
                 .results
@@ -156,6 +159,10 @@ impl FakeParentClassifier {
                 .expect("fake classifier sequence was checked as non-empty")
                 .clone())
         }
+    }
+
+    pub async fn call_count(&self) -> u64 {
+        self.state.lock().await.calls
     }
 }
 

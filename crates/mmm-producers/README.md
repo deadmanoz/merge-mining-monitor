@@ -45,7 +45,7 @@ Cross-cutting modules:
 | `poller` | The crate-internal `ChainPoller` trait and the generic `Poller<C>` driver: cursor seeding, the trailing rescan window, batch advance, startup read-model repair, shutdown, and bounded tip-fetch retry. |
 | `bitcoin_core_backbone` | The durable Bitcoin spine sync (one-shot batch plus the follow daemon), the live-tip window maintenance, and the structural integrity guards in `integrity.rs`. |
 | `producer_runtime` | The shared runtime: `ProducerRuntime` (`PG*` + `BITCOIN_RPC_*`), the composed `ProducerContext`, `connect_from_env`, the post-backfill repair hook, and the classifier-enabled-backfill warning. |
-| `historical_ingest` | The CSV-backed historical stale-block dataset ingest, with zero public-API calls. |
+| `historical_ingest` | Uniform CSV-backed historical evidence ingest with zero public-API calls. Its `csv_source` parser preserves lossless parent-coinbase evidence, while the runner commits base snapshots before bounded read-model work drains from the durable historical queue. |
 
 Per-chain divergent modules under `chains/`:
 

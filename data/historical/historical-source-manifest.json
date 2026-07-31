@@ -1,152 +1,462 @@
 {
-  "schema_version": 1,
-  "scope": "historical_auxpow_validated_stales_phase1",
-  "source_class": "validated_stales_csv",
-  "source_repo": "merge-mining-research",
-  "source_repo_commit": "e1e72d47808ce83289aac1bacfb79bd1a1717ed8",
-  "manifest_generator": "scripts/gen-historical-source-manifest.sh",
-  "total_declared_stale_rows": 1461,
-  "notes": [
-    "Scope is the historical-only chains in scripts/lib/historical-source-chains.sh; live chains are excluded.",
-    "Inputs are committed validated stale CSV blobs from the source repo; full-evidence and orphan-heavy inventories are intentionally kept outside this repo.",
-    "Rows are stale-only provenance inputs and are re-proven by the monitor Bitcoin Core classifier during import."
-  ],
-  "sources": [
+  "aggregate_rows": 20,
+  "artifacts": [
     {
       "chain": "argentum",
-      "source_code": "auxpow:argentum",
-      "csv_path": "data/validated-stales/argentum_validated_stales.csv",
-      "height_column": "arg_height",
-      "declared_stale_rows": 2,
-      "sha256": "26ec87b2297967c5f8ced753573c9e6322b86260276b1d43731d930cf3d41769"
+      "counts": {
+        "canonical": 27,
+        "stale": 2,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/argentum_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 29,
+      "sha256": "6293215e776a51ae034ee188b62a8a21225cd4cb5294736316129b7f4077408e",
+      "size_bytes": 89262
     },
     {
       "chain": "bitcoin-vault",
-      "source_code": "auxpow:bitcoin-vault",
-      "csv_path": "data/validated-stales/bitcoin-vault_validated_stales.csv",
-      "height_column": "btcv_height",
-      "declared_stale_rows": 9,
-      "sha256": "615d298836c9ea4417222b6d4ef1d9a018ab2d32744d9f5b9c17e6110ce6f643"
+      "counts": {
+        "canonical": 2566,
+        "stale": 9,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/bitcoin-vault_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 2575,
+      "sha256": "a95508d2d69fe32be85114892ef429e0928ca1f4e4b4ff3d46aaf60d9cbbae66",
+      "size_bytes": 2470244
     },
     {
       "chain": "bitmark",
-      "source_code": "auxpow:bitmark",
-      "csv_path": "data/validated-stales/bitmark_validated_stales.csv",
-      "height_column": "btmk_height",
-      "declared_stale_rows": 1,
-      "sha256": "f699702dc447266d5f75d6a305c92a1e9ffbf1d8a25acaaa75aba18f8c2ee496"
+      "counts": {
+        "canonical": 897,
+        "stale": 1,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/bitmark_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 898,
+      "sha256": "dde64e3dfd422e23425dd931a0a919facbf1469163c2c98077dc0518ffba2d8d",
+      "size_bytes": 942597
     },
     {
       "chain": "coiledcoin",
-      "source_code": "auxpow:coiledcoin",
-      "csv_path": "data/validated-stales/coiledcoin_validated_stales.csv",
-      "height_column": "clc_height",
-      "declared_stale_rows": 27,
-      "sha256": "34f6570c1dadab41304c57ca2e42746c721ea245cc897fadf21d73e7c9c5fbe2"
+      "counts": {
+        "canonical": 608,
+        "stale": 27,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/coiledcoin_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 635,
+      "sha256": "986eca0abdc4fd4d617d43dce993858be3ec2842b4a9576e74265d68a7560ddb",
+      "size_bytes": 1702815
     },
     {
       "chain": "crown",
-      "source_code": "auxpow:crown",
-      "csv_path": "data/validated-stales/crown_validated_stales.csv",
-      "height_column": "crown_height",
-      "declared_stale_rows": 23,
-      "sha256": "a46042ce4f9f04c8d2c9101b93abd671ca982ee724024805e705ec109b5a9e6c"
+      "counts": {
+        "canonical": 5483,
+        "stale": 23,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/crown_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 5506,
+      "sha256": "db7d20c950dc76ed94da00beb531ec41eeccaaba1d68cedb45da32b6a0932b82",
+      "size_bytes": 5832586
     },
     {
       "chain": "devcoin",
-      "source_code": "auxpow:devcoin",
-      "csv_path": "data/validated-stales/devcoin_validated_stales.csv",
-      "height_column": "dvc_height",
-      "declared_stale_rows": 468,
-      "sha256": "0a100026f39224245328bfc49f3d4728374028ba58e3de19ce74cb63cc4e794e"
+      "counts": {
+        "canonical": 54100,
+        "stale": 468,
+        "stale_descendant": 3,
+        "strict_btc_orphan": 1,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/devcoin_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 54572,
+      "sha256": "3035078ef65dd1080ca3dbede156bec0cf59ecc53c36f99d13c0d09a40428c17",
+      "size_bytes": 69312973
+    },
+    {
+      "chain": "doichain",
+      "counts": {
+        "canonical": 0,
+        "stale": 0,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/doichain_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 0,
+      "sha256": "783ea31e30711dfe7ca9459f12032289e240afe66ce2872312ddcde8e1e72d06",
+      "size_bytes": 394
+    },
+    {
+      "chain": "elastos",
+      "counts": {
+        "canonical": 175078,
+        "stale": 153,
+        "stale_descendant": 1,
+        "strict_btc_orphan": 3,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/elastos_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 175235,
+      "sha256": "d3875c7632abcd1be0838691b09f80a10a7559eeabed9890e06537989a9982c0",
+      "size_bytes": 167171120
     },
     {
       "chain": "elcash",
-      "source_code": "auxpow:elcash",
-      "csv_path": "data/validated-stales/elcash_validated_stales.csv",
-      "height_column": "elc_height",
-      "declared_stale_rows": 3,
-      "sha256": "6f5d2d673031733cf1299669b68c5f5743f0ac938eb48508e7341961e763a8f1"
+      "counts": {
+        "canonical": 2426,
+        "stale": 3,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/elcash_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 2429,
+      "sha256": "827199fab8bf7a9341f7a18beb221213e3c785e9d1bd9a37bba3067941fd2bbf",
+      "size_bytes": 2590633
     },
     {
       "chain": "emercoin",
-      "source_code": "auxpow:emercoin",
-      "csv_path": "data/validated-stales/emercoin_validated_stales.csv",
-      "height_column": "emc_height",
-      "declared_stale_rows": 96,
-      "sha256": "2e4c0e696f0c0df485a8083f6d9f46d53726aa1724051bb3c4f0424def6fcb8f"
+      "counts": {
+        "canonical": 45595,
+        "stale": 96,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/emercoin_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 45691,
+      "sha256": "622df4f0d6d6a5e35cfc4240475763c5373184a12b8cbae1e5b129c0c30371e7",
+      "size_bytes": 52088602
+    },
+    {
+      "chain": "fractal",
+      "counts": {
+        "canonical": 58980,
+        "stale": 31,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/fractal_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 59011,
+      "sha256": "84d1014e788cbc21ab0464b96df8d92da89d50250987af02223f15afe5480eca",
+      "size_bytes": 61541299
     },
     {
       "chain": "geistgeld",
-      "source_code": "auxpow:geistgeld",
-      "csv_path": "data/validated-stales/geistgeld_validated_stales.csv",
-      "height_column": "geistgeld_height",
-      "declared_stale_rows": 0,
-      "sha256": "0ad057066c214163078114fd6f16ed9c685c1c7ab3d6fda5929857017a2912ec"
+      "counts": {
+        "canonical": 1,
+        "stale": 0,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/geistgeld_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 1,
+      "sha256": "3d541a4e3a0136fbb3f75a26e9b719f55ab4676f2ad934e34843452cb1005f19",
+      "size_bytes": 1228
     },
     {
       "chain": "groupcoin",
-      "source_code": "auxpow:groupcoin",
-      "csv_path": "data/validated-stales/groupcoin_validated_stales.csv",
-      "height_column": "groupcoin_height",
-      "declared_stale_rows": 30,
-      "sha256": "e68447877577bff7d18b2f6ea856c8f363b281ce76d0668ddc64b370eb676f97"
+      "counts": {
+        "canonical": 2123,
+        "stale": 30,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/groupcoin_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 2153,
+      "sha256": "23fa9068c550dceec1e8e2d547ea5594d74b0fac6cbab3bb75ca68a345780d4c",
+      "size_bytes": 2316510
+    },
+    {
+      "chain": "hathor",
+      "counts": {
+        "canonical": 0,
+        "stale": 6,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/hathor_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 6,
+      "sha256": "26bc974727a85c56091db907f33e5b40edcc035796c35b07aed240f70f32009d",
+      "size_bytes": 7525
     },
     {
       "chain": "huntercoin",
-      "source_code": "auxpow:huntercoin",
-      "csv_path": "data/validated-stales/huntercoin_validated_stales.csv",
-      "height_column": "huc_height",
-      "declared_stale_rows": 13,
-      "sha256": "7790440283fd73c4bcc57bddb7de17aece490e9a552bf75b4dab0952740f3a30"
+      "counts": {
+        "canonical": 857,
+        "stale": 13,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/huntercoin_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 870,
+      "sha256": "bd881355360ddf61246e70419e48f2e2d04adfcc3684a93cb4df3dd3dec579fa",
+      "size_bytes": 2143061
     },
     {
       "chain": "i0coin",
-      "source_code": "auxpow:i0coin",
-      "csv_path": "data/validated-stales/i0coin_validated_stales.csv",
-      "height_column": "child_height",
-      "declared_stale_rows": 166,
-      "sha256": "3e0a03dc1e60722cb2aa89b70ce7118dfcfb205180cb59632ff25d9b40530978"
+      "counts": {
+        "canonical": 16958,
+        "stale": 166,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 2,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/i0coin_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 17126,
+      "sha256": "c13a2810a9c0d51efc7c1a102dc0686b4fefc106dc8201cd7e02258895d11354",
+      "size_bytes": 18499988
     },
     {
       "chain": "ixcoin",
-      "source_code": "auxpow:ixcoin",
-      "csv_path": "data/validated-stales/ixcoin_validated_stales.csv",
-      "height_column": "ixc_height",
-      "declared_stale_rows": 465,
-      "sha256": "726e7e4e4581e7546dcc0f9afb90c0bfcd036c09a49b8f01ecf8606178e76a1f"
+      "counts": {
+        "canonical": 46808,
+        "stale": 465,
+        "stale_descendant": 3,
+        "strict_btc_orphan": 3,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/ixcoin_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 47279,
+      "sha256": "677673cb3dd6457fa1bcc29bc125871e60eb3f337adca2d7a5443ca7dcd97b58",
+      "size_bytes": 69925685
+    },
+    {
+      "chain": "lyncoin",
+      "counts": {
+        "canonical": 11,
+        "stale": 0,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/lyncoin_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 11,
+      "sha256": "26dabd649dbbbecb318ecbf878a260e45285be1ff6cbea0b10c54908bc68fb78",
+      "size_bytes": 10044
     },
     {
       "chain": "myriadcoin",
-      "source_code": "auxpow:myriadcoin",
-      "csv_path": "data/validated-stales/myriadcoin_validated_stales.csv",
-      "height_column": "xmy_height",
-      "declared_stale_rows": 40,
-      "sha256": "05afd5dac8403c8237990daccf20917be5f23c7c822218b690b8e0f1b039bb35"
+      "counts": {
+        "canonical": 14705,
+        "stale": 40,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/myriadcoin_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 14745,
+      "sha256": "284507d52ccfaefd59fb6e695d30d8fd202aad9557a6b10fd9d09ef1f2b01d04",
+      "size_bytes": 15795185
+    },
+    {
+      "chain": "namecoin",
+      "counts": {
+        "canonical": 0,
+        "stale": 1625,
+        "stale_descendant": 19,
+        "strict_btc_orphan": 11,
+        "weak_btc_orphan": 10
+      },
+      "csv_path": "results/monitor-evidence/namecoin_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 1665,
+      "sha256": "af03907a2ff4c97424f3f0e86f50de5efdf1b86dfc732e699240dd93eecd443f",
+      "size_bytes": 1785888
+    },
+    {
+      "chain": "rsk",
+      "counts": {
+        "canonical": 0,
+        "stale": 298,
+        "stale_descendant": 2,
+        "strict_btc_orphan": 3,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/rsk_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 303,
+      "sha256": "0707c96ecc1aaa0030ad43f9e7bf8aae95ef18edbab6d074132d797658023c17",
+      "size_bytes": 513690
+    },
+    {
+      "chain": "sixeleven",
+      "counts": {
+        "canonical": 7,
+        "stale": 0,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/sixeleven_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 7,
+      "sha256": "06b183c114949b4eace33f59ac233bf5c33858781e37b0192788f1ddc309d10f",
+      "size_bytes": 8479
+    },
+    {
+      "chain": "stale-descendants",
+      "counts": {
+        "canonical": 0,
+        "stale": 0,
+        "stale_descendant": 20,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/stale-descendants_monitor_evidence.csv",
+      "role": "aggregate",
+      "row_count": 20,
+      "sha256": "b7e4e8357fa1ce9e520392362f1ecb096cf699aeba4a0d03ca46324a44bf0e29",
+      "size_bytes": 22125
+    },
+    {
+      "chain": "syscoin",
+      "counts": {
+        "canonical": 98634,
+        "stale": 78,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 1,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/syscoin_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 98713,
+      "sha256": "f503015c61bfe6e0f3352a07f16de2fe89c812fb7bc8e6633d885ddb9c92a5b6",
+      "size_bytes": 76368435
     },
     {
       "chain": "terracoin",
-      "source_code": "auxpow:terracoin",
-      "csv_path": "data/validated-stales/terracoin_validated_stales.csv",
-      "height_column": "trc_height",
-      "declared_stale_rows": 35,
-      "sha256": "22581760af21cc53ae0768d5ee5ea525ab0c53f0e232c068131eba5ad9c90664"
+      "counts": {
+        "canonical": 11257,
+        "stale": 35,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/terracoin_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 11292,
+      "sha256": "4071f1f2f273f8049017a337be5d69c06e952f839809894190c5f477512a7503",
+      "size_bytes": 11069472
     },
     {
       "chain": "unobtanium",
-      "source_code": "auxpow:unobtanium",
-      "csv_path": "data/validated-stales/unobtanium_validated_stales.csv",
-      "height_column": "uno_height",
-      "declared_stale_rows": 43,
-      "sha256": "8b043f504edc6af8ed507b017abab1d2b76e296df52e4f96b53d4a2e02089e1e"
+      "counts": {
+        "canonical": 14958,
+        "stale": 43,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/unobtanium_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 15001,
+      "sha256": "a5f976459e4d6711669cbdef70b15d6d2f4fab33af50dc7cedf36d3becaf6d34",
+      "size_bytes": 16212224
+    },
+    {
+      "chain": "vcash",
+      "counts": {
+        "canonical": 68,
+        "stale": 0,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/vcash_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 68,
+      "sha256": "4bf6b9cd6dc66464f87888959ce9872ea20125b85335b253c5be244dffaf4784",
+      "size_bytes": 120665
     },
     {
       "chain": "xaya",
-      "source_code": "auxpow:xaya",
-      "csv_path": "data/validated-stales/xaya_validated_stales.csv",
-      "height_column": "child_height",
-      "declared_stale_rows": 40,
-      "sha256": "2890ca538fc3dc4034798cc4928ec5c1d8014748c3c736dcd341d36f351bf48b"
+      "counts": {
+        "canonical": 20801,
+        "stale": 40,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/xaya_monitor_evidence.csv",
+      "role": "event",
+      "row_count": 20841,
+      "sha256": "4d0d436167ee313fd446f264d65bf4c2fe852bc4ebcf738c3367d9d58415ba02",
+      "size_bytes": 25802500
     }
-  ]
+  ],
+  "manifest_generator": "scripts/gen-historical-source-manifest.sh",
+  "publication_manifest_path": "results/monitor-evidence/monitor-evidence-manifest.json",
+  "publication_manifest_sha256": "8609427cb84c78ab26dc0c61fa6338aa25b2c8518922d695f3642fed893b0c74",
+  "required_columns": [
+    "chain",
+    "source_kind",
+    "source_path",
+    "source_row_number",
+    "artifact_scope",
+    "provenance",
+    "child_height",
+    "child_block_hash",
+    "child_header_hex",
+    "child_block_time",
+    "child_nbits",
+    "btc_height",
+    "btc_header_hash",
+    "btc_prev_hash",
+    "btc_time",
+    "btc_bits",
+    "btc_nonce",
+    "btc_header_hex",
+    "coinbase_scriptsig_hex",
+    "coinbase_outputs",
+    "full_coinbase_hex",
+    "classification",
+    "validation_status",
+    "expected_nbits",
+    "rejection_reason",
+    "btc_stale_relevance",
+    "relevance_reason"
+  ],
+  "schema_version": 2,
+  "scope": "uniform_monitor_evidence_v1",
+  "source_repo": "merge-mining-research",
+  "source_repo_commit": "2146c204a8a203c59534a1b23b04f447a47b499e",
+  "total_event_rows": 576662
 }

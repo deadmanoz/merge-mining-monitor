@@ -183,7 +183,9 @@ impl NamecoinEventFixture {
         observed_at_epoch: i64,
     ) -> Result<InsertedNamecoinEvent> {
         let payload = self.payload(child_height, proof, observed_at_epoch)?;
-        let id = upsert_merge_mining_event(client, self.source_id, &payload).await?;
+        let id = upsert_merge_mining_event(client, self.source_id, &payload)
+            .await?
+            .event_id;
         Ok(InsertedNamecoinEvent {
             id,
             parent_hash: self.parsed.parent_header.hash().to_byte_array().to_vec(),
@@ -202,12 +204,14 @@ impl NamecoinEventFixture {
     ) -> Result<InsertedNamecoinEvent> {
         let parent_hash = header.block_hash().to_byte_array().to_vec();
         let mut payload = self.payload(child_height, proof, observed_at_epoch)?;
-        payload.child_block_hash = vec![child_hash_fill; 32];
+        payload.child_block_hash = Some(vec![child_hash_fill; 32]);
         payload.btc_parent_header_hash = parent_hash.clone();
         payload.btc_parent_prev_header_hash = header.prev_blockhash.to_byte_array().to_vec();
         payload.btc_parent_header_bytes = serialize(&header);
         payload.btc_parent_header_time = header.time as i64;
-        let id = upsert_merge_mining_event(client, self.source_id, &payload).await?;
+        let id = upsert_merge_mining_event(client, self.source_id, &payload)
+            .await?
+            .event_id;
         Ok(InsertedNamecoinEvent {
             id,
             parent_hash,

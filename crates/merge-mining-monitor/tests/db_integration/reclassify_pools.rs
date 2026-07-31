@@ -146,8 +146,8 @@ async fn insert_namecoin_event(client: &Client, seed: NamecoinEventSeed) -> Resu
         ClassificationProof::default(),
         1_000,
     )?;
-    payload.child_height = seed.child_height;
-    payload.child_block_hash = vec![seed.child_hash_fill; 32];
+    payload.child_height = Some(seed.child_height);
+    payload.child_block_hash = Some(vec![seed.child_hash_fill; 32]);
     payload.btc_parent_header_hash = parent_hash.clone();
     payload.btc_parent_prev_header_hash = header.prev_blockhash.to_byte_array().to_vec();
     payload.btc_parent_header_bytes = serialize(&header);
@@ -156,7 +156,11 @@ async fn insert_namecoin_event(client: &Client, seed: NamecoinEventSeed) -> Resu
     payload.btc_parent_coinbase_outputs = seed.parent_coinbase_outputs;
     payload.child_coinbase_script = seed.child_coinbase_script;
     payload.child_coinbase_outputs = None;
-    upsert_merge_mining_event_with_attributions(client, seed.source_id, &payload).await
+    Ok(
+        upsert_merge_mining_event_with_attributions(client, seed.source_id, &payload)
+            .await?
+            .event_id,
+    )
 }
 
 #[tokio::test]

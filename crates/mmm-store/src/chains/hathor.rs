@@ -11,7 +11,7 @@ use mmm_capture::capture::{
     MergeMiningEventPayload,
 };
 
-use crate::upsert_merge_mining_event_with_attributions;
+use crate::{EventWriteOutcome, upsert_merge_mining_event_with_attributions};
 
 /// Write a Hathor capture in the caller's transaction (injected as the
 /// `capture_in_txn` upsert closure): upsert the event, restore a
@@ -21,8 +21,8 @@ pub async fn write_hathor_capture_in_txn<C: GenericClient>(
     source_id: i64,
     payload: &MergeMiningEventPayload,
     evidence: &HathorEvidencePayload,
-) -> Result<i64> {
-    let event_id = upsert_merge_mining_event_with_attributions(client, source_id, payload).await?;
+) -> Result<EventWriteOutcome> {
+    let outcome = upsert_merge_mining_event_with_attributions(client, source_id, payload).await?;
     // RESTORE-AND-REFRESH, scoped by reason: a re-observation of a block that
     // was auto-revoked for a child-DAG reorg (voided/superseded) clears the
     // revocation; a hathor_nbits_classifier_conflict or any manual revoke stays
@@ -33,7 +33,7 @@ pub async fn write_hathor_capture_in_txn<C: GenericClient>(
                 SET revoked_at = NULL, revocation_reason = NULL \
               WHERE id = $1 AND revocation_reason IN ($2, $3, $4)",
             &[
-                &event_id,
+                &outcome.event_id,
                 &HATHOR_REVOKE_VOIDED,
                 &HATHOR_REVOKE_SUPERSEDED,
                 &HATHOR_REVOKE_NON_BTC,
@@ -41,8 +41,8 @@ pub async fn write_hathor_capture_in_txn<C: GenericClient>(
         )
         .await
         .context("clear reversible Hathor revocation on recapture")?;
-    upsert_hathor_evidence(client, event_id, evidence).await?;
-    Ok(event_id)
+    upsert_hathor_evidence(client, outcome.event_id, evidence).await?;
+    Ok(outcome)
 }
 
 async fn upsert_hathor_evidence<C: GenericClient>(
@@ -92,7 +92,8 @@ async fn upsert_hathor_evidence<C: GenericClient>(
 #[derive(Debug, Clone)]
 pub struct HathorEventRow {
     pub event_id: i64,
-    pub child_block_hash: Vec<u8>,
+    pub child_block_hash: Option<Vec<u8>>,
+    pub btc_parent_header_hash: Vec<u8>,
     pub is_active: bool,
 }
 
@@ -104,7 +105,8 @@ pub async fn hathor_events_at_height(
 ) -> Result<Vec<HathorEventRow>> {
     let rows = client
         .query(
-            "SELECT id, child_block_hash, (revoked_at IS NULL) AS is_active \
+            "SELECT id, child_block_hash, btc_parent_header_hash, \
+                    (revoked_at IS NULL) AS is_active \
                FROM merge_mining_event \
               WHERE source_id = $1 AND child_height = $2",
             &[&source_id, &height],
@@ -116,6 +118,7 @@ pub async fn hathor_events_at_height(
         .map(|row| HathorEventRow {
             event_id: row.get("id"),
             child_block_hash: row.get("child_block_hash"),
+            btc_parent_header_hash: row.get("btc_parent_header_hash"),
             is_active: row.get("is_active"),
         })
         .collect())

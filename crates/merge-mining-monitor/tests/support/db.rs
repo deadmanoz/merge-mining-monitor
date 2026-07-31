@@ -37,6 +37,26 @@ pub async fn new_test_db() -> Result<(Client, String)> {
     Ok((client, schema))
 }
 
+/// Test-only upgrade prelude: create a throwaway schema and apply migrations
+/// through `last_version`, inclusive.
+pub async fn new_test_db_through(last_version: &str) -> Result<(Client, String)> {
+    let client = connect(&PgConfig::from_env()?).await?;
+    let schema = unique_schema();
+    create_schema(&client, &schema).await?;
+    let mut migrations = migration_paths()?;
+    let last_index = migrations
+        .iter()
+        .position(|path| {
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|version| version == last_version)
+        })
+        .with_context(|| format!("unknown migration version {last_version}"))?;
+    migrations.truncate(last_index + 1);
+    apply_migration_paths(&client, &schema, migrations).await?;
+    Ok((client, schema))
+}
+
 /// Standard teardown: drop the schema, then propagate the body result.
 ///
 /// Matches the original inline sequence exactly - the schema is dropped even
