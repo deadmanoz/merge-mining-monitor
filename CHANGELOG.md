@@ -6,6 +6,13 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Remove the `reclassify-pools` RSK skip, so back-to-back runs always rescan
+  the corpus instead of occasionally short-circuiting. The skip fired only
+  when the active-event fingerprint was unchanged since the previous run, a
+  condition a live RSK poller invalidates every block, and computing that
+  fingerprint cost a sequential scan of the RSK evidence on every run.
+  Migration `0008` drops the `rsk_reclassify_watermark` singleton.
+
 ## [0.4.2] - 2026-07-30
 
 - Bound the RSK miner-identity keyset scan on both sides of the

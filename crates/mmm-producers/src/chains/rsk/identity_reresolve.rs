@@ -8,23 +8,18 @@
 //! never treats explorer labels as authority.
 
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use bitcoin::hashes::{Hash as _, sha256d};
 use serde_json::Value;
 use tokio_postgres::Client;
-use tracing::{debug, info};
+use tracing::debug;
 
 use mmm_capture::capture::EventPoolAttribution;
-use mmm_capture::pool_resolver::{
-    DEFAULT_RSK_MINER_REGISTRY_JSON, PoolIdentityRegistry, RSK_MINER_ADDRESS_NAMESPACE,
-};
+use mmm_capture::pool_resolver::{PoolIdentityRegistry, RSK_MINER_ADDRESS_NAMESPACE};
 use mmm_capture::source_registry::RSK_SOURCE_CODE;
 use mmm_store::{
-    get_source_id, late_fill_rsk_pool_identity_id, load_rsk_reclassify_watermark,
-    rsk_active_set_fingerprint, upsert_event_pool_attributions,
-    upsert_rsk_pool_identities_with_policy, upsert_rsk_reclassify_watermark,
+    get_source_id, late_fill_rsk_pool_identity_id, upsert_event_pool_attributions,
+    upsert_rsk_pool_identities_with_policy,
 };
 
 use crate::reclassify_pools::{ReclassifyPoolsConfig, ReclassifyPoolsStats};
@@ -100,10 +95,7 @@ struct PlannedRskMinerUpdate {
 /// embedded registry: seed identity rows, then keyset-page over events (ordered
 /// by `event_id`, paged on the last id) and apply the planned attribution
 /// upserts and sidecar late-fills per batch in a transaction. Idempotent:
-/// re-running only touches rows whose resolution actually changed. For
-/// non-`--overwrite` runs, a skip watermark (embedded registry hash + active-set
-/// fingerprint) short-circuits the whole scan when nothing it reads has changed
-/// since the last successful pass.
+/// re-running only touches rows whose resolution actually changed.
 pub(crate) async fn reresolve_rsk_miner_identities(
     client: &mut Client,
     registry: &PoolIdentityRegistry,
@@ -120,29 +112,6 @@ pub(crate) async fn reresolve_rsk_miner_identities(
     .await
     .context("seed RSK miner pool identities")?;
     let rsk_source_id = get_source_id(client, RSK_SOURCE_CODE).await?;
-
-    // Tier 1 skip watermark. Computed AFTER the seed above (which enforces
-    // registry remap conflicts even at zero rows) and BEFORE the expensive scan.
-    // Only honoured for non-`--overwrite` runs, since `--overwrite` deliberately
-    // rewrites rows. The skip-check compares the live (start-of-pass) fingerprint
-    // against the stored watermark; the watermark itself is (re)written from a
-    // FRESH end-of-pass fingerprint below, not this one, so events processed
-    // during the scan are reflected and an event revoked-then-restored mid-scan
-    // is not wrongly claimed as covered.
-    let registry_hash = sha256d::Hash::hash(DEFAULT_RSK_MINER_REGISTRY_JSON.as_bytes()).to_string();
-    let start_fingerprint = rsk_active_set_fingerprint(&*client, rsk_source_id).await?;
-    if !config.overwrite
-        && let Some(watermark) = load_rsk_reclassify_watermark(&*client).await?
-        && watermark.registry_hash == registry_hash
-        && watermark.fingerprint == start_fingerprint
-    {
-        info!(
-            phase = "rsk",
-            active_event_count = start_fingerprint.active_event_count,
-            "reclassify-pools: RSK pass skipped by watermark (registry + active set unchanged)"
-        );
-        return Ok(());
-    }
 
     let mut cursor = None;
     let mut batch_index: u64 = 0;
@@ -181,23 +150,6 @@ pub(crate) async fn reresolve_rsk_miner_identities(
             }
         }
         apply_rsk_miner_updates(client, &updates, stats).await?;
-    }
-
-    // Record the watermark for non-overwrite runs so an unchanged re-run skips
-    // the whole pass next time. Re-reads a FRESH end-of-pass fingerprint: the scan
-    // paged to exhaustion, so every currently-active event was either processed by
-    // the loop or excluded because it is revoked. Writing the current state (rather
-    // than the start-of-pass value) both avoids over-claiming an event revoked
-    // mid-scan and avoids a needless rescan of events that arrived and were
-    // processed during this pass.
-    if !config.overwrite {
-        let end_fingerprint = rsk_active_set_fingerprint(&*client, rsk_source_id).await?;
-        let completed_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs() as i64)
-            .unwrap_or(0);
-        upsert_rsk_reclassify_watermark(&*client, &registry_hash, end_fingerprint, completed_at)
-            .await?;
     }
 
     Ok(())
