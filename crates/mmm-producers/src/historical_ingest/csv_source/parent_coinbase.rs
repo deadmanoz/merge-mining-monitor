@@ -25,7 +25,7 @@ pub(super) fn parse_parent_coinbase_fields(
     let published_script = parse_optional_hex_field(record.get(layout.coinbase_script))?;
     let outputs_text = optional_string(record.get(layout.coinbase_outputs));
     let tx_bytes = parse_optional_hex_field(record.get(layout.full_coinbase))?;
-    let mut published_addresses = outputs_text
+    let published_addresses = outputs_text
         .as_deref()
         .map(published_parent_coinbase_output_addresses)
         .unwrap_or_default();
@@ -57,10 +57,12 @@ pub(super) fn parse_parent_coinbase_fields(
     {
         return Err(SkipReason::EvidenceMismatch);
     }
-    for address in output_addresses(&transaction.output) {
-        if !published_addresses.contains(&address) {
-            published_addresses.push(address);
-        }
+    let decoded_addresses = output_addresses(&transaction.output);
+    if published_addresses
+        .iter()
+        .any(|published| !decoded_addresses.contains(published))
+    {
+        return Err(SkipReason::EvidenceMismatch);
     }
     Ok(ParentCoinbaseFields {
         txid: Some(transaction.compute_txid().to_byte_array().to_vec()),
@@ -68,6 +70,6 @@ pub(super) fn parse_parent_coinbase_fields(
         outputs: Some(serialize(&transaction.output)),
         outputs_text,
         tx_bytes: Some(tx_bytes),
-        output_addresses: published_addresses,
+        output_addresses: decoded_addresses,
     })
 }

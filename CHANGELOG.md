@@ -27,8 +27,10 @@ This changelog starts with the initial release.
   fields explicitly instead of zero or placeholder values.
 - Report historical write outcomes from the store's exact/partial identity
   decision instead of re-querying identities in the importer, and combine
-  candidate parsing, validation, and preclassification into one stream. Digest,
-  manifest-count, and mutation passes remain separate.
+  candidate parsing, validation, and preclassification into one stream. Bind
+  classification and mutation reads to the already-verified artifact handle,
+  preflight the required aggregate, and fail source health closed until the
+  final multi-chain rebuild succeeds.
 
 ## [0.4.2] - 2026-07-30
 

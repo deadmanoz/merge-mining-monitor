@@ -193,6 +193,48 @@ async fn exact_observation_satisfies_later_partial_observation() -> Result<()> {
 }
 
 #[tokio::test]
+async fn partial_observation_fills_and_checks_an_exact_events_child_header() -> Result<()> {
+    crate::run_db_test!(client, {
+        let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let mut exact = exact_payload(1_010, 2_010)?;
+        let authenticated_header = exact
+            .child_header_bytes
+            .take()
+            .expect("fixture child header");
+        let exact_outcome = upsert_merge_mining_event(&client, source_id, &exact).await?;
+
+        let mut partial = partial_payload(1_010, 2_011)?;
+        partial.child_header_bytes = Some(authenticated_header.clone());
+        let partial_outcome = upsert_merge_mining_event(&client, source_id, &partial).await?;
+        assert_eq!(
+            partial_outcome.disposition,
+            EventWriteDisposition::SatisfiedByExistingExact
+        );
+        assert_eq!(partial_outcome.event_id, exact_outcome.event_id);
+        let stored: Option<Vec<u8>> = client
+            .query_one(
+                "SELECT child_header_bytes FROM merge_mining_event WHERE id = $1",
+                &[&exact_outcome.event_id],
+            )
+            .await?
+            .get(0);
+        assert_eq!(stored, Some(authenticated_header));
+
+        let mut contradictory = partial;
+        contradictory.child_header_bytes = Some(vec![0x42; 80]);
+        let error = upsert_merge_mining_event(&client, source_id, &contradictory)
+            .await
+            .expect_err("a contradictory child header must be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("partial child evidence contradicts existing exact observation")
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn exact_observation_promotes_existing_partial_observation() -> Result<()> {
     crate::run_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;

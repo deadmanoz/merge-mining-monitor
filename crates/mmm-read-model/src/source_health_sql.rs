@@ -453,6 +453,23 @@ pub async fn rebuild_source_health(client: &mut Client) -> Result<()> {
     Ok(())
 }
 
+/// Prevent the sources API from serving a previously complete aggregate while
+/// a historical import is committing base evidence across multiple
+/// transactions. The final successful rebuild sets the flag ready again.
+pub async fn invalidate_source_health<C: GenericClient>(client: &C) -> Result<()> {
+    let now = mmm_capture::capture::now_epoch_seconds()?;
+    client
+        .execute(
+            "UPDATE read_model_invariant \
+             SET source_health_ready = FALSE, updated_at = $1 \
+             WHERE id = TRUE",
+            &[&now],
+        )
+        .await
+        .context("invalidate source_health before historical import")?;
+    Ok(())
+}
+
 /// Rebuild source health inside a caller-owned transaction.
 ///
 /// Historical snapshot replacement uses this after all event upserts and

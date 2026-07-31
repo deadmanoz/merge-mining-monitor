@@ -12,6 +12,7 @@ use mmm_producers::{
     HistoricalImportAllConfig, HistoricalImportConfig, run_historical_import,
     run_historical_import_configs_for_test, run_manifest_historical_import_for_test,
 };
+use mmm_read_model::rebuild_source_health;
 use mmm_store::get_source_id;
 
 use crate::support::scenario::{
@@ -212,11 +213,18 @@ async fn operator_csv_retains_per_row_skip_accounting() -> Result<()> {
 async fn import_persists_lossless_parent_coinbase_evidence() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let header = header_meeting_bits(0x207f_ffff, 1_700_000_042, 42);
-        let output_text = "1F1xcRt8H8Wa623KqmkEontwAAVqDSAWCV:5000000000";
+        let coinbase: bitcoin::Transaction =
+            bitcoin::consensus::deserialize(&hex::decode(GENESIS_COINBASE)?)?;
+        let genesis_output = coinbase.output.first().context("genesis output")?;
+        let output_text = format!(
+            "{}:{}",
+            hex::encode(genesis_output.script_pubkey.as_bytes()),
+            genesis_output.value.to_sat()
+        );
         let csv_path = write_normalized_csv_with_parent_coinbase(
             &header,
             GENESIS_COINBASE_SCRIPT,
-            output_text,
+            &output_text,
             GENESIS_COINBASE,
             700_042,
         )?;
@@ -242,7 +250,7 @@ async fn import_persists_lossless_parent_coinbase_evidence() -> Result<()> {
             assert!(row.get::<_, Option<Vec<u8>>>(1).is_some());
             assert_eq!(
                 row.get::<_, Option<String>>(2).as_deref(),
-                Some(output_text)
+                Some(output_text.as_str())
             );
             assert_eq!(
                 row.get::<_, Option<Vec<u8>>>(3),
@@ -963,6 +971,7 @@ async fn failed_chain_import_rolls_back_every_row() -> Result<()> {
 #[tokio::test]
 async fn interrupted_multi_chain_import_resumes_safely() -> Result<()> {
     crate::run_mut_db_test!(client, {
+        rebuild_source_health(&mut client).await?;
         let header = header_meeting_bits(0x207f_ffff, 1_700_000_038, 38);
         let devcoin_path = write_normalized_csv_for_chain(
             "devcoin",
@@ -997,6 +1006,17 @@ async fn interrupted_multi_chain_import_resumes_safely() -> Result<()> {
             assert_eq!(
                 active_source_event_count(&client, "auxpow:ixcoin").await?,
                 0
+            );
+            let source_health_ready: bool = client
+                .query_one(
+                    "SELECT source_health_ready FROM read_model_invariant WHERE id = TRUE",
+                    &[],
+                )
+                .await?
+                .get(0);
+            assert!(
+                !source_health_ready,
+                "a partial multi-chain import must fail closed"
             );
 
             let corrected = normalized_csv_line(

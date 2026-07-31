@@ -22,8 +22,8 @@ use mmm_capture::capture::{
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::{
     clear_authoritative_historical_provenance_in_transaction, drain_historical_reconcile_queue,
-    rebuild_historical_source_health, reconcile_authoritative_historical_source_in_transaction,
-    write_historical_base_in_transaction,
+    invalidate_source_health, rebuild_historical_source_health,
+    reconcile_authoritative_historical_source_in_transaction, write_historical_base_in_transaction,
 };
 use mmm_store::{
     EventWriteDisposition, upsert_merge_mining_event_with_attributions, upsert_pool_snapshot,
@@ -34,10 +34,11 @@ use tracing::info;
 
 use super::config::{HistoricalImportConfig, historical_chain_spec};
 use super::csv_source::{
-    CsvLayout, ImportCandidate, RelevanceSelection, SkipReason, SourceClassification,
-    candidate_from_record,
+    ImportCandidate, RelevanceSelection, SkipReason, SourceClassification, candidate_from_record,
 };
-use super::publication::{ArtifactPreflight, preflight_artifact};
+use super::publication::{
+    ArtifactPreflight, preflight_artifact, preflight_required_aggregate_artifacts,
+};
 
 /// Running tallies for one import, surfaced to the operator via `print`.
 ///
@@ -267,7 +268,7 @@ async fn run_historical_import_with_cache(
     let spec = historical_chain_spec(&config.chain)
         .ok_or_else(|| anyhow::anyhow!("unsupported published chain {:?}", config.chain))?;
     let candidates_prepared = preflighted_artifact.is_some();
-    let artifact = match preflighted_artifact {
+    let mut artifact = match preflighted_artifact {
         Some(artifact) => artifact,
         None => preflight_artifact(config, spec)?,
     };
@@ -283,7 +284,7 @@ async fn run_historical_import_with_cache(
             classifier,
             config,
             spec,
-            artifact.row_count,
+            &mut artifact,
             classifications,
         )
         .await?;
@@ -297,6 +298,7 @@ async fn run_historical_import_with_cache(
     }
     let source_id = mmm_store::get_source_id(client, spec.source_code).await?;
     let resolver = PoolResolver::from_default_snapshot().context("load embedded pool snapshot")?;
+    invalidate_source_health(client).await?;
 
     let txn = client
         .transaction()
@@ -349,9 +351,8 @@ async fn run_historical_import_with_cache(
 async fn import_rows_in_transaction(
     txn: &Transaction<'_>,
     context: &mut ChainImportContext<'_>,
-    artifact: ArtifactPreflight,
+    mut artifact: ArtifactPreflight,
 ) -> Result<(HistoricalImportSummary, HashMap<Vec<u8>, u64>)> {
-    let (mut reader, layout) = open_candidate_reader(context.config, context.spec)?;
     let mut summary = HistoricalImportSummary {
         expected_rows: artifact.row_count,
         published_canonical: artifact.counts.canonical,
@@ -362,6 +363,7 @@ async fn import_rows_in_transaction(
         ..HistoricalImportSummary::default()
     };
     let mut parent_counts = HashMap::new();
+    let (mut reader, layout) = artifact.open_reader(context.spec)?;
 
     for record in reader.records() {
         summary.rows_seen += 1;
@@ -440,6 +442,7 @@ pub async fn run_historical_import_all(
     classifier: &ConfiguredParentClassifier,
     config: &super::config::HistoricalImportAllConfig,
 ) -> Result<HistoricalImportAllSummary> {
+    preflight_required_aggregate_artifacts(config)?;
     let configs = config.chain_configs()?;
     run_historical_import_configs(client, classifier, configs).await
 }
@@ -468,7 +471,7 @@ async fn run_historical_import_configs(
         })
         .collect::<Vec<_>>();
     ensure_import_environment(client, classifier, &import_configs).await?;
-    for (chain_config, artifact) in configs.iter().zip(&preflighted_artifacts) {
+    for (chain_config, artifact) in configs.iter().zip(&mut preflighted_artifacts) {
         let spec = historical_chain_spec(&chain_config.chain)
             .expect("chain configs are built from the source registry");
         preflight_and_classify_candidates(
@@ -476,7 +479,7 @@ async fn run_historical_import_configs(
             classifier,
             chain_config,
             spec,
-            artifact.row_count,
+            artifact,
             &mut classifications,
         )
         .await?;
@@ -588,10 +591,11 @@ async fn preflight_and_classify_candidates<C: GenericClient>(
     classifier: &ConfiguredParentClassifier,
     config: &HistoricalImportConfig,
     spec: &super::config::HistoricalChainSpec,
-    expected_rows: u64,
+    artifact: &mut ArtifactPreflight,
     classifications: &mut HashMap<Vec<u8>, ParentClassification>,
 ) -> Result<()> {
-    let (mut reader, layout) = open_candidate_reader(config, spec)?;
+    let expected_rows = artifact.row_count;
+    let (mut reader, layout) = artifact.open_reader(spec)?;
     let mut rows = 0_u64;
     for (offset, record) in reader.records().enumerate() {
         let record = record.with_context(|| {
@@ -673,20 +677,6 @@ async fn ensure_import_environment(
         known_stale_count, "starting historical import with known-stale membership"
     );
     Ok(())
-}
-
-fn open_candidate_reader(
-    config: &HistoricalImportConfig,
-    spec: &super::config::HistoricalChainSpec,
-) -> Result<(csv::Reader<std::fs::File>, CsvLayout)> {
-    let file = std::fs::File::open(&config.csv_path)
-        .with_context(|| format!("open historical CSV {}", config.csv_path.display()))?;
-    let mut reader = csv::Reader::from_reader(file);
-    let layout = CsvLayout::new(
-        reader.headers().context("read historical CSV header")?,
-        spec,
-    )?;
-    Ok((reader, layout))
 }
 
 /// Decide a candidate's fate, the layer where live Core classification meets the

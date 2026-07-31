@@ -31,6 +31,10 @@ the importer verifies:
 - every row's schema, hashes, compact targets, parent header, proof of work,
   taxonomy, and available child-header corroboration.
 
+Each event artifact remains open after verification. Classification and
+mutation rewind that same verified file handle, so replacing a checkout path
+during a long preclassification pass cannot substitute unverified bytes.
+
 Git LFS must materialize the CSV payloads. If the importer finds pointer text,
 recover the files with:
 
@@ -120,8 +124,10 @@ the durable queue in bounded per-parent transactions. Primary reconcile results
 store their changed-hash cascade seeds in the same transaction, and queue work
 is removed only after its dependent cascade succeeds. An interruption at
 either boundary therefore resumes without losing cascade work. `import-all`
-rebuilds source health once after all chains and targeted stale branches have
-reconciled.
+marks source health unready before a non-surveyed chain can commit, then rebuilds
+it once after all chains and targeted stale branches have reconciled. A partial
+multi-chain import therefore never exposes counters from the previous complete
+snapshot.
 
 The schema migration retains existing child values and makes the child evidence
 columns nullable. Before changing the schema, it fails closed if the legacy

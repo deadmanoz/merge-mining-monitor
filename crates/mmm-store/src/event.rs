@@ -252,6 +252,7 @@ async fn fill_existing_event<C: GenericClient>(
                 btc_parent_coinbase_outputs = COALESCE(btc_parent_coinbase_outputs, $5), \
                 btc_parent_coinbase_outputs_text = COALESCE(btc_parent_coinbase_outputs_text, $6), \
                 btc_parent_coinbase_tx_bytes = COALESCE(btc_parent_coinbase_tx_bytes, $7), \
+                child_header_bytes = COALESCE(child_header_bytes, $16), \
                 child_block_time = COALESCE(child_block_time, $8), \
                 child_nbits = COALESCE(child_nbits, $9), \
                 child_coinbase_txid = COALESCE(child_coinbase_txid, $10), \
@@ -261,6 +262,7 @@ async fn fill_existing_event<C: GenericClient>(
              WHERE id = $1 \
                AND btc_parent_header_hash = $14 \
                AND btc_parent_header_bytes = $15 \
+               AND (child_header_bytes IS NULL OR $16::bytea IS NULL OR child_header_bytes = $16) \
                AND (child_block_time IS NULL OR $8::bigint IS NULL OR child_block_time = $8) \
                AND (child_nbits IS NULL OR $9::bigint IS NULL OR child_nbits = $9) \
                AND (btc_parent_coinbase_txid IS NULL OR $3::bytea IS NULL OR btc_parent_coinbase_txid = $3) \
@@ -285,6 +287,7 @@ async fn fill_existing_event<C: GenericClient>(
                 &payload.aux_merkle_proof,
                 &payload.btc_parent_header_hash,
                 &payload.btc_parent_header_bytes,
+                &payload.child_header_bytes,
             ],
         )
         .await

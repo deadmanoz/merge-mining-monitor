@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::process::Command;
 
@@ -14,7 +14,7 @@ use serde::Deserialize;
 use super::config::{
     HistoricalChainSpec, HistoricalImportConfig, PINNED_RESEARCH_COMMIT, importable_chains,
 };
-use super::csv_source::{PublicationCategory, publication_category};
+use super::csv_source::{CsvLayout, PublicationCategory, publication_category};
 
 pub(super) const NORMALIZED_COLUMNS: &[&str] = &[
     "chain",
@@ -57,6 +57,7 @@ const RSK_SIDECAR_COLUMNS: &[&str] = &[
 ];
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub(super) struct PublicationManifest {
     schema_version: u32,
     source_repo: String,
@@ -70,6 +71,7 @@ pub(super) struct PublicationManifest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub(super) struct PublicationArtifact {
     pub(super) chain: String,
     pub(super) csv_path: String,
@@ -81,6 +83,7 @@ pub(super) struct PublicationArtifact {
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize))]
 #[serde(rename_all = "snake_case")]
 pub(super) enum ArtifactRole {
     Event,
@@ -88,6 +91,7 @@ pub(super) enum ArtifactRole {
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub(super) struct PublicationCounts {
     pub(super) canonical: u64,
     pub(super) stale: u64,
@@ -117,6 +121,12 @@ impl PublicationManifest {
         self.artifacts
             .iter()
             .filter(|artifact| artifact.role == ArtifactRole::Event)
+    }
+
+    fn aggregate_artifacts(&self) -> impl Iterator<Item = &PublicationArtifact> {
+        self.artifacts
+            .iter()
+            .filter(|artifact| artifact.role == ArtifactRole::Aggregate)
     }
 }
 
@@ -255,10 +265,28 @@ fn valid_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(super) struct ArtifactPreflight {
     pub(super) row_count: u64,
     pub(super) counts: PublicationCounts,
+    file: File,
+}
+
+impl ArtifactPreflight {
+    pub(super) fn open_reader<'a>(
+        &'a mut self,
+        spec: &HistoricalChainSpec,
+    ) -> Result<(csv::Reader<&'a mut File>, CsvLayout)> {
+        self.file
+            .seek(SeekFrom::Start(0))
+            .context("rewind verified historical artifact")?;
+        let mut reader = csv::Reader::from_reader(&mut self.file);
+        let layout = CsvLayout::new(
+            reader.headers().context("read historical CSV header")?,
+            spec,
+        )?;
+        Ok((reader, layout))
+    }
 }
 
 /// Verify provenance, bytes, schema, and declared counts before any database
@@ -308,6 +336,41 @@ pub(super) fn preflight_artifact(
     inspect_csv(&config.csv_path, spec, expected.as_ref())
 }
 
+pub(super) fn preflight_required_aggregate_artifacts(
+    config: &super::config::HistoricalImportAllConfig,
+) -> Result<()> {
+    let manifest = load_publication_manifest(&config.manifest_path)?;
+    if config.require_pinned_checkout {
+        verify_checkout_pin(&config.artifact_root)?;
+    }
+    verify_research_manifest(&config.artifact_root, &manifest)?;
+    for artifact in manifest.aggregate_artifacts() {
+        inspect_aggregate_csv(&config.artifact_root.join(&artifact.csv_path), artifact)?;
+    }
+    Ok(())
+}
+
+fn inspect_aggregate_csv(path: &Path, expected: &PublicationArtifact) -> Result<()> {
+    let mut file = open_artifact_file(path, Some(expected))?;
+    let mut reader = csv::Reader::from_reader(&mut file);
+    let (row_count, counts) = inspect_rows(&mut reader, path, &expected.chain, true)?;
+    ensure!(
+        row_count == expected.row_count,
+        "artifact row-count mismatch for {}: expected {}, got {}",
+        path.display(),
+        expected.row_count,
+        row_count
+    );
+    ensure!(
+        counts == expected.counts,
+        "artifact classification-count mismatch for {}: expected {:?}, got {:?}",
+        path.display(),
+        expected.counts,
+        counts
+    );
+    Ok(())
+}
+
 fn verify_checkout_pin(root: &Path) -> Result<()> {
     let output = Command::new("git")
         .args(["-C"])
@@ -350,52 +413,15 @@ fn inspect_csv(
     spec: &HistoricalChainSpec,
     expected: Option<&PublicationArtifact>,
 ) -> Result<ArtifactPreflight> {
-    reject_lfs_pointer(path)?;
-    if let Some(expected) = expected {
-        let size = std::fs::metadata(path)
-            .with_context(|| format!("stat {}", path.display()))?
-            .len();
-        ensure!(
-            size == expected.size_bytes,
-            "artifact size mismatch for {}: expected {}, got {}",
-            path.display(),
-            expected.size_bytes,
-            size
-        );
-        let actual = sha256_file(path)?;
-        ensure!(
-            actual == expected.sha256,
-            "artifact checksum mismatch for {}: expected {}, got {}",
-            path.display(),
-            expected.sha256,
-            actual
-        );
-    }
-
-    let mut reader = csv::Reader::from_path(path)
-        .with_context(|| format!("open normalized artifact {}", path.display()))?;
+    let mut file = open_artifact_file(path, expected)?;
+    file.seek(SeekFrom::Start(0))
+        .with_context(|| format!("rewind {}", path.display()))?;
+    let mut reader = csv::Reader::from_reader(&mut file);
     verify_header(reader.headers()?, spec.chain)?;
-    let headers = reader.headers()?.clone();
-    let indices = CountIndices::new(&headers)?;
-    let mut row_count = 0_u64;
-    let mut counts = PublicationCounts::default();
-    for (offset, record) in reader.records().enumerate() {
-        let record =
-            record.with_context(|| format!("parse {} row {}", path.display(), offset + 2))?;
-        ensure!(
-            record.get(indices.chain).map(str::trim) == Some(spec.chain),
-            "{} row {} has a mismatched chain field",
-            path.display(),
-            offset + 2
-        );
-        if let Err(error) = count_row(&record, indices, &mut counts)
-            && expected.is_some()
-        {
-            return Err(error)
-                .with_context(|| format!("classify {} row {}", path.display(), offset + 2));
-        }
-        row_count += 1;
-    }
+    let (row_count, counts) = inspect_rows(&mut reader, path, spec.chain, expected.is_some())?;
+    drop(reader);
+    file.seek(SeekFrom::Start(0))
+        .with_context(|| format!("rewind {}", path.display()))?;
     if let Some(expected) = expected {
         ensure!(
             row_count == expected.row_count,
@@ -419,11 +445,78 @@ fn inspect_csv(
             spec.chain
         );
     }
-    Ok(ArtifactPreflight { row_count, counts })
+    Ok(ArtifactPreflight {
+        row_count,
+        counts,
+        file,
+    })
+}
+
+fn open_artifact_file(path: &Path, expected: Option<&PublicationArtifact>) -> Result<File> {
+    let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
+    reject_lfs_pointer_from(&mut file, path)?;
+    if let Some(expected) = expected {
+        let size = file
+            .metadata()
+            .with_context(|| format!("stat {}", path.display()))?
+            .len();
+        ensure!(
+            size == expected.size_bytes,
+            "artifact size mismatch for {}: expected {}, got {}",
+            path.display(),
+            expected.size_bytes,
+            size
+        );
+        let actual = sha256_open_file(&mut file, path)?;
+        ensure!(
+            actual == expected.sha256,
+            "artifact checksum mismatch for {}: expected {}, got {}",
+            path.display(),
+            expected.sha256,
+            actual
+        );
+    }
+    Ok(file)
+}
+
+fn inspect_rows<R: Read>(
+    reader: &mut csv::Reader<R>,
+    path: &Path,
+    chain: &str,
+    require_valid_taxonomy: bool,
+) -> Result<(u64, PublicationCounts)> {
+    let headers = reader.headers()?.clone();
+    let indices = CountIndices::new(&headers)?;
+    let mut row_count = 0_u64;
+    let mut counts = PublicationCounts::default();
+    for (offset, record) in reader.records().enumerate() {
+        let record =
+            record.with_context(|| format!("parse {} row {}", path.display(), offset + 2))?;
+        ensure!(
+            record.get(indices.chain).map(str::trim) == Some(chain),
+            "{} row {} has a mismatched chain field",
+            path.display(),
+            offset + 2
+        );
+        if let Err(error) = count_row(&record, indices, &mut counts)
+            && require_valid_taxonomy
+        {
+            return Err(error)
+                .with_context(|| format!("classify {} row {}", path.display(), offset + 2));
+        }
+        row_count += 1;
+    }
+    Ok((row_count, counts))
 }
 
 fn reject_lfs_pointer(path: &Path) -> Result<()> {
     let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
+    reject_lfs_pointer_from(&mut file, path)
+}
+
+fn reject_lfs_pointer_from(file: &mut File, path: &Path) -> Result<()> {
+    file.seek(SeekFrom::Start(0))
+        .with_context(|| format!("rewind {}", path.display()))?;
     let mut prefix = [0_u8; 128];
     let count = file
         .read(&mut prefix)
@@ -434,11 +527,19 @@ fn reject_lfs_pointer(path: &Path) -> Result<()> {
             path.display()
         );
     }
+    file.seek(SeekFrom::Start(0))
+        .with_context(|| format!("rewind {}", path.display()))?;
     Ok(())
 }
 
 fn sha256_file(path: &Path) -> Result<String> {
     let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
+    sha256_open_file(&mut file, path)
+}
+
+fn sha256_open_file(file: &mut File, path: &Path) -> Result<String> {
+    file.seek(SeekFrom::Start(0))
+        .with_context(|| format!("rewind {}", path.display()))?;
     let mut engine = sha256::Hash::engine();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
@@ -450,7 +551,10 @@ fn sha256_file(path: &Path) -> Result<String> {
         }
         engine.input(&buffer[..count]);
     }
-    Ok(sha256::Hash::from_engine(engine).to_string())
+    let digest = sha256::Hash::from_engine(engine).to_string();
+    file.seek(SeekFrom::Start(0))
+        .with_context(|| format!("rewind {}", path.display()))?;
+    Ok(digest)
 }
 
 fn verify_header(headers: &csv::StringRecord, chain: &str) -> Result<()> {
@@ -527,7 +631,18 @@ fn count_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::historical_ingest::config::historical_chain_spec;
+    use crate::historical_ingest::config::{HistoricalImportAllConfig, historical_chain_spec};
+
+    fn temp_path(label: &str) -> std::path::PathBuf {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "mmm-publication-{label}-{}-{suffix}",
+            std::process::id()
+        ))
+    }
 
     fn valid_manifest() -> PublicationManifest {
         let mut assigned_total = false;
@@ -676,14 +791,7 @@ mod tests {
 
     #[test]
     fn artifact_preflight_rejects_checksum_and_row_count_drift() {
-        let suffix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock after epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "mmm-publication-preflight-{}-{suffix}.csv",
-            std::process::id()
-        ));
+        let path = temp_path("preflight.csv");
         std::fs::write(&path, format!("{}\n", NORMALIZED_COLUMNS.join(",")))
             .expect("write fixture artifact");
         let size_bytes = std::fs::metadata(&path).expect("fixture metadata").len();
@@ -709,6 +817,79 @@ mod tests {
             inspect_csv(&path, spec, Some(&expected)).expect_err("wrong row count must fail");
         std::fs::remove_file(&path).expect("remove fixture artifact");
         assert!(row_count_error.to_string().contains("row-count mismatch"));
+    }
+
+    #[test]
+    fn verified_artifact_reader_survives_path_replacement() {
+        let path = temp_path("snapshot.csv");
+        let replacement = temp_path("replacement.csv");
+        std::fs::write(&path, format!("{}\n", NORMALIZED_COLUMNS.join(",")))
+            .expect("write original artifact");
+        let spec = historical_chain_spec("devcoin").expect("devcoin spec");
+        let mut artifact = inspect_csv(&path, spec, None).expect("preflight original artifact");
+
+        let replacement_row = vec!["replacement"; NORMALIZED_COLUMNS.len()].join(",");
+        std::fs::write(
+            &replacement,
+            format!("{}\n{replacement_row}\n", NORMALIZED_COLUMNS.join(",")),
+        )
+        .expect("write replacement artifact");
+        std::fs::rename(&replacement, &path).expect("replace artifact path");
+
+        let (mut reader, _) = artifact.open_reader(spec).expect("open verified snapshot");
+        assert_eq!(reader.records().count(), 0);
+        drop(reader);
+        std::fs::remove_file(&path).expect("remove replacement artifact");
+    }
+
+    #[test]
+    fn import_all_preflights_the_required_aggregate_artifact() {
+        let root = temp_path("aggregate-root");
+        let publication_dir = root.join("results/monitor-evidence");
+        std::fs::create_dir_all(&publication_dir).expect("create publication fixture");
+
+        let research_manifest = b"{\"fixture\":\"aggregate-preflight\"}\n";
+        std::fs::write(publication_dir.join("manifest.json"), research_manifest)
+            .expect("write research manifest");
+        let aggregate_path = root.join("results/stale-descendants.csv");
+        let mut aggregate =
+            "chain,classification,btc_stale_relevance,relevance_reason\n".to_owned();
+        for _ in 0..20 {
+            aggregate.push_str("stale-descendants,stale_descendant,,valid_stale_descendant\n");
+        }
+        std::fs::write(&aggregate_path, &aggregate).expect("write aggregate fixture");
+
+        let mut manifest = valid_manifest();
+        manifest.publication_manifest_sha256 = sha256::Hash::hash(research_manifest).to_string();
+        let aggregate_artifact = manifest
+            .artifacts
+            .iter_mut()
+            .find(|artifact| artifact.role == ArtifactRole::Aggregate)
+            .expect("aggregate artifact");
+        aggregate_artifact.size_bytes = aggregate.len() as u64;
+        aggregate_artifact.sha256 = sha256::Hash::hash(aggregate.as_bytes()).to_string();
+
+        let manifest_path = root.join("monitor-manifest.json");
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("serialize manifest"),
+        )
+        .expect("write monitor manifest");
+        let config = HistoricalImportAllConfig {
+            manifest_path,
+            artifact_root: root.clone(),
+            require_pinned_checkout: false,
+            batch_size: 10,
+            allow_unclassified: false,
+            allow_empty_known_stales: true,
+        };
+
+        preflight_required_aggregate_artifacts(&config).expect("aggregate preflight");
+        std::fs::remove_file(&aggregate_path).expect("remove aggregate fixture");
+        let error = preflight_required_aggregate_artifacts(&config)
+            .expect_err("missing aggregate must fail import-all preflight");
+        assert!(error.to_string().contains("open"));
+        std::fs::remove_dir_all(&root).expect("remove aggregate fixture root");
     }
 
     #[test]
