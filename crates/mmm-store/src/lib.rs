@@ -29,10 +29,8 @@ pub use chains::hathor::{
 #[cfg(any(test, feature = "db-integration"))]
 pub use chains::rsk::write_rsk_capture;
 pub use chains::rsk::{
-    RskActiveSetFingerprint, RskReclassifyWatermark, late_fill_rsk_pool_identity_id,
-    load_rsk_reclassify_watermark, rsk_active_set_fingerprint, upsert_rsk_only_pools,
-    upsert_rsk_pool_identities, upsert_rsk_pool_identities_with_policy,
-    upsert_rsk_reclassify_watermark, write_rsk_capture_in_txn,
+    late_fill_rsk_pool_identity_id, upsert_rsk_only_pools, upsert_rsk_pool_identities,
+    upsert_rsk_pool_identities_with_policy, write_rsk_capture_in_txn,
 };
 pub use event::{
     delete_event_pool_attributions_for_source, fill_event_child_coinbase,

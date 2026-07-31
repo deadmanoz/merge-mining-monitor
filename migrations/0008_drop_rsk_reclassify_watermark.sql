@@ -1,0 +1,22 @@
+-- 0008_drop_rsk_reclassify_watermark.sql
+--
+-- Retires the `rsk_reclassify_watermark` singleton created by the 0001
+-- baseline. It backed a skip in the `reclassify-pools` RSK miner-identity
+-- pass: a non-`--overwrite` run returned early when the embedded registry hash
+-- and the RSK active-set fingerprint both matched the stored row.
+--
+-- That skip is unreachable on a live chain. The fingerprint is `count(*)` plus
+-- `bit_xor(hashtextextended(id))` over non-revoked RSK events, and RSK produces
+-- a block roughly every thirty seconds, so any two operator runs more than half
+-- a minute apart see different active sets and the pass runs in full anyway.
+-- Computing the fingerprint is itself a sequential scan of the RSK partition of
+-- `merge_mining_event` (7.7 seconds against 18.4M rows on production), paid
+-- twice per run to produce a value that never matches. The scan it guarded now
+-- completes in about nine minutes after the keyset fix in 0.4.2, so the skip
+-- protects nothing worth protecting.
+--
+-- Fresh databases still create the table in 0001 (migrations are append-only)
+-- and drop it here. Idempotent: `IF EXISTS` makes a re-run a no-op, and no
+-- foreign key references the table, so no `CASCADE` is required.
+
+DROP TABLE IF EXISTS rsk_reclassify_watermark;
