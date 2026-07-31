@@ -45,6 +45,15 @@ pollers, back up, apply the migration, and run `just import-all`; authoritative
 historical sources then remove obsolete rows, while live sources remain
 additive. See `docs/historical-ingest.md`.
 
+Migration 0009 removes the RSK reclassification watermark used by older
+`reclassify-pools` binaries. Activate the watermark-free application package
+and confirm that no older or in-flight `reclassify-pools` process remains
+before running the backup-first migration. The new binary works both before
+and after the table is dropped. A binary-only rollback to an older release is
+not valid after 0009: recreate the empty singleton table (the old command will
+populate it) or restore the pre-migration backup before activating the old
+binary.
+
 Before applying 0007 to an existing database, audit the exact child identities:
 
 ```sql
