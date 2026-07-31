@@ -41,7 +41,9 @@ ALTER TABLE merge_mining_event
         CHECK (
             child_nbits IS NULL
             OR child_nbits BETWEEN 0 AND 4294967295
-        );
+        ),
+    ADD COLUMN btc_parent_coinbase_outputs_text TEXT,
+    ADD COLUMN btc_parent_coinbase_tx_bytes BYTEA;
 
 ALTER TABLE merge_mining_event
     DROP CONSTRAINT merge_mining_event_source_id_child_height_child_block_hash_key,
@@ -59,8 +61,10 @@ CREATE UNIQUE INDEX merge_mining_event_partial_child_identity
 CREATE TABLE historical_event_provenance (
     event_id               BIGINT NOT NULL
                            REFERENCES merge_mining_event(id) ON DELETE CASCADE,
-    publication_commit     TEXT NOT NULL
-                           CHECK (publication_commit ~ '^[0-9a-f]{40}$'),
+    publication_ref        TEXT NOT NULL CHECK (
+        publication_ref ~ '^[0-9a-f]{40}$'
+        OR publication_ref = 'operator-csv'
+    ),
     chain                  TEXT NOT NULL,
     source_kind            TEXT NOT NULL,
     source_path            TEXT NOT NULL,
@@ -78,11 +82,27 @@ CREATE TABLE historical_event_provenance (
     ),
     relevance_reason       TEXT,
 
-    PRIMARY KEY (publication_commit, chain, source_path, source_row_number)
+    PRIMARY KEY (publication_ref, chain, source_path, source_row_number)
 );
 
 CREATE INDEX historical_event_provenance_publication
-    ON historical_event_provenance (publication_commit, chain);
+    ON historical_event_provenance (publication_ref, chain);
 
 CREATE INDEX historical_event_provenance_event
     ON historical_event_provenance (event_id);
+
+-- Historical base rows are imported in one chain transaction, but parent
+-- read-model reconciliation is deliberately drained afterwards in bounded
+-- per-parent transactions. Persist both the primary work bit and the exact
+-- changed-hash cascade seeds so an interruption at either boundary is
+-- resumable. A new base mutation increments generation and preserves any
+-- unconsumed cascade seeds from an earlier generation.
+CREATE TABLE historical_reconcile_queue (
+    btc_parent_header_hash BYTEA PRIMARY KEY
+                           CHECK (octet_length(btc_parent_header_hash) = 32),
+    primary_pending        BOOLEAN NOT NULL DEFAULT TRUE,
+    changed_hashes         BYTEA[] NOT NULL DEFAULT ARRAY[]::BYTEA[],
+    generation             BIGINT NOT NULL DEFAULT 1 CHECK (generation > 0),
+    enqueued_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);

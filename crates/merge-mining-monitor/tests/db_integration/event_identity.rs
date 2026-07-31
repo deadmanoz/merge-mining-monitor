@@ -285,6 +285,45 @@ async fn exact_observation_rejects_contradictory_child_evidence() -> Result<()> 
 }
 
 #[tokio::test]
+async fn exact_observation_rejects_a_different_parent_for_the_same_child_hash() -> Result<()> {
+    crate::run_db_test!(client, {
+        let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let first = exact_payload(1_009, 2_009)?;
+        let mut contradictory = first.clone();
+        let other = parse_auxpow_fixture("500001-near-parent")?;
+        contradictory.btc_parent_header_hash = other
+            .parent_header
+            .header
+            .block_hash()
+            .to_byte_array()
+            .to_vec();
+        contradictory.btc_parent_prev_header_hash = other
+            .parent_header
+            .header
+            .prev_blockhash
+            .to_byte_array()
+            .to_vec();
+        contradictory.btc_parent_header_bytes = serialize(&other.parent_header.header);
+        contradictory.btc_parent_header_time = i64::from(other.parent_header.header.time);
+
+        upsert_merge_mining_event(&client, source_id, &first).await?;
+        let error = upsert_merge_mining_event(&client, source_id, &contradictory)
+            .await
+            .expect_err("one child ledger identity cannot select two parent observations");
+        assert!(error.to_string().contains("contradicts stored evidence"));
+        let count: i64 = client
+            .query_one(
+                "SELECT count(*) FROM merge_mining_event WHERE source_id = $1",
+                &[&source_id],
+            )
+            .await?
+            .get(0);
+        assert_eq!(count, 1);
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn exact_partial_refinement_rejects_contradictory_child_evidence() -> Result<()> {
     crate::run_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;

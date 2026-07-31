@@ -48,6 +48,10 @@ Use `just` targets, not raw commands, when a target exists:
 - Historical and partial source imports are authoritative snapshots. Live
   source publication imports are additive. Keep this lifecycle distinction in
   the shared source registry, not in per-chain schema branches.
+- Historical base/provenance writes enqueue affected parents in the same
+  transaction. Drain `historical_reconcile_queue` in bounded parent
+  transactions and retain changed-hash seeds until dependent cascades succeed;
+  never hold every parent advisory lock across a chain import.
 - Do not copy a sibling chain module to add a Namecoin-family source. Extend
   the shared source registry, chain spec, config, AuxPoW-family parser, poller,
   and write paths.

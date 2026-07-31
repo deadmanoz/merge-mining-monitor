@@ -8,12 +8,14 @@
 //! adapter.
 
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, bail};
 use bitcoin::block::Header;
 use bitcoin::consensus::{deserialize, encode, serialize};
 use bitcoin::hashes::Hash as _;
+use bitcoin::{Address, Network, ScriptBuf};
 use serde_json::{Value, json};
 
 use crate::auxpow::{ParsedAuxpowBlock, output_addresses, validates_target};
@@ -157,6 +159,8 @@ pub struct MergeMiningEventPayload {
     pub btc_parent_coinbase_txid: Option<Vec<u8>>,
     pub btc_parent_coinbase_script: Option<Vec<u8>>,
     pub btc_parent_coinbase_outputs: Option<Vec<u8>>,
+    pub btc_parent_coinbase_outputs_text: Option<String>,
+    pub btc_parent_coinbase_tx_bytes: Option<Vec<u8>>,
     pub child_coinbase_txid: Option<Vec<u8>>,
     pub child_coinbase_script: Option<Vec<u8>>,
     pub child_coinbase_outputs: Option<Vec<u8>>,
@@ -173,7 +177,7 @@ pub struct MergeMiningEventPayload {
 /// the event's independently derived Bitcoin parent state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoricalEventProvenance {
-    pub publication_commit: String,
+    pub publication_ref: String,
     pub chain: String,
     pub source_kind: String,
     pub source_path: String,
@@ -406,6 +410,8 @@ pub struct NormalizedEventEvidence {
     pub btc_parent_coinbase_txid: Option<Vec<u8>>,
     pub btc_parent_coinbase_script: Option<Vec<u8>>,
     pub btc_parent_coinbase_outputs: Option<Vec<u8>>,
+    pub btc_parent_coinbase_outputs_text: Option<String>,
+    pub btc_parent_coinbase_tx_bytes: Option<Vec<u8>>,
     pub child_coinbase_txid: Option<Vec<u8>>,
     pub child_coinbase_script: Option<Vec<u8>>,
     pub child_coinbase_outputs: Option<Vec<u8>>,
@@ -470,6 +476,8 @@ pub fn build_event_payload_from_evidence(
         btc_parent_coinbase_txid: evidence.btc_parent_coinbase_txid,
         btc_parent_coinbase_script: evidence.btc_parent_coinbase_script,
         btc_parent_coinbase_outputs: evidence.btc_parent_coinbase_outputs,
+        btc_parent_coinbase_outputs_text: evidence.btc_parent_coinbase_outputs_text,
+        btc_parent_coinbase_tx_bytes: evidence.btc_parent_coinbase_tx_bytes,
         child_coinbase_txid: evidence.child_coinbase_txid,
         child_coinbase_script: evidence.child_coinbase_script,
         child_coinbase_outputs: evidence.child_coinbase_outputs,
@@ -538,6 +546,8 @@ fn namecoin_evidence(
         btc_parent_coinbase_txid: Some(parsed.parent_coinbase_txid.to_byte_array().to_vec()),
         btc_parent_coinbase_script: Some(parsed.parent_coinbase_script.clone()),
         btc_parent_coinbase_outputs: Some(serialize(&parsed.parent_coinbase_outputs)),
+        btc_parent_coinbase_outputs_text: None,
+        btc_parent_coinbase_tx_bytes: None,
         child_coinbase_txid: parsed
             .child_coinbase_txid
             .map(|hash| hash.to_byte_array().to_vec()),
@@ -714,6 +724,55 @@ pub fn resolve_parent_pool_attribution_from_serialized_coinbase_outputs(
     ))
 }
 
+/// Decode the normalized publication's heterogeneous parent-output text into
+/// Bitcoin mainnet payout addresses.
+///
+/// Historical sources preserve either raw scriptPubKey hex or an address,
+/// optionally paired with a value using `:` and separated by `;` or `|`.
+/// Non-address scripts and explicit `OP_RETURN`/`nonstandard` entries remain
+/// preserved in the event's raw text field but do not participate in pool
+/// matching.
+pub fn published_parent_coinbase_output_addresses(value: &str) -> Vec<String> {
+    let mut addresses = Vec::new();
+    for entry in value.split([';', '|']).map(str::trim) {
+        if entry.is_empty() || entry.starts_with("OP_RETURN") || entry.starts_with("nonstandard:") {
+            continue;
+        }
+        let address = entry
+            .split_once(':')
+            .and_then(|(left, right)| {
+                published_parent_output_address(left.trim())
+                    .or_else(|| published_parent_output_address(right.trim()))
+            })
+            .or_else(|| published_parent_output_address(entry));
+        let Some(address) = address else { continue };
+        if !addresses.contains(&address) {
+            addresses.push(address);
+        }
+    }
+    addresses
+}
+
+fn published_parent_output_address(candidate: &str) -> Option<String> {
+    if candidate.is_empty() {
+        return None;
+    }
+    if let Ok(address) = Address::from_str(candidate) {
+        return address
+            .require_network(Network::Bitcoin)
+            .ok()
+            .map(|address| address.to_string());
+    }
+    if !candidate.len().is_multiple_of(2) || !candidate.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    let script = ScriptBuf::from_bytes(hex::decode(candidate).ok()?);
+    Address::from_script(&script, Network::Bitcoin)
+        .ok()
+        .map(|address| address.to_string())
+}
+
 /// Resolve a coinbase to a `PoolMatch`: try the coinbase script first
 /// (`resolve_coinbase_script`), then fall back to the parent's payout addresses
 /// (`resolve_payout_addresses`). Returns the match WITHOUT mapping to a
@@ -801,6 +860,8 @@ mod tests {
             btc_parent_coinbase_txid: None,
             btc_parent_coinbase_script: None,
             btc_parent_coinbase_outputs: None,
+            btc_parent_coinbase_outputs_text: None,
+            btc_parent_coinbase_tx_bytes: None,
             child_coinbase_txid: None,
             child_coinbase_script: None,
             child_coinbase_outputs: None,
@@ -826,5 +887,16 @@ mod tests {
         assert_eq!(payload.btc_parent_kind, ParentKind::Canonical);
         assert_eq!(payload.btc_parent_height, Some(840_000));
         assert_eq!(payload.difficulty_epoch_ok, Some(true));
+    }
+
+    #[test]
+    fn publication_output_parser_accepts_an_all_digit_witness_script() {
+        let script = format!("0014{}", "00".repeat(20));
+        assert_eq!(
+            published_parent_coinbase_output_addresses(&format!(
+                "{script};{script}:5000000000;5000000000:{script};not-an-address"
+            )),
+            vec!["bc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9e75rs"]
+        );
     }
 }

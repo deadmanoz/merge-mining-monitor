@@ -603,6 +603,8 @@ pub fn prepare_rsk_capture(
         btc_parent_coinbase_txid: None,
         btc_parent_coinbase_script: None,
         btc_parent_coinbase_outputs: None,
+        btc_parent_coinbase_outputs_text: None,
+        btc_parent_coinbase_tx_bytes: None,
         child_coinbase_txid: None,
         child_coinbase_script: None,
         child_coinbase_outputs: None,

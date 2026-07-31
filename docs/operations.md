@@ -152,10 +152,10 @@ canonical rows before rerunning sync.
 counters. It is required on a fresh database and after bulk backfills:
 `/api/v1/sources` fails closed until the first rebuild sets
 `source_health_ready`. Run it during a quiescent window (pollers stopped) so it
-sees a stable base. Counters are maintained incrementally afterward, so re-running
-it is only needed to repair drift. `import-all` rebuilds source health inside
-each atomic chain transaction, so no separate rebuild is required after that
-command.
+sees a stable base. Counters are maintained incrementally afterward, so
+re-running it is only needed to repair drift. `import-all` rebuilds source
+health once after all durable historical parent and dependent work has drained,
+so no separate rebuild is required after that command.
 
 `reconcile-read-model --start-height` and `--end-height` are child-height
 bounds. Either bound excludes exact events whose authenticated child height is
@@ -197,10 +197,12 @@ just reclassify-pools
 
 `import-all` verifies all 27 per-chain artifacts before the first database
 mutation. Each chain then commits atomically. Historical and partial sources
-are authoritative snapshots; live sources are additive; Doichain is a
-surveyed zero-row no-op. Stop live pollers during a production cutover and
-retain the backup until event totals, block details, orphan exclusions, and
-poller health are verified.
+are authoritative snapshots; live sources are additive; Doichain is a surveyed
+zero-row no-op. Parent read-model work then drains from the durable historical
+queue in bounded transactions, retaining cascade seeds until their dependent
+work succeeds. Stop live pollers during a production cutover and retain the
+backup until event totals, block details, orphan exclusions, and poller health
+are verified.
 
 ## Live Test Deployment
 

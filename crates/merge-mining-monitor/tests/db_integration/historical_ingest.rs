@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use bitcoin::block::Header;
 use bitcoin::consensus::serialize;
-use bitcoin::hashes::{Hash as _, sha256};
+use bitcoin::hashes::{Hash as _, sha256, sha256d};
 use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier};
 use mmm_capture::auxpow::parse_bip34_height;
 use mmm_capture::btc_orphan::{BtcOrphanVerdict, classify_btc_orphan};
@@ -22,6 +22,8 @@ use crate::support::{
 };
 
 const NORMALIZED_HEADER: &str = "chain,source_kind,source_path,source_row_number,artifact_scope,provenance,child_height,child_block_hash,child_header_hex,child_block_time,child_nbits,btc_height,btc_header_hash,btc_prev_hash,btc_time,btc_bits,btc_nonce,btc_header_hex,coinbase_scriptsig_hex,coinbase_outputs,full_coinbase_hex,classification,validation_status,expected_nbits,rejection_reason,btc_stale_relevance,relevance_reason\n";
+const GENESIS_COINBASE_SCRIPT: &str = "04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73";
+const GENESIS_COINBASE: &str = "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000";
 
 #[tokio::test]
 async fn manifest_backed_import_verifies_artifacts_before_writes() -> Result<()> {
@@ -129,6 +131,123 @@ async fn import_dataset_persists_and_replays_a_normalized_canonical_row() -> Res
                 provenance.get::<_, Option<String>>(2).as_deref(),
                 Some("canonical_parent")
             );
+            let queued: i64 = client
+                .query_one("SELECT count(*) FROM historical_reconcile_queue", &[])
+                .await?
+                .get(0);
+            assert_eq!(queued, 0, "successful imports fully drain durable work");
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        finish_import_with_cleanup(result, &[&csv_path])
+    })
+}
+
+#[tokio::test]
+async fn operator_csv_retains_per_row_skip_accounting() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let header = header_meeting_bits(0x207f_ffff, 1_700_000_037, 37);
+        let csv_path = temp_csv_path()?;
+        let child_header = serialize(&header);
+        let valid = normalized_csv_line_with_child_header(
+            &header,
+            &NormalizedCsvRow {
+                chain: "devcoin",
+                source_row_number: 1,
+                classification: "canonical",
+                relevance: "",
+                relevance_reason: "canonical_parent",
+                coinbase_script: &[],
+                btc_height: 700_037,
+                child_height: 12,
+                child_hash: None,
+            },
+            &child_header,
+        );
+        let mut invalid_fields = valid
+            .trim_end()
+            .split(',')
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        invalid_fields[3] = "2".to_owned();
+        invalid_fields[7] = "11".repeat(32);
+        invalid_fields[8] = hex::encode(serialize(&header));
+        let invalid = format!("{}\n", invalid_fields.join(","));
+        let mut near_fields = valid
+            .trim_end()
+            .split(',')
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        near_fields[3] = "3".to_owned();
+        near_fields[6] = "13".to_owned();
+        near_fields[21] = "near".to_owned();
+        near_fields[22].clear();
+        near_fields[26].clear();
+        let near = format!("{}\n", near_fields.join(","));
+        std::fs::write(
+            &csv_path,
+            format!("{NORMALIZED_HEADER}{valid}{invalid}{near}"),
+        )?;
+
+        let result = async {
+            let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+                canonical_verdict(&header, 700_037),
+            ));
+            let summary =
+                run_historical_import(&mut client, &classifier, &devcoin_import_config(&csv_path))
+                    .await?;
+
+            assert_eq!(summary.rows_seen, 3);
+            assert_eq!(summary.ingested, 1);
+            assert_eq!(summary.skipped.get("hash_mismatch"), Some(&1));
+            assert_eq!(summary.skipped.get("near"), Some(&1));
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        finish_import_with_cleanup(result, &[&csv_path])
+    })
+}
+
+#[tokio::test]
+async fn import_persists_lossless_parent_coinbase_evidence() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let header = header_meeting_bits(0x207f_ffff, 1_700_000_042, 42);
+        let output_text = "1F1xcRt8H8Wa623KqmkEontwAAVqDSAWCV:5000000000";
+        let csv_path = write_normalized_csv_with_parent_coinbase(
+            &header,
+            GENESIS_COINBASE_SCRIPT,
+            output_text,
+            GENESIS_COINBASE,
+            700_042,
+        )?;
+        let result = async {
+            let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+                canonical_verdict(&header, 700_042),
+            ));
+            run_historical_import(&mut client, &classifier, &devcoin_import_config(&csv_path))
+                .await?;
+
+            let row = client
+                .query_one(
+                    "SELECT btc_parent_coinbase_script, btc_parent_coinbase_outputs, \
+                            btc_parent_coinbase_outputs_text, btc_parent_coinbase_tx_bytes \
+                     FROM merge_mining_event",
+                    &[],
+                )
+                .await?;
+            assert_eq!(
+                row.get::<_, Option<Vec<u8>>>(0),
+                Some(hex::decode(GENESIS_COINBASE_SCRIPT)?)
+            );
+            assert!(row.get::<_, Option<Vec<u8>>>(1).is_some());
+            assert_eq!(
+                row.get::<_, Option<String>>(2).as_deref(),
+                Some(output_text)
+            );
+            assert_eq!(
+                row.get::<_, Option<Vec<u8>>>(3),
+                Some(hex::decode(GENESIS_COINBASE)?)
+            );
             Ok::<_, anyhow::Error>(())
         }
         .await;
@@ -215,6 +334,71 @@ async fn import_summary_reports_partial_satisfied_by_existing_exact() -> Result<
                 .await?
                 .get(0);
             assert_eq!(event_count, 1);
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        finish_import_with_cleanup(result, &[&csv_path])
+    })
+}
+
+#[tokio::test]
+async fn live_child_hash_byte_order_matches_historical_identity() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let header = header_meeting_bits(0x207f_ffff, 1_700_000_039, 39);
+        let child_header = serialize(&header);
+        let child_hash = sha256d::Hash::hash(&child_header).to_byte_array().to_vec();
+        let csv_path = temp_csv_path()?;
+        let row = normalized_csv_line_with_child_header(
+            &header,
+            &NormalizedCsvRow {
+                chain: "namecoin",
+                source_row_number: 1,
+                classification: "canonical",
+                relevance: "",
+                relevance_reason: "canonical_parent",
+                coinbase_script: &[],
+                btc_height: 700_039,
+                child_height: 12,
+                child_hash: Some(&child_hash),
+            },
+            &child_header,
+        );
+        std::fs::write(&csv_path, format!("{NORMALIZED_HEADER}{row}"))?;
+
+        let result = async {
+            let live_event = seed_identity_event(
+                &client,
+                "auxpow:namecoin",
+                &header,
+                12,
+                Some(child_hash.clone()),
+            )
+            .await?;
+            let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+                canonical_verdict(&header, 700_039),
+            ));
+            let mut config = HistoricalImportConfig::for_csv("namecoin", &csv_path);
+            config.allow_empty_known_stales = true;
+
+            let summary = run_historical_import(&mut client, &classifier, &config).await?;
+
+            assert_eq!(summary.updated, 1);
+            assert_eq!(summary.inserted, 0);
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:namecoin").await?,
+                1
+            );
+            let stored = client
+                .query_one(
+                    "SELECT id, child_block_hash, child_header_bytes \
+                     FROM merge_mining_event \
+                     WHERE source_id = (SELECT id FROM source WHERE code = 'auxpow:namecoin')",
+                    &[],
+                )
+                .await?;
+            assert_eq!(stored.get::<_, i64>(0), live_event);
+            assert_eq!(stored.get::<_, Option<Vec<u8>>>(1), Some(child_hash));
+            assert_eq!(stored.get::<_, Option<Vec<u8>>>(2), Some(child_header));
             Ok::<_, anyhow::Error>(())
         }
         .await;
@@ -522,23 +706,193 @@ async fn known_branch_attestation_is_not_reinterpreted_as_an_orphan() -> Result<
 async fn authoritative_import_removes_rows_absent_from_the_snapshot() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let header = header_meeting_bits(0x207f_ffff, 1_700_000_010, 21);
-        let csv_path =
-            write_normalized_csv(&header, "canonical", "", "canonical_parent", &[], 700_010)?;
+        let row = normalized_csv_line(
+            &header,
+            &NormalizedCsvRow {
+                chain: "devcoin",
+                source_row_number: 1,
+                classification: "canonical",
+                relevance: "",
+                relevance_reason: "canonical_parent",
+                coinbase_script: &[],
+                btc_height: 700_010,
+                child_height: 12,
+                child_hash: None,
+            },
+        );
+        let fixture = write_manifest_fixture_rows(&[row])?;
         let result = async {
             let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
                 canonical_verdict(&header, 700_010),
             ));
-            let config = devcoin_import_config(&csv_path);
-            run_historical_import(&mut client, &classifier, &config).await?;
-            seed_unpublished_event(&client, "auxpow:devcoin", 99, vec![0x44; 32]).await?;
+            run_manifest_historical_import_for_test(
+                &mut client,
+                &classifier,
+                &fixture.config,
+                "devcoin",
+            )
+            .await?;
+            let omitted_event =
+                seed_unpublished_event(&client, "auxpow:devcoin", 99, vec![0x44; 32]).await?;
+            client
+                .execute(
+                    "INSERT INTO event_pool_attribution ( \
+                        event_id, side, namespace, match_kind, matched_value, source, \
+                        confidence, first_seen_at, last_seen_at \
+                     ) VALUES ($1, 'btc_parent', 'btc_coinbase_tag', 'test_seed', \
+                        'omitted-attribution', 'test_seed', 'high', 1, 1)",
+                    &[&omitted_event],
+                )
+                .await?;
 
-            let summary = run_historical_import(&mut client, &classifier, &config).await?;
+            let summary = run_manifest_historical_import_for_test(
+                &mut client,
+                &classifier,
+                &fixture.config,
+                "devcoin",
+            )
+            .await?;
             assert_eq!(summary.updated, 1);
             assert_eq!(summary.removed, 1);
             assert_eq!(
                 active_source_event_count(&client, "auxpow:devcoin").await?,
                 1
             );
+            let attribution_count: i64 = client
+                .query_one(
+                    "SELECT count(*) FROM event_pool_attribution WHERE event_id = $1",
+                    &[&omitted_event],
+                )
+                .await?
+                .get(0);
+            assert_eq!(attribution_count, 0);
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        std::fs::remove_dir_all(&fixture.root)
+            .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
+        result
+    })
+}
+
+#[tokio::test]
+async fn authoritative_reimport_replaces_prior_provenance_for_the_same_commit() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let retained = header_meeting_bits(0x207f_ffff, 1_700_000_040, 40);
+        let omitted = header_meeting_bits(0x207f_ffff, 1_700_000_041, 41);
+        let retained_row = normalized_csv_line(
+            &retained,
+            &NormalizedCsvRow {
+                chain: "devcoin",
+                source_row_number: 1,
+                classification: "canonical",
+                relevance: "",
+                relevance_reason: "canonical_parent",
+                coinbase_script: &[],
+                btc_height: 700_040,
+                child_height: 40,
+                child_hash: None,
+            },
+        );
+        let omitted_row = normalized_csv_line(
+            &omitted,
+            &NormalizedCsvRow {
+                chain: "devcoin",
+                source_row_number: 2,
+                classification: "canonical",
+                relevance: "",
+                relevance_reason: "canonical_parent",
+                coinbase_script: &[],
+                btc_height: 700_041,
+                child_height: 41,
+                child_hash: None,
+            },
+        );
+        let first_fixture = write_manifest_fixture_rows(&[retained_row.clone(), omitted_row])?;
+        let second_fixture = write_manifest_fixture_rows(&[retained_row])?;
+        let result = async {
+            let first_classifier =
+                ConfiguredParentClassifier::Fake(FakeParentClassifier::new_sequence([
+                    canonical_verdict(&retained, 700_040),
+                    canonical_verdict(&omitted, 700_041),
+                ]));
+            run_manifest_historical_import_for_test(
+                &mut client,
+                &first_classifier,
+                &first_fixture.config,
+                "devcoin",
+            )
+            .await?;
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:devcoin").await?,
+                2
+            );
+
+            let second_classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+                canonical_verdict(&retained, 700_040),
+            ));
+            let summary = run_manifest_historical_import_for_test(
+                &mut client,
+                &second_classifier,
+                &second_fixture.config,
+                "devcoin",
+            )
+            .await?;
+
+            assert_eq!(summary.removed, 1);
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:devcoin").await?,
+                1
+            );
+            let provenance_count: i64 = client
+                .query_one(
+                    "SELECT count(*) FROM historical_event_provenance \
+                     WHERE chain = 'devcoin'",
+                    &[],
+                )
+                .await?
+                .get(0);
+            assert_eq!(provenance_count, 1);
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        for fixture in [&first_fixture, &second_fixture] {
+            std::fs::remove_dir_all(&fixture.root)
+                .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
+        }
+        result
+    })
+}
+
+#[tokio::test]
+async fn operator_csv_is_additive_for_historical_sources() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let header = header_meeting_bits(0x207f_ffff, 1_700_000_043, 43);
+        let csv_path =
+            write_normalized_csv(&header, "canonical", "", "canonical_parent", &[], 700_043)?;
+        let result = async {
+            let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+                canonical_verdict(&header, 700_043),
+            ));
+            let config = devcoin_import_config(&csv_path);
+            run_historical_import(&mut client, &classifier, &config).await?;
+            seed_unpublished_event(&client, "auxpow:devcoin", 99, vec![0x45; 32]).await?;
+
+            let summary = run_historical_import(&mut client, &classifier, &config).await?;
+            assert_eq!(summary.removed, 0);
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:devcoin").await?,
+                2
+            );
+            let publication_ref: String = client
+                .query_one(
+                    "SELECT publication_ref FROM historical_event_provenance \
+                     WHERE chain = 'devcoin'",
+                    &[],
+                )
+                .await?
+                .get(0);
+            assert_eq!(publication_ref, "operator-csv");
             Ok::<_, anyhow::Error>(())
         }
         .await;
@@ -585,7 +939,7 @@ async fn live_import_is_additive_and_never_removes_live_events() -> Result<()> {
 async fn failed_chain_import_rolls_back_every_row() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let header = header_meeting_bits(0x207f_ffff, 1_700_000_012, 23);
-        let csv_path = write_contradictory_exact_rows(&header, 700_012)?;
+        let csv_path = write_contradictory_exact_rows("devcoin", &header, 700_012)?;
         let result = async {
             let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
                 canonical_verdict(&header, 700_012),
@@ -603,6 +957,83 @@ async fn failed_chain_import_rolls_back_every_row() -> Result<()> {
         }
         .await;
         finish_import_with_cleanup(result, &[&csv_path])
+    })
+}
+
+#[tokio::test]
+async fn interrupted_multi_chain_import_resumes_safely() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let header = header_meeting_bits(0x207f_ffff, 1_700_000_038, 38);
+        let devcoin_path = write_normalized_csv_for_chain(
+            "devcoin",
+            &header,
+            "canonical",
+            "",
+            "canonical_parent",
+            &[],
+            700_038,
+        )?;
+        let ixcoin_path = write_contradictory_exact_rows("ixcoin", &header, 700_038)?;
+        let result = async {
+            let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+                canonical_verdict(&header, 700_038),
+            ));
+            let first_error = run_historical_import_configs_for_test(
+                &mut client,
+                &classifier,
+                two_chain_import_configs(&ixcoin_path, &devcoin_path),
+            )
+            .await
+            .expect_err("the second chain must roll back");
+            assert!(
+                first_error
+                    .to_string()
+                    .contains("capture historical parent")
+            );
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:devcoin").await?,
+                1
+            );
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:ixcoin").await?,
+                0
+            );
+
+            let corrected = normalized_csv_line(
+                &header,
+                &NormalizedCsvRow {
+                    chain: "ixcoin",
+                    source_row_number: 1,
+                    classification: "canonical",
+                    relevance: "",
+                    relevance_reason: "canonical_parent",
+                    coinbase_script: &[],
+                    btc_height: 700_038,
+                    child_height: 12,
+                    child_hash: None,
+                },
+            );
+            std::fs::write(&ixcoin_path, format!("{NORMALIZED_HEADER}{corrected}"))?;
+
+            let summary = run_historical_import_configs_for_test(
+                &mut client,
+                &classifier,
+                two_chain_import_configs(&ixcoin_path, &devcoin_path),
+            )
+            .await?;
+            assert_eq!(summary.chains.len(), 2);
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:devcoin").await?,
+                1
+            );
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:ixcoin").await?,
+                1
+            );
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        finish_import_with_cleanup(result, &[&ixcoin_path, &devcoin_path])
     })
 }
 
@@ -643,18 +1074,6 @@ struct ManifestFixture {
 }
 
 fn write_manifest_fixture(header: &Header) -> Result<ManifestFixture> {
-    let suffix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .context("clock before epoch")?
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mmm-manifest-import-{}-{suffix}",
-        std::process::id()
-    ));
-    let publication_dir = root.join("results/monitor-evidence");
-    std::fs::create_dir_all(&publication_dir)?;
-
-    let artifact_path = publication_dir.join("devcoin_monitor_evidence.csv");
     let row = normalized_csv_line(
         header,
         &NormalizedCsvRow {
@@ -669,8 +1088,28 @@ fn write_manifest_fixture(header: &Header) -> Result<ManifestFixture> {
             child_hash: None,
         },
     );
-    std::fs::write(&artifact_path, format!("{NORMALIZED_HEADER}{row}"))?;
+    write_manifest_fixture_rows(&[row])
+}
+
+fn write_manifest_fixture_rows(rows: &[String]) -> Result<ManifestFixture> {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("clock before epoch")?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "mmm-manifest-import-{}-{suffix}",
+        std::process::id()
+    ));
+    let publication_dir = root.join("results/monitor-evidence");
+    std::fs::create_dir_all(&publication_dir)?;
+
+    let artifact_path = publication_dir.join("devcoin_monitor_evidence.csv");
+    std::fs::write(
+        &artifact_path,
+        format!("{NORMALIZED_HEADER}{}", rows.concat()),
+    )?;
     let artifact_bytes = std::fs::read(&artifact_path)?;
+    let row_count = u64::try_from(rows.len()).context("fixture row count exceeds u64")?;
 
     let research_manifest_path = publication_dir.join("monitor-evidence-manifest.json");
     let research_manifest_bytes = b"{\"fixture\":\"manifest-backed import\"}\n";
@@ -693,12 +1132,12 @@ fn write_manifest_fixture(header: &Header) -> Result<ManifestFixture> {
     let prior_devcoin_rows = artifacts[devcoin_index]["row_count"]
         .as_u64()
         .context("devcoin row_count")?;
-    artifacts[devcoin_index]["row_count"] = serde_json::json!(1);
+    artifacts[devcoin_index]["row_count"] = serde_json::json!(row_count);
     artifacts[devcoin_index]["size_bytes"] = serde_json::json!(artifact_bytes.len());
     artifacts[devcoin_index]["sha256"] =
         serde_json::json!(sha256::Hash::hash(&artifact_bytes).to_string());
     artifacts[devcoin_index]["counts"] = serde_json::json!({
-        "canonical": 1,
+        "canonical": row_count,
         "stale": 0,
         "stale_descendant": 0,
         "strict_btc_orphan": 0,
@@ -710,8 +1149,8 @@ fn write_manifest_fixture(header: &Header) -> Result<ManifestFixture> {
         .find(|artifact| artifact["chain"] == "elastos" && artifact["role"] == "event")
         .context("elastos event artifact")?;
     let transferred_rows = prior_devcoin_rows
-        .checked_sub(1)
-        .context("committed devcoin artifact is non-empty")?;
+        .checked_sub(row_count)
+        .context("fixture cannot exceed committed devcoin row count")?;
     donor["row_count"] = serde_json::json!(
         donor["row_count"].as_u64().context("elastos row_count")? + transferred_rows
     );
@@ -840,6 +1279,30 @@ fn write_normalized_csv_row(header: &Header, row: &NormalizedCsvRow<'_>) -> Resu
 }
 
 fn normalized_csv_line(header: &Header, row: &NormalizedCsvRow<'_>) -> String {
+    normalized_csv_line_with_parent_coinbase(header, row, "", "")
+}
+
+fn normalized_csv_line_with_child_header(
+    header: &Header,
+    row: &NormalizedCsvRow<'_>,
+    child_header: &[u8],
+) -> String {
+    let line = normalized_csv_line(header, row);
+    let mut fields = line
+        .trim_end()
+        .split(',')
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    fields[8] = hex::encode(child_header);
+    format!("{}\n", fields.join(","))
+}
+
+fn normalized_csv_line_with_parent_coinbase(
+    header: &Header,
+    row: &NormalizedCsvRow<'_>,
+    coinbase_outputs: &str,
+    full_coinbase: &str,
+) -> String {
     let validation_status = if row.classification == "canonical" {
         "VALID (canonical Bitcoin block)"
     } else if row.classification == "stale" {
@@ -851,7 +1314,7 @@ fn normalized_csv_line(header: &Header, row: &NormalizedCsvRow<'_>) -> String {
     let child_hash = row.child_hash.map(hex::encode).unwrap_or_default();
     format!(
         "{},full_inventory,<fixture>,{},full_classifier_inventory,test,\
-         {},{child_hash},,,,{},{},{},{},{bits},{},{},{},,,{},\
+         {},{child_hash},,,,{},{},{},{},{bits},{},{},{},{},{},{},\
          {validation_status},{bits},,{},{relevance_reason}\n",
         row.chain,
         row.source_row_number,
@@ -863,10 +1326,39 @@ fn normalized_csv_line(header: &Header, row: &NormalizedCsvRow<'_>) -> String {
         header.nonce,
         hex::encode(serialize(header)),
         hex::encode(row.coinbase_script),
+        coinbase_outputs,
+        full_coinbase,
         row.classification,
         row.relevance,
         relevance_reason = row.relevance_reason,
     )
+}
+
+fn write_normalized_csv_with_parent_coinbase(
+    header: &Header,
+    coinbase_script: &str,
+    coinbase_outputs: &str,
+    full_coinbase: &str,
+    btc_height: i32,
+) -> Result<PathBuf> {
+    let path = temp_csv_path()?;
+    let script = hex::decode(coinbase_script)?;
+    let row = NormalizedCsvRow {
+        chain: "devcoin",
+        source_row_number: 1,
+        classification: "canonical",
+        relevance: "",
+        relevance_reason: "canonical_parent",
+        coinbase_script: &script,
+        btc_height,
+        child_height: 12,
+        child_hash: None,
+    };
+    let csv_row =
+        normalized_csv_line_with_parent_coinbase(header, &row, coinbase_outputs, full_coinbase);
+    std::fs::write(&path, format!("{NORMALIZED_HEADER}{csv_row}"))
+        .with_context(|| format!("write temp CSV {}", path.display()))?;
+    Ok(path)
 }
 
 fn write_refining_rows(header: &Header, btc_height: i32) -> Result<PathBuf> {
@@ -930,13 +1422,17 @@ async fn seed_identity_event(
         .get(0))
 }
 
-fn write_contradictory_exact_rows(header: &Header, btc_height: i32) -> Result<PathBuf> {
+fn write_contradictory_exact_rows(
+    chain: &str,
+    header: &Header,
+    btc_height: i32,
+) -> Result<PathBuf> {
     let path = temp_csv_path()?;
     let bits = format!("{:08x}", header.bits.to_consensus());
     let child_hash = "66".repeat(32);
     let row = |source_row: i32, child_height: i32| {
         format!(
-            "devcoin,full_inventory,<fixture>,{source_row},full_classifier_inventory,test,\
+            "{chain},full_inventory,<fixture>,{source_row},full_classifier_inventory,test,\
              {child_height},{child_hash},,,,{btc_height},{},{},{},{bits},{},{},,,,canonical,\
              VALID (canonical Bitcoin block),{bits},,,canonical_parent\n",
             header.block_hash(),
@@ -959,10 +1455,10 @@ async fn seed_unpublished_event(
     source_code: &str,
     child_height: i32,
     child_hash: Vec<u8>,
-) -> Result<()> {
+) -> Result<i64> {
     let source_id = get_source_id(client, source_code).await?;
-    client
-        .execute(
+    Ok(client
+        .query_one(
             "INSERT INTO merge_mining_event ( \
                 source_id, child_height, child_block_hash, child_block_time, \
                 btc_parent_header_hash, btc_parent_prev_header_hash, \
@@ -978,12 +1474,13 @@ async fn seed_unpublished_event(
              FROM merge_mining_event \
              WHERE source_id = $1 \
              ORDER BY id \
-             LIMIT 1",
+             LIMIT 1 \
+             RETURNING id",
             &[&source_id, &child_height, &child_hash],
         )
         .await
-        .context("seed unpublished event")?;
-    Ok(())
+        .context("seed unpublished event")?
+        .get(0))
 }
 
 async fn active_source_event_count(

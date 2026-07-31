@@ -11,6 +11,7 @@ use anyhow::{Context, Result, bail};
 use mmm_capture::source_registry::{SOURCE_REGISTRY, SourceKind, SourceLifecycle};
 
 pub(super) const PINNED_RESEARCH_COMMIT: &str = "2146c204a8a203c59534a1b23b04f447a47b499e";
+pub(super) const OPERATOR_CSV_PROVENANCE: &str = "operator-csv";
 pub(super) const DEFAULT_MANIFEST_PATH: &str = "data/historical/historical-source-manifest.json";
 const RESEARCH_ROOT_ENV: &str = "MERGE_MINING_RESEARCH_DIR";
 const DEFAULT_BATCH_SIZE: usize = 500;
@@ -86,8 +87,9 @@ pub struct HistoricalImportAllConfig {
 }
 
 impl HistoricalImportConfig {
-    /// Build a fixture/operator override. The CSV must still use the normalized
-    /// schema, but publication digest and count checks are intentionally absent.
+    /// Build an additive fixture/operator override. The CSV must still use the
+    /// normalized schema, but publication digest, count checks, and
+    /// authoritative removal are intentionally absent.
     pub fn for_csv(chain: impl Into<String>, csv_path: impl Into<PathBuf>) -> Self {
         Self {
             chain: chain.into(),
@@ -100,6 +102,18 @@ impl HistoricalImportConfig {
             allow_unclassified: false,
             allow_empty_known_stales: false,
         }
+    }
+
+    pub(super) fn publication_ref(&self) -> &'static str {
+        if self.manifest_path.is_some() {
+            PINNED_RESEARCH_COMMIT
+        } else {
+            OPERATOR_CSV_PROVENANCE
+        }
+    }
+
+    pub(super) fn is_authoritative_snapshot(&self, spec: &HistoricalChainSpec) -> bool {
+        self.manifest_path.is_some() && self.limit.is_none() && spec.is_authoritative()
     }
 
     /// Parse `import-dataset <chain> [flags...]`.

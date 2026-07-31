@@ -3,7 +3,6 @@
 //! Child height, hash, header, time, and `nBits` are independent evidence.
 //! Empty cells remain absent. No child value is derived from a scan counter,
 //! Bitcoin parent field, or synthetic placeholder.
-
 use anyhow::Result;
 use bitcoin::block::Header;
 use bitcoin::consensus::deserialize;
@@ -14,9 +13,15 @@ use mmm_capture::capture::{
     HistoricalEventProvenance, NormalizedEventEvidence, RskEvidencePayload,
 };
 
-use super::config::{HistoricalChainSpec, PINNED_RESEARCH_COMMIT};
+use super::config::HistoricalChainSpec;
 use super::publication::NORMALIZED_COLUMNS;
 use super::rsk_sidecar::{RskSidecarColumns, parse_rsk_sidecar};
+
+mod parent_coinbase;
+use parent_coinbase::parse_parent_coinbase_fields;
+
+#[cfg(test)]
+mod contract_tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SourceClassification {
@@ -52,6 +57,7 @@ pub(super) struct ImportCandidate {
     pub(super) orphan_verdict: Option<BtcOrphanVerdict>,
     pub(super) relevance_selection: Option<RelevanceSelection>,
     pub(super) rsk_evidence: Option<RskEvidencePayload>,
+    pub(super) parent_output_addresses: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -111,6 +117,8 @@ pub(super) struct CsvLayout {
     btc_nonce: usize,
     btc_header: usize,
     coinbase_script: usize,
+    coinbase_outputs: usize,
+    full_coinbase: usize,
     classification: usize,
     validation_status: usize,
     expected_nbits: usize,
@@ -144,6 +152,8 @@ impl CsvLayout {
             btc_nonce: required_header(headers, "btc_nonce")?,
             btc_header: required_header(headers, "btc_header_hex")?,
             coinbase_script: required_header(headers, "coinbase_scriptsig_hex")?,
+            coinbase_outputs: required_header(headers, "coinbase_outputs")?,
+            full_coinbase: required_header(headers, "full_coinbase_hex")?,
             classification: required_header(headers, "classification")?,
             validation_status: required_header(headers, "validation_status")?,
             expected_nbits: required_header(headers, "expected_nbits")?,
@@ -176,19 +186,20 @@ pub(super) fn candidate_from_record(
     spec: &HistoricalChainSpec,
     layout: &CsvLayout,
     record: &csv::StringRecord,
+    publication_ref: &str,
 ) -> Result<ImportCandidate, SkipReason> {
     if record.get(layout.chain).map(str::trim) != Some(spec.chain) {
         return Err(SkipReason::Malformed);
     }
     let child = parse_child_fields(spec, layout, record)?;
-    let taxonomy = parse_taxonomy_fields(spec, layout, record)?;
+    let taxonomy = parse_taxonomy_fields(spec, layout, record, publication_ref)?;
     let header = parse_parent_header(record.get(layout.btc_header))?;
     let display_hash = header.block_hash().to_string();
     validate_parent_fields(layout, record, &header, &display_hash)?;
 
-    let coinbase_script = parse_optional_hex_field(record.get(layout.coinbase_script))?;
+    let coinbase = parse_parent_coinbase_fields(layout, record)?;
     let orphan_verdict = if taxonomy.source_classification == SourceClassification::Unknown {
-        let verdict = orphan_verdict(spec.chain, &header, coinbase_script.as_deref());
+        let verdict = orphan_verdict(spec.chain, &header, coinbase.script.as_deref());
         filter_unknown(verdict, taxonomy.relevance_selection)?;
         Some(verdict)
     } else {
@@ -214,9 +225,11 @@ pub(super) fn candidate_from_record(
             child_nbits: child.nbits,
             btc_parent_header: header,
             pow_validates_child_target: None,
-            btc_parent_coinbase_txid: None,
-            btc_parent_coinbase_script: coinbase_script,
-            btc_parent_coinbase_outputs: None,
+            btc_parent_coinbase_txid: coinbase.txid,
+            btc_parent_coinbase_script: coinbase.script,
+            btc_parent_coinbase_outputs: coinbase.outputs,
+            btc_parent_coinbase_outputs_text: coinbase.outputs_text,
+            btc_parent_coinbase_tx_bytes: coinbase.tx_bytes,
             child_coinbase_txid: None,
             child_coinbase_script: None,
             child_coinbase_outputs: None,
@@ -227,6 +240,7 @@ pub(super) fn candidate_from_record(
         orphan_verdict,
         relevance_selection: taxonomy.relevance_selection,
         rsk_evidence,
+        parent_output_addresses: coinbase.output_addresses,
     })
 }
 
@@ -263,6 +277,7 @@ fn parse_taxonomy_fields(
     spec: &HistoricalChainSpec,
     layout: &CsvLayout,
     record: &csv::StringRecord,
+    publication_ref: &str,
 ) -> Result<TaxonomyFields, SkipReason> {
     let source_classification = parse_source_classification(record.get(layout.classification))?;
     let validation_status = optional_string(record.get(layout.validation_status));
@@ -297,7 +312,7 @@ fn parse_taxonomy_fields(
         source_classification,
         relevance_selection,
         provenance: HistoricalEventProvenance {
-            publication_commit: PINNED_RESEARCH_COMMIT.to_owned(),
+            publication_ref: publication_ref.to_owned(),
             chain: spec.chain.to_owned(),
             source_kind: non_empty(record.get(layout.source_kind))?.to_owned(),
             source_path: non_empty(record.get(layout.source_path))?.to_owned(),
@@ -374,10 +389,8 @@ fn validate_child_bundle(
     if header.len() != Header::SIZE {
         return Err(SkipReason::Malformed);
     }
-    let hash = child_hash.ok_or(SkipReason::EvidenceMismatch)?;
-    let time = child_time.ok_or(SkipReason::EvidenceMismatch)?;
-    let nbits = child_nbits.ok_or(SkipReason::EvidenceMismatch)?;
-    if sha256d::Hash::hash(header).to_byte_array().as_slice() != hash {
+    if child_hash.is_some_and(|hash| sha256d::Hash::hash(header).to_byte_array().as_slice() != hash)
+    {
         return Err(SkipReason::HashMismatch);
     }
     let header_time = u32::from_le_bytes(
@@ -385,7 +398,7 @@ fn validate_child_bundle(
             .try_into()
             .expect("80-byte child header has time field"),
     );
-    if i64::from(header_time) != time {
+    if child_time.is_some_and(|time| i64::from(header_time) != time) {
         return Err(SkipReason::EvidenceMismatch);
     }
     let header_nbits = u32::from_le_bytes(
@@ -393,7 +406,7 @@ fn validate_child_bundle(
             .try_into()
             .expect("80-byte child header has nBits field"),
     );
-    if chain != "xaya" && header_nbits != nbits {
+    if chain != "xaya" && child_nbits.is_some_and(|nbits| header_nbits != nbits) {
         return Err(SkipReason::EvidenceMismatch);
     }
     Ok(())
@@ -409,16 +422,18 @@ fn filter_unknown(
     ) {
         return Ok(());
     }
-    if !matches!(
-        selection,
-        Some(RelevanceSelection::StrictBtcOrphan | RelevanceSelection::WeakBtcOrphan)
-    ) {
-        return Err(SkipReason::OrphanNotSelected);
-    }
-    match verdict {
-        BtcOrphanVerdict::Strict | BtcOrphanVerdict::Weak => Ok(()),
-        BtcOrphanVerdict::Excluded => Err(SkipReason::OrphanExcluded),
-        BtcOrphanVerdict::Pending => Err(SkipReason::OrphanPending),
+    match (verdict, selection) {
+        (BtcOrphanVerdict::Strict, Some(RelevanceSelection::StrictBtcOrphan))
+        | (BtcOrphanVerdict::Weak, Some(RelevanceSelection::WeakBtcOrphan)) => Ok(()),
+        (
+            BtcOrphanVerdict::Strict | BtcOrphanVerdict::Weak,
+            Some(RelevanceSelection::StrictBtcOrphan | RelevanceSelection::WeakBtcOrphan),
+        ) => Err(SkipReason::TaxonomyMismatch),
+        (BtcOrphanVerdict::Strict | BtcOrphanVerdict::Weak, _) => {
+            Err(SkipReason::OrphanNotSelected)
+        }
+        (BtcOrphanVerdict::Excluded, _) => Err(SkipReason::OrphanExcluded),
+        (BtcOrphanVerdict::Pending, _) => Err(SkipReason::OrphanPending),
     }
 }
 
@@ -581,11 +596,17 @@ pub(super) fn non_empty(value: Option<&str>) -> Result<&str, SkipReason> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::config::historical_chain_spec;
+    use super::super::config::{PINNED_RESEARCH_COMMIT, historical_chain_spec};
     use super::*;
 
     const GENESIS_HEADER: &str = "0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c";
     const GENESIS_HASH: &str = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
+    const GENESIS_COINBASE: &str = "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000";
+    const GENESIS_COINBASE_SCRIPT: &str = "04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73";
+    const RSK_CHILD_HASH: &str = "863002b6ad9a940f191f3ed3289e42e8eee107a769b6ecdfdaaad747f70c981d";
+    const RSK_MINER: &str = "32dfc7a84f24b10a5dded1d8b24f48b96ab77373";
+    const RSK_MERGE_MINING_HASH: &str =
+        "f0d9129c65b3b91a89355b9ccf975e55c29229d78d4a66201b83d409ae001f73";
 
     #[derive(Default)]
     struct TestRow<'a> {
@@ -595,6 +616,9 @@ mod tests {
         child_header: &'a str,
         child_time: &'a str,
         child_nbits: &'a str,
+        coinbase_script: &'a str,
+        coinbase_outputs: &'a str,
+        full_coinbase: &'a str,
         classification: &'a str,
         relevance: &'a str,
         relevance_reason: &'a str,
@@ -608,15 +632,23 @@ mod tests {
             child_header,
             child_time,
             child_nbits,
+            coinbase_script,
+            coinbase_outputs,
+            full_coinbase,
             classification,
             relevance,
             relevance_reason,
         } = value;
+        let coinbase_script = if coinbase_script.is_empty() {
+            "04ffff001d0104"
+        } else {
+            coinbase_script
+        };
         format!(
             "{chain},full_inventory,<archive>,1,full_classifier_inventory,archive,\
              {child_height},{child_hash},{child_header},{child_time},{child_nbits},\
              0,{GENESIS_HASH},{},{},1d00ffff,2083236893,{GENESIS_HEADER},\
-             04ffff001d0104,,,{},VALID,1d00ffff,,{relevance},{relevance_reason}\n",
+             {coinbase_script},{coinbase_outputs},{full_coinbase},{},VALID,1d00ffff,,{relevance},{relevance_reason}\n",
             "0".repeat(64),
             1_231_006_505,
             classification
@@ -637,7 +669,7 @@ mod tests {
         let mut reader = csv::Reader::from_reader(input.as_bytes());
         let layout = CsvLayout::new(reader.headers().unwrap(), spec).unwrap();
         let record = reader.records().next().unwrap().unwrap();
-        candidate_from_record(spec, &layout, &record)
+        candidate_from_record(spec, &layout, &record, PINNED_RESEARCH_COMMIT)
     }
 
     fn child_identity() -> (String, String) {
@@ -728,7 +760,76 @@ mod tests {
     }
 
     #[test]
-    fn rejects_identity_free_rows_and_partial_header_bundles() {
+    fn rsk_candidate_carries_sidecar_keyed_by_child_identity() {
+        let mut input = row(TestRow {
+            chain: "rsk",
+            child_height: "263443",
+            child_hash: RSK_CHILD_HASH,
+            classification: "stale",
+            relevance_reason: "valid_direct_stale",
+            ..TestRow::default()
+        });
+        input.pop();
+        input.push_str(&format!(",{RSK_MINER},{RSK_MERGE_MINING_HASH},0,,,0405,\n"));
+
+        let parsed = candidate("rsk", &input).unwrap();
+        let evidence = parsed.rsk_evidence.expect("RSK row carries sidecar");
+        assert_eq!(
+            evidence.rsk_block_hash,
+            parsed.evidence.child_block_hash.unwrap()
+        );
+        assert_eq!(evidence.rsk_height, parsed.evidence.child_height.unwrap());
+        assert!(!evidence.is_uncle);
+        assert_eq!(evidence.merkle_proof.as_deref(), Some(&[0x04, 0x05][..]));
+    }
+
+    #[test]
+    fn preserves_published_output_text_and_derives_payout_addresses() {
+        let outputs = "76a914000000000000000000000000000000000000000088ac;OP_RETURN:0";
+        let parsed = candidate(
+            "devcoin",
+            &row(TestRow {
+                chain: "devcoin",
+                child_height: "42",
+                coinbase_outputs: outputs,
+                classification: "canonical",
+                relevance_reason: "canonical_parent",
+                ..TestRow::default()
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.evidence.btc_parent_coinbase_outputs_text.as_deref(),
+            Some(outputs)
+        );
+        assert_eq!(parsed.parent_output_addresses.len(), 1);
+    }
+
+    #[test]
+    fn parses_and_preserves_a_full_parent_coinbase_transaction() {
+        let parsed = candidate(
+            "devcoin",
+            &row(TestRow {
+                chain: "devcoin",
+                child_height: "42",
+                coinbase_script: GENESIS_COINBASE_SCRIPT,
+                full_coinbase: GENESIS_COINBASE,
+                classification: "canonical",
+                relevance_reason: "canonical_parent",
+                ..TestRow::default()
+            }),
+        )
+        .unwrap();
+        assert!(parsed.evidence.btc_parent_coinbase_txid.is_some());
+        assert!(parsed.evidence.btc_parent_coinbase_outputs.is_some());
+        assert_eq!(
+            parsed.evidence.btc_parent_coinbase_tx_bytes,
+            Some(hex::decode(GENESIS_COINBASE).unwrap())
+        );
+    }
+
+    #[test]
+    fn rejects_identity_free_rows_and_accepts_independent_header_companions() {
         assert_eq!(
             candidate(
                 "devcoin",
@@ -743,23 +844,27 @@ mod tests {
             SkipReason::EmptyField
         );
         let (hash, header) = child_identity();
-        assert_eq!(
-            candidate(
-                "devcoin",
-                &row(TestRow {
-                    chain: "devcoin",
-                    child_height: "42",
-                    child_hash: &hash,
-                    child_header: &header,
-                    child_nbits: "1d00ffff",
-                    classification: "stale",
-                    relevance_reason: "valid_direct_stale",
-                    ..TestRow::default()
-                }),
-            )
-            .unwrap_err(),
-            SkipReason::EvidenceMismatch
-        );
+        for partial in [
+            TestRow {
+                chain: "devcoin",
+                child_height: "42",
+                child_header: &header,
+                classification: "stale",
+                relevance_reason: "valid_direct_stale",
+                ..TestRow::default()
+            },
+            TestRow {
+                chain: "devcoin",
+                child_hash: &hash,
+                child_header: &header,
+                child_nbits: "1d00ffff",
+                classification: "stale",
+                relevance_reason: "valid_direct_stale",
+                ..TestRow::default()
+            },
+        ] {
+            candidate("devcoin", &row(partial)).unwrap();
+        }
     }
 
     #[test]
@@ -858,6 +963,38 @@ mod tests {
         assert_eq!(
             parsed.source_classification,
             SourceClassification::StaleDescendant
+        );
+    }
+
+    #[test]
+    fn published_orphan_bucket_must_match_the_local_verdict() {
+        assert_eq!(
+            filter_unknown(
+                BtcOrphanVerdict::Strict,
+                Some(RelevanceSelection::WeakBtcOrphan)
+            ),
+            Err(SkipReason::TaxonomyMismatch)
+        );
+        assert_eq!(
+            filter_unknown(
+                BtcOrphanVerdict::Weak,
+                Some(RelevanceSelection::StrictBtcOrphan)
+            ),
+            Err(SkipReason::TaxonomyMismatch)
+        );
+        assert_eq!(
+            filter_unknown(
+                BtcOrphanVerdict::Strict,
+                Some(RelevanceSelection::StrictBtcOrphan)
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            filter_unknown(
+                BtcOrphanVerdict::Weak,
+                Some(RelevanceSelection::WeakBtcOrphan)
+            ),
+            Ok(())
         );
     }
 }

@@ -29,7 +29,7 @@ the importer verifies:
 - every file's size, checksum, normalized header, row count, and classification
   counts;
 - every row's schema, hashes, compact targets, parent header, proof of work,
-  taxonomy, and authenticated child-header bundle.
+  taxonomy, and available child-header corroboration.
 
 Git LFS must materialize the CSV payloads. If the importer finds pointer text,
 recover the files with:
@@ -52,9 +52,10 @@ be unavailable. These fields are independent:
 Empty cells remain SQL `NULL`. The importer never substitutes a scan counter,
 placeholder hash, Bitcoin parent time, zero, or another synthetic value.
 An individual event must have a child hash or a child height. A populated child
-header must be exactly 80 bytes and must authenticate its hash, timestamp, and
-`nBits`. Xaya is the documented exception to the header-field `nBits`
-comparison because its authenticated effective target lives in `PowData`.
+header must be exactly 80 bytes. When a child hash, timestamp, or `nBits` is
+also present, the header must authenticate that companion independently. Xaya
+is the documented exception to the header-field `nBits` comparison because its
+authenticated effective target lives in `PowData`.
 
 A real child hash is exact identity: `(source_id, child_block_hash)`. A hashless
 row uses `(source_id, child_height, btc_parent_header_hash)` as partial identity.
@@ -63,30 +64,64 @@ row already represented by one exact event attaches its historical provenance
 to that exact event instead of creating a duplicate. Contradictory or ambiguous
 evidence fails the chain transaction.
 
-`historical_event_provenance` retains every publication source row: commit,
-chain, original path and row number, source classification, validation result,
-and stale relevance axes remain separate from the monitor's derived Bitcoin
-block state. Several source rows can refine to one event without losing their
-individual provenance.
+An exact identity represents the one child-ledger block exposed under that
+hash, including the parent proof retained by the child node. A later row with
+the same source and child hash but a different Bitcoin parent is contradictory
+source evidence, not a second event, and fails closed. The pinned publication
+contains 243,970 non-null child hashes with no duplicate
+`(chain, child_block_hash)` identities.
+
+`child_block_hash` encodes the exact bytes stored by live capture. For
+SHA256d child headers this is lowercase hex of the raw
+`sha256d::Hash::to_byte_array()` bytes, not the reversed display/RPC form.
+Bitcoin parent hash columns are different: they are display-order
+cross-checks, while the stored parent identity is derived from
+`btc_header_hex`.
+
+`expected_nbits` is the publication validator's expected Bitcoin target for an
+admitted row. When populated, it must equal the `nBits` encoded in
+`btc_header_hex`; disagreement is contradictory evidence and fails closed.
+All 3,672 populated values in the pinned publication satisfy this invariant.
+
+`historical_event_provenance` retains every imported source row. Its
+`publication_ref` is the pinned research commit for manifest-backed imports and
+`operator-csv` for an unpinned override. Chain, original path and row number,
+source classification, validation result, and stale relevance axes remain
+separate from the monitor's derived Bitcoin block state. Several source rows
+can refine to one event without losing their individual provenance.
+
+The importer also retains both parent-coinbase publication fields.
+`full_coinbase_hex`, when present, is decoded and corroborated against the
+published scriptSig before its raw bytes, txid, script, and value-complete
+outputs are stored. `coinbase_outputs` is preserved verbatim because the
+research publication legitimately contains raw scriptPubKey, address, and
+value-paired forms. Recognizable Bitcoin payout addresses participate in
+capture-time attribution, and `reclassify-pools` can replay from the stored
+text later.
 
 ## Source Lifecycles And Existing Data
 
 The shared source registry controls reconciliation:
 
-- `Historical` and `Partial` sources are authoritative snapshots. After a
-  complete successful import, source events absent from the pinned publication
-  are deleted, including rows created by the retired synthetic importer.
+- `Historical` and `Partial` sources use the checksum-verified manifest as
+  their authoritative snapshot. After a complete successful manifest import,
+  source events absent from the pinned publication are deleted, including rows
+  created by the retired synthetic importer.
 - `Live` sources are additive. Historical publication rows can fill or refine
   a matching live event, but absence from the publication never deletes a
   live-captured event.
 - `Surveyed` sources must publish zero rows. Doichain completes preflight and
   performs no database writes.
 
-Each chain writes, removes obsolete authoritative rows, rebuilds affected
-parents and source health, and commits in one transaction. A failure rolls back
-the whole chain. `import-all` can therefore be rerun after interruption:
-completed chains are idempotent, while an interrupted chain starts again from
-its prior committed state.
+Each chain writes its complete base/provenance snapshot, removes obsolete
+authoritative rows, and enqueues affected parents in one transaction. A failure
+before that commit rolls back the whole chain. After commit, the importer drains
+the durable queue in bounded per-parent transactions. Primary reconcile results
+store their changed-hash cascade seeds in the same transaction, and queue work
+is removed only after its dependent cascade succeeds. An interruption at
+either boundary therefore resumes without losing cascade work. `import-all`
+rebuilds source health once after all chains and targeted stale branches have
+reconciled.
 
 The schema migration retains existing child values and makes the child evidence
 columns nullable. Before changing the schema, it fails closed if the legacy
@@ -160,10 +195,10 @@ stale-branch reconciliation pass. Use `import-all` to establish the complete
 publication state; the single-chain command is for diagnostics and recovery.
 
 `--csv PATH` is an explicit fixture or operator override. It must still use the
-normalized schema, but it has no monitor-manifest checksum expectation.
-Without `--limit`, it remains an authoritative snapshot for historical and
-partial sources and removes source events absent from the supplied file.
-`--limit` makes the run diagnostic and disables that authoritative removal.
+normalized schema, but it has no monitor-manifest checksum expectation. It is
+always additive, carries `operator-csv` rather than the pinned research commit
+in provenance, and never removes events absent from the supplied file.
+Authoritative replacement is reserved for the checksum-verified manifest path.
 
 After the full import, refresh attribution:
 

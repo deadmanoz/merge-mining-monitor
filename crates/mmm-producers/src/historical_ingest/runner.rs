@@ -21,9 +21,9 @@ use mmm_capture::capture::{
 };
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::{
-    capture_historical_in_transaction, cascade_historical_import,
-    rebuild_historical_source_health_in_transaction,
-    reconcile_authoritative_historical_source_in_transaction,
+    clear_authoritative_historical_provenance_in_transaction, drain_historical_reconcile_queue,
+    rebuild_historical_source_health, reconcile_authoritative_historical_source_in_transaction,
+    write_historical_base_in_transaction,
 };
 use mmm_store::{
     EventWriteDisposition, upsert_merge_mining_event_with_attributions, upsert_pool_snapshot,
@@ -133,22 +133,21 @@ impl HistoricalImportSummary {
     /// membership gate can persist `excluded` for a row whose offline verdict
     /// was strict/weak. The summary reports what was stored. Call exactly once
     /// per persisted row, paired with `ingested += 1`.
-    fn record_persisted(
-        &mut self,
-        persisted: Option<(BlockKind, Option<String>)>,
-        candidate: &ImportCandidate,
-    ) {
+    fn record_persisted(&mut self, persisted: Option<(BlockKind, Option<String>)>, count: u64) {
         match persisted {
-            Some((BlockKind::Canonical, _)) => self.canonical += 1,
-            Some((BlockKind::Stale, _)) => self.stale += 1,
+            Some((BlockKind::Canonical, _)) => self.canonical += count,
+            Some((BlockKind::Stale, _)) => self.stale += count,
             Some((BlockKind::Unknown, class)) => match class.as_deref() {
-                Some("strict_btc_orphan") => self.strict_orphans += 1,
-                Some("weak_btc_orphan") => self.weak_orphans += 1,
-                Some("excluded") => self.excluded += 1,
-                _ => self.pending += 1,
+                Some("strict_btc_orphan") => self.strict_orphans += count,
+                Some("weak_btc_orphan") => self.weak_orphans += count,
+                Some("excluded") => self.excluded += count,
+                _ => self.pending += count,
             },
-            None => self.pending += 1,
+            None => self.pending += count,
         }
+    }
+
+    fn record_attestation(&mut self, candidate: &ImportCandidate) {
         match candidate.relevance_selection {
             Some(RelevanceSelection::KnownDirectStale) => {
                 self.known_direct_branch_attestations += 1;
@@ -253,7 +252,8 @@ pub async fn run_historical_import(
     config: &HistoricalImportConfig,
 ) -> Result<HistoricalImportSummary> {
     let mut classifications = HashMap::new();
-    run_historical_import_with_cache(client, classifier, config, &mut classifications, None).await
+    run_historical_import_with_cache(client, classifier, config, &mut classifications, None, true)
+        .await
 }
 
 async fn run_historical_import_with_cache(
@@ -262,6 +262,7 @@ async fn run_historical_import_with_cache(
     config: &HistoricalImportConfig,
     classifications: &mut HashMap<Vec<u8>, ParentClassification>,
     preflighted_artifact: Option<ArtifactPreflight>,
+    rebuild_source_health_after_import: bool,
 ) -> Result<HistoricalImportSummary> {
     let spec = historical_chain_spec(&config.chain)
         .ok_or_else(|| anyhow::anyhow!("unsupported published chain {:?}", config.chain))?;
@@ -302,7 +303,15 @@ async fn run_historical_import_with_cache(
         .await
         .with_context(|| format!("begin {} historical chain transaction", spec.chain))?;
     let pool_ids_by_slug = upsert_pool_snapshot(&txn, resolver.snapshot()).await?;
-    let (mut summary, mut changed_hashes) = import_rows_in_transaction(
+    if config.is_authoritative_snapshot(spec) {
+        clear_authoritative_historical_provenance_in_transaction(
+            &txn,
+            super::config::PINNED_RESEARCH_COMMIT,
+            spec.chain,
+        )
+        .await?;
+    }
+    let (mut summary, parent_counts) = import_rows_in_transaction(
         &txn,
         &mut ChainImportContext {
             source_id,
@@ -317,25 +326,23 @@ async fn run_historical_import_with_cache(
     )
     .await?;
 
-    if config.limit.is_none() && spec.is_authoritative() {
-        let (removed, hashes) = reconcile_authoritative_historical_source_in_transaction(
+    if config.is_authoritative_snapshot(spec) {
+        summary.removed = reconcile_authoritative_historical_source_in_transaction(
             &txn,
             source_id,
             super::config::PINNED_RESEARCH_COMMIT,
             spec.chain,
-            classifier,
         )
         .await?;
-        summary.removed = removed;
-        changed_hashes.extend(hashes);
     }
-    rebuild_historical_source_health_in_transaction(&txn).await?;
     txn.commit()
         .await
         .with_context(|| format!("commit {} historical chain transaction", spec.chain))?;
-    changed_hashes.sort();
-    changed_hashes.dedup();
-    cascade_historical_import(client, classifier, changed_hashes).await?;
+    drain_historical_reconcile_queue(client, classifier, classifications).await?;
+    record_persisted_parent_counts(client, &mut summary, parent_counts).await?;
+    if rebuild_source_health_after_import {
+        rebuild_historical_source_health(client).await?;
+    }
     Ok(summary)
 }
 
@@ -343,7 +350,7 @@ async fn import_rows_in_transaction(
     txn: &Transaction<'_>,
     context: &mut ChainImportContext<'_>,
     artifact: ArtifactPreflight,
-) -> Result<(HistoricalImportSummary, Vec<Vec<u8>>)> {
+) -> Result<(HistoricalImportSummary, HashMap<Vec<u8>, u64>)> {
     let (mut reader, layout) = open_candidate_reader(context.config, context.spec)?;
     let mut summary = HistoricalImportSummary {
         expected_rows: artifact.row_count,
@@ -354,7 +361,7 @@ async fn import_rows_in_transaction(
         published_weak_orphans: artifact.counts.weak_btc_orphan,
         ..HistoricalImportSummary::default()
     };
-    let mut changed_hashes = Vec::new();
+    let mut parent_counts = HashMap::new();
 
     for record in reader.records() {
         summary.rows_seen += 1;
@@ -365,7 +372,12 @@ async fn import_rows_in_transaction(
                 continue;
             }
         };
-        let candidate = match candidate_from_record(context.spec, &layout, &record) {
+        let candidate = match candidate_from_record(
+            context.spec,
+            &layout,
+            &record,
+            context.config.publication_ref(),
+        ) {
             Ok(candidate) => candidate,
             Err(reason) => {
                 summary.skip(reason);
@@ -399,7 +411,7 @@ async fn import_rows_in_transaction(
             decision,
         )
         .await
-        .map(|hashes| changed_hashes.extend(hashes))?;
+        .map(|parent_hash| *parent_counts.entry(parent_hash).or_default() += 1)?;
         if let Some(limit) = context.config.limit
             && summary.ingested as usize >= limit
         {
@@ -418,7 +430,7 @@ async fn import_rows_in_transaction(
             );
         }
     }
-    Ok((summary, changed_hashes))
+    Ok((summary, parent_counts))
 }
 
 /// Preflight the complete pinned publication, then import every event artifact
@@ -484,6 +496,7 @@ async fn run_historical_import_configs(
             chain_config,
             &mut classifications,
             Some(artifact),
+            false,
         )
         .await?;
         summary
@@ -492,6 +505,7 @@ async fn run_historical_import_configs(
     }
     summary.stale_branches_reconciled =
         reconcile_published_stale_branches(client, classifier).await?;
+    rebuild_historical_source_health(client).await?;
     Ok(summary)
 }
 
@@ -546,6 +560,10 @@ async fn reconcile_published_stale_branches(
     let mut reconciled = 0_u64;
     for row in rows {
         let event_id: i64 = row.get(0);
+        // These rows remained unknown after the shared import preflight. A
+        // fresh classification is the purpose of this targeted pass; reusing
+        // the cached unknown verdict would prevent the attested stale branch
+        // from converging when Core can now place it.
         mmm_read_model::reconcile_from_merge_mining_event(client, event_id, classifier, None)
             .await
             .with_context(|| format!("reconcile published stale-branch event {event_id}"))?;
@@ -562,7 +580,9 @@ async fn reconcile_published_stale_branches(
 /// mutation pass reuses this cache and therefore performs no Bitcoin Core calls
 /// while holding the chain transaction open. Parsing and classification share
 /// one stream so the complete artifact is not reopened for two identical parse
-/// passes.
+/// passes. Candidates are deliberately reparsed during mutation rather than
+/// retained for the whole publication: the extra sequential read keeps memory
+/// bounded while classification remains outside the transaction.
 async fn preflight_and_classify_candidates<C: GenericClient>(
     client: &C,
     classifier: &ConfiguredParentClassifier,
@@ -581,14 +601,20 @@ async fn preflight_and_classify_candidates<C: GenericClient>(
                 offset + 2
             )
         })?;
-        let candidate = candidate_from_record(spec, &layout, &record).map_err(|reason| {
-            anyhow::anyhow!(
-                "normalized artifact {} row {} failed {}",
-                config.csv_path.display(),
-                offset + 2,
-                reason.as_str()
-            )
-        })?;
+        rows += 1;
+        let candidate =
+            match candidate_from_record(spec, &layout, &record, config.publication_ref()) {
+                Ok(candidate) => candidate,
+                Err(_) if config.manifest_path.is_none() => continue,
+                Err(reason) => {
+                    bail!(
+                        "normalized artifact {} row {} failed {}",
+                        config.csv_path.display(),
+                        offset + 2,
+                        reason.as_str()
+                    );
+                }
+            };
         if classifier.is_enabled() {
             let decision =
                 import_decision(client, classifier, config, &candidate, classifications).await?;
@@ -603,7 +629,6 @@ async fn preflight_and_classify_candidates<C: GenericClient>(
                 );
             }
         }
-        rows += 1;
     }
     if rows != expected_rows {
         bail!(
@@ -779,29 +804,28 @@ async fn import_decision<C: GenericClient>(
 /// Persist one decided candidate through the shared producer write path.
 ///
 /// Resolves pool attribution from the parent coinbase, builds the standard event
-/// payload, then writes and reconciles it inside the caller-owned chain
-/// transaction. `Skip` is unreachable here by construction.
+/// payload, then writes it and durably enqueues the affected parent inside the
+/// caller-owned chain transaction. The bounded read-model reconcile drains
+/// after commit. `Skip` is unreachable here by construction.
 async fn import_candidate(
     txn: &Transaction<'_>,
     context: &ImportContext<'_>,
     summary: &mut HistoricalImportSummary,
     candidate: ImportCandidate,
     decision: ImportDecision,
-) -> Result<Vec<Vec<u8>>> {
-    let attributions = candidate
-        .evidence
-        .btc_parent_coinbase_script
-        .as_deref()
-        .and_then(|script| {
-            resolve_parent_pool_attribution_from_coinbase(
-                script,
-                &[],
-                context.resolver,
-                context.pool_ids_by_slug,
-            )
-        })
-        .into_iter()
-        .collect();
+) -> Result<Vec<u8>> {
+    let attributions = resolve_parent_pool_attribution_from_coinbase(
+        candidate
+            .evidence
+            .btc_parent_coinbase_script
+            .as_deref()
+            .unwrap_or_default(),
+        &candidate.parent_output_addresses,
+        context.resolver,
+        context.pool_ids_by_slug,
+    )
+    .into_iter()
+    .collect();
     let pool_attributions = ResolvedPoolAttributions { attributions };
     let mut payload = build_event_payload_from_evidence(
         candidate.evidence.clone(),
@@ -845,7 +869,7 @@ async fn import_candidate(
         ImportDecision::CapturePreclassified(parent_classification) => Some(*parent_classification),
         ImportDecision::Skip(_) => unreachable!("skip decisions do not reach import_candidate"),
     };
-    let (outcome, changed_hashes) = capture_historical_in_transaction(
+    let outcome = write_historical_base_in_transaction(
         txn,
         context.source_id,
         context.classifier,
@@ -875,9 +899,37 @@ async fn import_candidate(
         .block_hash()
         .to_byte_array()
         .to_vec();
-    let persisted = mmm_read_model::load_persisted_kind_and_orphan_class(txn, &parent_hash)
-        .await
-        .context("read back persisted block kind and orphan class for the import summary")?;
-    summary.record_persisted(persisted, &candidate);
-    Ok(changed_hashes)
+    summary.record_attestation(&candidate);
+    Ok(parent_hash)
+}
+
+async fn record_persisted_parent_counts(
+    client: &Client,
+    summary: &mut HistoricalImportSummary,
+    parent_counts: HashMap<Vec<u8>, u64>,
+) -> Result<()> {
+    let parent_hashes = parent_counts.keys().cloned().collect::<Vec<_>>();
+    let mut persisted = HashMap::with_capacity(parent_hashes.len());
+    for chunk in parent_hashes.chunks(1_000) {
+        let hashes = chunk.to_vec();
+        for row in client
+            .query(
+                "SELECT btc_header_hash, kind, btc_orphan_class \
+                 FROM block \
+                 WHERE btc_header_hash = ANY($1::bytea[])",
+                &[&hashes],
+            )
+            .await
+            .context("load persisted historical parent classifications")?
+        {
+            let hash: Vec<u8> = row.get(0);
+            let kind: String = row.get(1);
+            let orphan_class: Option<String> = row.get(2);
+            persisted.insert(hash, (BlockKind::from_db_str(&kind)?, orphan_class));
+        }
+    }
+    for (hash, count) in parent_counts {
+        summary.record_persisted(persisted.remove(&hash), count);
+    }
+    Ok(())
 }

@@ -15,10 +15,14 @@ This changelog starts with the initial release.
   height-plus-parent identity, promote partial observations in place, and
   reject ambiguous or contradictory refinement. Fail the upgrade before schema
   changes if legacy rows conflict with the stronger exact identity.
-- Reconcile historical and partial sources as atomic authoritative snapshots,
-  keep live-source imports additive, retain source taxonomy in historical
-  provenance without collapsing distinct source rows, and treat Doichain's
-  zero-row survey as a database no-op.
+- Reconcile manifest-backed historical and partial sources as authoritative
+  snapshots while keeping live-source and operator CSV imports additive.
+  Commit each base/provenance snapshot
+  atomically, then drain parent and dependent read-model work through a durable
+  resumable queue without retaining one advisory lock per imported parent.
+  Retain source taxonomy and all published parent-coinbase evidence without
+  collapsing distinct source rows, and treat Doichain's zero-row survey as a
+  database no-op.
 - Expose nullable child evidence through block detail and render unavailable
   fields explicitly instead of zero or placeholder values.
 - Report historical write outcomes from the store's exact/partial identity

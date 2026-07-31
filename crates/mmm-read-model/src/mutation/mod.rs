@@ -27,12 +27,17 @@ use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
 use mmm_capture::capture::{MergeMiningEventPayload, ParentKind, apply_classification_proof};
 use mmm_store::EventWriteOutcome;
 
+mod historical_queue;
+pub use historical_queue::drain_historical_reconcile_queue;
+#[cfg(feature = "db-integration")]
+pub use historical_queue::drain_historical_reconcile_queue_with_budget_for_test;
+use historical_queue::enqueue_historical_parent;
+
 use super::{
     CoreCoinbaseStatus, DEFAULT_CASCADE_BUDGET, PreclassifiedParent,
-    RECONCILE_LOCK_SET_RETRY_LIMIT, classify_payload_parent, find_anchor_event_for_block,
-    is_reconcile_lock_set_changed, load_block_cascade_state, load_event, lock_block_hash,
-    lock_block_hashes, lock_event_for_source_health, lock_payload_parent_read_model_in_txn,
-    preclassify_event_parent, rebuild_parent_read_model,
+    RECONCILE_LOCK_SET_RETRY_LIMIT, classify_payload_parent, is_reconcile_lock_set_changed,
+    load_event, lock_block_hash, lock_event_for_source_health,
+    lock_payload_parent_read_model_in_txn, preclassify_event_parent,
     reconcile_dependents_after_changes_with_budget, reconcile_one_event_in_txn,
     upsert_core_canonical_header_with_coinbase,
 };
@@ -245,56 +250,46 @@ where
     Ok(outcome.event_id)
 }
 
-/// Capture one historical observation inside a caller-owned chain transaction.
+/// Write one historical observation inside a caller-owned chain transaction.
 ///
-/// The caller retains the returned changed hashes, rebuilds source health
-/// before committing, then cascades those hashes after commit. Any error rolls
-/// back the complete chain snapshot instead of leaving a partial import.
-pub async fn capture_historical_in_transaction<F>(
+/// Historical publication imports intentionally stop at base evidence here.
+/// The affected parent is enqueued durably in the same transaction, then
+/// [`drain_historical_reconcile_queue`] rebuilds parent and dependent read-model
+/// state after the chain snapshot commits. Keeping advisory read-model locks out
+/// of the chain transaction prevents a broad import from retaining one lock per
+/// parent until commit.
+pub async fn write_historical_base_in_transaction<F>(
     txn: &Transaction<'_>,
     source_id: i64,
     classifier: &ConfiguredParentClassifier,
     payload: &mut MergeMiningEventPayload,
     parent_classification: Option<ParentClassification>,
     upsert: F,
-) -> Result<(EventWriteOutcome, Vec<Vec<u8>>)>
+) -> Result<EventWriteOutcome>
 where
     F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
 {
-    let preclassified = match parent_classification {
+    match parent_classification {
         Some(classification) => {
             apply_classification_proof(payload, classification.to_proof())?;
-            Some(classification)
         }
-        None => classify_payload_parent(txn, payload, classifier).await?,
-    };
-    lock_payload_parent_read_model_in_txn(txn, payload, preclassified.as_ref()).await?;
-    lock_block_hash(txn, &payload.btc_parent_header_hash).await?;
+        None => {
+            classify_payload_parent(txn, payload, classifier).await?;
+        }
+    }
     let outcome = upsert(txn, source_id, payload).await?;
-    let changed_hashes = if payload.btc_parent_kind == ParentKind::Near {
-        Vec::new()
-    } else {
-        reconcile_one_event_in_txn(
-            txn,
-            outcome.event_id,
-            classifier,
-            preclassified.map(PreclassifiedParent::trusted),
-            PrimaryDiff::BulkImport,
-        )
-        .await?
-    };
-    Ok((outcome, changed_hashes))
+    enqueue_historical_parent(txn, &payload.btc_parent_header_hash).await?;
+    Ok(outcome)
 }
 
 /// Remove authoritative-source events absent from the current publication and
-/// rebuild every affected parent in the same transaction.
+/// durably enqueue every affected parent in the same transaction.
 pub async fn reconcile_authoritative_historical_source_in_transaction(
     txn: &Transaction<'_>,
     source_id: i64,
-    publication_commit: &str,
+    publication_ref: &str,
     chain: &str,
-    classifier: &ConfiguredParentClassifier,
-) -> Result<(u64, Vec<Vec<u8>>)> {
+) -> Result<u64> {
     let rows = txn
         .query(
             "SELECT DISTINCT e.btc_parent_header_hash \
@@ -303,22 +298,17 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
                AND NOT EXISTS ( \
                     SELECT 1 FROM historical_event_provenance p \
                     WHERE p.event_id = e.id \
-                      AND p.publication_commit = $2 \
+                      AND p.publication_ref = $2 \
                       AND p.chain = $3 \
                ) \
              ORDER BY e.btc_parent_header_hash",
-            &[&source_id, &publication_commit, &chain],
+            &[&source_id, &publication_ref, &chain],
         )
         .await
         .context("load authoritative historical removals")?;
-    let parent_hashes = rows
-        .into_iter()
-        .map(|row| row.get::<_, Vec<u8>>(0))
-        .collect::<Vec<_>>();
-    lock_block_hashes(txn, &parent_hashes).await?;
-    let mut before = Vec::with_capacity(parent_hashes.len());
-    for hash in &parent_hashes {
-        before.push(load_block_cascade_state(txn, hash).await?);
+    for row in rows {
+        let hash: Vec<u8> = row.get(0);
+        enqueue_historical_parent(txn, &hash).await?;
     }
 
     let removed = txn
@@ -328,51 +318,45 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
                AND NOT EXISTS ( \
                     SELECT 1 FROM historical_event_provenance p \
                     WHERE p.event_id = e.id \
-                      AND p.publication_commit = $2 \
+                      AND p.publication_ref = $2 \
                       AND p.chain = $3 \
                )",
-            &[&source_id, &publication_commit, &chain],
+            &[&source_id, &publication_ref, &chain],
         )
         .await
         .context("remove events absent from authoritative historical snapshot")?;
-
-    let mut changed_hashes = Vec::new();
-    for (hash, before_state) in parent_hashes.iter().zip(before) {
-        if let Some(event_id) = find_anchor_event_for_block(txn, hash).await? {
-            changed_hashes.extend(
-                reconcile_one_event_in_txn(
-                    txn,
-                    event_id,
-                    classifier,
-                    None,
-                    PrimaryDiff::BulkImport,
-                )
-                .await?,
-            );
-        } else {
-            rebuild_parent_read_model(txn, hash, None).await?;
-        }
-        if load_block_cascade_state(txn, hash).await? != before_state {
-            changed_hashes.push(hash.clone());
-        }
-    }
-    changed_hashes.sort();
-    changed_hashes.dedup();
-    Ok((removed, changed_hashes))
+    Ok(removed)
 }
 
-/// Recompute source-health state before committing a historical chain.
-pub async fn rebuild_historical_source_health_in_transaction(txn: &Transaction<'_>) -> Result<()> {
-    crate::source_health_sql::rebuild_source_health_in_transaction(txn).await
-}
-
-/// Drain the dependent cascade after a historical chain transaction commits.
-pub async fn cascade_historical_import(
-    client: &mut Client,
-    classifier: &ConfiguredParentClassifier,
-    changed_hashes: Vec<Vec<u8>>,
+/// Replace the current provenance view for one complete authoritative snapshot.
+///
+/// The delete and all replacement provenance rows share the caller's chain
+/// transaction, so a failed import restores the previous snapshot intact.
+pub async fn clear_authoritative_historical_provenance_in_transaction(
+    txn: &Transaction<'_>,
+    publication_ref: &str,
+    chain: &str,
 ) -> Result<()> {
-    cascade_changed(client, classifier, changed_hashes, DEFAULT_CASCADE_BUDGET).await
+    txn.execute(
+        "DELETE FROM historical_event_provenance \
+         WHERE publication_ref = $1 AND chain = $2",
+        &[&publication_ref, &chain],
+    )
+    .await
+    .context("clear prior authoritative historical provenance snapshot")?;
+    Ok(())
+}
+
+/// Recompute source-health state after all durable historical work has drained.
+pub async fn rebuild_historical_source_health(client: &mut Client) -> Result<()> {
+    let txn = client
+        .transaction()
+        .await
+        .context("begin historical source-health rebuild")?;
+    crate::source_health_sql::rebuild_source_health_in_transaction(&txn).await?;
+    txn.commit()
+        .await
+        .context("commit historical source-health rebuild")
 }
 
 /// Capture one merge-mining event: the shared per-block transactional sequence

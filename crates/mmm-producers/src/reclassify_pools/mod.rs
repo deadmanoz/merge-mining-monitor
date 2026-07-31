@@ -233,10 +233,9 @@ pub struct ReclassifyPoolsStats {
     pub child_pool_updates: usize,
     /// Distinct parent header hashes whose read model was reconciled.
     pub parents_reconciled: usize,
-    /// Rows whose stored `btc_parent_coinbase_outputs` blob failed to
-    /// deserialize and were skipped for the address fallback (best-effort: the
-    /// row is treated as unresolved, never erased).
-    pub corrupt_outputs_skipped: usize,
+    /// Rows whose stored structured `btc_parent_coinbase_outputs` blob failed
+    /// to deserialize. Preserved publication text may still resolve them.
+    pub corrupt_parent_outputs: usize,
     /// Rows whose stored `child_coinbase_outputs` blob failed to deserialize
     /// and were skipped for child payout replay.
     pub corrupt_child_outputs_skipped: usize,
@@ -373,6 +372,7 @@ SELECT e.id, e.btc_parent_header_hash, s.code AS source_code,
        child_attr.details AS child_attribution_details,
        child_payout_attr.rows AS child_payout_attribution_rows,
        btc_parent_coinbase_script, btc_parent_coinbase_outputs,
+       btc_parent_coinbase_outputs_text,
        child_coinbase_script, child_coinbase_outputs, confirmed_at
 FROM merge_mining_event e
 JOIN source s ON s.id = e.source_id
@@ -386,10 +386,14 @@ LEFT JOIN LATERAL ({EVENT_POOL_ATTRIBUTION_JSON_ROWS_SELECT}
 ) child_payout_attr ON true
 WHERE e.revoked_at IS NULL
   AND (e.btc_parent_coinbase_script IS NOT NULL
+       OR e.btc_parent_coinbase_outputs IS NOT NULL
+       OR e.btc_parent_coinbase_outputs_text IS NOT NULL
        OR e.child_coinbase_script IS NOT NULL
        OR (s.code = ANY($8::text[]) AND e.child_coinbase_outputs IS NOT NULL))
   AND ($3
-       OR (e.btc_parent_coinbase_script IS NOT NULL
+       OR ((e.btc_parent_coinbase_script IS NOT NULL
+            OR e.btc_parent_coinbase_outputs IS NOT NULL
+            OR e.btc_parent_coinbase_outputs_text IS NOT NULL)
            AND NOT EXISTS (
                SELECT 1 FROM event_pool_attribution a
                WHERE a.event_id = e.id

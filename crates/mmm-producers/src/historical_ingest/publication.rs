@@ -388,8 +388,12 @@ fn inspect_csv(
             path.display(),
             offset + 2
         );
-        count_row(&record, indices, &mut counts)
-            .with_context(|| format!("classify {} row {}", path.display(), offset + 2))?;
+        if let Err(error) = count_row(&record, indices, &mut counts)
+            && expected.is_some()
+        {
+            return Err(error)
+                .with_context(|| format!("classify {} row {}", path.display(), offset + 2));
+        }
         row_count += 1;
     }
     if let Some(expected) = expected {

@@ -103,6 +103,19 @@ enum Exactness {
     Partial,
 }
 
+fn identity_conflict_clause(exactness: Exactness) -> &'static str {
+    match exactness {
+        Exactness::Exact => {
+            "ON CONFLICT (source_id, child_block_hash) \
+             WHERE child_block_hash IS NOT NULL DO UPDATE SET"
+        }
+        Exactness::Partial => {
+            "ON CONFLICT (source_id, child_height, btc_parent_header_hash) \
+             WHERE child_block_hash IS NULL AND child_height IS NOT NULL DO UPDATE SET"
+        }
+    }
+}
+
 async fn exact_event_id<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -184,13 +197,20 @@ async fn promote_partial_event<C: GenericClient>(
                 btc_parent_coinbase_txid = COALESCE(btc_parent_coinbase_txid, $10), \
                 btc_parent_coinbase_script = COALESCE(btc_parent_coinbase_script, $11), \
                 btc_parent_coinbase_outputs = COALESCE(btc_parent_coinbase_outputs, $12), \
-                aux_merkle_proof = COALESCE(aux_merkle_proof, $13) \
+                btc_parent_coinbase_outputs_text = COALESCE(btc_parent_coinbase_outputs_text, $13), \
+                btc_parent_coinbase_tx_bytes = COALESCE(btc_parent_coinbase_tx_bytes, $14), \
+                aux_merkle_proof = COALESCE(aux_merkle_proof, $15) \
              WHERE id = $1 \
                AND child_block_hash IS NULL \
-               AND btc_parent_header_bytes = $14 \
+               AND btc_parent_header_bytes = $16 \
                AND (child_header_bytes IS NULL OR $3::bytea IS NULL OR child_header_bytes = $3) \
                AND (child_block_time IS NULL OR $4::bigint IS NULL OR child_block_time = $4) \
                AND (child_nbits IS NULL OR $5::bigint IS NULL OR child_nbits = $5) \
+               AND (btc_parent_coinbase_txid IS NULL OR $10::bytea IS NULL OR btc_parent_coinbase_txid = $10) \
+               AND (btc_parent_coinbase_script IS NULL OR $11::bytea IS NULL OR btc_parent_coinbase_script = $11) \
+               AND (btc_parent_coinbase_outputs IS NULL OR $12::bytea IS NULL OR btc_parent_coinbase_outputs = $12) \
+               AND (btc_parent_coinbase_outputs_text IS NULL OR $13::text IS NULL OR btc_parent_coinbase_outputs_text = $13) \
+               AND (btc_parent_coinbase_tx_bytes IS NULL OR $14::bytea IS NULL OR btc_parent_coinbase_tx_bytes = $14) \
              RETURNING id",
             &[
                 &event_id,
@@ -205,6 +225,8 @@ async fn promote_partial_event<C: GenericClient>(
                 &payload.btc_parent_coinbase_txid,
                 &payload.btc_parent_coinbase_script,
                 &payload.btc_parent_coinbase_outputs,
+                &payload.btc_parent_coinbase_outputs_text,
+                &payload.btc_parent_coinbase_tx_bytes,
                 &payload.aux_merkle_proof,
                 &payload.btc_parent_header_bytes,
             ],
@@ -228,17 +250,24 @@ async fn fill_existing_event<C: GenericClient>(
                 btc_parent_coinbase_txid = COALESCE(btc_parent_coinbase_txid, $3), \
                 btc_parent_coinbase_script = COALESCE(btc_parent_coinbase_script, $4), \
                 btc_parent_coinbase_outputs = COALESCE(btc_parent_coinbase_outputs, $5), \
-                child_block_time = COALESCE(child_block_time, $6), \
-                child_nbits = COALESCE(child_nbits, $7), \
-                child_coinbase_txid = COALESCE(child_coinbase_txid, $8), \
-                child_coinbase_script = COALESCE(child_coinbase_script, $9), \
-                child_coinbase_outputs = COALESCE(child_coinbase_outputs, $10), \
-                aux_merkle_proof = COALESCE(aux_merkle_proof, $11) \
+                btc_parent_coinbase_outputs_text = COALESCE(btc_parent_coinbase_outputs_text, $6), \
+                btc_parent_coinbase_tx_bytes = COALESCE(btc_parent_coinbase_tx_bytes, $7), \
+                child_block_time = COALESCE(child_block_time, $8), \
+                child_nbits = COALESCE(child_nbits, $9), \
+                child_coinbase_txid = COALESCE(child_coinbase_txid, $10), \
+                child_coinbase_script = COALESCE(child_coinbase_script, $11), \
+                child_coinbase_outputs = COALESCE(child_coinbase_outputs, $12), \
+                aux_merkle_proof = COALESCE(aux_merkle_proof, $13) \
              WHERE id = $1 \
-               AND btc_parent_header_hash = $12 \
-               AND btc_parent_header_bytes = $13 \
-               AND (child_block_time IS NULL OR $6::bigint IS NULL OR child_block_time = $6) \
-               AND (child_nbits IS NULL OR $7::bigint IS NULL OR child_nbits = $7) \
+               AND btc_parent_header_hash = $14 \
+               AND btc_parent_header_bytes = $15 \
+               AND (child_block_time IS NULL OR $8::bigint IS NULL OR child_block_time = $8) \
+               AND (child_nbits IS NULL OR $9::bigint IS NULL OR child_nbits = $9) \
+               AND (btc_parent_coinbase_txid IS NULL OR $3::bytea IS NULL OR btc_parent_coinbase_txid = $3) \
+               AND (btc_parent_coinbase_script IS NULL OR $4::bytea IS NULL OR btc_parent_coinbase_script = $4) \
+               AND (btc_parent_coinbase_outputs IS NULL OR $5::bytea IS NULL OR btc_parent_coinbase_outputs = $5) \
+               AND (btc_parent_coinbase_outputs_text IS NULL OR $6::text IS NULL OR btc_parent_coinbase_outputs_text = $6) \
+               AND (btc_parent_coinbase_tx_bytes IS NULL OR $7::bytea IS NULL OR btc_parent_coinbase_tx_bytes = $7) \
              RETURNING id",
             &[
                 &event_id,
@@ -246,6 +275,8 @@ async fn fill_existing_event<C: GenericClient>(
                 &payload.btc_parent_coinbase_txid,
                 &payload.btc_parent_coinbase_script,
                 &payload.btc_parent_coinbase_outputs,
+                &payload.btc_parent_coinbase_outputs_text,
+                &payload.btc_parent_coinbase_tx_bytes,
                 &payload.child_block_time,
                 &payload.child_nbits.map(i64::from),
                 &payload.child_coinbase_txid,
@@ -272,16 +303,7 @@ async fn insert_event<C: GenericClient>(
 ) -> Result<EventWriteOutcome> {
     let btc_parent_kind = payload.btc_parent_kind.as_db_str();
     let child_nbits = payload.child_nbits.map(i64::from);
-    let conflict = match exactness {
-        Exactness::Exact => {
-            "ON CONFLICT (source_id, child_block_hash) \
-             WHERE child_block_hash IS NOT NULL DO UPDATE SET"
-        }
-        Exactness::Partial => {
-            "ON CONFLICT (source_id, child_height, btc_parent_header_hash) \
-             WHERE child_block_hash IS NULL AND child_height IS NOT NULL DO UPDATE SET"
-        }
-    };
+    let conflict = identity_conflict_clause(exactness);
     let sql = format!(
         "INSERT INTO merge_mining_event ( \
             source_id, child_height, child_block_hash, child_header_bytes, \
@@ -292,12 +314,13 @@ async fn insert_event<C: GenericClient>(
             pow_validates_btc_target, pow_validates_child_target, \
             difficulty_epoch_ok, btc_parent_coinbase_txid, \
             btc_parent_coinbase_script, btc_parent_coinbase_outputs, \
+            btc_parent_coinbase_outputs_text, btc_parent_coinbase_tx_bytes, \
             child_coinbase_txid, child_coinbase_script, child_coinbase_outputs, \
             aux_merkle_proof, discovered_at, confirmed_at, revoked_at, revocation_reason \
          ) VALUES ( \
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, \
             $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, \
-            $21, $22, $23, $24, $25, $26 \
+            $21, $22, $23, $24, $25, $26, $27, $28 \
          ) \
          {conflict} \
             confirmed_at = GREATEST(merge_mining_event.confirmed_at, EXCLUDED.confirmed_at), \
@@ -308,6 +331,8 @@ async fn insert_event<C: GenericClient>(
             btc_parent_coinbase_txid = COALESCE(merge_mining_event.btc_parent_coinbase_txid, EXCLUDED.btc_parent_coinbase_txid), \
             btc_parent_coinbase_script = COALESCE(merge_mining_event.btc_parent_coinbase_script, EXCLUDED.btc_parent_coinbase_script), \
             btc_parent_coinbase_outputs = COALESCE(merge_mining_event.btc_parent_coinbase_outputs, EXCLUDED.btc_parent_coinbase_outputs), \
+            btc_parent_coinbase_outputs_text = COALESCE(merge_mining_event.btc_parent_coinbase_outputs_text, EXCLUDED.btc_parent_coinbase_outputs_text), \
+            btc_parent_coinbase_tx_bytes = COALESCE(merge_mining_event.btc_parent_coinbase_tx_bytes, EXCLUDED.btc_parent_coinbase_tx_bytes), \
             child_coinbase_txid = COALESCE(merge_mining_event.child_coinbase_txid, EXCLUDED.child_coinbase_txid), \
             child_coinbase_script = COALESCE(merge_mining_event.child_coinbase_script, EXCLUDED.child_coinbase_script), \
             child_coinbase_outputs = COALESCE(merge_mining_event.child_coinbase_outputs, EXCLUDED.child_coinbase_outputs), \
@@ -318,6 +343,11 @@ async fn insert_event<C: GenericClient>(
            AND (merge_mining_event.child_header_bytes IS NULL OR EXCLUDED.child_header_bytes IS NULL OR merge_mining_event.child_header_bytes = EXCLUDED.child_header_bytes) \
            AND (merge_mining_event.child_block_time IS NULL OR EXCLUDED.child_block_time IS NULL OR merge_mining_event.child_block_time = EXCLUDED.child_block_time) \
            AND (merge_mining_event.child_nbits IS NULL OR EXCLUDED.child_nbits IS NULL OR merge_mining_event.child_nbits = EXCLUDED.child_nbits) \
+           AND (merge_mining_event.btc_parent_coinbase_txid IS NULL OR EXCLUDED.btc_parent_coinbase_txid IS NULL OR merge_mining_event.btc_parent_coinbase_txid = EXCLUDED.btc_parent_coinbase_txid) \
+           AND (merge_mining_event.btc_parent_coinbase_script IS NULL OR EXCLUDED.btc_parent_coinbase_script IS NULL OR merge_mining_event.btc_parent_coinbase_script = EXCLUDED.btc_parent_coinbase_script) \
+           AND (merge_mining_event.btc_parent_coinbase_outputs IS NULL OR EXCLUDED.btc_parent_coinbase_outputs IS NULL OR merge_mining_event.btc_parent_coinbase_outputs = EXCLUDED.btc_parent_coinbase_outputs) \
+           AND (merge_mining_event.btc_parent_coinbase_outputs_text IS NULL OR EXCLUDED.btc_parent_coinbase_outputs_text IS NULL OR merge_mining_event.btc_parent_coinbase_outputs_text = EXCLUDED.btc_parent_coinbase_outputs_text) \
+           AND (merge_mining_event.btc_parent_coinbase_tx_bytes IS NULL OR EXCLUDED.btc_parent_coinbase_tx_bytes IS NULL OR merge_mining_event.btc_parent_coinbase_tx_bytes = EXCLUDED.btc_parent_coinbase_tx_bytes) \
          RETURNING id, (xmax = 0) AS inserted"
     );
     let row = client
@@ -342,6 +372,8 @@ async fn insert_event<C: GenericClient>(
                 &payload.btc_parent_coinbase_txid,
                 &payload.btc_parent_coinbase_script,
                 &payload.btc_parent_coinbase_outputs,
+                &payload.btc_parent_coinbase_outputs_text,
+                &payload.btc_parent_coinbase_tx_bytes,
                 &payload.child_coinbase_txid,
                 &payload.child_coinbase_script,
                 &payload.child_coinbase_outputs,
@@ -403,13 +435,13 @@ async fn upsert_historical_event_provenance<C: GenericClient>(
     let row = client
         .query_opt(
             "INSERT INTO historical_event_provenance ( \
-                event_id, publication_commit, chain, source_kind, source_path, \
+                event_id, publication_ref, chain, source_kind, source_path, \
                 source_row_number, artifact_scope, provenance, classification, \
                 btc_height, validation_status, btc_stale_relevance, relevance_reason \
              ) VALUES ( \
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13 \
              ) \
-             ON CONFLICT (publication_commit, chain, source_path, source_row_number) DO UPDATE SET \
+             ON CONFLICT (publication_ref, chain, source_path, source_row_number) DO UPDATE SET \
                 event_id = EXCLUDED.event_id \
              WHERE historical_event_provenance.event_id = EXCLUDED.event_id \
                AND historical_event_provenance.source_kind = EXCLUDED.source_kind \
@@ -423,7 +455,7 @@ async fn upsert_historical_event_provenance<C: GenericClient>(
              RETURNING event_id",
             &[
                 &event_id,
-                &provenance.publication_commit,
+                &provenance.publication_ref,
                 &provenance.chain,
                 &provenance.source_kind,
                 &provenance.source_path,
@@ -442,7 +474,7 @@ async fn upsert_historical_event_provenance<C: GenericClient>(
     if row.is_none() {
         bail!(
             "historical publication row contradicts stored provenance for {}:{}:{} row {}",
-            provenance.publication_commit,
+            provenance.publication_ref,
             provenance.chain,
             provenance.source_path,
             provenance.source_row_number

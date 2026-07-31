@@ -13,6 +13,7 @@ tree view from that evidence.
 | `pool_identity` | Native child-chain identities that map to a pool, such as RSK miner addresses or child reward addresses. |
 | `merge_mining_event` | Source evidence keyed by exact or partial authenticated child identity and its Bitcoin parent header. |
 | `historical_event_provenance` | Publication-side chain, source row, classification, validation, and relevance provenance attached to imported events; multiple source rows can map to one event. |
+| `historical_reconcile_queue` | Durable parent rebuild state and dependent-cascade seeds for resumable historical imports. |
 | chain sidecars | One-to-one evidence details for chains with extra structured data, such as RSK and Hathor. |
 | `event_pool_attribution` | Attribution rows connecting an event to a pool with source/provenance details. |
 | `poll_cursor` | Live poll progress. Backfills never move the cursor. |
@@ -50,6 +51,12 @@ fields. Missing source evidence remains `NULL`; producers and importers do not
 fabricate substitutes.
 
 - A real child hash is exact identity under `(source_id, child_block_hash)`.
+- One exact identity has one stored Bitcoin parent. A second observation with
+  the same source and child hash but a different parent is contradictory
+  source evidence and fails closed.
+- Historical child hashes use the exact bytes stored by live capture. For
+  SHA256d child headers this is raw `sha256d::Hash::to_byte_array()` order, not
+  reversed display/RPC order.
 - A hashless observation uses
   `(source_id, child_height, btc_parent_header_hash)`.
 - Every event has at least a child hash or a child height.
@@ -64,9 +71,19 @@ fabricate substitutes.
 The API exposes these fields as nullable values and additionally surfaces an
 authenticated `child_header_hex` and `child_nbits` when present.
 
+Historical parent-coinbase evidence is also lossless. Structured full
+transactions populate the normal txid, script, and serialized-output fields,
+while the complete transaction bytes and normalized publication output text
+remain attached to the event. The text field preserves address, value/script,
+and raw scriptPubKey forms that cannot be represented as a value-complete
+`Vec<TxOut>`.
+
 ## Read-Model Rules
 
 - Derived rows are written through `mmm-read-model` mutation entry points.
+- Historical base snapshots enqueue parents transactionally. Primary parent
+  rebuilds commit one at a time, store their changed-hash seeds transactionally,
+  and delete queue work only after the dependent cascade succeeds.
 - A transient classifier `unknown` never demotes a previously proven canonical
   or stale row.
 - Bad evidence is removed with explicit event revocation, then the read model

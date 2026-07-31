@@ -36,7 +36,7 @@ Shared, table-generic modules:
 
 | Module | Responsibility |
 |--------|----------------|
-| `event` | Exact/partial `merge_mining_event` identity resolution and store-owned write dispositions, upserts, `historical_event_provenance`, the `event_pool_attribution` provenance writes (with and without stale-attribution cleanup), and NULL-preserving evidence fill. |
+| `event` | Exact/partial `merge_mining_event` identity resolution and store-owned write dispositions, lossless parent-coinbase evidence upserts, `historical_event_provenance`, the `event_pool_attribution` provenance writes (with and without stale-attribution cleanup), and NULL-preserving evidence fill. |
 | `pool` | Pool snapshot upserts, the generic registry-only pool seeding, and the namespace `pool_identity` seeding and lookup helper. |
 | `poll_cursor` | The `poll_cursor` live-progress table: source-id lookup, cursor load, and monotonic upsert (with optional observed target). Backfills never move the cursor. |
 | `pending_reconcile` | The pending-reconcile work-queue rows: list, upsert, attempt-bump, revocation-reason retag, and delete. |

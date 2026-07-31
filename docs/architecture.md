@@ -23,6 +23,7 @@ and the API serves those derived projections without writing capture state.
                                                  chain sidecar tables
                                                  event_pool_attribution
    historical publication ────────────────────> historical_event_provenance
+                                                historical_reconcile_queue
 
    operator import (import-known-stales) ──────> known_stale_block
 
@@ -45,6 +46,11 @@ Two base tables retain operator-imported provenance:
 and `known_stale_block` holds known-stale membership loaded by
 `import-known-stales`. The reconciler consults both as orphan-classification
 exclusion evidence.
+Historical import also writes `historical_reconcile_queue` in the base
+transaction. The read-model drains one parent at a time after commit and keeps
+the exact dependent-cascade seeds durable until that cascade succeeds. This
+preserves chain-level snapshot atomicity without retaining a transaction-level
+advisory lock for every parent in a broad publication.
 Derived state (`block`, `attestation_proof`, `source_health`) is rebuilt from
 that evidence by the read-model reconciler (stage 2), so a bad event can be
 revoked and the affected parent block recomputed. Bitcoin Core feeds the

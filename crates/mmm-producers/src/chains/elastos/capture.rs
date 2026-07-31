@@ -441,6 +441,8 @@ async fn write_valid_capture(
         btc_parent_coinbase_txid: Some(parsed.parent_coinbase_txid.to_byte_array().to_vec()),
         btc_parent_coinbase_script: Some(parsed.parent_coinbase_script.clone()),
         btc_parent_coinbase_outputs: Some(serialize(&parsed.parent_coinbase_outputs)),
+        btc_parent_coinbase_outputs_text: None,
+        btc_parent_coinbase_tx_bytes: None,
         // Child coinbase absent (the Elastos Go-RPC tx is not coerced into TxOut).
         child_coinbase_txid: None,
         child_coinbase_script: None,
