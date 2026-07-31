@@ -646,7 +646,7 @@ async fn historical_preflight_fills_classifier_concurrency() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let first = header_meeting_bits(0x207f_ffff, 1_700_000_037, 37);
         let second = header_meeting_bits(0x207f_ffff, 1_700_000_038, 38);
-        let csv_path = write_two_canonical_rows(&first, &second, 700_037)?;
+        let csv_path = write_repeated_then_unique_canonical_rows(&first, &second, 700_037)?;
         let result = async {
             let gate = FakeParentClassifierGate::new();
             let fake = FakeParentClassifier::new(canonical_verdict(&first, 700_037))
@@ -686,7 +686,7 @@ async fn historical_preflight_fills_classifier_concurrency() -> Result<()> {
 
             gate.proceed();
             let summary = import.await?;
-            assert_eq!(summary.ingested, 2);
+            assert_eq!(summary.ingested, 3);
             assert_eq!(fake.call_count().await, 2);
             Ok::<_, anyhow::Error>(())
         }
@@ -957,6 +957,59 @@ async fn allow_unclassified_manifest_import_does_not_replace_authoritative_rows(
     crate::run_mut_db_test!(client, {
         let header = header_meeting_bits(0x207f_ffff, 1_700_000_064, 64);
         let fixture = write_manifest_fixture(&header)?;
+        let unknown_header = btc_400000_header()?;
+        let unknown_coinbase = btc_400000_coinbase_script()?;
+        let unknown_relevance = match classify_btc_orphan(
+            i64::from(unknown_header.time),
+            unknown_header.bits,
+            parse_bip34_height(&unknown_coinbase),
+        )
+        .0
+        {
+            BtcOrphanVerdict::Strict => "strict_btc_orphan",
+            BtcOrphanVerdict::Weak => "weak_btc_orphan",
+            other => panic!("fixture must be strict/weak, got {other:?}"),
+        };
+        let unknown_row = normalized_csv_line(
+            &unknown_header,
+            &NormalizedCsvRow {
+                chain: "devcoin",
+                source_row_number: 2,
+                classification: "unknown",
+                relevance: unknown_relevance,
+                relevance_reason: "published_orphan_verdict",
+                coinbase_script: &unknown_coinbase,
+                btc_height: 400_000,
+                child_height: 13,
+                child_hash: None,
+            },
+        );
+        let canonical_row = normalized_csv_line(
+            &header,
+            &NormalizedCsvRow {
+                chain: "devcoin",
+                source_row_number: 1,
+                classification: "canonical",
+                relevance: "",
+                relevance_reason: "canonical_parent",
+                coinbase_script: &[],
+                btc_height: 700_000,
+                child_height: 12,
+                child_hash: None,
+            },
+        );
+        let mut diagnostic_counts = serde_json::json!({
+            "canonical": 1,
+            "stale": 0,
+            "stale_descendant": 0,
+            "strict_btc_orphan": 0,
+            "weak_btc_orphan": 0
+        });
+        diagnostic_counts[unknown_relevance] = serde_json::json!(1);
+        let diagnostic_fixture = write_manifest_fixture_rows_with_counts(
+            &[canonical_row, unknown_row],
+            diagnostic_counts,
+        )?;
         let result = async {
             let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
                 canonical_verdict(&header, 700_000),
@@ -974,7 +1027,7 @@ async fn allow_unclassified_manifest_import_does_not_replace_authoritative_rows(
                 2
             );
 
-            let mut diagnostic = fixture.config.clone();
+            let mut diagnostic = diagnostic_fixture.config.clone();
             diagnostic.allow_unclassified = true;
             let summary = run_manifest_historical_import_for_test(
                 &mut client,
@@ -983,6 +1036,8 @@ async fn allow_unclassified_manifest_import_does_not_replace_authoritative_rows(
                 "devcoin",
             )
             .await?;
+            assert_eq!(summary.ingested, 1);
+            assert_eq!(summary.skipped.get("unclassified"), Some(&1));
             assert_eq!(summary.removed, 0);
             assert_eq!(
                 active_source_event_count(&client, "auxpow:devcoin").await?,
@@ -994,6 +1049,9 @@ async fn allow_unclassified_manifest_import_does_not_replace_authoritative_rows(
         .await;
         std::fs::remove_dir_all(&fixture.root)
             .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
+        std::fs::remove_dir_all(&diagnostic_fixture.root).with_context(|| {
+            format!("remove fixture root {}", diagnostic_fixture.root.display())
+        })?;
         result
     })
 }
@@ -1327,6 +1385,23 @@ fn write_manifest_fixture(header: &Header) -> Result<ManifestFixture> {
 }
 
 fn write_manifest_fixture_rows(rows: &[String]) -> Result<ManifestFixture> {
+    let row_count = u64::try_from(rows.len()).context("fixture row count exceeds u64")?;
+    write_manifest_fixture_rows_with_counts(
+        rows,
+        serde_json::json!({
+            "canonical": row_count,
+            "stale": 0,
+            "stale_descendant": 0,
+            "strict_btc_orphan": 0,
+            "weak_btc_orphan": 0
+        }),
+    )
+}
+
+fn write_manifest_fixture_rows_with_counts(
+    rows: &[String],
+    counts: serde_json::Value,
+) -> Result<ManifestFixture> {
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .context("clock before epoch")?
@@ -1371,13 +1446,7 @@ fn write_manifest_fixture_rows(rows: &[String]) -> Result<ManifestFixture> {
     artifacts[devcoin_index]["size_bytes"] = serde_json::json!(artifact_bytes.len());
     artifacts[devcoin_index]["sha256"] =
         serde_json::json!(sha256::Hash::hash(&artifact_bytes).to_string());
-    artifacts[devcoin_index]["counts"] = serde_json::json!({
-        "canonical": row_count,
-        "stale": 0,
-        "stale_descendant": 0,
-        "strict_btc_orphan": 0,
-        "weak_btc_orphan": 0
-    });
+    artifacts[devcoin_index]["counts"] = counts;
 
     let donor = artifacts
         .iter_mut()
@@ -1596,7 +1665,11 @@ fn write_normalized_csv_with_parent_coinbase(
     Ok(path)
 }
 
-fn write_two_canonical_rows(first: &Header, second: &Header, btc_height: i32) -> Result<PathBuf> {
+fn write_repeated_then_unique_canonical_rows(
+    first: &Header,
+    second: &Header,
+    btc_height: i32,
+) -> Result<PathBuf> {
     let path = temp_csv_path()?;
     let first_row = NormalizedCsvRow {
         chain: "devcoin",
@@ -1609,17 +1682,23 @@ fn write_two_canonical_rows(first: &Header, second: &Header, btc_height: i32) ->
         child_height: 12,
         child_hash: None,
     };
-    let second_row = NormalizedCsvRow {
+    let repeated_row = NormalizedCsvRow {
         source_row_number: 2,
         child_height: 13,
+        ..first_row
+    };
+    let unique_row = NormalizedCsvRow {
+        source_row_number: 3,
+        child_height: 14,
         ..first_row
     };
     std::fs::write(
         &path,
         format!(
-            "{NORMALIZED_HEADER}{}{}",
+            "{NORMALIZED_HEADER}{}{}{}",
             normalized_csv_line(first, &first_row),
-            normalized_csv_line(second, &second_row)
+            normalized_csv_line(first, &repeated_row),
+            normalized_csv_line(second, &unique_row)
         ),
     )
     .with_context(|| format!("write temp CSV {}", path.display()))?;
