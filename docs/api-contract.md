@@ -283,10 +283,10 @@ another instance is ever chosen, update `fixtures/api/sources.json`, every
 fixture reference, this document, the manifest, and the source seed migration
 together.
 
-Historical `auxpow:<chain>` sources are populated by the operator
-`import-dataset` command and then appear through the same block/proof/source
-summary projections as live AuxPoW evidence. The API does not expose a separate
-dataset row schema for them.
+Historical `auxpow:<chain>` sources are populated by the operator `import-all`
+or `import-dataset` command and then appear through the same
+block/proof/source summary projections as live AuxPoW evidence. The API does
+not expose a separate dataset row schema for them.
 
 ## Response Ordering
 
@@ -307,8 +307,8 @@ Response arrays use stable ordering:
 - `competitions[].sources`: ascending source code, unique.
 - `block.proofs`: ascending `source.code`, then smallest
   `evidence.contributing_event_ids` value.
-- `block.event_details`: `event_confirmed_at`, `source`, `child_height`,
-  `child_block_hash`, then `id`.
+- `block.event_details`: `event_confirmed_at`, `source`, `child_height` with
+  nulls last, `child_block_hash` with nulls last, then `id`.
 - `sources.sources`: ascending `id`.
 
 ## Core Entities
@@ -990,11 +990,15 @@ read API must fail loudly if it observes an active `unknown` event with
 
 ## Event Details
 
-Every event detail includes source, child block identity, parent hash,
-event-parent kind, generic AuxPoW fields, `child_miner_pool`, pool identity
-objects, target flags, event lifecycle fields, and `pool_attributions`. Rows sort by
-`event_confirmed_at`, then `source`, then `child_height`, then
-`child_block_hash`, then `id`.
+Every event detail includes source, child evidence, parent hash, event-parent
+kind, generic AuxPoW fields, `child_miner_pool`, pool identity objects, target
+flags, event lifecycle fields, and `pool_attributions`. `child_height`,
+`child_block_hash`, `child_header_hex`, `child_block_time`, and `child_nbits`
+are nullable independent evidence fields. Missing source evidence is JSON
+`null`, never zero or a placeholder. `child_nbits`, when present, is an
+eight-character lowercase hexadecimal compact target. Rows sort by
+`event_confirmed_at`, then `source`, then nullable child height and hash with
+nulls last, then `id`.
 
 `event_details[].pool_attributions` is always present with `btc_parent` and
 `child_block` arrays. Each array contains zero or more provenance objects:

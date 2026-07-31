@@ -6,6 +6,26 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Import the pinned 576,662-row research publication through one normalized
+  27-chain contract, with complete checksum/schema/count preflight, Git LFS
+  diagnostics, deterministic `import-all`, shared Bitcoin-parent
+  classification caching, and no legacy artifact fallbacks.
+- Preserve authenticated child height, hash, header, time, and `nBits` as
+  independent nullable evidence. Use exact child-hash identity or partial
+  height-plus-parent identity, promote partial observations in place, and
+  reject ambiguous or contradictory refinement. Fail the upgrade before schema
+  changes if legacy rows conflict with the stronger exact identity.
+- Reconcile historical and partial sources as atomic authoritative snapshots,
+  keep live-source imports additive, retain source taxonomy in historical
+  provenance without collapsing distinct source rows, and treat Doichain's
+  zero-row survey as a database no-op.
+- Expose nullable child evidence through block detail and render unavailable
+  fields explicitly instead of zero or placeholder values.
+- Report historical write outcomes from the store's exact/partial identity
+  decision instead of re-querying identities in the importer, and combine
+  candidate parsing, validation, and preclassification into one stream. Digest,
+  manifest-count, and mutation passes remain separate.
+
 ## [0.4.2] - 2026-07-30
 
 - Bound the RSK miner-identity keyset scan on both sides of the

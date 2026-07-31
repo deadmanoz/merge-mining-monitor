@@ -12,6 +12,7 @@ use mmm_read_model::{
     ReclassifyUnknownParentsConfig, ReconcileReadModelConfig, reconcile_from_merge_mining_event,
     revoke_merge_mining_event, run_reclassify_unknown_parents, run_reconcile_read_model,
 };
+use mmm_store::upsert_merge_mining_event;
 use std::time::Duration;
 use tokio_postgres::Client;
 
@@ -241,6 +242,76 @@ async fn reconcile_all_pages_beyond_first_batch() -> Result<()> {
             .await?
             .get(0);
         assert_eq!(count, 2);
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn reconcile_all_distinguishes_unknown_height_from_i32_max() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let fixture = NamecoinEventFixture::new(&client).await?;
+        let mut payload = fixture.payload(500_010, ClassificationProof::default(), 2_250)?;
+        payload.child_height = None;
+        let unknown_height_id = upsert_merge_mining_event(&client, fixture.source_id, &payload)
+            .await?
+            .event_id;
+        let mut max_height_payload =
+            fixture.payload(i32::MAX, ClassificationProof::default(), 2_251)?;
+        max_height_payload.child_block_hash = Some(vec![0x7f; 32]);
+        let max_height_id =
+            upsert_merge_mining_event(&client, fixture.source_id, &max_height_payload)
+                .await?
+                .event_id;
+        let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+            canonical_parent_classification(&fixture.parsed.parent_header.header, 721_010, true),
+        ));
+
+        let bounded = run_reconcile_read_model(
+            &mut client,
+            &classifier,
+            ReconcileReadModelConfig {
+                missing_only: false,
+                start_height: Some(0),
+                end_height: Some(i32::MAX - 1),
+                batch_size: 1,
+                max_iterations: 2,
+                ..ReconcileReadModelConfig::default()
+            },
+        )
+        .await?;
+        assert_eq!(
+            bounded, 0,
+            "a child-height bound cannot select an event whose height is unknown"
+        );
+
+        let repaired = run_reconcile_read_model(
+            &mut client,
+            &classifier,
+            ReconcileReadModelConfig {
+                missing_only: false,
+                batch_size: 1,
+                max_iterations: 3,
+                ..ReconcileReadModelConfig::default()
+            },
+        )
+        .await?;
+
+        assert_eq!(repaired, 2);
+        let rows = client
+            .query_one(
+                "SELECT \
+                    (SELECT btc_parent_kind FROM merge_mining_event WHERE id = $1), \
+                    (SELECT btc_parent_kind FROM merge_mining_event WHERE id = $2), \
+                    (SELECT child_height FROM merge_mining_event WHERE id = $1), \
+                    (SELECT child_height FROM merge_mining_event WHERE id = $2)",
+                &[&unknown_height_id, &max_height_id],
+            )
+            .await?;
+        assert_eq!(rows.get::<_, String>(0), "canonical");
+        assert_eq!(rows.get::<_, String>(1), "canonical");
+        assert_eq!(rows.get::<_, Option<i32>>(2), None);
+        assert_eq!(rows.get::<_, Option<i32>>(3), Some(i32::MAX));
 
         Ok::<_, anyhow::Error>(())
     })

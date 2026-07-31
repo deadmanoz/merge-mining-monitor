@@ -100,9 +100,11 @@ fn crafted_unknown_payload(
     observed_at: i64,
 ) -> Result<MergeMiningEventPayload> {
     let evidence = NormalizedEventEvidence {
-        child_height,
-        child_block_hash: vec![child_seed; 32],
-        child_block_time: observed_at,
+        child_height: Some(child_height),
+        child_block_hash: Some(vec![child_seed; 32]),
+        child_header_bytes: None,
+        child_block_time: Some(observed_at),
+        child_nbits: None,
         btc_parent_header: parent_header,
         pow_validates_child_target: Some(true),
         btc_parent_coinbase_txid: None,

@@ -58,9 +58,11 @@ async fn elastos_recapture_restores_reversible_but_keeps_conflict_sticky() -> Re
         verify_auxpow_commitment(&parsed, recon.block_hash, ELASTOS_AUXPOW_CHAIN_ID)?;
         let payload = build_event_payload_from_evidence(
             NormalizedEventEvidence {
-                child_height: recon.height,
-                child_block_hash: recon.block_hash.to_byte_array().to_vec(),
-                child_block_time: i64::from(recon.time),
+                child_height: Some(recon.height),
+                child_block_hash: Some(recon.block_hash.to_byte_array().to_vec()),
+                child_header_bytes: None,
+                child_block_time: Some(i64::from(recon.time)),
+                child_nbits: None,
                 btc_parent_header: parsed.parent_header.header,
                 pow_validates_child_target: Some(true),
                 btc_parent_coinbase_txid: Some(
@@ -78,7 +80,9 @@ async fn elastos_recapture_restores_reversible_but_keeps_conflict_sticky() -> Re
             1_800_000_000,
         )?;
 
-        let event_id = write_elastos_capture_in_txn(&client, source_id, &payload).await?;
+        let event_id = write_elastos_capture_in_txn(&client, source_id, &payload)
+            .await?
+            .event_id;
 
         // Reversible (elastos_non_btc) revoke -> a Valid recapture reactivates it.
         revoke_event(&client, event_id, 1_800_000_001, ELASTOS_REVOKE_NON_BTC).await?;
@@ -164,9 +168,11 @@ async fn hathor_recapture_restores_reversible_but_keeps_conflict_sticky() -> Res
         let block_hash = recon.header.block_hash().to_byte_array().to_vec();
 
         let evidence = NormalizedEventEvidence {
-            child_height: 1_971_823,
-            child_block_hash: block_hash.clone(),
-            child_block_time: 1_637_668_049,
+            child_height: Some(1_971_823),
+            child_block_hash: Some(block_hash.clone()),
+            child_header_bytes: None,
+            child_block_time: Some(1_637_668_049),
+            child_nbits: None,
             btc_parent_header: recon.header,
             pow_validates_child_target: None,
             btc_parent_coinbase_txid: None,
@@ -196,8 +202,9 @@ async fn hathor_recapture_restores_reversible_but_keeps_conflict_sticky() -> Res
         };
 
         // Capture, void-revoke, then recapture with a CHANGED expected nBits.
-        let event_id =
-            write_hathor_capture_in_txn(&client, source_id, &payload, &sidecar(111)).await?;
+        let event_id = write_hathor_capture_in_txn(&client, source_id, &payload, &sidecar(111))
+            .await?
+            .event_id;
         revoke_event(&client, event_id, 1_800_000_001, HATHOR_REVOKE_VOIDED).await?;
         write_hathor_capture_in_txn(&client, source_id, &payload, &sidecar(222)).await?;
 

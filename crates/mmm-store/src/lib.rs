@@ -35,9 +35,10 @@ pub use chains::rsk::{
     upsert_rsk_reclassify_watermark, write_rsk_capture_in_txn,
 };
 pub use event::{
-    delete_event_pool_attributions_for_source, fill_event_child_coinbase,
-    upsert_event_pool_attributions, upsert_event_pool_attributions_without_stale_cleanup,
-    upsert_merge_mining_event, upsert_merge_mining_event_with_attributions,
+    EventWriteDisposition, EventWriteOutcome, delete_event_pool_attributions_for_source,
+    fill_event_child_coinbase, upsert_event_pool_attributions,
+    upsert_event_pool_attributions_without_stale_cleanup, upsert_merge_mining_event,
+    upsert_merge_mining_event_with_attributions,
 };
 pub use known_stale::{count_known_stale_blocks, is_known_stale_hash, upsert_known_stale_block};
 pub use pending_reconcile::{

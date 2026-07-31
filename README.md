@@ -48,8 +48,9 @@ From it you can:
 - **Browse the whole chain** from the genesis block to the current tip, or jump
   straight to any height or UTC timestamp.
 - **Inspect any block** in a detail drawer: the pool and miner, the decoded AuxPoW
-  commitment, every child chain that merge-mined it (with child heights), and
-  external explorer links.
+  commitment, every child chain that merge-mined it, authenticated child
+  height/hash/header/time/`nBits` evidence where available, and external
+  explorer links.
 - **Filter by source** to see which headers a given chain touched, and by
   classification to isolate canonical, stale, or orphan blocks.
 - **Step through the record** with a single navigator across the latest stale
@@ -219,13 +220,14 @@ walks through the mechanism step by step.
 
 ## How it works
 
-`merge-mining-monitor` is a Postgres-backed Rust service. Producers append raw
-child-chain evidence to a single append-only log (`merge_mining_event`); a
-read-model reconciler derives the deduplicated `block` tree, attributing pools and
-classifying each Bitcoin parent header against Bitcoin Core. A read-only API
-(`serve`) projects that read model to the static frontend. Because the base log is
-append-only, the whole derived tree is rebuildable, and bad evidence can be revoked
-and recomputed without losing anything proven earlier.
+`merge-mining-monitor` is a Postgres-backed Rust service. Producers write
+authenticated child-chain observations to `merge_mining_event`; a read-model
+reconciler derives the deduplicated `block` tree, attributing pools and
+classifying each Bitcoin parent header against Bitcoin Core. Live evidence is
+additive, while recovered historical and partial sources can be reconciled as
+authoritative publication snapshots. A read-only API (`serve`) projects that
+read model to the static frontend. Derived state is rebuildable, and bad live
+evidence can be revoked and recomputed without losing proven observations.
 
 See [`docs/architecture.md`](docs/architecture.md) for the crate boundaries and
 data flow.

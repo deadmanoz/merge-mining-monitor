@@ -25,12 +25,14 @@ use crate::source_health_sql::ParentContribution;
 use mmm_bitcoin_core::BitcoinCoreBlockCoinbase;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
 use mmm_capture::capture::{MergeMiningEventPayload, ParentKind, apply_classification_proof};
+use mmm_store::EventWriteOutcome;
 
 use super::{
     CoreCoinbaseStatus, DEFAULT_CASCADE_BUDGET, PreclassifiedParent,
-    RECONCILE_LOCK_SET_RETRY_LIMIT, classify_payload_parent, is_reconcile_lock_set_changed,
-    load_event, lock_block_hash, lock_event_for_source_health,
-    lock_payload_parent_read_model_in_txn, preclassify_event_parent,
+    RECONCILE_LOCK_SET_RETRY_LIMIT, classify_payload_parent, find_anchor_event_for_block,
+    is_reconcile_lock_set_changed, load_block_cascade_state, load_event, lock_block_hash,
+    lock_block_hashes, lock_event_for_source_health, lock_payload_parent_read_model_in_txn,
+    preclassify_event_parent, rebuild_parent_read_model,
     reconcile_dependents_after_changes_with_budget, reconcile_one_event_in_txn,
     upsert_core_canonical_header_with_coinbase,
 };
@@ -101,6 +103,10 @@ pub(crate) enum PrimaryDiff<'a> {
     /// repair, and reclassify paths, where the reconcile's `before` is
     /// genuinely pre-mutation).
     Reconcile,
+    /// A caller-owned bulk transaction rebuilds source health from base tables
+    /// after all event changes, so this reconcile skips its incremental primary
+    /// diff.
+    BulkImport,
     /// A wrapper opened a bracket BEFORE its own base mutation and owns the
     /// primary diff; the reconcile must not diff the primary hash (it would
     /// double-apply or use a post-mutation `before`). The reconcile still owns
@@ -191,9 +197,9 @@ pub async fn capture_in_txn<F>(
     upsert: F,
 ) -> Result<i64>
 where
-    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<i64>,
+    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
 {
-    capture_event(
+    let outcome = capture_event(
         client,
         source_id,
         classifier,
@@ -202,7 +208,8 @@ where
         upsert,
         CaptureEventOptions::default(),
     )
-    .await
+    .await?;
+    Ok(outcome.event_id)
 }
 
 /// [`capture_in_txn`] variant for callers that already had to classify the
@@ -221,9 +228,9 @@ pub async fn capture_preclassified_in_txn<F>(
     upsert: F,
 ) -> Result<i64>
 where
-    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<i64>,
+    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
 {
-    capture_event(
+    let outcome = capture_event(
         client,
         source_id,
         classifier,
@@ -234,7 +241,138 @@ where
             parent_classification: Some(parent_classification),
         },
     )
-    .await
+    .await?;
+    Ok(outcome.event_id)
+}
+
+/// Capture one historical observation inside a caller-owned chain transaction.
+///
+/// The caller retains the returned changed hashes, rebuilds source health
+/// before committing, then cascades those hashes after commit. Any error rolls
+/// back the complete chain snapshot instead of leaving a partial import.
+pub async fn capture_historical_in_transaction<F>(
+    txn: &Transaction<'_>,
+    source_id: i64,
+    classifier: &ConfiguredParentClassifier,
+    payload: &mut MergeMiningEventPayload,
+    parent_classification: Option<ParentClassification>,
+    upsert: F,
+) -> Result<(EventWriteOutcome, Vec<Vec<u8>>)>
+where
+    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
+{
+    let preclassified = match parent_classification {
+        Some(classification) => {
+            apply_classification_proof(payload, classification.to_proof())?;
+            Some(classification)
+        }
+        None => classify_payload_parent(txn, payload, classifier).await?,
+    };
+    lock_payload_parent_read_model_in_txn(txn, payload, preclassified.as_ref()).await?;
+    lock_block_hash(txn, &payload.btc_parent_header_hash).await?;
+    let outcome = upsert(txn, source_id, payload).await?;
+    let changed_hashes = if payload.btc_parent_kind == ParentKind::Near {
+        Vec::new()
+    } else {
+        reconcile_one_event_in_txn(
+            txn,
+            outcome.event_id,
+            classifier,
+            preclassified.map(PreclassifiedParent::trusted),
+            PrimaryDiff::BulkImport,
+        )
+        .await?
+    };
+    Ok((outcome, changed_hashes))
+}
+
+/// Remove authoritative-source events absent from the current publication and
+/// rebuild every affected parent in the same transaction.
+pub async fn reconcile_authoritative_historical_source_in_transaction(
+    txn: &Transaction<'_>,
+    source_id: i64,
+    publication_commit: &str,
+    chain: &str,
+    classifier: &ConfiguredParentClassifier,
+) -> Result<(u64, Vec<Vec<u8>>)> {
+    let rows = txn
+        .query(
+            "SELECT DISTINCT e.btc_parent_header_hash \
+             FROM merge_mining_event e \
+             WHERE e.source_id = $1 \
+               AND NOT EXISTS ( \
+                    SELECT 1 FROM historical_event_provenance p \
+                    WHERE p.event_id = e.id \
+                      AND p.publication_commit = $2 \
+                      AND p.chain = $3 \
+               ) \
+             ORDER BY e.btc_parent_header_hash",
+            &[&source_id, &publication_commit, &chain],
+        )
+        .await
+        .context("load authoritative historical removals")?;
+    let parent_hashes = rows
+        .into_iter()
+        .map(|row| row.get::<_, Vec<u8>>(0))
+        .collect::<Vec<_>>();
+    lock_block_hashes(txn, &parent_hashes).await?;
+    let mut before = Vec::with_capacity(parent_hashes.len());
+    for hash in &parent_hashes {
+        before.push(load_block_cascade_state(txn, hash).await?);
+    }
+
+    let removed = txn
+        .execute(
+            "DELETE FROM merge_mining_event e \
+             WHERE e.source_id = $1 \
+               AND NOT EXISTS ( \
+                    SELECT 1 FROM historical_event_provenance p \
+                    WHERE p.event_id = e.id \
+                      AND p.publication_commit = $2 \
+                      AND p.chain = $3 \
+               )",
+            &[&source_id, &publication_commit, &chain],
+        )
+        .await
+        .context("remove events absent from authoritative historical snapshot")?;
+
+    let mut changed_hashes = Vec::new();
+    for (hash, before_state) in parent_hashes.iter().zip(before) {
+        if let Some(event_id) = find_anchor_event_for_block(txn, hash).await? {
+            changed_hashes.extend(
+                reconcile_one_event_in_txn(
+                    txn,
+                    event_id,
+                    classifier,
+                    None,
+                    PrimaryDiff::BulkImport,
+                )
+                .await?,
+            );
+        } else {
+            rebuild_parent_read_model(txn, hash, None).await?;
+        }
+        if load_block_cascade_state(txn, hash).await? != before_state {
+            changed_hashes.push(hash.clone());
+        }
+    }
+    changed_hashes.sort();
+    changed_hashes.dedup();
+    Ok((removed, changed_hashes))
+}
+
+/// Recompute source-health state before committing a historical chain.
+pub async fn rebuild_historical_source_health_in_transaction(txn: &Transaction<'_>) -> Result<()> {
+    crate::source_health_sql::rebuild_source_health_in_transaction(txn).await
+}
+
+/// Drain the dependent cascade after a historical chain transaction commits.
+pub async fn cascade_historical_import(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    changed_hashes: Vec<Vec<u8>>,
+) -> Result<()> {
+    cascade_changed(client, classifier, changed_hashes, DEFAULT_CASCADE_BUDGET).await
 }
 
 /// Capture one merge-mining event: the shared per-block transactional sequence
@@ -264,9 +402,9 @@ async fn capture_event<F>(
     chain_label: &str,
     upsert: F,
     options: CaptureEventOptions,
-) -> Result<i64>
+) -> Result<EventWriteOutcome>
 where
-    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<i64>,
+    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
 {
     let preclassified = match options.parent_classification {
         Some(classification) => {
@@ -276,7 +414,7 @@ where
         None => classify_payload_parent(client, payload, classifier).await?,
     };
     let mut attempts = 0;
-    let (event_id, changed_hashes) = loop {
+    let (outcome, changed_hashes) = loop {
         let txn = client
             .transaction()
             .await
@@ -291,11 +429,11 @@ where
         lock_block_hash(&txn, &payload.btc_parent_header_hash).await?;
         let bracket =
             PrimarySourceHealthBracket::open(&txn, &payload.btc_parent_header_hash).await?;
-        let event_id = upsert(&txn, source_id, payload).await?;
+        let outcome = upsert(&txn, source_id, payload).await?;
         let reconcile_result = if payload.btc_parent_kind != ParentKind::Near {
             reconcile_one_event_in_txn(
                 &txn,
-                event_id,
+                outcome.event_id,
                 classifier,
                 preclassified.clone().map(PreclassifiedParent::trusted),
                 PrimaryDiff::Wrapper(&bracket),
@@ -310,7 +448,7 @@ where
                 txn.commit()
                     .await
                     .with_context(|| format!("commit {chain_label} capture transaction"))?;
-                break (event_id, changed_hashes);
+                break (outcome, changed_hashes);
             }
             Err(err) if is_reconcile_lock_set_changed(&err) && attempts + 1 < retry_attempts() => {
                 txn.rollback().await.with_context(|| {
@@ -325,7 +463,7 @@ where
         }
     };
     cascade_changed(client, classifier, changed_hashes, DEFAULT_CASCADE_BUDGET).await?;
-    Ok(event_id)
+    Ok(outcome)
 }
 
 /// The two directions of `set_event_revocation`.

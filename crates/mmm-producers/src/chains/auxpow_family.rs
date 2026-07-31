@@ -556,7 +556,7 @@ mod tests {
         .expect("build payload");
 
         // The RPC height owns this field; the blob has no child coinbase height.
-        assert_eq!(payload.child_height, 1_342_257);
+        assert_eq!(payload.child_height, Some(1_342_257));
         // No child coinbase in the getblockheader-auxpow proof -> child fields NULL.
         assert_eq!(payload.child_coinbase_txid, None);
         assert_eq!(payload.child_coinbase_script, None);

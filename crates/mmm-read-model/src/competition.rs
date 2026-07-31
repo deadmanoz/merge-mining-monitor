@@ -57,6 +57,9 @@ pub(crate) async fn compute_block_orphan_class<C: GenericClient>(
     if kind != BlockKind::Unknown {
         return Ok(None);
     }
+    if has_published_stale_branch_attestation(client, hash).await? {
+        return Ok(BtcOrphanVerdict::Excluded.as_db_str().map(str::to_string));
+    }
     if !classification.core_absence_attested {
         return load_persisted_orphan_class(client, hash).await;
     }
@@ -90,6 +93,26 @@ pub(crate) async fn compute_block_orphan_class<C: GenericClient>(
         );
     }
     Ok(verdict.as_db_str().map(str::to_string))
+}
+
+async fn has_published_stale_branch_attestation<C: GenericClient>(
+    client: &C,
+    hash: &[u8],
+) -> Result<bool> {
+    Ok(client
+        .query_opt(
+            "SELECT 1 \
+             FROM merge_mining_event e \
+             JOIN historical_event_provenance p ON p.event_id = e.id \
+             WHERE e.btc_parent_header_hash = $1 \
+               AND e.revoked_at IS NULL \
+               AND p.relevance_reason IN ('valid_direct_stale', 'valid_stale_descendant') \
+             LIMIT 1",
+            &[&hash],
+        )
+        .await
+        .context("check published stale-branch attestation")?
+        .is_some())
 }
 
 /// Read the persisted `block.kind` and `btc_orphan_class` for a hash, for

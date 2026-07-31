@@ -222,9 +222,11 @@ impl Scenario {
                         });
                     let mut payload = build_event_payload_from_evidence(
                         NormalizedEventEvidence {
-                            child_height: evidence.child_height,
-                            child_block_hash: evidence.child_block_hash,
-                            child_block_time: evidence.observed_at,
+                            child_height: Some(evidence.child_height),
+                            child_block_hash: Some(evidence.child_block_hash),
+                            child_header_bytes: None,
+                            child_block_time: Some(evidence.observed_at),
+                            child_nbits: None,
                             btc_parent_header: evidence.parent_header,
                             pow_validates_child_target: Some(true),
                             btc_parent_coinbase_txid: None,

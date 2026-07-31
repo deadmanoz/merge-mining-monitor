@@ -15,7 +15,7 @@ use mmm_capture::pool_resolver::{
 use crate::pool::{
     PoolIdentitySeed, upsert_pool_identities_for_namespace_with_policy, upsert_registry_only_pools,
 };
-use crate::upsert_merge_mining_event_with_attributions;
+use crate::{EventWriteOutcome, upsert_merge_mining_event_with_attributions};
 
 /// Low-level fixture writer for one RSK block (canonical or uncle): opens its own
 /// transaction and upserts the shared `merge_mining_event` row plus the 1:1
@@ -38,12 +38,12 @@ pub async fn write_rsk_capture(
         .await
         .context("begin RSK capture transaction")?;
 
-    let event_id = write_rsk_capture_in_txn(&txn, source_id, payload, evidence).await?;
+    let outcome = write_rsk_capture_in_txn(&txn, source_id, payload, evidence).await?;
 
     txn.commit()
         .await
         .context("commit RSK capture transaction")?;
-    Ok(event_id)
+    Ok(outcome.event_id)
 }
 
 /// Write an RSK capture in the caller's transaction (injected as the
@@ -56,10 +56,10 @@ pub async fn write_rsk_capture_in_txn<C: GenericClient>(
     source_id: i64,
     payload: &MergeMiningEventPayload,
     evidence: &RskEvidencePayload,
-) -> Result<i64> {
-    let event_id = upsert_merge_mining_event_with_attributions(client, source_id, payload).await?;
-    upsert_rsk_evidence(client, event_id, evidence).await?;
-    Ok(event_id)
+) -> Result<EventWriteOutcome> {
+    let outcome = upsert_merge_mining_event_with_attributions(client, source_id, payload).await?;
+    upsert_rsk_evidence(client, outcome.event_id, evidence).await?;
+    Ok(outcome)
 }
 
 async fn upsert_rsk_evidence<C: GenericClient>(

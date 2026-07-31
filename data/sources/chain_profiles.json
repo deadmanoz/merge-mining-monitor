@@ -51,7 +51,7 @@
       ]
     },
     "provenance": {
-      "source": "Recovered historical dataset from a self-built `argentumd` node; monitor ingestion uses the committed `data/validated-stales/argentum_validated_stales.csv` rows from merge-mining-research.[^8]",
+      "source": "Recovered historical dataset from a self-built `argentumd` node; monitor ingestion uses the normalized `results/monitor-evidence/argentum_monitor_evidence.csv` publication from merge-mining-research.[^8]",
       "coverage": "Canonical attestation spans BTC heights `434,652`-`728,756` (October 2016 to March 2022); the 2 admitted stales fall within BTC `467,186`-`472,975` (May to June 2017). The June 2017 endpoint bounds the stale subset, not the evidence. Local recovery starts at ARG AuxPoW activation height `1,825,000`; admitted Bitcoin evidence is limited to rows that pass the monitor's validation gates, and non-Bitcoin SHA-256d parents are rejected by admission checks. Live chain status is outside this monitor's Argentum evidence path."
     },
     "references": [
@@ -217,7 +217,7 @@
       ]
     },
     "provenance": {
-      "source": "Recovered historical dataset from Trezor Blockbook raw block responses at btcvexplorer.com; monitor ingestion imports the classified row set (canonical attestation and admitted stales together) from the committed `data/validated-stales/bitcoin-vault_validated_stales.csv` rows in merge-mining-research, not the stale subset alone.[^1]",
+      "source": "Recovered historical dataset from Trezor Blockbook raw block responses at btcvexplorer.com; monitor ingestion imports the normalized canonical-plus-stale `results/monitor-evidence/bitcoin-vault_monitor_evidence.csv` publication from merge-mining-research.[^1]",
       "coverage": "Canonical attestation spans BTC heights `657,688`-`833,492` (November 2020 to March 2024) / BTCV heights `58,737`-`227,922`; the 9 admitted stales fall within BTC `657,561`-`699,616` (November 2020 to September 2021). The September 2021 endpoint bounds the stale subset, not the evidence. Admitted Bitcoin evidence is limited to rows that pass validation and is summarized by Current Evidence Counts."
     },
     "references": [
@@ -439,7 +439,7 @@
       ]
     },
     "provenance": {
-      "source": "Recovered historical dataset from a local `crownd` node; monitor ingestion imports the full classified row set from merge-mining-research (canonical attestation and admitted stales together), not the stale subset alone, from the committed `data/validated-stales/crown_validated_stales.csv` rows.",
+      "source": "Recovered historical dataset from a local `crownd` node; monitor ingestion imports the normalized canonical-plus-stale `results/monitor-evidence/crown_monitor_evidence.csv` publication from merge-mining-research.",
       "coverage": "Canonical attestation spans BTC heights `385,325`-`571,351` (November 2015 to April 2019) / CRW heights `620,574`-`2,329,781`; the 23 admitted stales fall within BTC `470,447`-`555,155` (June 2017 to December 2018) / CRW `1,410,258`-`2,178,872`. The December 2018 endpoint bounds the stale subset, not the evidence. Crown's AuxPoW evidence is bounded by CRW block `453,273` and the PoW to MN-PoS switch at `2,330,000`.[^1][^2]"
     },
     "references": [
@@ -656,7 +656,7 @@
       ]
     },
     "provenance": {
-      "source": "Recovered historical dataset from a self-synced `elcashd` node. The compact `data/validated-stales/elcash_validated_stales.csv` (the three stale parents) is committed; monitor ingestion of the full canonical-plus-stale classified set uses the archived `elcash_stale_blocks.csv`, matching the project's compact-committed / full-archive split.",
+      "source": "Recovered historical dataset from a self-synced `elcashd` node; monitor ingestion uses the normalized canonical-plus-stale `results/monitor-evidence/elcash_monitor_evidence.csv` publication from merge-mining-research.",
       "coverage": "Self-synced ELCASH mainnet (genesis through the current tip). Admitted Bitcoin evidence is 2,426 canonical Bitcoin blocks found while merge-mining ELCASH (the merge-mining attestation, by pools including Binance) plus three mid-2021 stale parents that pass Bitcoin proof of work and build on a canonical block with a canonical competitor at their height. Bitcoin Cash and Bitcoin SV parents that share the SHA-256d algorithm are excluded as contamination."
     },
     "references": [
@@ -880,7 +880,7 @@
       ]
     },
     "provenance": {
-      "source": "Recovered historical dataset from Nicholas Stifter's per-block `getblock` JSON dump; monitor ingestion uses the classified `data/validated-stales/geistgeld_validated_stales.csv` from merge-mining-research, which admits a single canonical Bitcoin attestation and no stale rows.",
+      "source": "Recovered historical dataset from Nicholas Stifter's per-block `getblock` JSON dump; monitor ingestion uses the normalized `results/monitor-evidence/geistgeld_monitor_evidence.csv` publication from merge-mining-research, which admits a single canonical Bitcoin attestation and no stale rows.",
       "coverage": "Canonical attestation is a single Bitcoin block at height `270,741` (21 November 2013); no stale blocks were admitted. The remainder of the recovered dump was classified but rejected at Bitcoin admission, so only the one canonical row enters the Bitcoin tree."
     },
     "references": [
@@ -1207,7 +1207,7 @@
       ]
     },
     "provenance": {
-      "source": "Recovered historical dataset from an offline parse of a January 2018 third-party i0coin `blk*.dat` snapshot; monitor ingestion uses the committed `data/validated-stales/i0coin_validated_stales.csv` rows.",
+      "source": "Recovered historical dataset from an offline parse of a January 2018 third-party i0coin `blk*.dat` snapshot; monitor ingestion uses the normalized `results/monitor-evidence/i0coin_monitor_evidence.csv` publication from merge-mining-research.",
       "coverage": "Canonical attestation spans BTC heights `158,531`-`505,261` (December 2011 to January 2018) / I0C child heights `161,910`-`2,358,495`; the 166 admitted stales fall within BTC `160,948`-`504,952` (January 2012 to January 2018, the last in January 2018). The January 2018 endpoint is the recovered snapshot boundary, not an Emercoin-style shutdown date; I0C blocks below `160,000` predate AuxPoW, and activity after the snapshot is not covered by the current monitor dataset."
     },
     "references": [
@@ -1287,7 +1287,7 @@
       ]
     },
     "provenance": {
-      "source": "Recovered historical dataset from a local archival `ixcoind` sync; monitor ingestion uses the generated full-evidence CSV when available, with `data/validated-stales/ixcoin_validated_stales.csv` as the compact stale-only fallback.",
+      "source": "Recovered historical dataset from a local archival `ixcoind` sync; monitor ingestion uses the normalized `results/monitor-evidence/ixcoin_monitor_evidence.csv` publication from merge-mining-research.",
       "coverage": "Canonical attestation spans BTC heights `160,089`-`500,593` (January 2012 to December 2017) / IXC heights `46,155`-`417,701`; the 465 admitted stales fall within BTC `161,761`-`422,212` (January 2012 to July 2016) / IXC heights `51,376`-`330,060`. The July 2016 endpoint bounds the stale subset, not the evidence; canonical attestation continues into December 2017. IXC blocks below `45,001` predate AuxPoW. Pre-BIP34 Bitcoin parent heights are inferred from `nBits` epoch and timestamp evidence."
     },
     "references": [
@@ -1361,7 +1361,7 @@
       ]
     },
     "provenance": {
-      "source": "Recovered historical dataset from a local `myriadcoind` sync; monitor ingestion imports the full classified row set from merge-mining-research (canonical attestation and admitted stales together), not the stale subset alone, via the committed `data/validated-stales/myriadcoin_validated_stales.csv` evidence.",
+      "source": "Recovered historical dataset from a local `myriadcoind` sync; monitor ingestion uses the normalized canonical-plus-stale `results/monitor-evidence/myriadcoin_monitor_evidence.csv` publication from merge-mining-research.",
       "coverage": "Canonical attestation spans BTC heights `385,325`-`895,496` (November 2015 to May 2025) / XMY heights `1,471,140`-`3,667,045`; the 40 admitted stales fall within BTC `467,186`-`642,669` (May 2017 to August 2020) / XMY heights `2,060,939`-`3,105,294`. The August 2020 endpoint bounds the stale subset, not the evidence. SHA-256d branch only; other Myriadcoin algorithms and non-Bitcoin SHA-256d parents are rejected by admission checks."
     },
     "references": [
@@ -1835,7 +1835,7 @@
       ]
     },
     "provenance": {
-      "source": "Recovered historical dataset from Xaya's published downloads index and block dump; monitor ingestion imports the full classified row set from merge-mining-research (canonical attestation and admitted stales together), not the stale subset alone, via the committed `data/validated-stales/xaya_validated_stales.csv` evidence.[^4]",
+      "source": "Recovered historical dataset from Xaya's published downloads index and block dump; monitor ingestion uses the normalized canonical-plus-stale `results/monitor-evidence/xaya_monitor_evidence.csv` publication from merge-mining-research.[^4]",
       "coverage": "Canonical attestation spans BTC heights `531,784`-`870,012` (July 2018 to November 2024); the 40 admitted stales fall within BTC `547,182`-`853,120` (October 2018 to July 2024). The July 2024 endpoint bounds the stale subset, not the evidence; canonical attestation continues to November 2024. The published block dump snapshot is dated 2024-11-15 and stops before the later `7,300,000` migration snapshot height; Neoscrypt blocks are outside the evidence path.[^1][^4]"
     },
     "references": [

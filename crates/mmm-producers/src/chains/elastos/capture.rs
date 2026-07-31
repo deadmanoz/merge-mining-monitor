@@ -427,9 +427,11 @@ async fn write_valid_capture(
     let pool_attributions = ResolvedPoolAttributions { attributions };
 
     let evidence = NormalizedEventEvidence {
-        child_height: recon.height,
-        child_block_hash: recon.block_hash.to_byte_array().to_vec(),
-        child_block_time: i64::from(recon.time),
+        child_height: Some(recon.height),
+        child_block_hash: Some(recon.block_hash.to_byte_array().to_vec()),
+        child_header_bytes: None,
+        child_block_time: Some(i64::from(recon.time)),
+        child_nbits: None,
         btc_parent_header: parsed.parent_header.header,
         // The own-node child-target check, GATED true to reach this path.
         pow_validates_child_target: Some(validates_target(

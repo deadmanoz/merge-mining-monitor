@@ -640,10 +640,12 @@ fn build_hathor_capture(
     let pool_attributions = ResolvedPoolAttributions { attributions };
 
     let evidence = NormalizedEventEvidence {
-        child_height: hathor_height,
+        child_height: Some(hathor_height),
         // The Hathor block hash IS the reconstructed BTC parent header hash.
-        child_block_hash: block_hash_bytes.clone(),
-        child_block_time: tx.timestamp,
+        child_block_hash: Some(block_hash_bytes.clone()),
+        child_header_bytes: None,
+        child_block_time: Some(tx.timestamp),
+        child_nbits: None,
         btc_parent_header: recon.header,
         // Hathor has no consensus-grade child nBits target in the REST payload;
         // leave the child-target verdict NULL like RSK.
@@ -872,9 +874,11 @@ mod tests {
         let _ = (&resolver, &funds_graph, height);
 
         let evidence = NormalizedEventEvidence {
-            child_height: height,
-            child_block_hash: recon.header.block_hash().to_byte_array().to_vec(),
-            child_block_time: tx.timestamp,
+            child_height: Some(height),
+            child_block_hash: Some(recon.header.block_hash().to_byte_array().to_vec()),
+            child_header_bytes: None,
+            child_block_time: Some(tx.timestamp),
+            child_nbits: None,
             btc_parent_header: recon.header,
             pow_validates_child_target: None,
             btc_parent_coinbase_txid: Some(coinbase.compute_txid().to_byte_array().to_vec()),

@@ -585,9 +585,11 @@ pub fn prepare_rsk_capture(
     });
 
     let evidence_for_event = NormalizedEventEvidence {
-        child_height: rsk_height,
-        child_block_hash: block_hash_bytes.clone(),
-        child_block_time: timestamp,
+        child_height: Some(rsk_height),
+        child_block_hash: Some(block_hash_bytes.clone()),
+        child_header_bytes: None,
+        child_block_time: Some(timestamp),
+        child_nbits: None,
         btc_parent_header: header,
         // RSK exposes only an RLP-encoded child header with an integer
         // difficulty; no consensus-grade child target is available in this
@@ -848,7 +850,7 @@ mod tests {
         assert_eq!(inputs.evidence.uncle_index, Some(0));
         assert_eq!(inputs.evidence.uncle_parent_height, Some(800_010));
         // child_height on the main row is the uncle's own RSK block number.
-        assert_eq!(inputs.payload.child_height, 800_001);
+        assert_eq!(inputs.payload.child_height, Some(800_001));
     }
 
     #[test]

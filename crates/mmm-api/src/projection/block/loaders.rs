@@ -45,9 +45,11 @@ pub(super) struct BlockDetailRow {
 pub(super) struct EventDetailRow {
     pub(super) id: i64,
     pub(super) source: SourceRecord,
-    pub(super) child_height: i32,
-    pub(super) child_block_hash: Vec<u8>,
-    pub(super) child_block_time: i64,
+    pub(super) child_height: Option<i32>,
+    pub(super) child_block_hash: Option<Vec<u8>>,
+    pub(super) child_header_bytes: Option<Vec<u8>>,
+    pub(super) child_block_time: Option<i64>,
+    pub(super) child_nbits: Option<i64>,
     pub(super) parent_hash: Vec<u8>,
     pub(super) prev_hash: Vec<u8>,
     pub(super) parent_header_bytes: Vec<u8>,
@@ -306,14 +308,16 @@ pub(super) fn event_detail_sql(predicate: &str) -> String {
                 r.rsk_block_hash, r.rsk_height, \
                 r.is_uncle, r.uncle_index, r.uncle_parent_height, r.rsk_miner, \
                 r.merge_mining_hash, r.merkle_proof, r.coinbase_tail, \
-                r.proof_format, pi.id, pi.namespace, pi.identifier \
+                r.proof_format, pi.id, pi.namespace, pi.identifier, \
+                e.child_header_bytes, e.child_nbits \
          FROM merge_mining_event e \
          JOIN source s ON s.id = e.source_id \
          LEFT JOIN pool cmp ON cmp.id = e.child_miner_pool_id \
          LEFT JOIN rsk_merge_mining_evidence r ON r.event_id = e.id \
          LEFT JOIN pool_identity pi ON pi.id = r.pool_identity_id \
          WHERE e.revoked_at IS NULL AND {predicate} \
-         ORDER BY e.confirmed_at, s.code, e.child_height, e.child_block_hash, e.id"
+         ORDER BY e.confirmed_at, s.code, e.child_height NULLS LAST, \
+                  e.child_block_hash NULLS LAST, e.id"
     )
 }
 
@@ -338,6 +342,8 @@ pub(super) fn map_event_detail_rows(rows: Vec<tokio_postgres::Row>) -> Result<Ve
                 child_height: row.get(6),
                 child_block_hash: row.get(7),
                 child_block_time: row.get(8),
+                child_header_bytes: row.get("child_header_bytes"),
+                child_nbits: row.get("child_nbits"),
                 parent_hash: row.get(9),
                 prev_hash: row.get(10),
                 parent_header_bytes: row.get(11),

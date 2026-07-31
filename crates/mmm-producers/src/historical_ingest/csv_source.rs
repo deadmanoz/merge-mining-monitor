@@ -1,52 +1,31 @@
-//! Pure CSV-row to `ImportCandidate` parsing for the recovered-evidence importer.
+//! Pure normalized monitor-evidence row parsing.
 //!
-//! No DB or RPC: this layer decodes one recovered-evidence row into a standard
-//! `NormalizedEventEvidence` (the same format live producers emit), rejecting bad
-//! rows with a typed `SkipReason` rather than an error. It also enforces the
-//! orphan-relevance gate: unknown rows are admitted only when a relevance
-//! selection pre-selected their parent hash (from the row's own
-//! monitor-evidence columns or the relevance inventory), so unproven unknown
-//! rows never enter the pipeline. The runner layers the live Core classifier
-//! on top of this.
+//! Child height, hash, header, time, and `nBits` are independent evidence.
+//! Empty cells remain absent. No child value is derived from a scan counter,
+//! Bitcoin parent field, or synthetic placeholder.
 
-use std::collections::BTreeMap;
-use std::io::Read;
-use std::path::Path;
-
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use bitcoin::block::Header;
 use bitcoin::consensus::deserialize;
 use bitcoin::hashes::{Hash as _, sha256d};
 use mmm_capture::auxpow::{parse_bip34_height, validates_target};
 use mmm_capture::btc_orphan::{BtcOrphanVerdict, classify_btc_orphan, is_strict_bip34_chain};
-use mmm_capture::capture::{NormalizedEventEvidence, RskEvidencePayload};
+use mmm_capture::capture::{
+    HistoricalEventProvenance, NormalizedEventEvidence, RskEvidencePayload,
+};
 
-use super::config::HistoricalChainSpec;
+use super::config::{HistoricalChainSpec, PINNED_RESEARCH_COMMIT};
+use super::publication::NORMALIZED_COLUMNS;
 use super::rsk_sidecar::{RskSidecarColumns, parse_rsk_sidecar};
 
-/// The classification stated by the source dataset's `classification` column.
-///
-/// This is the dataset's own verdict, not the project's: `Stale` folds the
-/// dataset's `stale` and `stale_descendant` labels, and `Unknown` rows are only
-/// trusted after the relevance gate and (in the runner) live Core attestation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SourceClassification {
     Canonical,
     Stale,
-    /// Parent state unknown: the header resolves to neither a canonical
-    /// block nor a known stale. Research artifacts write `unknown`
-    /// (legacy exports wrote `orphan`); admission into the ingest requires
-    /// a strict/weak BTC-orphan verdict or a known-branch relevance
-    /// selection.
+    StaleDescendant,
     Unknown,
 }
 
-/// Why the relevance inventory pre-selected a parent hash, in priority order.
-///
-/// `KnownStaleDescendant` and `KnownDirectStale` are known-branch attestations
-/// (admitted regardless of the local orphan verdict); the two BTC-orphan
-/// variants still require a Strict/Weak orphan verdict. `selection_priority`
-/// keeps the strongest reason when a hash appears more than once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum RelevanceSelection {
     StrictBtcOrphan,
@@ -55,175 +34,121 @@ pub(super) enum RelevanceSelection {
     KnownStaleDescendant,
 }
 
-/// One accepted row, normalized into producer evidence plus the metadata the
-/// runner needs to decide and tally it.
-///
-/// `evidence` is ready for `build_event_payload_from_evidence`;
-/// `btc_parent_display_hash` is the reversed-hex parent id used in error context
-/// and relevance lookups; `orphan_verdict`/`relevance_selection` carry the
-/// orphan provenance the runner re-checks against live classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PublicationCategory {
+    Canonical,
+    Stale,
+    StaleDescendant,
+    StrictBtcOrphan,
+    WeakBtcOrphan,
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct ImportCandidate {
     pub(super) source_classification: SourceClassification,
     pub(super) evidence: NormalizedEventEvidence,
-    /// Reversed-hex (Display) parent block hash, for relevance lookup and logs.
+    pub(super) historical_provenance: HistoricalEventProvenance,
     pub(super) btc_parent_display_hash: String,
     pub(super) orphan_verdict: Option<BtcOrphanVerdict>,
     pub(super) relevance_selection: Option<RelevanceSelection>,
-    /// The 1:1 `rsk_merge_mining_evidence` payload, present exactly when the
-    /// dataset is RSK (see the `rsk_sidecar` module).
     pub(super) rsk_evidence: Option<RskEvidencePayload>,
 }
 
-/// Typed reason a row is dropped instead of ingested.
-///
-/// Carried in place of an error so a single bad row never aborts the import;
-/// the runner tallies these by `as_str` into the summary's `skipped` map. The
-/// `as_str` values are the stable keys printed in that summary, treat them as a
-/// reporting contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum SkipReason {
     EmptyField,
     Malformed,
     HashMismatch,
+    EvidenceMismatch,
+    TaxonomyMismatch,
     TargetInvalid,
     UnsupportedClassification,
     Near,
     OrphanNotSelected,
     OrphanExcluded,
     OrphanPending,
+    ClassificationMismatch,
     Unclassified,
-    KnownBranchNotClassified,
 }
 
 impl SkipReason {
-    /// Stable snake_case key for this reason, used as the summary `skipped` map
-    /// key and in printed output. Changing a value changes that reporting contract.
-    pub(super) fn as_str(self) -> &'static str {
+    pub(super) const fn as_str(self) -> &'static str {
         match self {
             Self::EmptyField => "empty_field",
             Self::Malformed => "malformed",
             Self::HashMismatch => "hash_mismatch",
+            Self::EvidenceMismatch => "evidence_mismatch",
+            Self::TaxonomyMismatch => "taxonomy_mismatch",
             Self::TargetInvalid => "target_invalid",
             Self::UnsupportedClassification => "unsupported_classification",
             Self::Near => "near",
             Self::OrphanNotSelected => "orphan_not_selected",
             Self::OrphanExcluded => "orphan_excluded",
             Self::OrphanPending => "orphan_pending",
+            Self::ClassificationMismatch => "classification_mismatch",
             Self::Unclassified => "unclassified",
-            Self::KnownBranchNotClassified => "known_branch_not_classified",
         }
     }
 }
 
-/// The set of parent hashes the relevance inventory pre-cleared for orphan rows,
-/// keyed by reversed-hex (Display) hash to the strongest selection reason.
-///
-/// Empty by default (no inventory), which means no orphan row is admitted.
-#[derive(Debug, Default, Clone)]
-pub(super) struct RelevanceFilter {
-    selected_orphans: BTreeMap<String, RelevanceSelection>,
-}
-
-impl RelevanceFilter {
-    /// The winning selection reason for `display_hash`, if pre-selected.
-    fn selection_for_orphan(&self, display_hash: &str) -> Option<RelevanceSelection> {
-        self.selected_orphans.get(display_hash).copied()
-    }
-}
-
-/// Load the relevance filter from an optional inventory CSV, scoped to `chain`.
-/// `None` path yields an empty filter (every orphan row will be skipped).
-pub(super) fn load_relevance_filter(path: Option<&Path>, chain: &str) -> Result<RelevanceFilter> {
-    let Some(path) = path else {
-        return Ok(RelevanceFilter::default());
-    };
-    let file = std::fs::File::open(path)
-        .with_context(|| format!("open relevance inventory {}", path.display()))?;
-    read_relevance_filter(file, chain)
-        .with_context(|| format!("read relevance inventory {}", path.display()))
-}
-
-/// Parse a relevance inventory from any reader, keeping only rows for `chain`
-/// whose `btc_stale_relevance`/`relevance_reason` map to a `RelevanceSelection`
-/// (other rows, including `*_excluded`, are dropped). Duplicate parent hashes
-/// resolve to the highest-priority selection via `insert_selection`.
-fn read_relevance_filter<R: Read>(reader: R, chain: &str) -> Result<RelevanceFilter> {
-    let mut csv = csv::Reader::from_reader(reader);
-    let mut selected_orphans = BTreeMap::new();
-    for row in csv.deserialize::<BTreeMap<String, String>>() {
-        let row = row.context("parse relevance inventory row")?;
-        if row.get("chain").map(String::as_str) != Some(chain) {
-            continue;
-        }
-        let relevance = row
-            .get("btc_stale_relevance")
-            .map(|value| value.trim())
-            .unwrap_or_default();
-        let reason = row
-            .get("relevance_reason")
-            .map(|value| value.trim())
-            .unwrap_or_default();
-        let Some(selection) = selection_from_labels(relevance, reason) else {
-            continue;
-        };
-        let hash = required_value(&row, "btc_header_hash")?;
-        insert_selection(&mut selected_orphans, hash.to_owned(), selection);
-    }
-    Ok(RelevanceFilter { selected_orphans })
-}
-
-/// Resolved column indices for one dataset's header row.
-///
-/// Computed once per file so per-row parsing is positional. Required columns
-/// (`header_hex`, `classification`, a height column) error at construction;
-/// optional ones are `None` and silently absent. The explicit VCash, Lyncoin,
-/// and SixEleven artifacts require child hash and time columns. Height accepts
-/// the chain's `height_column` or a normalized `child_height`; the cross-check
-/// column accepts either `btc_header_hash` or `btc_hash`.
 pub(super) struct CsvLayout {
-    height: usize,
-    child_hash: Option<usize>,
-    child_time: Option<usize>,
-    header_hex: usize,
-    coinbase_script: Option<usize>,
+    chain: usize,
+    source_kind: usize,
+    source_path: usize,
+    source_row_number: usize,
+    artifact_scope: usize,
+    provenance: usize,
+    child_height: usize,
+    child_hash: usize,
+    child_header: usize,
+    child_time: usize,
+    child_nbits: usize,
+    btc_height: usize,
+    btc_hash: usize,
+    btc_prev_hash: usize,
+    btc_time: usize,
+    btc_bits: usize,
+    btc_nonce: usize,
+    btc_header: usize,
+    coinbase_script: usize,
     classification: usize,
-    hash_cross_check: Option<usize>,
-    /// Per-row strict/weak verdict columns carried by the research repo's
-    /// monitor-evidence exports; absent on other datasets.
-    relevance: Option<usize>,
-    relevance_reason: Option<usize>,
-    requires_exact_child_fields: bool,
-    /// RSK's seven sidecar columns, resolved (and required) only for RSK.
+    validation_status: usize,
+    expected_nbits: usize,
+    relevance: usize,
+    relevance_reason: usize,
     rsk_sidecar: Option<RskSidecarColumns>,
 }
 
 impl CsvLayout {
-    /// Resolve column indices against `headers`, applying the chain-specific and
-    /// fallback column-name rules. Errors if a required column is missing.
     pub(super) fn new(headers: &csv::StringRecord, spec: &HistoricalChainSpec) -> Result<Self> {
-        let requires_exact_child_fields = spec.requires_exact_child_fields();
+        for column in NORMALIZED_COLUMNS {
+            required_header(headers, column)?;
+        }
         Ok(Self {
-            height: required_header(headers, spec.height_column)
-                .or_else(|_| required_header(headers, "child_height"))?,
-            child_hash: if requires_exact_child_fields {
-                Some(required_header(headers, "child_block_hash")?)
-            } else {
-                optional_header(headers, "child_block_hash")
-            },
-            child_time: if requires_exact_child_fields {
-                Some(required_header(headers, "child_block_time")?)
-            } else {
-                optional_header(headers, "child_block_time")
-            },
-            header_hex: required_header(headers, "btc_header_hex")?,
-            coinbase_script: optional_header(headers, "coinbase_scriptsig_hex"),
+            chain: required_header(headers, "chain")?,
+            source_kind: required_header(headers, "source_kind")?,
+            source_path: required_header(headers, "source_path")?,
+            source_row_number: required_header(headers, "source_row_number")?,
+            artifact_scope: required_header(headers, "artifact_scope")?,
+            provenance: required_header(headers, "provenance")?,
+            child_height: required_header(headers, "child_height")?,
+            child_hash: required_header(headers, "child_block_hash")?,
+            child_header: required_header(headers, "child_header_hex")?,
+            child_time: required_header(headers, "child_block_time")?,
+            child_nbits: required_header(headers, "child_nbits")?,
+            btc_height: required_header(headers, "btc_height")?,
+            btc_hash: required_header(headers, "btc_header_hash")?,
+            btc_prev_hash: required_header(headers, "btc_prev_hash")?,
+            btc_time: required_header(headers, "btc_time")?,
+            btc_bits: required_header(headers, "btc_bits")?,
+            btc_nonce: required_header(headers, "btc_nonce")?,
+            btc_header: required_header(headers, "btc_header_hex")?,
+            coinbase_script: required_header(headers, "coinbase_scriptsig_hex")?,
             classification: required_header(headers, "classification")?,
-            hash_cross_check: optional_header(headers, "btc_header_hash")
-                .or_else(|| optional_header(headers, "btc_hash")),
-            relevance: optional_header(headers, "btc_stale_relevance"),
-            relevance_reason: optional_header(headers, "relevance_reason"),
-            requires_exact_child_fields,
+            validation_status: required_header(headers, "validation_status")?,
+            expected_nbits: required_header(headers, "expected_nbits")?,
+            relevance: required_header(headers, "btc_stale_relevance")?,
+            relevance_reason: required_header(headers, "relevance_reason")?,
             rsk_sidecar: if spec.chain == "rsk" {
                 Some(RskSidecarColumns::new(headers)?)
             } else {
@@ -233,178 +158,270 @@ impl CsvLayout {
     }
 }
 
-/// Decode one CSV row into an `ImportCandidate`, or a `SkipReason` if it should
-/// be dropped.
-///
-/// Validation order matters: parse height and classification, deserialize the
-/// 80-byte parent header, cross-check the stated hash against the derived one,
-/// reject headers whose PoW does not meet their own target, then run the
-/// orphan-relevance gate. Legacy child hashes fall back to a deterministic
-/// `synthetic_child_hash` when omitted, so re-imports stay idempotent on the
-/// same `(source, child_height)`. Explicit recovery sources reject that fallback.
+struct ChildFields {
+    height: Option<i32>,
+    block_hash: Option<Vec<u8>>,
+    header_bytes: Option<Vec<u8>>,
+    block_time: Option<i64>,
+    nbits: Option<u32>,
+}
+
+struct TaxonomyFields {
+    source_classification: SourceClassification,
+    relevance_selection: Option<RelevanceSelection>,
+    provenance: HistoricalEventProvenance,
+}
+
 pub(super) fn candidate_from_record(
     spec: &HistoricalChainSpec,
     layout: &CsvLayout,
     record: &csv::StringRecord,
-    relevance: &RelevanceFilter,
 ) -> Result<ImportCandidate, SkipReason> {
-    let child_height = parse_child_height(record.get(layout.height))?;
-    let source_classification = parse_source_classification(record.get(layout.classification))?;
-    let header = parse_parent_header(record.get(layout.header_hex))?;
-    let display_hash = header.block_hash().to_string();
-    check_hash_cross_reference(record, layout.hash_cross_check, &display_hash)?;
-    if !validates_target(header.block_hash(), header.bits) {
-        return Err(SkipReason::TargetInvalid);
+    if record.get(layout.chain).map(str::trim) != Some(spec.chain) {
+        return Err(SkipReason::Malformed);
     }
-    let coinbase_script =
-        parse_optional_hex_field(layout.coinbase_script.and_then(|index| record.get(index)))?;
-    let orphan_verdict = orphan_verdict(spec.chain, &header, coinbase_script.as_deref());
-    // A monitor-evidence export carries the strict/weak verdict on the row
-    // itself; other datasets rely on the separate relevance inventory. Merge
-    // both, keeping the strongest selection.
-    let row_selection = row_relevance_selection(layout, record);
-    let inventory_selection = relevance.selection_for_orphan(&display_hash);
-    let relevance_selection = match (row_selection, inventory_selection) {
-        (Some(row), Some(inv)) => {
-            if selection_priority(row) >= selection_priority(inv) {
-                Some(row)
-            } else {
-                Some(inv)
-            }
-        }
-        (row, inv) => row.or(inv),
+    let child = parse_child_fields(spec, layout, record)?;
+    let taxonomy = parse_taxonomy_fields(spec, layout, record)?;
+    let header = parse_parent_header(record.get(layout.btc_header))?;
+    let display_hash = header.block_hash().to_string();
+    validate_parent_fields(layout, record, &header, &display_hash)?;
+
+    let coinbase_script = parse_optional_hex_field(record.get(layout.coinbase_script))?;
+    let orphan_verdict = if taxonomy.source_classification == SourceClassification::Unknown {
+        let verdict = orphan_verdict(spec.chain, &header, coinbase_script.as_deref());
+        filter_unknown(verdict, taxonomy.relevance_selection)?;
+        Some(verdict)
+    } else {
+        None
     };
-    filter_source_classification(source_classification, orphan_verdict, relevance_selection)?;
-    let parsed_child_hash =
-        parse_optional_hash_field(layout.child_hash.and_then(|index| record.get(index)))?;
-    let child_block_hash = match parsed_child_hash {
-        Some(hash) => hash,
-        None if layout.requires_exact_child_fields => return Err(SkipReason::EmptyField),
-        None => synthetic_child_hash(spec.chain, child_height),
-    };
-    let rsk_evidence = layout
-        .rsk_sidecar
-        .as_ref()
-        .map(|columns| parse_rsk_sidecar(columns, record, child_height, &child_block_hash))
-        .transpose()?;
-    let evidence = NormalizedEventEvidence {
-        child_height,
-        child_block_hash,
-        child_block_time: parse_child_time(
-            layout.child_time.and_then(|index| record.get(index)),
-            header.time as i64,
-            layout.requires_exact_child_fields,
-        )?,
-        btc_parent_header: header,
-        pow_validates_child_target: None,
-        btc_parent_coinbase_txid: None,
-        btc_parent_coinbase_script: coinbase_script,
-        btc_parent_coinbase_outputs: None,
-        child_coinbase_txid: None,
-        child_coinbase_script: None,
-        child_coinbase_outputs: None,
-        aux_merkle_proof: None,
+    let rsk_evidence = if let Some(columns) = &layout.rsk_sidecar {
+        Some(parse_rsk_sidecar(
+            columns,
+            record,
+            child.height.ok_or(SkipReason::EmptyField)?,
+            child.block_hash.as_deref().ok_or(SkipReason::EmptyField)?,
+        )?)
+    } else {
+        None
     };
     Ok(ImportCandidate {
-        source_classification,
-        evidence,
+        source_classification: taxonomy.source_classification,
+        evidence: NormalizedEventEvidence {
+            child_height: child.height,
+            child_block_hash: child.block_hash,
+            child_header_bytes: child.header_bytes,
+            child_block_time: child.block_time,
+            child_nbits: child.nbits,
+            btc_parent_header: header,
+            pow_validates_child_target: None,
+            btc_parent_coinbase_txid: None,
+            btc_parent_coinbase_script: coinbase_script,
+            btc_parent_coinbase_outputs: None,
+            child_coinbase_txid: None,
+            child_coinbase_script: None,
+            child_coinbase_outputs: None,
+            aux_merkle_proof: None,
+        },
+        historical_provenance: taxonomy.provenance,
         btc_parent_display_hash: display_hash,
-        orphan_verdict: Some(orphan_verdict),
-        relevance_selection,
+        orphan_verdict,
+        relevance_selection: taxonomy.relevance_selection,
         rsk_evidence,
     })
 }
 
-/// The orphan-relevance gate. Canonical and stale rows pass unconditionally.
-/// Unknown rows need a relevance selection (from the row's own
-/// monitor-evidence columns or the relevance inventory); known-branch
-/// selections are admitted outright, while strict/weak BTC-orphan selections
-/// additionally require a Strict/Weak local verdict (Excluded/Pending map to
-/// their own skip reasons). This is what keeps unproven unknown rows out of
-/// the ingest pipeline.
-fn filter_source_classification(
-    classification: SourceClassification,
-    orphan_verdict: BtcOrphanVerdict,
-    relevance_selection: Option<RelevanceSelection>,
+fn parse_child_fields(
+    spec: &HistoricalChainSpec,
+    layout: &CsvLayout,
+    record: &csv::StringRecord,
+) -> Result<ChildFields, SkipReason> {
+    let height = parse_optional_nonnegative_i32(record.get(layout.child_height))?;
+    let block_hash = parse_optional_hash_field(record.get(layout.child_hash))?;
+    if height.is_none() && block_hash.is_none() {
+        return Err(SkipReason::EmptyField);
+    }
+    let header_bytes = parse_optional_hex_field(record.get(layout.child_header))?;
+    let block_time = parse_optional_nonnegative_i64(record.get(layout.child_time))?;
+    let nbits = parse_optional_compact_target(record.get(layout.child_nbits))?;
+    validate_child_bundle(
+        spec.chain,
+        block_hash.as_deref(),
+        header_bytes.as_deref(),
+        block_time,
+        nbits,
+    )?;
+    Ok(ChildFields {
+        height,
+        block_hash,
+        header_bytes,
+        block_time,
+        nbits,
+    })
+}
+
+fn parse_taxonomy_fields(
+    spec: &HistoricalChainSpec,
+    layout: &CsvLayout,
+    record: &csv::StringRecord,
+) -> Result<TaxonomyFields, SkipReason> {
+    let source_classification = parse_source_classification(record.get(layout.classification))?;
+    let validation_status = optional_string(record.get(layout.validation_status));
+    if matches!(
+        source_classification,
+        SourceClassification::Stale | SourceClassification::StaleDescendant
+    ) && !validation_status
+        .as_deref()
+        .unwrap_or_default()
+        .starts_with("VALID")
+    {
+        return Err(SkipReason::TaxonomyMismatch);
+    }
+    let relevance = optional_string(record.get(layout.relevance));
+    let relevance_reason = optional_string(record.get(layout.relevance_reason));
+    let category = publication_category(
+        record
+            .get(layout.classification)
+            .map(str::trim)
+            .unwrap_or_default(),
+        relevance.as_deref().unwrap_or_default(),
+        relevance_reason.as_deref().unwrap_or_default(),
+    )?;
+    let relevance_selection = match category {
+        PublicationCategory::Canonical => None,
+        PublicationCategory::Stale => Some(RelevanceSelection::KnownDirectStale),
+        PublicationCategory::StaleDescendant => Some(RelevanceSelection::KnownStaleDescendant),
+        PublicationCategory::StrictBtcOrphan => Some(RelevanceSelection::StrictBtcOrphan),
+        PublicationCategory::WeakBtcOrphan => Some(RelevanceSelection::WeakBtcOrphan),
+    };
+    Ok(TaxonomyFields {
+        source_classification,
+        relevance_selection,
+        provenance: HistoricalEventProvenance {
+            publication_commit: PINNED_RESEARCH_COMMIT.to_owned(),
+            chain: spec.chain.to_owned(),
+            source_kind: non_empty(record.get(layout.source_kind))?.to_owned(),
+            source_path: non_empty(record.get(layout.source_path))?.to_owned(),
+            source_row_number: parse_positive_i64(record.get(layout.source_row_number))?,
+            artifact_scope: non_empty(record.get(layout.artifact_scope))?.to_owned(),
+            provenance: non_empty(record.get(layout.provenance))?.to_owned(),
+            classification: non_empty(record.get(layout.classification))?.to_owned(),
+            btc_height: parse_optional_nonnegative_i32(record.get(layout.btc_height))?,
+            validation_status,
+            btc_stale_relevance: relevance,
+            relevance_reason,
+        },
+    })
+}
+
+pub(super) fn publication_category(
+    classification: &str,
+    relevance: &str,
+    relevance_reason: &str,
+) -> Result<PublicationCategory, SkipReason> {
+    match (classification, relevance, relevance_reason) {
+        ("stale" | "unknown", "", "valid_direct_stale") => Ok(PublicationCategory::Stale),
+        ("stale_descendant" | "unknown", "", "valid_stale_descendant") => {
+            Ok(PublicationCategory::StaleDescendant)
+        }
+        (_, _, "valid_direct_stale" | "valid_stale_descendant") => {
+            Err(SkipReason::TaxonomyMismatch)
+        }
+        ("canonical", "", _) => Ok(PublicationCategory::Canonical),
+        ("unknown", "strict_btc_orphan", _) => Ok(PublicationCategory::StrictBtcOrphan),
+        ("unknown", "weak_btc_orphan", _) => Ok(PublicationCategory::WeakBtcOrphan),
+        ("near", _, _) => Err(SkipReason::Near),
+        ("canonical" | "stale" | "stale_descendant" | "unknown", _, _) => {
+            Err(SkipReason::TaxonomyMismatch)
+        }
+        _ => Err(SkipReason::UnsupportedClassification),
+    }
+}
+
+fn validate_parent_fields(
+    layout: &CsvLayout,
+    record: &csv::StringRecord,
+    header: &Header,
+    display_hash: &str,
 ) -> Result<(), SkipReason> {
-    if classification != SourceClassification::Unknown {
+    check_display_hash(record.get(layout.btc_hash), display_hash)?;
+    check_display_hash(
+        record.get(layout.btc_prev_hash),
+        &header.prev_blockhash.to_string(),
+    )?;
+    check_optional_i64(record.get(layout.btc_time), i64::from(header.time))?;
+    check_optional_u32_decimal(record.get(layout.btc_nonce), header.nonce)?;
+    check_optional_compact_target(record.get(layout.btc_bits), header.bits.to_consensus())?;
+    check_optional_compact_target(
+        record.get(layout.expected_nbits),
+        header.bits.to_consensus(),
+    )?;
+    if !validates_target(header.block_hash(), header.bits) {
+        return Err(SkipReason::TargetInvalid);
+    }
+    Ok(())
+}
+
+fn validate_child_bundle(
+    chain: &str,
+    child_hash: Option<&[u8]>,
+    child_header: Option<&[u8]>,
+    child_time: Option<i64>,
+    child_nbits: Option<u32>,
+) -> Result<(), SkipReason> {
+    let Some(header) = child_header else {
+        return Ok(());
+    };
+    if header.len() != Header::SIZE {
+        return Err(SkipReason::Malformed);
+    }
+    let hash = child_hash.ok_or(SkipReason::EvidenceMismatch)?;
+    let time = child_time.ok_or(SkipReason::EvidenceMismatch)?;
+    let nbits = child_nbits.ok_or(SkipReason::EvidenceMismatch)?;
+    if sha256d::Hash::hash(header).to_byte_array().as_slice() != hash {
+        return Err(SkipReason::HashMismatch);
+    }
+    let header_time = u32::from_le_bytes(
+        header[68..72]
+            .try_into()
+            .expect("80-byte child header has time field"),
+    );
+    if i64::from(header_time) != time {
+        return Err(SkipReason::EvidenceMismatch);
+    }
+    let header_nbits = u32::from_le_bytes(
+        header[72..76]
+            .try_into()
+            .expect("80-byte child header has nBits field"),
+    );
+    if chain != "xaya" && header_nbits != nbits {
+        return Err(SkipReason::EvidenceMismatch);
+    }
+    Ok(())
+}
+
+fn filter_unknown(
+    verdict: BtcOrphanVerdict,
+    selection: Option<RelevanceSelection>,
+) -> Result<(), SkipReason> {
+    if matches!(
+        selection,
+        Some(RelevanceSelection::KnownDirectStale | RelevanceSelection::KnownStaleDescendant)
+    ) {
         return Ok(());
     }
-    match relevance_selection {
-        Some(RelevanceSelection::KnownDirectStale | RelevanceSelection::KnownStaleDescendant) => {
-            return Ok(());
-        }
-        Some(RelevanceSelection::StrictBtcOrphan | RelevanceSelection::WeakBtcOrphan) => {}
-        None => return Err(SkipReason::OrphanNotSelected),
+    if !matches!(
+        selection,
+        Some(RelevanceSelection::StrictBtcOrphan | RelevanceSelection::WeakBtcOrphan)
+    ) {
+        return Err(SkipReason::OrphanNotSelected);
     }
-    match orphan_verdict {
+    match verdict {
         BtcOrphanVerdict::Strict | BtcOrphanVerdict::Weak => Ok(()),
         BtcOrphanVerdict::Excluded => Err(SkipReason::OrphanExcluded),
         BtcOrphanVerdict::Pending => Err(SkipReason::OrphanPending),
     }
 }
 
-/// Read the row-level strict/weak selection from a monitor-evidence export's
-/// `btc_stale_relevance` / `relevance_reason` columns, when present.
-fn row_relevance_selection(
-    layout: &CsvLayout,
-    record: &csv::StringRecord,
-) -> Option<RelevanceSelection> {
-    let relevance = layout
-        .relevance
-        .and_then(|index| record.get(index))
-        .map(str::trim)
-        .unwrap_or_default();
-    let reason = layout
-        .relevance_reason
-        .and_then(|index| record.get(index))
-        .map(str::trim)
-        .unwrap_or_default();
-    selection_from_labels(relevance, reason)
-}
-
-fn selection_from_labels(relevance: &str, reason: &str) -> Option<RelevanceSelection> {
-    match (relevance, reason) {
-        ("strict_btc_orphan", _) => Some(RelevanceSelection::StrictBtcOrphan),
-        ("weak_btc_orphan", _) => Some(RelevanceSelection::WeakBtcOrphan),
-        // Known-stale exports signal direct stale rows and valid stale-fork
-        // descendants through relevance_reason alone.
-        (_, "valid_direct_stale") => Some(RelevanceSelection::KnownDirectStale),
-        (_, "valid_stale_descendant") => Some(RelevanceSelection::KnownStaleDescendant),
-        _ => None,
-    }
-}
-
-/// Insert keeping the strongest reason: a new selection overwrites only when its
-/// priority strictly exceeds the existing one, so inventory row order does not
-/// affect the result.
-fn insert_selection(
-    selected_orphans: &mut BTreeMap<String, RelevanceSelection>,
-    hash: String,
-    selection: RelevanceSelection,
-) {
-    match selected_orphans.get(&hash).copied() {
-        Some(existing) if selection_priority(existing) >= selection_priority(selection) => {}
-        _ => {
-            selected_orphans.insert(hash, selection);
-        }
-    }
-}
-
-/// Total order over selection reasons (higher wins): known-branch attestations
-/// outrank BTC-orphan verdicts, descendant outranks direct, strict outranks weak.
-fn selection_priority(selection: RelevanceSelection) -> u8 {
-    match selection {
-        RelevanceSelection::KnownStaleDescendant => 4,
-        RelevanceSelection::KnownDirectStale => 3,
-        RelevanceSelection::StrictBtcOrphan => 2,
-        RelevanceSelection::WeakBtcOrphan => 1,
-    }
-}
-
-/// Compute the local BTC-orphan verdict for a parent header. BIP34 height is
-/// only parsed from the coinbase for strict-BIP34 chains; otherwise the verdict
-/// rests on timestamp and target alone.
 fn orphan_verdict(
     chain: &str,
     header: &Header,
@@ -416,66 +433,24 @@ fn orphan_verdict(
     classify_btc_orphan(header.time as i64, header.bits, strict_height).0
 }
 
-/// Locate a required column index, erroring (aborting the import) if absent.
 pub(super) fn required_header(headers: &csv::StringRecord, name: &str) -> Result<usize> {
-    optional_header(headers, name)
+    headers
+        .iter()
+        .position(|header| header.trim() == name)
         .ok_or_else(|| anyhow::anyhow!("CSV missing required column {name}"))
 }
 
-/// Locate a column index by trimmed exact name, `None` if not present.
-fn optional_header(headers: &csv::StringRecord, name: &str) -> Option<usize> {
-    headers.iter().position(|header| header.trim() == name)
-}
-
-/// Parse the child height; empty is `EmptyField`, non-integer is `Malformed`.
-fn parse_child_height(value: Option<&str>) -> Result<i32, SkipReason> {
-    let value = non_empty(value)?;
-    let height = value.parse().map_err(|_| SkipReason::Malformed)?;
-    if height < 0 {
-        return Err(SkipReason::Malformed);
-    }
-    Ok(height)
-}
-
-/// Parse a normalized child timestamp. Explicit recovery artifacts require an
-/// unsigned 32-bit wire timestamp; legacy datasets retain the parent-time
-/// fallback and accept their existing non-negative i64 range.
-fn parse_child_time(
-    value: Option<&str>,
-    fallback: i64,
-    requires_exact: bool,
-) -> Result<i64, SkipReason> {
-    let value = value.map(str::trim).unwrap_or_default();
-    if value.is_empty() {
-        return if requires_exact {
-            Err(SkipReason::EmptyField)
-        } else {
-            Ok(fallback)
-        };
-    }
-    let timestamp = value.parse::<i64>().map_err(|_| SkipReason::Malformed)?;
-    if timestamp < 0 || (requires_exact && timestamp > i64::from(u32::MAX)) {
-        return Err(SkipReason::Malformed);
-    }
-    Ok(timestamp)
-}
-
-/// Map the dataset's `classification` label to a `SourceClassification`. `stale`
-/// and `stale_descendant` both fold to `Stale`; `near` and unrecognized labels
-/// become their own skip reasons rather than being silently treated as unknown.
 fn parse_source_classification(value: Option<&str>) -> Result<SourceClassification, SkipReason> {
-    match non_empty(value)?.trim() {
+    match non_empty(value)? {
         "canonical" => Ok(SourceClassification::Canonical),
-        "stale" | "stale_descendant" => Ok(SourceClassification::Stale),
-        // Legacy research artifacts wrote "orphan" for the unknown state.
-        "unknown" | "orphan" => Ok(SourceClassification::Unknown),
+        "stale" => Ok(SourceClassification::Stale),
+        "stale_descendant" => Ok(SourceClassification::StaleDescendant),
+        "unknown" => Ok(SourceClassification::Unknown),
         "near" => Err(SkipReason::Near),
         _ => Err(SkipReason::UnsupportedClassification),
     }
 }
 
-/// Decode and consensus-deserialize the parent header, enforcing the exact
-/// 80-byte `Header::SIZE` before deserializing so a wrong-length hex is rejected.
 fn parse_parent_header(value: Option<&str>) -> Result<Header, SkipReason> {
     let raw = parse_hex_field(value)?;
     if raw.len() != Header::SIZE {
@@ -484,12 +459,10 @@ fn parse_parent_header(value: Option<&str>) -> Result<Header, SkipReason> {
     deserialize(&raw).map_err(|_| SkipReason::Malformed)
 }
 
-/// Decode a required hex field; empty is `EmptyField`, bad hex is `Malformed`.
 pub(super) fn parse_hex_field(value: Option<&str>) -> Result<Vec<u8>, SkipReason> {
     hex::decode(non_empty(value)?).map_err(|_| SkipReason::Malformed)
 }
 
-/// Decode an optional hex field: missing/blank yields `Ok(None)`, bad hex is `Malformed`.
 pub(super) fn parse_optional_hex_field(value: Option<&str>) -> Result<Option<Vec<u8>>, SkipReason> {
     let value = value.map(str::trim).unwrap_or_default();
     if value.is_empty() {
@@ -501,8 +474,6 @@ pub(super) fn parse_optional_hex_field(value: Option<&str>) -> Result<Option<Vec
     }
 }
 
-/// Decode an optional 32-byte hash field, enforcing the byte length. Returned
-/// bytes are stored as-is (wire/internal order): callers must not re-reverse.
 fn parse_optional_hash_field(value: Option<&str>) -> Result<Option<Vec<u8>>, SkipReason> {
     let Some(bytes) = parse_optional_hex_field(value)? else {
         return Ok(None);
@@ -514,7 +485,91 @@ fn parse_optional_hash_field(value: Option<&str>) -> Result<Option<Vec<u8>>, Ski
     }
 }
 
-/// Trim and require a non-empty value, mapping blank/missing to `EmptyField`.
+fn parse_optional_nonnegative_i32(value: Option<&str>) -> Result<Option<i32>, SkipReason> {
+    let value = value.map(str::trim).unwrap_or_default();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    match value.parse::<i32>() {
+        Ok(parsed) if parsed >= 0 => Ok(Some(parsed)),
+        _ => Err(SkipReason::Malformed),
+    }
+}
+
+fn parse_optional_nonnegative_i64(value: Option<&str>) -> Result<Option<i64>, SkipReason> {
+    let value = value.map(str::trim).unwrap_or_default();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    match value.parse::<i64>() {
+        Ok(parsed) if parsed >= 0 => Ok(Some(parsed)),
+        _ => Err(SkipReason::Malformed),
+    }
+}
+
+fn parse_positive_i64(value: Option<&str>) -> Result<i64, SkipReason> {
+    match non_empty(value)?.parse::<i64>() {
+        Ok(parsed) if parsed > 0 => Ok(parsed),
+        _ => Err(SkipReason::Malformed),
+    }
+}
+
+fn optional_string(value: Option<&str>) -> Option<String> {
+    let value = value.map(str::trim).unwrap_or_default();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+fn parse_optional_compact_target(value: Option<&str>) -> Result<Option<u32>, SkipReason> {
+    let value = value.map(str::trim).unwrap_or_default();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let value = value.strip_prefix("0x").unwrap_or(value);
+    if value.is_empty() || value.len() > 8 {
+        return Err(SkipReason::Malformed);
+    }
+    u32::from_str_radix(value, 16)
+        .map(Some)
+        .map_err(|_| SkipReason::Malformed)
+}
+
+fn check_display_hash(value: Option<&str>, expected: &str) -> Result<(), SkipReason> {
+    let value = non_empty(value)?;
+    if value.eq_ignore_ascii_case(expected) {
+        Ok(())
+    } else {
+        Err(SkipReason::HashMismatch)
+    }
+}
+
+fn check_optional_i64(value: Option<&str>, expected: i64) -> Result<(), SkipReason> {
+    if parse_optional_nonnegative_i64(value)?.is_none_or(|value| value == expected) {
+        Ok(())
+    } else {
+        Err(SkipReason::EvidenceMismatch)
+    }
+}
+
+fn check_optional_u32_decimal(value: Option<&str>, expected: u32) -> Result<(), SkipReason> {
+    let value = value.map(str::trim).unwrap_or_default();
+    if value.is_empty() {
+        return Ok(());
+    }
+    if value.parse::<u32>().is_ok_and(|value| value == expected) {
+        Ok(())
+    } else {
+        Err(SkipReason::EvidenceMismatch)
+    }
+}
+
+fn check_optional_compact_target(value: Option<&str>, expected: u32) -> Result<(), SkipReason> {
+    if parse_optional_compact_target(value)?.is_none_or(|value| value == expected) {
+        Ok(())
+    } else {
+        Err(SkipReason::EvidenceMismatch)
+    }
+}
+
 pub(super) fn non_empty(value: Option<&str>) -> Result<&str, SkipReason> {
     let value = value.map(str::trim).unwrap_or_default();
     if value.is_empty() {
@@ -522,47 +577,6 @@ pub(super) fn non_empty(value: Option<&str>) -> Result<&str, SkipReason> {
     } else {
         Ok(value)
     }
-}
-
-/// Guard the dataset's stated parent hash against the one derived from the
-/// header. No cross-check column or a blank value passes; a present, mismatching
-/// (case-insensitive) value is `HashMismatch`, catching corrupted header hex.
-fn check_hash_cross_reference(
-    record: &csv::StringRecord,
-    index: Option<usize>,
-    display_hash: &str,
-) -> Result<(), SkipReason> {
-    let Some(index) = index else {
-        return Ok(());
-    };
-    let stated = record.get(index).map(str::trim).unwrap_or_default();
-    if stated.is_empty() || stated.eq_ignore_ascii_case(display_hash) {
-        Ok(())
-    } else {
-        Err(SkipReason::HashMismatch)
-    }
-}
-
-/// Read a required relevance-inventory field, erroring if blank or absent.
-fn required_value<'a>(row: &'a BTreeMap<String, String>, key: &str) -> Result<&'a str> {
-    let value = row.get(key).map(|value| value.trim()).unwrap_or_default();
-    if value.is_empty() {
-        bail!("relevance inventory row missing {key}");
-    }
-    Ok(value)
-}
-
-/// Deterministic child-block hash for datasets lacking a real one, derived as
-/// `sha256d("mmm-dataset:<chain>:<height>")`.
-///
-/// Stable across re-imports (so the `(source, child_height)` upsert stays
-/// idempotent) and source-scoped (so two chains at the same height never
-/// collide). Returned in `to_byte_array` (wire/internal) order; never reverse it.
-fn synthetic_child_hash(chain: &str, child_height: i32) -> Vec<u8> {
-    let material = format!("mmm-dataset:{chain}:{child_height}");
-    sha256d::Hash::hash(material.as_bytes())
-        .to_byte_array()
-        .to_vec()
 }
 
 #[cfg(test)]
@@ -573,424 +587,277 @@ mod tests {
     const GENESIS_HEADER: &str = "0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c";
     const GENESIS_HASH: &str = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 
-    #[test]
-    fn derives_parent_fields_and_synthetic_child_identity() {
-        let spec = historical_chain_spec("devcoin").unwrap();
-        let (layout, record) = layout_and_record(&format!(
-            "dvc_height,btc_header_hex,coinbase_scriptsig_hex,classification,btc_header_hash\n\
-             42,{GENESIS_HEADER},04ffff001d0104,stale,{GENESIS_HASH}\n"
-        ));
-        let first =
-            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap();
-        let second =
-            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap();
-
-        assert_eq!(first.btc_parent_display_hash, GENESIS_HASH);
-        assert_eq!(first.evidence.child_height, 42);
-        assert_eq!(
-            first.evidence.child_block_hash,
-            second.evidence.child_block_hash
-        );
-        assert_eq!(first.evidence.child_block_time, 1_231_006_505);
-        assert!(first.evidence.btc_parent_coinbase_outputs.is_none());
+    #[derive(Default)]
+    struct TestRow<'a> {
+        chain: &'a str,
+        child_height: &'a str,
+        child_hash: &'a str,
+        child_header: &'a str,
+        child_time: &'a str,
+        child_nbits: &'a str,
+        classification: &'a str,
+        relevance: &'a str,
+        relevance_reason: &'a str,
     }
 
-    #[test]
-    fn rejects_hash_cross_reference_mismatch() {
-        let spec = historical_chain_spec("devcoin").unwrap();
-        let (layout, record) = layout_and_record(&format!(
-            "dvc_height,btc_header_hex,coinbase_scriptsig_hex,classification,btc_header_hash\n\
-             42,{GENESIS_HEADER},04ffff001d0104,stale,{}\n",
-            "11".repeat(32)
-        ));
-
-        assert_eq!(
-            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap_err(),
-            SkipReason::HashMismatch
-        );
+    fn row(value: TestRow<'_>) -> String {
+        let TestRow {
+            chain,
+            child_height,
+            child_hash,
+            child_header,
+            child_time,
+            child_nbits,
+            classification,
+            relevance,
+            relevance_reason,
+        } = value;
+        format!(
+            "{chain},full_inventory,<archive>,1,full_classifier_inventory,archive,\
+             {child_height},{child_hash},{child_header},{child_time},{child_nbits},\
+             0,{GENESIS_HASH},{},{},1d00ffff,2083236893,{GENESIS_HEADER},\
+             04ffff001d0104,,,{},VALID,1d00ffff,,{relevance},{relevance_reason}\n",
+            "0".repeat(64),
+            1_231_006_505,
+            classification
+        )
     }
 
-    #[test]
-    fn orphan_rows_need_relevance_selection() {
-        let spec = historical_chain_spec("devcoin").unwrap();
-        let (layout, record) = layout_and_record(&format!(
-            "dvc_height,btc_header_hex,coinbase_scriptsig_hex,classification,btc_header_hash\n\
-             42,{GENESIS_HEADER},04ffff001d0104,orphan,{GENESIS_HASH}\n"
-        ));
-
-        assert_eq!(
-            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap_err(),
-            SkipReason::OrphanNotSelected
-        );
-    }
-
-    #[test]
-    fn relevance_filter_loads_only_exact_chain_strict_or_weak_rows() {
-        let csv = "\
-chain,btc_stale_relevance,btc_header_hash\n\
-devcoin,strict_btc_orphan,aa\n\
-devcoin,weak_btc_orphan,bb\n\
-devcoin,excluded,cc\n\
-devcoin|ixcoin,strict_btc_orphan,dd\n\
-ixcoin,strict_btc_orphan,ee\n";
-        let filter = read_relevance_filter(csv.as_bytes(), "devcoin").unwrap();
-
-        assert!(filter.selection_for_orphan("aa").is_some());
-        assert!(filter.selection_for_orphan("bb").is_some());
-        assert!(filter.selection_for_orphan("cc").is_none());
-        assert!(filter.selection_for_orphan("dd").is_none());
-        assert!(filter.selection_for_orphan("ee").is_none());
-    }
-
-    #[test]
-    fn relevance_filter_loads_known_branch_attestation_reasons() {
-        let csv = "\
-chain,source_classification,btc_stale_relevance,relevance_reason,btc_header_hash\n\
-devcoin,unknown,,valid_direct_stale,aa\n\
-devcoin,orphan,,valid_stale_descendant,bb\n\
-devcoin,orphan,excluded,validation_rejected,cc\n\
-devcoin,orphan,excluded,known_direct_stale_hash,dd\n\
-ixcoin,unknown,,valid_direct_stale,ee\n";
-        let filter = read_relevance_filter(csv.as_bytes(), "devcoin").unwrap();
-
-        assert_eq!(
-            filter.selection_for_orphan("aa"),
-            Some(RelevanceSelection::KnownDirectStale)
-        );
-        assert_eq!(
-            filter.selection_for_orphan("bb"),
-            Some(RelevanceSelection::KnownStaleDescendant)
-        );
-        assert!(filter.selection_for_orphan("cc").is_none());
-        // The pre-research placeholder reason strings are not honored.
-        assert!(filter.selection_for_orphan("dd").is_none());
-        assert!(filter.selection_for_orphan("ee").is_none());
-    }
-
-    #[test]
-    fn known_branch_orphan_rows_pass_relevance_selection() {
-        let spec = historical_chain_spec("devcoin").unwrap();
-        let (layout, record) = layout_and_record(&format!(
-            "dvc_height,btc_header_hex,coinbase_scriptsig_hex,classification,btc_header_hash\n\
-             42,{GENESIS_HEADER},04ffff001d0104,orphan,{GENESIS_HASH}\n"
-        ));
-        let csv = format!(
-            "chain,btc_stale_relevance,relevance_reason,btc_header_hash\n\
-             devcoin,,valid_stale_descendant,{GENESIS_HASH}\n"
-        );
-        let relevance = read_relevance_filter(csv.as_bytes(), "devcoin").unwrap();
-
-        let candidate = candidate_from_record(spec, &layout, &record, &relevance).unwrap();
-
-        assert_eq!(
-            candidate.relevance_selection,
-            Some(RelevanceSelection::KnownStaleDescendant)
-        );
-        assert_eq!(
-            candidate.source_classification,
-            SourceClassification::Unknown
-        );
-    }
-
-    #[test]
-    fn unknown_classification_rows_need_relevance_selection_like_legacy_orphan() {
-        let spec = historical_chain_spec("devcoin").unwrap();
-        let (layout, record) = layout_and_record(&format!(
-            "dvc_height,btc_header_hex,coinbase_scriptsig_hex,classification,btc_header_hash\n\
-             42,{GENESIS_HEADER},04ffff001d0104,unknown,{GENESIS_HASH}\n"
-        ));
-
-        assert_eq!(
-            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap_err(),
-            SkipReason::OrphanNotSelected
-        );
-    }
-
-    #[test]
-    fn monitor_evidence_row_level_known_branch_selection_admits_without_inventory() {
-        let spec = historical_chain_spec("devcoin").unwrap();
-        let (layout, record) = layout_and_record(&format!(
-            "dvc_height,btc_header_hex,coinbase_scriptsig_hex,classification,btc_header_hash,btc_stale_relevance,relevance_reason\n\
-             42,{GENESIS_HEADER},04ffff001d0104,unknown,{GENESIS_HASH},,valid_direct_stale\n"
-        ));
-
-        let candidate =
-            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap();
-
-        assert_eq!(
-            candidate.relevance_selection,
-            Some(RelevanceSelection::KnownDirectStale)
-        );
-        assert_eq!(
-            candidate.source_classification,
-            SourceClassification::Unknown
-        );
-    }
-
-    #[test]
-    fn monitor_evidence_row_level_strict_selection_passes_gate_with_local_verdict() {
-        let spec = historical_chain_spec("devcoin").unwrap();
-        // A row-level strict/weak selection goes through the same gate as an
-        // inventory selection: the locally recomputed verdict must itself be
-        // Strict or Weak. The genesis header's bits match Bitcoin's at its
-        // timestamp, so the local verdict is Weak and the row is admitted.
-        let (layout, record) = layout_and_record(&format!(
-            "dvc_height,btc_header_hex,coinbase_scriptsig_hex,classification,btc_header_hash,btc_stale_relevance,relevance_reason\n\
-             42,{GENESIS_HEADER},04ffff001d0104,unknown,{GENESIS_HASH},strict_btc_orphan,strict_height_nbits_match\n"
-        ));
-
-        let candidate =
-            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap();
-        assert_eq!(
-            candidate.relevance_selection,
-            Some(RelevanceSelection::StrictBtcOrphan)
-        );
-        assert_eq!(candidate.orphan_verdict, Some(BtcOrphanVerdict::Weak));
-    }
-
-    #[test]
-    fn normalized_full_evidence_rows_use_child_height_and_hash() {
-        let spec = historical_chain_spec("devcoin").unwrap();
-        let child_hash = "11".repeat(32);
-        let (layout, record) = layout_and_record(&format!(
-            "chain,child_height,child_block_hash,btc_header_hex,coinbase_scriptsig_hex,classification,btc_header_hash\n\
-             devcoin,42,{child_hash},{GENESIS_HEADER},,stale,{GENESIS_HASH}\n"
-        ));
-
-        let candidate =
-            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap();
-
-        assert_eq!(candidate.evidence.child_height, 42);
-        assert_eq!(candidate.evidence.child_block_hash, vec![0x11; 32]);
-        assert!(candidate.evidence.btc_parent_coinbase_script.is_none());
-    }
-
-    #[test]
-    fn vcash_normalized_row_preserves_child_timestamp() {
-        let spec = historical_chain_spec("vcash").unwrap();
-        let child_hash = "11".repeat(32);
-        let input = format!(
-            "child_height,child_block_hash,child_block_time,btc_header_hex,classification,btc_header_hash\n\
-             100,{child_hash},1609556645,{GENESIS_HEADER},canonical,{GENESIS_HASH}\n"
-        );
+    fn candidate(chain: &str, row: &str) -> Result<ImportCandidate, SkipReason> {
+        let spec = historical_chain_spec(chain).unwrap();
+        let mut input = NORMALIZED_COLUMNS.join(",");
+        if chain == "rsk" {
+            input.push_str(
+                ",rsk_miner,merge_mining_hash,is_uncle,uncle_index,\
+                 uncle_parent_height,rsk_merkle_proof,rsk_coinbase_tail",
+            );
+        }
+        input.push('\n');
+        input.push_str(row);
         let mut reader = csv::Reader::from_reader(input.as_bytes());
         let layout = CsvLayout::new(reader.headers().unwrap(), spec).unwrap();
         let record = reader.records().next().unwrap().unwrap();
+        candidate_from_record(spec, &layout, &record)
+    }
 
-        let candidate =
-            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap();
-
-        assert_eq!(candidate.evidence.child_height, 100);
-        assert_eq!(candidate.evidence.child_block_hash, vec![0x11; 32]);
-        assert_eq!(candidate.evidence.child_block_time, 1_609_556_645);
-        assert_ne!(candidate.evidence.child_block_time, 1_231_006_505);
+    fn child_identity() -> (String, String) {
+        let raw = hex::decode(GENESIS_HEADER).unwrap();
+        let hash = sha256d::Hash::hash(&raw).to_byte_array();
+        (hex::encode(hash), hex::encode(raw))
     }
 
     #[test]
-    fn lyncoin_evidence_row_preserves_exact_child_identity_and_timestamp() {
-        let spec = historical_chain_spec("lyncoin").unwrap();
-        let child_hash = "0aed171ebaa6d877d35e683af6f919f4baeefe1aa56f4b9383160046bd6ae9d4";
-        let parent_hash = "00000000000000000003ab5d3bd0aa8f157fce92de3fa88da03b2193ba858cad";
-        let parent_header = "0040be2c3f1e5c66e72b8bd9b7e345245a8f81d4da511aad46c701000000000000000000a476fd6ac358d774de8fff0e250aaf3ea61336a10fee93f963862adfa37f71066ea167655024041752b11c24";
-        let input = format!(
-            "btc_stale_height,btc_hash,btc_prev_hash,btc_time,btc_bits_hex,btc_bip34_height,btc_nonce,coinbase_scriptsig_hex,coinbase_outputs,btc_header_hex,child_height,child_block_hash,child_block_time,classification,expected_nbits,nbits_match,post_bch_fork,validation_status\n\
-             819035,{parent_hash},,1701290350,17042450,819035,605860178,,,{parent_header},69735,{child_hash},1701290106,canonical,17042450,true,true,VALID (canonical Bitcoin block)\n"
-        );
-        let mut reader = csv::Reader::from_reader(input.as_bytes());
-        let layout = CsvLayout::new(reader.headers().unwrap(), spec).unwrap();
-        let record = reader.records().next().unwrap().unwrap();
-
-        let candidate =
-            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap();
-
-        assert_eq!(
-            candidate.source_classification,
-            SourceClassification::Canonical
-        );
-        assert_eq!(candidate.btc_parent_display_hash, parent_hash);
-        assert_eq!(candidate.evidence.child_height, 69_735);
-        assert_eq!(
-            candidate.evidence.child_block_hash,
-            hex::decode(child_hash).unwrap()
-        );
-        assert_eq!(candidate.evidence.child_block_time, 1_701_290_106);
-        assert_ne!(candidate.evidence.child_block_time, 1_701_290_350);
-    }
-
-    #[test]
-    fn sixeleven_evidence_row_preserves_exact_child_identity_and_timestamp() {
-        let spec = historical_chain_spec("sixeleven").unwrap();
-        let child_hash = "3daef8f576acf6ebf0efa5701bd9e52345361e31bd5e5173559d2d6d5309ca18";
-        let parent_hash = "00000000000000000002784ca68b0876b1e5342cc2b923f69a26e46e52bb4853";
-        let parent_header = "000000205e68671b7872002ecaa6445787c425f2bf585ca6c6f139000000000000000000470a7cfc71666d022c8d8de0a666f7def4c4c531f5359600f33f4d3f335a9a12ca743d5a4596001808af1bf3";
-        let input = format!(
-            "btc_stale_height,btc_hash,btc_prev_hash,btc_time,btc_bits_hex,btc_bip34_height,btc_nonce,coinbase_scriptsig_hex,coinbase_outputs,btc_header_hex,child_height,child_block_hash,child_block_time,classification,expected_nbits,nbits_match,post_bch_fork,validation_status\n\
-             500593,{parent_hash},,1513977034,18009645,500593,4078677768,,,{parent_header},203325,{child_hash},1513976418,canonical,18009645,true,true,VALID (canonical Bitcoin block)\n"
-        );
-        let mut reader = csv::Reader::from_reader(input.as_bytes());
-        let layout = CsvLayout::new(reader.headers().unwrap(), spec).unwrap();
-        let record = reader.records().next().unwrap().unwrap();
-
-        let candidate =
-            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap();
-
-        assert_eq!(
-            candidate.source_classification,
-            SourceClassification::Canonical
-        );
-        assert_eq!(candidate.btc_parent_display_hash, parent_hash);
-        assert_eq!(candidate.evidence.child_height, 203_325);
-        assert_eq!(
-            candidate.evidence.child_block_hash,
-            hex::decode(child_hash).unwrap()
-        );
-        assert_eq!(candidate.evidence.child_block_time, 1_513_976_418);
-        assert_ne!(candidate.evidence.child_block_time, 1_513_977_034);
-    }
-
-    #[test]
-    fn explicit_recovery_layout_requires_child_hash_and_time_columns() {
-        let spec = historical_chain_spec("sixeleven").unwrap();
-        let missing_hash = csv::StringRecord::from(vec![
-            "child_height",
-            "child_block_time",
-            "btc_header_hex",
-            "classification",
-        ]);
-        let error = CsvLayout::new(&missing_hash, spec)
+    fn requires_the_uniform_schema_for_every_chain() {
+        let headers = csv::StringRecord::from(vec!["chain", "child_height", "btc_header_hex"]);
+        let error = CsvLayout::new(&headers, historical_chain_spec("devcoin").unwrap())
             .err()
-            .expect("missing child hash must fail");
-        assert!(error.to_string().contains("child_block_hash"));
-
-        let missing_time = csv::StringRecord::from(vec![
-            "child_height",
-            "child_block_hash",
-            "btc_header_hex",
-            "classification",
-        ]);
-        let error = CsvLayout::new(&missing_time, spec)
-            .err()
-            .expect("missing child time must fail");
-        assert!(error.to_string().contains("child_block_time"));
+            .expect("incomplete schema must fail");
+        assert!(error.to_string().contains("source_kind"));
     }
 
     #[test]
-    fn explicit_recovery_rows_reject_missing_or_malformed_child_fields() {
+    fn authenticates_and_preserves_a_complete_child_header_bundle() {
+        let (hash, header) = child_identity();
+        let parsed = candidate(
+            "devcoin",
+            &row(TestRow {
+                chain: "devcoin",
+                child_height: "42",
+                child_hash: &hash,
+                child_header: &header,
+                child_time: "1231006505",
+                child_nbits: "1d00ffff",
+                classification: "stale",
+                relevance_reason: "valid_direct_stale",
+                ..TestRow::default()
+            }),
+        )
+        .unwrap();
+        assert_eq!(parsed.evidence.child_height, Some(42));
         assert_eq!(
-            explicit_vcash_candidate("100", "", "1609556645").unwrap_err(),
+            parsed.evidence.child_block_hash,
+            Some(hex::decode(hash).unwrap())
+        );
+        assert_eq!(
+            parsed.evidence.child_header_bytes,
+            Some(hex::decode(header).unwrap())
+        );
+        assert_eq!(parsed.evidence.child_block_time, Some(1_231_006_505));
+        assert_eq!(parsed.evidence.child_nbits, Some(0x1d00ffff));
+    }
+
+    #[test]
+    fn supports_exact_identity_without_height() {
+        let (hash, header) = child_identity();
+        let parsed = candidate(
+            "i0coin",
+            &row(TestRow {
+                chain: "i0coin",
+                child_hash: &hash,
+                child_header: &header,
+                child_time: "1231006505",
+                child_nbits: "1d00ffff",
+                classification: "stale",
+                relevance_reason: "valid_direct_stale",
+                ..TestRow::default()
+            }),
+        )
+        .unwrap();
+        assert_eq!(parsed.evidence.child_height, None);
+        assert!(parsed.evidence.child_block_hash.is_some());
+    }
+
+    #[test]
+    fn supports_height_only_child_evidence_without_fabrication() {
+        let parsed = candidate(
+            "elastos",
+            &row(TestRow {
+                chain: "elastos",
+                child_height: "360062",
+                classification: "canonical",
+                relevance_reason: "canonical_parent",
+                ..TestRow::default()
+            }),
+        )
+        .unwrap();
+        assert_eq!(parsed.evidence.child_height, Some(360_062));
+        assert_eq!(parsed.evidence.child_block_hash, None);
+        assert_eq!(parsed.evidence.child_header_bytes, None);
+        assert_eq!(parsed.evidence.child_block_time, None);
+        assert_eq!(parsed.evidence.child_nbits, None);
+    }
+
+    #[test]
+    fn rejects_identity_free_rows_and_partial_header_bundles() {
+        assert_eq!(
+            candidate(
+                "devcoin",
+                &row(TestRow {
+                    chain: "devcoin",
+                    classification: "canonical",
+                    relevance_reason: "canonical_parent",
+                    ..TestRow::default()
+                }),
+            )
+            .unwrap_err(),
             SkipReason::EmptyField
         );
+        let (hash, header) = child_identity();
         assert_eq!(
-            explicit_vcash_candidate("100", &"11".repeat(32), "").unwrap_err(),
-            SkipReason::EmptyField
-        );
-        assert_eq!(
-            explicit_vcash_candidate("100", "11", "1609556645").unwrap_err(),
-            SkipReason::Malformed
-        );
-        assert_eq!(
-            explicit_vcash_candidate("100", &"11".repeat(32), "4294967296").unwrap_err(),
-            SkipReason::Malformed
-        );
-        assert_eq!(
-            explicit_vcash_candidate("100", &"11".repeat(32), "not-a-time").unwrap_err(),
-            SkipReason::Malformed
-        );
-        assert_eq!(
-            explicit_vcash_candidate("100", &"11".repeat(32), "-1").unwrap_err(),
-            SkipReason::Malformed
-        );
-        assert_eq!(
-            explicit_vcash_candidate("-1", &"11".repeat(32), "1609556645").unwrap_err(),
-            SkipReason::Malformed
+            candidate(
+                "devcoin",
+                &row(TestRow {
+                    chain: "devcoin",
+                    child_height: "42",
+                    child_hash: &hash,
+                    child_header: &header,
+                    child_nbits: "1d00ffff",
+                    classification: "stale",
+                    relevance_reason: "valid_direct_stale",
+                    ..TestRow::default()
+                }),
+            )
+            .unwrap_err(),
+            SkipReason::EvidenceMismatch
         );
     }
 
     #[test]
-    fn synthetic_child_hash_is_source_scoped() {
-        assert_ne!(
-            synthetic_child_hash("devcoin", 10),
-            synthetic_child_hash("ixcoin", 10)
-        );
-    }
-
-    const RSK_CHILD_HASH: &str = "863002b6ad9a940f191f3ed3289e42e8eee107a769b6ecdfdaaad747f70c981d";
-    const RSK_MINER: &str = "32dfc7a84f24b10a5dded1d8b24f48b96ab77373";
-    const RSK_MM_HASH: &str = "f0d9129c65b3b91a89355b9ccf975e55c29229d78d4a66201b83d409ae001f73";
-
-    fn rsk_candidate(
-        is_uncle: &str,
-        uncle_index: &str,
-        uncle_parent_height: &str,
-    ) -> Result<ImportCandidate, SkipReason> {
-        let spec = historical_chain_spec("rsk").unwrap();
-        let input = format!(
-            "child_height,child_block_hash,child_block_time,btc_header_hex,classification,\
-             btc_header_hash,rsk_miner,merge_mining_hash,is_uncle,uncle_index,\
-             uncle_parent_height,rsk_merkle_proof,rsk_coinbase_tail\n\
-             263443,{RSK_CHILD_HASH},1521456575,{GENESIS_HEADER},stale,{GENESIS_HASH},\
-             {RSK_MINER},{RSK_MM_HASH},{is_uncle},{uncle_index},{uncle_parent_height},0405,\n"
-        );
-        let mut reader = csv::Reader::from_reader(input.as_bytes());
-        let layout = CsvLayout::new(reader.headers().unwrap(), spec).unwrap();
-        let record = reader.records().next().unwrap().unwrap();
-        candidate_from_record(spec, &layout, &record, &RelevanceFilter::default())
-    }
-
-    #[test]
-    fn rsk_rows_parse_the_sidecar_payload() {
-        // Field parsing is covered in rsk_sidecar; this pins the seam: an RSK
-        // candidate carries the payload, keyed by the event's child identity.
-        let block = rsk_candidate("0", "", "").unwrap();
-        let evidence = block.rsk_evidence.expect("rsk rows carry sidecar evidence");
-        assert_eq!(evidence.rsk_block_hash, block.evidence.child_block_hash);
-        assert_eq!(evidence.rsk_height, block.evidence.child_height);
-        assert!(!evidence.is_uncle);
-
-        let uncle = rsk_candidate("1", "0", "417924").unwrap();
-        assert!(uncle.rsk_evidence.unwrap().is_uncle);
+    fn rejects_child_hash_time_and_nbits_contradictions() {
+        let (hash, header) = child_identity();
+        for (bad_hash, bad_time, bad_nbits) in [
+            ("11".repeat(32), "1231006505", "1d00ffff"),
+            (hash.clone(), "1231006506", "1d00ffff"),
+            (hash.clone(), "1231006505", "1d00fffe"),
+        ] {
+            let error = candidate(
+                "devcoin",
+                &row(TestRow {
+                    chain: "devcoin",
+                    child_height: "42",
+                    child_hash: &bad_hash,
+                    child_header: &header,
+                    child_time: bad_time,
+                    child_nbits: bad_nbits,
+                    classification: "stale",
+                    relevance_reason: "valid_direct_stale",
+                    ..TestRow::default()
+                }),
+            )
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                SkipReason::HashMismatch | SkipReason::EvidenceMismatch
+            ));
+        }
     }
 
     #[test]
-    fn live_import_rows_reject_missing_child_identity() {
-        // A live-import chain must never fall back to a synthetic child hash
-        // or the Bitcoin parent time: a blank cell is a skip, not a mint.
-        let spec = historical_chain_spec("namecoin").unwrap();
-        let input = format!(
-            "child_height,child_block_hash,child_block_time,btc_header_hex,classification,btc_header_hash\n\
-             30902,,,{GENESIS_HEADER},stale,{GENESIS_HASH}\n"
-        );
-        let mut reader = csv::Reader::from_reader(input.as_bytes());
-        let layout = CsvLayout::new(reader.headers().unwrap(), spec).unwrap();
-        let record = reader.records().next().unwrap().unwrap();
+    fn xaya_uses_its_external_authenticated_child_target() {
+        let (hash, header) = child_identity();
+        let parsed = candidate(
+            "xaya",
+            &row(TestRow {
+                chain: "xaya",
+                child_height: "42",
+                child_hash: &hash,
+                child_header: &header,
+                child_time: "1231006505",
+                child_nbits: "184c238c",
+                classification: "stale",
+                relevance_reason: "valid_direct_stale",
+                ..TestRow::default()
+            }),
+        )
+        .unwrap();
+        assert_eq!(parsed.evidence.child_nbits, Some(0x184c238c));
+    }
+
+    #[test]
+    fn classification_and_relevance_axes_must_agree() {
         assert_eq!(
-            candidate_from_record(spec, &layout, &record, &RelevanceFilter::default()).unwrap_err(),
-            SkipReason::EmptyField
+            candidate(
+                "devcoin",
+                &row(TestRow {
+                    chain: "devcoin",
+                    child_height: "42",
+                    classification: "unknown",
+                    relevance: "strict_btc_orphan",
+                    relevance_reason: "valid_stale_descendant",
+                    ..TestRow::default()
+                }),
+            )
+            .unwrap_err(),
+            SkipReason::TaxonomyMismatch
         );
-    }
-
-    fn explicit_vcash_candidate(
-        child_height: &str,
-        child_hash: &str,
-        child_time: &str,
-    ) -> Result<ImportCandidate, SkipReason> {
-        let spec = historical_chain_spec("vcash").unwrap();
-        let input = format!(
-            "child_height,child_block_hash,child_block_time,btc_header_hex,classification,btc_header_hash\n\
-             {child_height},{child_hash},{child_time},{GENESIS_HEADER},canonical,{GENESIS_HASH}\n"
+        assert_eq!(
+            candidate(
+                "devcoin",
+                &row(TestRow {
+                    chain: "devcoin",
+                    child_height: "42",
+                    classification: "stale_descendant",
+                    relevance_reason: "valid_direct_stale",
+                    ..TestRow::default()
+                }),
+            )
+            .unwrap_err(),
+            SkipReason::TaxonomyMismatch
         );
-        let mut reader = csv::Reader::from_reader(input.as_bytes());
-        let layout = CsvLayout::new(reader.headers().unwrap(), spec).unwrap();
-        let record = reader.records().next().unwrap().unwrap();
-        candidate_from_record(spec, &layout, &record, &RelevanceFilter::default())
-    }
-
-    fn layout_and_record(input: &str) -> (CsvLayout, csv::StringRecord) {
-        let mut reader = csv::Reader::from_reader(input.as_bytes());
-        let headers = reader.headers().unwrap().clone();
-        let spec = historical_chain_spec("devcoin").unwrap();
-        let layout = CsvLayout::new(&headers, spec).unwrap();
-        let record = reader.records().next().unwrap().unwrap();
-        (layout, record)
+        let parsed = candidate(
+            "devcoin",
+            &row(TestRow {
+                chain: "devcoin",
+                child_height: "42",
+                classification: "stale_descendant",
+                relevance_reason: "valid_stale_descendant",
+                ..TestRow::default()
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.source_classification,
+            SourceClassification::StaleDescendant
+        );
     }
 }

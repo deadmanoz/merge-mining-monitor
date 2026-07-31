@@ -4,6 +4,8 @@ mod support;
 
 #[path = "db_integration/elastos.rs"]
 mod elastos;
+#[path = "db_integration/event_identity.rs"]
+mod event_identity;
 #[path = "db_integration/event_pool_attribution.rs"]
 mod event_pool_attribution;
 #[path = "db_integration/fractal_reward.rs"]

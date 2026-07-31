@@ -6,7 +6,7 @@ use tokio_postgres::{Client, GenericClient};
 
 use mmm_capture::capture::{ELASTOS_REVOKE_NON_BTC, MergeMiningEventPayload};
 
-use crate::upsert_merge_mining_event_with_attributions;
+use crate::{EventWriteOutcome, upsert_merge_mining_event_with_attributions};
 
 /// Write a Valid Elastos capture: upsert the shared event row, then clear ONLY the
 /// reversible auto-revocation reason (`ELASTOS_REVOKE_NON_BTC`) so a later re-Valid
@@ -18,18 +18,18 @@ pub async fn write_elastos_capture_in_txn<C: GenericClient>(
     client: &C,
     source_id: i64,
     payload: &MergeMiningEventPayload,
-) -> Result<i64> {
-    let event_id = upsert_merge_mining_event_with_attributions(client, source_id, payload).await?;
+) -> Result<EventWriteOutcome> {
+    let outcome = upsert_merge_mining_event_with_attributions(client, source_id, payload).await?;
     client
         .execute(
             "UPDATE merge_mining_event \
                 SET revoked_at = NULL, revocation_reason = NULL \
               WHERE id = $1 AND revocation_reason = $2",
-            &[&event_id, &ELASTOS_REVOKE_NON_BTC],
+            &[&outcome.event_id, &ELASTOS_REVOKE_NON_BTC],
         )
         .await
         .context("clear reversible Elastos revocation on recapture")?;
-    Ok(event_id)
+    Ok(outcome)
 }
 
 /// Active (non-revoked) event ids for a source at a child height. The Elastos

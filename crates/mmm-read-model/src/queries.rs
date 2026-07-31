@@ -77,7 +77,7 @@ pub(crate) async fn load_representative_active_event<C: GenericClient>(
              WHERE btc_parent_header_hash = $1 \
                AND btc_parent_kind <> 'near' \
                AND revoked_at IS NULL \
-             ORDER BY (btc_parent_coinbase_script IS NULL), child_height, id \
+             ORDER BY (btc_parent_coinbase_script IS NULL), child_height NULLS LAST, id \
              LIMIT 1",
             &[&hash],
         )
@@ -236,7 +236,7 @@ pub(crate) async fn find_anchor_event_for_block<C: GenericClient>(
              WHERE btc_parent_header_hash = $1 \
                AND btc_parent_kind <> 'near' \
                AND revoked_at IS NULL \
-             ORDER BY child_height, id \
+             ORDER BY child_height NULLS LAST, id \
              LIMIT 1",
             &[&hash],
         )
@@ -262,7 +262,7 @@ pub(crate) async fn find_child_events<C: GenericClient>(
                AND btc_parent_kind <> 'near' \
                AND pow_validates_btc_target \
                AND revoked_at IS NULL \
-             ORDER BY child_height, id",
+             ORDER BY child_height NULLS LAST, id",
             &[&hash],
         )
         .await
@@ -329,7 +329,7 @@ pub(crate) enum ReconcileCandidate {
 /// unknown events, zero-attestation rows), height/source-scoped by the
 /// reconcile config.
 const RECONCILE_CANDIDATES_SQL: &str = "WITH parent_scope AS ( \
-                SELECT e.btc_parent_header_hash, min(e.child_height) AS sort_child_height, min(e.id) AS sort_event_id \
+                SELECT e.btc_parent_header_hash, COALESCE(min(e.child_height)::bigint, 2147483648::bigint) AS sort_child_height, min(e.id) AS sort_event_id \
                 FROM merge_mining_event e \
                 WHERE e.btc_parent_kind <> 'near' \
                   AND e.revoked_at IS NULL \
@@ -358,7 +358,7 @@ const RECONCILE_CANDIDATES_SQL: &str = "WITH parent_scope AS ( \
                 LEFT JOIN block canonical_b ON canonical_b.btc_header_hash = b.canonical_competitor_hash \
                 WHERE e.btc_parent_kind <> 'near' \
                   AND e.revoked_at IS NULL \
-                ORDER BY e.btc_parent_header_hash, e.child_height, e.id \
+                ORDER BY e.btc_parent_header_hash, e.child_height NULLS LAST, e.id \
              ), representative_event AS ( \
                 SELECT btc_parent_header_hash, expected_kind, \
                        CASE WHEN expected_kind IN ('canonical','stale') \
@@ -381,7 +381,7 @@ const RECONCILE_CANDIDATES_SQL: &str = "WITH parent_scope AS ( \
                 GROUP BY e.btc_parent_header_hash, e.source_id \
              ), event_candidates AS ( \
                 SELECT 'event'::text AS kind, min(e.id) AS event_id, NULL::bytea AS hash, \
-                       min(e.child_height) AS sort_child_height, min(e.id) AS sort_event_id \
+                       COALESCE(min(e.child_height)::bigint, 2147483648::bigint) AS sort_child_height, min(e.id) AS sort_event_id \
                 FROM merge_mining_event e \
                 JOIN parent_scope ps ON ps.btc_parent_header_hash = e.btc_parent_header_hash \
                 JOIN parent_rollup pr ON pr.btc_parent_header_hash = e.btc_parent_header_hash \
@@ -410,7 +410,7 @@ const RECONCILE_CANDIDATES_SQL: &str = "WITH parent_scope AS ( \
                 GROUP BY e.btc_parent_header_hash \
              ), block_candidates AS ( \
                 SELECT 'block'::text AS kind, NULL::bigint AS event_id, b.btc_header_hash AS hash, \
-                       2147483647 AS sort_child_height, 9223372036854775807::bigint AS sort_event_id \
+                       2147483649::bigint AS sort_child_height, 9223372036854775807::bigint AS sort_event_id \
                 FROM block b \
                 LEFT JOIN parent_rollup pr ON pr.btc_parent_header_hash = b.btc_header_hash \
                 WHERE pr.btc_parent_header_hash IS NULL \

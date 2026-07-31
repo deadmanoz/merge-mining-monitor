@@ -239,6 +239,13 @@ function explorerCopyValue(value, chain, block = {}) {
   return `${copyValue(value)} ${explorerLink(explorer, chain)}`;
 }
 
+function unavailableEvidence(value, render = copyValue) {
+  if (value === null || value === undefined) {
+    return `<span class="null-value">unavailable</span>`;
+  }
+  return render(value);
+}
+
 function explorerLink(explorer, chain) {
   const safeChain = esc(chain);
   const safeName = esc(explorer.name);
@@ -277,15 +284,17 @@ function renderEvents(events) {
     const knownChildPool = event.child_miner_pool?.known ? event.child_miner_pool : null;
     const poolSuffix = knownChildPool ? ` · ${esc(knownChildPool.name)}` : "";
     const slotSuffix = event.slot_index != null ? ` · slot ${esc(event.slot_index)}` : "";
-    const summary = `${esc(chainDisplayName(event.child_chain))} · ${esc(event.child_height ?? "unheighted")}${slotSuffix}${poolSuffix}`;
+    const summary = `${esc(chainDisplayName(event.child_chain))} · ${esc(event.child_height ?? "height unavailable")}${slotSuffix}${poolSuffix}`;
     const rows = [
       ["Source", formatSourceRef(event.source)],
-      ["Child Hash", explorerCopyValue(event.child_block_hash, event.child_chain, {
-        hash: event.child_block_hash,
+      ["Child Hash", unavailableEvidence(event.child_block_hash, (hash) => explorerCopyValue(hash, event.child_chain, {
+        hash,
         height: event.child_height,
-      })],
+      }))],
+      ["Child Header", unavailableEvidence(event.child_header_hex)],
       // The real auxiliary block time, not a monitor capture timestamp.
-      ["Child Time", formatEpoch(event.child_block_time)],
+      ["Child Time", unavailableEvidence(event.child_block_time, formatEpoch)],
+      ["Child nBits", unavailableEvidence(event.child_nbits)],
       ["PoW (parent_target / aux_target)", `${formatScalar(event.pow_validates_btc_target)} / ${formatScalar(event.pow_validates_child_target)} ${auxpowInfoButton("targets")}`],
     ];
     if (event.slot_index != null) rows.push(["Slot index", `${formatScalar(event.slot_index)} ${auxpowInfoButton("slot_index")}`]);

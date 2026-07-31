@@ -38,7 +38,6 @@ Chain-specific extras:
 | `BITCOIN_RPC_TIMEOUT_SECS` / `BITCOIN_RPC_MAX_CONCURRENCY` | Bitcoin Core client controls. |
 | `SERVE_BIND_ADDR` / `SERVE_DB_POOL_SIZE` / `SERVE_WWW_DIR` | Read API and static frontend serving. |
 | `MMM_POOLS_DIR` | Optional local `bitcoin-data/mining-pools/pools` checkout used by `just gen-pool-snapshot` when no path argument is provided. |
-| `MERGE_MINING_RESEARCH_DIR` | Local `merge-mining-research` checkout used by historical manifest generation and import-dataset default CSV discovery. |
-| `MERGE_MINING_ARCHIVE_DIR` | Optional local classified stale-block archive root used by import-dataset default CSV discovery. |
+| `MERGE_MINING_RESEARCH_DIR` | Local `merge-mining-research` checkout at the pinned publication commit, used by `import-all`, `import-dataset`, and manifest generation. |
 
 See `.env.example` for a complete starter file.

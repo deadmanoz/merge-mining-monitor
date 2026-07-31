@@ -140,9 +140,11 @@ pub struct ClassificationProof {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergeMiningEventPayload {
-    pub child_height: i32,
-    pub child_block_hash: Vec<u8>,
-    pub child_block_time: i64,
+    pub child_height: Option<i32>,
+    pub child_block_hash: Option<Vec<u8>>,
+    pub child_header_bytes: Option<Vec<u8>>,
+    pub child_block_time: Option<i64>,
+    pub child_nbits: Option<u32>,
     pub btc_parent_header_hash: Vec<u8>,
     pub btc_parent_prev_header_hash: Vec<u8>,
     pub btc_parent_header_bytes: Vec<u8>,
@@ -164,6 +166,25 @@ pub struct MergeMiningEventPayload {
     pub confirmed_at: i64,
     pub revoked_at: Option<i64>,
     pub revocation_reason: Option<String>,
+    pub historical_provenance: Option<HistoricalEventProvenance>,
+}
+
+/// Publication-row provenance attached to an imported event without changing
+/// the event's independently derived Bitcoin parent state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoricalEventProvenance {
+    pub publication_commit: String,
+    pub chain: String,
+    pub source_kind: String,
+    pub source_path: String,
+    pub source_row_number: i64,
+    pub artifact_scope: String,
+    pub provenance: String,
+    pub classification: String,
+    pub btc_height: Option<i32>,
+    pub validation_status: Option<String>,
+    pub btc_stale_relevance: Option<String>,
+    pub relevance_reason: Option<String>,
 }
 
 /// Ordered set of pool attributions for one event, produced by the
@@ -375,9 +396,11 @@ pub use sidecars::{
 /// `nBits`, byte-array hash projections) consistently across chains.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizedEventEvidence {
-    pub child_height: i32,
-    pub child_block_hash: Vec<u8>,
-    pub child_block_time: i64,
+    pub child_height: Option<i32>,
+    pub child_block_hash: Option<Vec<u8>>,
+    pub child_header_bytes: Option<Vec<u8>>,
+    pub child_block_time: Option<i64>,
+    pub child_nbits: Option<u32>,
     pub btc_parent_header: Header,
     pub pow_validates_child_target: Option<bool>,
     pub btc_parent_coinbase_txid: Option<Vec<u8>>,
@@ -428,7 +451,9 @@ pub fn build_event_payload_from_evidence(
     Ok(MergeMiningEventPayload {
         child_height: evidence.child_height,
         child_block_hash: evidence.child_block_hash,
+        child_header_bytes: evidence.child_header_bytes,
         child_block_time: evidence.child_block_time,
+        child_nbits: evidence.child_nbits,
         btc_parent_header_hash: parent_hash.to_byte_array().to_vec(),
         btc_parent_prev_header_hash: evidence
             .btc_parent_header
@@ -454,6 +479,7 @@ pub fn build_event_payload_from_evidence(
         confirmed_at: observed_at_epoch,
         revoked_at: None,
         revocation_reason: None,
+        historical_provenance: None,
     })
 }
 
@@ -502,9 +528,11 @@ fn namecoin_evidence(
     ));
 
     Ok(NormalizedEventEvidence {
-        child_height,
-        child_block_hash: parsed.child_header.hash().to_byte_array().to_vec(),
-        child_block_time: parsed.child_header.time() as i64,
+        child_height: Some(child_height),
+        child_block_hash: Some(parsed.child_header.hash().to_byte_array().to_vec()),
+        child_header_bytes: Some(parsed.child_header.consensus_bytes()),
+        child_block_time: Some(parsed.child_header.time() as i64),
+        child_nbits: Some(parsed.child_header.bits().to_consensus()),
         btc_parent_header: parsed.parent_header.header,
         pow_validates_child_target,
         btc_parent_coinbase_txid: Some(parsed.parent_coinbase_txid.to_byte_array().to_vec()),
@@ -756,9 +784,11 @@ mod tests {
     #[test]
     fn classification_proof_updates_payload_height_from_proof_only() {
         let mut payload = MergeMiningEventPayload {
-            child_height: 1,
-            child_block_hash: vec![1; 32],
-            child_block_time: 1,
+            child_height: Some(1),
+            child_block_hash: Some(vec![1; 32]),
+            child_header_bytes: None,
+            child_block_time: Some(1),
+            child_nbits: None,
             btc_parent_header_hash: vec![2; 32],
             btc_parent_prev_header_hash: vec![3; 32],
             btc_parent_header_bytes: vec![4; 80],
@@ -780,6 +810,7 @@ mod tests {
             confirmed_at: 10,
             revoked_at: None,
             revocation_reason: None,
+            historical_provenance: None,
         };
 
         apply_classification_proof(

@@ -3,8 +3,8 @@
 `merge-mining-monitor` is a Rust/Postgres service that collects evidence about
 Bitcoin stale blocks from merge-mined AuxPoW child chains, live Bitcoin Core
 observations, and recovered historical datasets. It turns heterogeneous source
-evidence into one append-only base log, then derives a read model for the API
-and frontend.
+evidence into normalized base observations, then derives a read model for the
+API and frontend.
 
 ## System Flow
 
@@ -22,6 +22,7 @@ and the API serves those derived projections without writing capture state.
    child-chain source ──> parser / verifier ──> merge_mining_event
                                                  chain sidecar tables
                                                  event_pool_attribution
+   historical publication ────────────────────> historical_event_provenance
 
    operator import (import-known-stales) ──────> known_stale_block
 
@@ -39,10 +40,11 @@ and the API serves those derived projections without writing capture state.
 ```
 
 The key design choice is that producers write base evidence only (stage 1).
-One base table is operator-imported rather than captured: `known_stale_block`,
-the known-stale membership loaded by `import-known-stales` (written through
-`mmm-store` like every base table) and consulted by the reconciler's orphan
-classification as an exclusion gate.
+Two base tables retain operator-imported provenance:
+`historical_event_provenance` attaches normalized publication claims to events,
+and `known_stale_block` holds known-stale membership loaded by
+`import-known-stales`. The reconciler consults both as orphan-classification
+exclusion evidence.
 Derived state (`block`, `attestation_proof`, `source_health`) is rebuilt from
 that evidence by the read-model reconciler (stage 2), so a bad event can be
 revoked and the affected parent block recomputed. Bitcoin Core feeds the

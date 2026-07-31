@@ -369,7 +369,7 @@ pub(crate) async fn reconcile_one_event_in_txn<C: GenericClient>(
     // it. `before` here is genuinely pre-mutation for the no-wrapper callers
     // (apply_event_classification below is the first mutation).
     let sh_primary_before = match primary {
-        PrimaryDiff::Wrapper(_) => None,
+        PrimaryDiff::Wrapper(_) | PrimaryDiff::BulkImport => None,
         PrimaryDiff::Reconcile => Some(
             crate::source_health_sql::snapshot_parent_contribution(
                 client,

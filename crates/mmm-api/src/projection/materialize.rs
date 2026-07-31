@@ -223,16 +223,10 @@ pub(super) fn child_chain_evidence_from_events<'a>(
             .entry((event.source.code.clone(), event.source.chain.clone()))
             .or_insert((0, None, None));
         entry.0 += 1;
-        entry.1 = Some(
-            entry
-                .1
-                .map_or(event.child_height, |min| min.min(event.child_height)),
-        );
-        entry.2 = Some(
-            entry
-                .2
-                .map_or(event.child_height, |max| max.max(event.child_height)),
-        );
+        if let Some(child_height) = event.child_height {
+            entry.1 = Some(entry.1.map_or(child_height, |min| min.min(child_height)));
+            entry.2 = Some(entry.2.map_or(child_height, |max| max.max(child_height)));
+        }
     }
     grouped
         .into_iter()
@@ -287,5 +281,43 @@ pub(super) fn source_summary_from_sources<'a>(
         auxpow_chain_count: auxpow_chains.len(),
         live_observed,
         pow_validates_btc_target,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event_without_child_height(id: i64) -> EventRow {
+        EventRow {
+            id,
+            source: SourceRecord {
+                id: 1,
+                code: "auxpow:i0coin".to_owned(),
+                kind: "auxpow".to_owned(),
+                chain: Some("i0coin".to_owned()),
+            },
+            child_height: None,
+            parent_hash: vec![0; 32],
+            prev_hash: vec![0; 32],
+            header_time: 1_600_000_000,
+            kind: ParentKind::Canonical,
+            pow_validates_btc_target: true,
+            child_miner_pool: unknown_pool(),
+        }
+    }
+
+    #[test]
+    fn child_chain_evidence_keeps_source_when_every_height_is_unknown() {
+        let events = [event_without_child_height(1), event_without_child_height(2)];
+
+        let evidence = child_chain_evidence_from_events(events.iter());
+
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].source, "auxpow:i0coin");
+        assert_eq!(evidence[0].child_chain.as_deref(), Some("i0coin"));
+        assert_eq!(evidence[0].event_count, 2);
+        assert_eq!(evidence[0].child_height_min, None);
+        assert_eq!(evidence[0].child_height_max, None);
     }
 }

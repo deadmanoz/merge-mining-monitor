@@ -7,8 +7,14 @@
 
 mod config;
 mod csv_source;
+mod publication;
 mod rsk_sidecar;
 mod runner;
 
-pub use config::HistoricalImportConfig;
-pub use runner::{HistoricalImportSummary, run_historical_import};
+pub use config::{HistoricalImportAllConfig, HistoricalImportConfig};
+pub use runner::{
+    HistoricalImportAllSummary, HistoricalImportSummary, run_historical_import,
+    run_historical_import_all,
+};
+#[cfg(feature = "db-integration")]
+pub use runner::{run_historical_import_configs_for_test, run_manifest_historical_import_for_test};

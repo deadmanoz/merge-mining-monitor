@@ -1,10 +1,13 @@
 # mmm-store
 
 Producer-side base-table SQL for the merge-mining monitor. This crate owns every
-producer-facing `INSERT`/`UPSERT`/maintenance statement against the append-only
-*base* tables: `merge_mining_event` and its 1:1 chain sidecars, the
-`event_pool_attribution` provenance vector, the `pool`/`pool_identity` seed rows,
-and the `poll_cursor` live-progress table.
+producer-facing `INSERT`/`UPSERT`/maintenance statement against the
+evidence-bearing *base* tables: `merge_mining_event` and its 1:1 chain sidecars,
+the `historical_event_provenance` publication identity,
+the `event_pool_attribution` provenance vector, the `pool`/`pool_identity` seed
+rows, and the `poll_cursor` live-progress table. Live evidence is additive;
+authoritative historical refreshes may replace their own published rows through
+the read-model transaction boundary.
 
 ## The invariant
 
@@ -33,7 +36,7 @@ Shared, table-generic modules:
 
 | Module | Responsibility |
 |--------|----------------|
-| `event` | `merge_mining_event` upserts, the `event_pool_attribution` provenance writes (with and without stale-attribution cleanup), and the NULL-preserving child-coinbase field fill. |
+| `event` | Exact/partial `merge_mining_event` identity resolution and store-owned write dispositions, upserts, `historical_event_provenance`, the `event_pool_attribution` provenance writes (with and without stale-attribution cleanup), and NULL-preserving evidence fill. |
 | `pool` | Pool snapshot upserts, the generic registry-only pool seeding, and the namespace `pool_identity` seeding and lookup helper. |
 | `poll_cursor` | The `poll_cursor` live-progress table: source-id lookup, cursor load, and monotonic upsert (with optional observed target). Backfills never move the cursor. |
 | `pending_reconcile` | The pending-reconcile work-queue rows: list, upsert, attempt-bump, revocation-reason retag, and delete. |

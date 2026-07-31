@@ -39,6 +39,32 @@ just db-backup
 
 Do not run raw migration commands against a persistent database.
 
+Migration 0007 preserves existing event values while making child evidence
+nullable. Its publication cutover is a separate, explicit operation. Stop live
+pollers, back up, apply the migration, and run `just import-all`; authoritative
+historical sources then remove obsolete rows, while live sources remain
+additive. See `docs/historical-ingest.md`.
+
+Before applying 0007 to an existing database, audit the exact child identities:
+
+```sql
+SELECT s.code,
+       encode(e.child_block_hash, 'hex') AS child_block_hash,
+       count(*) AS rows,
+       array_agg(e.child_height ORDER BY e.child_height) AS child_heights
+FROM merge_mining_event e
+JOIN source s ON s.id = e.source_id
+WHERE e.child_block_hash IS NOT NULL
+GROUP BY s.code, e.child_block_hash
+HAVING count(*) > 1
+ORDER BY s.code, child_block_hash;
+```
+
+The result must be empty. Migration 0007 repeats this check and aborts before
+altering the schema if it finds a conflict. Resolve each conflict against the
+authenticated child-chain evidence; do not automatically keep or delete a row
+based on height, activity, or insertion order.
+
 ## Cleanup And Local Reset
 
 `just clean` is non-destructive for database state. It stops this checkout's
@@ -123,11 +149,18 @@ canonical rows before rerunning sync.
 ## Source Health And Classification Repair
 
 `just rebuild-source-health` recomputes the per-source `/api/v1/sources` rollup
-counters. It is required on a fresh database and after bulk backfills or
-imports: `/api/v1/sources` fails closed until the first rebuild sets
+counters. It is required on a fresh database and after bulk backfills:
+`/api/v1/sources` fails closed until the first rebuild sets
 `source_health_ready`. Run it during a quiescent window (pollers stopped) so it
 sees a stable base. Counters are maintained incrementally afterward, so re-running
-it is only needed to repair drift.
+it is only needed to repair drift. `import-all` rebuilds source health inside
+each atomic chain transaction, so no separate rebuild is required after that
+command.
+
+`reconcile-read-model --start-height` and `--end-height` are child-height
+bounds. Either bound excludes exact events whose authenticated child height is
+unavailable. Run an unbounded scan, optionally restricted with `--source`, to
+include those events.
 
 `just reclassify-unknown-parents` upgrades `unknown` Bitcoin parents once Core can
 classify their headers (for example after a historical load that deferred
@@ -149,6 +182,25 @@ before the membership existed, `just reclassify-known-stales` retroactively
 demotes contaminated strict/weak rows to `excluded`, idempotently, and
 maintains `source_health` through the reconciler. See
 `docs/historical-ingest.md` for the full fresh-database ordering.
+
+## Historical Publication
+
+Materialize the pinned research Git LFS objects, then import the whole
+publication:
+
+```bash
+git -C "$MERGE_MINING_RESEARCH_DIR" lfs pull \
+  --include="results/monitor-evidence/*_monitor_evidence.csv"
+just import-all
+just reclassify-pools
+```
+
+`import-all` verifies all 27 per-chain artifacts before the first database
+mutation. Each chain then commits atomically. Historical and partial sources
+are authoritative snapshots; live sources are additive; Doichain is a
+surveyed zero-row no-op. Stop live pollers during a production cutover and
+retain the backup until event totals, block details, orphan exclusions, and
+poller health are verified.
 
 ## Live Test Deployment
 

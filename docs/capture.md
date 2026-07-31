@@ -3,6 +3,8 @@
 Every source follows the same high-level contract: fetch child-chain evidence,
 verify enough of it locally to make it safe to store, normalize it into
 `merge_mining_event`, and let the read model derive Bitcoin tree state.
+Child height, hash, header, time, and `nBits` are independent optional evidence;
+unavailable values remain `NULL`.
 
 ## Capture And Classification Flow
 
@@ -54,6 +56,9 @@ for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
   store and read-model entry points.
 - Producers write base evidence and sidecars only. They do not maintain
   `block`, `attestation_proof`, or `source_health` directly.
+- Live capture is additive. Historical and partial publication sources reconcile
+  as authoritative snapshots through the shared source lifecycle, while live
+  publication imports never remove live events.
 - Long child-chain backfills may run with `BITCOIN_RPC_URL` unset, then upgrade
   the deferred `unknown` parents afterward with
   `just reclassify-unknown-parents`. Dataset imports are stricter: see

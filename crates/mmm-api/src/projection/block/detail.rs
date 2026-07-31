@@ -198,8 +198,8 @@ pub(super) fn render_event_details(
         a.event_confirmed_at
             .cmp(&b.event_confirmed_at)
             .then_with(|| a.source.code.cmp(&b.source.code))
-            .then_with(|| a.child_height.cmp(&b.child_height))
-            .then_with(|| a.child_block_hash.cmp(&b.child_block_hash))
+            .then_with(|| cmp_option_none_last(&a.child_height, &b.child_height))
+            .then_with(|| cmp_option_none_last(&a.child_block_hash, &b.child_block_hash))
             .then_with(|| a.id.cmp(&b.id))
     });
     rows.into_iter()
@@ -249,15 +249,20 @@ pub(super) fn render_event_details(
                 (None, None, None)
             };
             let rsk = row.rsk.map(render_rsk_detail);
-            let child_block_hash =
-                display_child_block_hash(&row.source.code, &row.child_block_hash)?;
+            let child_block_hash = row
+                .child_block_hash
+                .as_deref()
+                .map(|hash| display_child_block_hash(&row.source.code, hash))
+                .transpose()?;
             Ok(EventDetail {
                 id: row.id,
                 source: row.source.code,
                 child_chain: row.source.chain,
                 child_height: row.child_height,
                 child_block_hash,
+                child_header_hex: row.child_header_bytes.map(hex::encode),
                 child_block_time: row.child_block_time,
+                child_nbits: row.child_nbits.map(|nbits| format!("{nbits:08x}")),
                 btc_parent_header_hash: display_hash(&row.parent_hash)?,
                 event_parent_kind: kind_as_str(row.kind),
                 btc_parent_coinbase_txid: display_hash_opt(row.btc_parent_coinbase_txid)?,
@@ -285,6 +290,15 @@ pub(super) fn render_event_details(
             })
         })
         .collect()
+}
+
+fn cmp_option_none_last<T: Ord>(left: &Option<T>, right: &Option<T>) -> std::cmp::Ordering {
+    match (left, right) {
+        (Some(left), Some(right)) => left.cmp(right),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    }
 }
 
 /// Render an `RskEvidenceRow` into the wire `RskEventDetail`. Hashes/proofs are
@@ -452,9 +466,11 @@ mod tests {
                 kind: "auxpow".to_owned(),
                 chain: Some(chain.to_owned()),
             },
-            child_height: 1,
-            child_block_hash: vec![0u8; 32],
-            child_block_time: 1_600_000_000,
+            child_height: Some(1),
+            child_block_hash: Some(vec![0u8; 32]),
+            child_header_bytes: None,
+            child_block_time: Some(1_600_000_000),
+            child_nbits: None,
             parent_hash: vec![0u8; 32],
             prev_hash: vec![0u8; 32],
             parent_header_bytes: vec![0u8; 80],
@@ -476,6 +492,37 @@ mod tests {
             child_miner_pool: unknown_pool(),
             rsk: None,
         }
+    }
+
+    #[test]
+    fn child_evidence_serializes_authenticated_values_or_null() {
+        let mut full = event_row(1, "namecoin");
+        full.child_header_bytes = Some(vec![0xabu8; 80]);
+        full.child_nbits = Some(0x1d00_ffff);
+        let mut partial = event_row(2, "i0coin");
+        partial.child_height = None;
+        partial.child_block_hash = None;
+        partial.child_block_time = None;
+
+        let rendered =
+            render_event_details(vec![full, partial], &HashMap::new()).expect("render events");
+        let full = rendered
+            .iter()
+            .find(|event| event.source == "auxpow:namecoin")
+            .expect("full Namecoin evidence");
+        let partial = rendered
+            .iter()
+            .find(|event| event.source == "auxpow:i0coin")
+            .expect("partial I0coin evidence");
+
+        assert_eq!(full.child_height, Some(1));
+        assert_eq!(full.child_header_hex, Some("ab".repeat(80)));
+        assert_eq!(full.child_nbits.as_deref(), Some("1d00ffff"));
+        assert_eq!(partial.child_height, None);
+        assert_eq!(partial.child_block_hash, None);
+        assert_eq!(partial.child_header_hex, None);
+        assert_eq!(partial.child_block_time, None);
+        assert_eq!(partial.child_nbits, None);
     }
 
     fn synthetic_marker_script() -> Vec<u8> {

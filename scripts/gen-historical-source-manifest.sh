@@ -3,18 +3,19 @@ set -euo pipefail
 
 usage() {
     cat <<'USAGE'
-Usage: scripts/gen-historical-source-manifest.sh [--check] [--allow-missing-repo] [--repo-dir DIR] [--out PATH]
+Usage: scripts/gen-historical-source-manifest.sh [--check] [--allow-missing-repo] [--repo-dir DIR] [--source-commit COMMIT] [--out PATH]
 
-Generate or verify data/historical/historical-source-manifest.json and its checksum from
-committed merge-mining-research validated stale CSV blobs.
+Generate or verify the monitor-owned provenance manifest for the normalized
+merge-mining-research monitor-evidence publication.
 
 Options:
-  --check         Compare the generated manifest with the committed file
+  --check         Compare generated output with the committed manifest
   --allow-missing-repo
-                  In --check mode, skip with a warning when the source clone
-                  is unavailable. Intended for the standard test gate.
+                  In --check mode, skip when the source clone is unavailable
   --repo-dir DIR  merge-mining-research clone (default: $MERGE_MINING_RESEARCH_DIR)
-  --out PATH      Output manifest path (default: data/historical/historical-source-manifest.json)
+  --source-commit COMMIT
+                  Publication commit (default: the committed manifest pin)
+  --out PATH      Output path (default: data/historical/historical-source-manifest.json)
 USAGE
 }
 
@@ -23,16 +24,35 @@ die() {
     exit 1
 }
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${script_dir}/lib/historical-source-chains.sh"
-
 skip_check() {
     printf 'historical source manifest check skipped: %s\n' "$*" >&2
     exit 0
 }
 
+sha256_file() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{ print $1 }'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{ print $1 }'
+    else
+        die "neither sha256sum nor shasum is available"
+    fi
+}
+
+manifest_checksum_path() {
+    case "$1" in
+        *.json) printf '%s.sha256\n' "${1%.json}" ;;
+        *) printf '%s.sha256\n' "$1" ;;
+    esac
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || die "required command is unavailable: $1"
+}
+
 repo_dir="${MERGE_MINING_RESEARCH_DIR:-}"
 output="data/historical/historical-source-manifest.json"
+source_commit=""
 check=0
 allow_missing_repo=0
 
@@ -51,6 +71,11 @@ while [ "$#" -gt 0 ]; do
             repo_dir="$2"
             shift 2
             ;;
+        --source-commit)
+            [ "$#" -ge 2 ] || die "--source-commit requires a value"
+            source_commit="$2"
+            shift 2
+            ;;
         --out)
             [ "$#" -ge 2 ] || die "--out requires a value"
             output="$2"
@@ -66,13 +91,14 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+require_command jq
+
 if [ -z "${repo_dir}" ]; then
     if [ "${check}" -eq 1 ] && [ "${allow_missing_repo}" -eq 1 ]; then
         skip_check "source repo not configured; set MERGE_MINING_RESEARCH_DIR or pass --repo-dir"
     fi
     die "source repo not configured; set MERGE_MINING_RESEARCH_DIR or pass --repo-dir"
 fi
-
 if ! git -C "${repo_dir}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     if [ "${check}" -eq 1 ] && [ "${allow_missing_repo}" -eq 1 ]; then
         skip_check "source repo unavailable: ${repo_dir}"
@@ -80,255 +106,147 @@ if ! git -C "${repo_dir}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     die "not a git work tree: ${repo_dir}"
 fi
 
-sha256_file() {
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | awk '{ print $1 }'
-    elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" | awk '{ print $1 }'
-    else
-        die "neither sha256sum nor shasum is available"
-    fi
-}
+if [ -z "${source_commit}" ]; then
+    [ -f "${output}" ] || die "pass --source-commit when generating a new manifest"
+    source_commit="$(jq -er '.source_repo_commit' "${output}")" \
+        || die "${output} has no source_repo_commit"
+fi
+source_commit="$(git -C "${repo_dir}" rev-parse "${source_commit}^{commit}")" \
+    || die "source commit is unavailable: ${source_commit}"
 
-manifest_checksum_path() {
-    local manifest_path="$1"
-
-    case "${manifest_path}" in
-        *.json) printf '%s.sha256\n' "${manifest_path%.json}" ;;
-        *) printf '%s.sha256\n' "${manifest_path}" ;;
-    esac
-}
-
-require_column() {
-    local header="$1"
-    local column="$2"
-    local file="$3"
-
-    header="$(printf '%s\n' "${header}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/[[:space:]]*,[[:space:]]*/,/g')"
-    case ",${header}," in
-        *",${column},"*) ;;
-        *) die "${file} is missing required column ${column}" ;;
-    esac
-}
-
-manifest_source_commit() {
-    sed -n 's/^[[:space:]]*"source_repo_commit": "\([0-9a-f][0-9a-f]*\)",[[:space:]]*$/\1/p' "$1"
-}
-
-# These source CSV blobs are stable one-record-per-line exports. The parser
-# below handles quoted commas in validation_status and other free-text fields.
-validated_stale_row_count_for() {
-    awk -v path="$1" '
-        function trim(value) {
-            gsub(/^[[:space:]]+/, "", value)
-            gsub(/[[:space:]]+$/, "", value)
-            return value
-        }
-
-        function csv_split(line, out,    i, ch, next_ch, field, count, in_quotes, key) {
-            for (key in out) {
-                delete out[key]
-            }
-            count = 1
-            field = ""
-            in_quotes = 0
-
-            for (i = 1; i <= length(line); i++) {
-                ch = substr(line, i, 1)
-                if (in_quotes) {
-                    if (ch == "\"") {
-                        next_ch = substr(line, i + 1, 1)
-                        if (next_ch == "\"") {
-                            field = field "\""
-                            i++
-                        } else {
-                            in_quotes = 0
-                        }
-                    } else {
-                        field = field ch
-                    }
-                } else if (ch == "\"") {
-                    in_quotes = 1
-                } else if (ch == ",") {
-                    out[count] = field
-                    count++
-                    field = ""
-                } else {
-                    field = field ch
-                }
-            }
-
-            out[count] = field
-            return count
-        }
-
-        NR == 1 {
-            field_count = csv_split($0, fields)
-            for (i = 1; i <= field_count; i++) {
-                gsub(/\r/, "", fields[i])
-                fields[i] = trim(fields[i])
-                if (fields[i] == "classification") {
-                    classification_col = i
-                }
-                if (fields[i] == "validation_status") {
-                    validation_col = i
-                }
-            }
-            next
-        }
-        /^[[:space:]]*$/ { next }
-        {
-            csv_split($0, fields)
-            classification = trim(fields[classification_col])
-            validation_status = trim(fields[validation_col])
-            gsub(/\r/, "", classification)
-            gsub(/\r/, "", validation_status)
-
-            if (classification == "stale" && validation_status ~ /^VALID([[:space:](]|$)/) {
-                count++
-            } else {
-                printf "%s:%d is not a validated stale row: classification=%s validation_status=%s\n", path, NR, classification, validation_status > "/dev/stderr"
-                invalid = 1
-            }
-        }
-        END {
-            if (NR == 0) {
-                print -1
-            } else if (invalid) {
-                exit 2
-            } else {
-                print count + 0
-            }
-        }
-    ' "$1"
-}
-
-tmp="$(mktemp "${TMPDIR:-/tmp}/historical-source-manifest.XXXXXX")"
-csv_tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/historical-source-csvs.XXXXXX")"
+publication_manifest_path="results/monitor-evidence/monitor-evidence-manifest.json"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/historical-source-manifest.XXXXXX")"
 cleanup() {
-    rm -f "${tmp}"
-    rm -rf "${csv_tmpdir}"
+    rm -rf "${scratch}"
 }
 trap cleanup EXIT
 
+research_manifest="${scratch}/research-manifest.json"
+git -C "${repo_dir}" show "${source_commit}:${publication_manifest_path}" \
+    >"${research_manifest}" \
+    || die "${publication_manifest_path} is missing at ${source_commit}"
+jq -e '.artifacts and .counts' "${research_manifest}" >/dev/null \
+    || die "research publication manifest is missing artifacts or counts"
+
+artifacts_ndjson="${scratch}/artifacts.ndjson"
+: >"${artifacts_ndjson}"
+while IFS= read -r chain; do
+    csv_path="$(jq -er --arg chain "${chain}" '.artifacts[$chain]' "${research_manifest}")"
+    pointer="${scratch}/${chain}.pointer"
+    git -C "${repo_dir}" show "${source_commit}:${csv_path}" >"${pointer}" \
+        || die "${csv_path} is missing at ${source_commit}"
+    grep -qx 'version https://git-lfs.github.com/spec/v1' <(sed -n '1p' "${pointer}") \
+        || die "${csv_path} is not a Git LFS pointer at ${source_commit}"
+    oid="$(sed -n 's/^oid sha256:\([0-9a-f]\{64\}\)$/\1/p' "${pointer}")"
+    size="$(sed -n 's/^size \([0-9][0-9]*\)$/\1/p' "${pointer}")"
+    [ -n "${oid}" ] || die "${csv_path} has no valid LFS oid"
+    [ -n "${size}" ] || die "${csv_path} has no valid LFS size"
+    count="$(jq -cer --arg chain "${chain}" '
+        [.counts[] | select(.chain == $chain)] as $rows
+        | if ($rows | length) != 1 then
+            error("missing or duplicate count row")
+          else
+            $rows[0]
+          end
+    ' "${research_manifest}")" || die "invalid count row for ${chain}"
+    role="event"
+    if [ "${chain}" = "stale-descendants" ]; then
+        role="aggregate"
+    fi
+    jq -cn \
+        --arg chain "${chain}" \
+        --arg csv_path "${csv_path}" \
+        --arg role "${role}" \
+        --arg sha256 "${oid}" \
+        --argjson size_bytes "${size}" \
+        --argjson count "${count}" '
+        {
+          chain: $chain,
+          csv_path: $csv_path,
+          role: $role,
+          row_count: $count.monitor_rows,
+          size_bytes: $size_bytes,
+          sha256: $sha256,
+          counts: {
+            canonical: $count.canonical,
+            stale: $count.stale,
+            stale_descendant: $count.stale_descendant,
+            strict_btc_orphan: $count.strict_btc_orphan,
+            weak_btc_orphan: $count.weak_btc_orphan
+          }
+        }
+    ' >>"${artifacts_ndjson}"
+done < <(jq -r '.artifacts | keys[]' "${research_manifest}")
+
+generated="${scratch}/generated.json"
+jq -S \
+    --arg source_commit "${source_commit}" \
+    --arg publication_manifest_path "${publication_manifest_path}" \
+    --arg publication_manifest_sha256 "$(sha256_file "${research_manifest}")" \
+    --slurpfile artifacts "${artifacts_ndjson}" '
+    ($artifacts) as $items
+    | {
+        schema_version: 2,
+        scope: "uniform_monitor_evidence_v1",
+        source_repo: "merge-mining-research",
+        source_repo_commit: $source_commit,
+        publication_manifest_path: $publication_manifest_path,
+        publication_manifest_sha256: $publication_manifest_sha256,
+        manifest_generator: "scripts/gen-historical-source-manifest.sh",
+        total_event_rows: (
+          [$items[] | select(.role == "event") | .row_count] | add
+        ),
+        aggregate_rows: (
+          [$items[] | select(.role == "aggregate") | .row_count] | add
+        ),
+        required_columns: [
+          "chain",
+          "source_kind",
+          "source_path",
+          "source_row_number",
+          "artifact_scope",
+          "provenance",
+          "child_height",
+          "child_block_hash",
+          "child_header_hex",
+          "child_block_time",
+          "child_nbits",
+          "btc_height",
+          "btc_header_hash",
+          "btc_prev_hash",
+          "btc_time",
+          "btc_bits",
+          "btc_nonce",
+          "btc_header_hex",
+          "coinbase_scriptsig_hex",
+          "coinbase_outputs",
+          "full_coinbase_hex",
+          "classification",
+          "validation_status",
+          "expected_nbits",
+          "rejection_reason",
+          "btc_stale_relevance",
+          "relevance_reason"
+        ],
+        artifacts: $items
+      }
+' "${research_manifest}" >"${generated}"
+
+checksum_output="$(manifest_checksum_path "${output}")"
 if [ "${check}" -eq 1 ]; then
     [ -f "${output}" ] || die "missing committed manifest ${output}"
-    base_commit="$(manifest_source_commit "${output}")"
-    printf '%s\n' "${base_commit}" | grep -Eq '^[0-9a-f]{40}$' \
-        || die "${output} has no valid source_repo_commit"
-    if ! git -C "${repo_dir}" cat-file -e "${base_commit}^{commit}" 2>/dev/null; then
-        if [ "${allow_missing_repo}" -eq 1 ]; then
-            skip_check "source repo ${repo_dir} does not contain pinned commit ${base_commit}"
-        fi
-        die "source repo ${repo_dir} does not contain pinned commit ${base_commit}"
-    fi
-else
-    base_commit="$(git -C "${repo_dir}" rev-parse HEAD)"
-fi
-
-set_csv_file() {
-    local chain="$1"
-    local csv_path="$2"
-
-    file="${csv_tmpdir}/${chain}.csv"
-    if [ ! -f "${file}" ]; then
-        git -C "${repo_dir}" show "${base_commit}:${csv_path}" >"${file}" 2>/dev/null \
-            || die "${csv_path} is missing at ${base_commit}"
-    fi
-}
-
-total_rows=0
-while IFS='|' read -r chain height_column; do
-    csv_path="data/validated-stales/${chain}_validated_stales.csv"
-    set_csv_file "${chain}" "${csv_path}"
-    [ -f "${file}" ] || die "missing ${file}"
-    header="$(head -n 1 "${file}" | tr -d '\r')"
-    [ -n "${header}" ] || die "${file} has no header"
-    require_column "${header}" "btc_header_hex" "${csv_path}"
-    require_column "${header}" "coinbase_scriptsig_hex" "${csv_path}"
-    require_column "${header}" "classification" "${csv_path}"
-    require_column "${header}" "validation_status" "${csv_path}"
-    require_column "${header}" "${height_column}" "${csv_path}"
-    rows="$(validated_stale_row_count_for "${file}")" \
-        || die "${csv_path} contains rows outside the validated stale scope"
-    [ "${rows}" -ge 0 ] || die "${file} is empty"
-    total_rows=$((total_rows + rows))
-done <<EOF
-$(historical_source_chain_entries)
-EOF
-
-{
-    printf '{\n'
-    printf '  "schema_version": 1,\n'
-    printf '  "scope": "historical_auxpow_validated_stales_phase1",\n'
-    printf '  "source_class": "validated_stales_csv",\n'
-    printf '  "source_repo": "merge-mining-research",\n'
-    printf '  "source_repo_commit": "%s",\n' "${base_commit}"
-    printf '  "manifest_generator": "scripts/gen-historical-source-manifest.sh",\n'
-    printf '  "total_declared_stale_rows": %s,\n' "${total_rows}"
-    printf '  "notes": [\n'
-    printf '    "Scope is the historical-only chains in scripts/lib/historical-source-chains.sh; live chains are excluded.",\n'
-    printf '    "Inputs are committed validated stale CSV blobs from the source repo; full-evidence and orphan-heavy inventories are intentionally kept outside this repo.",\n'
-    printf '    "Rows are stale-only provenance inputs and are re-proven by the monitor Bitcoin Core classifier during import."\n'
-    printf '  ],\n'
-    printf '  "sources": [\n'
-
-    index=0
-    source_count="$(historical_source_chain_entries | wc -l | tr -d '[:space:]')"
-    # The interpolated values come from static chain metadata, integer counts,
-    # git commit hex, and SHA-256 hex, so no JSON escaping is required here.
-    while IFS='|' read -r chain height_column; do
-        index=$((index + 1))
-        csv_path="data/validated-stales/${chain}_validated_stales.csv"
-        set_csv_file "${chain}" "${csv_path}"
-        rows="$(validated_stale_row_count_for "${file}")" \
-            || die "${csv_path} contains rows outside the validated stale scope"
-        sha256="$(sha256_file "${file}")"
-
-        printf '    {\n'
-        printf '      "chain": "%s",\n' "${chain}"
-        printf '      "source_code": "auxpow:%s",\n' "${chain}"
-        printf '      "csv_path": "%s",\n' "${csv_path}"
-        printf '      "height_column": "%s",\n' "${height_column}"
-        printf '      "declared_stale_rows": %s,\n' "${rows}"
-        printf '      "sha256": "%s"\n' "${sha256}"
-        if [ "${index}" -eq "${source_count}" ]; then
-            printf '    }\n'
-        else
-            printf '    },\n'
-        fi
-    done <<EOF
-$(historical_source_chain_entries)
-EOF
-
-    printf '  ]\n'
-    printf '}\n'
-} >"${tmp}"
-
-if [ "${check}" -eq 1 ]; then
-    [ -f "${output}" ] || die "missing committed manifest ${output}"
-    if ! cmp -s "${tmp}" "${output}"; then
-        printf 'historical source manifest drifted: %s\n' "${output}" >&2
-        printf 'regenerate with: scripts/gen-historical-source-manifest.sh --repo-dir %s --out %s\n' "${repo_dir}" "${output}" >&2
-        exit 1
-    fi
-    checksum_output="$(manifest_checksum_path "${output}")"
+    cmp -s "${generated}" "${output}" \
+        || die "historical source manifest drifted: ${output}"
     [ -f "${checksum_output}" ] \
         || die "missing historical source manifest checksum ${checksum_output}"
     expected_checksum="$(sed -n '1{s/[[:space:]].*$//;p;q;}' "${checksum_output}")"
-    printf '%s\n' "${expected_checksum}" | grep -Eq '^[0-9a-f]{64}$' \
-        || die "${checksum_output} does not contain a 64-character lowercase hex checksum"
     actual_checksum="$(sha256_file "${output}")"
-    if [ "${actual_checksum}" != "${expected_checksum}" ]; then
-        printf 'historical source manifest checksum drifted: %s\n' "${checksum_output}" >&2
-        printf 'regenerate with: scripts/gen-historical-source-manifest.sh --repo-dir %s --out %s\n' "${repo_dir}" "${output}" >&2
-        exit 1
-    fi
+    [ "${expected_checksum}" = "${actual_checksum}" ] \
+        || die "historical source manifest checksum drifted: ${checksum_output}"
     printf 'historical source manifest is up to date: %s\n' "${output}"
 else
-    mv -f "${tmp}" "${output}"
+    mv -f "${generated}" "${output}"
     chmod 0644 "${output}"
-    checksum_output="$(manifest_checksum_path "${output}")"
     printf '%s\n' "$(sha256_file "${output}")" >"${checksum_output}"
     chmod 0644 "${checksum_output}"
     printf 'wrote %s\n' "${output}"

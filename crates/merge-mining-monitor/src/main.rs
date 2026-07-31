@@ -26,6 +26,7 @@ async fn main() -> Result<()> {
             mmm_producers::run_hathor_cache_command(args).await?;
         }
         Some("import-dataset") => cmd_import_dataset(args).await?,
+        Some("import-all") => cmd_import_all(args).await?,
         Some("import-known-stales") => cmd_import_known_stales(args).await?,
         Some("reclassify-unknown-parents") => cmd_reclassify_unknown_parents(args).await?,
         Some("reclassify-known-stales") => cmd_reclassify_known_stales(args).await?,
@@ -46,6 +47,16 @@ async fn main() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+async fn cmd_import_all(args: std::env::Args) -> Result<()> {
+    let config = mmm_producers::HistoricalImportAllConfig::from_args(args)?;
+    let classifier = mmm_bitcoin_core::ConfiguredParentClassifier::from_env()?;
+    let mut pg_client = mmm_producers::connect_from_env().await?;
+    let summary =
+        mmm_producers::run_historical_import_all(&mut pg_client, &classifier, &config).await?;
+    summary.print();
     Ok(())
 }
 
