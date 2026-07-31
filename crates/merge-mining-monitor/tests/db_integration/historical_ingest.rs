@@ -1,11 +1,13 @@
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use bitcoin::block::Header;
 use bitcoin::consensus::serialize;
 use bitcoin::hashes::{Hash as _, sha256, sha256d};
-use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier};
+use mmm_bitcoin_core::{
+    ConfiguredParentClassifier, FakeParentClassifier, FakeParentClassifierGate,
+};
 use mmm_capture::auxpow::parse_bip34_height;
 use mmm_capture::btc_orphan::{BtcOrphanVerdict, classify_btc_orphan};
 use mmm_producers::{
@@ -636,6 +638,60 @@ async fn multi_chain_import_reuses_the_parent_classification_cache() -> Result<(
         }
         .await;
         finish_import_with_cleanup(result, &[&ixcoin_path, &devcoin_path])
+    })
+}
+
+#[tokio::test]
+async fn historical_preflight_fills_classifier_concurrency() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let first = header_meeting_bits(0x207f_ffff, 1_700_000_037, 37);
+        let second = header_meeting_bits(0x207f_ffff, 1_700_000_038, 38);
+        let csv_path = write_two_canonical_rows(&first, &second, 700_037)?;
+        let result = async {
+            let gate = FakeParentClassifierGate::new();
+            let fake = FakeParentClassifier::new(canonical_verdict(&first, 700_037))
+                .with_first_call_gate(gate.clone())
+                .with_max_concurrency(2);
+            let classifier = ConfiguredParentClassifier::Fake(fake.clone());
+            let config = devcoin_import_config(&csv_path);
+            let mut import = Box::pin(run_historical_import(&mut client, &classifier, &config));
+
+            tokio::select! {
+                result = &mut import => {
+                    result.context("import completed before the classifier gate")?;
+                    anyhow::bail!("import completed before the classifier gate");
+                }
+                result = tokio::time::timeout(Duration::from_secs(5), gate.wait_started()) => {
+                    result.context("first classification did not reach the gate")?;
+                }
+            }
+
+            let second_started = async {
+                loop {
+                    if fake.call_count().await == 1 {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            };
+            tokio::select! {
+                result = &mut import => {
+                    result.context("import completed while the first classification was gated")?;
+                    anyhow::bail!("import completed while the first classification was gated");
+                }
+                result = tokio::time::timeout(Duration::from_secs(5), second_started) => {
+                    result.context("second classification did not run concurrently")?;
+                }
+            }
+
+            gate.proceed();
+            let summary = import.await?;
+            assert_eq!(summary.ingested, 2);
+            assert_eq!(fake.call_count().await, 2);
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        finish_import_with_cleanup(result, &[&csv_path])
     })
 }
 
@@ -1537,6 +1593,36 @@ fn write_normalized_csv_with_parent_coinbase(
         normalized_csv_line_with_parent_coinbase(header, &row, coinbase_outputs, full_coinbase);
     std::fs::write(&path, format!("{NORMALIZED_HEADER}{csv_row}"))
         .with_context(|| format!("write temp CSV {}", path.display()))?;
+    Ok(path)
+}
+
+fn write_two_canonical_rows(first: &Header, second: &Header, btc_height: i32) -> Result<PathBuf> {
+    let path = temp_csv_path()?;
+    let first_row = NormalizedCsvRow {
+        chain: "devcoin",
+        source_row_number: 1,
+        classification: "canonical",
+        relevance: "",
+        relevance_reason: "canonical_parent",
+        coinbase_script: &[],
+        btc_height,
+        child_height: 12,
+        child_hash: None,
+    };
+    let second_row = NormalizedCsvRow {
+        source_row_number: 2,
+        child_height: 13,
+        ..first_row
+    };
+    std::fs::write(
+        &path,
+        format!(
+            "{NORMALIZED_HEADER}{}{}",
+            normalized_csv_line(first, &first_row),
+            normalized_csv_line(second, &second_row)
+        ),
+    )
+    .with_context(|| format!("write temp CSV {}", path.display()))?;
     Ok(path)
 }
 

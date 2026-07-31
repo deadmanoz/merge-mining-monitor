@@ -194,7 +194,11 @@ just import-all
 The command preflights all artifacts before importing the first chain, processes
 chains in deterministic order, shares a Bitcoin-parent classification cache,
 combines candidate parsing, validation, and preclassification into one stream,
-and runs targeted stale-branch reconciliation after all sources are present.
+fills the Bitcoin RPC client's configured bounded concurrency, and runs targeted
+stale-branch reconciliation after all sources are present. Canonical and
+Core-indexed stale parents do not query predecessor state from the database;
+that read-model lookup is deferred until Core proves the candidate header is
+absent.
 Digest verification, manifest-count inspection, and database mutation still
 read the artifact separately.
 Its per-chain and total summaries report expected, ingested, inserted, updated,

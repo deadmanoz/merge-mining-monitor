@@ -37,6 +37,7 @@ use super::config::{HistoricalImportConfig, historical_chain_spec};
 use super::csv_source::{
     ImportCandidate, RelevanceSelection, SkipReason, SourceClassification, candidate_from_record,
 };
+use super::preclassify::{PreflightCandidate, resolve_candidate_batch};
 use super::publication::{
     ArtifactPreflight, preflight_artifact, preflight_required_aggregate_artifacts,
 };
@@ -617,6 +618,8 @@ async fn preflight_and_classify_candidates<C: GenericClient>(
 ) -> Result<()> {
     let expected_rows = artifact.row_count;
     let (mut reader, layout) = artifact.open_reader(spec)?;
+    let concurrency = classifier.max_concurrency();
+    let mut batch = Vec::with_capacity(concurrency);
     let mut rows = 0_u64;
     for (offset, record) in reader.records().enumerate() {
         let record = record.with_context(|| {
@@ -640,26 +643,52 @@ async fn preflight_and_classify_candidates<C: GenericClient>(
                     );
                 }
             };
-        if classifier.is_enabled() {
-            let decision =
-                import_decision(client, classifier, config, &candidate, classifications).await?;
-            if config.manifest_path.is_some()
-                && let ImportDecision::Skip(reason) = decision
-            {
-                bail!(
-                    "published artifact {} row {} would be skipped as {}",
-                    config.csv_path.display(),
-                    offset + 2,
-                    reason.as_str()
-                );
-            }
+        batch.push(PreflightCandidate {
+            row_number: offset + 2,
+            candidate,
+        });
+        if batch.len() == concurrency {
+            preflight_candidate_batch(client, classifier, config, &batch, classifications).await?;
+            batch.clear();
         }
     }
+    preflight_candidate_batch(client, classifier, config, &batch, classifications).await?;
     if rows != expected_rows {
         bail!(
             "normalized artifact {} changed during preflight: expected {expected_rows} rows, parsed {rows}",
             config.csv_path.display()
         );
+    }
+    Ok(())
+}
+
+/// Resolve one bounded group of unique parents concurrently, then apply the
+/// publication decision gate in source order. The Core RPC client supplies the
+/// bound, so this fills its existing request capacity without creating a second
+/// concurrency setting. Repeated parents still share one classification across
+/// the complete publication.
+async fn preflight_candidate_batch<C: GenericClient>(
+    client: &C,
+    classifier: &ConfiguredParentClassifier,
+    config: &HistoricalImportConfig,
+    batch: &[PreflightCandidate],
+    classifications: &mut HashMap<Vec<u8>, ParentClassification>,
+) -> Result<()> {
+    resolve_candidate_batch(client, classifier, batch, classifications).await?;
+
+    for row in batch {
+        let decision =
+            import_decision(client, classifier, config, &row.candidate, classifications).await?;
+        if config.manifest_path.is_some()
+            && let ImportDecision::Skip(reason) = decision
+        {
+            bail!(
+                "published artifact {} row {} would be skipped as {}",
+                config.csv_path.display(),
+                row.row_number,
+                reason.as_str()
+            );
+        }
     }
     Ok(())
 }

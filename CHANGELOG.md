@@ -41,6 +41,9 @@ This changelog starts with the initial release.
   classification and mutation reads to the already-verified artifact handle,
   preflight the required aggregate, and fail source health closed until the
   final multi-chain rebuild succeeds.
+- Fill the Bitcoin RPC client's existing bounded concurrency during historical
+  preclassification, and defer predecessor read-model queries until Bitcoin
+  Core proves a candidate header is absent.
 
 ## [0.4.2] - 2026-07-30
 
