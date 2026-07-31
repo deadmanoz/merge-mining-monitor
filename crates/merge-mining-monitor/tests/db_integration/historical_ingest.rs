@@ -642,11 +642,12 @@ async fn multi_chain_import_reuses_the_parent_classification_cache() -> Result<(
 }
 
 #[tokio::test]
-async fn historical_preflight_fills_classifier_concurrency() -> Result<()> {
+async fn historical_preflight_refills_classifier_concurrency() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let first = header_meeting_bits(0x207f_ffff, 1_700_000_037, 37);
         let second = header_meeting_bits(0x207f_ffff, 1_700_000_038, 38);
-        let csv_path = write_repeated_then_unique_canonical_rows(&first, &second, 700_037)?;
+        let third = header_meeting_bits(0x207f_ffff, 1_700_000_039, 39);
+        let csv_path = write_repeated_then_unique_canonical_rows(&first, &second, &third, 700_037)?;
         let result = async {
             let gate = FakeParentClassifierGate::new();
             let fake = FakeParentClassifier::new(canonical_verdict(&first, 700_037))
@@ -666,9 +667,9 @@ async fn historical_preflight_fills_classifier_concurrency() -> Result<()> {
                 }
             }
 
-            let second_started = async {
+            let later_completed = async {
                 loop {
-                    if fake.call_count().await == 1 {
+                    if fake.call_count().await == 2 {
                         break;
                     }
                     tokio::task::yield_now().await;
@@ -679,15 +680,15 @@ async fn historical_preflight_fills_classifier_concurrency() -> Result<()> {
                     result.context("import completed while the first classification was gated")?;
                     anyhow::bail!("import completed while the first classification was gated");
                 }
-                result = tokio::time::timeout(Duration::from_secs(5), second_started) => {
-                    result.context("second classification did not run concurrently")?;
+                result = tokio::time::timeout(Duration::from_secs(5), later_completed) => {
+                    result.context("classification slots were not refilled while the first was gated")?;
                 }
             }
 
             gate.proceed();
             let summary = import.await?;
-            assert_eq!(summary.ingested, 3);
-            assert_eq!(fake.call_count().await, 2);
+            assert_eq!(summary.ingested, 4);
+            assert_eq!(fake.call_count().await, 3);
             Ok::<_, anyhow::Error>(())
         }
         .await;
@@ -1668,6 +1669,7 @@ fn write_normalized_csv_with_parent_coinbase(
 fn write_repeated_then_unique_canonical_rows(
     first: &Header,
     second: &Header,
+    third: &Header,
     btc_height: i32,
 ) -> Result<PathBuf> {
     let path = temp_csv_path()?;
@@ -1692,13 +1694,19 @@ fn write_repeated_then_unique_canonical_rows(
         child_height: 14,
         ..first_row
     };
+    let third_unique_row = NormalizedCsvRow {
+        source_row_number: 4,
+        child_height: 15,
+        ..first_row
+    };
     std::fs::write(
         &path,
         format!(
-            "{NORMALIZED_HEADER}{}{}{}",
+            "{NORMALIZED_HEADER}{}{}{}{}",
             normalized_csv_line(first, &first_row),
             normalized_csv_line(first, &repeated_row),
-            normalized_csv_line(second, &unique_row)
+            normalized_csv_line(second, &unique_row),
+            normalized_csv_line(third, &third_unique_row)
         ),
     )
     .with_context(|| format!("write temp CSV {}", path.display()))?;

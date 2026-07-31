@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result, bail};
 use bitcoin::hashes::Hash as _;
-use futures::{StreamExt, TryStreamExt, stream};
+use futures::{TryStreamExt, stream::FuturesUnordered};
 use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
 use mmm_capture::btc_orphan::BtcOrphanVerdict;
 use mmm_capture::capture::ParentKind;
@@ -28,8 +28,9 @@ pub(super) enum ImportDecision {
 ///
 /// Positive Core classifications and Core-absence results are cached by parent
 /// hash so repeated observations across a chain do not repeat RPC work. The
-/// first pass batches only unresolved unique parents, so cached and repeated
-/// rows cannot consume classifier capacity. A second sequential pass applies
+/// first pass keeps a rolling bounded set of unresolved unique parents, so
+/// cached and repeated rows cannot consume capacity and each completed slot is
+/// refilled without waiting for slower peers. A second sequential pass applies
 /// the publication decision gate in source order. Re-reading the artifact keeps
 /// memory bounded without sacrificing concurrency or deterministic validation.
 pub(super) async fn preflight_and_classify_candidates<C: GenericClient>(
@@ -43,7 +44,7 @@ pub(super) async fn preflight_and_classify_candidates<C: GenericClient>(
     let expected_rows = artifact.row_count;
     let (mut reader, layout) = artifact.open_reader(spec)?;
     let concurrency = classifier.max_concurrency();
-    let mut batch = Vec::with_capacity(concurrency);
+    let mut in_flight = FuturesUnordered::new();
     let mut pending_hashes = HashSet::with_capacity(concurrency);
     let mut rows = 0_u64;
     for (offset, record) in reader.records().enumerate() {
@@ -75,17 +76,30 @@ pub(super) async fn preflight_and_classify_candidates<C: GenericClient>(
                 .block_hash()
                 .to_byte_array()
                 .to_vec();
-            if !classifications.contains_key(&parent_hash) && pending_hashes.insert(parent_hash) {
-                batch.push(candidate);
-                if batch.len() == concurrency {
-                    resolve_candidate_batch(client, classifier, &batch, classifications).await?;
-                    batch.clear();
-                    pending_hashes.clear();
+            if !classifications.contains_key(&parent_hash)
+                && pending_hashes.insert(parent_hash.clone())
+            {
+                in_flight.push(resolve_candidate(
+                    client,
+                    classifier,
+                    candidate,
+                    parent_hash,
+                ));
+                if in_flight.len() == concurrency {
+                    let (resolved_hash, classification) = in_flight
+                        .try_next()
+                        .await?
+                        .context("full preclassification set yielded no result")?;
+                    pending_hashes.remove(&resolved_hash);
+                    classifications.insert(resolved_hash, classification);
                 }
             }
         }
     }
-    resolve_candidate_batch(client, classifier, &batch, classifications).await?;
+    while let Some((resolved_hash, classification)) = in_flight.try_next().await? {
+        pending_hashes.remove(&resolved_hash);
+        classifications.insert(resolved_hash, classification);
+    }
     if rows != expected_rows {
         bail!(
             "normalized artifact {} changed during preflight: expected {expected_rows} rows, parsed {rows}",
@@ -101,63 +115,33 @@ pub(super) async fn preflight_and_classify_candidates<C: GenericClient>(
     Ok(())
 }
 
-/// Resolve one bounded group of unique parents concurrently. The Core RPC
-/// client supplies the bound, so the importer fills its existing request
-/// capacity without creating a second concurrency setting. Repeated parents
-/// still share one classification across the complete publication.
-pub(super) async fn resolve_candidate_batch<C: GenericClient>(
+/// Resolve one parent while deferring the predecessor query until Core proves
+/// the candidate itself absent.
+async fn resolve_candidate<C: GenericClient>(
     client: &C,
     classifier: &ConfiguredParentClassifier,
-    batch: &[ImportCandidate],
-    classifications: &mut HashMap<Vec<u8>, ParentClassification>,
-) -> Result<()> {
-    if !classifier.is_enabled() {
-        return Ok(());
-    }
-
-    let mut pending_hashes = HashSet::new();
-    let mut pending = Vec::new();
-    for (index, candidate) in batch.iter().enumerate() {
-        let parent_hash = candidate
-            .evidence
-            .btc_parent_header
-            .block_hash()
-            .to_byte_array()
-            .to_vec();
-        if !classifications.contains_key(&parent_hash) && pending_hashes.insert(parent_hash.clone())
-        {
-            pending.push((parent_hash, index));
-        }
-    }
-
-    let resolved = stream::iter(pending)
-        .map(|(parent_hash, index)| async move {
-            let candidate = &batch[index];
-            let prev_hash = candidate
-                .evidence
-                .btc_parent_header
-                .prev_blockhash
-                .to_byte_array()
-                .to_vec();
-            let classification = classifier
-                .classify_parent_deferred(
-                    &candidate.evidence.btc_parent_header,
-                    mmm_read_model::load_parent_preflight(client, &prev_hash),
-                )
-                .await
-                .with_context(|| {
-                    format!(
-                        "preclassify historical parent {}",
-                        candidate.btc_parent_display_hash
-                    )
-                })?;
-            Ok::<_, anyhow::Error>((parent_hash, classification))
-        })
-        .buffer_unordered(classifier.max_concurrency())
-        .try_collect::<Vec<_>>()
-        .await?;
-    classifications.extend(resolved);
-    Ok(())
+    candidate: ImportCandidate,
+    parent_hash: Vec<u8>,
+) -> Result<(Vec<u8>, ParentClassification)> {
+    let prev_hash = candidate
+        .evidence
+        .btc_parent_header
+        .prev_blockhash
+        .to_byte_array()
+        .to_vec();
+    let classification = classifier
+        .classify_parent_deferred(
+            &candidate.evidence.btc_parent_header,
+            mmm_read_model::load_parent_preflight(client, &prev_hash),
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "preclassify historical parent {}",
+                candidate.btc_parent_display_hash
+            )
+        })?;
+    Ok((parent_hash, classification))
 }
 
 /// Re-read a classified artifact and apply its publication decision gate in
