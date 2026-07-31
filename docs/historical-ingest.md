@@ -133,10 +133,13 @@ is removed only after its dependent cascade succeeds. An interruption at
 either boundary therefore resumes without losing cascade work. `import-all`
 also enqueues its final targeted stale-branch pass before rebuilding any parent,
 so a failure after a fresh stale promotion resumes its dependent cascade.
-`import-all` marks source health unready before a non-surveyed chain can commit,
-then rebuilds it once after all chains and targeted stale branches have
-reconciled. A partial multi-chain import therefore never exposes counters from
-the previous complete snapshot.
+`import-all` takes the exclusive source-health lock at the end of each
+non-surveyed chain transaction, then commits its base evidence, durable queue,
+and unready flag atomically. A concurrent rebuild either finishes before that
+invalidation or observes pending historical work and refuses to mark the
+aggregate ready. The importer rebuilds once after all chains and targeted stale
+branches have reconciled. A partial multi-chain import therefore never exposes
+counters from the previous complete snapshot.
 
 The schema migration retains existing child values and makes the child evidence
 columns nullable. Before changing the schema, it fails closed if the legacy

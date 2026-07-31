@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use tokio_postgres::{Client, GenericClient};
 
 use mmm_capture::capture::{MergeMiningEventPayload, RskEvidencePayload};
@@ -67,7 +67,7 @@ async fn upsert_rsk_evidence<C: GenericClient>(
     event_id: i64,
     evidence: &RskEvidencePayload,
 ) -> Result<()> {
-    client
+    let affected = client
         .execute(
             "INSERT INTO rsk_merge_mining_evidence ( \
                 event_id, rsk_block_hash, rsk_height, is_uncle, uncle_index, \
@@ -92,7 +92,21 @@ async fn upsert_rsk_evidence<C: GenericClient>(
                 coinbase_tail = COALESCE( \
                     rsk_merge_mining_evidence.coinbase_tail, \
                     EXCLUDED.coinbase_tail \
-                )",
+                ) \
+             WHERE rsk_merge_mining_evidence.rsk_block_hash = EXCLUDED.rsk_block_hash \
+               AND rsk_merge_mining_evidence.rsk_height = EXCLUDED.rsk_height \
+               AND rsk_merge_mining_evidence.rsk_miner = EXCLUDED.rsk_miner \
+               AND rsk_merge_mining_evidence.merge_mining_hash = EXCLUDED.merge_mining_hash \
+               AND rsk_merge_mining_evidence.proof_format = EXCLUDED.proof_format \
+               AND (rsk_merge_mining_evidence.pool_identity_id IS NULL \
+                    OR EXCLUDED.pool_identity_id IS NULL \
+                    OR rsk_merge_mining_evidence.pool_identity_id = EXCLUDED.pool_identity_id) \
+               AND (rsk_merge_mining_evidence.merkle_proof IS NULL \
+                    OR EXCLUDED.merkle_proof IS NULL \
+                    OR rsk_merge_mining_evidence.merkle_proof = EXCLUDED.merkle_proof) \
+               AND (rsk_merge_mining_evidence.coinbase_tail IS NULL \
+                    OR EXCLUDED.coinbase_tail IS NULL \
+                    OR rsk_merge_mining_evidence.coinbase_tail = EXCLUDED.coinbase_tail)",
             &[
                 &event_id,
                 &evidence.rsk_block_hash,
@@ -110,6 +124,9 @@ async fn upsert_rsk_evidence<C: GenericClient>(
         )
         .await
         .context("upsert rsk_merge_mining_evidence")?;
+    if affected != 1 {
+        bail!("RSK evidence contradicts stored immutable sidecar fields");
+    }
     Ok(())
 }
 

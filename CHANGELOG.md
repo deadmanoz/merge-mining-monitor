@@ -29,6 +29,10 @@ This changelog starts with the initial release.
   import limit before mutation, derive the child-target verdict from published
   `nBits`, and route the targeted stale-branch pass through the durable parent
   and dependent reconciliation queue.
+- Serialize historical source-health invalidation against rebuilds, refuse to
+  mark source health ready while durable historical work remains, preserve a
+  Hathor row promoted from hashless identity, and reject contradictory immutable
+  RSK sidecar evidence before provenance can commit.
 - Expose nullable child evidence through block detail and render unavailable
   fields explicitly instead of zero or placeholder values.
 - Report historical write outcomes from the store's exact/partial identity

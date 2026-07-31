@@ -22,7 +22,7 @@ use mmm_capture::capture::{
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::{
     clear_authoritative_historical_provenance_in_transaction, drain_historical_reconcile_queue,
-    enqueue_historical_parent_reconcile, invalidate_source_health,
+    enqueue_historical_parent_reconcile, invalidate_source_health_in_transaction,
     rebuild_historical_source_health, reconcile_authoritative_historical_source_in_transaction,
     write_historical_base_in_transaction,
 };
@@ -302,7 +302,6 @@ async fn run_historical_import_with_cache(
     }
     let source_id = mmm_store::get_source_id(client, spec.source_code).await?;
     let resolver = PoolResolver::from_default_snapshot().context("load embedded pool snapshot")?;
-    invalidate_source_health(client).await?;
 
     let txn = client
         .transaction()
@@ -341,6 +340,7 @@ async fn run_historical_import_with_cache(
         )
         .await?;
     }
+    invalidate_source_health_in_transaction(&txn).await?;
     txn.commit()
         .await
         .with_context(|| format!("commit {} historical chain transaction", spec.chain))?;
@@ -583,6 +583,7 @@ async fn enqueue_published_stale_branches(client: &mut Client) -> Result<u64> {
         let parent_hash: Vec<u8> = row.get(0);
         enqueue_historical_parent_reconcile(&txn, &parent_hash).await?;
     }
+    invalidate_source_health_in_transaction(&txn).await?;
     txn.commit()
         .await
         .context("commit targeted stale-branch queue transaction")?;

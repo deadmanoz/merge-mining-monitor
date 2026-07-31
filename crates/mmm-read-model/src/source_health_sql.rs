@@ -7,8 +7,8 @@
 
 use std::collections::HashMap;
 
-use anyhow::{Context, Result};
-use tokio_postgres::{Client, GenericClient};
+use anyhow::{Context, Result, bail};
+use tokio_postgres::{Client, GenericClient, Transaction};
 
 // ---------------------------------------------------------------------------
 // source_health: precomputed per-source rollup counters.
@@ -453,10 +453,20 @@ pub async fn rebuild_source_health(client: &mut Client) -> Result<()> {
     Ok(())
 }
 
-/// Prevent the sources API from serving a previously complete aggregate while
-/// a historical import is committing base evidence across multiple
-/// transactions. The final successful rebuild sets the flag ready again.
-pub async fn invalidate_source_health<C: GenericClient>(client: &C) -> Result<()> {
+/// Serialize a historical base/queue commit after any concurrent rebuild, then
+/// prevent the sources API from serving the prior aggregate.
+///
+/// Call this at the end of the historical transaction, immediately before
+/// commit. The exclusive transaction lock makes the staged base evidence,
+/// durable queue rows, and `source_health_ready = FALSE` visible atomically.
+pub async fn invalidate_source_health_in_transaction(client: &Transaction<'_>) -> Result<()> {
+    client
+        .execute(
+            "SELECT pg_advisory_xact_lock($1, $2)",
+            &[&SOURCE_HEALTH_LOCK_CLASS, &SOURCE_HEALTH_LOCK_OBJ],
+        )
+        .await
+        .context("acquire source_health lock for historical invalidation")?;
     let now = mmm_capture::capture::now_epoch_seconds()?;
     client
         .execute(
@@ -484,6 +494,18 @@ pub(crate) async fn rebuild_source_health_in_transaction<C: GenericClient>(
         )
         .await
         .context("acquire exclusive source_health advisory lock")?;
+
+    let historical_work_pending: bool = client
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM historical_reconcile_queue)",
+            &[],
+        )
+        .await
+        .context("check pending historical reconciliation before source_health rebuild")?
+        .get(0);
+    if historical_work_pending {
+        bail!("cannot rebuild source_health while historical reconciliation is pending");
+    }
 
     let computed = compute_source_health_from_base(client).await?;
     let now = mmm_capture::capture::now_epoch_seconds()?;

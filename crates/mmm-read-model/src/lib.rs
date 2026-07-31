@@ -29,7 +29,7 @@ pub use mutation::{
     restore_merge_mining_event, revoke_merge_mining_event, update_parent_events,
     write_core_canonical, write_historical_base_in_transaction,
 };
-pub use source_health_sql::invalidate_source_health;
+pub use source_health_sql::invalidate_source_health_in_transaction;
 #[cfg(any(test, feature = "db-integration"))]
 pub use source_health_sql::{compute_source_health_from_base, rebuild_source_health};
 

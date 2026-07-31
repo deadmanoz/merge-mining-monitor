@@ -406,9 +406,21 @@ async fn write_valid_capture(
     built: BuiltCapture,
 ) -> Result<HathorHeightOutcome> {
     let now = now_epoch_seconds()?;
+    let current_parent_hash = built
+        .evidence
+        .btc_parent_header
+        .block_hash()
+        .to_byte_array()
+        .to_vec();
     let superseded: Vec<i64> = prior
         .iter()
-        .filter(|e| e.is_active && e.child_block_hash.as_deref() != Some(current_hash))
+        .filter(|event| {
+            event.is_active
+                && match event.child_block_hash.as_deref() {
+                    Some(hash) => hash != current_hash,
+                    None => event.btc_parent_header_hash != current_parent_hash,
+                }
+        })
         .map(|e| e.event_id)
         .collect();
 
@@ -453,7 +465,7 @@ async fn write_valid_capture(
         Ok(_event_id) => {
             // Y now exists: revoke the superseded priors, then clear the marker.
             if !superseded.is_empty() {
-                revoke_superseded(client, context, prior, current_hash).await?;
+                revoke_event_ids(client, context, &superseded, HATHOR_REVOKE_SUPERSEDED).await?;
                 delete_pending_reconcile_at(
                     client,
                     context.source_id(),
@@ -493,6 +505,20 @@ async fn write_valid_capture(
         }
         Err(err) => Err(err).with_context(|| format!("Hathor capture at height {height}")),
     }
+}
+
+async fn revoke_event_ids(
+    client: &mut Client,
+    context: &HathorCaptureContext,
+    event_ids: &[i64],
+    reason: &str,
+) -> Result<()> {
+    for &event_id in event_ids {
+        revoke_merge_mining_event(client, event_id, reason, context.parent_classifier())
+            .await
+            .with_context(|| format!("revoke Hathor event {event_id} ({reason})"))?;
+    }
+    Ok(())
 }
 
 /// Revoke active prior events at a height whose hash differs from the current

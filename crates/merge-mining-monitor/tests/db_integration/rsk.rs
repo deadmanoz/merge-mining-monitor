@@ -6,7 +6,7 @@ use tokio_postgres::{Client, Row};
 
 use bitcoin::block::Header;
 use bitcoin::consensus::deserialize;
-use mmm_capture::capture::RSK_PROOF_FORMAT_OPAQUE;
+use mmm_capture::capture::{HistoricalEventProvenance, RSK_PROOF_FORMAT_OPAQUE};
 use mmm_capture::pool_resolver::{
     PoolIdentityRegistry, PoolSnapshotSource, RSK_MINER_ADDRESS_NAMESPACE, RskMinerEntry,
     RskMinerRegistry,
@@ -35,6 +35,75 @@ async fn writes_rsk_canonical_and_uncle_idempotently_with_pool_identity() -> Res
 async fn rsk_pool_identity_progresses_null_to_resolved_preserving_proof_bytes() -> Result<()> {
     crate::run_mut_db_test!(client, {
         run_rsk_pool_identity_progression(&mut client).await
+    })
+}
+
+#[tokio::test]
+async fn contradictory_rsk_sidecar_rolls_back_historical_provenance() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let block = load_rsk_block_fixture("canonical-valid");
+        let context =
+            rsk_context_with_known_miner(&client, ConfiguredParentClassifier::Disabled).await?;
+        let inputs = ready_inputs(&context, &block, false, None, None);
+        let event_id = write_rsk_capture(
+            &mut client,
+            context.source_id(),
+            &inputs.payload,
+            &inputs.evidence,
+        )
+        .await?;
+        let stored_miner = inputs.evidence.rsk_miner.clone();
+
+        for (source_row_number, corrupt_miner) in [(1_i64, true), (2_i64, false)] {
+            let mut payload = inputs.payload.clone();
+            payload.historical_provenance = Some(HistoricalEventProvenance {
+                publication_ref: "2146c204a8a203c59534a1b23b04f447a47b499e".to_owned(),
+                chain: "rsk".to_owned(),
+                source_kind: "full_inventory".to_owned(),
+                source_path: "fixture.csv".to_owned(),
+                source_row_number,
+                artifact_scope: "full_classifier_inventory".to_owned(),
+                provenance: "fixture".to_owned(),
+                classification: "canonical".to_owned(),
+                btc_height: Some(730_000),
+                validation_status: Some("VALID".to_owned()),
+                btc_stale_relevance: None,
+                relevance_reason: Some("canonical_parent".to_owned()),
+            });
+            let mut contradictory = inputs.evidence.clone();
+            if corrupt_miner {
+                contradictory.rsk_miner[0] ^= 0xff;
+            } else {
+                contradictory.merge_mining_hash[0] ^= 0xff;
+            }
+
+            let error =
+                write_rsk_capture(&mut client, context.source_id(), &payload, &contradictory)
+                    .await
+                    .expect_err("contradictory immutable RSK evidence must fail");
+            assert!(
+                format!("{error:#}").contains("immutable sidecar fields"),
+                "{error:#}"
+            );
+        }
+
+        let row = client
+            .query_one(
+                "SELECT r.rsk_miner, count(p.event_id)::bigint \
+                 FROM rsk_merge_mining_evidence r \
+                 LEFT JOIN historical_event_provenance p ON p.event_id = r.event_id \
+                 WHERE r.event_id = $1 \
+                 GROUP BY r.rsk_miner",
+                &[&event_id],
+            )
+            .await?;
+        assert_eq!(row.get::<_, Vec<u8>>(0), stored_miner);
+        assert_eq!(
+            row.get::<_, i64>(1),
+            0,
+            "failed sidecars attach no provenance"
+        );
+        Ok::<_, anyhow::Error>(())
     })
 }
 

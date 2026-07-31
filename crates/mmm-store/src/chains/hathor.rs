@@ -93,6 +93,7 @@ async fn upsert_hathor_evidence<C: GenericClient>(
 pub struct HathorEventRow {
     pub event_id: i64,
     pub child_block_hash: Option<Vec<u8>>,
+    pub btc_parent_header_hash: Vec<u8>,
     pub is_active: bool,
 }
 
@@ -104,7 +105,8 @@ pub async fn hathor_events_at_height(
 ) -> Result<Vec<HathorEventRow>> {
     let rows = client
         .query(
-            "SELECT id, child_block_hash, (revoked_at IS NULL) AS is_active \
+            "SELECT id, child_block_hash, btc_parent_header_hash, \
+                    (revoked_at IS NULL) AS is_active \
                FROM merge_mining_event \
               WHERE source_id = $1 AND child_height = $2",
             &[&source_id, &height],
@@ -116,6 +118,7 @@ pub async fn hathor_events_at_height(
         .map(|row| HathorEventRow {
             event_id: row.get("id"),
             child_block_hash: row.get("child_block_hash"),
+            btc_parent_header_hash: row.get("btc_parent_header_hash"),
             is_active: row.get("is_active"),
         })
         .collect())

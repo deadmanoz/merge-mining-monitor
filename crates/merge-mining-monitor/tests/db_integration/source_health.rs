@@ -6,8 +6,9 @@ use mmm_bitcoin_core::{
 use mmm_capture::capture::{ClassificationProof, ParentKind};
 use mmm_capture::source_registry::RSK_SOURCE_CODE;
 use mmm_read_model::{
-    compute_source_health_from_base, rebuild_source_health, reconcile_from_merge_mining_event,
-    restore_merge_mining_event, revoke_merge_mining_event,
+    compute_source_health_from_base, invalidate_source_health_in_transaction,
+    rebuild_source_health, reconcile_from_merge_mining_event, restore_merge_mining_event,
+    revoke_merge_mining_event,
 };
 use mmm_store::get_source_id;
 use tokio_postgres::Client;
@@ -21,6 +22,80 @@ use crate::support::{
 /// canonical, stale, strict_orphan, weak_orphan). Excludes the `updated_at` audit
 /// column.
 pub(crate) type SourceHealthCounts = (i64, Option<i64>, i64, i64, i64, i64, i64, i64);
+
+#[tokio::test]
+async fn historical_invalidation_waits_for_the_exclusive_source_health_lock() -> Result<()> {
+    crate::run_mut_db_test!(client, schema, {
+        rebuild_source_health(&mut client).await?;
+        let lock_txn = client.transaction().await?;
+        lock_txn
+            .execute(
+                "SELECT pg_advisory_xact_lock($1, $2)",
+                &[&0x5048_i32, &0_i32],
+            )
+            .await?;
+
+        let mut concurrent = crate::support::db::connect_to_schema(&schema).await?;
+        let mut invalidation = tokio::spawn(async move {
+            let txn = concurrent.transaction().await?;
+            invalidate_source_health_in_transaction(&txn).await?;
+            txn.commit().await?;
+            Ok::<_, anyhow::Error>(())
+        });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), &mut invalidation)
+                .await
+                .is_err(),
+            "invalidation must wait for an in-flight rebuild lock"
+        );
+
+        lock_txn.commit().await?;
+        invalidation.await??;
+        let ready: bool = client
+            .query_one(
+                "SELECT source_health_ready FROM read_model_invariant WHERE id = TRUE",
+                &[],
+            )
+            .await?
+            .get(0);
+        assert!(!ready);
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn source_health_rebuild_refuses_pending_historical_reconciliation() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        client
+            .execute(
+                "INSERT INTO historical_reconcile_queue (btc_parent_header_hash) VALUES ($1)",
+                &[&vec![0x48_u8; 32]],
+            )
+            .await?;
+        let error = rebuild_source_health(&mut client)
+            .await
+            .expect_err("pending historical work must keep source health unready");
+        assert!(
+            error
+                .to_string()
+                .contains("historical reconciliation is pending")
+        );
+
+        client
+            .execute("DELETE FROM historical_reconcile_queue", &[])
+            .await?;
+        rebuild_source_health(&mut client).await?;
+        let ready: bool = client
+            .query_one(
+                "SELECT source_health_ready FROM read_model_invariant WHERE id = TRUE",
+                &[],
+            )
+            .await?
+            .get(0);
+        assert!(ready);
+        Ok::<_, anyhow::Error>(())
+    })
+}
 
 /// The semantic (non-`updated_at`) `source_health` projection, sorted by source.
 pub(crate) async fn read_source_health_semantic(
