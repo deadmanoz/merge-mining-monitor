@@ -9,15 +9,20 @@ use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier};
 use mmm_capture::auxpow::parse_bip34_height;
 use mmm_capture::btc_orphan::{BtcOrphanVerdict, classify_btc_orphan};
 use mmm_producers::{
-    HistoricalImportAllConfig, HistoricalImportConfig, run_historical_import,
-    run_historical_import_configs_for_test, run_manifest_historical_import_for_test,
+    HistoricalImportAllConfig, HistoricalImportConfig, enqueue_published_stale_branches_for_test,
+    run_historical_import, run_historical_import_configs_for_test,
+    run_manifest_historical_import_for_test,
 };
-use mmm_read_model::rebuild_source_health;
+use mmm_read_model::{
+    drain_historical_reconcile_queue, drain_historical_reconcile_queue_with_budget_for_test,
+    rebuild_source_health,
+};
 use mmm_store::get_source_id;
 
 use crate::support::scenario::{
     canonical_verdict, stale_verdict_with_competitor_header, unknown_verdict,
 };
+use crate::support::seed::insert_block;
 use crate::support::{
     absent_classifier, btc_400000_coinbase_script, btc_400000_header, header_meeting_bits,
 };
@@ -85,6 +90,38 @@ async fn manifest_backed_import_verifies_artifacts_before_writes() -> Result<()>
         std::fs::remove_dir_all(&fixture.root)
             .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
         result
+    })
+}
+
+#[tokio::test]
+async fn zero_import_limit_fails_before_any_database_write() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let header = header_meeting_bits(0x207f_ffff, 1_700_000_060, 60);
+        let csv_path =
+            write_normalized_csv(&header, "canonical", "", "canonical_parent", &[], 700_060)?;
+        let result = async {
+            let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+                canonical_verdict(&header, 700_060),
+            ));
+            let mut config = devcoin_import_config(&csv_path);
+            config.limit = Some(0);
+
+            let error = run_historical_import(&mut client, &classifier, &config)
+                .await
+                .expect_err("zero limit must be rejected before mutation");
+            assert!(
+                error
+                    .to_string()
+                    .contains("--limit must be greater than zero")
+            );
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:devcoin").await?,
+                0
+            );
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        finish_import_with_cleanup(result, &[&csv_path])
     })
 }
 
@@ -481,6 +518,82 @@ async fn multi_chain_import_orders_sources_and_reconciles_stale_branch() -> Resu
 }
 
 #[tokio::test]
+async fn targeted_stale_reconcile_retains_committed_cascade_seeds() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let header = header_meeting_bits(0x207f_ffff, 1_700_000_061, 61);
+        let parent_hash = header.block_hash().to_byte_array().to_vec();
+        let competitor = header_meeting_bits(0x207f_ffff, 1_700_000_062, 62);
+        let competitor_hash = competitor.block_hash().to_byte_array().to_vec();
+        let csv_path =
+            write_normalized_csv(&header, "unknown", "", "valid_direct_stale", &[], 700_061)?;
+        let result = async {
+            let initial = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+                unknown_verdict(&header),
+            ));
+            run_historical_import(&mut client, &initial, &devcoin_import_config(&csv_path)).await?;
+
+            let dependent_hash = vec![0x63; 32];
+            insert_block(
+                &client,
+                &dependent_hash,
+                &parent_hash,
+                None,
+                "unknown",
+                1_700_000_063,
+                None,
+            )
+            .await?;
+            assert_eq!(
+                enqueue_published_stale_branches_for_test(&mut client).await?,
+                1
+            );
+
+            let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+                stale_verdict_with_competitor_header(&header, 700_061, competitor, competitor_hash),
+            ));
+            let classifications = std::collections::HashMap::new();
+            drain_historical_reconcile_queue_with_budget_for_test(
+                &mut client,
+                &classifier,
+                &classifications,
+                0,
+            )
+            .await
+            .expect_err("zero cascade budget must interrupt targeted dependent work");
+
+            let queued: (bool, Vec<Vec<u8>>) = client
+                .query_one(
+                    "SELECT primary_pending, changed_hashes \
+                     FROM historical_reconcile_queue \
+                     WHERE btc_parent_header_hash = $1",
+                    &[&parent_hash],
+                )
+                .await
+                .map(|row| (row.get(0), row.get(1)))?;
+            assert!(
+                !queued.0,
+                "the primary promotion committed before the failure"
+            );
+            assert!(queued.1.contains(&parent_hash));
+            assert_eq!(
+                block_kind_and_orphan_class(&client, &header).await?.0,
+                "stale"
+            );
+
+            drain_historical_reconcile_queue(&mut client, &classifier, &classifications).await?;
+            let remaining: i64 = client
+                .query_one("SELECT count(*) FROM historical_reconcile_queue", &[])
+                .await?
+                .get(0);
+            assert_eq!(remaining, 0);
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        finish_import_with_cleanup(result, &[&csv_path])
+    })
+}
+
+#[tokio::test]
 async fn multi_chain_import_reuses_the_parent_classification_cache() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let header = header_meeting_bits(0x207f_ffff, 1_700_000_036, 36);
@@ -774,6 +887,52 @@ async fn authoritative_import_removes_rows_absent_from_the_snapshot() -> Result<
                 .await?
                 .get(0);
             assert_eq!(attribution_count, 0);
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        std::fs::remove_dir_all(&fixture.root)
+            .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
+        result
+    })
+}
+
+#[tokio::test]
+async fn allow_unclassified_manifest_import_does_not_replace_authoritative_rows() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let header = header_meeting_bits(0x207f_ffff, 1_700_000_064, 64);
+        let fixture = write_manifest_fixture(&header)?;
+        let result = async {
+            let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+                canonical_verdict(&header, 700_000),
+            ));
+            run_manifest_historical_import_for_test(
+                &mut client,
+                &classifier,
+                &fixture.config,
+                "devcoin",
+            )
+            .await?;
+            seed_unpublished_event(&client, "auxpow:devcoin", 65, vec![0x65; 32]).await?;
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:devcoin").await?,
+                2
+            );
+
+            let mut diagnostic = fixture.config.clone();
+            diagnostic.allow_unclassified = true;
+            let summary = run_manifest_historical_import_for_test(
+                &mut client,
+                &ConfiguredParentClassifier::Disabled,
+                &diagnostic,
+                "devcoin",
+            )
+            .await?;
+            assert_eq!(summary.removed, 0);
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:devcoin").await?,
+                2,
+                "an incomplete diagnostic import must not replace the snapshot"
+            );
             Ok::<_, anyhow::Error>(())
         }
         .await;

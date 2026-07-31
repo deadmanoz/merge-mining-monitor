@@ -17,4 +17,7 @@ pub use runner::{
     run_historical_import_all,
 };
 #[cfg(feature = "db-integration")]
-pub use runner::{run_historical_import_configs_for_test, run_manifest_historical_import_for_test};
+pub use runner::{
+    enqueue_published_stale_branches_for_test, run_historical_import_configs_for_test,
+    run_manifest_historical_import_for_test,
+};

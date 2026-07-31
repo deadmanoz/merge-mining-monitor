@@ -63,6 +63,11 @@ must authenticate that companion independently. Xaya is the documented
 exception to the header-field `nBits` comparison because its authenticated
 effective target lives in `PowData`.
 
+When `child_nbits` is present, the importer compares the imported Bitcoin
+parent hash with that compact target and persists the result as
+`pow_validates_child_target`. This is the same target test used by live
+Namecoin-family capture, including Xaya's authenticated effective target.
+
 A real child hash is exact identity: `(source_id, child_block_hash)`. A hashless
 row uses `(source_id, child_height, btc_parent_header_hash)` as partial identity.
 Later exact evidence promotes one unambiguous partial row in place. A partial
@@ -126,10 +131,12 @@ the durable queue in bounded per-parent transactions. Primary reconcile results
 store their changed-hash cascade seeds in the same transaction, and queue work
 is removed only after its dependent cascade succeeds. An interruption at
 either boundary therefore resumes without losing cascade work. `import-all`
-marks source health unready before a non-surveyed chain can commit, then rebuilds
-it once after all chains and targeted stale branches have reconciled. A partial
-multi-chain import therefore never exposes counters from the previous complete
-snapshot.
+also enqueues its final targeted stale-branch pass before rebuilding any parent,
+so a failure after a fresh stale promotion resumes its dependent cascade.
+`import-all` marks source health unready before a non-surveyed chain can commit,
+then rebuilds it once after all chains and targeted stale branches have
+reconciled. A partial multi-chain import therefore never exposes counters from
+the previous complete snapshot.
 
 The schema migration retains existing child values and makes the child evidence
 columns nullable. Before changing the schema, it fails closed if the legacy
@@ -158,7 +165,10 @@ exclusion from strict/weak classification, including while its branch awaits
 derived placement.
 
 `--allow-empty-known-stales` and `--allow-unclassified` exist for disposable
-diagnostic databases. They are not production cutover options.
+diagnostic databases. They are not production cutover options. A manifest
+import using `--allow-unclassified` is additive because its skipped unknown rows
+make it incomplete; it never clears provenance or removes rows from the prior
+authoritative snapshot. `--limit` must be greater than zero.
 
 ## Import
 

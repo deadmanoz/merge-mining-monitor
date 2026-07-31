@@ -25,6 +25,10 @@ This changelog starts with the initial release.
   Retain source taxonomy and all published parent-coinbase evidence without
   collapsing distinct source rows, and treat Doichain's zero-row survey as a
   database no-op.
+- Keep incomplete `--allow-unclassified` diagnostics additive, reject a zero
+  import limit before mutation, derive the child-target verdict from published
+  `nBits`, and route the targeted stale-branch pass through the durable parent
+  and dependent reconciliation queue.
 - Expose nullable child evidence through block detail and render unavailable
   fields explicitly instead of zero or placeholder values.
 - Report historical write outcomes from the store's exact/partial identity

@@ -4,6 +4,7 @@
 //! Empty cells remain absent. No child value is derived from a scan counter,
 //! Bitcoin parent field, or synthetic placeholder.
 use anyhow::Result;
+use bitcoin::CompactTarget;
 use bitcoin::block::Header;
 use bitcoin::consensus::deserialize;
 use bitcoin::hashes::{Hash as _, sha256d};
@@ -196,6 +197,9 @@ pub(super) fn candidate_from_record(
     let header = parse_parent_header(record.get(layout.btc_header))?;
     let display_hash = header.block_hash().to_string();
     validate_parent_fields(layout, record, &header, &display_hash)?;
+    let pow_validates_child_target = child
+        .nbits
+        .map(|nbits| validates_target(header.block_hash(), CompactTarget::from_consensus(nbits)));
 
     let coinbase = parse_parent_coinbase_fields(layout, record)?;
     let orphan_verdict = if taxonomy.source_classification == SourceClassification::Unknown {
@@ -224,7 +228,7 @@ pub(super) fn candidate_from_record(
             child_block_time: child.block_time,
             child_nbits: child.nbits,
             btc_parent_header: header,
-            pow_validates_child_target: None,
+            pow_validates_child_target,
             btc_parent_coinbase_txid: coinbase.txid,
             btc_parent_coinbase_script: coinbase.script,
             btc_parent_coinbase_outputs: coinbase.outputs,
@@ -732,6 +736,7 @@ mod tests {
         );
         assert_eq!(parsed.evidence.child_block_time, Some(1_231_006_505));
         assert_eq!(parsed.evidence.child_nbits, Some(0x1d00ffff));
+        assert_eq!(parsed.evidence.pow_validates_child_target, Some(true));
     }
 
     #[test]
@@ -909,6 +914,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(parsed.evidence.child_nbits, Some(0x184c238c));
+        assert_eq!(parsed.evidence.pow_validates_child_target, Some(false));
     }
 
     #[test]

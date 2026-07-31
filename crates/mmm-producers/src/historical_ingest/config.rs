@@ -113,7 +113,10 @@ impl HistoricalImportConfig {
     }
 
     pub(super) fn is_authoritative_snapshot(&self, spec: &HistoricalChainSpec) -> bool {
-        self.manifest_path.is_some() && self.limit.is_none() && spec.is_authoritative()
+        self.manifest_path.is_some()
+            && self.limit.is_none()
+            && !self.allow_unclassified
+            && spec.is_authoritative()
     }
 
     /// Parse `import-dataset <chain> [flags...]`.
@@ -353,5 +356,20 @@ mod tests {
                 .expect("doichain")
                 .is_authoritative()
         );
+    }
+
+    #[test]
+    fn incomplete_manifest_diagnostics_are_not_authoritative() {
+        let spec = historical_chain_spec("devcoin").unwrap();
+        let mut config = HistoricalImportConfig::for_csv("devcoin", "fixture.csv");
+        config.manifest_path = Some(PathBuf::from("manifest.json"));
+        assert!(config.is_authoritative_snapshot(spec));
+
+        config.allow_unclassified = true;
+        assert!(!config.is_authoritative_snapshot(spec));
+
+        config.allow_unclassified = false;
+        config.limit = Some(1);
+        assert!(!config.is_authoritative_snapshot(spec));
     }
 }

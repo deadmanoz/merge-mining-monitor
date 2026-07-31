@@ -282,6 +282,19 @@ where
     Ok(outcome)
 }
 
+/// Durably enqueue a historical parent for a fresh primary reconcile.
+///
+/// Callers that discover additional historical repair work after the base
+/// import must enqueue it before attempting the primary rebuild. The queue
+/// retains both an unfinished primary and its committed dependent-cascade
+/// seeds across process failures.
+pub async fn enqueue_historical_parent_reconcile<C: GenericClient>(
+    client: &C,
+    parent_hash: &[u8],
+) -> Result<()> {
+    enqueue_historical_parent(client, parent_hash).await
+}
+
 /// Remove authoritative-source events absent from the current publication and
 /// durably enqueue every affected parent in the same transaction.
 pub async fn reconcile_authoritative_historical_source_in_transaction(

@@ -24,9 +24,10 @@ pub use mutation::drain_historical_reconcile_queue_with_budget_for_test;
 pub use mutation::{
     CommittedParentMutation, CoreCanonicalWrite, capture_in_txn, capture_preclassified_in_txn,
     clear_authoritative_historical_provenance_in_transaction, drain_historical_reconcile_queue,
-    rebuild_historical_source_health, reconcile_authoritative_historical_source_in_transaction,
-    record_coinbase_failure, restore_merge_mining_event, revoke_merge_mining_event,
-    update_parent_events, write_core_canonical, write_historical_base_in_transaction,
+    enqueue_historical_parent_reconcile, rebuild_historical_source_health,
+    reconcile_authoritative_historical_source_in_transaction, record_coinbase_failure,
+    restore_merge_mining_event, revoke_merge_mining_event, update_parent_events,
+    write_core_canonical, write_historical_base_in_transaction,
 };
 pub use source_health_sql::invalidate_source_health;
 #[cfg(any(test, feature = "db-integration"))]

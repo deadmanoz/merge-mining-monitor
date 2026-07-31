@@ -22,8 +22,9 @@ use mmm_capture::capture::{
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::{
     clear_authoritative_historical_provenance_in_transaction, drain_historical_reconcile_queue,
-    invalidate_source_health, rebuild_historical_source_health,
-    reconcile_authoritative_historical_source_in_transaction, write_historical_base_in_transaction,
+    enqueue_historical_parent_reconcile, invalidate_source_health,
+    rebuild_historical_source_health, reconcile_authoritative_historical_source_in_transaction,
+    write_historical_base_in_transaction,
 };
 use mmm_store::{
     EventWriteDisposition, upsert_merge_mining_event_with_attributions, upsert_pool_snapshot,
@@ -265,6 +266,9 @@ async fn run_historical_import_with_cache(
     preflighted_artifact: Option<ArtifactPreflight>,
     rebuild_source_health_after_import: bool,
 ) -> Result<HistoricalImportSummary> {
+    if config.limit == Some(0) {
+        bail!("--limit must be greater than zero");
+    }
     let spec = historical_chain_spec(&config.chain)
         .ok_or_else(|| anyhow::anyhow!("unsupported published chain {:?}", config.chain))?;
     let candidates_prepared = preflighted_artifact.is_some();
@@ -546,33 +550,49 @@ async fn reconcile_published_stale_branches(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
 ) -> Result<u64> {
+    let queued = enqueue_published_stale_branches(client).await?;
+    let fresh_classifications = HashMap::new();
+    drain_historical_reconcile_queue(client, classifier, &fresh_classifications).await?;
+    Ok(queued)
+}
+
+async fn enqueue_published_stale_branches(client: &mut Client) -> Result<u64> {
     let rows = client
         .query(
-            "SELECT DISTINCT ON (e.btc_parent_header_hash) e.id \
+            "SELECT DISTINCT e.btc_parent_header_hash \
              FROM merge_mining_event e \
              JOIN historical_event_provenance p ON p.event_id = e.id \
              LEFT JOIN block b ON b.btc_header_hash = e.btc_parent_header_hash \
              WHERE e.revoked_at IS NULL \
                AND p.relevance_reason IN ('valid_direct_stale', 'valid_stale_descendant') \
                AND (b.kind IS NULL OR b.kind = 'unknown') \
-             ORDER BY e.btc_parent_header_hash, e.child_height NULLS LAST, e.id",
+             ORDER BY e.btc_parent_header_hash",
             &[],
         )
         .await
         .context("load published stale branches for targeted reconciliation")?;
-    let mut reconciled = 0_u64;
-    for row in rows {
-        let event_id: i64 = row.get(0);
-        // These rows remained unknown after the shared import preflight. A
-        // fresh classification is the purpose of this targeted pass; reusing
-        // the cached unknown verdict would prevent the attested stale branch
-        // from converging when Core can now place it.
-        mmm_read_model::reconcile_from_merge_mining_event(client, event_id, classifier, None)
-            .await
-            .with_context(|| format!("reconcile published stale-branch event {event_id}"))?;
-        reconciled += 1;
+    let queued = u64::try_from(rows.len()).context("targeted stale branch count exceeds u64")?;
+    if rows.is_empty() {
+        return Ok(0);
     }
-    Ok(reconciled)
+    let txn = client
+        .transaction()
+        .await
+        .context("begin targeted stale-branch queue transaction")?;
+    for row in rows {
+        let parent_hash: Vec<u8> = row.get(0);
+        enqueue_historical_parent_reconcile(&txn, &parent_hash).await?;
+    }
+    txn.commit()
+        .await
+        .context("commit targeted stale-branch queue transaction")?;
+    Ok(queued)
+}
+
+#[cfg(feature = "db-integration")]
+#[doc(hidden)]
+pub async fn enqueue_published_stale_branches_for_test(client: &mut Client) -> Result<u64> {
+    enqueue_published_stale_branches(client).await
 }
 
 /// Validate every normalized candidate and resolve parent classifications before
