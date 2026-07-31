@@ -12,9 +12,11 @@ This changelog starts with the initial release.
   classification caching, and no legacy artifact fallbacks.
 - Preserve authenticated child height, hash, header, time, and `nBits` as
   independent nullable evidence. Use exact child-hash identity or partial
-  height-plus-parent identity, promote partial observations in place, and
-  reject ambiguous or contradictory refinement. Fail the upgrade before schema
-  changes if legacy rows conflict with the stronger exact identity.
+  height-plus-parent identity, derive exact identity from a header when needed,
+  promote partial observations in place, and reject ambiguous or contradictory
+  refinement. Keep live state reads and child-target verdict refinement safe
+  for hashless historical rows. Fail the upgrade before schema changes if
+  legacy rows conflict with the stronger exact identity.
 - Reconcile manifest-backed historical and partial sources as authoritative
   snapshots while keeping live-source and operator CSV imports additive.
   Commit each base/provenance snapshot

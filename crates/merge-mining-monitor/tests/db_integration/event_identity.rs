@@ -4,8 +4,10 @@ use bitcoin::hashes::Hash as _;
 use mmm_capture::capture::{
     ClassificationProof, MergeMiningEventPayload, ResolvedPoolAttributions, build_event_payload,
 };
-use mmm_capture::source_registry::NAMECOIN_SOURCE_CODE;
-use mmm_store::{EventWriteDisposition, get_source_id, upsert_merge_mining_event};
+use mmm_capture::source_registry::{HATHOR_SOURCE_CODE, NAMECOIN_SOURCE_CODE};
+use mmm_store::{
+    EventWriteDisposition, get_source_id, hathor_events_at_height, upsert_merge_mining_event,
+};
 
 use crate::support::parse_auxpow_fixture;
 
@@ -26,6 +28,7 @@ fn partial_payload(child_height: i32, observed_at: i64) -> Result<MergeMiningEve
     payload.child_header_bytes = None;
     payload.child_block_time = None;
     payload.child_nbits = None;
+    payload.pow_validates_child_target = None;
     Ok(payload)
 }
 
@@ -165,6 +168,22 @@ async fn exact_and_partial_observations_are_idempotent() -> Result<()> {
 }
 
 #[tokio::test]
+async fn hathor_state_reads_tolerate_height_only_historical_events() -> Result<()> {
+    crate::run_db_test!(client, {
+        let source_id = get_source_id(&client, HATHOR_SOURCE_CODE).await?;
+        let payload = partial_payload(1_012, 2_012)?;
+        let outcome = upsert_merge_mining_event(&client, source_id, &payload).await?;
+
+        let events = hathor_events_at_height(&client, source_id, 1_012).await?;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_id, outcome.event_id);
+        assert_eq!(events[0].child_block_hash, None);
+        assert!(events[0].is_active);
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn exact_observation_satisfies_later_partial_observation() -> Result<()> {
     crate::run_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
@@ -255,7 +274,8 @@ async fn exact_observation_promotes_existing_partial_observation() -> Result<()>
             .query_one(
                 "SELECT child_block_hash, child_header_bytes, child_block_time, child_nbits, \
                         btc_parent_coinbase_txid, btc_parent_coinbase_script, \
-                        btc_parent_coinbase_outputs, aux_merkle_proof \
+                        btc_parent_coinbase_outputs, aux_merkle_proof, \
+                        pow_validates_child_target \
                  FROM merge_mining_event WHERE id = $1",
                 &[&exact_outcome.event_id],
             )
@@ -280,6 +300,40 @@ async fn exact_observation_promotes_existing_partial_observation() -> Result<()>
             exact.btc_parent_coinbase_outputs
         );
         assert_eq!(row.get::<_, Option<Vec<u8>>>(7), exact.aux_merkle_proof);
+        assert_eq!(
+            row.get::<_, Option<bool>>(8),
+            exact.pow_validates_child_target
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn exact_observation_fills_and_checks_the_child_target_verdict() -> Result<()> {
+    crate::run_db_test!(client, {
+        let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let mut initial = exact_payload(1_013, 2_013)?;
+        initial.pow_validates_child_target = None;
+        let initial_outcome = upsert_merge_mining_event(&client, source_id, &initial).await?;
+
+        let mut refined = initial.clone();
+        refined.pow_validates_child_target = Some(true);
+        let refined_outcome = upsert_merge_mining_event(&client, source_id, &refined).await?;
+        assert_eq!(refined_outcome.event_id, initial_outcome.event_id);
+        let stored: Option<bool> = client
+            .query_one(
+                "SELECT pow_validates_child_target FROM merge_mining_event WHERE id = $1",
+                &[&initial_outcome.event_id],
+            )
+            .await?
+            .get(0);
+        assert_eq!(stored, Some(true));
+
+        refined.pow_validates_child_target = Some(false);
+        let error = upsert_merge_mining_event(&client, source_id, &refined)
+            .await
+            .expect_err("a contradictory child-target verdict must be rejected");
+        assert!(error.to_string().contains("contradicts stored evidence"));
         Ok::<_, anyhow::Error>(())
     })
 }
@@ -404,7 +458,7 @@ async fn exact_partial_refinement_rejects_contradictory_child_evidence() -> Resu
 }
 
 #[tokio::test]
-async fn observation_requires_a_child_hash_or_height() -> Result<()> {
+async fn observation_requires_a_child_hash_height_or_header() -> Result<()> {
     crate::run_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         let mut payload = partial_payload(1_006, 2_006)?;

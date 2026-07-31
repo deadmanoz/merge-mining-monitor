@@ -92,7 +92,7 @@ async fn upsert_hathor_evidence<C: GenericClient>(
 #[derive(Debug, Clone)]
 pub struct HathorEventRow {
     pub event_id: i64,
-    pub child_block_hash: Vec<u8>,
+    pub child_block_hash: Option<Vec<u8>>,
     pub is_active: bool,
 }
 

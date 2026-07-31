@@ -70,3 +70,24 @@ fn stale_validation_requires_a_complete_valid_token() {
         assert!(candidate("devcoin", &input).is_ok(), "status {valid:?}");
     }
 }
+
+#[test]
+fn header_only_child_evidence_derives_an_exact_identity() {
+    let (expected_hash, header) = child_identity();
+    let parsed = candidate(
+        "devcoin",
+        &row(TestRow {
+            chain: "devcoin",
+            child_header: &header,
+            classification: "canonical",
+            relevance_reason: "canonical_parent",
+            ..TestRow::default()
+        }),
+    )
+    .expect("header-only child evidence");
+    assert_eq!(
+        parsed.evidence.child_block_hash,
+        Some(hex::decode(expected_hash).expect("expected child hash"))
+    );
+    assert_eq!(parsed.evidence.child_height, None);
+}

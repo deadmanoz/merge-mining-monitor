@@ -250,11 +250,11 @@ fn parse_child_fields(
     record: &csv::StringRecord,
 ) -> Result<ChildFields, SkipReason> {
     let height = parse_optional_nonnegative_i32(record.get(layout.child_height))?;
-    let block_hash = parse_optional_hash_field(record.get(layout.child_hash))?;
-    if height.is_none() && block_hash.is_none() {
+    let header_bytes = parse_optional_hex_field(record.get(layout.child_header))?;
+    let mut block_hash = parse_optional_hash_field(record.get(layout.child_hash))?;
+    if height.is_none() && block_hash.is_none() && header_bytes.is_none() {
         return Err(SkipReason::EmptyField);
     }
-    let header_bytes = parse_optional_hex_field(record.get(layout.child_header))?;
     let block_time = parse_optional_nonnegative_i64(record.get(layout.child_time))?;
     let nbits = parse_optional_compact_target(record.get(layout.child_nbits))?;
     validate_child_bundle(
@@ -264,6 +264,11 @@ fn parse_child_fields(
         block_time,
         nbits,
     )?;
+    if block_hash.is_none()
+        && let Some(header) = header_bytes.as_deref()
+    {
+        block_hash = Some(sha256d::Hash::hash(header).to_byte_array().to_vec());
+    }
     Ok(ChildFields {
         height,
         block_hash,

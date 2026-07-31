@@ -53,13 +53,15 @@ be unavailable. These fields are independent:
 - `child_block_time`
 - `child_nbits`
 
-Empty cells remain SQL `NULL`. The importer never substitutes a scan counter,
-placeholder hash, Bitcoin parent time, zero, or another synthetic value.
-An individual event must have a child hash or a child height. A populated child
-header must be exactly 80 bytes. When a child hash, timestamp, or `nBits` is
-also present, the header must authenticate that companion independently. Xaya
-is the documented exception to the header-field `nBits` comparison because its
-authenticated effective target lives in `PowData`.
+Empty cells remain SQL `NULL`, except that an 80-byte child header derives its
+exact SHA256d child hash when the hash cell is empty. This is authenticated
+identity from the supplied header, not a placeholder. The importer never
+substitutes a scan counter, Bitcoin parent time, zero, or another synthetic
+value. An individual event must have a child hash, child height, or child
+header. When a child hash, timestamp, or `nBits` is also present, the header
+must authenticate that companion independently. Xaya is the documented
+exception to the header-field `nBits` comparison because its authenticated
+effective target lives in `PowData`.
 
 A real child hash is exact identity: `(source_id, child_block_hash)`. A hashless
 row uses `(source_id, child_height, btc_parent_header_hash)` as partial identity.

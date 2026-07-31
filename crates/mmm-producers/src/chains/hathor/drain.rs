@@ -116,7 +116,7 @@ async fn drain_supersede(
         let events = hathor_events_at_height(client, context.source_id(), row.height).await?;
         let replacement_active = events
             .iter()
-            .any(|event| event.is_active && &event.child_block_hash == new_hash);
+            .any(|event| event.is_active && event.child_block_hash.as_ref() == Some(new_hash));
         if replacement_active {
             // Revoke ONLY the originally-captured superseded events that are
             // still active, never a newer/manual/restored event at this height.

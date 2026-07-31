@@ -408,7 +408,7 @@ async fn write_valid_capture(
     let now = now_epoch_seconds()?;
     let superseded: Vec<i64> = prior
         .iter()
-        .filter(|e| e.is_active && e.child_block_hash != current_hash)
+        .filter(|e| e.is_active && e.child_block_hash.as_deref() != Some(current_hash))
         .map(|e| e.event_id)
         .collect();
 
@@ -507,7 +507,7 @@ async fn revoke_superseded(
         client,
         context,
         prior,
-        |hash| hash != current_hash,
+        |hash| hash != Some(current_hash),
         HATHOR_REVOKE_SUPERSEDED,
     )
     .await
@@ -528,7 +528,7 @@ async fn revoke_current_and_superseded(
         client,
         context,
         prior,
-        |hash| hash == current_hash,
+        |hash| hash == Some(current_hash),
         current_reason,
     )
     .await?;
@@ -536,7 +536,7 @@ async fn revoke_current_and_superseded(
         client,
         context,
         prior,
-        |hash| hash != current_hash,
+        |hash| hash != Some(current_hash),
         HATHOR_REVOKE_SUPERSEDED,
     )
     .await
@@ -552,10 +552,10 @@ async fn revoke_matching<F>(
     reason: &str,
 ) -> Result<()>
 where
-    F: Fn(&[u8]) -> bool,
+    F: Fn(Option<&[u8]>) -> bool,
 {
     for event in prior {
-        if event.is_active && should_revoke(&event.child_block_hash) {
+        if event.is_active && should_revoke(event.child_block_hash.as_deref()) {
             revoke_merge_mining_event(client, event.event_id, reason, context.parent_classifier())
                 .await
                 .with_context(|| format!("revoke Hathor event {} ({reason})", event.event_id))?;

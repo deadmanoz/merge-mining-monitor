@@ -190,6 +190,7 @@ async fn promote_partial_event<C: GenericClient>(
                 child_header_bytes = COALESCE(child_header_bytes, $3), \
                 child_block_time = COALESCE(child_block_time, $4), \
                 child_nbits = COALESCE(child_nbits, $5), \
+                pow_validates_child_target = COALESCE(pow_validates_child_target, $17), \
                 confirmed_at = GREATEST(confirmed_at, $6), \
                 child_coinbase_txid = COALESCE(child_coinbase_txid, $7), \
                 child_coinbase_script = COALESCE(child_coinbase_script, $8), \
@@ -206,6 +207,7 @@ async fn promote_partial_event<C: GenericClient>(
                AND (child_header_bytes IS NULL OR $3::bytea IS NULL OR child_header_bytes = $3) \
                AND (child_block_time IS NULL OR $4::bigint IS NULL OR child_block_time = $4) \
                AND (child_nbits IS NULL OR $5::bigint IS NULL OR child_nbits = $5) \
+               AND (pow_validates_child_target IS NULL OR $17::boolean IS NULL OR pow_validates_child_target = $17) \
                AND (btc_parent_coinbase_txid IS NULL OR $10::bytea IS NULL OR btc_parent_coinbase_txid = $10) \
                AND (btc_parent_coinbase_script IS NULL OR $11::bytea IS NULL OR btc_parent_coinbase_script = $11) \
                AND (btc_parent_coinbase_outputs IS NULL OR $12::bytea IS NULL OR btc_parent_coinbase_outputs = $12) \
@@ -229,6 +231,7 @@ async fn promote_partial_event<C: GenericClient>(
                 &payload.btc_parent_coinbase_tx_bytes,
                 &payload.aux_merkle_proof,
                 &payload.btc_parent_header_bytes,
+                &payload.pow_validates_child_target,
             ],
         )
         .await
@@ -255,6 +258,7 @@ async fn fill_existing_event<C: GenericClient>(
                 child_header_bytes = COALESCE(child_header_bytes, $16), \
                 child_block_time = COALESCE(child_block_time, $8), \
                 child_nbits = COALESCE(child_nbits, $9), \
+                pow_validates_child_target = COALESCE(pow_validates_child_target, $17), \
                 child_coinbase_txid = COALESCE(child_coinbase_txid, $10), \
                 child_coinbase_script = COALESCE(child_coinbase_script, $11), \
                 child_coinbase_outputs = COALESCE(child_coinbase_outputs, $12), \
@@ -265,6 +269,7 @@ async fn fill_existing_event<C: GenericClient>(
                AND (child_header_bytes IS NULL OR $16::bytea IS NULL OR child_header_bytes = $16) \
                AND (child_block_time IS NULL OR $8::bigint IS NULL OR child_block_time = $8) \
                AND (child_nbits IS NULL OR $9::bigint IS NULL OR child_nbits = $9) \
+               AND (pow_validates_child_target IS NULL OR $17::boolean IS NULL OR pow_validates_child_target = $17) \
                AND (btc_parent_coinbase_txid IS NULL OR $3::bytea IS NULL OR btc_parent_coinbase_txid = $3) \
                AND (btc_parent_coinbase_script IS NULL OR $4::bytea IS NULL OR btc_parent_coinbase_script = $4) \
                AND (btc_parent_coinbase_outputs IS NULL OR $5::bytea IS NULL OR btc_parent_coinbase_outputs = $5) \
@@ -288,6 +293,7 @@ async fn fill_existing_event<C: GenericClient>(
                 &payload.btc_parent_header_hash,
                 &payload.btc_parent_header_bytes,
                 &payload.child_header_bytes,
+                &payload.pow_validates_child_target,
             ],
         )
         .await
@@ -331,6 +337,7 @@ async fn insert_event<C: GenericClient>(
             child_header_bytes = COALESCE(merge_mining_event.child_header_bytes, EXCLUDED.child_header_bytes), \
             child_block_time = COALESCE(merge_mining_event.child_block_time, EXCLUDED.child_block_time), \
             child_nbits = COALESCE(merge_mining_event.child_nbits, EXCLUDED.child_nbits), \
+            pow_validates_child_target = COALESCE(merge_mining_event.pow_validates_child_target, EXCLUDED.pow_validates_child_target), \
             btc_parent_coinbase_txid = COALESCE(merge_mining_event.btc_parent_coinbase_txid, EXCLUDED.btc_parent_coinbase_txid), \
             btc_parent_coinbase_script = COALESCE(merge_mining_event.btc_parent_coinbase_script, EXCLUDED.btc_parent_coinbase_script), \
             btc_parent_coinbase_outputs = COALESCE(merge_mining_event.btc_parent_coinbase_outputs, EXCLUDED.btc_parent_coinbase_outputs), \
@@ -346,6 +353,7 @@ async fn insert_event<C: GenericClient>(
            AND (merge_mining_event.child_header_bytes IS NULL OR EXCLUDED.child_header_bytes IS NULL OR merge_mining_event.child_header_bytes = EXCLUDED.child_header_bytes) \
            AND (merge_mining_event.child_block_time IS NULL OR EXCLUDED.child_block_time IS NULL OR merge_mining_event.child_block_time = EXCLUDED.child_block_time) \
            AND (merge_mining_event.child_nbits IS NULL OR EXCLUDED.child_nbits IS NULL OR merge_mining_event.child_nbits = EXCLUDED.child_nbits) \
+           AND (merge_mining_event.pow_validates_child_target IS NULL OR EXCLUDED.pow_validates_child_target IS NULL OR merge_mining_event.pow_validates_child_target = EXCLUDED.pow_validates_child_target) \
            AND (merge_mining_event.btc_parent_coinbase_txid IS NULL OR EXCLUDED.btc_parent_coinbase_txid IS NULL OR merge_mining_event.btc_parent_coinbase_txid = EXCLUDED.btc_parent_coinbase_txid) \
            AND (merge_mining_event.btc_parent_coinbase_script IS NULL OR EXCLUDED.btc_parent_coinbase_script IS NULL OR merge_mining_event.btc_parent_coinbase_script = EXCLUDED.btc_parent_coinbase_script) \
            AND (merge_mining_event.btc_parent_coinbase_outputs IS NULL OR EXCLUDED.btc_parent_coinbase_outputs IS NULL OR merge_mining_event.btc_parent_coinbase_outputs = EXCLUDED.btc_parent_coinbase_outputs) \
