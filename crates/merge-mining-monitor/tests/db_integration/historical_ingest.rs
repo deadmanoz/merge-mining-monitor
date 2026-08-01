@@ -697,6 +697,59 @@ async fn historical_preflight_refills_classifier_concurrency() -> Result<()> {
 }
 
 #[tokio::test]
+async fn historical_preflight_stops_at_first_invalid_publication_row() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let headers = (0..20)
+            .map(|offset| header_meeting_bits(0x207f_ffff, 1_700_000_100 + offset, 100 + offset))
+            .collect::<Vec<_>>();
+        let rows = headers
+            .iter()
+            .enumerate()
+            .map(|(index, header)| {
+                normalized_csv_line(
+                    header,
+                    &NormalizedCsvRow {
+                        chain: "devcoin",
+                        source_row_number: i64::try_from(index + 1).expect("fixture row fits i64"),
+                        classification: "canonical",
+                        relevance: "",
+                        relevance_reason: "canonical_parent",
+                        coinbase_script: &[],
+                        btc_height: 700_100 + i32::try_from(index).expect("fixture index fits i32"),
+                        child_height: 100 + i32::try_from(index).expect("fixture index fits i32"),
+                        child_hash: None,
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let fixture = write_manifest_fixture_rows(&rows)?;
+        let result = async {
+            let fake =
+                FakeParentClassifier::new(unknown_verdict(&headers[0])).with_max_concurrency(2);
+            let classifier = ConfiguredParentClassifier::Fake(fake.clone());
+            let error = run_manifest_historical_import_for_test(
+                &mut client,
+                &classifier,
+                &fixture.config,
+                "devcoin",
+            )
+            .await
+            .expect_err("an invalid canonical publication row must fail preflight");
+            assert!(error.to_string().contains("row 2 would be skipped"));
+            assert!(
+                fake.call_count().await < u64::try_from(rows.len())?,
+                "preflight must not classify the complete artifact before rejecting its first row"
+            );
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        std::fs::remove_dir_all(&fixture.root)
+            .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
+        result
+    })
+}
+
+#[tokio::test]
 async fn refining_publication_rows_share_one_event_and_keep_both_provenance_rows() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let header = header_meeting_bits(0x207f_ffff, 1_700_000_035, 35);

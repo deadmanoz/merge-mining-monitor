@@ -1,6 +1,6 @@
 //! Bounded Bitcoin-parent preclassification for historical publication rows.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use anyhow::{Context, Result, bail};
 use bitcoin::hashes::Hash as _;
@@ -23,16 +23,24 @@ pub(super) enum ImportDecision {
     Skip(SkipReason),
 }
 
+struct PendingDecision {
+    row_number: usize,
+    parent_hash: Vec<u8>,
+    source_classification: SourceClassification,
+    relevance_selection: Option<RelevanceSelection>,
+    orphan_verdict: Option<BtcOrphanVerdict>,
+}
+
 /// Validate every normalized candidate and resolve parent classifications before
 /// the chain transaction begins.
 ///
 /// Positive Core classifications and Core-absence results are cached by parent
 /// hash so repeated observations across a chain do not repeat RPC work. The
-/// first pass keeps a rolling bounded set of unresolved unique parents, so
-/// cached and repeated rows cannot consume capacity and each completed slot is
-/// refilled without waiting for slower peers. A second sequential pass applies
-/// the publication decision gate in source order. Re-reading the artifact keeps
-/// memory bounded without sacrificing concurrency or deterministic validation.
+/// pass keeps a rolling bounded set of unresolved unique parents, so cached
+/// and repeated rows cannot consume classifier capacity and each completed slot
+/// is refilled without waiting for slower peers. Manifest decisions queue in
+/// source order and drain as their classifications arrive, stopping promptly on
+/// the first known-fatal row while bounding speculative lookahead.
 pub(super) async fn preflight_and_classify_candidates<C: GenericClient>(
     client: &C,
     classifier: &ConfiguredParentClassifier,
@@ -46,6 +54,8 @@ pub(super) async fn preflight_and_classify_candidates<C: GenericClient>(
     let concurrency = classifier.max_concurrency();
     let mut in_flight = FuturesUnordered::new();
     let mut pending_hashes = HashSet::with_capacity(concurrency);
+    let mut pending_decisions = VecDeque::new();
+    let max_pending_decisions = config.batch_size.max(concurrency);
     let mut rows = 0_u64;
     for (offset, record) in reader.records().enumerate() {
         let record = record.with_context(|| {
@@ -76,6 +86,15 @@ pub(super) async fn preflight_and_classify_candidates<C: GenericClient>(
                 .block_hash()
                 .to_byte_array()
                 .to_vec();
+            if config.manifest_path.is_some() {
+                pending_decisions.push_back(PendingDecision {
+                    row_number: offset + 2,
+                    parent_hash: parent_hash.clone(),
+                    source_classification: candidate.source_classification,
+                    relevance_selection: candidate.relevance_selection,
+                    orphan_verdict: candidate.orphan_verdict,
+                });
+            }
             if !classifications.contains_key(&parent_hash)
                 && pending_hashes.insert(parent_hash.clone())
             {
@@ -85,32 +104,37 @@ pub(super) async fn preflight_and_classify_candidates<C: GenericClient>(
                     candidate,
                     parent_hash,
                 ));
-                if in_flight.len() == concurrency {
-                    let (resolved_hash, classification) = in_flight
-                        .try_next()
-                        .await?
-                        .context("full preclassification set yielded no result")?;
-                    pending_hashes.remove(&resolved_hash);
-                    classifications.insert(resolved_hash, classification);
-                }
+            }
+            drain_ready_publication_decisions(config, &mut pending_decisions, classifications)?;
+            while in_flight.len() >= concurrency || pending_decisions.len() >= max_pending_decisions
+            {
+                let Some((resolved_hash, classification)) = in_flight.try_next().await? else {
+                    break;
+                };
+                pending_hashes.remove(&resolved_hash);
+                classifications.insert(resolved_hash, classification);
+                drain_ready_publication_decisions(config, &mut pending_decisions, classifications)?;
             }
         }
     }
     while let Some((resolved_hash, classification)) = in_flight.try_next().await? {
         pending_hashes.remove(&resolved_hash);
         classifications.insert(resolved_hash, classification);
+        drain_ready_publication_decisions(config, &mut pending_decisions, classifications)?;
+    }
+    drain_ready_publication_decisions(config, &mut pending_decisions, classifications)?;
+    if !pending_decisions.is_empty() {
+        bail!(
+            "normalized artifact {} retained {} unresolved publication decisions",
+            config.csv_path.display(),
+            pending_decisions.len()
+        );
     }
     if rows != expected_rows {
         bail!(
             "normalized artifact {} changed during preflight: expected {expected_rows} rows, parsed {rows}",
             config.csv_path.display()
         );
-    }
-    drop(reader);
-
-    if classifier.is_enabled() {
-        validate_publication_decisions(client, classifier, config, spec, artifact, classifications)
-            .await?;
     }
     Ok(())
 }
@@ -144,60 +168,32 @@ async fn resolve_candidate<C: GenericClient>(
     Ok((parent_hash, classification))
 }
 
-/// Re-read a classified artifact and apply its publication decision gate in
-/// source order. All parent results are already cached, so this pass performs
-/// no Bitcoin Core or predecessor-preflight I/O.
-async fn validate_publication_decisions<C: GenericClient>(
-    client: &C,
-    classifier: &ConfiguredParentClassifier,
+/// Apply the ready prefix of manifest decisions without overtaking an earlier
+/// unresolved row.
+fn drain_ready_publication_decisions(
     config: &HistoricalImportConfig,
-    spec: &HistoricalChainSpec,
-    artifact: &mut ArtifactPreflight,
-    classifications: &mut HashMap<Vec<u8>, ParentClassification>,
+    pending: &mut VecDeque<PendingDecision>,
+    classifications: &HashMap<Vec<u8>, ParentClassification>,
 ) -> Result<()> {
-    let expected_rows = artifact.row_count;
-    let (mut reader, layout) = artifact.open_reader(spec)?;
-    let mut rows = 0_u64;
-    for (offset, record) in reader.records().enumerate() {
-        let record = record.with_context(|| {
-            format!(
-                "parse normalized artifact {} row {} during decision validation",
-                config.csv_path.display(),
-                offset + 2
-            )
-        })?;
-        rows += 1;
-        let candidate =
-            match candidate_from_record(spec, &layout, &record, config.publication_ref()) {
-                Ok(candidate) => candidate,
-                Err(_) if config.manifest_path.is_none() => continue,
-                Err(reason) => {
-                    bail!(
-                        "normalized artifact {} row {} failed {}",
-                        config.csv_path.display(),
-                        offset + 2,
-                        reason.as_str()
-                    );
-                }
-            };
-        let decision =
-            import_decision(client, classifier, config, &candidate, classifications).await?;
-        if config.manifest_path.is_some()
-            && let ImportDecision::Skip(reason) = decision
-        {
+    while let Some(row) = pending.front() {
+        let Some(classification) = classifications.get(&row.parent_hash) else {
+            break;
+        };
+        let decision = classified_import_decision(
+            row.source_classification,
+            row.relevance_selection,
+            row.orphan_verdict,
+            classification.clone(),
+        );
+        if let ImportDecision::Skip(reason) = decision {
             bail!(
                 "published artifact {} row {} would be skipped as {}",
                 config.csv_path.display(),
-                offset + 2,
+                row.row_number,
                 reason.as_str()
             );
         }
-    }
-    if rows != expected_rows {
-        bail!(
-            "normalized artifact {} changed during decision validation: expected {expected_rows} rows, parsed {rows}",
-            config.csv_path.display()
-        );
+        pending.pop_front();
     }
     Ok(())
 }
@@ -249,56 +245,62 @@ pub(super) async fn import_decision<C: GenericClient>(
         classifications.insert(parent_hash, classification.clone());
         classification
     };
+    Ok(classified_import_decision(
+        candidate.source_classification,
+        candidate.relevance_selection,
+        candidate.orphan_verdict,
+        classification,
+    ))
+}
+
+fn classified_import_decision(
+    source_classification: SourceClassification,
+    relevance_selection: Option<RelevanceSelection>,
+    orphan_verdict: Option<BtcOrphanVerdict>,
+    classification: ParentClassification,
+) -> ImportDecision {
     match classification.kind {
-        ParentKind::Canonical
-            if candidate.source_classification == SourceClassification::Canonical =>
-        {
-            Ok(ImportDecision::CapturePreclassified(Box::new(
-                classification,
-            )))
+        ParentKind::Canonical if source_classification == SourceClassification::Canonical => {
+            ImportDecision::CapturePreclassified(Box::new(classification))
         }
         ParentKind::Stale
             if matches!(
-                candidate.source_classification,
+                source_classification,
                 SourceClassification::Stale | SourceClassification::StaleDescendant
             ) || matches!(
-                candidate.relevance_selection,
+                relevance_selection,
                 Some(
                     RelevanceSelection::KnownDirectStale | RelevanceSelection::KnownStaleDescendant
                 )
             ) =>
         {
-            Ok(ImportDecision::CapturePreclassified(Box::new(
-                classification,
-            )))
+            ImportDecision::CapturePreclassified(Box::new(classification))
         }
         ParentKind::Canonical | ParentKind::Stale => {
-            Ok(ImportDecision::Skip(SkipReason::ClassificationMismatch))
+            ImportDecision::Skip(SkipReason::ClassificationMismatch)
         }
-        ParentKind::Near => Ok(ImportDecision::Skip(SkipReason::Unclassified)),
+        ParentKind::Near => ImportDecision::Skip(SkipReason::Unclassified),
         ParentKind::Unknown => {
             if matches!(
-                candidate.relevance_selection,
+                relevance_selection,
                 Some(
                     RelevanceSelection::KnownDirectStale | RelevanceSelection::KnownStaleDescendant
                 )
             ) {
                 let mut known_branch = classification;
                 known_branch.core_absence_attested = false;
-                Ok(ImportDecision::CapturePreclassified(Box::new(known_branch)))
+                ImportDecision::CapturePreclassified(Box::new(known_branch))
             } else if !classification.core_absence_attested
-                || candidate.source_classification != SourceClassification::Unknown
+                || source_classification != SourceClassification::Unknown
             {
-                Ok(ImportDecision::Skip(SkipReason::Unclassified))
+                ImportDecision::Skip(SkipReason::Unclassified)
             } else if matches!(
-                candidate.orphan_verdict,
+                orphan_verdict,
                 Some(BtcOrphanVerdict::Strict | BtcOrphanVerdict::Weak)
             ) {
-                Ok(ImportDecision::CapturePreclassified(Box::new(
-                    classification,
-                )))
+                ImportDecision::CapturePreclassified(Box::new(classification))
             } else {
-                Ok(ImportDecision::Skip(SkipReason::Unclassified))
+                ImportDecision::Skip(SkipReason::Unclassified)
             }
         }
     }
