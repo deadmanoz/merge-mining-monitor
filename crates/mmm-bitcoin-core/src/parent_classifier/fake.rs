@@ -13,6 +13,7 @@ pub struct FakeParentClassifier {
     fail_synced_tip: bool,
     epoch_nbits: std::collections::HashMap<i32, EpochNbits>,
     fail_epoch_nbits: bool,
+    max_concurrency: usize,
 }
 
 #[cfg(any(test, feature = "db-integration"))]
@@ -54,11 +55,18 @@ impl FakeParentClassifier {
             fail_synced_tip: false,
             epoch_nbits: std::collections::HashMap::new(),
             fail_epoch_nbits: false,
+            max_concurrency: 1,
         }
     }
 
     pub fn with_first_call_gate(mut self, gate: Arc<FakeParentClassifierGate>) -> Self {
         self.first_call_gate = Some(gate);
+        self
+    }
+
+    pub fn with_max_concurrency(mut self, max_concurrency: usize) -> Self {
+        assert!(max_concurrency > 0, "fake concurrency must be positive");
+        self.max_concurrency = max_concurrency;
         self
     }
 
@@ -163,6 +171,10 @@ impl FakeParentClassifier {
 
     pub async fn call_count(&self) -> u64 {
         self.state.lock().await.calls
+    }
+
+    pub(crate) fn max_concurrency(&self) -> usize {
+        self.max_concurrency
     }
 }
 

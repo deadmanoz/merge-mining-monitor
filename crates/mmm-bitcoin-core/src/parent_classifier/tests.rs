@@ -491,6 +491,44 @@ async fn bitcoin_core_classifier_uses_verbose_canonical_and_stale_paths() {
 }
 
 #[tokio::test]
+async fn bitcoin_core_classifier_loads_preflight_only_after_candidate_absence() {
+    let canonical_header = test_header(23, 0x207f_ffff);
+    let canonical_source = Arc::new(MockCoreHeaderSource::default());
+    canonical_source.set_verbose(
+        canonical_header.block_hash(),
+        MockResult::Ok(CoreHeaderStatus {
+            confirmations: 5,
+            height: 720_002,
+        }),
+    );
+    let canonical_reads = Arc::new(AtomicUsize::new(0));
+    let reads = canonical_reads.clone();
+    let canonical = BitcoinCoreParentClassifier::from_source(canonical_source)
+        .classify_parent_deferred(&canonical_header, async move {
+            reads.fetch_add(1, Ordering::SeqCst);
+            Ok(ParentPreflight { known_prev: None })
+        })
+        .await
+        .unwrap();
+    assert_eq!(canonical.kind, ParentKind::Canonical);
+    assert_eq!(canonical_reads.load(Ordering::SeqCst), 0);
+
+    let absent_header = test_header(24, 0x207f_ffff);
+    let absent_reads = Arc::new(AtomicUsize::new(0));
+    let reads = absent_reads.clone();
+    let absent =
+        BitcoinCoreParentClassifier::from_source(Arc::new(MockCoreHeaderSource::default()))
+            .classify_parent_deferred(&absent_header, async move {
+                reads.fetch_add(1, Ordering::SeqCst);
+                Ok(ParentPreflight { known_prev: None })
+            })
+            .await
+            .unwrap();
+    assert_eq!(absent.kind, ParentKind::Unknown);
+    assert_eq!(absent_reads.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn bitcoin_core_classifier_infers_stale_after_not_found() {
     let header = test_header(30, 0x207f_ffff);
     let competitor = classified_header(test_header(31, 0x207f_ffff), 720_010);

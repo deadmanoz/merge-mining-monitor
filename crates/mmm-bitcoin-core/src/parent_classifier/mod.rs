@@ -205,11 +205,39 @@ impl ConfiguredParentClassifier {
         header: &Header,
         preflight: ParentPreflight,
     ) -> Result<ParentClassification> {
+        self.classify_parent_deferred(header, std::future::ready(Ok(preflight)))
+            .await
+    }
+
+    /// Defer loading read-model predecessor context until the Core-backed
+    /// classifier proves the candidate header is absent. Test fakes retain the
+    /// established eager behavior.
+    pub async fn classify_parent_deferred<F>(
+        &self,
+        header: &Header,
+        preflight: F,
+    ) -> Result<ParentClassification>
+    where
+        F: Future<Output = Result<ParentPreflight>>,
+    {
         match self {
             Self::Disabled => Ok(ParentClassification::unknown(header)),
-            Self::BitcoinCore(classifier) => classifier.classify_parent(header, preflight).await,
+            Self::BitcoinCore(classifier) => {
+                classifier.classify_parent_deferred(header, preflight).await
+            }
             #[cfg(any(test, feature = "db-integration"))]
-            Self::Fake(classifier) => classifier.classify_parent(header, preflight).await,
+            Self::Fake(classifier) => classifier.classify_parent(header, preflight.await?).await,
+        }
+    }
+
+    /// Maximum useful number of in-flight classifications for this backend.
+    /// The Core RPC client enforces the same limit at the transport boundary.
+    pub fn max_concurrency(&self) -> usize {
+        match self {
+            Self::Disabled => 1,
+            Self::BitcoinCore(classifier) => classifier.max_concurrency(),
+            #[cfg(any(test, feature = "db-integration"))]
+            Self::Fake(classifier) => classifier.max_concurrency(),
         }
     }
 

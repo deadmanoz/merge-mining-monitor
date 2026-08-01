@@ -29,6 +29,7 @@ const DEFAULT_MAX_CONCURRENCY: usize = 4;
 pub struct BitcoinCoreRpcClient {
     client: Arc<CoreClient>,
     semaphore: Arc<Semaphore>,
+    max_concurrency: usize,
     timeout: Duration,
 }
 
@@ -80,8 +81,13 @@ impl BitcoinCoreRpcClient {
         Ok(Self {
             client: Arc::new(client),
             semaphore: Arc::new(Semaphore::new(max_concurrency)),
+            max_concurrency,
             timeout: Duration::from_secs(timeout_secs),
         })
+    }
+
+    pub(crate) fn max_concurrency(&self) -> usize {
+        self.max_concurrency
     }
 
     pub async fn get_block_hash(&self, height: u64) -> Result<BlockHash> {

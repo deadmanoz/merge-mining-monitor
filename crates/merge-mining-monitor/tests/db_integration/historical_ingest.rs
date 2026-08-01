@@ -1,11 +1,13 @@
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use bitcoin::block::Header;
 use bitcoin::consensus::serialize;
 use bitcoin::hashes::{Hash as _, sha256, sha256d};
-use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier};
+use mmm_bitcoin_core::{
+    ConfiguredParentClassifier, FakeParentClassifier, FakeParentClassifierGate,
+};
 use mmm_capture::auxpow::parse_bip34_height;
 use mmm_capture::btc_orphan::{BtcOrphanVerdict, classify_btc_orphan};
 use mmm_producers::{
@@ -640,6 +642,114 @@ async fn multi_chain_import_reuses_the_parent_classification_cache() -> Result<(
 }
 
 #[tokio::test]
+async fn historical_preflight_refills_classifier_concurrency() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let first = header_meeting_bits(0x207f_ffff, 1_700_000_037, 37);
+        let second = header_meeting_bits(0x207f_ffff, 1_700_000_038, 38);
+        let third = header_meeting_bits(0x207f_ffff, 1_700_000_039, 39);
+        let csv_path = write_repeated_then_unique_canonical_rows(&first, &second, &third, 700_037)?;
+        let result = async {
+            let gate = FakeParentClassifierGate::new();
+            let fake = FakeParentClassifier::new(canonical_verdict(&first, 700_037))
+                .with_first_call_gate(gate.clone())
+                .with_max_concurrency(2);
+            let classifier = ConfiguredParentClassifier::Fake(fake.clone());
+            let config = devcoin_import_config(&csv_path);
+            let mut import = Box::pin(run_historical_import(&mut client, &classifier, &config));
+
+            tokio::select! {
+                result = &mut import => {
+                    result.context("import completed before the classifier gate")?;
+                    anyhow::bail!("import completed before the classifier gate");
+                }
+                result = tokio::time::timeout(Duration::from_secs(5), gate.wait_started()) => {
+                    result.context("first classification did not reach the gate")?;
+                }
+            }
+
+            let later_completed = async {
+                loop {
+                    if fake.call_count().await == 2 {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            };
+            tokio::select! {
+                result = &mut import => {
+                    result.context("import completed while the first classification was gated")?;
+                    anyhow::bail!("import completed while the first classification was gated");
+                }
+                result = tokio::time::timeout(Duration::from_secs(5), later_completed) => {
+                    result.context("classification slots were not refilled while the first was gated")?;
+                }
+            }
+
+            gate.proceed();
+            let summary = import.await?;
+            assert_eq!(summary.ingested, 4);
+            assert_eq!(fake.call_count().await, 3);
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        finish_import_with_cleanup(result, &[&csv_path])
+    })
+}
+
+#[tokio::test]
+async fn historical_preflight_stops_at_first_invalid_publication_row() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let headers = (0..20)
+            .map(|offset| header_meeting_bits(0x207f_ffff, 1_700_000_100 + offset, 100 + offset))
+            .collect::<Vec<_>>();
+        let rows = headers
+            .iter()
+            .enumerate()
+            .map(|(index, header)| {
+                normalized_csv_line(
+                    header,
+                    &NormalizedCsvRow {
+                        chain: "devcoin",
+                        source_row_number: i64::try_from(index + 1).expect("fixture row fits i64"),
+                        classification: "canonical",
+                        relevance: "",
+                        relevance_reason: "canonical_parent",
+                        coinbase_script: &[],
+                        btc_height: 700_100 + i32::try_from(index).expect("fixture index fits i32"),
+                        child_height: 100 + i32::try_from(index).expect("fixture index fits i32"),
+                        child_hash: None,
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let fixture = write_manifest_fixture_rows(&rows)?;
+        let result = async {
+            let fake =
+                FakeParentClassifier::new(unknown_verdict(&headers[0])).with_max_concurrency(2);
+            let classifier = ConfiguredParentClassifier::Fake(fake.clone());
+            let error = run_manifest_historical_import_for_test(
+                &mut client,
+                &classifier,
+                &fixture.config,
+                "devcoin",
+            )
+            .await
+            .expect_err("an invalid canonical publication row must fail preflight");
+            assert!(error.to_string().contains("row 2 would be skipped"));
+            assert!(
+                fake.call_count().await < u64::try_from(rows.len())?,
+                "preflight must not classify the complete artifact before rejecting its first row"
+            );
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        std::fs::remove_dir_all(&fixture.root)
+            .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
+        result
+    })
+}
+
+#[tokio::test]
 async fn refining_publication_rows_share_one_event_and_keep_both_provenance_rows() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let header = header_meeting_bits(0x207f_ffff, 1_700_000_035, 35);
@@ -901,6 +1011,59 @@ async fn allow_unclassified_manifest_import_does_not_replace_authoritative_rows(
     crate::run_mut_db_test!(client, {
         let header = header_meeting_bits(0x207f_ffff, 1_700_000_064, 64);
         let fixture = write_manifest_fixture(&header)?;
+        let unknown_header = btc_400000_header()?;
+        let unknown_coinbase = btc_400000_coinbase_script()?;
+        let unknown_relevance = match classify_btc_orphan(
+            i64::from(unknown_header.time),
+            unknown_header.bits,
+            parse_bip34_height(&unknown_coinbase),
+        )
+        .0
+        {
+            BtcOrphanVerdict::Strict => "strict_btc_orphan",
+            BtcOrphanVerdict::Weak => "weak_btc_orphan",
+            other => panic!("fixture must be strict/weak, got {other:?}"),
+        };
+        let unknown_row = normalized_csv_line(
+            &unknown_header,
+            &NormalizedCsvRow {
+                chain: "devcoin",
+                source_row_number: 2,
+                classification: "unknown",
+                relevance: unknown_relevance,
+                relevance_reason: "published_orphan_verdict",
+                coinbase_script: &unknown_coinbase,
+                btc_height: 400_000,
+                child_height: 13,
+                child_hash: None,
+            },
+        );
+        let canonical_row = normalized_csv_line(
+            &header,
+            &NormalizedCsvRow {
+                chain: "devcoin",
+                source_row_number: 1,
+                classification: "canonical",
+                relevance: "",
+                relevance_reason: "canonical_parent",
+                coinbase_script: &[],
+                btc_height: 700_000,
+                child_height: 12,
+                child_hash: None,
+            },
+        );
+        let mut diagnostic_counts = serde_json::json!({
+            "canonical": 1,
+            "stale": 0,
+            "stale_descendant": 0,
+            "strict_btc_orphan": 0,
+            "weak_btc_orphan": 0
+        });
+        diagnostic_counts[unknown_relevance] = serde_json::json!(1);
+        let diagnostic_fixture = write_manifest_fixture_rows_with_counts(
+            &[canonical_row, unknown_row],
+            diagnostic_counts,
+        )?;
         let result = async {
             let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
                 canonical_verdict(&header, 700_000),
@@ -918,7 +1081,7 @@ async fn allow_unclassified_manifest_import_does_not_replace_authoritative_rows(
                 2
             );
 
-            let mut diagnostic = fixture.config.clone();
+            let mut diagnostic = diagnostic_fixture.config.clone();
             diagnostic.allow_unclassified = true;
             let summary = run_manifest_historical_import_for_test(
                 &mut client,
@@ -927,6 +1090,8 @@ async fn allow_unclassified_manifest_import_does_not_replace_authoritative_rows(
                 "devcoin",
             )
             .await?;
+            assert_eq!(summary.ingested, 1);
+            assert_eq!(summary.skipped.get("unclassified"), Some(&1));
             assert_eq!(summary.removed, 0);
             assert_eq!(
                 active_source_event_count(&client, "auxpow:devcoin").await?,
@@ -938,6 +1103,9 @@ async fn allow_unclassified_manifest_import_does_not_replace_authoritative_rows(
         .await;
         std::fs::remove_dir_all(&fixture.root)
             .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
+        std::fs::remove_dir_all(&diagnostic_fixture.root).with_context(|| {
+            format!("remove fixture root {}", diagnostic_fixture.root.display())
+        })?;
         result
     })
 }
@@ -1271,6 +1439,23 @@ fn write_manifest_fixture(header: &Header) -> Result<ManifestFixture> {
 }
 
 fn write_manifest_fixture_rows(rows: &[String]) -> Result<ManifestFixture> {
+    let row_count = u64::try_from(rows.len()).context("fixture row count exceeds u64")?;
+    write_manifest_fixture_rows_with_counts(
+        rows,
+        serde_json::json!({
+            "canonical": row_count,
+            "stale": 0,
+            "stale_descendant": 0,
+            "strict_btc_orphan": 0,
+            "weak_btc_orphan": 0
+        }),
+    )
+}
+
+fn write_manifest_fixture_rows_with_counts(
+    rows: &[String],
+    counts: serde_json::Value,
+) -> Result<ManifestFixture> {
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .context("clock before epoch")?
@@ -1315,13 +1500,7 @@ fn write_manifest_fixture_rows(rows: &[String]) -> Result<ManifestFixture> {
     artifacts[devcoin_index]["size_bytes"] = serde_json::json!(artifact_bytes.len());
     artifacts[devcoin_index]["sha256"] =
         serde_json::json!(sha256::Hash::hash(&artifact_bytes).to_string());
-    artifacts[devcoin_index]["counts"] = serde_json::json!({
-        "canonical": row_count,
-        "stale": 0,
-        "stale_descendant": 0,
-        "strict_btc_orphan": 0,
-        "weak_btc_orphan": 0
-    });
+    artifacts[devcoin_index]["counts"] = counts;
 
     let donor = artifacts
         .iter_mut()
@@ -1537,6 +1716,53 @@ fn write_normalized_csv_with_parent_coinbase(
         normalized_csv_line_with_parent_coinbase(header, &row, coinbase_outputs, full_coinbase);
     std::fs::write(&path, format!("{NORMALIZED_HEADER}{csv_row}"))
         .with_context(|| format!("write temp CSV {}", path.display()))?;
+    Ok(path)
+}
+
+fn write_repeated_then_unique_canonical_rows(
+    first: &Header,
+    second: &Header,
+    third: &Header,
+    btc_height: i32,
+) -> Result<PathBuf> {
+    let path = temp_csv_path()?;
+    let first_row = NormalizedCsvRow {
+        chain: "devcoin",
+        source_row_number: 1,
+        classification: "canonical",
+        relevance: "",
+        relevance_reason: "canonical_parent",
+        coinbase_script: &[],
+        btc_height,
+        child_height: 12,
+        child_hash: None,
+    };
+    let repeated_row = NormalizedCsvRow {
+        source_row_number: 2,
+        child_height: 13,
+        ..first_row
+    };
+    let unique_row = NormalizedCsvRow {
+        source_row_number: 3,
+        child_height: 14,
+        ..first_row
+    };
+    let third_unique_row = NormalizedCsvRow {
+        source_row_number: 4,
+        child_height: 15,
+        ..first_row
+    };
+    std::fs::write(
+        &path,
+        format!(
+            "{NORMALIZED_HEADER}{}{}{}{}",
+            normalized_csv_line(first, &first_row),
+            normalized_csv_line(first, &repeated_row),
+            normalized_csv_line(second, &unique_row),
+            normalized_csv_line(third, &third_unique_row)
+        ),
+    )
+    .with_context(|| format!("write temp CSV {}", path.display()))?;
     Ok(path)
 }
 

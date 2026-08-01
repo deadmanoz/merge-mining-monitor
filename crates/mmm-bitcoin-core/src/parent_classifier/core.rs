@@ -58,6 +58,7 @@ fn now_unix_secs() -> i64 {
 #[derive(Clone)]
 pub struct BitcoinCoreParentClassifier {
     source: Arc<dyn CoreHeaderSource>,
+    max_concurrency: usize,
     /// Per-process memo of Core-resolved epoch nBits, keyed by DAA epoch-start
     /// height. The value is immutable once buried, so a per-process cache is
     /// sufficient; it refills cheaply from Core on restart.
@@ -83,8 +84,10 @@ pub(crate) trait CoreHeaderSource: Send + Sync {
 impl BitcoinCoreParentClassifier {
     pub fn from_env_url(url: &str) -> Result<Self> {
         let client = BitcoinCoreRpcClient::from_env_url(url)?;
+        let max_concurrency = client.max_concurrency();
         Ok(Self {
             source: Arc::new(CoreRpcHeaderSource { client }),
+            max_concurrency,
             epoch_nbits_cache: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -93,6 +96,7 @@ impl BitcoinCoreParentClassifier {
     pub(crate) fn from_source(source: Arc<dyn CoreHeaderSource>) -> Self {
         Self {
             source,
+            max_concurrency: 1,
             epoch_nbits_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -102,6 +106,21 @@ impl BitcoinCoreParentClassifier {
         header: &Header,
         preflight: ParentPreflight,
     ) -> Result<ParentClassification> {
+        self.classify_parent_deferred(header, std::future::ready(Ok(preflight)))
+            .await
+    }
+
+    /// Classify a parent while deferring the read-model lookup until Core proves
+    /// the candidate header is absent. Canonical and Core-indexed stale parents
+    /// never consume the supplied future.
+    pub async fn classify_parent_deferred<F>(
+        &self,
+        header: &Header,
+        preflight: F,
+    ) -> Result<ParentClassification>
+    where
+        F: Future<Output = Result<ParentPreflight>>,
+    {
         let candidate_hash = header.block_hash();
         let verbose = match self.source.get_header_verbose(candidate_hash).await {
             Ok(v) => v,
@@ -112,6 +131,7 @@ impl BitcoinCoreParentClassifier {
                 // missing competitor, bits-mismatch, height overflow) is a
                 // genuine BTC-orphan candidate, so stamp `core_absence_attested`.
                 // A `stale` result from the inferred-stale path is left untouched.
+                let preflight = preflight.await?;
                 let mut classification = self.classify_core_unknown(header, preflight).await?;
                 if classification.kind == ParentKind::Unknown {
                     classification.core_absence_attested = true;
@@ -147,6 +167,10 @@ impl BitcoinCoreParentClassifier {
             self.fetch_competitor(height).await,
             coinbase,
         ))
+    }
+
+    pub fn max_concurrency(&self) -> usize {
+        self.max_concurrency
     }
 
     pub async fn synced_tip_height(&self) -> Result<Option<i32>> {

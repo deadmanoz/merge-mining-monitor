@@ -14,9 +14,8 @@ use std::collections::{BTreeMap, HashMap};
 use anyhow::{Context, Result, bail};
 use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::{BlockKind, ConfiguredParentClassifier, ParentClassification};
-use mmm_capture::btc_orphan::BtcOrphanVerdict;
 use mmm_capture::capture::{
-    ClassificationProof, ParentKind, ResolvedPoolAttributions, build_event_payload_from_evidence,
+    ClassificationProof, ResolvedPoolAttributions, build_event_payload_from_evidence,
     now_epoch_seconds, resolve_parent_pool_attribution_from_coinbase,
 };
 use mmm_capture::pool_resolver::PoolResolver;
@@ -30,13 +29,12 @@ use mmm_store::{
     EventWriteDisposition, upsert_merge_mining_event_with_attributions, upsert_pool_snapshot,
     write_elastos_capture_in_txn, write_rsk_capture_in_txn,
 };
-use tokio_postgres::{Client, GenericClient, Transaction};
+use tokio_postgres::{Client, Transaction};
 use tracing::info;
 
 use super::config::{HistoricalImportConfig, historical_chain_spec};
-use super::csv_source::{
-    ImportCandidate, RelevanceSelection, SkipReason, SourceClassification, candidate_from_record,
-};
+use super::csv_source::{ImportCandidate, RelevanceSelection, SkipReason, candidate_from_record};
+use super::preclassify::{ImportDecision, import_decision, preflight_and_classify_candidates};
 use super::publication::{
     ArtifactPreflight, preflight_artifact, preflight_required_aggregate_artifacts,
 };
@@ -86,17 +84,6 @@ pub struct HistoricalImportSummary {
 pub struct HistoricalImportAllSummary {
     pub chains: Vec<(String, HistoricalImportSummary)>,
     pub stale_branches_reconciled: u64,
-}
-
-/// The per-row verdict from `import_decision`, deciding which capture path (if
-/// any) a candidate takes. `Skip` short-circuits before any DB write.
-enum ImportDecision {
-    /// Capture without a preset parent kind: the reconciler classifies later.
-    CaptureUnclassified,
-    /// Capture with a Core-attested classification already attached (boxed to
-    /// keep the enum small).
-    CapturePreclassified(Box<ParentClassification>),
-    Skip(SkipReason),
 }
 
 /// Per-import shared state threaded into `import_candidate`, resolved once before
@@ -596,74 +583,6 @@ pub async fn enqueue_published_stale_branches_for_test(client: &mut Client) -> R
     enqueue_published_stale_branches(client).await
 }
 
-/// Validate every normalized candidate and resolve parent classifications before
-/// the chain transaction begins.
-///
-/// Positive Core classifications and Core-absence results are cached by parent
-/// hash so repeated observations across a chain do not repeat RPC work. The
-/// mutation pass reuses this cache and therefore performs no Bitcoin Core calls
-/// while holding the chain transaction open. Parsing and classification share
-/// one stream so the complete artifact is not reopened for two identical parse
-/// passes. Candidates are deliberately reparsed during mutation rather than
-/// retained for the whole publication: the extra sequential read keeps memory
-/// bounded while classification remains outside the transaction.
-async fn preflight_and_classify_candidates<C: GenericClient>(
-    client: &C,
-    classifier: &ConfiguredParentClassifier,
-    config: &HistoricalImportConfig,
-    spec: &super::config::HistoricalChainSpec,
-    artifact: &mut ArtifactPreflight,
-    classifications: &mut HashMap<Vec<u8>, ParentClassification>,
-) -> Result<()> {
-    let expected_rows = artifact.row_count;
-    let (mut reader, layout) = artifact.open_reader(spec)?;
-    let mut rows = 0_u64;
-    for (offset, record) in reader.records().enumerate() {
-        let record = record.with_context(|| {
-            format!(
-                "parse normalized artifact {} row {}",
-                config.csv_path.display(),
-                offset + 2
-            )
-        })?;
-        rows += 1;
-        let candidate =
-            match candidate_from_record(spec, &layout, &record, config.publication_ref()) {
-                Ok(candidate) => candidate,
-                Err(_) if config.manifest_path.is_none() => continue,
-                Err(reason) => {
-                    bail!(
-                        "normalized artifact {} row {} failed {}",
-                        config.csv_path.display(),
-                        offset + 2,
-                        reason.as_str()
-                    );
-                }
-            };
-        if classifier.is_enabled() {
-            let decision =
-                import_decision(client, classifier, config, &candidate, classifications).await?;
-            if config.manifest_path.is_some()
-                && let ImportDecision::Skip(reason) = decision
-            {
-                bail!(
-                    "published artifact {} row {} would be skipped as {}",
-                    config.csv_path.display(),
-                    offset + 2,
-                    reason.as_str()
-                );
-            }
-        }
-    }
-    if rows != expected_rows {
-        bail!(
-            "normalized artifact {} changed during preflight: expected {expected_rows} rows, parsed {rows}",
-            config.csv_path.display()
-        );
-    }
-    Ok(())
-}
-
 /// Validate the shared classifier and known-stale prerequisites once for the
 /// set of non-surveyed chains that will be imported.
 async fn ensure_import_environment(
@@ -698,118 +617,6 @@ async fn ensure_import_environment(
         known_stale_count, "starting historical import with known-stale membership"
     );
     Ok(())
-}
-
-/// Decide a candidate's fate, the layer where live Core classification meets the
-/// dataset's own labels.
-///
-/// With no classifier (`--allow-unclassified`): non-unknown rows capture
-/// unclassified, unknown rows are skipped. With a classifier: Canonical/Stale
-/// capture preclassified; `Near` is skipped; `Unknown` first holds any
-/// known-branch selection as an excluded unknown pending targeted
-/// reconciliation (an externally attested stale-branch member is never
-/// persisted as a BTC orphan), then captures preclassified only when
-/// Core-absence is attested, the dataset
-/// classified it as unknown, and the local orphan verdict is Strict/Weak;
-/// everything else,
-/// `Unclassified`. Reads parent preflight by prev_blockhash in
-/// `to_byte_array` (wire) order.
-async fn import_decision<C: GenericClient>(
-    client: &C,
-    classifier: &ConfiguredParentClassifier,
-    config: &HistoricalImportConfig,
-    candidate: &ImportCandidate,
-    classifications: &mut HashMap<Vec<u8>, ParentClassification>,
-) -> Result<ImportDecision> {
-    if !classifier.is_enabled() {
-        if config.allow_unclassified
-            && candidate.source_classification != SourceClassification::Unknown
-        {
-            return Ok(ImportDecision::CaptureUnclassified);
-        }
-        return Ok(ImportDecision::Skip(SkipReason::Unclassified));
-    }
-    let parent_hash = candidate
-        .evidence
-        .btc_parent_header
-        .block_hash()
-        .to_byte_array()
-        .to_vec();
-    let prev_hash = candidate
-        .evidence
-        .btc_parent_header
-        .prev_blockhash
-        .to_byte_array()
-        .to_vec();
-    let classification = if let Some(classification) = classifications.get(&parent_hash) {
-        classification.clone()
-    } else {
-        let preflight = mmm_read_model::load_parent_preflight(client, &prev_hash).await?;
-        let classification = classifier
-            .classify_parent(&candidate.evidence.btc_parent_header, preflight)
-            .await
-            .with_context(|| {
-                format!(
-                    "preclassify historical parent {}",
-                    candidate.btc_parent_display_hash
-                )
-            })?;
-        classifications.insert(parent_hash, classification.clone());
-        classification
-    };
-    match classification.kind {
-        ParentKind::Canonical
-            if candidate.source_classification == SourceClassification::Canonical =>
-        {
-            Ok(ImportDecision::CapturePreclassified(Box::new(
-                classification,
-            )))
-        }
-        ParentKind::Stale
-            if matches!(
-                candidate.source_classification,
-                SourceClassification::Stale | SourceClassification::StaleDescendant
-            ) || matches!(
-                candidate.relevance_selection,
-                Some(
-                    RelevanceSelection::KnownDirectStale | RelevanceSelection::KnownStaleDescendant
-                )
-            ) =>
-        {
-            Ok(ImportDecision::CapturePreclassified(Box::new(
-                classification,
-            )))
-        }
-        ParentKind::Canonical | ParentKind::Stale => {
-            Ok(ImportDecision::Skip(SkipReason::ClassificationMismatch))
-        }
-        ParentKind::Near => Ok(ImportDecision::Skip(SkipReason::Unclassified)),
-        ParentKind::Unknown => {
-            if matches!(
-                candidate.relevance_selection,
-                Some(
-                    RelevanceSelection::KnownDirectStale | RelevanceSelection::KnownStaleDescendant
-                )
-            ) {
-                let mut known_branch = classification;
-                known_branch.core_absence_attested = false;
-                Ok(ImportDecision::CapturePreclassified(Box::new(known_branch)))
-            } else if !classification.core_absence_attested
-                || candidate.source_classification != SourceClassification::Unknown
-            {
-                Ok(ImportDecision::Skip(SkipReason::Unclassified))
-            } else if matches!(
-                candidate.orphan_verdict,
-                Some(BtcOrphanVerdict::Strict | BtcOrphanVerdict::Weak)
-            ) {
-                Ok(ImportDecision::CapturePreclassified(Box::new(
-                    classification,
-                )))
-            } else {
-                Ok(ImportDecision::Skip(SkipReason::Unclassified))
-            }
-        }
-    }
 }
 
 /// Persist one decided candidate through the shared producer write path.

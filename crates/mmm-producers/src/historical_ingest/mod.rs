@@ -7,6 +7,7 @@
 
 mod config;
 mod csv_source;
+mod preclassify;
 mod publication;
 mod rsk_sidecar;
 mod runner;
