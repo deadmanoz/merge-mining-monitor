@@ -57,7 +57,7 @@ async fn contradictory_rsk_sidecar_rolls_back_historical_provenance() -> Result<
         for (source_row_number, corrupt_miner) in [(1_i64, true), (2_i64, false)] {
             let mut payload = inputs.payload.clone();
             payload.historical_provenance = Some(HistoricalEventProvenance {
-                publication_ref: "08da16532a55240e54c4051d5d324a0484b80b1c".to_owned(),
+                publication_ref: "a30283101f33c8583855669fdffba5fb20730373".to_owned(),
                 chain: "rsk".to_owned(),
                 source_kind: "full_inventory".to_owned(),
                 source_path: "fixture.csv".to_owned(),

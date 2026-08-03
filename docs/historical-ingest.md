@@ -2,8 +2,8 @@
 
 Historical ingest consumes the normalized monitor publication from
 `merge-mining-research` and sends every observation through the same store and
-read-model rules as live capture. The pinned publication is merge commit
-`08da16532a55240e54c4051d5d324a0484b80b1c`.
+read-model rules as live capture. The pinned publication is commit
+`a30283101f33c8583855669fdffba5fb20730373`.
 
 ## Publication Contract
 
@@ -83,7 +83,7 @@ An exact identity represents the one child-ledger block exposed under that
 hash, including the parent proof retained by the child node. A later row with
 the same source and child hash but a different Bitcoin parent is contradictory
 source evidence, not a second event, and fails closed. The pinned publication
-contains 243,970 non-null child hashes with no duplicate
+contains 244,016 non-null child hashes with no duplicate
 `(chain, child_block_hash)` identities.
 
 `child_block_hash` encodes the exact bytes stored by live capture. For
@@ -96,7 +96,7 @@ cross-checks, while the stored parent identity is derived from
 `expected_nbits` is the publication validator's expected Bitcoin target for an
 admitted row. When populated, it must equal the `nBits` encoded in
 `btc_header_hex`; disagreement is contradictory evidence and fails closed.
-All 3,672 populated values in the pinned publication satisfy this invariant.
+All 3,696 populated values in the pinned publication satisfy this invariant.
 
 `historical_event_provenance` retains every imported source row. Its
 `publication_ref` is the pinned research commit for manifest-backed imports and

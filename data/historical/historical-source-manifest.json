@@ -13,7 +13,7 @@
       "csv_path": "results/monitor-evidence/argentum_monitor_evidence.csv",
       "role": "event",
       "row_count": 29,
-      "sha256": "545ae0cd341f629246bac331fd6fd81d2dbf3f68ea390f018defca4fd42ac2f6",
+      "sha256": "6293215e776a51ae034ee188b62a8a21225cd4cb5294736316129b7f4077408e",
       "size_bytes": 89262
     },
     {
@@ -28,7 +28,7 @@
       "csv_path": "results/monitor-evidence/bitcoin-vault_monitor_evidence.csv",
       "role": "event",
       "row_count": 2575,
-      "sha256": "6e26e89e3b5d3ad133589cd491a936d9e097a0bd7f1f514e7cdde9d5b6bc679e",
+      "sha256": "a95508d2d69fe32be85114892ef429e0928ca1f4e4b4ff3d46aaf60d9cbbae66",
       "size_bytes": 2470244
     },
     {
@@ -43,7 +43,7 @@
       "csv_path": "results/monitor-evidence/bitmark_monitor_evidence.csv",
       "role": "event",
       "row_count": 898,
-      "sha256": "bc6232abc645b8058518d89594b4041b04d132de5d2598cb83a2ff8c4d582d53",
+      "sha256": "dde64e3dfd422e23425dd931a0a919facbf1469163c2c98077dc0518ffba2d8d",
       "size_bytes": 942597
     },
     {
@@ -58,7 +58,7 @@
       "csv_path": "results/monitor-evidence/coiledcoin_monitor_evidence.csv",
       "role": "event",
       "row_count": 635,
-      "sha256": "80e59a9a3f137207115e7112871221d844a5e59717ae7878c413f10986405246",
+      "sha256": "986eca0abdc4fd4d617d43dce993858be3ec2842b4a9576e74265d68a7560ddb",
       "size_bytes": 1702815
     },
     {
@@ -73,7 +73,7 @@
       "csv_path": "results/monitor-evidence/crown_monitor_evidence.csv",
       "role": "event",
       "row_count": 5506,
-      "sha256": "cb50a825973736590ddf02776fbd4d7cef34a689807d2a38c7f00ca35cad4cc2",
+      "sha256": "db7d20c950dc76ed94da00beb531ec41eeccaaba1d68cedb45da32b6a0932b82",
       "size_bytes": 5832586
     },
     {
@@ -88,8 +88,8 @@
       "csv_path": "results/monitor-evidence/devcoin_monitor_evidence.csv",
       "role": "event",
       "row_count": 54572,
-      "sha256": "a9ef75c5bf12b16bbd6f1ab7d7d3de5312ca3da281db90d05742f3b46171659e",
-      "size_bytes": 69312973
+      "sha256": "7e26b8597a99f97ede0df2cd3c7a07a3cd0e994f64ab59341132ea42f9508095",
+      "size_bytes": 69313039
     },
     {
       "chain": "doichain",
@@ -118,8 +118,8 @@
       "csv_path": "results/monitor-evidence/elastos_monitor_evidence.csv",
       "role": "event",
       "row_count": 175235,
-      "sha256": "632f32ea024925e9542d3fba6f0358c434a5859879ff1fb96f36f7324c71a70b",
-      "size_bytes": 167173421
+      "sha256": "900fdd32350f21c0fa721f071a1e79ec7123d3f87922acbb92f8c3302113cc19",
+      "size_bytes": 167173465
     },
     {
       "chain": "elcash",
@@ -133,7 +133,7 @@
       "csv_path": "results/monitor-evidence/elcash_monitor_evidence.csv",
       "role": "event",
       "row_count": 2429,
-      "sha256": "01685b890507dcdd2870b87d5e24c0d29f0ffbfec0d6a48ac56f75c9a6ba1241",
+      "sha256": "827199fab8bf7a9341f7a18beb221213e3c785e9d1bd9a37bba3067941fd2bbf",
       "size_bytes": 2590633
     },
     {
@@ -148,7 +148,7 @@
       "csv_path": "results/monitor-evidence/emercoin_monitor_evidence.csv",
       "role": "event",
       "row_count": 45691,
-      "sha256": "e8396351ef4f8f9dbb46eec23a87031ef3b5a9f0f7394c6f067b637a88ad8574",
+      "sha256": "622df4f0d6d6a5e35cfc4240475763c5373184a12b8cbae1e5b129c0c30371e7",
       "size_bytes": 52088602
     },
     {
@@ -163,7 +163,7 @@
       "csv_path": "results/monitor-evidence/fractal_monitor_evidence.csv",
       "role": "event",
       "row_count": 59011,
-      "sha256": "94d36bafd1c7d8afe44d55efa20b9fed693c2d8d8883006ea49c3bd81b15b65e",
+      "sha256": "84d1014e788cbc21ab0464b96df8d92da89d50250987af02223f15afe5480eca",
       "size_bytes": 61541299
     },
     {
@@ -193,7 +193,7 @@
       "csv_path": "results/monitor-evidence/groupcoin_monitor_evidence.csv",
       "role": "event",
       "row_count": 2153,
-      "sha256": "31b60ddf4d2d162d9d3461572429aae7f7ba0d8db854ac65f3850216c8501d9c",
+      "sha256": "23fa9068c550dceec1e8e2d547ea5594d74b0fac6cbab3bb75ca68a345780d4c",
       "size_bytes": 2316510
     },
     {
@@ -223,7 +223,7 @@
       "csv_path": "results/monitor-evidence/huntercoin_monitor_evidence.csv",
       "role": "event",
       "row_count": 870,
-      "sha256": "26233f57126fdbb7cd02b8bc97a6caef7eb04b69b9e3fb187aa9272a2cdcad6b",
+      "sha256": "bd881355360ddf61246e70419e48f2e2d04adfcc3684a93cb4df3dd3dec579fa",
       "size_bytes": 2143061
     },
     {
@@ -238,7 +238,7 @@
       "csv_path": "results/monitor-evidence/i0coin_monitor_evidence.csv",
       "role": "event",
       "row_count": 17126,
-      "sha256": "54b8721de905aaf646307c4658c66be7cec644583ab02514e011f3e47aab492c",
+      "sha256": "c13a2810a9c0d51efc7c1a102dc0686b4fefc106dc8201cd7e02258895d11354",
       "size_bytes": 18499988
     },
     {
@@ -253,8 +253,8 @@
       "csv_path": "results/monitor-evidence/ixcoin_monitor_evidence.csv",
       "role": "event",
       "row_count": 47279,
-      "sha256": "7a2da5536fb783248da057437be20dbc31eb69abf2f5cb76918de350d1f9146a",
-      "size_bytes": 69925685
+      "sha256": "2f07b95531dca7599aee9d26ae84532ad3e893c5a7caa7116bedeee04abddd24",
+      "size_bytes": 69925751
     },
     {
       "chain": "lyncoin",
@@ -268,8 +268,8 @@
       "csv_path": "results/monitor-evidence/lyncoin_monitor_evidence.csv",
       "role": "event",
       "row_count": 11,
-      "sha256": "26dabd649dbbbecb318ecbf878a260e45285be1ff6cbea0b10c54908bc68fb78",
-      "size_bytes": 10044
+      "sha256": "2a1531207081b2816444cbe67fdf34761aa06a131e20114e8ac8b2abe86f64f7",
+      "size_bytes": 9703
     },
     {
       "chain": "myriadcoin",
@@ -283,7 +283,7 @@
       "csv_path": "results/monitor-evidence/myriadcoin_monitor_evidence.csv",
       "role": "event",
       "row_count": 14745,
-      "sha256": "c7df17ef2d71b0e279ad7a822c245a9d7237ae8e8b5b84fcccd56696a9ccfc8c",
+      "sha256": "284507d52ccfaefd59fb6e695d30d8fd202aad9557a6b10fd9d09ef1f2b01d04",
       "size_bytes": 15795185
     },
     {
@@ -298,8 +298,8 @@
       "csv_path": "results/monitor-evidence/namecoin_monitor_evidence.csv",
       "role": "event",
       "row_count": 1665,
-      "sha256": "0fea47451b5c24f70b6df6f107cbb5f17140192929523a0fd82ad35a93ce6c0a",
-      "size_bytes": 1785894
+      "sha256": "b30fa66328f93fbc58be6cad9df9b9780477ecbdb6244717a83899204ea8ebf7",
+      "size_bytes": 1786290
     },
     {
       "chain": "rsk",
@@ -313,8 +313,8 @@
       "csv_path": "results/monitor-evidence/rsk_monitor_evidence.csv",
       "role": "event",
       "row_count": 303,
-      "sha256": "0707c96ecc1aaa0030ad43f9e7bf8aae95ef18edbab6d074132d797658023c17",
-      "size_bytes": 513690
+      "sha256": "9810c68ee9735fd10c494c8687a609ca31577bc283d8d6c0c58d23e1c974a0a5",
+      "size_bytes": 513712
     },
     {
       "chain": "sixeleven",
@@ -328,8 +328,8 @@
       "csv_path": "results/monitor-evidence/sixeleven_monitor_evidence.csv",
       "role": "event",
       "row_count": 7,
-      "sha256": "06b183c114949b4eace33f59ac233bf5c33858781e37b0192788f1ddc309d10f",
-      "size_bytes": 8479
+      "sha256": "e7102e9f1a51d5fa43c155a5b91093e10d66894c7d7c38245659448c51ec4b51",
+      "size_bytes": 8262
     },
     {
       "chain": "stale-descendants",
@@ -358,8 +358,8 @@
       "csv_path": "results/monitor-evidence/syscoin_monitor_evidence.csv",
       "role": "event",
       "row_count": 98713,
-      "sha256": "5154036c4c1e801a2063ba89fd16ac8154ce25649f660dec663d7f45a3d2e72e",
-      "size_bytes": 76370387
+      "sha256": "2649d2f2e87c26eeb7cb1af5c2a5f92ae882a9d462cd5f93682eb30162df6f65",
+      "size_bytes": 76370409
     },
     {
       "chain": "terracoin",
@@ -373,7 +373,7 @@
       "csv_path": "results/monitor-evidence/terracoin_monitor_evidence.csv",
       "role": "event",
       "row_count": 11292,
-      "sha256": "928a7e4452bd17de54953f74e6567fd3c762be2e3961400124a8aa7f1f8ca380",
+      "sha256": "4071f1f2f273f8049017a337be5d69c06e952f839809894190c5f477512a7503",
       "size_bytes": 11069472
     },
     {
@@ -388,7 +388,7 @@
       "csv_path": "results/monitor-evidence/unobtanium_monitor_evidence.csv",
       "role": "event",
       "row_count": 15001,
-      "sha256": "80be8d7f7c0fc958b2357bc01163021935e83994c76e9b73ed36e982e4dfa6b4",
+      "sha256": "a5f976459e4d6711669cbdef70b15d6d2f4fab33af50dc7cedf36d3becaf6d34",
       "size_bytes": 16212224
     },
     {
@@ -403,8 +403,8 @@
       "csv_path": "results/monitor-evidence/vcash_monitor_evidence.csv",
       "role": "event",
       "row_count": 68,
-      "sha256": "4bf6b9cd6dc66464f87888959ce9872ea20125b85335b253c5be244dffaf4784",
-      "size_bytes": 120665
+      "sha256": "c32cc2674db4cb38e2d5b108e7c45e37ac6a9f58d0b339cce803de29b2380b73",
+      "size_bytes": 119373
     },
     {
       "chain": "xaya",
@@ -418,13 +418,13 @@
       "csv_path": "results/monitor-evidence/xaya_monitor_evidence.csv",
       "role": "event",
       "row_count": 20841,
-      "sha256": "cefef85b89af9abb8435417feb230e6f3d42acceb97c6b84da29ef7ffe25801f",
+      "sha256": "0ba1d2e397bbe2a84880d51e6c15e824cb8ab673e57709d1474acc909932cb73",
       "size_bytes": 25802500
     }
   ],
   "manifest_generator": "scripts/gen-historical-source-manifest.sh",
   "publication_manifest_path": "results/monitor-evidence/monitor-evidence-manifest.json",
-  "publication_manifest_sha256": "d4710676e555c1eabfc153e6490200c55f94a8f5cc35f30add5879a1e6266725",
+  "publication_manifest_sha256": "6f4afd94e895e939ad480b4f77c3b4362a28dc991979c471158bd53534c1223c",
   "required_columns": [
     "chain",
     "source_kind",
@@ -457,6 +457,6 @@
   "schema_version": 2,
   "scope": "uniform_monitor_evidence_v1",
   "source_repo": "merge-mining-research",
-  "source_repo_commit": "08da16532a55240e54c4051d5d324a0484b80b1c",
+  "source_repo_commit": "a30283101f33c8583855669fdffba5fb20730373",
   "total_event_rows": 576662
 }
