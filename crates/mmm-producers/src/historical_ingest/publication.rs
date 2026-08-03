@@ -189,7 +189,7 @@ fn validate_manifest(manifest: &PublicationManifest) -> Result<()> {
         "unexpected pinned publication event total"
     );
     ensure!(
-        manifest.aggregate_rows == 20,
+        manifest.aggregate_rows == 21,
         "unexpected pinned publication aggregate total"
     );
     for spec in importable_chains() {
@@ -676,11 +676,11 @@ mod tests {
             chain: "stale-descendants".to_owned(),
             csv_path: "results/stale-descendants.csv".to_owned(),
             role: ArtifactRole::Aggregate,
-            row_count: 20,
+            row_count: 21,
             size_bytes: 1,
             sha256: "0".repeat(64),
             counts: PublicationCounts {
-                stale_descendant: 20,
+                stale_descendant: 21,
                 ..PublicationCounts::default()
             },
         });
@@ -691,7 +691,7 @@ mod tests {
             publication_manifest_path: "results/monitor-evidence/manifest.json".to_owned(),
             publication_manifest_sha256: "0".repeat(64),
             total_event_rows: 576_662,
-            aggregate_rows: 20,
+            aggregate_rows: 21,
             required_columns: NORMALIZED_COLUMNS
                 .iter()
                 .map(|column| (*column).to_owned())
@@ -778,7 +778,7 @@ mod tests {
                         .artifacts
                         .retain(|artifact| artifact.role != ArtifactRole::Aggregate);
                 }
-                "aggregate_total" => manifest.aggregate_rows = 21,
+                "aggregate_total" => manifest.aggregate_rows = 22,
                 _ => unreachable!("table defines every case"),
             }
             let error = validate_manifest(&manifest).expect_err(case);
@@ -854,7 +854,7 @@ mod tests {
         let aggregate_path = root.join("results/stale-descendants.csv");
         let mut aggregate =
             "chain,classification,btc_stale_relevance,relevance_reason\n".to_owned();
-        for _ in 0..20 {
+        for _ in 0..21 {
             aggregate.push_str("stale-descendants,stale_descendant,,valid_stale_descendant\n");
         }
         std::fs::write(&aggregate_path, &aggregate).expect("write aggregate fixture");

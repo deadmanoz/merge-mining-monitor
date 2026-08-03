@@ -10,7 +10,7 @@ use std::sync::LazyLock;
 use anyhow::{Context, Result, bail};
 use mmm_capture::source_registry::{SOURCE_REGISTRY, SourceKind, SourceLifecycle};
 
-pub(super) const PINNED_RESEARCH_COMMIT: &str = "2146c204a8a203c59534a1b23b04f447a47b499e";
+pub(super) const PINNED_RESEARCH_COMMIT: &str = "08da16532a55240e54c4051d5d324a0484b80b1c";
 pub(super) const OPERATOR_CSV_PROVENANCE: &str = "operator-csv";
 pub(super) const DEFAULT_MANIFEST_PATH: &str = "data/historical/historical-source-manifest.json";
 const RESEARCH_ROOT_ENV: &str = "MERGE_MINING_RESEARCH_DIR";

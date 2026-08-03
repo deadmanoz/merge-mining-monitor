@@ -3,7 +3,7 @@
 Historical ingest consumes the normalized monitor publication from
 `merge-mining-research` and sends every observation through the same store and
 read-model rules as live capture. The pinned publication is merge commit
-`2146c204a8a203c59534a1b23b04f447a47b499e`.
+`08da16532a55240e54c4051d5d324a0484b80b1c`.
 
 ## Publication Contract
 
@@ -14,7 +14,7 @@ results/monitor-evidence/<chain>_monitor_evidence.csv
 ```
 
 Doichain participates through the same path with a valid zero-row file. The
-separate 20-row `stale-descendants` file is an aggregate view, not an event
+separate 21-row `stale-descendants` file is an aggregate view, not an event
 source, because its contributing chain observations already exist in the
 per-chain files.
 
@@ -30,6 +30,10 @@ the importer verifies:
   counts;
 - every row's schema, hashes, compact targets, parent header, proof of work,
   taxonomy, and available child-header corroboration.
+
+Direct stale rows require a complete `VALID` validation token. Stale-descendant
+rows require the exact `VALID_STALE_DESCENDANT` status. These statuses describe
+different validation profiles and are checked uniformly for every chain.
 
 Each event artifact remains open after verification. Classification and
 mutation rewind that same verified file handle, so replacing a checkout path
@@ -198,7 +202,10 @@ fills the Bitcoin RPC client's configured bounded concurrency, and runs targeted
 stale-branch reconciliation after all sources are present. Canonical and
 Core-indexed stale parents do not query predecessor state from the database;
 that read-model lookup is deferred until Core proves the candidate header is
-absent.
+absent. Transient Bitcoin Core transport failures and warmup responses are
+retried with bounded exponential backoff. Exhausting those retries fails
+preclassification explicitly instead of converting an operational failure
+into an `unknown` parent classification.
 Digest verification, manifest-count inspection, and database mutation still
 read the artifact separately.
 Its per-chain and total summaries report expected, ingested, inserted, updated,

@@ -209,6 +209,24 @@ impl ConfiguredParentClassifier {
             .await
     }
 
+    /// Historical publication imports fail on exhausted classification RPCs
+    /// rather than persisting an operational failure as evidence. Optional
+    /// coinbase enrichment remains best-effort.
+    pub async fn classify_parent_strict(
+        &self,
+        header: &Header,
+        preflight: ParentPreflight,
+    ) -> Result<ParentClassification> {
+        match self {
+            Self::Disabled => Ok(ParentClassification::unknown(header)),
+            Self::BitcoinCore(classifier) => {
+                classifier.classify_parent_strict(header, preflight).await
+            }
+            #[cfg(any(test, feature = "db-integration"))]
+            Self::Fake(classifier) => classifier.classify_parent(header, preflight).await,
+        }
+    }
+
     /// Defer loading read-model predecessor context until the Core-backed
     /// classifier proves the candidate header is absent. Test fakes retain the
     /// established eager behavior.
@@ -224,6 +242,28 @@ impl ConfiguredParentClassifier {
             Self::Disabled => Ok(ParentClassification::unknown(header)),
             Self::BitcoinCore(classifier) => {
                 classifier.classify_parent_deferred(header, preflight).await
+            }
+            #[cfg(any(test, feature = "db-integration"))]
+            Self::Fake(classifier) => classifier.classify_parent(header, preflight.await?).await,
+        }
+    }
+
+    /// Strict historical-import variant of [`Self::classify_parent_deferred`].
+    /// Classification RPCs fail explicitly; coinbase enrichment is optional.
+    pub async fn classify_parent_deferred_strict<F>(
+        &self,
+        header: &Header,
+        preflight: F,
+    ) -> Result<ParentClassification>
+    where
+        F: Future<Output = Result<ParentPreflight>>,
+    {
+        match self {
+            Self::Disabled => Ok(ParentClassification::unknown(header)),
+            Self::BitcoinCore(classifier) => {
+                classifier
+                    .classify_parent_deferred_strict(header, preflight)
+                    .await
             }
             #[cfg(any(test, feature = "db-integration"))]
             Self::Fake(classifier) => classifier.classify_parent(header, preflight.await?).await,

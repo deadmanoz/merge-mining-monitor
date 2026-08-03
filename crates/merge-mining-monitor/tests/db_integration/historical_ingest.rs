@@ -1661,12 +1661,11 @@ fn normalized_csv_line_with_parent_coinbase(
     coinbase_outputs: &str,
     full_coinbase: &str,
 ) -> String {
-    let validation_status = if row.classification == "canonical" {
-        "VALID (canonical Bitcoin block)"
-    } else if row.classification == "stale" {
-        "VALID"
-    } else {
-        ""
+    let validation_status = match (row.classification, row.relevance_reason) {
+        ("canonical", _) => "VALID (canonical Bitcoin block)",
+        ("stale", _) | ("unknown", "valid_direct_stale") => "VALID",
+        ("stale_descendant", _) | ("unknown", "valid_stale_descendant") => "VALID_STALE_DESCENDANT",
+        _ => "",
     };
     let bits = format!("{:08x}", header.bits.to_consensus());
     let child_hash = row.child_hash.map(hex::encode).unwrap_or_default();

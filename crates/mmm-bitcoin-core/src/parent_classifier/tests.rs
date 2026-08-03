@@ -597,16 +597,27 @@ async fn core_absence_attested_only_on_candidate_not_found() {
     assert_eq!(disabled.kind, ParentKind::Unknown);
     assert!(!disabled.core_absence_attested);
 
-    // Candidate verbose lookup fails with a transient (non-not-found) error:
-    // unknown, but NOT absence-attested (we do not know it is absent).
+    // Live/reconcile callers preserve the repairable unknown behavior for an
+    // operational candidate lookup failure, without attesting Core absence.
     let transient_source = Arc::new(MockCoreHeaderSource::default());
     transient_source.set_verbose(header.block_hash(), MockResult::Error);
-    let transient = BitcoinCoreParentClassifier::from_source(transient_source)
+    let transient = BitcoinCoreParentClassifier::from_source(transient_source.clone())
         .classify_parent(&header, ParentPreflight { known_prev: None })
         .await
         .unwrap();
     assert_eq!(transient.kind, ParentKind::Unknown);
     assert!(!transient.core_absence_attested);
+
+    // Historical import uses the strict policy and surfaces the same failure.
+    let transient_error = BitcoinCoreParentClassifier::from_source(transient_source)
+        .classify_parent_strict(&header, ParentPreflight { known_prev: None })
+        .await
+        .unwrap_err();
+    assert!(
+        transient_error
+            .to_string()
+            .contains("Bitcoin Core parent-header lookup failed")
+    );
 
     // Candidate not-found + predecessor not-found: attested absent.
     let absent =
@@ -627,6 +638,18 @@ async fn core_absence_attested_only_on_candidate_not_found() {
         .unwrap();
     assert_eq!(prev_err.kind, ParentKind::Unknown);
     assert!(prev_err.core_absence_attested);
+
+    let strict_prev_err_source = Arc::new(MockCoreHeaderSource::default());
+    strict_prev_err_source.set_verbose(header.prev_blockhash, MockResult::Error);
+    let strict_prev_error = BitcoinCoreParentClassifier::from_source(strict_prev_err_source)
+        .classify_parent_strict(&header, ParentPreflight { known_prev: None })
+        .await
+        .unwrap_err();
+    assert!(
+        strict_prev_error
+            .to_string()
+            .contains("Bitcoin Core predecessor lookup failed")
+    );
 
     // Candidate not-found + inferred-stale path returns unknown for a missing
     // competitor: attested (the candidate was absent).
@@ -649,6 +672,19 @@ async fn core_absence_attested_only_on_candidate_not_found() {
             .unwrap();
     assert_eq!(missing_comp.kind, ParentKind::Unknown);
     assert!(missing_comp.core_absence_attested);
+
+    let strict_missing_comp =
+        BitcoinCoreParentClassifier::from_source(Arc::new(MockCoreHeaderSource::default()))
+            .classify_parent_strict(
+                &header,
+                ParentPreflight {
+                    known_prev: Some(canonical_prev()),
+                },
+            )
+            .await
+            .unwrap();
+    assert_eq!(strict_missing_comp.kind, ParentKind::Unknown);
+    assert!(strict_missing_comp.core_absence_attested);
 
     // Candidate not-found + inferred-stale path returns unknown for a
     // competitor whose nBits mismatches: attested.

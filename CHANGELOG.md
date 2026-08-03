@@ -44,6 +44,10 @@ This changelog starts with the initial release.
 - Fill the Bitcoin RPC client's existing bounded concurrency during historical
   preclassification, and defer predecessor read-model queries until Bitcoin
   Core proves a candidate header is absent.
+- Retry transient Bitcoin Core transport and warmup failures with bounded
+  exponential backoff, fail parent preclassification explicitly after
+  exhaustion, and validate direct-stale and stale-descendant publication
+  statuses against their distinct canonical tokens.
 
 ## [0.4.2] - 2026-07-30
 

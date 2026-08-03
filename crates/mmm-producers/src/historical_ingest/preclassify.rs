@@ -154,7 +154,7 @@ async fn resolve_candidate<C: GenericClient>(
         .to_byte_array()
         .to_vec();
     let classification = classifier
-        .classify_parent_deferred(
+        .classify_parent_deferred_strict(
             &candidate.evidence.btc_parent_header,
             mmm_read_model::load_parent_preflight(client, &prev_hash),
         )
@@ -234,7 +234,7 @@ pub(super) async fn import_decision<C: GenericClient>(
     } else {
         let preflight = mmm_read_model::load_parent_preflight(client, &prev_hash).await?;
         let classification = classifier
-            .classify_parent(&candidate.evidence.btc_parent_header, preflight)
+            .classify_parent_strict(&candidate.evidence.btc_parent_header, preflight)
             .await
             .with_context(|| {
                 format!(
