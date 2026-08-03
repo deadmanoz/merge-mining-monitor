@@ -19,9 +19,10 @@ This changelog starts with the initial release.
   legacy rows conflict with the stronger exact identity.
 - Reconcile manifest-backed historical and partial sources as authoritative
   snapshots while keeping live-source and operator CSV imports additive.
-  Commit each base/provenance snapshot
-  atomically, then drain parent and dependent read-model work through a durable
-  resumable queue without retaining one advisory lock per imported parent.
+  Retire manifest-backed provenance from superseded publication commits and
+  commit each base/provenance snapshot atomically, then drain parent and
+  dependent read-model work through a durable resumable queue without retaining
+  one advisory lock per imported parent.
   Retain source taxonomy and all published parent-coinbase evidence without
   collapsing distinct source rows, and treat Doichain's zero-row survey as a
   database no-op.

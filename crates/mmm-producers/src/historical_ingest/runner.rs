@@ -296,12 +296,7 @@ async fn run_historical_import_with_cache(
         .with_context(|| format!("begin {} historical chain transaction", spec.chain))?;
     let pool_ids_by_slug = upsert_pool_snapshot(&txn, resolver.snapshot()).await?;
     if config.is_authoritative_snapshot(spec) {
-        clear_authoritative_historical_provenance_in_transaction(
-            &txn,
-            super::config::PINNED_RESEARCH_COMMIT,
-            spec.chain,
-        )
-        .await?;
+        clear_authoritative_historical_provenance_in_transaction(&txn, spec.chain).await?;
     }
     let (mut summary, parent_counts) = import_rows_in_transaction(
         &txn,
