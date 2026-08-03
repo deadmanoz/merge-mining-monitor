@@ -341,19 +341,21 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
     Ok(removed)
 }
 
-/// Replace the current provenance view for one complete authoritative snapshot.
+/// Replace the manifest-backed provenance view for one complete authoritative
+/// snapshot.
 ///
-/// The delete and all replacement provenance rows share the caller's chain
-/// transaction, so a failed import restores the previous snapshot intact.
+/// Every prior pinned publication for the chain is superseded; additive
+/// `operator-csv` provenance remains independent. The delete and all
+/// replacement provenance rows share the caller's chain transaction, so a
+/// failed import restores the previous snapshot intact.
 pub async fn clear_authoritative_historical_provenance_in_transaction(
     txn: &Transaction<'_>,
-    publication_ref: &str,
     chain: &str,
 ) -> Result<()> {
     txn.execute(
         "DELETE FROM historical_event_provenance \
-         WHERE publication_ref = $1 AND chain = $2",
-        &[&publication_ref, &chain],
+         WHERE chain = $1 AND publication_ref <> 'operator-csv'",
+        &[&chain],
     )
     .await
     .context("clear prior authoritative historical provenance snapshot")?;

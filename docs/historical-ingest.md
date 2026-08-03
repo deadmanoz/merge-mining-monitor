@@ -129,14 +129,17 @@ The shared source registry controls reconciliation:
   performs no database writes.
 
 Each chain writes its complete base/provenance snapshot, removes obsolete
-authoritative rows, and enqueues affected parents in one transaction. A failure
-before that commit rolls back the whole chain. After commit, the importer drains
-the durable queue in bounded per-parent transactions. Primary reconcile results
-store their changed-hash cascade seeds in the same transaction, and queue work
-is removed only after its dependent cascade succeeds. An interruption at
-either boundary therefore resumes without losing cascade work. `import-all`
-also enqueues its final targeted stale-branch pass before rebuilding any parent,
-so a failure after a fresh stale promotion resumes its dependent cascade.
+authoritative rows, retires manifest-backed provenance from every superseded
+publication commit for that chain, and enqueues affected parents in one
+transaction. Additive `operator-csv` provenance is preserved. A failure before
+that commit rolls back the whole chain, including restoration of the previous
+publication provenance. After commit, the importer drains the durable queue in
+bounded per-parent transactions. Primary reconcile results store their
+changed-hash cascade seeds in the same transaction, and queue work is removed
+only after its dependent cascade succeeds. An interruption at either boundary
+therefore resumes without losing cascade work. `import-all` also enqueues its
+final targeted stale-branch pass before rebuilding any parent, so a failure
+after a fresh stale promotion resumes its dependent cascade.
 `import-all` takes the exclusive source-health lock at the end of each
 non-surveyed chain transaction, then commits its base evidence, durable queue,
 and unready flag atomically. A concurrent rebuild either finishes before that

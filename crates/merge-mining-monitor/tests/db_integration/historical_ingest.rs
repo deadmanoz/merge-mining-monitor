@@ -1111,7 +1111,7 @@ async fn allow_unclassified_manifest_import_does_not_replace_authoritative_rows(
 }
 
 #[tokio::test]
-async fn authoritative_reimport_replaces_prior_provenance_for_the_same_commit() -> Result<()> {
+async fn authoritative_reimport_replaces_superseded_publication_provenance() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let retained = header_meeting_bits(0x207f_ffff, 1_700_000_040, 40);
         let omitted = header_meeting_bits(0x207f_ffff, 1_700_000_041, 41);
@@ -1162,6 +1162,15 @@ async fn authoritative_reimport_replaces_prior_provenance_for_the_same_commit() 
                 active_source_event_count(&client, "auxpow:devcoin").await?,
                 2
             );
+            client
+                .execute(
+                    "UPDATE historical_event_provenance \
+                     SET publication_ref = '08da16532a55240e54c4051d5d324a0484b80b1c' \
+                     WHERE chain = 'devcoin' \
+                       AND publication_ref <> 'operator-csv'",
+                    &[],
+                )
+                .await?;
 
             let second_classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
                 canonical_verdict(&retained, 700_040),
@@ -1179,15 +1188,15 @@ async fn authoritative_reimport_replaces_prior_provenance_for_the_same_commit() 
                 active_source_event_count(&client, "auxpow:devcoin").await?,
                 1
             );
-            let provenance_count: i64 = client
+            let publication_ref: String = client
                 .query_one(
-                    "SELECT count(*) FROM historical_event_provenance \
-                     WHERE chain = 'devcoin'",
+                    "SELECT publication_ref \
+                     FROM historical_event_provenance WHERE chain = 'devcoin'",
                     &[],
                 )
                 .await?
                 .get(0);
-            assert_eq!(provenance_count, 1);
+            assert_eq!(publication_ref, "a30283101f33c8583855669fdffba5fb20730373");
             Ok::<_, anyhow::Error>(())
         }
         .await;
@@ -1204,10 +1213,11 @@ async fn operator_csv_is_additive_for_historical_sources() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let header = header_meeting_bits(0x207f_ffff, 1_700_000_043, 43);
         let csv_path =
-            write_normalized_csv(&header, "canonical", "", "canonical_parent", &[], 700_043)?;
+            write_normalized_csv(&header, "canonical", "", "canonical_parent", &[], 700_000)?;
+        let fixture = write_manifest_fixture(&header)?;
         let result = async {
             let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
-                canonical_verdict(&header, 700_043),
+                canonical_verdict(&header, 700_000),
             ));
             let config = devcoin_import_config(&csv_path);
             run_historical_import(&mut client, &classifier, &config).await?;
@@ -1228,9 +1238,34 @@ async fn operator_csv_is_additive_for_historical_sources() -> Result<()> {
                 .await?
                 .get(0);
             assert_eq!(publication_ref, "operator-csv");
+
+            run_manifest_historical_import_for_test(
+                &mut client,
+                &classifier,
+                &fixture.config,
+                "devcoin",
+            )
+            .await?;
+            let publication_refs = client
+                .query_one(
+                    "SELECT array_agg(publication_ref ORDER BY publication_ref) \
+                     FROM historical_event_provenance WHERE chain = 'devcoin'",
+                    &[],
+                )
+                .await?
+                .get::<_, Vec<String>>(0);
+            assert_eq!(
+                publication_refs,
+                vec![
+                    "a30283101f33c8583855669fdffba5fb20730373".to_owned(),
+                    "operator-csv".to_owned(),
+                ]
+            );
             Ok::<_, anyhow::Error>(())
         }
         .await;
+        std::fs::remove_dir_all(&fixture.root)
+            .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
         finish_import_with_cleanup(result, &[&csv_path])
     })
 }
