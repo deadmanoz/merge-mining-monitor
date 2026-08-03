@@ -106,7 +106,16 @@ impl BitcoinCoreParentClassifier {
         header: &Header,
         preflight: ParentPreflight,
     ) -> Result<ParentClassification> {
-        self.classify_parent_deferred(header, std::future::ready(Ok(preflight)))
+        self.classify_parent_deferred_with_policy(header, std::future::ready(Ok(preflight)), false)
+            .await
+    }
+
+    pub async fn classify_parent_strict(
+        &self,
+        header: &Header,
+        preflight: ParentPreflight,
+    ) -> Result<ParentClassification> {
+        self.classify_parent_deferred_with_policy(header, std::future::ready(Ok(preflight)), true)
             .await
     }
 
@@ -117,6 +126,31 @@ impl BitcoinCoreParentClassifier {
         &self,
         header: &Header,
         preflight: F,
+    ) -> Result<ParentClassification>
+    where
+        F: Future<Output = Result<ParentPreflight>>,
+    {
+        self.classify_parent_deferred_with_policy(header, preflight, false)
+            .await
+    }
+
+    pub async fn classify_parent_deferred_strict<F>(
+        &self,
+        header: &Header,
+        preflight: F,
+    ) -> Result<ParentClassification>
+    where
+        F: Future<Output = Result<ParentPreflight>>,
+    {
+        self.classify_parent_deferred_with_policy(header, preflight, true)
+            .await
+    }
+
+    async fn classify_parent_deferred_with_policy<F>(
+        &self,
+        header: &Header,
+        preflight: F,
+        fail_on_rpc_error: bool,
     ) -> Result<ParentClassification>
     where
         F: Future<Output = Result<ParentPreflight>>,
@@ -132,13 +166,20 @@ impl BitcoinCoreParentClassifier {
                 // genuine BTC-orphan candidate, so stamp `core_absence_attested`.
                 // A `stale` result from the inferred-stale path is left untouched.
                 let preflight = preflight.await?;
-                let mut classification = self.classify_core_unknown(header, preflight).await?;
+                let mut classification = self
+                    .classify_core_unknown(header, preflight, fail_on_rpc_error)
+                    .await?;
                 if classification.kind == ParentKind::Unknown {
                     classification.core_absence_attested = true;
                 }
                 return Ok(classification);
             }
             Err(err) => {
+                if fail_on_rpc_error {
+                    return Err(err).with_context(|| {
+                        format!("Bitcoin Core parent-header lookup failed for {candidate_hash}")
+                    });
+                }
                 warn!(error = %err, hash = %candidate_hash, "Bitcoin Core parent-header lookup failed");
                 return Ok(ParentClassification::unknown(header));
             }
@@ -164,7 +205,7 @@ impl BitcoinCoreParentClassifier {
         Ok(classify_core_stale_header(
             header,
             height,
-            self.fetch_competitor(height).await,
+            self.fetch_competitor(height, fail_on_rpc_error).await?,
             coinbase,
         ))
     }
@@ -241,13 +282,20 @@ impl BitcoinCoreParentClassifier {
         &self,
         header: &Header,
         preflight: ParentPreflight,
+        fail_on_rpc_error: bool,
     ) -> Result<ParentClassification> {
         if let Some(known_prev) = preflight.known_prev
             && matches!(known_prev.kind, BlockKind::Canonical | BlockKind::Stale)
             && let Some(prev_height) = known_prev.btc_height
         {
             return self
-                .classify_inferred_stale(header, prev_height, None, known_prev.kind)
+                .classify_inferred_stale(
+                    header,
+                    prev_height,
+                    None,
+                    known_prev.kind,
+                    fail_on_rpc_error,
+                )
                 .await;
         }
 
@@ -258,6 +306,14 @@ impl BitcoinCoreParentClassifier {
                 return Ok(ParentClassification::unknown(header));
             }
             Err(err) => {
+                if fail_on_rpc_error {
+                    return Err(err).with_context(|| {
+                        format!(
+                            "Bitcoin Core predecessor lookup failed for {}",
+                            header.prev_blockhash
+                        )
+                    });
+                }
                 warn!(error = %err, prev_hash = %header.prev_blockhash, "Bitcoin Core predecessor lookup failed");
                 return Ok(ParentClassification::unknown(header));
             }
@@ -273,12 +329,26 @@ impl BitcoinCoreParentClassifier {
         {
             Ok(header) => Some(header),
             Err(err) => {
+                if fail_on_rpc_error {
+                    return Err(err).with_context(|| {
+                        format!(
+                            "Bitcoin Core predecessor header fetch failed for {}",
+                            header.prev_blockhash
+                        )
+                    });
+                }
                 warn!(error = %err, prev_hash = %header.prev_blockhash, "Bitcoin Core predecessor header fetch failed");
                 return Ok(ParentClassification::unknown(header));
             }
         };
-        self.classify_inferred_stale(header, prev_height, predecessor, BlockKind::Canonical)
-            .await
+        self.classify_inferred_stale(
+            header,
+            prev_height,
+            predecessor,
+            BlockKind::Canonical,
+            fail_on_rpc_error,
+        )
+        .await
     }
 
     async fn classify_inferred_stale(
@@ -287,6 +357,7 @@ impl BitcoinCoreParentClassifier {
         prev_height: i32,
         predecessor: Option<ClassifiedHeader>,
         prev_kind: BlockKind,
+        fail_on_rpc_error: bool,
     ) -> Result<ParentClassification> {
         let height = match prev_height.checked_add(1) {
             Some(height) => height,
@@ -297,27 +368,48 @@ impl BitcoinCoreParentClassifier {
             height,
             predecessor,
             prev_kind,
-            self.fetch_competitor(height).await,
+            self.fetch_competitor(height, fail_on_rpc_error).await?,
         ))
     }
 
-    async fn fetch_competitor(&self, height: i32) -> Option<ClassifiedHeader> {
+    async fn fetch_competitor(
+        &self,
+        height: i32,
+        fail_on_rpc_error: bool,
+    ) -> Result<Option<ClassifiedHeader>> {
         let height_u64 = match height.try_into() {
             Ok(height) => height,
-            Err(_) => return None,
+            Err(_) => return Ok(None),
         };
         let hash = match self.source.get_block_hash(height_u64).await {
             Ok(hash) => hash,
+            Err(err)
+                if bitcoin_rpc::is_block_height_out_of_range(&err)
+                    || bitcoin_rpc::is_not_found(&err) =>
+            {
+                return Ok(None);
+            }
             Err(err) => {
+                if fail_on_rpc_error {
+                    return Err(err).with_context(|| {
+                        format!("Bitcoin Core competitor hash fetch failed at {height}")
+                    });
+                }
                 warn!(height, error = %err, "Bitcoin Core same-height competitor hash fetch failed");
-                return None;
+                return Ok(None);
             }
         };
         match self.source.get_header(hash, height).await {
-            Ok(header) => Some(header),
+            Ok(header) => Ok(Some(header)),
+            Err(err) if bitcoin_rpc::is_not_found(&err) => Ok(None),
             Err(err) => {
+                if fail_on_rpc_error {
+                    return Err(err).with_context(|| {
+                        format!("Bitcoin Core competitor header fetch failed for {hash}")
+                    });
+                }
                 warn!(height, hash = %hash, error = %err, "Bitcoin Core same-height competitor header fetch failed");
-                None
+                Ok(None)
             }
         }
     }

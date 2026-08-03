@@ -30,7 +30,7 @@ jq -e '
     and (.source_repo_commit | test("^[0-9a-f]{40}$"))
     and (.publication_manifest_sha256 | test("^[0-9a-f]{64}$"))
     and .total_event_rows == 576662
-    and .aggregate_rows == 20
+    and .aggregate_rows == 21
     and ([.artifacts[] | select(.role == "event")] | length) == 27
     and ([.artifacts[] | select(.role == "aggregate" and .chain == "stale-descendants")] | length) == 1
     and ([.artifacts[].chain] | unique | length) == 28

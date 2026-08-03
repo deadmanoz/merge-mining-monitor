@@ -290,15 +290,6 @@ fn parse_taxonomy_fields(
 ) -> Result<TaxonomyFields, SkipReason> {
     let source_classification = parse_source_classification(record.get(layout.classification))?;
     let validation_status = optional_string(record.get(layout.validation_status));
-    if matches!(
-        source_classification,
-        SourceClassification::Stale | SourceClassification::StaleDescendant
-    ) && !validation_status
-        .as_deref()
-        .is_some_and(has_complete_valid_status_token)
-    {
-        return Err(SkipReason::TaxonomyMismatch);
-    }
     let relevance = optional_string(record.get(layout.relevance));
     let relevance_reason = optional_string(record.get(layout.relevance_reason));
     let category = publication_category(
@@ -309,6 +300,9 @@ fn parse_taxonomy_fields(
         relevance.as_deref().unwrap_or_default(),
         relevance_reason.as_deref().unwrap_or_default(),
     )?;
+    if !validation_status_matches(category, validation_status.as_deref()) {
+        return Err(SkipReason::TaxonomyMismatch);
+    }
     let relevance_selection = match category {
         PublicationCategory::Canonical => None,
         PublicationCategory::Stale => Some(RelevanceSelection::KnownDirectStale),
@@ -336,14 +330,23 @@ fn parse_taxonomy_fields(
     })
 }
 
-fn has_complete_valid_status_token(value: &str) -> bool {
-    let Some(suffix) = value.strip_prefix("VALID") else {
-        return false;
-    };
-    suffix
-        .chars()
-        .next()
-        .is_none_or(|character| character.is_whitespace() || character == '(')
+fn validation_status_matches(category: PublicationCategory, status: Option<&str>) -> bool {
+    match category {
+        PublicationCategory::Stale => status.is_some_and(has_direct_stale_valid_token),
+        PublicationCategory::StaleDescendant => status == Some("VALID_STALE_DESCENDANT"),
+        PublicationCategory::Canonical
+        | PublicationCategory::StrictBtcOrphan
+        | PublicationCategory::WeakBtcOrphan => true,
+    }
+}
+
+fn has_direct_stale_valid_token(value: &str) -> bool {
+    value.strip_prefix("VALID").is_some_and(|suffix| {
+        suffix
+            .chars()
+            .next()
+            .is_none_or(|character| character.is_whitespace() || character == '(')
+    })
 }
 
 pub(super) fn publication_category(
@@ -948,17 +951,15 @@ mod tests {
             .unwrap_err(),
             SkipReason::TaxonomyMismatch
         );
-        let parsed = candidate(
-            "devcoin",
-            &row(TestRow {
-                chain: "devcoin",
-                child_height: "42",
-                classification: "stale_descendant",
-                relevance_reason: "valid_stale_descendant",
-                ..TestRow::default()
-            }),
-        )
-        .unwrap();
+        let input = row(TestRow {
+            chain: "devcoin",
+            child_height: "42",
+            classification: "stale_descendant",
+            relevance_reason: "valid_stale_descendant",
+            ..TestRow::default()
+        })
+        .replacen(",VALID,1d00ffff", ",VALID_STALE_DESCENDANT,1d00ffff", 1);
+        let parsed = candidate("devcoin", &input).unwrap();
         assert_eq!(
             parsed.source_classification,
             SourceClassification::StaleDescendant

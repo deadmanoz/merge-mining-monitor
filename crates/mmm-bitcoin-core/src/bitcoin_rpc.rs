@@ -5,6 +5,8 @@
 //! auth, timeout validation, concurrency limiting, and blocking-task dispatch.
 
 use std::env;
+use std::fmt;
+use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,7 +18,8 @@ use bitcoin::{Block, BlockHash};
 use corepc_client::client_sync::v28::Client as CoreClient;
 use corepc_client::client_sync::{Auth, Error as CoreError};
 use tokio::sync::Semaphore;
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
+use tracing::warn;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 // Verified against jsonrpc 0.18.0 src/http/minreq_http.rs
@@ -24,6 +27,20 @@ const DEFAULT_TIMEOUT_SECS: u64 = 30;
 // upgraded or when corepc-client exposes a timeout constructor.
 const COREPC_MINREQ_HTTP_TIMEOUT_SECS: u64 = 15;
 const DEFAULT_MAX_CONCURRENCY: usize = 4;
+const RPC_MAX_ATTEMPTS: usize = 5;
+const RPC_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
+const RPC_RETRY_MAX_DELAY: Duration = Duration::from_secs(4);
+
+#[derive(Debug)]
+struct RpcCallTimeout;
+
+impl fmt::Display for RpcCallTimeout {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Bitcoin Core RPC timed out")
+    }
+}
+
+impl std::error::Error for RpcCallTimeout {}
 
 #[derive(Clone)]
 pub struct BitcoinCoreRpcClient {
@@ -150,18 +167,111 @@ impl BitcoinCoreRpcClient {
     async fn rpc_call<T, F>(&self, f: F) -> Result<T>
     where
         T: Send + 'static,
-        F: FnOnce() -> Result<T> + Send + 'static,
+        F: Fn() -> Result<T> + Send + Sync + 'static,
     {
-        let _permit = Arc::clone(&self.semaphore)
-            .acquire_owned()
+        self.rpc_call_with_policy(f, RPC_MAX_ATTEMPTS, RPC_RETRY_BASE_DELAY)
             .await
-            .context("acquire Bitcoin Core RPC semaphore")?;
-        let task = tokio::task::spawn_blocking(f);
-        timeout(self.timeout, task)
-            .await
-            .context("Bitcoin Core RPC timed out")?
-            .context("Bitcoin Core RPC blocking task panicked")?
     }
+
+    async fn rpc_call_with_policy<T, F>(
+        &self,
+        f: F,
+        max_attempts: usize,
+        retry_base_delay: Duration,
+    ) -> Result<T>
+    where
+        T: Send + 'static,
+        F: Fn() -> Result<T> + Send + Sync + 'static,
+    {
+        assert!(max_attempts > 0, "RPC retry policy requires an attempt");
+        let f = Arc::new(f);
+        for attempt in 1..=max_attempts {
+            let result = match timeout(self.timeout, async {
+                let permit = Arc::clone(&self.semaphore)
+                    .acquire_owned()
+                    .await
+                    .context("acquire Bitcoin Core RPC semaphore")?;
+                let call = Arc::clone(&f);
+                tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    call()
+                })
+                .await
+                .context("Bitcoin Core RPC blocking task panicked")?
+            })
+            .await
+            {
+                Ok(result) => result,
+                // Dropping the future detaches a started blocking call. Its
+                // owned permit remains held until minreq's shorter timeout
+                // returns, while later attempts still have a bounded deadline
+                // for reacquiring a slot.
+                Err(_) => Err(anyhow::Error::new(RpcCallTimeout)),
+            };
+
+            match result {
+                Ok(value) => return Ok(value),
+                Err(err) if is_transient_rpc_error(&err) && attempt < max_attempts => {
+                    let delay = rpc_retry_delay(attempt, retry_base_delay);
+                    warn!(attempt, max_attempts, ?delay, error = %err, "retrying transient Bitcoin Core RPC failure");
+                    sleep(delay).await;
+                }
+                Err(err) if is_transient_rpc_error(&err) => {
+                    return Err(err).with_context(|| {
+                        format!("Bitcoin Core RPC failed after {attempt} attempts")
+                    });
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        unreachable!("positive RPC attempt count must return from the loop")
+    }
+}
+
+fn rpc_retry_delay(attempt: usize, base: Duration) -> Duration {
+    let exponent = u32::try_from(attempt.saturating_sub(1)).unwrap_or(u32::MAX);
+    let multiplier = 2_u32.checked_pow(exponent).unwrap_or(u32::MAX);
+    base.saturating_mul(multiplier).min(RPC_RETRY_MAX_DELAY)
+}
+
+fn is_transient_rpc_error(err: &anyhow::Error) -> bool {
+    if err.downcast_ref::<RpcCallTimeout>().is_some() {
+        return true;
+    }
+    match err.downcast_ref::<CoreError>() {
+        Some(CoreError::Io(err)) => is_transient_io_error(err),
+        Some(CoreError::JsonRpc(jsonrpc::error::Error::Rpc(err))) => err.code == -28,
+        Some(CoreError::JsonRpc(jsonrpc::error::Error::Transport(transport))) => transport
+            .downcast_ref::<jsonrpc::minreq_http::Error>()
+            .is_some_and(|err| match err {
+                jsonrpc::minreq_http::Error::Minreq(err) => std::error::Error::source(err)
+                    .and_then(|source| source.downcast_ref::<io::Error>())
+                    .is_some_and(is_transient_io_error),
+                jsonrpc::minreq_http::Error::Http(err) => {
+                    matches!(err.status_code, 408 | 425 | 429 | 500..=599)
+                }
+                _ => false,
+            }),
+        _ => false,
+    }
+}
+
+fn is_transient_io_error(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::HostUnreachable
+            | io::ErrorKind::NetworkDown
+            | io::ErrorKind::NetworkUnreachable
+            | io::ErrorKind::NotConnected
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::Interrupted
+            | io::ErrorKind::TimedOut
+            | io::ErrorKind::UnexpectedEof
+            | io::ErrorKind::WouldBlock
+    )
 }
 
 pub(crate) fn coinbase_from_block(block: &Block) -> Result<BitcoinCoreBlockCoinbase> {
@@ -236,6 +346,12 @@ pub(crate) fn is_not_found(err: &anyhow::Error) -> bool {
         .is_some_and(|code| code == -5)
 }
 
+pub(crate) fn is_block_height_out_of_range(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<CoreError>()
+        .and_then(core_rpc_error_code)
+        .is_some_and(|code| code == -8)
+}
+
 fn core_rpc_error_code(err: &CoreError) -> Option<i32> {
     match err {
         CoreError::JsonRpc(jsonrpc::error::Error::Rpc(rpc)) => Some(rpc.code),
@@ -257,6 +373,43 @@ pub(crate) fn test_not_found_error() -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn test_client() -> BitcoinCoreRpcClient {
+        BitcoinCoreRpcClient {
+            client: Arc::new(CoreClient::new("http://127.0.0.1:1")),
+            semaphore: Arc::new(Semaphore::new(1)),
+            max_concurrency: 1,
+            timeout: Duration::from_secs(1),
+        }
+    }
+
+    fn transient_transport_error() -> anyhow::Error {
+        anyhow::Error::new(CoreError::JsonRpc(jsonrpc::error::Error::Transport(
+            Box::new(jsonrpc::minreq_http::Error::Http(
+                jsonrpc::minreq_http::HttpError {
+                    status_code: 503,
+                    body: "test unavailable".to_owned(),
+                },
+            )),
+        )))
+    }
+
+    fn unknown_transport_error() -> anyhow::Error {
+        anyhow::Error::new(CoreError::JsonRpc(jsonrpc::error::Error::Transport(
+            Box::new(io::Error::new(io::ErrorKind::TimedOut, "test timeout")),
+        )))
+    }
+
+    fn warmup_rpc_error() -> anyhow::Error {
+        anyhow::Error::new(CoreError::JsonRpc(jsonrpc::error::Error::Rpc(
+            jsonrpc::error::RpcError {
+                code: -28,
+                message: "Loading block index...".to_owned(),
+                data: None,
+            },
+        )))
+    }
 
     #[test]
     fn rpc_auth_rejects_blank_credentials() {
@@ -280,6 +433,16 @@ mod tests {
             },
         )));
         assert!(!is_not_found(&method_missing));
+
+        let height_out_of_range = anyhow::Error::new(CoreError::JsonRpc(
+            jsonrpc::error::Error::Rpc(jsonrpc::error::RpcError {
+                code: -8,
+                message: "Block height out of range".to_owned(),
+                data: None,
+            }),
+        ));
+        assert!(is_block_height_out_of_range(&height_out_of_range));
+        assert!(!is_not_found(&height_out_of_range));
     }
 
     #[test]
@@ -293,6 +456,142 @@ mod tests {
     fn validates_positive_max_concurrency() {
         assert!(validate_max_concurrency(1).is_ok());
         assert!(validate_max_concurrency(0).is_err());
+    }
+
+    #[test]
+    fn unreachable_network_io_failures_are_transient() {
+        for kind in [
+            io::ErrorKind::HostUnreachable,
+            io::ErrorKind::NetworkDown,
+            io::ErrorKind::NetworkUnreachable,
+        ] {
+            assert!(is_transient_io_error(&io::Error::from(kind)), "{kind:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn retries_transient_transport_failures_until_success() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&attempts);
+        let value = test_client()
+            .rpc_call_with_policy(
+                move || {
+                    if observed.fetch_add(1, Ordering::SeqCst) < 2 {
+                        Err(transient_transport_error())
+                    } else {
+                        Ok(42_u8)
+                    }
+                },
+                3,
+                Duration::ZERO,
+            )
+            .await
+            .unwrap();
+        assert_eq!(value, 42);
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn retries_bitcoin_core_warmup_until_success() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&attempts);
+        let value = test_client()
+            .rpc_call_with_policy(
+                move || {
+                    if observed.fetch_add(1, Ordering::SeqCst) < 2 {
+                        Err(warmup_rpc_error())
+                    } else {
+                        Ok(42_u8)
+                    }
+                },
+                3,
+                Duration::ZERO,
+            )
+            .await
+            .unwrap();
+        assert_eq!(value, 42);
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn reports_transient_failure_after_bounded_attempts() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&attempts);
+        let error = test_client()
+            .rpc_call_with_policy(
+                move || {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    Err::<(), _>(transient_transport_error())
+                },
+                3,
+                Duration::ZERO,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("failed after 3 attempts"));
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn bounds_permit_reacquisition_after_outer_timeout() {
+        let mut client = test_client();
+        client.timeout = Duration::from_millis(1);
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&attempts);
+        let error = timeout(
+            Duration::from_millis(100),
+            client.rpc_call_with_policy(
+                move || {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(200));
+                    Ok(())
+                },
+                2,
+                Duration::ZERO,
+            ),
+        )
+        .await
+        .expect("retry policy must not wait indefinitely for a retained permit")
+        .unwrap_err();
+        assert!(error.to_string().contains("failed after 2 attempts"));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_rpc_failures() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&attempts);
+        let error = test_client()
+            .rpc_call_with_policy(
+                move || {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    Err::<(), _>(test_not_found_error())
+                },
+                5,
+                Duration::ZERO,
+            )
+            .await
+            .unwrap_err();
+        assert!(is_not_found(&error));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_unknown_transport_failures() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&attempts);
+        test_client()
+            .rpc_call_with_policy(
+                move || {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    Err::<(), _>(unknown_transport_error())
+                },
+                5,
+                Duration::ZERO,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
     #[test]

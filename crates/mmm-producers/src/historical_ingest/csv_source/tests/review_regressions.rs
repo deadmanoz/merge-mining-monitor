@@ -72,6 +72,65 @@ fn stale_validation_requires_a_complete_valid_token() {
 }
 
 #[test]
+fn stale_descendant_requires_its_exact_validation_status() {
+    for invalid in ["VALID", "VALID_STALE_DESCENDANT_EXTRA"] {
+        let input = row(TestRow {
+            chain: "namecoin",
+            child_height: "42",
+            classification: "stale_descendant",
+            relevance_reason: "valid_stale_descendant",
+            ..TestRow::default()
+        })
+        .replacen(",VALID,1d00ffff", &format!(",{invalid},1d00ffff"), 1);
+        assert_eq!(
+            candidate("namecoin", &input).unwrap_err(),
+            SkipReason::TaxonomyMismatch,
+            "status {invalid:?}"
+        );
+    }
+
+    let input = row(TestRow {
+        chain: "namecoin",
+        child_height: "42",
+        classification: "stale_descendant",
+        relevance_reason: "valid_stale_descendant",
+        ..TestRow::default()
+    })
+    .replacen(",VALID,1d00ffff", ",VALID_STALE_DESCENDANT,1d00ffff", 1);
+    assert!(candidate("namecoin", &input).is_ok());
+}
+
+#[test]
+fn unknown_stale_representation_uses_the_resolved_category_status_contract() {
+    for (relevance_reason, valid_status, invalid_status) in [
+        ("valid_direct_stale", "VALID", "VALID_STALE_DESCENDANT"),
+        ("valid_stale_descendant", "VALID_STALE_DESCENDANT", "VALID"),
+    ] {
+        let base = row(TestRow {
+            chain: "namecoin",
+            child_height: "42",
+            classification: "unknown",
+            relevance_reason,
+            ..TestRow::default()
+        });
+        let valid = base.replacen(",VALID,1d00ffff", &format!(",{valid_status},1d00ffff"), 1);
+        assert!(
+            candidate("namecoin", &valid).is_ok(),
+            "reason {relevance_reason:?} with status {valid_status:?}"
+        );
+
+        for invalid in [invalid_status, ""] {
+            let input = base.replacen(",VALID,1d00ffff", &format!(",{invalid},1d00ffff"), 1);
+            assert_eq!(
+                candidate("namecoin", &input).unwrap_err(),
+                SkipReason::TaxonomyMismatch,
+                "reason {relevance_reason:?} with status {invalid:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn header_only_child_evidence_derives_an_exact_identity() {
     let (expected_hash, header) = child_identity();
     let parsed = candidate(

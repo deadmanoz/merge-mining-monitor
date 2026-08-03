@@ -35,7 +35,7 @@ Chain-specific extras:
 |---|---|
 | `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` | Postgres connection. |
 | `BITCOIN_RPC_URL` / `BITCOIN_RPC_USER` / `BITCOIN_RPC_PASSWORD` | Optional Bitcoin Core classifier and backbone source. Unset disables parent classification for child-chain capture. |
-| `BITCOIN_RPC_TIMEOUT_SECS` / `BITCOIN_RPC_MAX_CONCURRENCY` | Bitcoin Core client controls. |
+| `BITCOIN_RPC_TIMEOUT_SECS` / `BITCOIN_RPC_MAX_CONCURRENCY` | Bitcoin Core client controls. Transient transport failures and brief Bitcoin Core warmup responses use five attempts with capped exponential backoff; node readiness remains a deployment prerequisite. Other RPC, authentication, decoding, and integrity errors are not retried. |
 | `SERVE_BIND_ADDR` / `SERVE_DB_POOL_SIZE` / `SERVE_WWW_DIR` | Read API and static frontend serving. |
 | `MMM_POOLS_DIR` | Optional local `bitcoin-data/mining-pools/pools` checkout used by `just gen-pool-snapshot` when no path argument is provided. |
 | `MERGE_MINING_RESEARCH_DIR` | Local `merge-mining-research` checkout at the pinned publication commit, used by `import-all`, `import-dataset`, and manifest generation. |
