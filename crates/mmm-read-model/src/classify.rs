@@ -76,9 +76,10 @@ impl From<KnownBlockContextCompat> for mmm_bitcoin_core::KnownBlockContext {
 /// this parent header. Three guards in the WHERE clause are required for correctness:
 /// `revoked_at IS NULL` (revoked evidence is inert), `btc_parent_kind <> 'near'`
 /// (near parents are out of scope and never reclassified), and
-/// `($2 <> 'unknown' OR btc_parent_kind = 'unknown')` so a transient `unknown`
-/// never demotes a previously-proven canonical/stale/error-block row (demote bad evidence
-/// only by explicit revoke). Bails if a canonical/stale/error-block result carries no
+/// `($2 <> 'unknown' OR btc_parent_kind IN ('unknown', 'error_block'))` so a transient
+/// `unknown` never demotes a previously-proven canonical/stale row. Error-block membership
+/// is the exception: a catalogue correction must demote a no-longer-listed entry. Bails if a
+/// canonical/stale/error-block result carries no
 /// height. The `COALESCE` on `difficulty_epoch_ok` preserves a proven
 /// wrong-epoch `false` across a transient re-resolve (see the inline note).
 pub(crate) async fn apply_event_classification<C: GenericClient>(
@@ -119,7 +120,7 @@ pub(crate) async fn apply_event_classification<C: GenericClient>(
              WHERE btc_parent_header_hash = $1 \
                AND revoked_at IS NULL \
                AND btc_parent_kind <> 'near' \
-               AND ($2 <> 'unknown' OR btc_parent_kind = 'unknown')",
+               AND ($2 <> 'unknown' OR btc_parent_kind IN ('unknown', 'error_block'))",
             &[
                 &event.btc_parent_header_hash,
                 &kind,
@@ -301,11 +302,12 @@ async fn resolve_effective_bitcoin_miner_pool_id<C: GenericClient>(
 /// Resolve the classification actually written, preserving proven state under a
 /// transient `unknown`. A bare `unknown` (e.g. Core off or an RPC failure) must
 /// not erase a real verdict, so the fallback order is: persisted
-/// canonical/stale/error-block from `block`, then the event's own canonical claim
+/// canonical/stale from `block`, then the event's own canonical claim
 /// (`classification_from_event`), then for an event already marked stale an
 /// `unknown` that still carries the incoming `difficulty_epoch_ok`. Any
-/// non-unknown result passes through unchanged. Operators clear bad evidence by
-/// explicit revoke, not by letting a transient unknown demote it.
+/// non-unknown result passes through unchanged. Operators clear bad
+/// canonical/stale evidence by explicit revoke; a catalogue correction demotes
+/// an error block during a full rescan.
 pub(crate) async fn effective_classification<C: GenericClient>(
     client: &C,
     event: &MergeMiningEvent,
@@ -366,12 +368,13 @@ pub(crate) fn classification_from_event(
 
 /// Persisted-form classification: reconstruct a `ParentClassification` from the
 /// already-derived `block` row(s), used to hold proven state across a transient
-/// `unknown`. Canonical/stale/error-block persisted blocks qualify (unknown returns
-/// `None`). For a stale block the competitor must still resolve to a persisted
-/// canonical block, else `None` so a half-rebuilt stale relationship is not
-/// re-asserted. `core_attested`/`live_observed` are carried from the persisted
-/// row but `core_absence_attested` is false: this is replay of stored evidence,
-/// not a fresh Core absence consultation, so it must not retrigger orphan
+/// `unknown`. Canonical/stale blocks qualify; an error block qualifies only
+/// while its hash remains in the pinned catalogue (unknown returns `None`). For
+/// a stale block the competitor must still resolve to a persisted canonical
+/// block, else `None` so a half-rebuilt stale relationship is not re-asserted.
+/// `core_attested`/`live_observed` are carried from the persisted row but
+/// `core_absence_attested` is false: this is replay of stored evidence, not a
+/// fresh Core absence consultation, so it must not retrigger orphan
 /// reclassification.
 pub(crate) async fn persisted_classification_from_block<C: GenericClient>(
     client: &C,
@@ -386,6 +389,11 @@ pub(crate) async fn persisted_classification_from_block<C: GenericClient>(
         persisted.kind,
         BlockKind::Canonical | BlockKind::Stale | BlockKind::ErrorBlock
     ) {
+        return Ok(None);
+    }
+    if persisted.kind == BlockKind::ErrorBlock
+        && mmm_capture::error_blocks::lookup(&event.btc_parent_header_hash).is_none()
+    {
         return Ok(None);
     }
     let kind = match persisted.kind {

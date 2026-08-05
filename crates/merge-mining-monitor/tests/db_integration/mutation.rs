@@ -334,6 +334,85 @@ async fn full_reconcile_reclassifies_legacy_catalogue_rows() -> Result<()> {
 }
 
 #[tokio::test]
+async fn full_reconcile_demotes_removed_catalogue_membership() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (_, namecoin) = mutation_pool_snapshot(&mut client).await?;
+        let header = header_meeting_bits_with_prev(
+            0x207f_ffff,
+            1_700_000_400,
+            0xcd,
+            bitcoin::BlockHash::all_zeros(),
+        );
+        let parent_hash = header.block_hash().to_byte_array().to_vec();
+        assert!(mmm_capture::error_blocks::lookup(&parent_hash).is_none());
+        let mut payload = crafted_unknown_payload(header, 710_012, 0x53, 400)?;
+        let event_id = capture_test_payload(
+            &mut client,
+            namecoin,
+            &ConfiguredParentClassifier::Disabled,
+            &mut payload,
+        )
+        .await?;
+
+        client
+            .execute(
+                "UPDATE merge_mining_event \
+                 SET btc_parent_kind = 'error_block', btc_parent_height = 946213 \
+                 WHERE id = $1",
+                &[&event_id],
+            )
+            .await?;
+        client
+            .execute(
+                "UPDATE block \
+                 SET kind = 'error_block', btc_height = 946213, \
+                     btc_height_source = 'error-block-catalog', \
+                     canonical_competitor_hash = NULL, \
+                     error_block_reason = 'catalogue_removed_test', \
+                     btc_orphan_class = NULL \
+                 WHERE btc_header_hash = $1",
+                &[&parent_hash],
+            )
+            .await?;
+        rebuild_source_health(&mut client).await?;
+
+        let repaired = run_reconcile_read_model(
+            &mut client,
+            &ConfiguredParentClassifier::Disabled,
+            ReconcileReadModelConfig {
+                missing_only: false,
+                ..ReconcileReadModelConfig::default()
+            },
+        )
+        .await?;
+        assert_eq!(repaired, 1);
+        let event: (String, Option<i32>) = client
+            .query_one(
+                "SELECT btc_parent_kind, btc_parent_height \
+                 FROM merge_mining_event WHERE id = $1",
+                &[&event_id],
+            )
+            .await
+            .map(|row| (row.get(0), row.get(1)))?;
+        assert_eq!(event, ("unknown".to_owned(), None));
+        let block: (String, Option<String>) = client
+            .query_one(
+                "SELECT kind, error_block_reason FROM block WHERE btc_header_hash = $1",
+                &[&parent_hash],
+            )
+            .await
+            .map(|row| (row.get(0), row.get(1)))?;
+        assert_eq!(block, ("unknown".to_owned(), None));
+        assert_source_health_matches_recompute(
+            &client,
+            "after full-scan removed error-block catalogue membership",
+        )
+        .await?;
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn historical_cascade_failure_retains_durable_seeds_for_resume() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let changed_hash = vec![0x31; 32];
