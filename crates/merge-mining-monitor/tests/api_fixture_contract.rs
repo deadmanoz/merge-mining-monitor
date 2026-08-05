@@ -40,7 +40,22 @@ fn assert_block_fixture_contract(file: &str, fixture: &Value) {
         block.contains_key("error_block_reason"),
         "{file} block must include nullable error_block_reason"
     );
-    if block.get("kind").and_then(Value::as_str) != Some("error_block") {
+    if block.get("kind").and_then(Value::as_str) == Some("error_block") {
+        assert!(
+            block["error_block_reason"]
+                .as_str()
+                .is_some_and(|reason| !reason.is_empty()),
+            "{file} error block must carry a non-empty error_block_reason"
+        );
+        assert!(
+            fixture["competition"].is_null(),
+            "{file} error block must not carry a stale competition"
+        );
+        assert!(
+            fixture["stale_branch"].is_null(),
+            "{file} error block must not carry a stale branch"
+        );
+    } else {
         assert!(
             block["error_block_reason"].is_null(),
             "{file} non-error block must carry error_block_reason: null"
