@@ -279,6 +279,11 @@ fn classified_import_decision(
         ParentKind::Canonical | ParentKind::Stale => {
             ImportDecision::Skip(SkipReason::ClassificationMismatch)
         }
+        // The normalized publication deliberately contains only final valid
+        // evidence. A catalogue match in an override is not a stale/orphan
+        // row, so refuse it rather than importing invalid work through this
+        // valid-evidence path.
+        ParentKind::ErrorBlock => ImportDecision::Skip(SkipReason::UnsupportedClassification),
         ParentKind::Near => ImportDecision::Skip(SkipReason::Unclassified),
         ParentKind::Unknown => {
             if matches!(

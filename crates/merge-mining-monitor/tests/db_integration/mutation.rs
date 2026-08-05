@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use bitcoin::block::Header;
 use bitcoin::hashes::Hash as _;
+use bitcoin::{block::Header, consensus::deserialize};
 use mmm_bitcoin_core::BitcoinCoreBlockCoinbase;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier};
 use mmm_capture::capture::{
@@ -130,9 +130,89 @@ fn crafted_unknown_payload(
     )
 }
 
+fn catalogued_error_block_header() -> Result<Header> {
+    // Header for the `time_below_mtp` entry at height 946,213. The compact
+    // catalogue only carries its identity and rejection reason; this fixture
+    // exercises the full capture and read-model path against the exact header.
+    Ok(deserialize(&hex::decode(
+        "00a0032bb223f1aad55892df75d0ff4712f0543959c5065ab89d000000000000000000005eba715327fc82c765fa651bd6226c4b4a6a846cd60197bcd76d47ada0611cfce335df696913021725806e70",
+    )?)?)
+}
+
 // These tests exercise read_model::mutation transaction entry points: capture,
 // revoke/restore, Core writes, and event-pool cascade updates. Each scenario
 // pairs table assertions with the source_health recompute oracle.
+
+#[tokio::test]
+async fn mutation_catalogued_error_block_is_never_stale_or_unknown() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (_, namecoin) = mutation_pool_snapshot(&mut client).await?;
+        let header = catalogued_error_block_header()?;
+        let parent_hash = header.block_hash().to_byte_array().to_vec();
+        let mut payload = crafted_unknown_payload(header, 946_213, 0xe9, 1_776_876_260)?;
+        assert_eq!(payload.btc_parent_kind, ParentKind::ErrorBlock);
+        assert_eq!(payload.btc_parent_height, Some(946_213));
+
+        let classifier = ConfiguredParentClassifier::Disabled;
+        capture_test_payload(&mut client, namecoin, &classifier, &mut payload).await?;
+
+        let event: (String, Option<i32>) = client
+            .query_one(
+                "SELECT btc_parent_kind, btc_parent_height FROM merge_mining_event \
+                 WHERE btc_parent_header_hash = $1",
+                &[&parent_hash],
+            )
+            .await
+            .map(|row| (row.get(0), row.get(1)))?;
+        assert_eq!(event, ("error_block".to_owned(), Some(946_213)));
+
+        let block: (String, i32, String, Option<String>) = client
+            .query_one(
+                "SELECT kind, btc_height, btc_height_source, error_block_reason \
+                 FROM block WHERE btc_header_hash = $1",
+                &[&parent_hash],
+            )
+            .await
+            .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))?;
+        assert_eq!(
+            block,
+            (
+                "error_block".to_owned(),
+                946_213,
+                "error-block-catalog".to_owned(),
+                Some("time_below_mtp".to_owned()),
+            )
+        );
+
+        let display_hash = bitcoin::BlockHash::from_byte_array(
+            parent_hash
+                .clone()
+                .try_into()
+                .expect("parent hash must be 32 bytes"),
+        )
+        .to_string();
+        let detail = mmm_api::projection::block(&client, &display_hash)
+            .await
+            .map_err(|error| anyhow::anyhow!("error-block API projection failed: {error:?}"))?;
+        assert_eq!(detail.block.kind, "error_block");
+        assert_eq!(
+            detail.block.error_block_reason.as_deref(),
+            Some("time_below_mtp")
+        );
+
+        let error_block_count: i64 = client
+            .query_one(
+                "SELECT error_block_parents FROM source_health WHERE source_id = $1",
+                &[&namecoin],
+            )
+            .await?
+            .get(0);
+        assert_eq!(error_block_count, 1);
+        assert_source_health_matches_recompute(&client, "after catalogued error-block capture")
+            .await?;
+        Ok::<_, anyhow::Error>(())
+    })
+}
 
 #[tokio::test]
 async fn historical_cascade_failure_retains_durable_seeds_for_resume() -> Result<()> {

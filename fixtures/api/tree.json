@@ -10,6 +10,7 @@
     "context": "exact",
     "kinds": [
       "canonical",
+      "error_block",
       "near",
       "stale",
       "unknown"
@@ -621,6 +622,7 @@
     "kinds": [
       "canonical",
       "stale",
+      "error_block",
       "unknown",
       "near"
     ],

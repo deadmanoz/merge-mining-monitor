@@ -22,7 +22,7 @@ test("height shared link requests compact tree height automatically", async ({ p
   expect(query.has("to_height")).toBe(false);
 });
 
-test("tree controls show only canonical stale and orphan signal filters", async ({ page }) => {
+test("tree controls show canonical, stale, error-block, and orphan signal filters", async ({ page }) => {
   const treeRequests = [];
   await stubApi(page, treeRequests);
 
@@ -33,10 +33,11 @@ test("tree controls show only canonical stale and orphan signal filters", async 
 
   const filters = page.locator("#filters");
   await expect(filters.locator("legend", { hasText: "Classification" })).toBeVisible();
-  await expect(filters.locator('input[name="kind"]')).toHaveCount(2);
+  await expect(filters.locator('input[name="kind"]')).toHaveCount(3);
   await expect(filters.locator('input[name="classification"]')).toHaveCount(2);
   await expect(filters.getByText("Canonical", { exact: true })).toBeVisible();
   await expect(filters.getByText("Stale", { exact: true })).toBeVisible();
+  await expect(filters.getByText("Error block", { exact: true })).toBeVisible();
   await expect(filters.getByText("Strict orphan", { exact: true })).toBeVisible();
   await expect(filters.getByText("Weak orphan", { exact: true })).toBeVisible();
   await expect(filters.getByText("Unknown", { exact: true })).toHaveCount(0);
@@ -47,6 +48,7 @@ test("tree controls show only canonical stale and orphan signal filters", async 
   const legend = page.locator("#tree-legend-body");
   await expect(legend.getByText("canonical", { exact: true })).toBeVisible();
   await expect(legend.getByText("stale", { exact: true })).toBeVisible();
+  await expect(legend.getByText("error block", { exact: true })).toBeVisible();
   await expect(legend.getByText("strict orphan", { exact: true })).toBeVisible();
   await expect(legend.getByText("weak orphan", { exact: true })).toBeVisible();
   await expect(legend.getByText("near", { exact: true })).toHaveCount(0);

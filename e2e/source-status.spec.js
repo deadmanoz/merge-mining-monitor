@@ -13,7 +13,7 @@ function sourceFixture() {
     kind: "auxpow",
     instance: null,
     created_at: 1700000000,
-    counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0 },
+    counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0, error_block: 0 },
   };
   return sourcesPayload([
       {
@@ -33,7 +33,7 @@ function sourceFixture() {
           error_code: null,
           error_height: null,
         },
-        counts: { events: 4, near: 1, unknown: 5, canonical: 1, stale: 1, strict_orphan: 3, weak_orphan: 2 },
+        counts: { events: 4, near: 1, unknown: 5, canonical: 1, stale: 1, strict_orphan: 3, weak_orphan: 2, error_block: 1 },
       },
       {
         ...base,
@@ -52,7 +52,7 @@ function sourceFixture() {
           error_code: null,
           error_height: null,
         },
-        counts: { events: 2, near: 1, unknown: 1, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0 },
+        counts: { events: 2, near: 1, unknown: 1, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0, error_block: 0 },
       },
       {
         id: 3,
@@ -73,7 +73,7 @@ function sourceFixture() {
           error_code: null,
           error_height: null,
         },
-        counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0 },
+        counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0, error_block: 0 },
       },
       {
         ...base,
@@ -92,7 +92,7 @@ function sourceFixture() {
           error_code: "rpc_failed",
           error_height: 600000,
         },
-        counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0 },
+        counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0, error_block: 0 },
       },
       {
         ...base,
@@ -111,7 +111,7 @@ function sourceFixture() {
           error_code: null,
           error_height: null,
         },
-        counts: { events: 6, near: 1, unknown: 1, canonical: 3, stale: 1, strict_orphan: 0, weak_orphan: 0 },
+        counts: { events: 6, near: 1, unknown: 1, canonical: 3, stale: 1, strict_orphan: 0, weak_orphan: 0, error_block: 0 },
       },
       {
         ...base,
@@ -130,7 +130,7 @@ function sourceFixture() {
           error_code: null,
           error_height: null,
         },
-        counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0 },
+        counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0, error_block: 0 },
       },
       {
         ...base,
@@ -149,7 +149,7 @@ function sourceFixture() {
           error_code: null,
           error_height: null,
         },
-        counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0 },
+        counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0, error_block: 0 },
       },
       {
         ...base,
@@ -168,7 +168,7 @@ function sourceFixture() {
           error_code: null,
           error_height: null,
         },
-        counts: { events: 68, near: 0, unknown: 0, canonical: 68, stale: 0, strict_orphan: 0, weak_orphan: 0 },
+        counts: { events: 68, near: 0, unknown: 0, canonical: 68, stale: 0, strict_orphan: 0, weak_orphan: 0, error_block: 0 },
       },
       {
         ...base,
@@ -187,7 +187,7 @@ function sourceFixture() {
           error_code: null,
           error_height: null,
         },
-        counts: { events: 11, near: 0, unknown: 0, canonical: 11, stale: 0, strict_orphan: 0, weak_orphan: 0 },
+        counts: { events: 11, near: 0, unknown: 0, canonical: 11, stale: 0, strict_orphan: 0, weak_orphan: 0, error_block: 0 },
       },
       {
         ...base,
@@ -206,7 +206,7 @@ function sourceFixture() {
           error_code: null,
           error_height: null,
         },
-        counts: { events: 7, near: 0, unknown: 0, canonical: 7, stale: 0, strict_orphan: 0, weak_orphan: 0 },
+        counts: { events: 7, near: 0, unknown: 0, canonical: 7, stale: 0, strict_orphan: 0, weak_orphan: 0, error_block: 0 },
       },
       {
         ...base,
@@ -225,7 +225,7 @@ function sourceFixture() {
           error_code: null,
           error_height: null,
         },
-        counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0 },
+        counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0, error_block: 0 },
       },
       {
         ...base,
@@ -244,7 +244,7 @@ function sourceFixture() {
           error_code: null,
           error_height: null,
         },
-        counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0 },
+        counts: { events: 0, near: 0, unknown: 0, canonical: 0, stale: 0, strict_orphan: 0, weak_orphan: 0, error_block: 0 },
       },
     ]);
 }
@@ -493,14 +493,15 @@ test("source info dialog Capture tab shows derivation, provenance, operations, a
   await expect(capture.locator('dt:text-is("Progress") + dd')).toHaveText("700,000");
   await expect(capture.locator('dt:text-is("Updated")')).toHaveCount(1);
 
-  // The Current Evidence Counts rows are Events / Canonical / Stale / Strict
-  // orphans / Weak orphans.
-  for (const label of ["Events", "Canonical", "Stale", "Strict orphans", "Weak orphans"]) {
+  // The Current Evidence Counts rows keep catalogued invalid work separate
+  // from valid canonical, stale, and orphan evidence.
+  for (const label of ["Events", "Canonical", "Stale", "Error blocks", "Strict orphans", "Weak orphans"]) {
     await expect(capture.locator("dt").filter({ hasText: new RegExp(`^${label}$`) })).toHaveCount(1);
   }
   // Strict/weak values map straight from counts.strict_orphan / counts.weak_orphan.
   await expect(capture.locator('dt:text-is("Strict orphans") + dd')).toHaveText("3");
   await expect(capture.locator('dt:text-is("Weak orphans") + dd')).toHaveText("2");
+  await expect(capture.locator('dt:text-is("Error blocks") + dd')).toHaveText("1");
 
   await expect(capture.locator('dt:text-is("Unknown")')).toHaveCount(0);
   await expect(capture.locator('dt:text-is("Near")')).toHaveCount(0);

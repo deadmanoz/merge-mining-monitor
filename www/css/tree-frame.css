@@ -123,12 +123,14 @@
 
 .kind-canonical { color: var(--canonical); }
 .kind-stale { color: var(--stale); }
+.kind-error_block { color: var(--error_block); }
 .kind-near { color: var(--near); }
 .kind-unknown { color: var(--unknown); }
 .kind-context { color: var(--context); }
 
 .fill-canonical { background: var(--canonical); }
 .fill-stale { background: var(--stale); }
+.fill-error_block { background: var(--error_block); }
 .fill-near { background: var(--near); }
 .fill-unknown { background: var(--unknown); }
 .fill-context { background: var(--context); }

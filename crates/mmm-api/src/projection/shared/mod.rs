@@ -434,10 +434,11 @@ pub(super) fn group_sources(rows: &[SourceOnlyRow]) -> HashMap<Vec<u8>, Vec<Sour
 /// Parse a `btc_parent_kind` / `block.kind` db enum string into ParentKind,
 /// erroring on an unrecognized value (never silently coerced). API-local
 /// twin of mmm-read-model's parser; the api does not depend on the writer
-/// crate (constraint #1), and this maps four fixed db literals.
+/// crate (constraint #1), and this maps five fixed db literals.
 pub(super) fn parent_kind_from_db(raw: &str) -> Result<ParentKind> {
     match raw {
         "canonical" => Ok(ParentKind::Canonical),
+        "error_block" => Ok(ParentKind::ErrorBlock),
         "near" => Ok(ParentKind::Near),
         "stale" => Ok(ParentKind::Stale),
         "unknown" => Ok(ParentKind::Unknown),

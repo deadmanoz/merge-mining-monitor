@@ -572,6 +572,9 @@ pub(crate) fn classify_inferred_stale_with_competitor(
         height_source: Some(match prev_kind {
             BlockKind::Canonical => HeightSource::PrevCanonical,
             BlockKind::Stale => HeightSource::PrevStale,
+            BlockKind::ErrorBlock => {
+                unreachable!("error-block predecessor is not eligible for stale inference")
+            }
             BlockKind::Unknown => unreachable!("unknown predecessor kind is not classified"),
         }),
         prev_hash: header.prev_blockhash.to_byte_array().to_vec(),

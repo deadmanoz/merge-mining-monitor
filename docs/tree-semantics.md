@@ -93,8 +93,9 @@ yield the same response. The backend produces the collapsed-context fields
 500-node cap that yields `range_too_large`) with the following procedure:
 
 1. Build the candidate node set for the requested range and filters.
-2. Never strip near nodes, unknown nodes, stale branch members, stale canonical
-   competitors, or direct parents needed to attach stale roots.
+2. Never strip near nodes, unknown nodes, selected error blocks, stale branch
+   members, stale canonical competitors, or direct parents needed to attach
+   stale roots.
 3. Apply `min_sources` to evidence nodes, not canonical context nodes.
 4. Include all members of a stale branch when any member satisfies filters.
 5. Collapse eligible canonical-only spans by keeping their visible boundaries.

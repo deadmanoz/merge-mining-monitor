@@ -134,6 +134,7 @@ struct BlockInput {
     btc_coinbase_script: Option<Vec<u8>>,
     btc_coinbase_outputs: Option<Vec<u8>>,
     btc_coinbase_status: CoreCoinbaseStatus,
+    error_block_reason: Option<String>,
     canonical_competitor_hash: Option<Vec<u8>>,
     total_attestations: i32,
     distinct_sources: i32,
@@ -145,7 +146,7 @@ struct BlockInput {
     first_attested_at: Option<i64>,
     last_attested_at: Option<i64>,
     /// Derived orphan refinement for kind='unknown' blocks; NULL (None) for
-    /// canonical/stale and for pending/unclassified unknowns. Written in the same
+    /// canonical/stale/error-block and for pending/unclassified unknowns. Written in the same
     /// statement as `kind` so the `btc_orphan_class IS NULL OR kind='unknown'`
     /// CHECK is never transiently violated.
     btc_orphan_class: Option<String>,
@@ -410,12 +411,20 @@ pub(crate) async fn classify_payload_parent<C: GenericClient>(
     payload: &mut MergeMiningEventPayload,
     classifier: &ConfiguredParentClassifier,
 ) -> Result<Option<ParentClassification>> {
-    if !payload.pow_validates_btc_target || !classifier.is_enabled() {
+    if !payload.pow_validates_btc_target {
         return Ok(None);
     }
 
     let header: Header = deserialize(&payload.btc_parent_header_bytes)
         .context("deserialize payload parent header for classification")?;
+    if let Some(error_block) = mmm_capture::error_blocks::lookup(&payload.btc_parent_header_hash) {
+        let classification = ParentClassification::error_block(&header, error_block.height);
+        apply_classification_proof(payload, classification.to_proof())?;
+        return Ok(Some(classification));
+    }
+    if !classifier.is_enabled() {
+        return Ok(None);
+    }
     let preflight = load_parent_preflight(client, &payload.btc_parent_prev_header_hash).await?;
     let classification = classifier.classify_parent(&header, preflight).await?;
     apply_classification_proof(payload, classification.to_proof())?;

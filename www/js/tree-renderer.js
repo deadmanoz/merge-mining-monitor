@@ -55,7 +55,7 @@ function blockLegendRows(nodeKinds) {
     } else if (kind === "near") {
       continue;
     } else {
-      rows.push({ label: kind, swatchClass: `fill-${kind}` });
+      rows.push({ label: kind.replaceAll("_", " "), swatchClass: `fill-${kind}` });
     }
   }
   return rows;

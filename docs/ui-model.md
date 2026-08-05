@@ -4,7 +4,7 @@
 > the block detail drawer, flanked by collapsible, drag-resizable rails. The
 > left Controls rail starts with direct Height and native UTC Date/Time
 > tree lookup controls, followed by Classification and Source controls.
-> Canonical and stale are client-side highlights that fade non-matching blocks
+> Canonical, stale, and catalogued error blocks are client-side highlights that fade non-matching blocks
 > rather than refetch; strict and weak orphan are the server-side orphan
 > signal. The detail drawer starts collapsed and auto-expands on selection.
 > A topbar switcher selects between the header tree, the Header Time Delta

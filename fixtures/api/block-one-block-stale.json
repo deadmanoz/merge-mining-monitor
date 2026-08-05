@@ -6,6 +6,7 @@
     "height": 700004,
     "kind": "stale",
     "btc_orphan_class": null,
+"error_block_reason": null,
     "coinbase_tag": null,
     "header": {
       "version": 536870912,

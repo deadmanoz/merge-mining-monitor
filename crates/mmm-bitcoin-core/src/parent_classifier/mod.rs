@@ -33,6 +33,7 @@ pub enum HeightSource {
     BitcoinCore,
     PrevCanonical,
     PrevStale,
+    ErrorBlockCatalog,
 }
 
 impl HeightSource {
@@ -41,6 +42,7 @@ impl HeightSource {
             Self::BitcoinCore => "bitcoin-core",
             Self::PrevCanonical => "prev-canonical",
             Self::PrevStale => "prev-stale",
+            Self::ErrorBlockCatalog => "error-block-catalog",
         }
     }
 
@@ -49,6 +51,7 @@ impl HeightSource {
             "bitcoin-core" => Ok(Self::BitcoinCore),
             "prev-canonical" => Ok(Self::PrevCanonical),
             "prev-stale" => Ok(Self::PrevStale),
+            "error-block-catalog" => Ok(Self::ErrorBlockCatalog),
             other => bail!("unknown btc_height_source {other:?}"),
         }
     }
@@ -57,7 +60,7 @@ impl HeightSource {
 /// Persisted state stored on `block.kind`. Looks like a near-duplicate of
 /// `mmm_capture::capture::ParentKind`, but the two model different DB CHECK
 /// domains, not the same vocabulary twice: `block.kind` (this enum) allows
-/// only `'canonical'|'stale'|'unknown'`, while `merge_mining_event.
+/// all BTC-PoW-valid states, while `merge_mining_event.
 /// btc_parent_kind` (`ParentKind`) additionally allows `'near'`, because a
 /// `block` row only ever tracks a real BTC-PoW-valid header (a `Near` header
 /// is a child-chain artifact, never persisted as `block` state).
@@ -71,6 +74,7 @@ impl HeightSource {
 pub enum BlockKind {
     Canonical,
     Stale,
+    ErrorBlock,
     Unknown,
 }
 
@@ -79,6 +83,7 @@ impl BlockKind {
         match self {
             Self::Canonical => "canonical",
             Self::Stale => "stale",
+            Self::ErrorBlock => "error_block",
             Self::Unknown => "unknown",
         }
     }
@@ -87,6 +92,7 @@ impl BlockKind {
         match value {
             "canonical" => Ok(Self::Canonical),
             "stale" => Ok(Self::Stale),
+            "error_block" => Ok(Self::ErrorBlock),
             "unknown" => Ok(Self::Unknown),
             other => bail!("unknown block.kind {other:?}"),
         }
@@ -144,6 +150,25 @@ impl ParentClassification {
             kind: ParentKind::Unknown,
             height: None,
             height_source: None,
+            prev_hash: header.prev_blockhash.to_byte_array().to_vec(),
+            canonical_predecessor_header: None,
+            canonical_competitor_header: None,
+            canonical_competitor_hash: None,
+            coinbase: None,
+            difficulty_epoch_ok: None,
+            live_observed: false,
+            core_attested: false,
+            core_absence_attested: false,
+        }
+    }
+
+    /// Classification supplied by the pinned offline-validated error-block
+    /// registry. It never claims Core attestation or a canonical competitor.
+    pub fn error_block(header: &Header, height: i32) -> Self {
+        Self {
+            kind: ParentKind::ErrorBlock,
+            height: Some(height),
+            height_source: Some(HeightSource::ErrorBlockCatalog),
             prev_hash: header.prev_blockhash.to_byte_array().to_vec(),
             canonical_predecessor_header: None,
             canonical_competitor_header: None,

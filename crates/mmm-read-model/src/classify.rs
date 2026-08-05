@@ -77,8 +77,8 @@ impl From<KnownBlockContextCompat> for mmm_bitcoin_core::KnownBlockContext {
 /// `revoked_at IS NULL` (revoked evidence is inert), `btc_parent_kind <> 'near'`
 /// (near parents are out of scope and never reclassified), and
 /// `($2 <> 'unknown' OR btc_parent_kind = 'unknown')` so a transient `unknown`
-/// never demotes a previously-proven canonical/stale row (demote bad evidence
-/// only by explicit revoke). Bails if a canonical/stale result carries no
+/// never demotes a previously-proven canonical/stale/error-block row (demote bad evidence
+/// only by explicit revoke). Bails if a canonical/stale/error-block result carries no
 /// height. The `COALESCE` on `difficulty_epoch_ok` preserves a proven
 /// wrong-epoch `false` across a transient re-resolve (see the inline note).
 pub(crate) async fn apply_event_classification<C: GenericClient>(
@@ -88,22 +88,22 @@ pub(crate) async fn apply_event_classification<C: GenericClient>(
 ) -> Result<()> {
     let kind = classification.kind.as_db_str();
     let height = match classification.kind {
-        ParentKind::Canonical | ParentKind::Stale => classification.height,
+        ParentKind::Canonical | ParentKind::Stale | ParentKind::ErrorBlock => classification.height,
         ParentKind::Near | ParentKind::Unknown => None,
     };
     if matches!(
         classification.kind,
-        ParentKind::Canonical | ParentKind::Stale
+        ParentKind::Canonical | ParentKind::Stale | ParentKind::ErrorBlock
     ) && height.is_none()
     {
         bail!(
-            "canonical/stale classification for event {} has no height",
+            "canonical/stale/error-block classification for event {} has no height",
             event.id
         );
     }
 
     // COALESCE difficulty_epoch_ok so a transient NULL never erases a stored value.
-    // Only the unknown path supplies NULL here (canonical/stale always resolve a
+    // Only the unknown path supplies NULL here (canonical/stale/error-block always resolve a
     // concrete value); difficulty_epoch_ok is a fixed property of the header and
     // its resolved height, so a later run that could not re-resolve it (e.g. a
     // --recheck-orphans pass whose inferred-stale competitor lookup was transiently
@@ -167,23 +167,41 @@ pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
             .unwrap_or_else(|| ParentClassification::unknown(&header)),
     };
 
-    let (kind, height, height_source, competitor_hash) = match classification.kind {
-        ParentKind::Canonical => (
-            BlockKind::Canonical,
-            classification.height,
-            classification
-                .height_source
-                .or(Some(HeightSource::BitcoinCore)),
-            None,
-        ),
-        ParentKind::Stale => (
-            BlockKind::Stale,
-            classification.height,
-            classification.height_source,
-            classification.canonical_competitor_hash.clone(),
-        ),
-        ParentKind::Unknown | ParentKind::Near => (BlockKind::Unknown, None, None, None),
-    };
+    let (kind, height, height_source, competitor_hash, error_block_reason) =
+        match classification.kind {
+            ParentKind::Canonical => (
+                BlockKind::Canonical,
+                classification.height,
+                classification
+                    .height_source
+                    .or(Some(HeightSource::BitcoinCore)),
+                None,
+                None,
+            ),
+            ParentKind::Stale => (
+                BlockKind::Stale,
+                classification.height,
+                classification.height_source,
+                classification.canonical_competitor_hash.clone(),
+                None,
+            ),
+            ParentKind::ErrorBlock => {
+                let error_block = mmm_capture::error_blocks::lookup(hash).ok_or_else(|| {
+                    anyhow::anyhow!("error-block classification has no pinned catalogue entry")
+                })?;
+                if classification.height != Some(error_block.height) {
+                    bail!("error-block classification height disagrees with pinned catalogue");
+                }
+                (
+                    BlockKind::ErrorBlock,
+                    classification.height,
+                    Some(HeightSource::ErrorBlockCatalog),
+                    None,
+                    Some(error_block.rejection_reason.to_owned()),
+                )
+            }
+            ParentKind::Unknown | ParentKind::Near => (BlockKind::Unknown, None, None, None, None),
+        };
 
     let core_source_count = if classification.core_attested { 1 } else { 0 };
     // The effective wrong-epoch evidence: the current classifier result merged with
@@ -220,6 +238,7 @@ pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
         btc_coinbase_script: coinbase.script,
         btc_coinbase_outputs: coinbase.outputs,
         btc_coinbase_status: coinbase.status,
+        error_block_reason,
         canonical_competitor_hash: competitor_hash.clone(),
         total_attestations: rollup.total_attestations,
         distinct_sources: rollup.distinct_sources + core_source_count,
@@ -282,7 +301,7 @@ async fn resolve_effective_bitcoin_miner_pool_id<C: GenericClient>(
 /// Resolve the classification actually written, preserving proven state under a
 /// transient `unknown`. A bare `unknown` (e.g. Core off or an RPC failure) must
 /// not erase a real verdict, so the fallback order is: persisted
-/// canonical/stale from `block`, then the event's own canonical claim
+/// canonical/stale/error-block from `block`, then the event's own canonical claim
 /// (`classification_from_event`), then for an event already marked stale an
 /// `unknown` that still carries the incoming `difficulty_epoch_ok`. Any
 /// non-unknown result passes through unchanged. Operators clear bad evidence by
@@ -347,7 +366,7 @@ pub(crate) fn classification_from_event(
 
 /// Persisted-form classification: reconstruct a `ParentClassification` from the
 /// already-derived `block` row(s), used to hold proven state across a transient
-/// `unknown`. Only canonical/stale persisted blocks qualify (unknown returns
+/// `unknown`. Canonical/stale/error-block persisted blocks qualify (unknown returns
 /// `None`). For a stale block the competitor must still resolve to a persisted
 /// canonical block, else `None` so a half-rebuilt stale relationship is not
 /// re-asserted. `core_attested`/`live_observed` are carried from the persisted
@@ -363,12 +382,16 @@ pub(crate) async fn persisted_classification_from_block<C: GenericClient>(
     let Some(persisted) = persisted else {
         return Ok(None);
     };
-    if !matches!(persisted.kind, BlockKind::Canonical | BlockKind::Stale) {
+    if !matches!(
+        persisted.kind,
+        BlockKind::Canonical | BlockKind::Stale | BlockKind::ErrorBlock
+    ) {
         return Ok(None);
     }
     let kind = match persisted.kind {
         BlockKind::Canonical => ParentKind::Canonical,
         BlockKind::Stale => ParentKind::Stale,
+        BlockKind::ErrorBlock => ParentKind::ErrorBlock,
         BlockKind::Unknown => unreachable!("unknown state filtered above"),
     };
     let canonical_competitor_hash = match kind {
@@ -383,6 +406,7 @@ pub(crate) async fn persisted_classification_from_block<C: GenericClient>(
             Some(competitor_hash)
         }
         ParentKind::Canonical => None,
+        ParentKind::ErrorBlock => None,
         ParentKind::Near | ParentKind::Unknown => unreachable!("filtered above"),
     };
 

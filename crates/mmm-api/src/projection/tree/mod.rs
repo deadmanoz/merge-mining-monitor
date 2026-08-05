@@ -117,7 +117,8 @@ pub struct TreeNode {
     pub kind: &'static str,
     /// Derived refinement of `kind='unknown'` (see `block.btc_orphan_class`):
     /// `strict_btc_orphan` / `weak_btc_orphan` / `excluded`, or `null`
-    /// for canonical/stale nodes and for pending/never-Core-checked unknowns.
+    /// for canonical/stale/error-block nodes and for pending/never-Core-checked
+    /// unknowns.
     pub btc_orphan_class: Option<String>,
     pub prev_id: Option<usize>,
     pub prev_hash: String,
@@ -225,7 +226,7 @@ fn tree_window_from_resolved(
 
 fn base_tree_legend() -> TreeLegend {
     TreeLegend {
-        kinds: vec!["canonical", "stale", "unknown", "near"],
+        kinds: vec!["canonical", "stale", "error_block", "unknown", "near"],
         edge_kinds: vec!["canonical", "stale_entry", "stale", "hidden"],
     }
 }
@@ -296,6 +297,11 @@ fn select_tree_candidates(
             }
             (Some(_), ParentKind::Stale) if stale_branch_members.contains(&projection.hash) => {
                 projection.evidence = is_selected && enough_sources;
+                projection.protected = true;
+                candidates.push(projection);
+            }
+            (Some(_), ParentKind::ErrorBlock) if is_selected && enough_sources => {
+                projection.evidence = true;
                 projection.protected = true;
                 candidates.push(projection);
             }

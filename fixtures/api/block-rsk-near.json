@@ -6,6 +6,7 @@
     "height": null,
     "kind": "near",
     "btc_orphan_class": null,
+"error_block_reason": null,
     "coinbase_tag": null,
     "header": {
       "version": 536870912,

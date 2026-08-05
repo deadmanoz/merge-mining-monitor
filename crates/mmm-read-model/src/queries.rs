@@ -214,6 +214,7 @@ pub(crate) fn parent_kind_from_db(value: &str) -> Result<ParentKind> {
     match value {
         "canonical" => Ok(ParentKind::Canonical),
         "stale" => Ok(ParentKind::Stale),
+        "error_block" => Ok(ParentKind::ErrorBlock),
         "near" => Ok(ParentKind::Near),
         "unknown" => Ok(ParentKind::Unknown),
         other => bail!("unknown merge_mining_event.btc_parent_kind {other:?}"),

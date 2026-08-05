@@ -154,6 +154,9 @@ function renderParentBlock(block) {
     const meta = CLASSIFICATION_META[block.btc_orphan_class || "pending"];
     rows.push(["Orphan class", esc(meta ? meta.name : (block.btc_orphan_class || "Pending"))]);
   }
+  if (block.kind === "error_block") {
+    rows.push(["Consensus rejection", esc(block.error_block_reason || "catalogued consensus violation")]);
+  }
   if (block.coinbase_tag) {
     rows.push(["Coinbase tag", esc(block.coinbase_tag)]);
   }

@@ -258,8 +258,9 @@ pub(super) fn materialize_tree(
                     edge_kind,
                 });
             (prev_id, edge)
-        } else if let Some((prev_hash, hidden_count)) =
-            hidden_predecessor(&projection, &id_by_hash, ancestry_by_hash)
+        } else if projection.kind != ParentKind::ErrorBlock
+            && let Some((prev_hash, hidden_count)) =
+                hidden_predecessor(&projection, &id_by_hash, ancestry_by_hash)
         {
             let prev_id = id_by_hash.get(&prev_hash).copied();
             hidden_total += hidden_count;
@@ -345,8 +346,8 @@ pub(super) fn stale_member_competitor_hashes(
 
 /// Classify a visible parent->child edge: stale->stale = `stale`, anything->stale
 /// = `stale_entry`, canonical->canonical = `canonical`. Any other visible
-/// transition (an Unknown/Near child, or a canonical child with a non-canonical
-/// predecessor) draws no edge and returns `None`; the node still keeps its
+/// transition (an ErrorBlock/Unknown/Near child, or a canonical child with a
+/// non-canonical predecessor) draws no edge and returns `None`; the node still keeps its
 /// `prev_id`/`prev_hash`. The non-`None` `edge_kind` strings are part of the wire
 /// contract (legend.edge_kinds).
 fn visible_edge_kind(

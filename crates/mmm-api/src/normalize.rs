@@ -77,6 +77,7 @@ pub enum ParentKind {
     Unknown,
     Canonical,
     Stale,
+    ErrorBlock,
 }
 
 /// Parse a comma-delimited `kinds=` value into the parent-kind enum. An unknown
@@ -92,6 +93,7 @@ pub(crate) fn parse_kinds(raw: Option<&str>) -> Result<Vec<ParentKind>, ApiError
             "unknown" => ParentKind::Unknown,
             "canonical" => ParentKind::Canonical,
             "stale" => ParentKind::Stale,
+            "error_block" => ParentKind::ErrorBlock,
             other => {
                 return Err(ApiError::invalid_query(
                     format!("unknown kind {other:?}"),
@@ -341,8 +343,8 @@ mod tests {
     #[test]
     fn parse_kinds_roundtrip_and_reject() {
         assert_eq!(
-            parse_kinds(Some("near,stale")).unwrap(),
-            vec![ParentKind::Near, ParentKind::Stale]
+            parse_kinds(Some("near,error_block,stale")).unwrap(),
+            vec![ParentKind::Near, ParentKind::ErrorBlock, ParentKind::Stale]
         );
         assert_eq!(
             code(&parse_kinds(Some("bogus")).unwrap_err()),

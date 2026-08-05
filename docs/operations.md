@@ -170,6 +170,12 @@ reports changed rows. A transient `unknown` never demotes an already-proven
 `canonical` or `stale` row, so a Bitcoin Core gap costs nothing but a backlog of
 unknowns to sweep later.
 
+After applying migration 0008, run `just reconcile-read-model` without child
+height bounds. It revisits already-captured proof-of-work-valid headers, records
+any pinned consensus-invalid catalogue match as `error_block`, and rebuilds the
+separate source-health counter. An error block is not stale or orphan evidence,
+so no orphan reclassification command is required.
+
 `just import-known-stales --csv PATH --source-label LABEL` loads the operator
 known-stale membership (`known_stale_block`) from an upstream
 `stale-blocks.csv`-shaped dataset. Load it once per database, after migrations

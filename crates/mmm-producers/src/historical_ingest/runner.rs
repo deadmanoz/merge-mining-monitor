@@ -126,6 +126,9 @@ impl HistoricalImportSummary {
         match persisted {
             Some((BlockKind::Canonical, _)) => self.canonical += count,
             Some((BlockKind::Stale, _)) => self.stale += count,
+            Some((BlockKind::ErrorBlock, _)) => {
+                unreachable!("validated historical imports must reject error blocks")
+            }
             Some((BlockKind::Unknown, class)) => match class.as_deref() {
                 Some("strict_btc_orphan") => self.strict_orphans += count,
                 Some("weak_btc_orphan") => self.weak_orphans += count,

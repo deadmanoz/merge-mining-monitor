@@ -8,7 +8,7 @@
     "at_time": null,
     "window_mode": "unheighted_anchor",
     "context": "exact",
-    "kinds": ["canonical", "near", "stale", "unknown"],
+    "kinds": ["canonical", "error_block", "near", "stale", "unknown"],
     "classification": ["strict_btc_orphan", "weak_btc_orphan"],
     "sources": [],
     "include_near": false,
@@ -189,7 +189,7 @@
   ],
   "branches": [],
   "legend": {
-    "kinds": ["canonical", "stale", "unknown", "near"],
+    "kinds": ["canonical", "stale", "error_block", "unknown", "near"],
     "edge_kinds": ["canonical", "stale_entry", "stale", "hidden", "orphan", "orphan_approx"]
   }
 }

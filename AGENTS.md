@@ -35,6 +35,10 @@ Use `just` targets, not raw commands, when a target exists:
   `mmm-bitcoin-core` is the only Core RPC linker, `mmm-store` writes producer
   base tables, `mmm-read-model` writes derived tables, `mmm-producers` owns
   engines, and `mmm-api` serves read-only HTTP views.
+- `data/consensus/error_blocks.csv` is a pinned compact mirror of the research
+  catalogue. A proof-of-work-valid match is an `error_block`, never stale or
+  orphan evidence; reconciliation persists its catalogue height and rejection
+  reason in the derived `block` row.
 - Producers write only `merge_mining_event` plus 1:1 chain sidecars and
   attribution rows. Historical ingest also attaches
   `historical_event_provenance`. The further base table,

@@ -136,6 +136,7 @@ pub(crate) async fn upsert_synthesized_canonical<C: GenericClient>(
         btc_coinbase_script: coinbase.script,
         btc_coinbase_outputs: coinbase.outputs,
         btc_coinbase_status: coinbase.status,
+        error_block_reason: None,
         canonical_competitor_hash: None,
         total_attestations: 0,
         distinct_sources: 1,
@@ -186,15 +187,15 @@ const SYNTHESIZED_BITCOIN_MINER_POOL_MERGE: &str = "CASE \
                     ELSE block.bitcoin_miner_pool_id \
                 END";
 
-/// The 22 shared insert columns (the event-rollup mode appends
-/// `btc_orphan_class` as $23).
+/// The 23 shared insert columns (the event-rollup mode appends
+/// `btc_orphan_class` as $24).
 const BLOCK_INSERT_COLUMNS: &str = "btc_header_hash, btc_prev_header_hash, btc_height, btc_height_source, kind, \
                 btc_header_bytes, btc_header_time, bitcoin_miner_pool_id, btc_coinbase_txid, \
                 btc_coinbase_script, btc_coinbase_outputs, btc_coinbase_status, \
                 canonical_competitor_hash, total_attestations, distinct_sources, \
                 auxpow_chain_count, live_observed, \
                 core_attested, pow_validated, difficulty_epoch_ok, first_attested_at, \
-                last_attested_at";
+                last_attested_at, error_block_reason";
 
 /// Which conflict-update contract a block write follows. BOTH modes carry
 /// and write the Core coinbase columns (the synthesized/Core-canonical path
@@ -214,7 +215,7 @@ pub(crate) enum BlockWriteMode {
 }
 
 /// `BlockWriteMode::EventRollup` upsert: rebuild from the event
-/// rollup. Every derived column (including `btc_orphan_class`, the $23 column)
+/// rollup. Every derived column (including `btc_orphan_class`, the $24 column)
 /// is overwritten from EXCLUDED; only the Core coinbase columns deviate, using
 /// the monotonic `COINBASE_MERGE_SET`. The WHERE guard is the column-by-column
 /// DISTINCT-FROM set so an unchanged rollup is a no-op (no `updated_at` churn,
@@ -226,7 +227,7 @@ static EVENT_ROLLUP_UPSERT_SQL: LazyLock<String> = LazyLock::new(|| {
              ) VALUES ( \
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, \
                 $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, \
-                $21, $22, $23, \
+                $21, $22, $23, $24, \
                 extract(epoch from now())::bigint, extract(epoch from now())::bigint \
              ) \
              ON CONFLICT (btc_header_hash) DO UPDATE SET \
@@ -248,6 +249,7 @@ static EVENT_ROLLUP_UPSERT_SQL: LazyLock<String> = LazyLock::new(|| {
                 difficulty_epoch_ok = EXCLUDED.difficulty_epoch_ok, \
                 first_attested_at = EXCLUDED.first_attested_at, \
                 last_attested_at = EXCLUDED.last_attested_at, \
+                error_block_reason = EXCLUDED.error_block_reason, \
                 btc_orphan_class = EXCLUDED.btc_orphan_class, \
                 updated_at = extract(epoch from now())::bigint \
              WHERE block.btc_prev_header_hash IS DISTINCT FROM EXCLUDED.btc_prev_header_hash \
@@ -268,6 +270,7 @@ static EVENT_ROLLUP_UPSERT_SQL: LazyLock<String> = LazyLock::new(|| {
                 OR block.difficulty_epoch_ok IS DISTINCT FROM EXCLUDED.difficulty_epoch_ok \
                 OR block.first_attested_at IS DISTINCT FROM EXCLUDED.first_attested_at \
                 OR block.last_attested_at IS DISTINCT FROM EXCLUDED.last_attested_at \
+                OR block.error_block_reason IS DISTINCT FROM EXCLUDED.error_block_reason \
                 OR block.btc_orphan_class IS DISTINCT FROM EXCLUDED.btc_orphan_class"
     )
 });
@@ -290,7 +293,7 @@ static SYNTHESIZED_CORE_UPSERT_SQL: LazyLock<String> = LazyLock::new(|| {
              ) VALUES ( \
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, \
                 $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, \
-                $21, $22, \
+                $21, $22, $23, \
                 extract(epoch from now())::bigint, extract(epoch from now())::bigint \
              ) \
              ON CONFLICT (btc_header_hash) DO UPDATE SET \
@@ -321,6 +324,7 @@ static SYNTHESIZED_CORE_UPSERT_SQL: LazyLock<String> = LazyLock::new(|| {
                 core_attested = block.live_observed OR block.core_attested OR EXCLUDED.live_observed OR EXCLUDED.core_attested, \
                 pow_validated = block.pow_validated OR EXCLUDED.pow_validated, \
                 difficulty_epoch_ok = COALESCE(block.difficulty_epoch_ok, EXCLUDED.difficulty_epoch_ok), \
+                error_block_reason = COALESCE(block.error_block_reason, EXCLUDED.error_block_reason), \
                 btc_orphan_class = NULL, \
                 updated_at = extract(epoch from now())::bigint \
              WHERE block.btc_prev_header_hash IS DISTINCT FROM EXCLUDED.btc_prev_header_hash \
@@ -372,6 +376,7 @@ pub(crate) async fn upsert_block_row<C: GenericClient>(
         &block.difficulty_epoch_ok,
         &block.first_attested_at,
         &block.last_attested_at,
+        &block.error_block_reason,
     ];
     let (sql, context): (&str, &str) = match mode {
         BlockWriteMode::EventRollup => {
