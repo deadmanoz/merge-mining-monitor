@@ -15,9 +15,11 @@ use mmm_capture::test_support::header_meeting_bits_with_prev;
 use mmm_read_model::{
     CoreCanonicalWrite, drain_historical_reconcile_queue,
     drain_historical_reconcile_queue_with_budget_for_test, rebuild_source_health,
-    update_parent_events, write_core_canonical,
+    run_reconcile_read_model, update_parent_events, write_core_canonical,
 };
-use mmm_read_model::{restore_merge_mining_event, revoke_merge_mining_event};
+use mmm_read_model::{
+    ReconcileReadModelConfig, restore_merge_mining_event, revoke_merge_mining_event,
+};
 use mmm_store::{get_source_id, upsert_event_pool_attributions};
 use serde_json::json;
 use tokio_postgres::Client;
@@ -139,6 +141,18 @@ fn catalogued_error_block_header() -> Result<Header> {
     )?)?)
 }
 
+async fn capture_catalogued_error_block(client: &mut Client) -> Result<(i64, i64, Vec<u8>)> {
+    let (_, namecoin) = mutation_pool_snapshot(client).await?;
+    let header = catalogued_error_block_header()?;
+    let parent_hash = header.block_hash().to_byte_array().to_vec();
+    let mut payload = crafted_unknown_payload(header, 946_213, 0xe9, 1_776_876_260)?;
+    assert_eq!(payload.btc_parent_kind, ParentKind::ErrorBlock);
+    assert_eq!(payload.btc_parent_height, Some(946_213));
+    let classifier = ConfiguredParentClassifier::Disabled;
+    let event_id = capture_test_payload(client, namecoin, &classifier, &mut payload).await?;
+    Ok((namecoin, event_id, parent_hash))
+}
+
 // These tests exercise read_model::mutation transaction entry points: capture,
 // revoke/restore, Core writes, and event-pool cascade updates. Each scenario
 // pairs table assertions with the source_health recompute oracle.
@@ -146,15 +160,7 @@ fn catalogued_error_block_header() -> Result<Header> {
 #[tokio::test]
 async fn mutation_catalogued_error_block_is_never_stale_or_unknown() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        let (_, namecoin) = mutation_pool_snapshot(&mut client).await?;
-        let header = catalogued_error_block_header()?;
-        let parent_hash = header.block_hash().to_byte_array().to_vec();
-        let mut payload = crafted_unknown_payload(header, 946_213, 0xe9, 1_776_876_260)?;
-        assert_eq!(payload.btc_parent_kind, ParentKind::ErrorBlock);
-        assert_eq!(payload.btc_parent_height, Some(946_213));
-
-        let classifier = ConfiguredParentClassifier::Disabled;
-        capture_test_payload(&mut client, namecoin, &classifier, &mut payload).await?;
+        let (namecoin, _, parent_hash) = capture_catalogued_error_block(&mut client).await?;
 
         let event: (String, Option<i32>) = client
             .query_one(
@@ -210,6 +216,119 @@ async fn mutation_catalogued_error_block_is_never_stale_or_unknown() -> Result<(
         assert_eq!(error_block_count, 1);
         assert_source_health_matches_recompute(&client, "after catalogued error-block capture")
             .await?;
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn mutation_error_block_revoke_restore_and_missing_only_converge() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (namecoin, event_id, parent_hash) = capture_catalogued_error_block(&mut client).await?;
+        let classifier = ConfiguredParentClassifier::Disabled;
+
+        let repaired = run_reconcile_read_model(
+            &mut client,
+            &classifier,
+            ReconcileReadModelConfig::default(),
+        )
+        .await?;
+        assert_eq!(
+            repaired, 0,
+            "a current error block must not churn in missing-only"
+        );
+
+        revoke_merge_mining_event(&mut client, event_id, "mutation_test", &classifier).await?;
+        let revoked: (String, Option<String>) = client
+            .query_one(
+                "SELECT kind, error_block_reason FROM block WHERE btc_header_hash = $1",
+                &[&parent_hash],
+            )
+            .await
+            .map(|row| (row.get(0), row.get(1)))?;
+        assert_eq!(revoked, ("unknown".to_owned(), None));
+        let count: i64 = client
+            .query_one(
+                "SELECT error_block_parents FROM source_health WHERE source_id = $1",
+                &[&namecoin],
+            )
+            .await?
+            .get(0);
+        assert_eq!(count, 0);
+        assert_source_health_matches_recompute(&client, "after catalogued error-block revoke")
+            .await?;
+
+        restore_merge_mining_event(&mut client, event_id, &classifier).await?;
+        let restored: (String, Option<String>) = client
+            .query_one(
+                "SELECT kind, error_block_reason FROM block WHERE btc_header_hash = $1",
+                &[&parent_hash],
+            )
+            .await
+            .map(|row| (row.get(0), row.get(1)))?;
+        assert_eq!(
+            restored,
+            ("error_block".to_owned(), Some("time_below_mtp".to_owned()))
+        );
+        assert_source_health_matches_recompute(&client, "after catalogued error-block restore")
+            .await?;
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn full_reconcile_reclassifies_legacy_catalogue_rows() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (_, event_id, parent_hash) = capture_catalogued_error_block(&mut client).await?;
+        let classifier = ConfiguredParentClassifier::Disabled;
+        client
+            .execute(
+                "UPDATE merge_mining_event \
+                 SET btc_parent_kind = 'unknown', btc_parent_height = NULL \
+                 WHERE id = $1",
+                &[&event_id],
+            )
+            .await?;
+        client
+            .execute(
+                "UPDATE block \
+                 SET kind = 'unknown', btc_height = NULL, btc_height_source = NULL, \
+                     canonical_competitor_hash = NULL, error_block_reason = NULL, \
+                     btc_orphan_class = NULL \
+                 WHERE btc_header_hash = $1",
+                &[&parent_hash],
+            )
+            .await?;
+        rebuild_source_health(&mut client).await?;
+
+        let repaired = run_reconcile_read_model(
+            &mut client,
+            &classifier,
+            ReconcileReadModelConfig {
+                missing_only: false,
+                ..ReconcileReadModelConfig::default()
+            },
+        )
+        .await?;
+        assert_eq!(
+            repaired, 1,
+            "the unbounded full scan reclassifies the legacy row"
+        );
+        let reclassified: (String, Option<String>) = client
+            .query_one(
+                "SELECT kind, error_block_reason FROM block WHERE btc_header_hash = $1",
+                &[&parent_hash],
+            )
+            .await
+            .map(|row| (row.get(0), row.get(1)))?;
+        assert_eq!(
+            reclassified,
+            ("error_block".to_owned(), Some("time_below_mtp".to_owned()))
+        );
+        assert_source_health_matches_recompute(
+            &client,
+            "after full-scan catalogued error-block reclassification",
+        )
+        .await?;
         Ok::<_, anyhow::Error>(())
     })
 }
