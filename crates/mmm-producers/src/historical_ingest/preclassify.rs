@@ -79,6 +79,9 @@ pub(super) async fn preflight_and_classify_candidates<C: GenericClient>(
                     );
                 }
             };
+        if preflight_skips_catalogued_error_block(config, &candidate, offset + 2)? {
+            continue;
+        }
         if classifier.is_enabled() {
             let parent_hash = candidate
                 .evidence
@@ -209,6 +212,9 @@ pub(super) async fn import_decision<C: GenericClient>(
     candidate: &ImportCandidate,
     classifications: &mut HashMap<Vec<u8>, ParentClassification>,
 ) -> Result<ImportDecision> {
+    if let Some(reason) = catalogued_error_block_skip_reason(candidate) {
+        return Ok(ImportDecision::Skip(reason));
+    }
     if !classifier.is_enabled() {
         if config.allow_unclassified
             && candidate.source_classification != SourceClassification::Unknown
@@ -251,6 +257,37 @@ pub(super) async fn import_decision<C: GenericClient>(
         candidate.orphan_verdict,
         classification,
     ))
+}
+
+/// Keep catalogued consensus-invalid parents out of the historical valid-evidence
+/// import path before either the disabled override or a Core classifier decides
+/// how to handle the row. Live capture still records these as `error_block`.
+fn catalogued_error_block_skip_reason(candidate: &ImportCandidate) -> Option<SkipReason> {
+    let parent_hash = candidate
+        .evidence
+        .btc_parent_header
+        .block_hash()
+        .to_byte_array();
+    mmm_capture::error_blocks::lookup(&parent_hash).map(|_| SkipReason::UnsupportedClassification)
+}
+
+fn preflight_skips_catalogued_error_block(
+    config: &HistoricalImportConfig,
+    candidate: &ImportCandidate,
+    row_number: usize,
+) -> Result<bool> {
+    let Some(reason) = catalogued_error_block_skip_reason(candidate) else {
+        return Ok(false);
+    };
+    if config.manifest_path.is_some() {
+        bail!(
+            "published artifact {} row {} would be skipped as {}",
+            config.csv_path.display(),
+            row_number,
+            reason.as_str()
+        );
+    }
+    Ok(true)
 }
 
 fn classified_import_decision(
