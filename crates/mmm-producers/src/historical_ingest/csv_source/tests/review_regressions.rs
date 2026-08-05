@@ -1,6 +1,38 @@
 use super::*;
 
 #[test]
+fn published_orphan_bucket_accepts_only_stronger_cross_chain_promotion() {
+    assert_eq!(
+        filter_unknown(
+            BtcOrphanVerdict::Strict,
+            Some(RelevanceSelection::WeakBtcOrphan)
+        ),
+        Err(SkipReason::TaxonomyMismatch)
+    );
+    assert_eq!(
+        filter_unknown(
+            BtcOrphanVerdict::Weak,
+            Some(RelevanceSelection::StrictBtcOrphan)
+        ),
+        Ok(())
+    );
+    assert_eq!(
+        filter_unknown(
+            BtcOrphanVerdict::Strict,
+            Some(RelevanceSelection::StrictBtcOrphan)
+        ),
+        Ok(())
+    );
+    assert_eq!(
+        filter_unknown(
+            BtcOrphanVerdict::Weak,
+            Some(RelevanceSelection::WeakBtcOrphan)
+        ),
+        Ok(())
+    );
+}
+
+#[test]
 fn parses_and_preserves_a_full_parent_coinbase_transaction() {
     let parsed = candidate(
         "devcoin",
