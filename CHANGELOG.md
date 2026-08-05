@@ -55,6 +55,10 @@ This changelog starts with the initial release.
   exponential backoff, fail parent preclassification explicitly after
   exhaustion, and validate direct-stale and stale-descendant publication
   statuses against their distinct canonical tokens.
+- Accept a publication's cross-chain strict BTC-orphan promotion when the
+  current chain independently proves the weaker orphan verdict, and let a
+  direct Bitcoin Core stale attestation supersede an archived canonical source
+  label while preserving that source provenance.
 
 ## [0.4.2] - 2026-07-30
 

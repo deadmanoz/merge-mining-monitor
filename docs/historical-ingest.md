@@ -217,6 +217,15 @@ A pinned publication import fails on an unexplained skip. Write-disposition
 counters come from the store's exact/partial identity decision rather than a
 second importer-side identity query.
 
+Two stronger-evidence projections are accepted without weakening that gate.
+The publication can promote a chain-local weak BTC-orphan verdict to strict
+when another chain independently supplies strict evidence for the same parent
+header. Bitcoin Core can also identify an archived `canonical` source row as
+stale after the source snapshot was recorded; a direct Core stale attestation
+then controls the stored parent classification while the original source label
+remains in provenance. The reverse strict-to-weak and stale-to-canonical
+mismatches still fail closed.
+
 Import one chain when diagnosing or resuming a specific source:
 
 ```bash

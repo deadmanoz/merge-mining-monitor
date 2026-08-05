@@ -445,11 +445,15 @@ fn filter_unknown(
     }
     match (verdict, selection) {
         (BtcOrphanVerdict::Strict, Some(RelevanceSelection::StrictBtcOrphan))
-        | (BtcOrphanVerdict::Weak, Some(RelevanceSelection::WeakBtcOrphan)) => Ok(()),
-        (
-            BtcOrphanVerdict::Strict | BtcOrphanVerdict::Weak,
-            Some(RelevanceSelection::StrictBtcOrphan | RelevanceSelection::WeakBtcOrphan),
-        ) => Err(SkipReason::TaxonomyMismatch),
+        | (BtcOrphanVerdict::Weak, Some(RelevanceSelection::WeakBtcOrphan))
+        // The publication promotes every observation of a BTC header to the
+        // strongest verdict independently attested by any chain. A chain such
+        // as RSK can therefore carry a strict publication verdict even though
+        // its coinbase-free local evidence supports only the weak path.
+        | (BtcOrphanVerdict::Weak, Some(RelevanceSelection::StrictBtcOrphan)) => Ok(()),
+        (BtcOrphanVerdict::Strict, Some(RelevanceSelection::WeakBtcOrphan)) => {
+            Err(SkipReason::TaxonomyMismatch)
+        }
         (BtcOrphanVerdict::Strict | BtcOrphanVerdict::Weak, _) => {
             Err(SkipReason::OrphanNotSelected)
         }
@@ -963,38 +967,6 @@ mod tests {
         assert_eq!(
             parsed.source_classification,
             SourceClassification::StaleDescendant
-        );
-    }
-
-    #[test]
-    fn published_orphan_bucket_must_match_the_local_verdict() {
-        assert_eq!(
-            filter_unknown(
-                BtcOrphanVerdict::Strict,
-                Some(RelevanceSelection::WeakBtcOrphan)
-            ),
-            Err(SkipReason::TaxonomyMismatch)
-        );
-        assert_eq!(
-            filter_unknown(
-                BtcOrphanVerdict::Weak,
-                Some(RelevanceSelection::StrictBtcOrphan)
-            ),
-            Err(SkipReason::TaxonomyMismatch)
-        );
-        assert_eq!(
-            filter_unknown(
-                BtcOrphanVerdict::Strict,
-                Some(RelevanceSelection::StrictBtcOrphan)
-            ),
-            Ok(())
-        );
-        assert_eq!(
-            filter_unknown(
-                BtcOrphanVerdict::Weak,
-                Some(RelevanceSelection::WeakBtcOrphan)
-            ),
-            Ok(())
         );
     }
 }

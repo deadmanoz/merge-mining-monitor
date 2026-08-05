@@ -300,6 +300,16 @@ fn classified_import_decision(
         ParentKind::Canonical if source_classification == SourceClassification::Canonical => {
             ImportDecision::CapturePreclassified(Box::new(classification))
         }
+        // A historical source can preserve a parent that was canonical when
+        // observed but is now in Core's stale index. Core's direct stale
+        // attestation is stronger than the publication snapshot, so retain the
+        // source provenance while writing the current stale classification.
+        ParentKind::Stale
+            if source_classification == SourceClassification::Canonical
+                && classification.core_attested =>
+        {
+            ImportDecision::CapturePreclassified(Box::new(classification))
+        }
         ParentKind::Stale
             if matches!(
                 source_classification,
@@ -345,5 +355,53 @@ fn classified_import_decision(
                 ImportDecision::Skip(SkipReason::Unclassified)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mmm_bitcoin_core::HeightSource;
+
+    fn stale_classification(core_attested: bool) -> ParentClassification {
+        ParentClassification {
+            kind: ParentKind::Stale,
+            height: Some(874_036),
+            height_source: Some(HeightSource::BitcoinCore),
+            prev_hash: vec![1; 32],
+            canonical_predecessor_header: None,
+            canonical_competitor_header: None,
+            canonical_competitor_hash: Some(vec![2; 32]),
+            coinbase: None,
+            difficulty_epoch_ok: Some(true),
+            live_observed: true,
+            core_attested,
+            core_absence_attested: false,
+        }
+    }
+
+    #[test]
+    fn core_attested_stale_overrides_a_canonical_source_snapshot() {
+        let decision = classified_import_decision(
+            SourceClassification::Canonical,
+            None,
+            None,
+            stale_classification(true),
+        );
+        assert!(matches!(decision, ImportDecision::CapturePreclassified(_)));
+    }
+
+    #[test]
+    fn unattested_stale_does_not_override_a_canonical_source_snapshot() {
+        let decision = classified_import_decision(
+            SourceClassification::Canonical,
+            None,
+            None,
+            stale_classification(false),
+        );
+        assert!(matches!(
+            decision,
+            ImportDecision::Skip(SkipReason::ClassificationMismatch)
+        ));
     }
 }
