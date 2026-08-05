@@ -19,9 +19,9 @@ use crate::support::{
     parse_auxpow_fixture,
 };
 /// The comparable per-source counters: (events, last_event_seen, near, unknown,
-/// canonical, stale, strict_orphan, weak_orphan). Excludes the `updated_at` audit
+/// canonical, stale, error_block, strict_orphan, weak_orphan). Excludes the `updated_at` audit
 /// column.
-pub(crate) type SourceHealthCounts = (i64, Option<i64>, i64, i64, i64, i64, i64, i64);
+pub(crate) type SourceHealthCounts = (i64, Option<i64>, i64, i64, i64, i64, i64, i64, i64);
 
 #[tokio::test]
 async fn historical_invalidation_waits_for_the_exclusive_source_health_lock() -> Result<()> {
@@ -104,7 +104,8 @@ pub(crate) async fn read_source_health_semantic(
     let rows = client
         .query(
             "SELECT source_id, events, last_event_seen, near_parents, unknown_parents, \
-                    canonical_parents, stale_parents, strict_orphan_parents, weak_orphan_parents \
+                    canonical_parents, stale_parents, error_block_parents, \
+                    strict_orphan_parents, weak_orphan_parents \
              FROM source_health ORDER BY source_id",
             &[],
         )
@@ -123,6 +124,7 @@ pub(crate) async fn read_source_health_semantic(
                     r.get::<_, i64>(6),
                     r.get::<_, i64>(7),
                     r.get::<_, i64>(8),
+                    r.get::<_, i64>(9),
                 ),
             )
         })
@@ -151,6 +153,7 @@ pub(crate) async fn assert_source_health_matches_recompute(
                     r.unknown_parents,
                     r.canonical_parents,
                     r.stale_parents,
+                    r.error_block_parents,
                     r.strict_orphan_parents,
                     r.weak_orphan_parents,
                 ),
@@ -165,7 +168,7 @@ pub(crate) async fn assert_source_health_matches_recompute(
             ),
             None => assert_eq!(
                 maintained,
-                (0, None, 0, 0, 0, 0, 0, 0),
+                (0, None, 0, 0, 0, 0, 0, 0, 0),
                 "{context}: maintained source {sid} absent from recompute but not all-zero"
             ),
         }

@@ -1,0 +1,104 @@
+//! Embedded consensus-invalid, full-proof-of-work Bitcoin error-block registry.
+//!
+//! The source of truth lives in `merge-mining-research`'s
+//! `data/error-blocks/error_blocks.csv`. This compact pinned mirror lets live
+//! capture classify a witnessed catalogued error block without asking Bitcoin
+//! Core to treat an invalid block as stale or unknown. It intentionally carries
+//! only the identity, canonical-context height, and primary rejection token;
+//! the research dataset remains the complete evidence record.
+
+use std::collections::HashMap;
+use std::str::FromStr;
+use std::sync::LazyLock;
+
+use bitcoin::BlockHash;
+use bitcoin::hashes::Hash as _;
+
+const ERROR_BLOCKS_CSV: &str = include_str!("../../../data/consensus/error_blocks.csv");
+
+/// A pinned, mechanically re-derived Bitcoin consensus failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ErrorBlock {
+    /// Height in the canonical context used by the research validator.
+    pub height: i32,
+    /// Primary `rejection_reason` token from the research error-block catalogue.
+    pub rejection_reason: &'static str,
+}
+
+static ERROR_BLOCKS: LazyLock<HashMap<[u8; 32], ErrorBlock>> = LazyLock::new(parse_registry);
+
+/// Return catalogued error-block metadata for a stored-order hash.
+pub fn lookup(hash: &[u8]) -> Option<ErrorBlock> {
+    let hash: [u8; 32] = hash.try_into().ok()?;
+    ERROR_BLOCKS.get(&hash).copied()
+}
+
+/// Number of pinned catalogue entries, primarily for invariant tests and
+/// operator-facing diagnostics.
+pub fn len() -> usize {
+    ERROR_BLOCKS.len()
+}
+
+fn parse_registry() -> HashMap<[u8; 32], ErrorBlock> {
+    let mut entries = HashMap::new();
+    for (line_number, line) in ERROR_BLOCKS_CSV.lines().enumerate() {
+        if line.is_empty() || line.starts_with('#') || line == "height,hash,rejection_reason" {
+            continue;
+        }
+        let mut fields = line.split(',');
+        let height = fields
+            .next()
+            .and_then(|value| value.parse::<i32>().ok())
+            .filter(|height| *height >= 0)
+            .unwrap_or_else(|| panic!("invalid error-block height at line {}", line_number + 1));
+        let hash = fields
+            .next()
+            .and_then(|value| BlockHash::from_str(value).ok())
+            .map(|hash| hash.to_byte_array())
+            .unwrap_or_else(|| panic!("invalid error-block hash at line {}", line_number + 1));
+        let rejection_reason = fields
+            .next()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| panic!("invalid error-block reason at line {}", line_number + 1));
+        assert!(
+            fields.next().is_none(),
+            "invalid error-block field count at line {}",
+            line_number + 1
+        );
+        assert!(
+            entries
+                .insert(
+                    hash,
+                    ErrorBlock {
+                        height,
+                        rejection_reason,
+                    },
+                )
+                .is_none(),
+            "duplicate error-block hash at line {}",
+            line_number + 1
+        );
+    }
+    assert!(!entries.is_empty(), "error-block registry is empty");
+    entries
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pinned_registry_has_the_expected_complete_entry() {
+        let hash =
+            BlockHash::from_str("00000000000000000000c3d95a4bdc068dfe0c6d1e7ad13045c6f570e58d9ed7")
+                .unwrap();
+        assert_eq!(len(), 33);
+        assert_eq!(
+            lookup(&hash.to_byte_array()),
+            Some(ErrorBlock {
+                height: 946_213,
+                rejection_reason: "time_below_mtp",
+            })
+        );
+    }
+}

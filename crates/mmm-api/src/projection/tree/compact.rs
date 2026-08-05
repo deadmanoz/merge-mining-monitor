@@ -360,9 +360,10 @@ fn empty_compact_time_lookup() -> TreePayload {
 }
 
 /// Seed SELECT for a compact window: canonical blocks at the three anchor heights
-/// (from/target/to), every in-window stale, and any in-window canonical that is
-/// an active merge-mining parent. The sparse loader, it does NOT materialize
-/// every canonical interior (those become hidden edges via ancestry).
+/// (from/target/to), every in-window stale or error block, and any in-window
+/// canonical that is an active merge-mining parent. The sparse loader, it does
+/// NOT materialize every canonical interior (those become hidden edges via
+/// ancestry).
 async fn load_compact_seed_blocks(
     client: &Client,
     target_height: i32,
@@ -374,6 +375,7 @@ async fn load_compact_seed_blocks(
         "{BLOCK_ROW_SELECT} \
          WHERE (b.kind = 'canonical' AND b.btc_height = ANY($1::int[])) \
             OR (b.kind = 'stale' AND b.btc_height BETWEEN $2 AND $3) \
+            OR (b.kind = 'error_block' AND b.btc_height BETWEEN $2 AND $3) \
             OR ( \
                 b.kind = 'canonical' \
                 AND b.btc_height BETWEEN $2 AND $3 \

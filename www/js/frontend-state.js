@@ -3,8 +3,8 @@ import { inputDateTimeToUtc, utcDateTimeToInput } from "./tree-lookup.js?v=0.4.2
 
 
 const API_BASE = "/api/v1";
-const KINDS = ["canonical", "stale", "unknown", "near"];
-const VISIBLE_KIND_CONTROLS = ["canonical", "stale"];
+const KINDS = ["canonical", "stale", "error_block", "unknown", "near"];
+const VISIBLE_KIND_CONTROLS = ["canonical", "stale", "error_block"];
 const KIND_HELP = {
   canonical: {
     name: "Canonical",
@@ -28,6 +28,16 @@ const KIND_HELP = {
     notes: [
       "Stale does not mean invalid. The block had enough proof of work for Bitcoin; it just was not part of the branch Bitcoin kept building on.",
       "Stale branch navigation follows those losing Bitcoin branches, including multi-block branches when present.",
+    ],
+  },
+  error_block: {
+    name: "Error block",
+    meta: "Bitcoin proof of work, consensus-invalid",
+    criteria: "The header meets Bitcoin's proof-of-work target but matches a pinned, reproducibly validated consensus-invalid error-block catalogue.",
+    interpretation: "Error blocks are neither stale blocks nor BTC orphan evidence. They are retained so a full-proof-of-work header rejected by Bitcoin consensus cannot be misread as an off-chain Bitcoin block.",
+    notes: [
+      "The block detail names the primary consensus rule that the catalogue found it violates.",
+      "Error blocks are shown separately and never contribute to stale branches, orphan classification, or competition statistics.",
     ],
   },
   unknown: {

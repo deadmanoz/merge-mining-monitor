@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use bitcoin::block::Header;
-use bitcoin::consensus::serialize;
+use bitcoin::consensus::{deserialize, serialize};
 use bitcoin::hashes::{Hash as _, sha256, sha256d};
 use mmm_bitcoin_core::{
     ConfiguredParentClassifier, FakeParentClassifier, FakeParentClassifierGate,
@@ -241,6 +241,35 @@ async fn operator_csv_retains_per_row_skip_accounting() -> Result<()> {
             assert_eq!(summary.ingested, 1);
             assert_eq!(summary.skipped.get("hash_mismatch"), Some(&1));
             assert_eq!(summary.skipped.get("near"), Some(&1));
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        finish_import_with_cleanup(result, &[&csv_path])
+    })
+}
+
+#[tokio::test]
+async fn catalogued_error_block_is_skipped_before_unclassified_override() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let header = catalogued_error_block_header()?;
+        let csv_path =
+            write_normalized_csv(&header, "canonical", "", "canonical_parent", &[], 946_213)?;
+        let result = async {
+            let mut config = devcoin_import_config(&csv_path);
+            config.allow_unclassified = true;
+
+            let summary =
+                run_historical_import(&mut client, &ConfiguredParentClassifier::Disabled, &config)
+                    .await?;
+
+            assert_eq!(summary.rows_seen, 1);
+            assert_eq!(summary.candidates, 0);
+            assert_eq!(summary.ingested, 0);
+            assert_eq!(summary.skipped.get("unsupported_classification"), Some(&1));
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:devcoin").await?,
+                0
+            );
             Ok::<_, anyhow::Error>(())
         }
         .await;
@@ -1447,6 +1476,12 @@ fn devcoin_import_config(csv_path: &Path) -> HistoricalImportConfig {
     config.batch_size = 10;
     config.allow_empty_known_stales = true;
     config
+}
+
+fn catalogued_error_block_header() -> Result<Header> {
+    Ok(deserialize(&hex::decode(
+        "00a0032bb223f1aad55892df75d0ff4712f0543959c5065ab89d000000000000000000005eba715327fc82c765fa651bd6226c4b4a6a846cd60197bcd76d47ada0611cfce335df696913021725806e70",
+    )?)?)
 }
 
 struct ManifestFixture {

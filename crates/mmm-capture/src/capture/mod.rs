@@ -78,28 +78,33 @@ pub const RSK_RPC_MINER_SOURCE: &str = "rsk_rpc_miner";
 /// Orphan-ness is deliberately NOT a variant here. `Near` means the claimed
 /// parent header fails the BTC PoW target (a child-only header, not a real
 /// BTC block); `Unknown` means PoW passes but no canonical/stale proof is
-/// available yet; `Canonical`/`Stale` require an external height proof.
+/// available yet; `Canonical`/`Stale` require an external height proof, and a
+/// pinned catalogue may classify a full-PoW consensus-invalid `ErrorBlock`.
 /// Orphan status is the derived `block.btc_orphan_class`, set only on a
 /// Core-absence verdict.
 ///
 /// Looks like a near-duplicate of `mmm_bitcoin_core::parent_classifier::
 /// BlockKind`, but the two model different DB CHECK domains, not the same
 /// vocabulary twice: `merge_mining_event.btc_parent_kind` (this enum) allows
-/// `'canonical'|'stale'|'near'|'unknown'`, while `block.kind` (`BlockKind`)
-/// allows only `'canonical'|'stale'|'unknown'`, because a `block` row only
+/// `'canonical'|'stale'|'error_block'|'near'|'unknown'`, while `block.kind`
+/// allows only BTC-PoW-valid states, because a `block` row only
 /// ever tracks a real BTC-PoW-valid header (a `Near` header is a child-chain
 /// artifact, never persisted as `block` state). `mmm-read-model::classify` is
 /// the translation boundary that folds `Near` into `Unknown` when deriving
 /// `block.kind` from a `ParentKind`. Keep both: collapsing them would either
 /// let `Near` typecheck where the schema forbids it, or push a runtime
 /// disallow-`Near` check onto every `BlockKind` call site that currently
-/// relies on exhaustive 3-way matching (see the `unreachable!()` arms in
+/// relies on exhaustive matching (see the `unreachable!()` arms in
 /// `mmm-bitcoin-core::parent_classifier::core` and
 /// `mmm-read-model::classify`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParentKind {
     Canonical,
     Stale,
+    /// Full Bitcoin proof of work, but a pinned research catalogue
+    /// mechanically proves a consensus violation. It is neither stale nor an
+    /// orphan: the candidate was never valid Bitcoin work.
+    ErrorBlock,
     /// PoW does NOT satisfy the BTC parent target: the header is a
     /// child-chain-only artifact, not a BTC block. `classify_parent` forces
     /// this whenever `pow_validates_btc_target` is false, regardless of any
@@ -121,6 +126,7 @@ impl ParentKind {
         match self {
             Self::Canonical => "canonical",
             Self::Stale => "stale",
+            Self::ErrorBlock => "error_block",
             Self::Near => "near",
             Self::Unknown => "unknown",
         }
@@ -131,8 +137,8 @@ impl ParentKind {
 /// [`apply_classification_proof`]. The ONLY sanctioned source of
 /// `btc_parent_height`: height is read from here, never inferred from coinbase
 /// format (pre-BIP34 scripts can look height-like). `parent_kind == None` means
-/// no proof yet (Unknown when PoW is valid); a Canonical/Stale proof requires
-/// `parent_height` to be Some or `classify_parent` errors.
+/// no proof yet (Unknown when PoW is valid); a Canonical/Stale/ErrorBlock proof
+/// requires `parent_height` to be Some or `classify_parent` errors.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ClassificationProof {
     pub parent_kind: Option<ParentKind>,
@@ -443,16 +449,14 @@ pub fn build_event_payload_from_evidence(
 ) -> Result<MergeMiningEventPayload> {
     let parent_hash = evidence.btc_parent_header.block_hash();
     let pow_validates_btc_target = validates_target(parent_hash, evidence.btc_parent_header.bits);
-    let btc_parent_height = match proof.parent_kind {
-        Some(ParentKind::Canonical | ParentKind::Stale) => proof.parent_height,
-        _ => None,
-    };
-
-    let btc_parent_kind = classify_parent(
+    let (proven_kind, btc_parent_height) = error_block_proof(
+        &parent_hash.to_byte_array(),
         pow_validates_btc_target,
-        proof.parent_kind,
-        btc_parent_height,
-    )?;
+        proof,
+    );
+
+    let btc_parent_kind =
+        classify_parent(pow_validates_btc_target, proven_kind, btc_parent_height)?;
 
     Ok(MergeMiningEventPayload {
         child_height: evidence.child_height,
@@ -501,13 +505,14 @@ pub fn apply_classification_proof(
     payload: &mut MergeMiningEventPayload,
     proof: ClassificationProof,
 ) -> Result<()> {
-    let btc_parent_height = match proof.parent_kind {
-        Some(ParentKind::Canonical | ParentKind::Stale) => proof.parent_height,
-        _ => None,
-    };
+    let (proven_kind, btc_parent_height) = error_block_proof(
+        &payload.btc_parent_header_hash,
+        payload.pow_validates_btc_target,
+        proof,
+    );
     payload.btc_parent_kind = classify_parent(
         payload.pow_validates_btc_target,
-        proof.parent_kind,
+        proven_kind,
         btc_parent_height,
     )?;
     payload.btc_parent_height = btc_parent_height;
@@ -644,7 +649,7 @@ pub fn now_epoch_seconds() -> Result<i64> {
 /// Reconcile offline PoW validation against an external classifier proof into a
 /// [`ParentKind`]. Rules: PoW invalid means `Near` unconditionally (a
 /// child-only header). PoW valid: a proven `Near` conflicts (error); a
-/// Canonical/Stale proof without a height errors; any other proven kind is
+/// Canonical/Stale/ErrorBlock proof without a height errors; any other proven kind is
 /// taken as-is; absent proof means `Unknown`. This is the single chokepoint
 /// enforcing the height-required and no-near-with-valid-PoW invariants.
 fn classify_parent(
@@ -658,12 +663,37 @@ fn classify_parent(
 
     match proven_kind {
         Some(ParentKind::Near) => bail!("near parent proof conflicts with BTC target validation"),
-        Some(ParentKind::Canonical | ParentKind::Stale) if proven_height.is_none() => {
-            bail!("canonical/stale parent proof requires btc_parent_height")
+        Some(ParentKind::Canonical | ParentKind::Stale | ParentKind::ErrorBlock)
+            if proven_height.is_none() =>
+        {
+            bail!("canonical/stale/error-block parent proof requires btc_parent_height")
         }
         Some(kind) => Ok(kind),
         None => Ok(ParentKind::Unknown),
     }
+}
+
+/// Apply the pinned error-block catalogue after local PoW validation and before
+/// any optional Core result. A matching header is known consensus-invalid, so
+/// it must never be persisted as a stale or unknown candidate. The catalogue's
+/// height, not a coinbase-derived guess, is the only height source for this
+/// classification.
+fn error_block_proof(
+    parent_hash: &[u8],
+    pow_validates_btc_target: bool,
+    proof: ClassificationProof,
+) -> (Option<ParentKind>, Option<i32>) {
+    if pow_validates_btc_target && let Some(error_block) = crate::error_blocks::lookup(parent_hash)
+    {
+        return (Some(ParentKind::ErrorBlock), Some(error_block.height));
+    }
+    let height = match proof.parent_kind {
+        Some(ParentKind::Canonical | ParentKind::Stale | ParentKind::ErrorBlock) => {
+            proof.parent_height
+        }
+        Some(ParentKind::Near | ParentKind::Unknown) | None => None,
+    };
+    (proof.parent_kind, height)
 }
 
 /// Resolve a BTC parent-side pool attribution from a coinbase script
@@ -886,6 +916,60 @@ mod tests {
 
         assert_eq!(payload.btc_parent_kind, ParentKind::Canonical);
         assert_eq!(payload.btc_parent_height, Some(840_000));
+        assert_eq!(payload.difficulty_epoch_ok, Some(true));
+    }
+
+    #[test]
+    fn catalogued_error_block_overrides_external_proof() {
+        let mut payload = MergeMiningEventPayload {
+            child_height: Some(1),
+            child_block_hash: Some(vec![1; 32]),
+            child_header_bytes: None,
+            child_block_time: Some(1),
+            child_nbits: None,
+            btc_parent_header_hash: bitcoin::BlockHash::from_str(
+                "00000000000000000000c3d95a4bdc068dfe0c6d1e7ad13045c6f570e58d9ed7",
+            )
+            .unwrap()
+            .to_byte_array()
+            .to_vec(),
+            btc_parent_prev_header_hash: vec![3; 32],
+            btc_parent_header_bytes: vec![4; 80],
+            btc_parent_header_time: 1,
+            btc_parent_height: None,
+            btc_parent_kind: ParentKind::Unknown,
+            pow_validates_btc_target: true,
+            pow_validates_child_target: Some(true),
+            difficulty_epoch_ok: None,
+            btc_parent_coinbase_txid: None,
+            btc_parent_coinbase_script: None,
+            btc_parent_coinbase_outputs: None,
+            btc_parent_coinbase_outputs_text: None,
+            btc_parent_coinbase_tx_bytes: None,
+            child_coinbase_txid: None,
+            child_coinbase_script: None,
+            child_coinbase_outputs: None,
+            aux_merkle_proof: None,
+            pool_attributions: Vec::new(),
+            discovered_at: 10,
+            confirmed_at: 10,
+            revoked_at: None,
+            revocation_reason: None,
+            historical_provenance: None,
+        };
+
+        apply_classification_proof(
+            &mut payload,
+            ClassificationProof {
+                parent_kind: Some(ParentKind::Canonical),
+                parent_height: Some(946_213),
+                difficulty_epoch_ok: Some(true),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(payload.btc_parent_kind, ParentKind::ErrorBlock);
+        assert_eq!(payload.btc_parent_height, Some(946_213));
         assert_eq!(payload.difficulty_epoch_ok, Some(true));
     }
 

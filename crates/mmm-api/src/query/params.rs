@@ -26,12 +26,13 @@ pub fn epoch_start_of_day(date: Date) -> i64 {
         .unix_timestamp()
 }
 
-/// The serialized parent-`kind` string (canonical/near/stale/unknown) emitted
+/// The serialized parent-`kind` string (canonical/error_block/near/stale/unknown) emitted
 /// in tree and block payloads; byte-locked by fixtures/api/tree.json and
 /// block-*.json.
 pub(crate) fn kind_as_str(kind: ParentKind) -> &'static str {
     match kind {
         ParentKind::Canonical => "canonical",
+        ParentKind::ErrorBlock => "error_block",
         ParentKind::Near => "near",
         ParentKind::Stale => "stale",
         ParentKind::Unknown => "unknown",
@@ -205,7 +206,7 @@ pub(crate) fn optional_bool(
     }
 }
 
-/// Resolve the `kinds=` filter: absent or empty defaults to all four parent
+/// Resolve the `kinds=` filter: absent or empty defaults to all five parent
 /// kinds, then dedup into a deterministic name order. Mirrors
 /// `normalized_classifications`.
 pub(crate) fn normalized_kinds(raw: Option<&str>) -> Result<Vec<ParentKind>, ApiError> {
@@ -213,6 +214,7 @@ pub(crate) fn normalized_kinds(raw: Option<&str>) -> Result<Vec<ParentKind>, Api
     let values = if parsed.is_empty() {
         vec![
             ParentKind::Canonical,
+            ParentKind::ErrorBlock,
             ParentKind::Near,
             ParentKind::Stale,
             ParentKind::Unknown,
@@ -222,6 +224,7 @@ pub(crate) fn normalized_kinds(raw: Option<&str>) -> Result<Vec<ParentKind>, Api
     };
     Ok([
         ParentKind::Canonical,
+        ParentKind::ErrorBlock,
         ParentKind::Near,
         ParentKind::Stale,
         ParentKind::Unknown,

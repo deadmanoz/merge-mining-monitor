@@ -33,6 +33,34 @@ fn api_fixture_examples_are_listed_and_parse() {
 }
 
 fn assert_block_fixture_contract(file: &str, fixture: &Value) {
+    let block = fixture["block"]
+        .as_object()
+        .unwrap_or_else(|| panic!("{file} must carry a block object"));
+    assert!(
+        block.contains_key("error_block_reason"),
+        "{file} block must include nullable error_block_reason"
+    );
+    if block.get("kind").and_then(Value::as_str) == Some("error_block") {
+        assert!(
+            block["error_block_reason"]
+                .as_str()
+                .is_some_and(|reason| !reason.is_empty()),
+            "{file} error block must carry a non-empty error_block_reason"
+        );
+        assert!(
+            fixture["competition"].is_null(),
+            "{file} error block must not carry a stale competition"
+        );
+        assert!(
+            fixture["stale_branch"].is_null(),
+            "{file} error block must not carry a stale branch"
+        );
+    } else {
+        assert!(
+            block["error_block_reason"].is_null(),
+            "{file} non-error block must carry error_block_reason: null"
+        );
+    }
     let events = fixture["event_details"]
         .as_array()
         .unwrap_or_else(|| panic!("{file} must carry an event_details array"));
@@ -342,6 +370,7 @@ fn assert_sources_fixture_contract(fixture: &Value) {
         assert_eq!(source["counts"]["events"], expected_events);
         assert_eq!(source["counts"]["canonical"], expected_events);
         assert_eq!(source["counts"]["stale"], 0);
+        assert_eq!(source["counts"]["error_block"], 0);
         assert_eq!(source["status"], "stale");
         assert_eq!(source["last_seen_at"], expected_last_seen);
     }

@@ -11,6 +11,7 @@
   --focus: #005f73;
   --canonical: #2e7d5b;
   --stale: #b13f3a;
+  --error_block: #875a1e;
   --near: #b7771f;
   --zombie: #8a6a3f;
   --unknown: #5d5aa8;
@@ -41,6 +42,7 @@
   --focus: #7dd3fc;
   --canonical: #65b88c;
   --stale: #f06f67;
+  --error_block: #e0a85b;
   --near: #e4a84f;
   --zombie: #c2a06a;
   --unknown: #aaa7ff;

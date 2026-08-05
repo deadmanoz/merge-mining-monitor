@@ -106,7 +106,7 @@ function treeFixture(query) {
   });
 }
 
-async function stubApi(page, treeRequests) {
+async function stubApi(page, treeRequests, options = {}) {
   await stubSharedApi(page, treeRequests, {
     treePayload: treeFixture,
     blockPayload: (hash) => {
@@ -117,6 +117,7 @@ async function stubApi(page, treeRequests) {
         block,
       };
     },
+    ...options,
   });
 }
 
@@ -345,6 +346,40 @@ test("clicking an orphan/unknown node opens it via the empty-anchor fallback", a
 
   await expect(page.locator(".workspace")).toHaveAttribute("data-drawer-collapsed", "false");
   await expect(page.locator('g.tree-node[data-selected="true"]')).toHaveCount(1);
+});
+
+test("a catalogued error block is a standalone tree node with its rejection reason", async ({ page }) => {
+  const treeRequests = [];
+  const errorHash = "e".repeat(64);
+  const errorBlock = {
+    ...makeNode(errorHash, 946213, null, "error_block"),
+    error_block_reason: "time_below_mtp",
+  };
+  await stubApi(page, treeRequests, {
+    treePayload: (query) => treeEnvelope(query, {
+      nodes: [errorBlock],
+      edges: [],
+      legend: {
+        kinds: ["canonical", "stale", "error_block", "unknown", "near"],
+        edge_kinds: ["canonical", "stale_entry", "stale", "hidden"],
+      },
+    }),
+    blockPayload: () => ({
+      schema_version: "v1",
+      generated_at: GENERATED_AT,
+      block: errorBlock,
+    }),
+  });
+
+  await page.goto("/?tree_height=946213");
+  const errorNode = page.locator('g.tree-node[aria-label*="error_block 946213"]');
+  await expect(errorNode).toHaveCount(1);
+  await expect(page.locator("#tree-svg line.tree-edge")).toHaveCount(0);
+
+  await errorNode.click();
+  await expect(page.locator("#drawer")).toContainText("Consensus rejection");
+  await expect(page.locator("#drawer")).toContainText("time_below_mtp");
+  await expect(page.locator("#drawer")).not.toContainText("Orphan class");
 });
 
 test("entering a date centers the era roughly on the window mid-height", async ({ page }) => {

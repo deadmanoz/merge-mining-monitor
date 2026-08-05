@@ -6,6 +6,12 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Classify headers in the pinned research error-block catalogue as
+  `error_block`, preserving their primary consensus rejection token through the
+  read model, API, tree controls, and source-health counts. Keep this
+  full-proof-of-work but consensus-invalid state distinct from stale and BTC
+  orphan evidence.
+
 - Import the pinned 576,662-row research publication through one normalized
   27-chain contract, with complete checksum/schema/count preflight, Git LFS
   diagnostics, deterministic `import-all`, shared Bitcoin-parent

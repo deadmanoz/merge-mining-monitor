@@ -214,6 +214,7 @@ pub(crate) fn parent_kind_from_db(value: &str) -> Result<ParentKind> {
     match value {
         "canonical" => Ok(ParentKind::Canonical),
         "stale" => Ok(ParentKind::Stale),
+        "error_block" => Ok(ParentKind::ErrorBlock),
         "near" => Ok(ParentKind::Near),
         "unknown" => Ok(ParentKind::Unknown),
         other => bail!("unknown merge_mining_event.btc_parent_kind {other:?}"),
@@ -361,7 +362,7 @@ const RECONCILE_CANDIDATES_SQL: &str = "WITH parent_scope AS ( \
                 ORDER BY e.btc_parent_header_hash, e.child_height NULLS LAST, e.id \
              ), representative_event AS ( \
                 SELECT btc_parent_header_hash, expected_kind, \
-                       CASE WHEN expected_kind IN ('canonical','stale') \
+                       CASE WHEN expected_kind IN ('canonical','stale','error_block') \
                             THEN btc_parent_height \
                             ELSE NULL END AS expected_height \
                 FROM ( \
@@ -371,6 +372,7 @@ const RECONCILE_CANDIDATES_SQL: &str = "WITH parent_scope AS ( \
                                 WHEN btc_parent_kind = 'stale' \
                                      AND ((block_kind = 'stale' AND competitor_kind = 'canonical') \
                                           OR ($5::boolean AND block_kind IS NULL)) THEN 'stale' \
+                                WHEN btc_parent_kind = 'error_block' THEN 'error_block' \
                                 ELSE 'unknown' END AS expected_kind \
                     FROM representative_source \
                 ) selected_representative \
@@ -403,6 +405,8 @@ const RECONCILE_CANDIDATES_SQL: &str = "WITH parent_scope AS ( \
                        OR b.kind IS DISTINCT FROM re.expected_kind \
                        OR b.btc_height IS DISTINCT FROM re.expected_height \
                        OR (re.expected_kind IN ('canonical','stale') AND b.btc_height_source IS NULL) \
+                       OR (re.expected_kind = 'error_block' \
+                           AND b.btc_height_source IS DISTINCT FROM 'error-block-catalog') \
                        OR (re.expected_kind = 'unknown' AND b.btc_height_source IS NOT NULL) \
                        OR b.difficulty_epoch_ok IS DISTINCT FROM pr.difficulty_epoch_ok \
                        OR ap.evidence -> 'contributing_event_ids' IS DISTINCT FROM p.ids \

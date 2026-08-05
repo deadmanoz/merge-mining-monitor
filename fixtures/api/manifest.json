@@ -32,6 +32,11 @@
       "scenario": "RSK-only stale block with nullable authenticated child header and nBits evidence and no recoverable Bitcoin coinbase: bitcoin_miner_pool is Unknown while display_miner_pool resolves the merge-miner from the RSK miner address (display_miner_basis child_inferred)"
     },
     {
+      "file": "block-error-block.json",
+      "endpoint_family": "/api/v1/block/:hash",
+      "scenario": "Catalogued Bitcoin consensus-invalid error block with its non-null rejection reason and no stale competition or branch"
+    },
+    {
       "file": "block-rsk-uncle-near.json",
       "endpoint_family": "/api/v1/block/:hash",
       "scenario": "RSK uncle evidence for a near parent with nullable authenticated child header and nBits evidence"

@@ -14,6 +14,10 @@ directories.
   pool attribution. See `pools/README.md`.
 - `consensus/btc_nbits_by_epoch.json` - generated Bitcoin nBits epoch table.
   Regenerate with `scripts/gen-nbits-table.py` when extending offline coverage.
+- `consensus/error_blocks.csv` - compact mirror of the pinned
+  `merge-mining-research` error-block catalogue. It classifies a captured,
+  full-proof-of-work invalid header as `error_block`, never as stale or an
+  orphan. Update it atomically with its pinned research source commit.
 - `sources/chain_profiles.json` - hand-authored source profile data used by
   `just gen-source-artifacts`.
 - `findings/` - hand-authored evidence-backed findings, one JSON file per

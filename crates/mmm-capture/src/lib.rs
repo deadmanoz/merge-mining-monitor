@@ -11,6 +11,7 @@ pub mod btc_orphan;
 pub mod capture;
 pub mod child_payout;
 pub mod core_coinbase;
+pub mod error_blocks;
 #[cfg(any(test, feature = "artifact-generation"))]
 pub mod findings_registry;
 pub mod identity_registry;

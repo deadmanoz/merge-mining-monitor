@@ -28,6 +28,7 @@ pub(super) struct BlockDetailRow {
     pub(super) height: Option<i32>,
     pub(super) kind: ParentKind,
     pub(super) btc_orphan_class: Option<String>,
+    pub(super) error_block_reason: Option<String>,
     pub(super) header_bytes: Vec<u8>,
     pub(super) header_time: i64,
     pub(super) bitcoin_miner_pool: PoolObject,
@@ -120,7 +121,7 @@ pub(super) async fn load_block_detail(
             "SELECT b.btc_header_hash, b.btc_prev_header_hash, b.btc_height, b.kind, \
                     b.btc_header_bytes, b.btc_header_time, b.live_observed, \
                     b.core_attested, b.pow_validated, p.id, p.slug, p.canonical_name, \
-                    b.btc_orphan_class, b.btc_coinbase_script \
+                    b.btc_orphan_class, b.error_block_reason, b.btc_coinbase_script \
              FROM block b \
              LEFT JOIN pool p ON p.id = b.bitcoin_miner_pool_id \
              WHERE b.btc_header_hash = $1",
@@ -136,12 +137,13 @@ pub(super) async fn load_block_detail(
             height: row.get(2),
             kind: parent_kind_from_db(&kind)?,
             btc_orphan_class: row.get(12),
+            error_block_reason: row.get(13),
             header_bytes: row.get(4),
             header_time: row.get(5),
             live_observed: row.get(6),
             core_attested: row.get(7),
             pow_validated: row.get(8),
-            btc_coinbase_script: row.get(13),
+            btc_coinbase_script: row.get(14),
             bitcoin_miner_pool: pool_from_columns(row.get(9), row.get(10), row.get(11)),
         })
     })
@@ -213,7 +215,8 @@ pub(super) async fn load_event_details_by_hash(
 }
 
 /// Load active merge_mining_event rows by explicit id set (the proof
-/// `contributing_event_ids` for canonical/stale blocks). Empty ids
+/// `contributing_event_ids` for canonical/stale blocks). Error blocks use the
+/// hash-keyed path because catalogue evidence is not a stale proof. Empty ids
 /// short-circuit to empty. Sibling of `load_event_details_by_hash`; the two
 /// share `event_detail_sql` and differ only in predicate.
 pub(super) async fn load_event_details_by_ids(

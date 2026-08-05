@@ -251,6 +251,7 @@ function capturePanel(source, profile) {
         ["Events", formatScalar(source.counts.events)],
         ["Canonical", formatScalar(source.counts.canonical)],
         ["Stale", formatScalar(source.counts.stale)],
+        ["Error blocks", formatScalar(source.counts.error_block)],
         ["Strict orphans", formatScalar(source.counts.strict_orphan)],
         ["Weak orphans", formatScalar(source.counts.weak_orphan)],
       ])

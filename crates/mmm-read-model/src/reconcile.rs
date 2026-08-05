@@ -449,12 +449,18 @@ pub(crate) async fn classify_event_parent<C: GenericClient>(
 ) -> Result<(Header, ParentClassification)> {
     let header: Header = deserialize(&event.btc_parent_header_bytes)
         .with_context(|| format!("deserialize parent header for event {}", event.id))?;
-    let classification = match preclassified {
-        Some(preclassified) => preclassified.classification,
-        None => {
-            let preflight =
-                load_parent_preflight(client, &event.btc_parent_prev_header_hash).await?;
-            classifier.classify_parent(&header, preflight).await?
+    let classification = if let Some(error_block) =
+        mmm_capture::error_blocks::lookup(&event.btc_parent_header_hash)
+    {
+        ParentClassification::error_block(&header, error_block.height)
+    } else {
+        match preclassified {
+            Some(preclassified) => preclassified.classification,
+            None => {
+                let preflight =
+                    load_parent_preflight(client, &event.btc_parent_prev_header_hash).await?;
+                classifier.classify_parent(&header, preflight).await?
+            }
         }
     };
     Ok((header, classification))
@@ -471,12 +477,13 @@ pub(crate) async fn preclassify_event_parent(
     event_id: i64,
     classifier: &ConfiguredParentClassifier,
 ) -> Result<Option<PreclassifiedParent>> {
-    if !classifier.is_enabled() {
-        return Ok(None);
-    }
-
     let event = load_event(client, event_id).await?;
     if event.skips_parent_read_model() {
+        return Ok(None);
+    }
+    if mmm_capture::error_blocks::lookup(&event.btc_parent_header_hash).is_none()
+        && !classifier.is_enabled()
+    {
         return Ok(None);
     }
     let (_, classification) = classify_event_parent(client, &event, classifier, None).await?;

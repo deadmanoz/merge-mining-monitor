@@ -82,8 +82,12 @@ pub struct ApiBlock {
     pub kind: &'static str,
     /// Derived refinement of `kind='unknown'` (see `block.btc_orphan_class`):
     /// `strict_btc_orphan` / `weak_btc_orphan` / `excluded`, or `null`
-    /// for canonical/stale blocks and for pending/never-Core-checked unknowns.
+    /// for canonical/stale/error-block blocks and for pending/never-Core-checked
+    /// unknowns.
     pub btc_orphan_class: Option<String>,
+    /// Primary consensus violation from the pinned error-block catalogue.
+    /// Present only when `kind='error_block'`.
+    pub error_block_reason: Option<String>,
     /// Printable raw tag runs from the commitment representative's Bitcoin
     /// coinbase scriptSig, or `null` when that representative has no recoverable
     /// coinbase script.
@@ -290,7 +294,7 @@ pub struct BlockStaleBranch {
 }
 
 /// `/api/v1/block/{hash}` projection entry. Routes on read-model presence: a
-/// `block` row hydrates the full canonical/stale/unknown payload
+/// `block` row hydrates the full canonical/stale/error-block/unknown payload
 /// (`block_from_read_model`); absence falls through to direct
 /// merge_mining_event projection (`block_from_direct_events`, near/unknown).
 /// `hash` is display-order hex, decoded to stored byte order via
@@ -411,6 +415,7 @@ async fn block_from_read_model(
             height: row.height,
             kind: kind_as_str(row.kind),
             btc_orphan_class: row.btc_orphan_class.clone(),
+            error_block_reason: row.error_block_reason.clone(),
             coinbase_tag,
             header: header_projection(&row.header_bytes)?,
             bitcoin_miner_pool: row.bitcoin_miner_pool,
@@ -476,6 +481,7 @@ async fn block_from_direct_events(
             // A direct-projected block has no read-model `block` row, so it has
             // no Core-gated orphan class (pending by construction).
             btc_orphan_class: None,
+            error_block_reason: None,
             coinbase_tag,
             header,
             bitcoin_miner_pool,

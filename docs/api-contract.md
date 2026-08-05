@@ -441,7 +441,7 @@ backbone and active merge-mining evidence.
 Query:
 
 ```text
-GET /api/v1/tree?at_height&at_time&context=compact&from_height&to_height&kinds=near,unknown,canonical,stale&classification=strict_btc_orphan,weak_btc_orphan&source=auxpow:namecoin,auxpow:rsk,auxpow:syscoin,auxpow:fractal,auxpow:hathor&include_near=true&include_unheighted=true&unheighted_from=2026-05-01&unheighted_to=2026-05-26&min_sources=1
+GET /api/v1/tree?at_height&at_time&context=compact&from_height&to_height&kinds=near,unknown,canonical,stale,error_block&classification=strict_btc_orphan,weak_btc_orphan&source=auxpow:namecoin,auxpow:rsk,auxpow:syscoin,auxpow:fractal,auxpow:hathor&include_near=true&include_unheighted=true&unheighted_from=2026-05-01&unheighted_to=2026-05-26&min_sources=1
 ```
 
 `at_height`, `at_time`, `from_height` / `to_height`, and `unheighted_anchor` are
@@ -567,7 +567,8 @@ Each tree node has:
 - `hash`, `height`, `kind`, `prev_id`, `prev_hash`;
 - `btc_orphan_class`: the derived refinement of `kind='unknown'`
   (`strict_btc_orphan` / `weak_btc_orphan` / `excluded`), or `null` for
-  canonical/stale nodes and for pending/never-Core-checked unknowns. `kind` stays
+  canonical/stale/error-block nodes and for pending/never-Core-checked unknowns.
+  `kind` stays
   the structural evidence state; `btc_orphan_class` is the refinement the UI
   renders. It is a per-node detail field, not a navigable bucket;
 - `pool`;
@@ -590,7 +591,7 @@ Each tree node has:
 
 `height` is `null` for direct-projected near and unknown nodes because current
 AuxPoW producers do not prove Bitcoin parent height. The height window selects
-height-backed canonical/stale/context nodes
+height-backed canonical/stale/error-block/context nodes
 only. Null-height nodes are
 excluded unless `include_unheighted = true`; in that mode
 `unheighted_from` and `unheighted_to` are required UTC date bounds applied to
@@ -608,7 +609,7 @@ Clients must derive hidden context from `edges[]`. A hidden
 edge may make `node.prev_hash` differ from the visible `prev_id` node's hash.
 `edges[]` is the drawn-edge graph: a node may carry `prev_id`/`prev_hash` for a
 visible predecessor without a matching `edges[]` entry when that transition has
-no drawable edge kind (an unknown/near child, or a canonical child with a
+no drawable edge kind (an error-block, unknown, or near child, or a canonical child with a
 non-canonical predecessor).
 
 Edge fields are `from_hash`, `to_hash`, and `edge_kind`. Allowed edge kinds:
@@ -654,14 +655,16 @@ Response fields:
 - `block` with `hash`, nullable `height`, `kind`, nullable `btc_orphan_class`
   (the derived refinement of `kind='unknown'`: `strict_btc_orphan` /
   `weak_btc_orphan` / `excluded`, else `null`), nullable
-  `coinbase_tag` (for Core-attested canonical rows with stored Core coinbase
+  `error_block_reason` (the pinned catalogue's primary consensus-rejection
+  token for `kind = 'error_block'`, otherwise `null`), nullable `coinbase_tag`
+  (for Core-attested canonical rows with stored Core coinbase
   evidence, extracted from `block.btc_coinbase_script`; otherwise extracted
   from the representative Bitcoin coinbase script in
   `commitment.parent_coinbase_script_hex`; else `null`), `header`,
   `bitcoin_miner_pool`, `display_miner_pool` + `display_miner_basis` (the
   best-available display miner; see the glossary), and `source_summary`.
   Direct-projected near/unknown blocks (no read-model row) carry
-  `btc_orphan_class: null`;
+  `btc_orphan_class: null` and `error_block_reason: null`;
 - `proofs`;
 - `event_details`;
 - `competition`;
@@ -721,7 +724,7 @@ raw `aux_merkle_proof_hex` stays in the payload for programmatic use.
 
 For direct `near` and `unknown` projections, group active non-revoked
 `merge_mining_event` rows by `btc_parent_header_hash`. Current kind precedence
-is canonical/stale read model first, then any `unknown` event, then any `near`
+is canonical/stale/error-block read model first, then any `unknown` event, then any `near`
 event.
 
 `proofs[].evidence.contributing_event_ids` is the durable proof evidence for
@@ -903,7 +906,7 @@ Future live non-AuxPoW source kinds must define their own sync semantics before
 they should be registered.
 
 Per-source counts (`counts.events`, the distinct-parent `near`/`unknown`/
-`canonical`/`stale`, and the strict/weak orphan sub-counts `strict_orphan`/
+`canonical`/`stale`/`error_block`, and the strict/weak orphan sub-counts `strict_orphan`/
 `weak_orphan`) are served from the precomputed `source_health` table
 (O(sources)), not recomputed per request. This endpoint FAILS CLOSED (the shared
 `internal_error` envelope, HTTP 500) rather than returning zeros when the
@@ -962,25 +965,26 @@ roughly doubles the payload for a value this endpoint's clients do not need.
 
 ## Nullability By Parent Kind
 
-| Field | near | unknown | canonical | stale |
-|---|---|---|---|---|
-| `block.hash` | required | required | required | required |
-| `block.height` | null (direct-projected) | null (direct-projected) | required | required |
-| `block.kind` | required | required | required | required |
-| `block.coinbase_tag` | null or printable tag | null or printable tag | null or printable tag | null or printable tag |
-| `block.header` | required | required | required | required |
-| `block.bitcoin_miner_pool` | required | required | required | required |
-| `block.display_miner_pool` | required (Unknown) | required | required | required |
-| `block.display_miner_basis` | `unknown` | one of `bitcoin_coinbase` / `child_inferred` / `unknown` | one of `bitcoin_coinbase` / `child_inferred` / `unknown` | one of `bitcoin_coinbase` / `child_inferred` / `unknown` |
-| `block.source_summary.sources` | sorted non-empty array | sorted non-empty array | sorted non-empty array for evidence; may be empty for `/tree` canonical context | sorted non-empty array |
-| `block.source_summary.distinct_sources` | required | required | required | required |
-| `block.source_summary.auxpow_chain_count` | required | required | required | required |
-| `block.source_summary.live_observed` | false | false unless observed | required | required |
-| `block.source_summary.pow_validates_btc_target` | false | true | true | true |
-| `proofs` | empty array | empty array until proof derivation | array | array |
-| `event_details` | non-empty array | non-empty array | array | array |
-| `competition` | null | null | null | required when paired |
-| `stale_branch` | null | null | null | required |
+| Field | near | unknown | canonical | stale | error_block |
+|---|---|---|---|---|---|
+| `block.hash` | required | required | required | required | required |
+| `block.height` | null (direct-projected) | null (direct-projected) | required | required | required |
+| `block.kind` | required | required | required | required | required |
+| `block.error_block_reason` | null | null | null | null | required |
+| `block.coinbase_tag` | null or printable tag | null or printable tag | null or printable tag | null or printable tag | null or printable tag |
+| `block.header` | required | required | required | required | required |
+| `block.bitcoin_miner_pool` | required | required | required | required | required |
+| `block.display_miner_pool` | required (Unknown) | required | required | required | required |
+| `block.display_miner_basis` | `unknown` | one of `bitcoin_coinbase` / `child_inferred` / `unknown` | one of `bitcoin_coinbase` / `child_inferred` / `unknown` | one of `bitcoin_coinbase` / `child_inferred` / `unknown` | one of `bitcoin_coinbase` / `child_inferred` / `unknown` |
+| `block.source_summary.sources` | sorted non-empty array | sorted non-empty array | sorted non-empty array for evidence; may be empty for `/tree` canonical context | sorted non-empty array | sorted non-empty array |
+| `block.source_summary.distinct_sources` | required | required | required | required | required |
+| `block.source_summary.auxpow_chain_count` | required | required | required | required | required |
+| `block.source_summary.live_observed` | false | false unless observed | required | required | false |
+| `block.source_summary.pow_validates_btc_target` | false | true | true | true | true |
+| `proofs` | empty array | empty array until proof derivation | array | array | array |
+| `event_details` | non-empty array | non-empty array | array | array | array |
+| `competition` | null | null | null | required when paired | null |
+| `stale_branch` | null | null | null | required | null |
 
 The `unknown` invariant depends on producer behavior: rows with failing Bitcoin
 target are `near`, not `unknown`. The first non-AuxPoW producer migration must

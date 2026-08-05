@@ -84,6 +84,76 @@ async fn compact_tree_keeps_nearby_stale_event_and_hides_canonical_spans() -> Re
     })
 }
 
+#[tokio::test]
+async fn compact_tree_includes_in_window_error_blocks() -> Result<()> {
+    crate::run_db_test!(client, {
+        let namecoin = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let ts = day_epoch(2026, Month::May, 10);
+        let hashes = seed_canonical_chain(&client, 0..=120, 0x8200, 0x7fff, ts, None).await?;
+        let error_block = hash_bytes(0xe22b);
+        let parent = hashes[&59].clone();
+
+        insert_block(
+            &client,
+            &error_block,
+            &parent,
+            None,
+            "unknown",
+            ts + 60,
+            None,
+        )
+        .await?;
+        client
+            .execute(
+                "UPDATE block \
+                 SET kind = 'error_block', btc_height = 60, \
+                     btc_height_source = 'error-block-catalog', \
+                     error_block_reason = 'test_catalogue_reason' \
+                 WHERE btc_header_hash = $1",
+                &[&error_block],
+            )
+            .await?;
+        insert_event(
+            &client,
+            EventSeed {
+                source_id: namecoin,
+                child_height: 60,
+                child_hash: hash_bytes(0xe260),
+                parent_hash: error_block.clone(),
+                prev_hash: parent,
+                parent_time: ts + 60,
+                kind: "error_block",
+                pow_validates_btc_target: true,
+                btc_height: Some(60),
+                pool_id: None,
+            },
+        )
+        .await?;
+
+        let payload = project_tree(
+            &client,
+            Some("at_height=60&context=compact&kinds=error_block&min_sources=1"),
+        )
+        .await?;
+        let display_error_block = display_hash(&error_block);
+        assert!(
+            payload
+                .nodes
+                .iter()
+                .any(|node| { node.hash == display_error_block && node.kind == "error_block" })
+        );
+        assert!(
+            payload
+                .edges
+                .iter()
+                .all(|edge| edge.to_hash != display_error_block),
+            "catalogued error blocks are standalone tree nodes"
+        );
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
 #[derive(Debug, Clone, Copy)]
 enum InvalidOmittedSpan {
     MissingHeight,

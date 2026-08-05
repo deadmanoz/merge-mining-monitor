@@ -7,7 +7,8 @@ use super::*;
 /// row Core still vouches for (kind, height, competitor, single distinct source,
 /// `pow_validated=true`, persisted Core-coinbase miner reattributed); a non-core
 /// block collapses to a fully-revoked `unknown` husk (counters zeroed,
-/// `pow_validated=false`, `btc_orphan_class` cleared, miner NULL). The
+/// `pow_validated=false`, `btc_orphan_class` and `error_block_reason` cleared,
+/// miner NULL). The
 /// `pow_validated=false` husk is what the api orphan index filters out so it does
 /// not masquerade as a genuine PoW-valid unknown.
 pub(crate) async fn demote_zero_active_block<C: GenericClient>(
@@ -30,6 +31,7 @@ pub(crate) async fn demote_zero_active_block<C: GenericClient>(
                  difficulty_epoch_ok = CASE WHEN core_attested THEN difficulty_epoch_ok ELSE NULL END, \
                  first_attested_at = NULL, \
                  last_attested_at = NULL, \
+                 error_block_reason = CASE WHEN core_attested THEN error_block_reason ELSE NULL END, \
                  btc_orphan_class = NULL, \
                  updated_at = extract(epoch from now())::bigint \
              WHERE btc_header_hash = $1",
