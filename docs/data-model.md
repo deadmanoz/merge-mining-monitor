@@ -80,21 +80,23 @@ authenticated `child_header_hex` and `child_nbits` when present.
 `child_block_time` is the child block's own claimed timestamp, taken from
 whatever the chain commits: the header `nTime` for Namecoin-family chains, the
 RSK block timestamp, the Hathor block transaction timestamp. Whoever builds the
-child template writes it, which by mining practice is when that template is
-constructed; the service observes no build and records only the claim, read
-from a header, an RPC response, or a publication column. It is not the time the
-child block was broadcast, and it is not a second opinion on when the Bitcoin
-block was found.
+child template writes it; the service observes no build and records only the
+claim, read from a header, an RPC response, or a publication column. It is not
+the time the child block was broadcast, and it is not a second opinion on when
+the Bitcoin block was found.
 
 Once set it is fixed, and the invariant that fixes it is format-neutral: every
 AuxPoW scheme commits child data into the Bitcoin coinbase, so the child stamp
 is settled before the Bitcoin work exists and cannot be refreshed when the
 proof is finally submitted to the child network. Changing it by one second
 changes the committed child data, the coinbase, the Bitcoin merkle root, and
-voids the proof of work. Note what this does not say: an unchanged child
-template can be committed into several successive Bitcoin jobs, so the stamp
-belongs to the last rebuild of that template, not to the last coinbase that
-carried it.
+voids the proof of work. Note what this does not say. The stamp is the value
+carried by the committed child data, and nothing more: one unchanged template
+can be committed into several successive Bitcoin jobs, so it does not identify
+the coinbase that finally carried it. Reading it as the moment of the template's
+last rebuild is an additional assumption about miner policy, namely that the
+timestamp is refreshed on every rebuild. A rebuild that keeps the old value
+leaves no trace here, and no producer observes a build in any case.
 
 The Namecoin-family form of that commitment is the one the stored `aux_proof`
 describes:
