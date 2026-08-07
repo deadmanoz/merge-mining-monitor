@@ -1,4 +1,5 @@
 import { blockExplorer } from "./explorer-links.js?v=0.4.2";
+import { fmtDelta } from "./delta-scales.js?v=0.4.2";
 import { $, chainDisplayName, CLASSIFICATION_META, esc, formatEpoch, formatScalar, formatSourceList, formatSourceRef, state } from "./frontend-state.js?v=0.4.2";
 
 
@@ -51,6 +52,15 @@ const AUXPOW_HELP = {
     meta: "The chain's AuxPoW identifier",
     body: [
       "Each Bitcoin-merge-mined chain has a fixed AuxPoW chain id (Namecoin = 1). Combined with the marker's merkle_nonce and merkle_size it determines the chain's slot. It is a reference label; the slot index decoded from the proof determines verification.",
+    ],
+  },
+  child_time: {
+    name: "Child Time",
+    meta: "The auxiliary header's own nTime, stamped at commitment",
+    body: [
+      "The auxiliary block header's own timestamp, not a monitor capture time and not the moment the auxiliary block reached its network. It records when the pool last committed this child template into the Bitcoin coinbase.",
+      "It sits behind the Bitcoin header time in most cases, and that is ordinary. AuxPoW runs child-first: the child header is built, its hash becomes a leaf under aux_merkle_root, and only then do miners hash the Bitcoin header over a coinbase carrying that root. Changing the child nTime afterwards would change the leaf, the root, the coinbase, and the parent merkle root, voiding the work, so the stamp cannot be refreshed when the proof is finally submitted. Every refresh instead costs a fresh Bitcoin job, which is why pools re-commit fast chains almost continuously and slow ones about once per job. A chain committed at job start therefore trails the block it is committed to by roughly the Bitcoin block interval, which is a property of how long that block took to find rather than of the child chain.",
+      "So read a negative offset as re-commitment age, not lateness. A positive one is different: template practice can only ever push a child stamp earlier, and the Bitcoin block provably contains this header, so a child stamp later than the Bitcoin stamp means the producing pool's own two clocks disagree.",
     ],
   },
   targets: {
@@ -135,7 +145,7 @@ function renderBlockDetailPayload(payload) {
     detailSection("Parent block (Bitcoin)", renderParentBlock(block)),
     payload.commitment ? detailSectionHelp("Merge-mining commitment", "commitment", renderCommitment(payload.commitment)) : "",
     detailSection("Sources & capture", renderSourcesAndCapture(block.source_summary)),
-    detailSection("Auxiliary blocks", renderEvents(payload.event_details || [])),
+    detailSection("Auxiliary blocks", renderEvents(payload.event_details || [], block.header?.time)),
     payload.competition ? detailSection("Competition", renderCompetition(payload.competition)) : "",
     payload.stale_branch ? detailSection("Stale Branch", renderStaleBranch(payload.stale_branch, block.hash)) : "",
   ].join("");
@@ -242,6 +252,25 @@ function explorerCopyValue(value, chain, block = {}) {
   return `${copyValue(value)} ${explorerLink(explorer, chain)}`;
 }
 
+// The auxiliary stamp beside its offset from the Bitcoin header this event is
+// committed to. Both clocks are the producing pool's own, and the offset is
+// normally negative because the child header was sealed when the template was
+// committed rather than when the block was found; the child_time help topic
+// carries the mechanism. Rendered only when both stamps are exact integers, so
+// a value JavaScript cannot subtract losslessly shows the time alone rather
+// than a rounded offset dressed up as measured.
+function childTimeCell(childTime, parentHeaderTime) {
+  const stamp = unavailableEvidence(childTime, formatEpoch);
+  if (!Number.isSafeInteger(childTime) || !Number.isSafeInteger(parentHeaderTime)) return stamp;
+  const offset = childTime - parentHeaderTime;
+  // fmtDelta compacts to the largest fitting unit, which is what the distribution
+  // view reads in, but it rounds two offsets a few seconds apart to the same
+  // minute. Comparing auxiliaries on one block is exactly where that matters, so
+  // the exact second count stays available on the element.
+  const exact = `${offset >= 0 ? "+" : ""}${offset}s from the Bitcoin header time`;
+  return `${stamp} <span class="child-time-offset" title="${esc(exact)}">${esc(fmtDelta(offset))} vs Bitcoin</span>`;
+}
+
 function unavailableEvidence(value, render = copyValue) {
   if (value === null || value === undefined) {
     return `<span class="null-value">unavailable</span>`;
@@ -281,7 +310,7 @@ function renderSourcesAndCapture(summary = {}) {
 // Dropped fields that were redundant with the Header (Parent Kind, Parent Hash,
 // Parent Bitcoin miner) or internal (the DB ID). Child miner only appears when
 // resolved.
-function renderEvents(events) {
+function renderEvents(events, parentHeaderTime) {
   if (!events.length) return `<div class="empty">No auxiliary blocks</div>`;
   return events.map((event) => {
     const knownChildPool = event.child_miner_pool?.known ? event.child_miner_pool : null;
@@ -295,8 +324,9 @@ function renderEvents(events) {
         height: event.child_height,
       }))],
       ["Child Header", unavailableEvidence(event.child_header_hex)],
-      // The real auxiliary block time, not a monitor capture timestamp.
-      ["Child Time", unavailableEvidence(event.child_block_time, formatEpoch)],
+      // The real auxiliary block time, not a monitor capture timestamp. The help
+      // topic covers why it normally trails the Bitcoin header time.
+      ["Child Time", `${childTimeCell(event.child_block_time, parentHeaderTime)} ${auxpowInfoButton("child_time")}`],
       ["Child nBits", unavailableEvidence(event.child_nbits)],
       ["PoW (parent_target / aux_target)", `${formatScalar(event.pow_validates_btc_target)} / ${formatScalar(event.pow_validates_child_target)} ${auxpowInfoButton("targets")}`],
     ];

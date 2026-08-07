@@ -130,6 +130,13 @@
   overflow-wrap: anywhere;
 }
 
+/* The auxiliary stamp's offset from the Bitcoin header time. Muted like the
+   relative-time label it sits beside: it is context for the value, not a
+   second value. */
+.child-time-offset {
+  color: var(--muted);
+}
+
 /* A value that doubles as a cross-link. Styled as a link rather than a button,
    because it sits inline in a definition list where a button chrome would read
    as a separate control rather than as the value itself. */
