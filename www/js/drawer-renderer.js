@@ -56,7 +56,10 @@ const AUXPOW_HELP = {
   },
   child_time: {
     name: "Child Time",
-    meta: "The auxiliary block's own claimed stamp, settled at commitment",
+    // Provenance-neutral: this topic is shown for every event, including the
+    // RSK, Hathor and historical rows whose stamp was never checked against the
+    // commitment, so the kicker must not assert that it was.
+    meta: "The auxiliary block's own claimed timestamp, and its offset from Bitcoin",
     body: [
       "The auxiliary block's own timestamp, not a monitor capture time and not the moment the auxiliary block reached its network. Whoever builds the child template writes it, which by mining practice is when that template is constructed; the monitor observes no build and records only the claim. Which field it is depends on the chain: the header nTime for the Namecoin family, the block timestamp for RSK, the block transaction timestamp for Hathor.",
       "It sits behind the Bitcoin header time in most cases, and that is ordinary. AuxPoW runs child-first: the child data is committed into the Bitcoin coinbase (for the Namecoin family, the child header hash becomes a leaf under aux_merkle_root), and only then do miners hash the Bitcoin header over that coinbase. Changing the child stamp afterwards would change the committed data, the coinbase, and the parent merkle root, voiding the work, so it cannot be refreshed when the proof is finally submitted. Every refresh instead costs a fresh Bitcoin job, which is why pools re-commit fast chains almost continuously and slow ones about once per job, reusing one child template across many jobs.",

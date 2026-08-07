@@ -171,7 +171,7 @@ test("the Child Time row opens its own help topic", async ({ page }) => {
   await expect(dialog).toBeVisible();
   await expect(page.locator("#auxpow-dialog-title")).toHaveText("Child Time");
   await expect(page.locator("#auxpow-dialog-kicker")).toHaveText(
-    "The auxiliary block's own claimed stamp, settled at commitment",
+    "The auxiliary block's own claimed timestamp, and its offset from Bitcoin",
   );
   // The mechanism the whole topic exists to convey.
   await expect(page.locator("#auxpow-dialog-body")).toContainText(
@@ -205,12 +205,13 @@ test("a malformed block detail with no Bitcoin header time renders the stamp wit
 });
 
 // child_block_time is an unbounded i64 by contract, so the guard has to cover
-// the operand AND the subtraction, which fail independently. Event 1 is exact
-// on its own and inexact once the parent time is taken off it. Event 2 arrives
-// already past the safe range, where JSON.parse has silently rounded it, and
-// then differences back into a safe-LOOKING result that would render as though
-// it were measured. Event 3 differences back inside the range honestly and must
-// still render.
+// the operand AND the subtraction, which fail independently and so need fixtures
+// that isolate each. Event 1 is exact on its own and inexact once the parent
+// time is taken off it, which only the offset guard catches. Event 2 is the
+// mirror image: it arrives just past the exactly-representable range, so it is
+// already approximate, yet its difference lands back inside the safe range and
+// would render as a measured figure unless the OPERAND guard rejects it. Event 3
+// is exact throughout and must still render.
 test("an offset JavaScript cannot compute exactly is not rendered", async ({ page }) => {
   const PARENT_TIME = 1_700_000_000;
   const nodes = [makeNode(HASH, 700000, null, "canonical", { id: 1, prev_id: null })];
@@ -224,10 +225,11 @@ test("an offset JavaScript cannot compute exactly is not rendered", async ({ pag
           event({
             id: 3,
             child_chain: "syscoin",
-            // Beyond MAX_SAFE_INTEGER on arrival: the value is already
-            // approximate, so any offset from it is fiction however safe the
-            // subtraction looks.
-            child_block_time: Number.MAX_SAFE_INTEGER * 4,
+            // One past MAX_SAFE_INTEGER, so the value itself is already
+            // approximate, while the difference (about 9.0072e15) is comfortably
+            // back inside the safe range. Anything larger would be rejected by
+            // the offset guard instead and would prove nothing about this one.
+            child_block_time: Number.MAX_SAFE_INTEGER + 1,
           }),
           event({
             id: 2,
