@@ -77,13 +77,22 @@ authenticated `child_header_hex` and `child_nbits` when present.
 
 ### What `child_block_time` Means
 
-`child_block_time` is the child header's own `nTime`. It records when the pool
+`child_block_time` is the child block's own timestamp, taken from whatever the
+chain commits: the header `nTime` for Namecoin-family chains, the RSK block
+timestamp, the Hathor block transaction timestamp. It records when the pool
 last committed that child template into the Bitcoin coinbase. It is not the
 time the child block was broadcast, and it is not a second opinion on when the
 Bitcoin block was found.
 
-The commitment runs child-first, so the child header is sealed before the
-Bitcoin work exists:
+The invariant that makes this true is format-neutral: every AuxPoW scheme
+commits child data into the Bitcoin coinbase, so the child stamp is fixed
+before the Bitcoin work exists and cannot be refreshed when the proof is
+finally submitted to the child network. Changing it by one second changes the
+committed child data, the coinbase, the Bitcoin merkle root, and voids the
+proof of work.
+
+The Namecoin-family form of that chain is the one the stored `aux_proof`
+describes:
 
 ```
 child header (nTime at byte offset 68)
@@ -93,35 +102,43 @@ child header (nTime at byte offset 68)
   -> Bitcoin merkle root -> Bitcoin header -> proof of work
 ```
 
-Changing `nTime` by one second changes the leaf, the aux root, the coinbase,
-the Bitcoin merkle root, and voids the proof of work. So the stamp cannot be
-refreshed when the AuxPoW proof is finally submitted to the child network. The
-stored `aux_proof` carries both branches this depends on: `blockchain_branch`
-proves the child block hash sits at `slot_index` in the aux merkle tree, and
-`coinbase_branch` proves the coinbase sits in the Bitcoin transaction tree.
+`blockchain_branch` proves the child block hash sits at `slot_index` in the aux
+merkle tree, and `coinbase_branch` proves the coinbase sits in the Bitcoin
+transaction tree. RSK and Hathor commit differently and carry no such pair:
+RSK discards the coinbase under RSKIP-92, and Hathor uses the RFC 0006 split
+header (see `docs/capture.md`). The sealing invariant above still holds for
+both.
 
-Two consequences shape how the field may be read:
+Two asymmetric reading rules follow, and both assume the stamp is
+authenticated. Live capture derives it from the committed child data. A
+historical import may carry it from the publication's own column with no child
+header to authenticate it against, because `validate_child_bundle` only
+compares a supplied timestamp when a header is present. Treat an unauthenticated
+historical stamp as the publisher's claim, not as decoded evidence.
 
-- **A negative offset from the Bitcoin header time measures re-commitment age,
-  not lateness.** Every refresh of a child template costs a new Bitcoin job, so
-  pools re-commit fast chains continuously and slow chains about once per job.
-  A chain committed at job start carries an offset of roughly minus the Bitcoin
-  block interval, which is a property of Bitcoin's luck rather than of the
-  block, the pool, or the child chain. Do not derive a verdict about a Bitcoin
-  timestamp from it.
-- **A positive offset is a genuine inconsistency.** Template cadence can only
-  push a child stamp earlier, and the Bitcoin block provably contains the child
-  header, so a child stamp later than the Bitcoin stamp means the producing
-  pool's own two clocks disagree. It bounds how far the Bitcoin stamp is
-  understated. Treat it as an internal inconsistency rather than as proof
-  against an external clock, since the same operator sets both; it is stronger
-  where the child block was accepted on its own chain and therefore also passed
-  that network's median-time-past and future-drift rules.
+- **A negative offset from the Bitcoin header time is re-commitment age, not
+  lateness.** Every refresh of a child template costs a new Bitcoin job, so
+  pools re-commit fast chains continuously and slow chains about once per job,
+  reusing one child header across many jobs. A chain committed at job start
+  carries an offset of roughly minus the Bitcoin block interval, which is a
+  property of Bitcoin's luck rather than of the block, the pool, or the child
+  chain. This is an inference from template cadence, not a measurement, and the
+  magnitude depends on the pool's own refresh policy. Do not derive a verdict
+  about a Bitcoin timestamp from it.
+- **A positive offset is an internal inconsistency worth looking at.** Template
+  cadence can only push a child stamp earlier, and the Bitcoin block provably
+  contains the child data, so a child stamp later than the Bitcoin stamp means
+  the producing pool stamped the two inconsistently. That is not automatically
+  a clock fault: child chains accept headers some distance into the future, so
+  a pool may stamp ahead deliberately and still have the block accepted. Read
+  it as a flag on the pool's own pair of stamps, never as proof against an
+  external clock, since the same operator sets both.
 
 Neither direction can speak to block withholding. Every child witness is sealed
 into the block before it is found, so nothing inside the block testifies to
-when it was published; that question needs observation data such as
-`event_discovered_at`.
+when it was published. `event_discovered_at` does not answer it either: it is
+the wall clock at ingestion, so it is close to first observation only for live
+polling, and is the import date for backfills and historical publications.
 
 Historical parent-coinbase evidence is also lossless. Structured full
 transactions populate the normal txid, script, and serialized-output fields,

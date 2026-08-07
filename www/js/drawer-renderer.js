@@ -56,11 +56,11 @@ const AUXPOW_HELP = {
   },
   child_time: {
     name: "Child Time",
-    meta: "The auxiliary header's own nTime, stamped at commitment",
+    meta: "The auxiliary block's own stamp, fixed at commitment",
     body: [
-      "The auxiliary block header's own timestamp, not a monitor capture time and not the moment the auxiliary block reached its network. It records when the pool last committed this child template into the Bitcoin coinbase.",
-      "It sits behind the Bitcoin header time in most cases, and that is ordinary. AuxPoW runs child-first: the child header is built, its hash becomes a leaf under aux_merkle_root, and only then do miners hash the Bitcoin header over a coinbase carrying that root. Changing the child nTime afterwards would change the leaf, the root, the coinbase, and the parent merkle root, voiding the work, so the stamp cannot be refreshed when the proof is finally submitted. Every refresh instead costs a fresh Bitcoin job, which is why pools re-commit fast chains almost continuously and slow ones about once per job. A chain committed at job start therefore trails the block it is committed to by roughly the Bitcoin block interval, which is a property of how long that block took to find rather than of the child chain.",
-      "So read a negative offset as re-commitment age, not lateness. A positive one is different: template practice can only ever push a child stamp earlier, and the Bitcoin block provably contains this header, so a child stamp later than the Bitcoin stamp means the producing pool's own two clocks disagree.",
+      "The auxiliary block's own timestamp, not a monitor capture time and not the moment the auxiliary block reached its network. It records when the pool last committed this child template into the Bitcoin coinbase. Which field that is depends on the chain: the header nTime for the Namecoin family, the block timestamp for RSK, the block transaction timestamp for Hathor.",
+      "It sits behind the Bitcoin header time in most cases, and that is ordinary. AuxPoW runs child-first: the child data is committed into the Bitcoin coinbase (for the Namecoin family, the child header hash becomes a leaf under aux_merkle_root), and only then do miners hash the Bitcoin header over that coinbase. Changing the child stamp afterwards would change the committed data, the coinbase, and the parent merkle root, voiding the work, so it cannot be refreshed when the proof is finally submitted. Every refresh instead costs a fresh Bitcoin job, which is why pools re-commit fast chains almost continuously and slow ones about once per job, reusing one child template across many jobs. A chain committed at job start therefore trails the block it is committed to by roughly the Bitcoin block interval, which is a property of how long that block took to find rather than of the child chain.",
+      "So read a negative offset as re-commitment age, not lateness; its size follows the pool's own refresh policy, so it is an inference rather than a measurement. A positive one is different: template practice can only ever push a child stamp earlier, and the Bitcoin block provably contains this child data, so a child stamp later than the Bitcoin stamp means the pool stamped the two inconsistently. That is a flag on the pool's own pair of stamps rather than a clock fault, since child chains accept headers some distance into the future and a pool may stamp ahead deliberately.",
     ],
   },
   targets: {
@@ -254,7 +254,7 @@ function explorerCopyValue(value, chain, block = {}) {
 
 // The auxiliary stamp beside its offset from the Bitcoin header this event is
 // committed to. Both clocks are the producing pool's own, and the offset is
-// normally negative because the child header was sealed when the template was
+// normally negative because the child stamp was fixed when the template was
 // committed rather than when the block was found; the child_time help topic
 // carries the mechanism. Rendered only when both stamps are exact integers, so
 // a value JavaScript cannot subtract losslessly shows the time alone rather
