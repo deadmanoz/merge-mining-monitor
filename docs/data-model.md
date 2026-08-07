@@ -114,10 +114,13 @@ invariant above still holds for both.
 
 How firmly the stamp is evidence varies by source, and `child_header_hex` is a
 weaker discriminator than it looks. It answers one question only: whether the
-stamp can be re-derived from stored bytes. Only the Namecoin-family AuxPoW
-parse path stores child header bytes; every other path writes
-`child_header_bytes: None`, so its stamp is readable only as the column the
-source supplied.
+stamp can be re-derived from stored bytes. Among live capture paths only the
+Namecoin-family AuxPoW parse stores child header bytes; RSK, Hathor, and
+Elastos all write `child_header_bytes: None`, so their stamps are readable only
+as the column the source supplied. Historical import is not restricted that
+way: the shared CSV importer persists a validated `header_bytes` for any
+`HistoricalChainSpec` that supplies one, so an imported non-Namecoin event may
+carry a header where its live counterpart would not.
 
 That is not the same question as whether the Bitcoin block committed to the
 stamp, and the two answers come apart in both directions. Elastos capture
@@ -135,31 +138,42 @@ present. Read `child_header_hex` as "re-derivable from stored bytes", check
 `aux_proof` or the chain's own capture path for commitment, and treat a stamp
 with neither as the source's reported value.
 
-Two asymmetric reading rules follow. Both compare stamps the producing pool
-chose, on both sides: a Bitcoin header `nTime` is also miner-set, bounded only
-by median-time-past and future-drift tolerance, so the offset is a relation
-between two claims and not a measurement against a reference clock.
+Two asymmetric reading rules follow, and both are bounded by the same fact:
+the database holds two claimed timestamps and nothing else. Neither the moment
+a child template was built, nor the moment a Bitcoin job was created, nor the
+moment the block was found is recorded anywhere. Both stamps are miner-set, the
+Bitcoin `nTime` bounded only by median-time-past and future-drift tolerance, so
+the offset relates two claims and measures nothing against a reference clock.
+The two are not even guaranteed to come from one operator: `docs/attribution.md`
+notes that a Bitcoin pool may outsource or proxy child-chain operation through
+another operator's endpoint, which is why parent and child attribution are
+modelled separately here. Treat the pair as independently controlled unless the
+attribution rows evidence common control.
 
-- **A negative offset from the Bitcoin header time is child template age, not
-  lateness.** Every refresh of a child template costs a new Bitcoin job, so
-  pools re-commit fast chains continuously and slow chains about once per job,
-  reusing one child header across many jobs. A chain committed at job start
-  carries an offset of roughly minus the Bitcoin block interval, tracking how
-  long that block took to find rather than anything about the block, the pool,
-  or the child chain. This is an inference from template cadence, not a
-  measurement, and the magnitude depends on the pool's own refresh policy. Do
-  not derive a verdict about a Bitcoin timestamp from it.
-- **A positive offset is an internal inconsistency worth looking at.** What the
+- **A negative offset is an upper bound on child template age, not lateness.**
+  Every refresh of a child template costs a new Bitcoin job, so pools re-commit
+  fast chains continuously and slow chains about once per job, reusing one child
+  header across many jobs. The offset is therefore how stale the committed
+  template was relative to the parent's own claimed time, which is an upper
+  bound on nothing more than that. The familiar "roughly minus the Bitcoin block
+  interval" reading needs a further assumption the data does not carry: that the
+  pool rolled `nTime` forward while reusing the template, so the parent stamp
+  tracks the solve and the child stamp does not. Where `nTime` was instead fixed
+  at job creation alongside the template, the same practice yields an offset near
+  zero. Read the magnitude as a property of the pool's refresh and stamping
+  policy, and do not derive a verdict about a Bitcoin timestamp from it.
+- **A positive offset is an inconsistency worth looking at.** What the
   commitment order fixes is the real-time sequence, not either number: the child
   template is built first, and only then does a Bitcoin job commit to it. So if
   both stamps were honest readings of one clock, the child one could not be the
   later of the two. A positive offset means at least one of them is not the wall
-  clock it purports to be. It does not say which. The pool may have stamped the
-  child ahead, which child chains tolerate within their future-drift allowance,
-  or left the Bitcoin `nTime` behind the job that carries the template, which is
-  equally legal as long as it clears median-time-past. Read it as a flag on the
-  producing pool's own pair of stamps, never as proof against an external clock,
-  since the same operator sets both and neither side is pinned to real time.
+  clock it purports to be. It does not say which. The child may have been
+  stamped ahead, which child chains tolerate within their future-drift
+  allowance, or the Bitcoin `nTime` left behind the job that carries the
+  template, which is equally legal as long as it clears median-time-past. Read
+  it as a flag on the pair, never as proof against an external clock; where the
+  two stamps came from different operators it is not even an internal
+  inconsistency, only a disagreement between two independent claims.
 
 Neither direction can speak to block withholding. Every child witness is sealed
 into the block before it is found, so nothing inside the block testifies to

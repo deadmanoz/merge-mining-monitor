@@ -180,6 +180,11 @@ test("an offset JavaScript cannot compute exactly is not rendered", async ({ pag
   await events.nth(1).locator("summary").click();
 
   await expect(events.nth(0).locator(".child-time-offset")).toHaveCount(0);
+  // The fallback is the stamp ALONE, not an empty cell: asserting only the
+  // missing offset would pass on a regression that dropped the time with it.
+  await expect(events.nth(0).locator(`dt:has-text("Child Time") + dd`)).toContainText(
+    String(-Number.MAX_SAFE_INTEGER),
+  );
   await expect(events.nth(1).locator(".child-time-offset")).toHaveAttribute(
     "title",
     `-${Number.MAX_SAFE_INTEGER}s from the Bitcoin header time`,
