@@ -119,8 +119,14 @@ How firmly the stamp is evidence varies by source, and `child_header_hex` is a
 weaker discriminator than it looks. It answers one question only: whether the
 stamp can be re-derived from stored bytes. Among live capture paths only the
 Namecoin-family AuxPoW parse stores child header bytes; RSK, Hathor, and
-Elastos all write `child_header_bytes: None`, so their stamps are readable only
-as the column the source supplied. Historical import is not restricted that
+Elastos all write `child_header_bytes: None`, so their stamps are read from the
+column the source supplied. Hathor is a partial exception worth knowing about:
+capture also persists the exact `funds || graph` prefix in
+`hathor_merge_mining_evidence.funds_graph`, and RFC 0006 folds the graph into
+the committed auxiliary hash, so the transaction timestamp is retained in
+committed bytes. Capture does not use it that way, though. It reads the RPC
+column and never cross-checks the two, so today the retained bytes are a
+possibility rather than a corroboration. Historical import is not restricted that
 way: the shared CSV importer reads a per-row `child_header_hex` column,
 validates it as an 80-byte header, and persists it whatever the chain, so an
 imported non-Namecoin event may carry a header where its live counterpart would
@@ -153,8 +159,13 @@ the Bitcoin side, consensus requires only that `nTime` exceed median-time-past
 and stay inside the future-drift tolerance, and even that is an assurance about
 headers Core has attested: the drawer also renders `near`, `unknown`,
 error-block, and inferred-stale parents, for which capture checked the proof of
-work against `nBits` and nothing about the timestamp rules. So the offset
-relates two claims and measures nothing against a reference clock.
+work against `nBits` and nothing about the timestamp rules. The one exception
+runs the other way. A catalogued `error_block` carries the research
+catalogue's own rejection reason, and some of those reasons are timestamp
+rejections (`median_time_past_violation`, `time_below_mtp`); where the drawer
+shows one, the parent stamp is already known to violate the rule, which is a
+stronger statement than any offset. So the offset relates two claims and
+measures nothing against a reference clock.
 The two are not even guaranteed to come from one operator: `docs/attribution.md`
 notes that a Bitcoin pool may outsource or proxy child-chain operation through
 another operator's endpoint, which is why parent and child attribution are

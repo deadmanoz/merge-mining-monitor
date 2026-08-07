@@ -204,11 +204,13 @@ test("a malformed block detail with no Bitcoin header time renders the stamp wit
   await expect(events.nth(0).locator(".child-time-offset")).toHaveCount(0);
 });
 
-// child_block_time is an unbounded i64 by contract, so the two stamps can each
-// be exact while their difference is not: the guard has to be on the
-// subtraction, not only on the operands. The first stamp below is safe on its
-// own and unsafe once the parent time is taken off it; the second differences
-// back inside the range and must still render.
+// child_block_time is an unbounded i64 by contract, so the guard has to cover
+// the operand AND the subtraction, which fail independently. Event 1 is exact
+// on its own and inexact once the parent time is taken off it. Event 2 arrives
+// already past the safe range, where JSON.parse has silently rounded it, and
+// then differences back into a safe-LOOKING result that would render as though
+// it were measured. Event 3 differences back inside the range honestly and must
+// still render.
 test("an offset JavaScript cannot compute exactly is not rendered", async ({ page }) => {
   const PARENT_TIME = 1_700_000_000;
   const nodes = [makeNode(HASH, 700000, null, "canonical", { id: 1, prev_id: null })];
@@ -219,6 +221,14 @@ test("an offset JavaScript cannot compute exactly is not rendered", async ({ pag
         generated_at: GENERATED_AT,
         event_details: [
           event({ child_block_time: -Number.MAX_SAFE_INTEGER }),
+          event({
+            id: 3,
+            child_chain: "syscoin",
+            // Beyond MAX_SAFE_INTEGER on arrival: the value is already
+            // approximate, so any offset from it is fiction however safe the
+            // subtraction looks.
+            child_block_time: Number.MAX_SAFE_INTEGER * 4,
+          }),
           event({
             id: 2,
             child_chain: "namecoin",
@@ -233,17 +243,24 @@ test("an offset JavaScript cannot compute exactly is not rendered", async ({ pag
 
   await page.goto(`/?selected=${HASH}`);
   const events = page.locator("#drawer details.event-block");
-  await expect(events).toHaveCount(2);
+  await expect(events).toHaveCount(3);
   await events.nth(0).locator("summary").click();
   await events.nth(1).locator("summary").click();
+  await events.nth(2).locator("summary").click();
 
+  // Inexact subtraction, exact operands.
   await expect(events.nth(0).locator(".child-time-offset")).toHaveCount(0);
   // The fallback is the stamp ALONE, not an empty cell: asserting only the
   // missing offset would pass on a regression that dropped the time with it.
   await expect(events.nth(0).locator(`dt:has-text("Child Time") + dd`)).toContainText(
     String(-Number.MAX_SAFE_INTEGER),
   );
-  await expect(events.nth(1).locator(".child-time-offset")).toHaveAttribute(
+
+  // Inexact operand, safe-looking subtraction.
+  await expect(events.nth(1).locator(".child-time-offset")).toHaveCount(0);
+
+  // Exact throughout, so the offset renders.
+  await expect(events.nth(2).locator(".child-time-offset")).toHaveAttribute(
     "title",
     `-${Number.MAX_SAFE_INTEGER}s from the Bitcoin header time`,
   );
