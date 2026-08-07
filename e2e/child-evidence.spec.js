@@ -145,3 +145,43 @@ test("an auxiliary block shows no offset when the Bitcoin header time is unavail
   await expect(events.nth(0)).toContainText("2023-11-14T22:13:20Z");
   await expect(events.nth(0).locator(".child-time-offset")).toHaveCount(0);
 });
+
+// child_block_time is an unbounded i64 by contract, so the two stamps can each
+// be exact while their difference is not: the guard has to be on the
+// subtraction, not only on the operands. The first stamp below is safe on its
+// own and unsafe once the parent time is taken off it; the second differences
+// back inside the range and must still render.
+test("an offset JavaScript cannot compute exactly is not rendered", async ({ page }) => {
+  const PARENT_TIME = 1_700_000_000;
+  const nodes = [makeNode(HASH, 700000, null, "canonical", { id: 1, prev_id: null })];
+  await stubApi(page, [], {
+    treePayload: (params) => treeEnvelope(params, { nodes }),
+    blockPayload: (hash) => {
+      const payload = blockPayload(hash, {
+        generated_at: GENERATED_AT,
+        event_details: [
+          event({ child_block_time: -Number.MAX_SAFE_INTEGER }),
+          event({
+            id: 2,
+            child_chain: "namecoin",
+            child_block_time: -Number.MAX_SAFE_INTEGER + PARENT_TIME,
+          }),
+        ],
+      });
+      payload.block.header = { time: PARENT_TIME };
+      return payload;
+    },
+  });
+
+  await page.goto(`/?selected=${HASH}`);
+  const events = page.locator("#drawer details.event-block");
+  await expect(events).toHaveCount(2);
+  await events.nth(0).locator("summary").click();
+  await events.nth(1).locator("summary").click();
+
+  await expect(events.nth(0).locator(".child-time-offset")).toHaveCount(0);
+  await expect(events.nth(1).locator(".child-time-offset")).toHaveAttribute(
+    "title",
+    `-${Number.MAX_SAFE_INTEGER}s from the Bitcoin header time`,
+  );
+});

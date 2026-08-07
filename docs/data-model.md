@@ -107,19 +107,33 @@ child header (nTime at byte offset 68)
 `blockchain_branch` proves the child block hash sits at `slot_index` in the aux
 merkle tree, and `coinbase_branch` proves the coinbase sits in the Bitcoin
 transaction tree. RSK and Hathor commit differently and carry no such pair:
-RSK discards the coinbase under RSKIP-92, and Hathor uses the RFC 0006 split
-header (see `docs/capture.md`). The sealing invariant above still holds for
-both.
+RSKIP-92 midstate compression leaves RSK unable to recover the complete
+coinbase (a `coinbase_tail` is retained, and exposed as `coinbase_tail_hex`),
+and Hathor uses the RFC 0006 split header (see `docs/capture.md`). The sealing
+invariant above still holds for both.
 
-How firmly the stamp is evidence depends on where it came from, and the stored
-`child_header_hex` is the discriminator. Only the Namecoin-family AuxPoW parse
-path stores child header bytes, so only there is the stamp decoded from the
-data the Bitcoin block commits to. RSK, Hathor, and Elastos capture copy their
-chain's RPC timestamp with `child_header_bytes: None`, and a historical import
-may carry the publication's own column with no header to authenticate it
-against, because `validate_child_bundle` only compares a supplied timestamp
-when a header is present. Where no child header is stored, treat the value as
-the source's reported timestamp rather than as decoded evidence.
+How firmly the stamp is evidence varies by source, and `child_header_hex` is a
+weaker discriminator than it looks. It answers one question only: whether the
+stamp can be re-derived from stored bytes. Only the Namecoin-family AuxPoW
+parse path stores child header bytes; every other path writes
+`child_header_bytes: None`, so its stamp is readable only as the column the
+source supplied.
+
+That is not the same question as whether the Bitcoin block committed to the
+stamp, and the two answers come apart in both directions. Elastos capture
+stores no header, yet reconstructs the 84-byte Elastos header (Bitcoin-shaped
+80-byte prefix carrying `time`, plus the height), checks its hash against the
+RPC-reported one, and verifies that hash against the CAuxPow commitment before
+writing, so its stamp is bound into the committed data. A stored header, by
+contrast, does not by itself prove commitment: `validate_child_bundle` checks
+that the header hashes to `child_block_hash` and that the supplied timestamp
+matches the header's, which is internal consistency, not a parent-side proof.
+RSK and Hathor capture copy their chain's RPC timestamp, and a historical
+import may carry the publication's own column with nothing to check it against
+at all, because that validation only compares a timestamp when a header is
+present. Read `child_header_hex` as "re-derivable from stored bytes", check
+`aux_proof` or the chain's own capture path for commitment, and treat a stamp
+with neither as the source's reported value.
 
 Two asymmetric reading rules follow. Both compare stamps the producing pool
 chose, on both sides: a Bitcoin header `nTime` is also miner-set, bounded only
@@ -135,15 +149,17 @@ between two claims and not a measurement against a reference clock.
   or the child chain. This is an inference from template cadence, not a
   measurement, and the magnitude depends on the pool's own refresh policy. Do
   not derive a verdict about a Bitcoin timestamp from it.
-- **A positive offset is an internal inconsistency worth looking at.** The
-  direction is the part the commitment order fixes: template cadence can only
-  push a child stamp earlier, and the Bitcoin block commits to the child data,
-  so a child stamp later than the Bitcoin stamp means the producing pool
-  stamped the two inconsistently. That is not automatically a clock fault:
-  child chains accept headers some distance into the future, so a pool may
-  stamp ahead deliberately and still have the block accepted. Read it as a flag
-  on the pool's own pair of stamps, never as proof against an external clock,
-  since the same operator sets both.
+- **A positive offset is an internal inconsistency worth looking at.** What the
+  commitment order fixes is the real-time sequence, not either number: the child
+  template is built first, and only then does a Bitcoin job commit to it. So if
+  both stamps were honest readings of one clock, the child one could not be the
+  later of the two. A positive offset means at least one of them is not the wall
+  clock it purports to be. It does not say which. The pool may have stamped the
+  child ahead, which child chains tolerate within their future-drift allowance,
+  or left the Bitcoin `nTime` behind the job that carries the template, which is
+  equally legal as long as it clears median-time-past. Read it as a flag on the
+  producing pool's own pair of stamps, never as proof against an external clock,
+  since the same operator sets both and neither side is pinned to real time.
 
 Neither direction can speak to block withholding. Every child witness is sealed
 into the block before it is found, so nothing inside the block testifies to
