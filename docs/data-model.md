@@ -110,10 +110,10 @@ child header (nTime at byte offset 68)
 `blockchain_branch` proves the child block hash sits at `slot_index` in the aux
 merkle tree, and `coinbase_branch` proves the coinbase sits in the Bitcoin
 transaction tree. RSK and Hathor commit differently and carry no such pair:
-RSKIP-92 midstate compression leaves RSK unable to recover the complete
-coinbase (a `coinbase_tail` is retained, and exposed as `coinbase_tail_hex`),
-and Hathor uses the RFC 0006 split header (see `docs/capture.md`). The sealing
-invariant above still holds for both.
+RSK's SPV proof compresses the coinbase to a SHA-256 midstate, so the complete
+coinbase is unrecoverable (a `coinbase_tail` is retained, and exposed as
+`coinbase_tail_hex`), and Hathor uses the RFC 0006 split header (see
+`docs/capture.md`). The sealing invariant above still holds for both.
 
 How firmly the stamp is evidence varies by source, and `child_header_hex` is a
 weaker discriminator than it looks. It answers one question only: whether the
@@ -177,11 +177,15 @@ attribution rows evidence common control.
   refresh and stamping policy, and do not derive a verdict about a Bitcoin
   timestamp from it.
 - **A positive offset is an ordering disagreement worth investigating.** What
-  it is a disagreement *between* depends on the evidence class above. Where the
-  stamp is committed, as in a Namecoin-family header or an Elastos
-  reconstruction verified against the CAuxPow, the block commits to child data
-  stamped later than the block's own header time, and the disagreement is
-  internal to the block. Where the stamp is source-reported, as for RSK and
+  it is a disagreement *between* depends on the evidence class above, and the
+  bar is a verified commitment, not a stored header. Where the commitment was
+  checked, as in a live Namecoin-family capture carrying its `aux_proof` or an
+  Elastos reconstruction verified against the CAuxPow, the block commits to
+  child data stamped later than the block's own header time, and the
+  disagreement is internal to the block. A header on its own does not clear that
+  bar: historical imports always write `aux_merkle_proof: None`, so a header-only
+  imported row can carry a positive offset while nothing shows the Bitcoin
+  coinbase ever committed to it. Where the stamp is source-reported, as for RSK and
   Hathor capture (both assign the chain's RPC timestamp without checking it
   against the merge-mining commitment) and for a historical row carrying neither
   header nor proof, the offset says only that the source's reported child time
