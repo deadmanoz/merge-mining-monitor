@@ -80,8 +80,8 @@ test("the block drawer renders authenticated and unavailable child evidence hone
 // The offset is the only place the drawer subtracts two stamps. fmtDelta rounds
 // to the largest fitting unit, which is exactly what loses the distinction a
 // reader comparing two auxiliaries on one block needs, so the exact second count
-// has to survive alongside it and be reachable without a pointer. -607s is the
-// case that proves it: it renders as -10m, so an assertion that used a round
+// has to survive alongside it and be visible without a pointer. -607s is the
+// case that proves it: it renders as -10m, so an assertion built on a round
 // -600 would pass whether or not the exact figure was kept at all.
 test("an auxiliary block's offset from the Bitcoin header time is shown only when both stamps exist", async ({
   page,
@@ -97,10 +97,12 @@ test("an auxiliary block's offset from the Bitcoin header time is shown only whe
           // Committed at job start: the ordinary case, well behind the block,
           // and by a span the compact form cannot express exactly.
           event({ child_block_time: PARENT_TIME - 607 }),
-          // Stamped after the block it is committed to: the inconsistency.
+          // Stamped after the block it is committed to: the ordering disagreement.
           event({ id: 2, child_chain: "namecoin", child_block_time: PARENT_TIME + 7 }),
+          // Tied to the second. Neither side gets a sign.
+          event({ id: 3, child_chain: "fractal", child_block_time: PARENT_TIME }),
           // No child stamp to subtract.
-          event({ id: 3, child_chain: "syscoin", child_block_time: null }),
+          event({ id: 4, child_chain: "syscoin", child_block_time: null }),
         ],
       });
       payload.block.header = { time: PARENT_TIME };
@@ -110,32 +112,66 @@ test("an auxiliary block's offset from the Bitcoin header time is shown only whe
 
   await page.goto(`/?selected=${HASH}`);
   const events = page.locator("#drawer details.event-block");
-  await expect(events).toHaveCount(3);
-  for (const index of [0, 1, 2]) {
+  await expect(events).toHaveCount(4);
+  for (const index of [0, 1, 2, 3]) {
     await events.nth(index).locator("summary").click();
   }
 
   const offset = (index) => events.nth(index).locator(".child-time-offset");
-  const seen = (index) => offset(index).locator("[aria-hidden='true']");
-  const announced = (index) => offset(index).locator(".visually-hidden");
 
-  // Rounded for the eye, exact for the title, and exact again in text assistive
-  // technology can reach without hovering a non-focusable span.
-  await expect(seen(0)).toHaveText("-10m vs Bitcoin");
+  // Lossy compaction keeps the exact figure VISIBLE, not just in the title: a
+  // reader with no pointer must still be able to tell -607s from -600s.
+  await expect(offset(0)).toHaveText("-10m (-607s) vs Bitcoin");
   await expect(offset(0)).toHaveAttribute("title", "-607s from the Bitcoin header time");
-  await expect(announced(0)).toHaveText("-607s from the Bitcoin header time");
   // The offset annotates the stamp; it must not displace it.
   await expect(events.nth(0).locator(`dt:has-text("Child Time") + dd`)).toContainText(
     "2023-11-14T22:13:13Z",
   );
 
-  await expect(seen(1)).toHaveText("+7s vs Bitcoin");
-  await expect(announced(1)).toHaveText("+7s from the Bitcoin header time");
+  // Already exact, so no redundant "+7s (+7s)".
+  await expect(offset(1)).toHaveText("+7s vs Bitcoin");
+  await expect(offset(1)).toHaveAttribute("title", "+7s from the Bitcoin header time");
 
-  await expect(offset(2)).toHaveCount(0);
+  // Equal stamps are neutral in both forms; a "+0s" would imply a direction.
+  await expect(offset(2)).toHaveText("0s vs Bitcoin");
+  await expect(offset(2)).toHaveAttribute("title", "0s from the Bitcoin header time");
+
+  await expect(offset(3)).toHaveCount(0);
   await expect(
-    events.nth(2).locator(`dt:has-text("Child Time") + dd .null-value`),
+    events.nth(3).locator(`dt:has-text("Child Time") + dd .null-value`),
   ).toHaveText("unavailable");
+});
+
+// auxpowHelpFor falls back to an empty "AuxPoW" topic for an unknown key, so a
+// mis-keyed button or an emptied body would leave every other assertion here
+// green while the row's explanation silently vanished. Open it and check the
+// identity plus one load-bearing sentence.
+test("the Child Time row opens its own help topic", async ({ page }) => {
+  const nodes = [makeNode(HASH, 700000, null, "canonical", { id: 1, prev_id: null })];
+  await stubApi(page, [], {
+    treePayload: (params) => treeEnvelope(params, { nodes }),
+    blockPayload: (hash) =>
+      blockPayload(hash, {
+        generated_at: GENERATED_AT,
+        event_details: [event({ child_block_time: 1_700_000_000 })],
+      }),
+  });
+
+  await page.goto(`/?selected=${HASH}`);
+  const events = page.locator("#drawer details.event-block");
+  await events.nth(0).locator("summary").click();
+  await events.nth(0).getByRole("button", { name: "About Child Time" }).click();
+
+  const dialog = page.locator("#auxpow-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.locator("#auxpow-dialog-title")).toHaveText("Child Time");
+  await expect(page.locator("#auxpow-dialog-kicker")).toHaveText(
+    "The auxiliary block's own claimed stamp, settled at commitment",
+  );
+  // The mechanism the whole topic exists to convey.
+  await expect(page.locator("#auxpow-dialog-body")).toContainText(
+    "the monitor observes no build and records only the claim",
+  );
 });
 
 // Contract-wise `block.header.time` is a required non-null u32, so this stubs a

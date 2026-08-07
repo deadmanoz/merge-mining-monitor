@@ -133,8 +133,11 @@ stores no header, yet reconstructs the 84-byte Elastos header (Bitcoin-shaped
 RPC-reported one, and verifies that hash against the CAuxPow commitment before
 writing, so its stamp is bound into the committed data. A stored header, by
 contrast, does not by itself prove commitment: `validate_child_bundle` checks
-that the header hashes to `child_block_hash` and that the supplied timestamp
-matches the header's, which is internal consistency, not a parent-side proof.
+the header's hash against `child_block_hash` only when the row supplies one
+(a header-only row instead has its stored hash derived from that same header
+afterwards), and compares the supplied timestamp to the header's only when both
+are present. That is internal consistency, and where the hash was derived it is
+not even corroboration; either way it is not a parent-side proof.
 RSK and Hathor capture copy their chain's RPC timestamp, and a historical
 import may carry the publication's own column with nothing to check it against
 at all, because that validation only compares a timestamp when a header is
@@ -169,24 +172,28 @@ attribution rows evidence common control.
   how old the template really was. Read it as a joint property of the pool's
   refresh and stamping policy, and do not derive a verdict about a Bitcoin
   timestamp from it.
-- **A positive offset is an inconsistency worth looking at.** What the
-  commitment order fixes is the real-time sequence, not either number: the child
-  template is built first, and only then does a Bitcoin job commit to it. So if
-  both stamps were honest readings of one clock, the child one could not be the
-  later of the two. A positive offset means at least one of them is not the wall
-  clock it purports to be. It does not say which. The child may have been
-  stamped ahead, which child chains tolerate within their future-drift
-  allowance, or the Bitcoin `nTime` left behind the job that carries the
-  template, which is equally legal as long as it clears median-time-past. Read
-  it as a flag on the pair, never as proof against an external clock; where the
-  two stamps came from different operators it is not even an internal
-  inconsistency, only a disagreement between two independent claims.
+- **A positive offset is an ordering disagreement worth investigating.** The
+  block commits to child data stamped later than the block's own header time.
+  That is worth a look, but it is not proof that either number is wrong. The
+  child-first dependency fixes only that the child data was settled before the
+  hashing; it says nothing about the order in which the two values were chosen.
+  A pool can carry an `nTime` picked for an earlier base template while
+  rebuilding the coinbase and merkle root around a newer child commitment, which
+  produces the disagreement with both values honestly read when they were taken.
+  Stamping the child ahead is equally available, within whatever future-drift
+  allowance the child chain enforces. So read it as a disagreement between two
+  claims, never as proof against an external clock, and remember the claims may
+  not even come from one operator.
 
 Neither direction can speak to block withholding. Every child witness is sealed
 into the block before it is found, so nothing inside the block testifies to
 when it was published. `event_discovered_at` does not answer it either: it is
-the wall clock at ingestion, so it is close to first observation only for live
-polling, and is the import date for backfills and historical publications.
+the wall clock at first ingestion, so it is close to first observation only for
+live polling, and is the import date for the events a backfill or historical
+publication creates. It is not a reliable import stamp either, because it is
+never advanced on a later write: an import that meets an already-captured event
+promotes its evidence and raises `confirmed_at` while the row keeps the
+earliest ingestion time it was first written with.
 
 Historical parent-coinbase evidence is also lossless. Structured full
 transactions populate the normal txid, script, and serialized-output fields,
