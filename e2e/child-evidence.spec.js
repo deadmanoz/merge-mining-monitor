@@ -173,9 +173,13 @@ test("the Child Time row opens its own help topic", async ({ page }) => {
   await expect(page.locator("#auxpow-dialog-kicker")).toHaveText(
     "The auxiliary block's own claimed timestamp, and its offset from Bitcoin",
   );
-  // The mechanism the whole topic exists to convey.
+  // The two things the topic exists to convey: the stamp is a claim nobody
+  // observed being made, and a stored header is narrower than a commitment.
   await expect(page.locator("#auxpow-dialog-body")).toContainText(
     "the monitor observes no build and records only the claim",
+  );
+  await expect(page.locator("#auxpow-dialog-body")).toContainText(
+    "narrower than whether the Bitcoin block committed to it",
   );
 });
 
@@ -208,39 +212,41 @@ test("a malformed block detail with no Bitcoin header time renders the stamp wit
 // the operand AND the subtraction, which fail independently and so need fixtures
 // that isolate each. Event 1 is exact on its own and inexact once the parent
 // time is taken off it, which only the offset guard catches. Event 2 is the
-// mirror image: it arrives just past the exactly-representable range, so it is
-// already approximate, yet its difference lands back inside the safe range and
-// would render as a measured figure unless the OPERAND guard rejects it. Event 3
-// is exact throughout and must still render.
+// mirror image: 9007199254740993 has no double representation, so JSON.parse
+// hands the page a rounded 9007199254740992, and the difference from there lands
+// back inside the safe range. Only the OPERAND guard stops that rendering as a
+// measured figure. Event 3 is exact throughout and must still render.
+//
+// The rounded operand has to arrive as a raw JSON lexeme: route.fulfill({json})
+// serializes through JSON.stringify, which cannot emit an integer the runtime
+// has already lost. A route registered after stubApi takes precedence, so the
+// shared helper stays untouched.
 test("an offset JavaScript cannot compute exactly is not rendered", async ({ page }) => {
   const PARENT_TIME = 1_700_000_000;
+  const ROUNDED_STAMP = "__ROUNDED_CHILD_TIME__";
   const nodes = [makeNode(HASH, 700000, null, "canonical", { id: 1, prev_id: null })];
   await stubApi(page, [], {
     treePayload: (params) => treeEnvelope(params, { nodes }),
-    blockPayload: (hash) => {
-      const payload = blockPayload(hash, {
-        generated_at: GENERATED_AT,
-        event_details: [
-          event({ child_block_time: -Number.MAX_SAFE_INTEGER }),
-          event({
-            id: 3,
-            child_chain: "syscoin",
-            // One past MAX_SAFE_INTEGER, so the value itself is already
-            // approximate, while the difference (about 9.0072e15) is comfortably
-            // back inside the safe range. Anything larger would be rejected by
-            // the offset guard instead and would prove nothing about this one.
-            child_block_time: Number.MAX_SAFE_INTEGER + 1,
-          }),
-          event({
-            id: 2,
-            child_chain: "namecoin",
-            child_block_time: -Number.MAX_SAFE_INTEGER + PARENT_TIME,
-          }),
-        ],
-      });
-      payload.block.header = { time: PARENT_TIME };
-      return payload;
-    },
+  });
+  await page.route("**/api/v1/block/**", async (route) => {
+    const hash = route.request().url().split("/").at(-1);
+    const payload = blockPayload(hash, {
+      generated_at: GENERATED_AT,
+      event_details: [
+        event({ child_block_time: -Number.MAX_SAFE_INTEGER }),
+        event({ id: 3, child_chain: "syscoin", child_block_time: ROUNDED_STAMP }),
+        event({
+          id: 2,
+          child_chain: "namecoin",
+          child_block_time: -Number.MAX_SAFE_INTEGER + PARENT_TIME,
+        }),
+      ],
+    });
+    payload.block.header = { time: PARENT_TIME };
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(payload).replace(`"${ROUNDED_STAMP}"`, "9007199254740993"),
+    });
   });
 
   await page.goto(`/?selected=${HASH}`);
@@ -258,8 +264,12 @@ test("an offset JavaScript cannot compute exactly is not rendered", async ({ pag
     String(-Number.MAX_SAFE_INTEGER),
   );
 
-  // Inexact operand, safe-looking subtraction.
+  // Rounded operand, safe-looking subtraction. The stamp still renders, at the
+  // rounded value the runtime actually holds; only the offset is withheld.
   await expect(events.nth(1).locator(".child-time-offset")).toHaveCount(0);
+  await expect(events.nth(1).locator(`dt:has-text("Child Time") + dd`)).toContainText(
+    "9007199254740992",
+  );
 
   // Exact throughout, so the offset renders.
   await expect(events.nth(2).locator(".child-time-offset")).toHaveAttribute(

@@ -77,153 +77,47 @@ authenticated `child_header_hex` and `child_nbits` when present.
 
 ### What `child_block_time` Means
 
-`child_block_time` is the child block's own claimed timestamp, taken from
-whatever the chain commits: the header `nTime` for Namecoin-family chains, the
-RSK block timestamp, the Hathor block transaction timestamp. Whoever builds the
-child template writes it; the service observes no build and records only the
-claim, read from a header, an RPC response, or a publication column. It is not
-the time the child block was broadcast, and it is not a second opinion on when
-the Bitcoin block was found.
+`child_block_time` is the child block's own claimed timestamp as its chain
+reports it: the header `nTime` for Namecoin-family chains, the RSK block
+timestamp, the Hathor block transaction timestamp. Whoever builds the child
+template writes it. It is not a broadcast time, not a capture time, and not a
+second opinion on when the Bitcoin block was found.
 
-Once set it is fixed, and the invariant that fixes it is format-neutral: every
-AuxPoW scheme commits child data into the Bitcoin coinbase, so the child stamp
-is settled before the Bitcoin work exists and cannot be refreshed when the
-proof is finally submitted to the child network. Changing it by one second
-changes the committed child data, the coinbase, the Bitcoin merkle root, and
-voids the proof of work. Note what this does not say. The stamp is the value
-carried by the committed child data, and nothing more: one unchanged template
-can be committed into several successive Bitcoin jobs, so it does not identify
-the coinbase that finally carried it. Reading it as the moment of the template's
-last rebuild is an additional assumption about miner policy, namely that the
-timestamp is refreshed on every rebuild. A rebuild that keeps the old value
-leaves no trace here, and no producer observes a build in any case.
+It is fixed once set, whatever the AuxPoW format. The child data is committed
+into the Bitcoin coinbase before the Bitcoin work exists, so altering the stamp
+would void the proof of work; it cannot be refreshed when the proof is later
+submitted to the child chain.
 
-The Namecoin-family form of that commitment is the one the stored `aux_proof`
-describes:
+How far a stamp is evidence depends on the row, not on its source. The first
+two levels come apart in both directions, so check them separately:
 
-```
-child header (nTime at byte offset 68)
-  -> sha256d -> leaf at the chain's aux merkle slot
-  -> aux merkle root, written into the Bitcoin coinbase scriptSig
-  -> coinbase txid -> coinbase merkle branch
-  -> Bitcoin merkle root -> Bitcoin header -> proof of work
-```
+- `child_header_hex` present: the stamp is re-derivable from stored bytes.
+- `aux_proof` present: the Bitcoin block is proven to have committed to the
+  child data. Live Namecoin-family capture and Elastos carry this. Elastos
+  verifies the commitment without storing a header, so a missing header does
+  not imply an unproven stamp.
+- Neither: the value is the source's reported number. Every chain recovered
+  through publication import sits here, and RSK always does, because its proof
+  format discards the parent coinbase.
 
-`blockchain_branch` proves the child block hash sits at `slot_index` in the aux
-merkle tree, and `coinbase_branch` proves the coinbase sits in the Bitcoin
-transaction tree. RSK and Hathor commit differently and carry no such pair:
-RSK's SPV proof compresses the coinbase to a SHA-256 midstate, so the complete
-coinbase is unrecoverable (a `coinbase_tail` is retained, and exposed as
-`coinbase_tail_hex`), and Hathor uses the RFC 0006 split header (see
-`docs/capture.md`). The sealing invariant above still holds for both.
+Two reading rules follow, both bounded by the same fact: the database holds two
+claimed timestamps and nothing else, and both are miner-set.
 
-How firmly the stamp is evidence varies by source, and `child_header_hex` is a
-weaker discriminator than it looks. It answers one question only: whether the
-stamp can be re-derived from stored bytes. Among live capture paths only the
-Namecoin-family AuxPoW parse stores child header bytes; RSK, Hathor, and
-Elastos all write `child_header_bytes: None`, so their stamps are read from the
-column the source supplied. Hathor is a partial exception worth knowing about:
-capture also persists the exact `funds || graph` prefix in
-`hathor_merge_mining_evidence.funds_graph`, and RFC 0006 folds the graph into
-the committed auxiliary hash, so the transaction timestamp is retained in
-committed bytes. Capture does not use it that way, though. It reads the RPC
-column and never cross-checks the two, so today the retained bytes are a
-possibility rather than a corroboration. Historical import is not restricted that
-way: the shared CSV importer reads a per-row `child_header_hex` column,
-validates it as an 80-byte header, and persists it whatever the chain, so an
-imported non-Namecoin event may carry a header where its live counterpart would
-not.
+- A NEGATIVE offset is the ordinary case and is not lateness. A child header is
+  reused across successive Bitcoin jobs, so it is stamped earlier than the
+  parent that finally carries it. The magnitude reflects the pool's own refresh
+  and stamping policy, so do not derive a verdict about a Bitcoin timestamp
+  from it.
+- A POSITIVE offset is an ordering disagreement worth investigating. Where the
+  commitment was verified, the disagreement is internal to the block; otherwise
+  it says only that the source's reported child time exceeds the Bitcoin header
+  time. It is never proof that either number is wrong.
 
-That is not the same question as whether the Bitcoin block committed to the
-stamp, and the two answers come apart in both directions. Elastos capture
-stores no header, yet reconstructs the 84-byte Elastos header (Bitcoin-shaped
-80-byte prefix carrying `time`, plus the height), checks its hash against the
-RPC-reported one, and verifies that hash against the CAuxPow commitment before
-writing, so its stamp is bound into the committed data. A stored header, by
-contrast, does not by itself prove commitment: `validate_child_bundle` checks
-the header's hash against `child_block_hash` only when the row supplies one
-(a header-only row instead has its stored hash derived from that same header
-afterwards), and compares the supplied timestamp to the header's only when both
-are present. That is internal consistency, and where the hash was derived it is
-not even corroboration; either way it is not a parent-side proof.
-RSK and Hathor capture copy their chain's RPC timestamp, and a historical
-import may carry the publication's own column with nothing to check it against
-at all, because that validation only compares a timestamp when a header is
-present. Read `child_header_hex` as "re-derivable from stored bytes", check
-`aux_proof` or the chain's own capture path for commitment, and treat a stamp
-with neither as the source's reported value.
-
-Two asymmetric reading rules follow, and both are bounded by the same fact:
-the database holds two claimed timestamps and nothing else. Neither the moment
-a child template was built, nor the moment a Bitcoin job was created, nor the
-moment the block was found is recorded anywhere. Both stamps are miner-set. On
-the Bitcoin side, consensus requires only that `nTime` exceed median-time-past
-and stay inside the future-drift tolerance, and even that is an assurance about
-headers Core has attested: the drawer also renders `near`, `unknown`,
-error-block, and inferred-stale parents, for which capture checked the proof of
-work against `nBits` and nothing about the timestamp rules. The one exception
-runs the other way. A catalogued `error_block` carries the research
-catalogue's own rejection reason, and some of those reasons are timestamp
-rejections (`median_time_past_violation`, `time_below_mtp`); where the drawer
-shows one, the parent stamp is already known to violate the rule, which is a
-stronger statement than any offset. So the offset relates two claims and
-measures nothing against a reference clock.
-The two are not even guaranteed to come from one operator: `docs/attribution.md`
-notes that a Bitcoin pool may outsource or proxy child-chain operation through
-another operator's endpoint, which is why parent and child attribution are
-modelled separately here. Treat the pair as independently controlled unless the
-attribution rows evidence common control.
-
-- **A negative offset is the ordinary case, and it is not lateness.** It is
-  also not a measurement of template age: it is the gap between two claims, and
-  template age is not among the quantities stored. What explains the sign is
-  template cadence. Every refresh of a child template costs a new Bitcoin job,
-  so pools re-commit fast chains continuously and slow ones about once per job,
-  reusing one child header across many jobs, and a reused header is stamped
-  earlier than the parent that carries it. The magnitude is what resists
-  interpretation. Reading it as roughly the Bitcoin block interval assumes the
-  pool rolled `nTime` forward while reusing the template, so the parent stamp
-  moves with the solve and the child stamp does not; where `nTime` was instead
-  fixed at job creation, the same cadence yields an offset near zero while the
-  template goes on aging. The gap is therefore neither a floor nor a ceiling on
-  how old the template really was. Read it as a joint property of the pool's
-  refresh and stamping policy, and do not derive a verdict about a Bitcoin
-  timestamp from it.
-- **A positive offset is an ordering disagreement worth investigating.** What
-  it is a disagreement *between* depends on the evidence class above, and the
-  bar is a verified commitment, not a stored header. Where the commitment was
-  checked, as in a live Namecoin-family capture carrying its `aux_proof` or an
-  Elastos reconstruction verified against the CAuxPow, the block commits to
-  child data stamped later than the block's own header time, and the
-  disagreement is internal to the block. A header on its own does not clear that
-  bar: historical imports always write `aux_merkle_proof: None`, so a header-only
-  imported row can carry a positive offset while nothing shows the Bitcoin
-  coinbase ever committed to it. Where the stamp is source-reported, as for RSK and
-  Hathor capture (both assign the chain's RPC timestamp without checking it
-  against the merge-mining commitment) and for a historical row carrying neither
-  header nor proof, the offset says only that the source's reported child time
-  exceeds the Bitcoin header time. Nothing ties that number to the committed
-  data, so check the class before reading it as a property of the block. In
-  either case it is not proof that a number is wrong. The
-  child-first dependency fixes only that the child data was settled before the
-  hashing; it says nothing about the order in which the two values were chosen.
-  A pool can carry an `nTime` picked for an earlier base template while
-  rebuilding the coinbase and merkle root around a newer child commitment, which
-  produces the disagreement with both values honestly read when they were taken.
-  Stamping the child ahead is equally available, within whatever future-drift
-  allowance the child chain enforces. So read it as a disagreement between two
-  claims, never as proof against an external clock, and remember the claims may
-  not even come from one operator.
-
-Neither direction can speak to block withholding. Every child witness is sealed
-into the block before it is found, so nothing inside the block testifies to
-when it was published. `event_discovered_at` does not answer it either: it is
-the wall clock at first ingestion, so it is close to first observation only for
-live polling, and is the import date for the events a backfill or historical
-publication creates. It is not a reliable import stamp either, because it is
-never advanced on a later write: an import that meets an already-captured event
-promotes its evidence and raises `confirmed_at` while the row keeps the
-earliest ingestion time it was first written with.
+Neither direction can speak to block withholding. Every child stamp is sealed
+before the block is found, so nothing inside the block records when it was
+published. `event_discovered_at` does not answer it either: it is never
+advanced after the first write, so for backfilled or imported events it is the
+import date rather than a first-observation time.
 
 Historical parent-coinbase evidence is also lossless. Structured full
 transactions populate the normal txid, script, and serialized-output fields,

@@ -70,12 +70,13 @@ for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
   `block`, `attestation_proof`, or `source_health` directly.
 - A captured `child_block_time` is the child block's own stamp, whichever field
   the chain commits (header `nTime` for the Namecoin family, the RSK block
-  timestamp, the Hathor transaction timestamp). It is a claim, read from a
-  header, an RPC response, or a publication column: the value carried by the
-  committed child data, with no build ever observed. It is not when the child
-  block was broadcast, and it does not identify which Bitcoin job carried the
-  template, since one unchanged template can be committed into many successive
-  jobs. Whoever set it need not be the Bitcoin pool either. See
+  timestamp, the Hathor transaction timestamp). It is the source's claimed
+  timestamp, read from a header, an RPC response, or a publication column, with
+  no build ever observed and, outside the verified paths, nothing tying it to
+  the merge-mining commitment. It is not when the child block was broadcast, and
+  it does not identify which Bitcoin job carried the template, since one
+  unchanged template can be committed into many successive jobs. Whoever set it
+  need not be the Bitcoin pool either. See
   "What `child_block_time` Means" in
   `docs/data-model.md` before reading it as a clock on the Bitcoin block.
 - Live capture is additive. Historical and partial publication sources reconcile
