@@ -172,9 +172,18 @@ attribution rows evidence common control.
   how old the template really was. Read it as a joint property of the pool's
   refresh and stamping policy, and do not derive a verdict about a Bitcoin
   timestamp from it.
-- **A positive offset is an ordering disagreement worth investigating.** The
-  block commits to child data stamped later than the block's own header time.
-  That is worth a look, but it is not proof that either number is wrong. The
+- **A positive offset is an ordering disagreement worth investigating.** What
+  it is a disagreement *between* depends on the evidence class above. Where the
+  stamp is committed, as in a Namecoin-family header or an Elastos
+  reconstruction verified against the CAuxPow, the block commits to child data
+  stamped later than the block's own header time, and the disagreement is
+  internal to the block. Where the stamp is source-reported, as for RSK and
+  Hathor capture (both assign the chain's RPC timestamp without checking it
+  against the merge-mining commitment) and for a historical row carrying neither
+  header nor proof, the offset says only that the source's reported child time
+  exceeds the Bitcoin header time. Nothing ties that number to the committed
+  data, so check the class before reading it as a property of the block. In
+  either case it is not proof that a number is wrong. The
   child-first dependency fixes only that the child data was settled before the
   hashing; it says nothing about the order in which the two values were chosen.
   A pool can carry an `nTime` picked for an earlier base template while
