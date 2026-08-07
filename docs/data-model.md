@@ -77,21 +77,23 @@ authenticated `child_header_hex` and `child_nbits` when present.
 
 ### What `child_block_time` Means
 
-`child_block_time` is the child block's own timestamp, taken from whatever the
-chain commits: the header `nTime` for Namecoin-family chains, the RSK block
-timestamp, the Hathor block transaction timestamp. It records when the pool
-last committed that child template into the Bitcoin coinbase. It is not the
-time the child block was broadcast, and it is not a second opinion on when the
-Bitcoin block was found.
+`child_block_time` is the child block's own claimed timestamp, taken from
+whatever the chain commits: the header `nTime` for Namecoin-family chains, the
+RSK block timestamp, the Hathor block transaction timestamp. The pool sets it
+when it builds that child template. It is not the time the child block was
+broadcast, and it is not a second opinion on when the Bitcoin block was found.
 
-The invariant that makes this true is format-neutral: every AuxPoW scheme
-commits child data into the Bitcoin coinbase, so the child stamp is fixed
-before the Bitcoin work exists and cannot be refreshed when the proof is
-finally submitted to the child network. Changing it by one second changes the
-committed child data, the coinbase, the Bitcoin merkle root, and voids the
-proof of work.
+Once set it is fixed, and the invariant that fixes it is format-neutral: every
+AuxPoW scheme commits child data into the Bitcoin coinbase, so the child stamp
+is settled before the Bitcoin work exists and cannot be refreshed when the
+proof is finally submitted to the child network. Changing it by one second
+changes the committed child data, the coinbase, the Bitcoin merkle root, and
+voids the proof of work. Note what this does not say: an unchanged child
+template can be committed into several successive Bitcoin jobs, so the stamp
+marks when the template was last rebuilt, not the last coinbase that carried
+it.
 
-The Namecoin-family form of that chain is the one the stored `aux_proof`
+The Namecoin-family form of that commitment is the one the stored `aux_proof`
 describes:
 
 ```
@@ -109,30 +111,39 @@ RSK discards the coinbase under RSKIP-92, and Hathor uses the RFC 0006 split
 header (see `docs/capture.md`). The sealing invariant above still holds for
 both.
 
-Two asymmetric reading rules follow, and both assume the stamp is
-authenticated. Live capture derives it from the committed child data. A
-historical import may carry it from the publication's own column with no child
-header to authenticate it against, because `validate_child_bundle` only
-compares a supplied timestamp when a header is present. Treat an unauthenticated
-historical stamp as the publisher's claim, not as decoded evidence.
+How firmly the stamp is evidence depends on where it came from, and the stored
+`child_header_hex` is the discriminator. Only the Namecoin-family AuxPoW parse
+path stores child header bytes, so only there is the stamp decoded from the
+data the Bitcoin block commits to. RSK, Hathor, and Elastos capture copy their
+chain's RPC timestamp with `child_header_bytes: None`, and a historical import
+may carry the publication's own column with no header to authenticate it
+against, because `validate_child_bundle` only compares a supplied timestamp
+when a header is present. Where no child header is stored, treat the value as
+the source's reported timestamp rather than as decoded evidence.
 
-- **A negative offset from the Bitcoin header time is re-commitment age, not
+Two asymmetric reading rules follow. Both compare stamps the producing pool
+chose, on both sides: a Bitcoin header `nTime` is also miner-set, bounded only
+by median-time-past and future-drift tolerance, so the offset is a relation
+between two claims and not a measurement against a reference clock.
+
+- **A negative offset from the Bitcoin header time is child template age, not
   lateness.** Every refresh of a child template costs a new Bitcoin job, so
   pools re-commit fast chains continuously and slow chains about once per job,
   reusing one child header across many jobs. A chain committed at job start
-  carries an offset of roughly minus the Bitcoin block interval, which is a
-  property of Bitcoin's luck rather than of the block, the pool, or the child
-  chain. This is an inference from template cadence, not a measurement, and the
-  magnitude depends on the pool's own refresh policy. Do not derive a verdict
-  about a Bitcoin timestamp from it.
-- **A positive offset is an internal inconsistency worth looking at.** Template
-  cadence can only push a child stamp earlier, and the Bitcoin block provably
-  contains the child data, so a child stamp later than the Bitcoin stamp means
-  the producing pool stamped the two inconsistently. That is not automatically
-  a clock fault: child chains accept headers some distance into the future, so
-  a pool may stamp ahead deliberately and still have the block accepted. Read
-  it as a flag on the pool's own pair of stamps, never as proof against an
-  external clock, since the same operator sets both.
+  carries an offset of roughly minus the Bitcoin block interval, tracking how
+  long that block took to find rather than anything about the block, the pool,
+  or the child chain. This is an inference from template cadence, not a
+  measurement, and the magnitude depends on the pool's own refresh policy. Do
+  not derive a verdict about a Bitcoin timestamp from it.
+- **A positive offset is an internal inconsistency worth looking at.** The
+  direction is the part the commitment order fixes: template cadence can only
+  push a child stamp earlier, and the Bitcoin block commits to the child data,
+  so a child stamp later than the Bitcoin stamp means the producing pool
+  stamped the two inconsistently. That is not automatically a clock fault:
+  child chains accept headers some distance into the future, so a pool may
+  stamp ahead deliberately and still have the block accepted. Read it as a flag
+  on the pool's own pair of stamps, never as proof against an external clock,
+  since the same operator sets both.
 
 Neither direction can speak to block withholding. Every child witness is sealed
 into the block before it is found, so nothing inside the block testifies to

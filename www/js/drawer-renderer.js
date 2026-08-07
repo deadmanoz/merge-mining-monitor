@@ -56,11 +56,12 @@ const AUXPOW_HELP = {
   },
   child_time: {
     name: "Child Time",
-    meta: "The auxiliary block's own stamp, fixed at commitment",
+    meta: "The auxiliary block's own claimed stamp, settled at commitment",
     body: [
-      "The auxiliary block's own timestamp, not a monitor capture time and not the moment the auxiliary block reached its network. It records when the pool last committed this child template into the Bitcoin coinbase. Which field that is depends on the chain: the header nTime for the Namecoin family, the block timestamp for RSK, the block transaction timestamp for Hathor.",
-      "It sits behind the Bitcoin header time in most cases, and that is ordinary. AuxPoW runs child-first: the child data is committed into the Bitcoin coinbase (for the Namecoin family, the child header hash becomes a leaf under aux_merkle_root), and only then do miners hash the Bitcoin header over that coinbase. Changing the child stamp afterwards would change the committed data, the coinbase, and the parent merkle root, voiding the work, so it cannot be refreshed when the proof is finally submitted. Every refresh instead costs a fresh Bitcoin job, which is why pools re-commit fast chains almost continuously and slow ones about once per job, reusing one child template across many jobs. A chain committed at job start therefore trails the block it is committed to by roughly the Bitcoin block interval, which is a property of how long that block took to find rather than of the child chain.",
-      "So read a negative offset as re-commitment age, not lateness; its size follows the pool's own refresh policy, so it is an inference rather than a measurement. A positive one is different: template practice can only ever push a child stamp earlier, and the Bitcoin block provably contains this child data, so a child stamp later than the Bitcoin stamp means the pool stamped the two inconsistently. That is a flag on the pool's own pair of stamps rather than a clock fault, since child chains accept headers some distance into the future and a pool may stamp ahead deliberately.",
+      "The auxiliary block's own timestamp, not a monitor capture time and not the moment the auxiliary block reached its network. The pool sets it when it builds this child template. Which field it is depends on the chain: the header nTime for the Namecoin family, the block timestamp for RSK, the block transaction timestamp for Hathor.",
+      "It sits behind the Bitcoin header time in most cases, and that is ordinary. AuxPoW runs child-first: the child data is committed into the Bitcoin coinbase (for the Namecoin family, the child header hash becomes a leaf under aux_merkle_root), and only then do miners hash the Bitcoin header over that coinbase. Changing the child stamp afterwards would change the committed data, the coinbase, and the parent merkle root, voiding the work, so it cannot be refreshed when the proof is finally submitted. Every refresh instead costs a fresh Bitcoin job, which is why pools re-commit fast chains almost continuously and slow ones about once per job, reusing one child template across many jobs. A chain committed at job start therefore trails the block it is committed to by roughly the Bitcoin block interval, which tracks how long that block took to find rather than anything about the child chain.",
+      "So read a negative offset as the age of the child template, not lateness; its size follows the pool's own refresh policy, so it is an inference rather than a measurement. A positive one is different: template practice can only ever push a child stamp earlier, and the Bitcoin block commits to this child data, so a child stamp later than the Bitcoin stamp means the pool stamped the two inconsistently. Even then it is a flag on the pool's own pair of stamps rather than a clock fault, since child chains accept headers some distance into the future and a pool may stamp ahead deliberately.",
+      "Both sides of the offset are stamps the producing pool chose, including the Bitcoin one, so neither is a reference clock. How firmly the child side is evidence depends on the Child Header row above: where a header is shown, the stamp is decoded from the data the Bitcoin block commits to. Where it is unavailable, as for RSK, Hathor, and Elastos capture and some historical imports, this is the source's reported timestamp instead.",
     ],
   },
   targets: {
@@ -253,10 +254,14 @@ function explorerCopyValue(value, chain, block = {}) {
 }
 
 // The auxiliary stamp beside its offset from the Bitcoin header this event is
-// committed to. Both clocks are the producing pool's own, and the offset is
-// normally negative because the child stamp was fixed when the template was
-// committed rather than when the block was found; the child_time help topic
-// carries the mechanism. Rendered only when both stamps are exact integers, so
+// committed to. Both stamps are the producing pool's own, and the offset is
+// normally negative because the child one was settled when the template was
+// built rather than when the block was found; the child_time help topic carries
+// the mechanism and the caveats, including that the child stamp is decoded
+// evidence only where a child header is stored. That distinction is left to the
+// help text and the Child Header row rather than gating the offset: a per-event
+// authentication flag would be a new API field, which this change does not add.
+// Rendered only when both stamps are exact integers, so
 // a value JavaScript cannot subtract losslessly shows the time alone rather
 // than a rounded offset dressed up as measured.
 function childTimeCell(childTime, parentHeaderTime) {
