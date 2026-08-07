@@ -79,9 +79,12 @@ authenticated `child_header_hex` and `child_nbits` when present.
 
 `child_block_time` is the child block's own claimed timestamp, taken from
 whatever the chain commits: the header `nTime` for Namecoin-family chains, the
-RSK block timestamp, the Hathor block transaction timestamp. The pool sets it
-when it builds that child template. It is not the time the child block was
-broadcast, and it is not a second opinion on when the Bitcoin block was found.
+RSK block timestamp, the Hathor block transaction timestamp. Whoever builds the
+child template writes it, which by mining practice is when that template is
+constructed; the service observes no build and records only the claim, read
+from a header, an RPC response, or a publication column. It is not the time the
+child block was broadcast, and it is not a second opinion on when the Bitcoin
+block was found.
 
 Once set it is fixed, and the invariant that fixes it is format-neutral: every
 AuxPoW scheme commits child data into the Bitcoin coinbase, so the child stamp
@@ -90,8 +93,8 @@ proof is finally submitted to the child network. Changing it by one second
 changes the committed child data, the coinbase, the Bitcoin merkle root, and
 voids the proof of work. Note what this does not say: an unchanged child
 template can be committed into several successive Bitcoin jobs, so the stamp
-marks when the template was last rebuilt, not the last coinbase that carried
-it.
+belongs to the last rebuild of that template, not to the last coinbase that
+carried it.
 
 The Namecoin-family form of that commitment is the one the stored `aux_proof`
 describes:
@@ -118,9 +121,10 @@ stamp can be re-derived from stored bytes. Among live capture paths only the
 Namecoin-family AuxPoW parse stores child header bytes; RSK, Hathor, and
 Elastos all write `child_header_bytes: None`, so their stamps are readable only
 as the column the source supplied. Historical import is not restricted that
-way: the shared CSV importer persists a validated `header_bytes` for any
-`HistoricalChainSpec` that supplies one, so an imported non-Namecoin event may
-carry a header where its live counterpart would not.
+way: the shared CSV importer reads a per-row `child_header_hex` column,
+validates it as an 80-byte header, and persists it whatever the chain, so an
+imported non-Namecoin event may carry a header where its live counterpart would
+not.
 
 That is not the same question as whether the Bitcoin block committed to the
 stamp, and the two answers come apart in both directions. Elastos capture
@@ -150,18 +154,21 @@ another operator's endpoint, which is why parent and child attribution are
 modelled separately here. Treat the pair as independently controlled unless the
 attribution rows evidence common control.
 
-- **A negative offset is an upper bound on child template age, not lateness.**
-  Every refresh of a child template costs a new Bitcoin job, so pools re-commit
-  fast chains continuously and slow chains about once per job, reusing one child
-  header across many jobs. The offset is therefore how stale the committed
-  template was relative to the parent's own claimed time, which is an upper
-  bound on nothing more than that. The familiar "roughly minus the Bitcoin block
-  interval" reading needs a further assumption the data does not carry: that the
+- **A negative offset is the ordinary case, and it is not lateness.** It is
+  also not a measurement of template age: it is the gap between two claims, and
+  template age is not among the quantities stored. What explains the sign is
+  template cadence. Every refresh of a child template costs a new Bitcoin job,
+  so pools re-commit fast chains continuously and slow ones about once per job,
+  reusing one child header across many jobs, and a reused header is stamped
+  earlier than the parent that carries it. The magnitude is what resists
+  interpretation. Reading it as roughly the Bitcoin block interval assumes the
   pool rolled `nTime` forward while reusing the template, so the parent stamp
-  tracks the solve and the child stamp does not. Where `nTime` was instead fixed
-  at job creation alongside the template, the same practice yields an offset near
-  zero. Read the magnitude as a property of the pool's refresh and stamping
-  policy, and do not derive a verdict about a Bitcoin timestamp from it.
+  moves with the solve and the child stamp does not; where `nTime` was instead
+  fixed at job creation, the same cadence yields an offset near zero while the
+  template goes on aging. The gap is therefore neither a floor nor a ceiling on
+  how old the template really was. Read it as a joint property of the pool's
+  refresh and stamping policy, and do not derive a verdict about a Bitcoin
+  timestamp from it.
 - **A positive offset is an inconsistency worth looking at.** What the
   commitment order fixes is the real-time sequence, not either number: the child
   template is built first, and only then does a Bitcoin job commit to it. So if

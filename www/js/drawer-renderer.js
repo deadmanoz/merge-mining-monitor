@@ -60,7 +60,7 @@ const AUXPOW_HELP = {
     body: [
       "The auxiliary block's own timestamp, not a monitor capture time and not the moment the auxiliary block reached its network. The pool sets it when it builds this child template. Which field it is depends on the chain: the header nTime for the Namecoin family, the block timestamp for RSK, the block transaction timestamp for Hathor.",
       "It sits behind the Bitcoin header time in most cases, and that is ordinary. AuxPoW runs child-first: the child data is committed into the Bitcoin coinbase (for the Namecoin family, the child header hash becomes a leaf under aux_merkle_root), and only then do miners hash the Bitcoin header over that coinbase. Changing the child stamp afterwards would change the committed data, the coinbase, and the parent merkle root, voiding the work, so it cannot be refreshed when the proof is finally submitted. Every refresh instead costs a fresh Bitcoin job, which is why pools re-commit fast chains almost continuously and slow ones about once per job, reusing one child template across many jobs.",
-      "So a negative offset says the committed template was already that stale when the Bitcoin stamp was set. Reading it as roughly the Bitcoin block interval takes a further assumption nothing here records: that the pool rolled nTime forward while reusing the template. Had it instead fixed both at job creation, the same practice would show an offset near zero. A positive offset is different. What the commitment order fixes is the real-time sequence, not either number: the template is built first, and only then does a Bitcoin job commit to it, so two honest readings of one clock could not put the child stamp later. It means at least one of the pair is not the wall clock it claims to be, without saying which. The child may have been stamped ahead, which child chains tolerate within their future-drift allowance, or the Bitcoin nTime left behind the job carrying the template, which is equally legal above median-time-past.",
+      "That cadence is what makes a negative offset ordinary, but it does not make the offset a measurement of template age: only the two claims are stored, and nothing records when a template was built. Reading the gap as roughly the Bitcoin block interval takes a further assumption nothing here carries, that the pool rolled nTime forward while reusing the template. Had it instead fixed both at job creation, the same cadence would show an offset near zero while the template went on aging, so the gap is neither a floor nor a ceiling on how stale the template really was. A positive offset is different. What the commitment order fixes is the real-time sequence, not either number: the template is built first, and only then does a Bitcoin job commit to it, so two honest readings of one clock could not put the child stamp later. It means at least one of the pair is not the wall clock it claims to be, without saying which. The child may have been stamped ahead, which child chains tolerate within their future-drift allowance, or the Bitcoin nTime left behind the job carrying the template, which is equally legal above median-time-past.",
       "Neither side of the offset is a reference clock: both are miner-set claims, and they need not even come from one operator, since a Bitcoin pool can proxy child-chain operation through someone else's endpoint (which is why the two attributions are tracked separately). The Child Header row above says whether this stamp can be re-derived from stored bytes, which is a narrower thing than whether the Bitcoin block committed to it. Elastos capture stores no header yet verifies its child hash, time included, against the commitment; a stored header proves the bytes hash to the child block hash, not that a parent committed to them. Where neither holds, as for RSK and Hathor capture and some historical imports, this is the source's reported timestamp.",
     ],
   },
@@ -254,10 +254,12 @@ function explorerCopyValue(value, chain, block = {}) {
 }
 
 // The auxiliary stamp beside its offset from the Bitcoin header this event is
-// committed to. Both stamps are the producing pool's own, and the offset is
-// normally negative because the child one was settled when the template was
-// built, while the parent one is set later, at job creation or rolled past it;
-// neither is a clock reading the service records. The child_time help topic carries
+// committed to. Both are miner-set claims, and not necessarily by one operator:
+// a Bitcoin pool can proxy child-chain operation elsewhere, which is why the two
+// attributions are tracked apart. The offset is normally negative because the
+// child stamp was settled when the template was built, while the parent one is
+// set later, at job creation or rolled past it; neither is a clock reading the
+// service records. The child_time help topic carries
 // the mechanism and the caveats, including that a stored child header means the
 // stamp is re-derivable rather than that a parent committed to it. That
 // distinction is left to the help text and the Child Header row rather than
@@ -277,9 +279,15 @@ function childTimeCell(childTime, parentHeaderTime) {
   // fmtDelta compacts to the largest fitting unit, which is what the distribution
   // view reads in, but it rounds two offsets a few seconds apart to the same
   // minute. Comparing auxiliaries on one block is exactly where that matters, so
-  // the exact second count stays available on the element.
+  // the exact second count has to be reachable, not just hoverable: a title on a
+  // non-focusable span is invisible to keyboard and touch and inconsistently
+  // announced. It is carried as visually-hidden text inside the same element, so
+  // assistive technology reads the exact figure where sighted readers see the
+  // rounded one, and the title stays as the pointer affordance.
   const exact = `${offset >= 0 ? "+" : ""}${offset}s from the Bitcoin header time`;
-  return `${stamp} <span class="child-time-offset" title="${esc(exact)}">${esc(fmtDelta(offset))} vs Bitcoin</span>`;
+  return `${stamp} <span class="child-time-offset" title="${esc(exact)}">`
+    + `<span aria-hidden="true">${esc(fmtDelta(offset))} vs Bitcoin</span>`
+    + `<span class="visually-hidden">${esc(exact)}</span></span>`;
 }
 
 function unavailableEvidence(value, render = copyValue) {

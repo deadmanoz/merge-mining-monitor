@@ -77,11 +77,12 @@ test("the block drawer renders authenticated and unavailable child evidence hone
   await expect(events.nth(1)).toContainText("2023-11-14T22:13:20Z");
 });
 
-// The offset is the only place the drawer subtracts two stamps, and both are
-// independently optional. fmtDelta rounds to the largest fitting unit, so the
-// exact second count on the title is what a reader comparing two auxiliaries
-// on one block actually needs; assert both forms, and assert that a missing
-// stamp on either side yields no offset rather than an offset from nothing.
+// The offset is the only place the drawer subtracts two stamps. fmtDelta rounds
+// to the largest fitting unit, which is exactly what loses the distinction a
+// reader comparing two auxiliaries on one block needs, so the exact second count
+// has to survive alongside it and be reachable without a pointer. -607s is the
+// case that proves it: it renders as -10m, so an assertion that used a round
+// -600 would pass whether or not the exact figure was kept at all.
 test("an auxiliary block's offset from the Bitcoin header time is shown only when both stamps exist", async ({
   page,
 }) => {
@@ -93,8 +94,9 @@ test("an auxiliary block's offset from the Bitcoin header time is shown only whe
       const payload = blockPayload(hash, {
         generated_at: GENERATED_AT,
         event_details: [
-          // Committed at job start: the ordinary case, well behind the block.
-          event({ child_block_time: PARENT_TIME - 600 }),
+          // Committed at job start: the ordinary case, well behind the block,
+          // and by a span the compact form cannot express exactly.
+          event({ child_block_time: PARENT_TIME - 607 }),
           // Stamped after the block it is committed to: the inconsistency.
           event({ id: 2, child_chain: "namecoin", child_block_time: PARENT_TIME + 7 }),
           // No child stamp to subtract.
@@ -114,19 +116,34 @@ test("an auxiliary block's offset from the Bitcoin header time is shown only whe
   }
 
   const offset = (index) => events.nth(index).locator(".child-time-offset");
-  await expect(offset(0)).toHaveText("-10m vs Bitcoin");
-  await expect(offset(0)).toHaveAttribute("title", "-600s from the Bitcoin header time");
-  await expect(offset(1)).toHaveText("+7s vs Bitcoin");
-  await expect(offset(1)).toHaveAttribute("title", "+7s from the Bitcoin header time");
+  const seen = (index) => offset(index).locator("[aria-hidden='true']");
+  const announced = (index) => offset(index).locator(".visually-hidden");
+
+  // Rounded for the eye, exact for the title, and exact again in text assistive
+  // technology can reach without hovering a non-focusable span.
+  await expect(seen(0)).toHaveText("-10m vs Bitcoin");
+  await expect(offset(0)).toHaveAttribute("title", "-607s from the Bitcoin header time");
+  await expect(announced(0)).toHaveText("-607s from the Bitcoin header time");
+  // The offset annotates the stamp; it must not displace it.
+  await expect(events.nth(0).locator(`dt:has-text("Child Time") + dd`)).toContainText(
+    "2023-11-14T22:13:13Z",
+  );
+
+  await expect(seen(1)).toHaveText("+7s vs Bitcoin");
+  await expect(announced(1)).toHaveText("+7s from the Bitcoin header time");
+
   await expect(offset(2)).toHaveCount(0);
   await expect(
     events.nth(2).locator(`dt:has-text("Child Time") + dd .null-value`),
   ).toHaveText("unavailable");
 });
 
-// The parent side is optional too: a block detail with no header cannot be
-// subtracted from, and must render the child stamp alone.
-test("an auxiliary block shows no offset when the Bitcoin header time is unavailable", async ({
+// Contract-wise `block.header.time` is a required non-null u32, so this stubs a
+// response the API does not produce. It is kept deliberately, as resilience
+// cover for the parent-side guard: the drawer reads `block.header?.time`, and a
+// malformed or future-shape payload must degrade to the child stamp alone rather
+// than subtract from undefined and print an offset from nothing.
+test("a malformed block detail with no Bitcoin header time renders the stamp without an offset", async ({
   page,
 }) => {
   const nodes = [makeNode(HASH, 700000, null, "canonical", { id: 1, prev_id: null })];
