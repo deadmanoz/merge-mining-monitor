@@ -121,6 +121,9 @@ test("an auxiliary block's offset from the Bitcoin header time is shown only whe
 
   // Lossy compaction keeps the exact figure VISIBLE, not just in the title: a
   // reader with no pointer must still be able to tell -607s from -600s.
+  // toHaveText alone reads textContent and passes on a hidden element, which is
+  // the exact regression this is guarding against, so assert visibility too.
+  await expect(offset(0)).toBeVisible();
   await expect(offset(0)).toHaveText("-10m (-607s) vs Bitcoin");
   await expect(offset(0)).toHaveAttribute("title", "-607s from the Bitcoin header time");
   // The offset annotates the stamp; it must not displace it.
@@ -129,10 +132,12 @@ test("an auxiliary block's offset from the Bitcoin header time is shown only whe
   );
 
   // Already exact, so no redundant "+7s (+7s)".
+  await expect(offset(1)).toBeVisible();
   await expect(offset(1)).toHaveText("+7s vs Bitcoin");
   await expect(offset(1)).toHaveAttribute("title", "+7s from the Bitcoin header time");
 
   // Equal stamps are neutral in both forms; a "+0s" would imply a direction.
+  await expect(offset(2)).toBeVisible();
   await expect(offset(2)).toHaveText("0s vs Bitcoin");
   await expect(offset(2)).toHaveAttribute("title", "0s from the Bitcoin header time");
 

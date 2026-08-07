@@ -148,9 +148,13 @@ with neither as the source's reported value.
 Two asymmetric reading rules follow, and both are bounded by the same fact:
 the database holds two claimed timestamps and nothing else. Neither the moment
 a child template was built, nor the moment a Bitcoin job was created, nor the
-moment the block was found is recorded anywhere. Both stamps are miner-set, the
-Bitcoin `nTime` bounded only by median-time-past and future-drift tolerance, so
-the offset relates two claims and measures nothing against a reference clock.
+moment the block was found is recorded anywhere. Both stamps are miner-set. On
+the Bitcoin side, consensus requires only that `nTime` exceed median-time-past
+and stay inside the future-drift tolerance, and even that is an assurance about
+headers Core has attested: the drawer also renders `near`, `unknown`,
+error-block, and inferred-stale parents, for which capture checked the proof of
+work against `nBits` and nothing about the timestamp rules. So the offset
+relates two claims and measures nothing against a reference clock.
 The two are not even guaranteed to come from one operator: `docs/attribution.md`
 notes that a Bitcoin pool may outsource or proxy child-chain operation through
 another operator's endpoint, which is why parent and child attribution are
