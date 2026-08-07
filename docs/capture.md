@@ -68,6 +68,10 @@ for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
   store and read-model entry points.
 - Producers write base evidence and sidecars only. They do not maintain
   `block`, `attestation_proof`, or `source_health` directly.
+- A captured `child_block_time` is the child header's `nTime`, which records
+  when the pool last committed that template into the Bitcoin coinbase rather
+  than when the child block was broadcast. See "What `child_block_time` Means"
+  in `docs/data-model.md` before reading it as a clock on the Bitcoin block.
 - Live capture is additive. Historical and partial publication sources reconcile
   as authoritative snapshots through the shared source lifecycle, while live
   publication imports never remove live events.

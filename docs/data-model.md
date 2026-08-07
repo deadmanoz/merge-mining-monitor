@@ -75,6 +75,54 @@ fabricate substitutes.
 The API exposes these fields as nullable values and additionally surfaces an
 authenticated `child_header_hex` and `child_nbits` when present.
 
+### What `child_block_time` Means
+
+`child_block_time` is the child header's own `nTime`. It records when the pool
+last committed that child template into the Bitcoin coinbase. It is not the
+time the child block was broadcast, and it is not a second opinion on when the
+Bitcoin block was found.
+
+The commitment runs child-first, so the child header is sealed before the
+Bitcoin work exists:
+
+```
+child header (nTime at byte offset 68)
+  -> sha256d -> leaf at the chain's aux merkle slot
+  -> aux merkle root, written into the Bitcoin coinbase scriptSig
+  -> coinbase txid -> coinbase merkle branch
+  -> Bitcoin merkle root -> Bitcoin header -> proof of work
+```
+
+Changing `nTime` by one second changes the leaf, the aux root, the coinbase,
+the Bitcoin merkle root, and voids the proof of work. So the stamp cannot be
+refreshed when the AuxPoW proof is finally submitted to the child network. The
+stored `aux_proof` carries both branches this depends on: `blockchain_branch`
+proves the child block hash sits at `slot_index` in the aux merkle tree, and
+`coinbase_branch` proves the coinbase sits in the Bitcoin transaction tree.
+
+Two consequences shape how the field may be read:
+
+- **A negative offset from the Bitcoin header time measures re-commitment age,
+  not lateness.** Every refresh of a child template costs a new Bitcoin job, so
+  pools re-commit fast chains continuously and slow chains about once per job.
+  A chain committed at job start carries an offset of roughly minus the Bitcoin
+  block interval, which is a property of Bitcoin's luck rather than of the
+  block, the pool, or the child chain. Do not derive a verdict about a Bitcoin
+  timestamp from it.
+- **A positive offset is a genuine inconsistency.** Template cadence can only
+  push a child stamp earlier, and the Bitcoin block provably contains the child
+  header, so a child stamp later than the Bitcoin stamp means the producing
+  pool's own two clocks disagree. It bounds how far the Bitcoin stamp is
+  understated. Treat it as an internal inconsistency rather than as proof
+  against an external clock, since the same operator sets both; it is stronger
+  where the child block was accepted on its own chain and therefore also passed
+  that network's median-time-past and future-drift rules.
+
+Neither direction can speak to block withholding. Every child witness is sealed
+into the block before it is found, so nothing inside the block testifies to
+when it was published; that question needs observation data such as
+`event_discovered_at`.
+
 Historical parent-coinbase evidence is also lossless. Structured full
 transactions populate the normal txid, script, and serialized-output fields,
 while the complete transaction bytes and normalized publication output text
