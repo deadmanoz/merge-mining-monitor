@@ -4,9 +4,15 @@ use mmm_api::query::{self, NavigatorTarget};
 use time::Month;
 use tokio_postgres::Client;
 
-use crate::support::seed::{day_epoch, display_hash, hash_bytes, insert_block, insert_error_block};
+use mmm_capture::source_registry::NAMECOIN_SOURCE_CODE;
+use mmm_store::get_source_id;
 
-use crate::helpers::{format_api_error, format_projection_error};
+use crate::support::seed::{
+    EventSeed, day_epoch, display_hash, hash_bytes, insert_block, insert_error_block,
+    insert_error_block_with_sources, insert_event,
+};
+
+use crate::helpers::{format_api_error, format_projection_error, project_tree};
 
 async fn fetch_error_block_navigator(
     client: &Client,
@@ -293,6 +299,28 @@ async fn error_block_navigator_projects_a_complete_target_window() -> Result<()>
             "time_below_mtp",
         )
         .await?;
+        // A catalogued error block is witnessed by definition. The tree derives
+        // a node's source count from events, not from the block rollup column,
+        // so without a real witnessing event it renders as sourceless, is
+        // dropped under the default `min_sources`, and the round-trip below
+        // cannot pass.
+        let namecoin = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        insert_event(
+            &client,
+            EventSeed {
+                source_id: namecoin,
+                child_height: 1,
+                child_hash: hash_bytes(0x7ccc),
+                parent_hash: target.clone(),
+                prev_hash: hash_bytes(0x7776),
+                parent_time: ts + 1,
+                kind: "error_block",
+                pow_validates_btc_target: true,
+                btc_height: Some(50),
+                pool_id: None,
+            },
+        )
+        .await?;
 
         let payload = fetch_error_block_navigator(&client, "limit=1").await?;
         assert_eq!(payload.items.len(), 1);
@@ -311,6 +339,28 @@ async fn error_block_navigator_projects_a_complete_target_window() -> Result<()>
         assert_eq!(view["tree_from"], 34);
         assert_eq!(view["tree_to"], 66);
         assert_eq!(view["select_hash"], display_hash(&target));
+
+        // Round-trip the emitted window through the real tree projection: the
+        // navigator must not advertise a view whose tree response omits the
+        // block it selects, which would leave the UI falling back to the tip.
+        let tree = project_tree(
+            &client,
+            Some(&format!(
+                "from_height={}&to_height={}",
+                view["tree_from"], view["tree_to"]
+            )),
+        )
+        .await?;
+        let rendered = serde_json::to_value(&tree)?;
+        let selected = rendered["nodes"]
+            .as_array()
+            .expect("tree nodes")
+            .iter()
+            .any(|node| node["hash"] == view["select_hash"]);
+        assert!(
+            selected,
+            "the advertised window must actually render its select_hash"
+        );
         Ok(())
     })
 }
@@ -352,7 +402,7 @@ async fn error_blocks_count_against_the_tree_node_budget() -> Result<()> {
                         34 + (g % 33), 'error-block-catalog', \
                         'error_block', 'bip34_coinbase_height_mismatch', \
                         decode(lpad(to_hex(5000000 + g), 160, '0'), 'hex'), $1::bigint + g, \
-                        'not_attempted', 0, 0, 0, FALSE, FALSE, TRUE, $1::bigint + g, $1::bigint + g \
+                        'not_attempted', 1, 1, 1, FALSE, FALSE, TRUE, $1::bigint + g, $1::bigint + g \
                  FROM generate_series(1, 468) AS g",
                 &[&ts],
             )
@@ -404,6 +454,53 @@ async fn error_blocks_count_against_the_tree_node_budget() -> Result<()> {
             "navigator advertised [{tree_from}, {tree_to}] costing {advertised_nodes} nodes, \
              which /tree would reject as range_too_large"
         );
+        Ok(())
+    })
+}
+
+#[tokio::test]
+async fn error_block_navigator_skips_rows_the_tree_would_filter_out() -> Result<()> {
+    crate::run_db_test!(client, {
+        let ts = day_epoch(2026, Month::May, 10);
+        seed_canonical_backbone(&client, 100, ts).await?;
+
+        let witnessed = hash_bytes(0x4001);
+        insert_error_block(
+            &client,
+            &witnessed,
+            &hash_bytes(0x4000),
+            50,
+            ts + 1,
+            "time_below_mtp",
+        )
+        .await?;
+        // No active source: `/tree` drops this under the default min_sources of
+        // 1, so offering it would advertise a window whose tree response omits
+        // the block it selects.
+        let sourceless = hash_bytes(0x4002);
+        insert_error_block_with_sources(
+            &client,
+            &sourceless,
+            &hash_bytes(0x4000),
+            60,
+            ts + 2,
+            "time_below_mtp",
+            0,
+        )
+        .await?;
+
+        let payload = fetch_error_block_navigator(&client, "limit=10").await?;
+        assert_eq!(payload.total, 1, "only the witnessed block is navigable");
+        assert_eq!(payload.items.len(), 1);
+        assert_eq!(payload.items[0].primary_hash, display_hash(&witnessed));
+
+        // Anchor mode agrees, so a deep link cannot reach it either.
+        let anchored = fetch_error_block_navigator(
+            &client,
+            &format!("anchor_hash={}&limit=1", display_hash(&sourceless)),
+        )
+        .await?;
+        assert!(anchored.items.is_empty());
         Ok(())
     })
 }

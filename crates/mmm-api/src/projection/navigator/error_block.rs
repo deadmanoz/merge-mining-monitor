@@ -31,6 +31,12 @@ struct ErrorBlockRow {
 /// catalogue is not one block per height — several Bitcoin heights carry more
 /// than one catalogued error block, so height alone is not a unique cursor key
 /// and stepping on height alone would skip or repeat group members.
+///
+/// Eligibility requires at least one distinct source, matching what `/tree`
+/// will actually render: its candidate filter drops an error block below
+/// `min_sources`, which defaults to 1 and is never overridden by the frontend.
+/// Offering a sourceless row would advertise a window whose tree response omits
+/// the very block it selects, and the UI would silently fall back to the tip.
 pub async fn error_blocks(
     client: &Client,
     query: &NavigatorQuery,
@@ -124,7 +130,8 @@ fn error_block_item(
 async fn load_error_blocks_total(client: &Client) -> Result<u64, ProjectionError> {
     let row = client
         .query_one(
-            "SELECT count(*)::bigint FROM block WHERE kind = 'error_block'",
+            "SELECT count(*)::bigint FROM block \
+             WHERE kind = 'error_block' AND distinct_sources >= 1",
             &[],
         )
         .await
@@ -145,6 +152,7 @@ async fn fetch_error_blocks(
                     "SELECT btc_height, btc_header_hash \
                      FROM block \
                      WHERE kind = 'error_block' \
+                       AND distinct_sources >= 1 \
                        AND btc_header_hash = $1",
                     &[&hash],
                 )
@@ -157,6 +165,7 @@ async fn fetch_error_blocks(
                     "SELECT btc_height, btc_header_hash \
                      FROM block \
                      WHERE kind = 'error_block' \
+                       AND distinct_sources >= 1 \
                        AND (btc_height < $2 \
                             OR (btc_height = $2 AND btc_header_hash > $3)) \
                      ORDER BY btc_height DESC, btc_header_hash ASC \
@@ -172,6 +181,7 @@ async fn fetch_error_blocks(
                     "SELECT btc_height, btc_header_hash \
                      FROM block \
                      WHERE kind = 'error_block' \
+                       AND distinct_sources >= 1 \
                        AND (btc_height > $2 \
                             OR (btc_height = $2 AND btc_header_hash < $3)) \
                      ORDER BY btc_height ASC, btc_header_hash DESC \
@@ -186,6 +196,7 @@ async fn fetch_error_blocks(
                     "SELECT btc_height, btc_header_hash \
                      FROM block \
                      WHERE kind = 'error_block' \
+                       AND distinct_sources >= 1 \
                      ORDER BY btc_height DESC, btc_header_hash ASC \
                      LIMIT $1",
                     &[&fetch_limit],
@@ -221,6 +232,7 @@ async fn exists_error_block_across_edge(
             "SELECT EXISTS ( \
                  SELECT 1 FROM block \
                  WHERE kind = 'error_block' \
+                   AND distinct_sources >= 1 \
                    AND (btc_height < $1 \
                         OR (btc_height = $1 AND btc_header_hash > $2)) \
              )"
@@ -229,6 +241,7 @@ async fn exists_error_block_across_edge(
             "SELECT EXISTS ( \
                  SELECT 1 FROM block \
                  WHERE kind = 'error_block' \
+                   AND distinct_sources >= 1 \
                    AND (btc_height > $1 \
                         OR (btc_height = $1 AND btc_header_hash < $2)) \
              )"

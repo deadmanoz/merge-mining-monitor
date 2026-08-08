@@ -402,8 +402,15 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
       if (url.searchParams.get("direction") === "older") {
         return errorEnvelope([errorRow(olderHash, olderHeight)], "page");
       }
-      if (url.searchParams.get("anchor_hash")) {
-        return errorEnvelope([errorRow(errorHash, errorHeight)], "anchor");
+      // Anchor mode must honour the requested hash. Always returning the newest
+      // row would let selection-driven hydration overwrite the stepped-to state,
+      // and the readout assertion below could then pass on a transient value.
+      const anchor = url.searchParams.get("anchor_hash");
+      if (anchor) {
+        const row = anchor === olderHash
+          ? errorRow(olderHash, olderHeight)
+          : errorRow(errorHash, errorHeight);
+        return errorEnvelope([row], "anchor");
       }
       return errorEnvelope([errorRow(errorHash, errorHeight)], "latest");
     },
@@ -450,5 +457,14 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
     url.pathname.endsWith("/api/v1/navigator/error-block")
       && url.searchParams.get("direction") === "older"
   ))).toBe(true);
+  // Assert the SETTLED state: selection-driven anchor hydration also fires
+  // here, so a readout check alone could pass on a transient value before
+  // hydration resolves. Wait for the tree window and URL to agree with it too.
+  await expect.poll(() => treeRequests.some((url) => (
+    url.searchParams.get("from_height") === String(olderHeight - 16)
+      && url.searchParams.get("to_height") === String(olderHeight + 16)
+  ))).toBe(true);
+  await expect(page).toHaveURL(new RegExp(`selected=${olderHash}`));
   await expect(page.locator("#nav-readout")).toContainText("#717,696");
+  await expect(page.locator("#nav-readout")).not.toContainText("#946,213");
 });

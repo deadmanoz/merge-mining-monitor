@@ -120,13 +120,14 @@ error block, Latest orphan, or Latest orphan branch); the shared `«` `‹` `›
 within that target, the inner `‹` `›` by one and the outer `«` `»` by a coarse stride.
 One readout shows the active target's position. The target is locked when picked
 from the menu and otherwise follows the selection, so clicking a node re-derives
-which target the stepper is walking (branch over stale over orphan branch over
-orphan by precedence).
+which target the stepper is walking (branch over stale over error block over
+orphan branch over orphan by precedence; kinds are mutually exclusive, so an
+error block can only ever match its own target).
 
-The select displays the active target (Live tip / Stale / Branch / Orphan
-branch / Orphans, "Height" for a height lookup, or "Date/Time" for a timestamp
-lookup) rather than the last menu choice, so it always names what is being
-stepped; the dropdown still lists the five "Latest ..." actions. Picking an
+The select displays the active target (Live tip / Stale / Branch / Error blocks /
+Orphan branch / Orphans, "Height" for a height lookup, or "Date/Time" for a
+timestamp lookup) rather than the last menu choice, so it always names what is
+being stepped; the dropdown lists the six "Latest ..." actions. Picking an
 action always re-runs it, even the one already active, so choosing "Latest
 stale" after stepping away jumps back to the most recent stale.
 
@@ -138,9 +139,9 @@ the tip. The navigator's Live tip is a full deselect.
 "Latest stale" navigates the proven stale blocks (the `stale` parent kind). It
 jumps to the most recent proven stale and steps older / newer through bounded
 unified navigator pages (`/api/v1/navigator/stale`, newest-first); the readout is
-`#<height> · N total`. Each jump uses the row's server-provided `navigation`
+`#<height> · N total`. Each jump uses the row's server-provided `view`
 tree window, selects the stale, and centers the camera. If the row carries
-`navigation_error` instead, the tree panel surfaces that as a Bitcoin Core
+`view_error` instead, the tree panel surfaces that as a Bitcoin Core
 coverage/sync issue and does not advance into a rendering-density failure.
 Stepping disables at the ends of the index; clicking any stale node hydrates a
 keyset anchor with one-row edge probes. The outer `«` / `»` coarse steps request
@@ -151,9 +152,9 @@ up to the coarse stride and land on the boundary row.
 grouped by stale-to-stale previous-header links, one-block branches excluded).
 The readout uses branch-level context, for example
 `#700,005-700,006 · depth 2 · N total`.
-Branch jumps use the row's server-provided `navigation` tree window, open the
+Branch jumps use the row's server-provided `view` tree window, open the
 drawer, select the branch root, and center on it. Rows that cannot safely
-advertise a generated tree window carry `navigation_error` instead, and the tree
+advertise a generated tree window carry `view_error` instead, and the tree
 panel reports the supplied action. Clicking any branch member hydrates the
 matching branch through `anchor_hash`, so interior members resolve too.
 
@@ -165,8 +166,8 @@ by height and then by stored hash bytes: the catalogue carries more than one
 block at some heights, so the hash tie-break is what makes stepping return every
 member exactly once. It accepts no `classification` filter, since catalogue
 membership is not a refinement of `unknown`. Jumps use the row's server-provided
-`navigation` tree window exactly as "Latest stale" does, and rows that cannot
-advertise one carry `navigation_error` instead. Selecting an error block
+`view` tree window exactly as "Latest stale" does, and rows that cannot
+advertise one carry `view_error` instead. Selecting an error block
 directly, by clicking its tree node or restoring a `?selected=` link, hydrates
 this target through `anchor_hash` so the readout follows the selection and
 stepping continues from it.
