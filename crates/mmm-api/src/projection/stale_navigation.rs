@@ -202,8 +202,12 @@ pub(super) async fn load_navigation_readiness(
 /// lookup, ordered) so `NavigationWindowBudget` can count them per window by
 /// binary search.
 ///
-/// The kind filter must match what the compact tree actually renders beside the
-/// canonical spine, which is stale AND catalogued error blocks.
+/// The kind filter must match what the tree actually renders beside the
+/// canonical spine: stale rows, plus catalogued error blocks that carry at
+/// least one source. A sourceless error block is dropped by the tree's
+/// `min_sources` filter, so counting it here would consume budget for a node
+/// that never appears, needlessly narrowing the window or reporting a target as
+/// too large when the tree could in fact render it.
 async fn load_navigation_budget(
     client: &Client,
     windows: &[(i32, i32)],
@@ -220,8 +224,11 @@ async fn load_navigation_budget(
              JOIN LATERAL ( \
                  SELECT btc_height \
                  FROM block \
-                 WHERE kind IN ('stale', 'error_block') \
-                   AND btc_height BETWEEN w.from_height AND w.to_height \
+                 WHERE btc_height BETWEEN w.from_height AND w.to_height \
+                   AND ( \
+                        kind = 'stale' \
+                        OR (kind = 'error_block' AND distinct_sources >= 1) \
+                   ) \
              ) off_spine ON TRUE \
              ORDER BY off_spine.btc_height",
             &[&from_heights, &to_heights],
@@ -347,7 +354,10 @@ fn target_window_too_large_error(target_height: i32) -> NavigationError {
         code: "target_window_too_large",
         target_height,
         message: "Navigation target is too large to render as one tree window",
-        action: "open a narrower stale block target",
+        // Target-neutral: this path is shared by stale, stale-branch and
+        // error-block targets, and an error block is always a single height, so
+        // naming a "stale block target" would be wrong guidance for it.
+        action: "open a narrower navigation target",
     }
 }
 

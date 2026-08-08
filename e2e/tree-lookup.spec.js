@@ -1,5 +1,5 @@
 const { expect, test } = require("@playwright/test");
-const { stubApi, treeEnvelope } = require("./support/api-stubs");
+const { makeNode, stubApi, treeEnvelope } = require("./support/api-stubs");
 
 test("height shared link requests compact tree height automatically", async ({ page }) => {
   const treeRequests = [];
@@ -395,6 +395,23 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
   });
 
   await stubApi(page, treeRequests, {
+    // Render the error block the requested window is centred on. Without it the
+    // node never exists, centering silently falls back to the tip, and
+    // request/URL/readout assertions would still pass over a broken jump.
+    treePayload: (query) => {
+      const from = Number(query.get("from_height") || 0);
+      const [hash, height] = from === olderHeight - 16
+        ? [olderHash, olderHeight]
+        : [errorHash, errorHeight];
+      return treeEnvelope(query, {
+        nodes: [makeNode(hash, height, null, "error_block", { id: 1, prev_id: null })],
+        edges: [],
+        legend: {
+          kinds: ["canonical", "stale", "error_block", "unknown", "near"],
+          edge_kinds: ["canonical", "stale_entry", "stale", "hidden"],
+        },
+      });
+    },
     navigatorRequests,
     // Serve the newest row for latest/anchor modes and the older row once a
     // cursor page is requested, so a step actually changes the readout.
@@ -447,6 +464,17 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
       && url.searchParams.get("to_height") === String(errorHeight + 16)
   ))).toBe(true);
 
+  // The jump must land ON the block, not merely request its window.
+  await expect(
+    page.locator(`g.tree-node[aria-label*="error_block ${errorHeight}"]`),
+  ).toHaveCount(1);
+  await expect(page).toHaveURL(new RegExp(`selected=${errorHash}`));
+  // Selection also hydrates the target through anchor mode.
+  await expect.poll(() => navigatorRequests.some((url) => (
+    url.pathname.endsWith("/api/v1/navigator/error-block")
+      && url.searchParams.get("anchor_hash") === errorHash
+  ))).toBe(true);
+
   // Height-plus-total readout, not the branch/orphan date-and-depth form.
   await expect(page.locator("#nav-readout")).toContainText("#946,213");
   await expect(page.locator("#nav-readout")).toContainText("33 total");
@@ -465,6 +493,9 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
       && url.searchParams.get("to_height") === String(olderHeight + 16)
   ))).toBe(true);
   await expect(page).toHaveURL(new RegExp(`selected=${olderHash}`));
+  await expect(
+    page.locator(`g.tree-node[aria-label*="error_block ${olderHeight}"]`),
+  ).toHaveCount(1);
   await expect(page.locator("#nav-readout")).toContainText("#717,696");
   await expect(page.locator("#nav-readout")).not.toContainText("#946,213");
 });

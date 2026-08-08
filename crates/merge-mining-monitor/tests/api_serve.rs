@@ -159,6 +159,8 @@ async fn valid_or_queryless_routes_reach_the_db_path() {
         "/api/v1/navigator/stale".to_owned(),
         format!("/api/v1/navigator/stale?anchor_hash={anchor}"),
         "/api/v1/navigator/stale-branch".to_owned(),
+        "/api/v1/navigator/error-block".to_owned(),
+        format!("/api/v1/navigator/error-block?anchor_hash={anchor}"),
         "/api/v1/navigator/orphan".to_owned(),
         "/api/v1/navigator/orphan?classification=strict_btc_orphan".to_owned(),
         "/api/v1/navigator/orphan-branch".to_owned(),
@@ -198,6 +200,39 @@ async fn navigator_endpoint_validates_queries_before_db_checkout() {
         ),
         (
             "/api/v1/navigator/stale?limit=0".to_owned(),
+            StatusCode::BAD_REQUEST,
+            "invalid_query",
+        ),
+        (
+            "/api/v1/navigator/error-block?limit=0".to_owned(),
+            StatusCode::BAD_REQUEST,
+            "invalid_query",
+        ),
+        (
+            "/api/v1/navigator/error-block?limit=5000".to_owned(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "range_too_large",
+        ),
+        // The orphan-only classification axis does not apply to a catalogue
+        // membership target, so it must be rejected rather than ignored.
+        (
+            "/api/v1/navigator/error-block?classification=strict_btc_orphan".to_owned(),
+            StatusCode::BAD_REQUEST,
+            "invalid_query",
+        ),
+        (
+            format!("/api/v1/navigator/error-block?anchor_hash={bad_hash}"),
+            StatusCode::BAD_REQUEST,
+            "invalid_query",
+        ),
+        (
+            "/api/v1/navigator/error-block?direction=older".to_owned(),
+            StatusCode::BAD_REQUEST,
+            "invalid_query",
+        ),
+        // An unregistered target must not reach the projection.
+        (
+            "/api/v1/navigator/error_block".to_owned(),
             StatusCode::BAD_REQUEST,
             "invalid_query",
         ),

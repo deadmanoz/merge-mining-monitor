@@ -423,7 +423,11 @@ function resetTreeToTip() {
   clearTreeViewModes();
   state.selectedHash = null;
   state.selectedBlock = null;
+  // Every height/time anchor a readout can be rebuilt from, or a stale one
+  // survives Live tip and can reactivate the previous readout and edge controls
+  // when a later navigator request fails.
   state.stale.anchor = null;
+  state.errorBlock.anchor = null;
   state.orphan.anchor = null;
   reconcileNavFromSelected();
   writeForm();
