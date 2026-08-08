@@ -238,6 +238,162 @@ async fn error_block_navigator_pages_through_a_same_height_group_exactly_once() 
     })
 }
 
+/// Seed a complete canonical backbone over `[1, to_height]` in one statement.
+/// Hashes are derived from the height so they are unique and reproducible.
+async fn seed_canonical_backbone(client: &Client, to_height: i32, ts: i64) -> Result<()> {
+    client
+        .execute(
+            "INSERT INTO block ( \
+                btc_header_hash, btc_prev_header_hash, btc_height, btc_height_source, \
+                kind, btc_header_bytes, btc_header_time, btc_coinbase_script, \
+                btc_coinbase_status, total_attestations, distinct_sources, \
+                auxpow_chain_count, live_observed, core_attested, pow_validated, \
+                created_at, updated_at \
+             ) \
+             SELECT decode(lpad(to_hex(1000000 + g), 64, '0'), 'hex'), \
+                    decode(lpad(to_hex(999999 + g), 64, '0'), 'hex'), \
+                    g, 'bitcoin-core', 'canonical', \
+                    decode(lpad(to_hex(g), 160, '0'), 'hex'), $2::bigint + g, \
+                    decode('51', 'hex'), 'complete', 0, 0, 0, FALSE, FALSE, TRUE, \
+                    $2::bigint + g, $2::bigint + g \
+             FROM generate_series(1, $1::int) AS g",
+            &[&to_height, &ts],
+        )
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn error_block_navigator_projects_a_complete_target_window() -> Result<()> {
+    crate::run_db_test!(client, {
+        let ts = day_epoch(2026, Month::May, 10);
+        seed_canonical_backbone(&client, 100, ts).await?;
+
+        let target = hash_bytes(0x7777);
+        insert_error_block(
+            &client,
+            &target,
+            &hash_bytes(0x7776),
+            50,
+            ts + 1,
+            "time_below_mtp",
+        )
+        .await?;
+
+        let payload = fetch_error_block_navigator(&client, "limit=1").await?;
+        assert_eq!(payload.items.len(), 1);
+        let item = &payload.items[0];
+        assert!(
+            item.view_error.is_none(),
+            "a complete backbone must yield a renderable window, got {:?}",
+            item.view_error
+        );
+
+        // NAVIGATION_PADDING is 16 either side, clamped to the complete tip, and
+        // the widest fitting window wins.
+        let view = serde_json::to_value(item.view.as_ref().expect("renderable window"))?;
+        assert_eq!(view["mode"], "tree_window");
+        assert_eq!(view["target_height"], 50);
+        assert_eq!(view["tree_from"], 34);
+        assert_eq!(view["tree_to"], 66);
+        assert_eq!(view["select_hash"], display_hash(&target));
+        Ok(())
+    })
+}
+
+#[tokio::test]
+async fn error_blocks_count_against_the_tree_node_budget() -> Result<()> {
+    crate::run_db_test!(client, {
+        let ts = day_epoch(2026, Month::May, 10);
+        seed_canonical_backbone(&client, 100, ts).await?;
+
+        let target = hash_bytes(0x7777);
+        insert_error_block(
+            &client,
+            &target,
+            &hash_bytes(0x7776),
+            50,
+            ts + 1,
+            "time_below_mtp",
+        )
+        .await?;
+
+        // Crowd the target's 33-height window ([34, 66]) with error blocks until
+        // the visible-node count crosses TREE_NODE_LIMIT (500). Every extra row
+        // is an error block and none is stale, so a budget that counts only
+        // `kind = 'stale'` sees 33 nodes and happily proposes the window, while
+        // the true cost is 33 + 469. `/tree` would then reject the very window
+        // the navigator advertised with `range_too_large`.
+        client
+            .execute(
+                "INSERT INTO block ( \
+                    btc_header_hash, btc_prev_header_hash, btc_height, btc_height_source, \
+                    kind, error_block_reason, btc_header_bytes, btc_header_time, \
+                    btc_coinbase_status, total_attestations, distinct_sources, \
+                    auxpow_chain_count, live_observed, core_attested, pow_validated, \
+                    created_at, updated_at \
+                 ) \
+                 SELECT decode(lpad(to_hex(5000000 + g), 64, '0'), 'hex'), \
+                        decode(lpad(to_hex(4999999 + g), 64, '0'), 'hex'), \
+                        34 + (g % 33), 'error-block-catalog', \
+                        'error_block', 'bip34_coinbase_height_mismatch', \
+                        decode(lpad(to_hex(5000000 + g), 160, '0'), 'hex'), $1::bigint + g, \
+                        'not_attempted', 0, 0, 0, FALSE, FALSE, TRUE, $1::bigint + g, $1::bigint + g \
+                 FROM generate_series(1, 468) AS g",
+                &[&ts],
+            )
+            .await?;
+
+        // The navigator degrades to a narrower window rather than refusing, so
+        // the observable contract is that whatever window it DOES advertise
+        // fits the node budget once error blocks are counted.
+        let off_spine_in = |from: i32, to: i32| {
+            let client = &client;
+            async move {
+                let row = client
+                    .query_one(
+                        "SELECT count(*)::bigint FROM block \
+                         WHERE kind IN ('stale', 'error_block') \
+                           AND btc_height BETWEEN $1 AND $2",
+                        &[&from, &to],
+                    )
+                    .await?;
+                anyhow::Ok(row.get::<_, i64>(0))
+            }
+        };
+
+        // Guard against a vacuous test: the full padded window MUST be over
+        // budget, otherwise nothing here exercises the cap at all.
+        let full_window_nodes = i64::from(66 - 34 + 1) + off_spine_in(34, 66).await?;
+        assert!(
+            full_window_nodes > 500,
+            "fixture must put the full padded window over the 500-node cap, got {full_window_nodes}"
+        );
+
+        // Anchor on the height-50 target specifically: `limit=1` alone would
+        // return the NEWEST catalogued block, which the crowd above supplies.
+        let payload = fetch_error_block_navigator(
+            &client,
+            &format!("anchor_hash={}&limit=1", display_hash(&target)),
+        )
+        .await?;
+        let item = &payload.items[0];
+        assert_eq!(item.primary_hash, display_hash(&target));
+        let view = serde_json::to_value(item.view.as_ref().expect("renderable window"))?;
+        let tree_from = view["tree_from"].as_i64().expect("tree_from") as i32;
+        let tree_to = view["tree_to"].as_i64().expect("tree_to") as i32;
+
+        let advertised_nodes =
+            i64::from(tree_to - tree_from + 1) + off_spine_in(tree_from, tree_to).await?;
+        assert!(
+            advertised_nodes <= 500,
+            "navigator advertised [{tree_from}, {tree_to}] costing {advertised_nodes} nodes, \
+             which /tree would reject as range_too_large"
+        );
+        Ok(())
+    })
+}
+
 #[tokio::test]
 async fn error_block_navigator_anchors_on_a_catalogued_hash() -> Result<()> {
     crate::run_db_test!(client, {

@@ -29,7 +29,90 @@ fn api_fixture_examples_are_listed_and_parse() {
         if file.starts_with("block-") {
             assert_block_fixture_contract(&file, &fixture);
         }
+        if file.starts_with("navigator-") {
+            assert_navigator_fixture_contract(&file, &fixture);
+        }
     }
+}
+
+/// Shared navigator-item shape, plus the error-block target's specifics. Every
+/// item must carry a target-matching `kind` and exactly one of `view` /
+/// `view_error`, so a client is never left without either a window or a reason.
+fn assert_navigator_fixture_contract(file: &str, fixture: &Value) {
+    let target = string_field(&fixture["query"], "target");
+    assert_eq!(
+        fixture["target"], fixture["query"]["target"],
+        "{file}: payload target must match the normalized query target"
+    );
+
+    let items = fixture["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{file}: items must be an array"));
+    for item in items {
+        assert_eq!(
+            string_field(item, "kind"),
+            target,
+            "{file}: item kind must match the navigator target"
+        );
+        assert!(
+            item["view"].is_object() != item["view_error"].is_object(),
+            "{file}: item must carry a view xor a view_error"
+        );
+        assert_lower_hex(string_field(item, "primary_hash"), 64, file, "primary_hash");
+        assert!(
+            !string_field(item, "cursor").is_empty(),
+            "{file}: item cursor must be non-empty"
+        );
+    }
+
+    if file == "navigator-error-block.json" {
+        assert!(
+            fixture["query"]["classification"]
+                .as_array()
+                .is_some_and(|classes| classes.is_empty()),
+            "{file}: the error-block target has no orphan-class axis"
+        );
+        for item in items {
+            assert_eq!(item["position"]["axis"], "height", "{file}: height axis");
+            assert_eq!(
+                item["position"]["min"], item["position"]["max"],
+                "{file}: an error block is a single-height span"
+            );
+            assert!(
+                item["branch"].is_null() && item["orphan"].is_null(),
+                "{file}: an error block is never a branch member or an orphan"
+            );
+        }
+        // The fixture deliberately shows two blocks at ONE height, ordered by
+        // stored (reversed display) bytes, because that tie-break is what makes
+        // paging return every member of a same-height group exactly once.
+        let heights = items
+            .iter()
+            .map(|item| item["position"]["max"].as_i64().expect("height"))
+            .collect::<Vec<_>>();
+        assert!(
+            heights.len() >= 2 && heights.iter().all(|height| *height == heights[0]),
+            "{file}: must exercise a same-height group"
+        );
+        let stored = |display: &str| {
+            let mut bytes = hex_bytes(display);
+            bytes.reverse();
+            bytes
+        };
+        let first = stored(string_field(&items[0], "primary_hash"));
+        let second = stored(string_field(&items[1], "primary_hash"));
+        assert!(
+            first < second,
+            "{file}: same-height items must ascend by stored hash bytes"
+        );
+    }
+}
+
+fn hex_bytes(value: &str) -> Vec<u8> {
+    (0..value.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&value[index..index + 2], 16).expect("hex byte"))
+        .collect()
 }
 
 fn assert_block_fixture_contract(file: &str, fixture: &Value) {

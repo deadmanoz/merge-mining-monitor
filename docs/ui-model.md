@@ -116,7 +116,7 @@ request.
 A single "Go to" navigator in the tree heading replaces the former co-located
 Live tip / Latest stale / Latest stale branch button clusters. The select chooses
 the target the stepper walks (Live tip, Latest stale, Latest stale branch, Latest
-orphan, or Latest orphan branch); the shared `«` `‹` `›` `»` controls then step
+error block, Latest orphan, or Latest orphan branch); the shared `«` `‹` `›` `»` controls then step
 within that target, the inner `‹` `›` by one and the outer `«` `»` by a coarse stride.
 One readout shows the active target's position. The target is locked when picked
 from the menu and otherwise follows the selection, so clicking a node re-derives
@@ -156,6 +156,20 @@ drawer, select the branch root, and center on it. Rows that cannot safely
 advertise a generated tree window carry `navigation_error` instead, and the tree
 panel reports the supplied action. Clicking any branch member hydrates the
 matching branch through `anchor_hash`, so interior members resolve too.
+
+"Latest error block" navigates catalogued consensus-invalid, full-proof-of-work
+blocks, backed by `/api/v1/navigator/error-block`. The readout is the same
+height-plus-total form as "Latest stale", for example `#946,213 · 33 total`,
+because each item is a single block on the height axis. Ordering is newest-first
+by height and then by stored hash bytes: the catalogue carries more than one
+block at some heights, so the hash tie-break is what makes stepping return every
+member exactly once. It accepts no `classification` filter, since catalogue
+membership is not a refinement of `unknown`. Jumps use the row's server-provided
+`navigation` tree window exactly as "Latest stale" does, and rows that cannot
+advertise one carry `navigation_error` instead. Selecting an error block
+directly, by clicking its tree node or restoring a `?selected=` link, hydrates
+this target through `anchor_hash` so the readout follows the selection and
+stepping continues from it.
 
 "Latest orphan branch" navigates multi-block orphan branches only, backed by
 `/api/v1/navigator/orphan-branch` (proven prev_hash-linked orphans grouped into
@@ -356,7 +370,9 @@ fixtures only use active rows.
 The drawer is consolidated around the AuxPoW record. Its sections are:
 
 - Parent block (Bitcoin): header identity, classification (`kind`, plus an Orphan
-  class row sourced from `block.btc_orphan_class` for unknown blocks), raw
+  class row sourced from `block.btc_orphan_class` for unknown blocks, or a
+  Consensus rejection row sourced from `block.error_block_reason` for error
+  blocks), raw
   coinbase tag when `block.coinbase_tag` is non-null (Core block evidence for
   Core-attested canonical blocks first, event commitment fallback when no Core
   tag exists), pool attribution, the real Bitcoin block time, and a collapsible
@@ -380,6 +396,16 @@ The drawer is consolidated around the AuxPoW record. Its sections are:
 The standalone "AuxPoW Proofs" section has been removed (its fields were already
 in the event and source sections, and its proof bytes now live inside each
 auxiliary block). No drawer field reads as "Confirmed".
+
+The Consensus rejection row renders the rule in prose, not as the catalogue's
+raw `rejection_reason` token, with an `(i)` control opening a consensus-rule
+dialog that states the rule and what the block did wrong. The mapped vocabulary
+is deliberately not exhaustive: the research classifier can emit a token the
+frontend has not mapped, and such a token renders as its raw value with **no**
+help control rather than opening an empty or mislabelled dialog. For an error
+block the competition section is replaced by an explicit note that the block
+never raced and so has no canonical competitor, so its absence reads as meaning
+rather than a missing panel.
 
 For RSK rows, show `proof_format`, miner address, optional pool identity,
 canonical-vs-uncle state, and opaque proof byte presence. Do not imply decoded

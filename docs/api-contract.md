@@ -758,15 +758,23 @@ Stale branch positions are `root`, `interior`, `tip`, and `root_and_tip`.
 GET /api/v1/navigator/{target}?limit&cursor&direction&anchor_hash&classification
 ```
 
-Purpose: one bounded navigation API for the header-tree controls. The four
+Purpose: one bounded navigation API for the header-tree controls. The five
 targets are:
 
 | Target | Axis | Item scope | View |
 |---|---|---|---|
 | `stale` | `height` | proven stale blocks | `tree_window` |
 | `stale-branch` | `height` | current multi-block stale branches | `tree_window` |
+| `error-block` | `height` | catalogued consensus-invalid full-PoW blocks | `tree_window` |
 | `orphan` | `time` | BTC-orphan blocks | `unheighted_anchor` |
 | `orphan-branch` | `time` | multi-block BTC-orphan branches | `unheighted_anchor` |
+
+`error-block` items are single blocks with `kind = "error-block"`, ordered
+newest-first by height and then by stored hash bytes. The hash tie-break is
+load-bearing rather than cosmetic: the catalogue is not one block per height, so
+paging on height alone would skip or repeat members of a same-height group. Items
+never carry `branch` or `orphan`, because an error block never raced and so is
+neither a branch member nor an orphan.
 
 All targets use the same modes:
 
@@ -792,8 +800,10 @@ Query parameters:
   `strict_btc_orphan`, `weak_btc_orphan`, `excluded`, and `pending`.
 
 Supplying any other parameter, mixing `cursor` with `anchor_hash`, supplying only
-one of `cursor` / `direction`, or passing `classification` to a stale target is
-`invalid_query`.
+one of `cursor` / `direction`, or passing `classification` to a stale or
+error-block target is `invalid_query`. `error-block` rejects `classification`
+because catalogue membership is not a refinement of `unknown` and so has no
+orphan-class axis.
 
 Response fields:
 
