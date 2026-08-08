@@ -827,8 +827,9 @@ Each `items[]` entry has this format:
 - `kind`: one of the target strings.
 - `primary_hash`: display/RPC hash for the block or branch root.
 - `label`: display label for the UI.
-- `position`: `{ axis, min, max }`; stale targets use Bitcoin height, orphan
-  targets use `btc_header_time`.
+- `position`: `{ axis, min, max }`; the stale and error-block targets use
+  Bitcoin height, orphan targets use `btc_header_time`. For `error-block`,
+  `min` and `max` are always equal, because each item is one block.
 - `cursor`: opaque item cursor. Clients must send it back as-is.
 - `branch`: `null` for single-block targets, or
   `{ branch_id, root_hash, tip_hashes, depth }` for branch targets.
@@ -845,6 +846,10 @@ Ordering is stable and target-specific:
 - `stale`: `btc_height` descending, then stored stale hash bytes ascending.
 - `stale-branch`: `btc_height_max` descending, then `btc_height_min` descending,
   then stored root hash bytes ascending.
+- `error-block`: `btc_height` descending, then stored header hash bytes
+  ascending. The hash tie-break is required rather than cosmetic: the catalogue
+  carries more than one block at some heights, so paging on height alone would
+  skip or repeat members of a group.
 - `orphan`: `btc_header_time` descending, then stored header hash bytes
   descending.
 - `orphan-branch`: `btc_header_time_max` descending, then

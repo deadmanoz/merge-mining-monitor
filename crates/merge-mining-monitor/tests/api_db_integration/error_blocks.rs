@@ -497,11 +497,79 @@ async fn error_blocks_count_against_the_tree_node_budget() -> Result<()> {
 }
 
 #[tokio::test]
+async fn sourceless_error_blocks_do_not_consume_the_tree_node_budget() -> Result<()> {
+    crate::run_db_test!(client, {
+        let ts = day_epoch(2026, Month::May, 10);
+        seed_canonical_backbone(&client, 100, ts).await?;
+
+        let target = hash_bytes(0x7777);
+        insert_error_block(
+            &client,
+            &target,
+            &hash_bytes(0x7776),
+            50,
+            ts + 1,
+            "time_below_mtp",
+        )
+        .await?;
+        witness_error_block(&client, &target, &hash_bytes(0x7776), 50, ts + 1).await?;
+
+        // Crowd the target's window past the 500-node cap with error blocks that
+        // carry NO event. The tree never renders them, so they must not narrow
+        // the advertised window. Without the eligibility predicate in the budget
+        // query these invisible rows would push it over the cap and force a
+        // narrower window than the tree actually needs.
+        client
+            .execute(
+                "INSERT INTO block ( \
+                    btc_header_hash, btc_prev_header_hash, btc_height, btc_height_source, \
+                    kind, error_block_reason, btc_header_bytes, btc_header_time, \
+                    btc_coinbase_status, total_attestations, distinct_sources, \
+                    auxpow_chain_count, live_observed, core_attested, pow_validated, \
+                    created_at, updated_at \
+                 ) \
+                 SELECT decode(lpad(to_hex(7000000 + g), 64, '0'), 'hex'), \
+                        decode(lpad(to_hex(6999999 + g), 64, '0'), 'hex'), \
+                        34 + (g % 33), 'error-block-catalog', \
+                        'error_block', 'bip34_coinbase_height_mismatch', \
+                        decode(lpad(to_hex(7000000 + g), 160, '0'), 'hex'), $1::bigint + g, \
+                        'not_attempted', 0, 0, 0, FALSE, FALSE, TRUE, $1::bigint + g, $1::bigint + g \
+                 FROM generate_series(1, 600) AS g",
+                &[&ts],
+            )
+            .await?;
+
+        let payload = fetch_error_block_navigator(
+            &client,
+            &format!("anchor_hash={}&limit=1", display_hash(&target)),
+        )
+        .await?;
+        let view = serde_json::to_value(
+            payload.items[0]
+                .view
+                .as_ref()
+                .expect("invisible rows must not deny a window"),
+        )?;
+        // The full padded window, unnarrowed: 33 heights plus one visible error
+        // block, well inside the cap once the 600 invisible rows are excluded.
+        assert_eq!(view["tree_from"], 34);
+        assert_eq!(view["tree_to"], 66);
+        project_tree(&client, Some("from_height=34&to_height=66")).await?;
+        Ok(())
+    })
+}
+
+#[tokio::test]
 async fn error_block_navigator_skips_rows_the_tree_would_filter_out() -> Result<()> {
     crate::run_db_test!(client, {
         let ts = day_epoch(2026, Month::May, 10);
         seed_canonical_backbone(&client, 100, ts).await?;
 
+        // Genuinely witnessed: the rollup column AND an active event, which is
+        // what `/tree` actually counts. Seeding the column alone would make this
+        // control indistinguishable from `sourceless` to the tree, and the test
+        // would then only prove the navigator's own predicate rather than the
+        // renderability parity it claims.
         let witnessed = hash_bytes(0x4001);
         insert_error_block(
             &client,
@@ -512,9 +580,10 @@ async fn error_block_navigator_skips_rows_the_tree_would_filter_out() -> Result<
             "time_below_mtp",
         )
         .await?;
-        // No active source: `/tree` drops this under the default min_sources of
-        // 1, so offering it would advertise a window whose tree response omits
-        // the block it selects.
+        witness_error_block(&client, &witnessed, &hash_bytes(0x4000), 50, ts + 1).await?;
+        // No active source at all: `/tree` drops this under the default
+        // min_sources of 1, so offering it would advertise a window whose tree
+        // response omits the block it selects.
         let sourceless = hash_bytes(0x4002);
         insert_error_block_with_sources(
             &client,
@@ -531,6 +600,34 @@ async fn error_block_navigator_skips_rows_the_tree_would_filter_out() -> Result<
         assert_eq!(payload.total, 1, "only the witnessed block is navigable");
         assert_eq!(payload.items.len(), 1);
         assert_eq!(payload.items[0].primary_hash, display_hash(&witnessed));
+
+        // Parity: the block the navigator DOES offer must actually render, and
+        // the one it withholds must actually be absent.
+        let item = &payload.items[0];
+        let view = serde_json::to_value(item.view.as_ref().expect("renderable window"))?;
+        let tree = project_tree(
+            &client,
+            Some(&format!(
+                "from_height={}&to_height={}",
+                view["tree_from"], view["tree_to"]
+            )),
+        )
+        .await?;
+        let rendered = serde_json::to_value(&tree)?;
+        let hashes = rendered["nodes"]
+            .as_array()
+            .expect("tree nodes")
+            .iter()
+            .map(|node| node["hash"].as_str().unwrap_or_default().to_owned())
+            .collect::<Vec<_>>();
+        assert!(
+            hashes.contains(&display_hash(&witnessed)),
+            "the offered block must render in the window it advertises"
+        );
+        assert!(
+            !hashes.contains(&display_hash(&sourceless)),
+            "the withheld block must indeed be one the tree filters out"
+        );
 
         // Anchor mode agrees, so a deep link cannot reach it either.
         let anchored = fetch_error_block_navigator(
