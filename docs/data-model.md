@@ -103,14 +103,20 @@ two levels come apart in both directions, so check them separately:
   child data. Live Namecoin-family capture and Elastos carry this. Elastos
   verifies the commitment without storing a header, so a missing header does
   not imply an unproven stamp.
-- Neither: the value is the source's reported number. RSK and Hathor capture
-  sit here, RSK permanently, because its proof format discards the parent
-  coinbase.
+- Neither: the value is the source's reported number. RSK sits here
+  permanently, because its proof format discards the parent coinbase. Hathor
+  capture sits here today but its stamp is recoverable: the sidecar retains the
+  RFC 0006 `funds_graph`, whose bytes carry the transaction timestamp and fold
+  into the committed auxiliary hash. Capture copies the RPC value without
+  cross-checking them, so it is unverified rather than uncheckable.
 
-A row the import CREATED is therefore proof-less, not evidence-less: it is
-re-derivable but nothing shows the Bitcoin side committed to it. Where an
-import instead refines an event live capture already created, the store
-preserves that event's existing `aux_merkle_proof`, so the row keeps its proof.
+A row the import CREATED is therefore proof-less: nothing shows the Bitcoin
+side committed to it. Whether it is also re-derivable depends on the row, since
+the contract accepts height- or hash-only child evidence and validation returns
+early with no header, so an import-created row can carry a timestamp and no
+header at all. Where an import instead refines an event live capture already
+created, the store preserves that event's existing `aux_merkle_proof`, so the
+row keeps its proof.
 
 Two reading rules follow, both bounded by the same fact: the database holds two
 claimed timestamps and nothing else, and both are miner-set.
@@ -122,10 +128,14 @@ claimed timestamps and nothing else, and both are miner-set.
   since a Bitcoin pool may proxy child-chain operation through another (see
   `docs/attribution.md`). Do not derive a verdict about a Bitcoin timestamp
   from it.
-- A POSITIVE offset is an ordering disagreement worth investigating. Where the
-  commitment was verified, the disagreement is internal to the block; otherwise
-  it says only that the source's reported child time exceeds the Bitcoin header
-  time. It is never proof that either number is wrong.
+- A POSITIVE offset is an ordering disagreement worth investigating. It is
+  internal to the block only where the commitment was verified AND the stored
+  stamp was checked against the committed data. A verified proof alone does not
+  establish the second, for the same independence reason as above: the proof
+  and the timestamp can arrive from separate observations and never be
+  compared. Otherwise it says only that the source's reported child time
+  exceeds the Bitcoin header time. It is never proof that either number is
+  wrong.
 
 Neither direction can speak to block withholding. Every child stamp is sealed
 before the block is found, so nothing inside the block records when it was
