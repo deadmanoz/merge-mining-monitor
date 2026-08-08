@@ -107,8 +107,10 @@ two levels come apart in both directions, so check them separately:
   sit here, RSK permanently, because its proof format discards the parent
   coinbase.
 
-An imported row is therefore proof-less, not evidence-less: it is re-derivable
-but nothing shows the Bitcoin side committed to it.
+A row the import CREATED is therefore proof-less, not evidence-less: it is
+re-derivable but nothing shows the Bitcoin side committed to it. Where an
+import instead refines an event live capture already created, the store
+preserves that event's existing `aux_merkle_proof`, so the row keeps its proof.
 
 Two reading rules follow, both bounded by the same fact: the database holds two
 claimed timestamps and nothing else, and both are miner-set.
