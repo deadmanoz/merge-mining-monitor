@@ -63,7 +63,7 @@ const AUXPOW_HELP = {
     body: [
       "The auxiliary block's own timestamp, not a monitor capture time and not when the block reached its network. Whoever builds the child template writes it; the monitor observes no build and records only the claim. Which field it is depends on the chain: the header nTime for the Namecoin family, the block timestamp for RSK, the block transaction timestamp for Hathor.",
       "It usually sits behind the Bitcoin header time, and that is ordinary. The child data is committed into the Bitcoin coinbase before the Bitcoin work exists, so the stamp is sealed and cannot be refreshed later; one template is reused across many Bitcoin jobs, so it is stamped earlier than the parent that finally carries it.",
-      "How much it proves varies. The Child Header row says whether the stamp can be re-derived from stored bytes, which is narrower than whether the Bitcoin block committed to it. A positive offset is an ordering disagreement worth investigating, never proof that either clock is wrong.",
+      "How much it proves varies. The Child Header row says whether bytes are stored to re-derive the stamp from, which is narrower than whether the Bitcoin block committed to it, and narrower again than a check having run: the header and the timestamp fill independently, so an event assembled from separate observations may never have had the two compared. A positive offset is an ordering disagreement worth investigating, never proof that either clock is wrong.",
     ],
   },
   targets: {

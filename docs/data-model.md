@@ -91,10 +91,14 @@ submitted to the child chain.
 How far a stamp is evidence depends on the row, not on its source. The first
 two levels come apart in both directions, so check them separately:
 
-- `child_header_hex` present: the stamp is re-derivable from stored bytes. The
-  normalized publication contract carries this column and the importer
-  authenticates it, so an imported row is re-derivable even though no import
-  writes an AuxPoW proof.
+- `child_header_hex` present: bytes are stored to check the stamp against. That
+  is not the same as the check having run. A payload carrying both is validated
+  together, and the normalized publication contract carries this column, so an
+  imported row is re-derivable even though no import writes an AuxPoW proof.
+  But the two columns fill independently (`fill_existing_event` COALESCEs each
+  against the same stored field), so an event assembled from separate
+  observations can hold a header that was never compared with its stored
+  timestamp. Re-derive before relying on it.
 - `aux_proof` present: the Bitcoin block is proven to have committed to the
   child data. Live Namecoin-family capture and Elastos carry this. Elastos
   verifies the commitment without storing a header, so a missing header does
