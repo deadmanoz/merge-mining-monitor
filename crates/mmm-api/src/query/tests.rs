@@ -327,6 +327,42 @@ fn error_block_navigator_cursors_are_target_and_axis_bound() {
     .unwrap_err();
     assert_eq!(wrong_target.code(), "invalid_query");
 
+    // A height bound beyond i32 would wrap to a negative height through the
+    // projection's `as i32` casts and return a wrong page, so it is rejected at
+    // decode for every height-axis target.
+    let overflow_cursor = NavigatorCursor::new(
+        NavigatorTarget::ErrorBlock,
+        NavigatorAxis::Height,
+        i64::from(i32::MAX) + 1,
+        i64::from(i32::MAX) + 1,
+        "ab".repeat(32),
+    )
+    .encode();
+    let overflow = parse_navigator_query(
+        NavigatorTarget::ErrorBlock,
+        Some(&format!("cursor={overflow_cursor}&direction=older")),
+    )
+    .unwrap_err();
+    assert_eq!(overflow.code(), "invalid_query");
+
+    let stale_overflow_cursor = NavigatorCursor::new(
+        NavigatorTarget::Stale,
+        NavigatorAxis::Height,
+        i64::from(i32::MAX) + 1,
+        i64::from(i32::MAX) + 1,
+        "ab".repeat(32),
+    )
+    .encode();
+    assert_eq!(
+        parse_navigator_query(
+            NavigatorTarget::Stale,
+            Some(&format!("cursor={stale_overflow_cursor}&direction=older")),
+        )
+        .unwrap_err()
+        .code(),
+        "invalid_query"
+    );
+
     let time_axis_cursor = NavigatorCursor::new(
         NavigatorTarget::ErrorBlock,
         NavigatorAxis::Time,

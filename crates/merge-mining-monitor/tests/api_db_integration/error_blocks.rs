@@ -213,10 +213,18 @@ async fn error_block_navigator_pages_through_a_same_height_group_exactly_once() 
             "a full older-ward walk must return every catalogued block exactly once, in order"
         );
 
-        // And back: stepping newer from the last page reconstructs the reverse.
-        let mut back: Vec<String> = Vec::new();
+        // And back: stepping newer from the last page must revisit the whole
+        // catalogue. Each newer-ward page is itself returned newest-first, so
+        // the reconstruction reverses the PAGE order and keeps each page's
+        // internal order, rather than reversing the flattened list.
+        let mut back_pages: Vec<Vec<String>> = Vec::new();
         loop {
-            back.extend(page.items.iter().map(|item| item.primary_hash.clone()));
+            back_pages.push(
+                page.items
+                    .iter()
+                    .map(|item| item.primary_hash.clone())
+                    .collect(),
+            );
             let Some(cursor) = page.prev_cursor.clone() else {
                 break;
             };
@@ -226,13 +234,19 @@ async fn error_block_navigator_pages_through_a_same_height_group_exactly_once() 
             )
             .await?;
         }
-        let mut back_sorted = back.clone();
-        back_sorted.sort();
-        back_sorted.dedup();
+        back_pages.reverse();
+        let back: Vec<String> = back_pages.into_iter().flatten().collect();
+        // Uniqueness alone would still pass if the walk skipped blocks or
+        // stopped early, so assert the full reconstruction: newer-ward paging
+        // visits every block in catalogue order and terminates only once it has
+        // reached the newest edge.
         assert_eq!(
-            back_sorted.len(),
-            back.len(),
-            "a newer-ward walk must not repeat a block"
+            back, expected,
+            "a newer-ward walk must reconstruct the whole catalogue"
+        );
+        assert_eq!(
+            page.prev_cursor, None,
+            "the newer-ward walk must terminate at the newest edge"
         );
         Ok(())
     })

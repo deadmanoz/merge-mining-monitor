@@ -221,8 +221,14 @@ const CONSENSUS_RULE_HELP = {
 // Help for one catalogued consensus rule, or null when the token is outside the
 // mapped vocabulary. Null is meaningful: the caller renders the raw token with no
 // help control rather than an empty dialog.
+//
+// The own-property check matters: the token is server data, and a plain object's
+// bracket lookup also resolves inherited members, so tokens like `constructor`,
+// `toString` or `__proto__` would otherwise read as mapped rules and emit a help
+// control whose dialog then throws on the missing `body`.
 function consensusRuleHelpFor(token) {
-  return (token && CONSENSUS_RULE_HELP[token]) || null;
+  if (!token || !Object.prototype.hasOwnProperty.call(CONSENSUS_RULE_HELP, token)) return null;
+  return CONSENSUS_RULE_HELP[token];
 }
 
 // A small `(i)` button that opens the AuxPoW help dialog for one topic. Models

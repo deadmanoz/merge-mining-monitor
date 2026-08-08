@@ -63,6 +63,29 @@ fn assert_navigator_fixture_contract(file: &str, fixture: &Value) {
             !string_field(item, "cursor").is_empty(),
             "{file}: item cursor must be non-empty"
         );
+
+        // Runtime derives every id from a hash, so an id whose embedded hash
+        // disagrees with the item's own is a payload that cannot be emitted.
+        if let Some(branch) = item["branch"].as_object() {
+            let root = string_field(&item["branch"], "root_hash");
+            assert_lower_hex(root, 64, file, "branch.root_hash");
+            assert!(
+                string_field(item, "id").ends_with(root),
+                "{file}: item id must embed the branch root hash"
+            );
+            assert!(
+                string_field(&item["branch"], "branch_id").ends_with(root),
+                "{file}: branch_id must embed the branch root hash"
+            );
+            for tip in branch["tip_hashes"].as_array().into_iter().flatten() {
+                assert_lower_hex(tip.as_str().expect("tip hash"), 64, file, "tip_hashes");
+            }
+        } else {
+            assert!(
+                string_field(item, "id").ends_with(string_field(item, "primary_hash")),
+                "{file}: item id must embed its primary hash"
+            );
+        }
     }
 
     if file == "navigator-error-block.json" {

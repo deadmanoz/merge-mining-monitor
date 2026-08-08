@@ -163,6 +163,21 @@ impl NavigatorCursor {
                 }),
             ));
         }
+        // Height-axis bounds are compared against `block.btc_height`, an int4.
+        // The cursor is attacker-supplied `i64`, so reject anything that cannot
+        // round-trip here rather than letting a downstream `as i32` wrap it into
+        // a negative height and silently return a wrong page.
+        if cursor.axis == NavigatorAxis::Height
+            && (i32::try_from(cursor.min).is_err() || i32::try_from(cursor.max).is_err())
+        {
+            return Err(ApiError::invalid_query(
+                "height cursor bounds are out of range",
+                json!({
+                    "min": cursor.min,
+                    "max": cursor.max,
+                }),
+            ));
+        }
         validate_hash_param("cursor.hash", &cursor.hash)?;
         Ok(cursor)
     }

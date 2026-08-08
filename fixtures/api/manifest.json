@@ -54,7 +54,7 @@
     {
       "file": "navigator-error-block.json",
       "endpoint_family": "/api/v1/navigator/error-block",
-      "scenario": "Unified navigator error-block target: two catalogued consensus-invalid full-PoW blocks at the same Bitcoin height, ordered by stored hash bytes, with opaque cursors and tree-window view metadata"
+      "scenario": "Unified navigator error-block target: an older-direction page landing inside a same-height group of catalogued consensus-invalid full-PoW blocks, ordered by stored hash bytes, with opaque cursors and tree-window view metadata"
     },
     {
       "file": "navigator-orphan.json",
