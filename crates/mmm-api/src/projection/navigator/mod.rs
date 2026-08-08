@@ -1,5 +1,5 @@
-//! Unified navigator projection for stale blocks, stale branches, BTC orphans,
-//! and orphan branches.
+//! Unified navigator projection for stale blocks, stale branches, catalogued
+//! error blocks, BTC orphans, and orphan branches.
 
 use anyhow::Result;
 use serde::Serialize;
@@ -14,6 +14,7 @@ use super::ProjectionError;
 use super::shared::stored_hash_from_display;
 use super::stale_navigation::{NavigationError, TreeNavigation};
 
+mod error_block;
 mod orphan;
 mod stale;
 
@@ -24,6 +25,7 @@ pub async fn navigator(
     match query.target {
         NavigatorTarget::Stale => stale::stale_blocks(client, query).await,
         NavigatorTarget::StaleBranch => stale::stale_branches(client, query).await,
+        NavigatorTarget::ErrorBlock => error_block::error_blocks(client, query).await,
         NavigatorTarget::Orphan => orphan::orphans(client, query).await,
         NavigatorTarget::OrphanBranch => orphan::orphan_branches(client, query).await,
     }

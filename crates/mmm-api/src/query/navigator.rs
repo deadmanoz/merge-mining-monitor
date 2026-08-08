@@ -12,6 +12,7 @@ use crate::normalize::Classification;
 pub enum NavigatorTarget {
     Stale,
     StaleBranch,
+    ErrorBlock,
     Orphan,
     OrphanBranch,
 }
@@ -21,6 +22,7 @@ impl NavigatorTarget {
         match raw {
             "stale" => Ok(Self::Stale),
             "stale-branch" => Ok(Self::StaleBranch),
+            "error-block" => Ok(Self::ErrorBlock),
             "orphan" => Ok(Self::Orphan),
             "orphan-branch" => Ok(Self::OrphanBranch),
             other => Err(ApiError::invalid_query(
@@ -34,18 +36,22 @@ impl NavigatorTarget {
         match self {
             Self::Stale => "stale",
             Self::StaleBranch => "stale-branch",
+            Self::ErrorBlock => "error-block",
             Self::Orphan => "orphan",
             Self::OrphanBranch => "orphan-branch",
         }
     }
 
+    /// Only the orphan targets carry an orphan-class facet. An error block is a
+    /// catalogue membership, not a refinement of `unknown`, so it has no
+    /// classification axis and rejects the parameter.
     pub fn accepts_classification(self) -> bool {
         matches!(self, Self::Orphan | Self::OrphanBranch)
     }
 
     fn axis(self) -> NavigatorAxis {
         match self {
-            Self::Stale | Self::StaleBranch => NavigatorAxis::Height,
+            Self::Stale | Self::StaleBranch | Self::ErrorBlock => NavigatorAxis::Height,
             Self::Orphan | Self::OrphanBranch => NavigatorAxis::Time,
         }
     }

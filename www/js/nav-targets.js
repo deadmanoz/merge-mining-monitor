@@ -65,7 +65,11 @@ function orphanStepperState(
   };
 }
 
-function staleStepperState(
+// Height-anchored single-block readout: "#123,456 · 33 total". Shared by every
+// target whose items are individual blocks on the height axis (stale, error
+// block), as opposed to the branch and orphan readouts which report a span or a
+// date.
+function heightAnchorStepperState(
   { anchor = null, total = null, hasOlder = false, hasNewer = false } = {},
 ) {
   if (!anchor) return { olderEnabled: false, newerEnabled: false, readout: "" };
@@ -103,6 +107,14 @@ const TARGETS = Object.freeze({
     stateKey: "branch",
     selectionPrecedence: 10,
   }),
+  errorBlock: Object.freeze({
+    id: "errorBlock",
+    route: "error-block",
+    label: "Error blocks",
+    optionLabel: "Latest error block",
+    stateKey: "errorBlock",
+    selectionPrecedence: 25,
+  }),
   orphan: Object.freeze({
     id: "orphan",
     route: "orphan",
@@ -125,6 +137,7 @@ const NAV_MENU_TARGETS = Object.freeze([
   Object.freeze({ id: "tip", label: "Live tip", optionLabel: "Live tip" }),
   TARGETS.stale,
   TARGETS.branch,
+  TARGETS.errorBlock,
   TARGETS.orphan,
   TARGETS.orphanBranch,
 ]);
@@ -180,7 +193,8 @@ export function applyNavigatorPayload(state, targetId, payload, item) {
   slot.total = payload?.total ?? (selected ? slot.total : 0);
   slot.hasOlder = !!payload?.next_cursor;
   slot.hasNewer = !!payload?.prev_cursor;
-  if (targetId === "stale") {
+  if (targetId === "stale" || targetId === "errorBlock") {
+    // Height-axis single-block targets share the anchor shape their readout reads.
     slot.anchor = selected ? {
       btc_height: selected.position?.max,
       hash: selected.primary_hash,
@@ -235,7 +249,7 @@ export function navigatorItemView(item) {
       centerHash: item.view.center_hash ?? item.view.anchor_hash ?? item.primary_hash,
     };
   }
-  if (item.kind === "stale" && item.position?.axis === "height") {
+  if ((item.kind === "stale" || item.kind === "error-block") && item.position?.axis === "height") {
     return {
       mode: "height",
       view: {
@@ -253,8 +267,11 @@ export function navigatorItemView(item) {
 export function navigatorStepperState(state, targetId) {
   const slot = targetState(state, targetId);
   if (!slot) return { olderEnabled: false, newerEnabled: false, readout: "" };
-  if (targetId === "stale") {
-    return staleStepperState({
+  // Every arm below is explicit: the final `return` is the orphan-branch
+  // readout, so an unhandled target would silently render a date/depth line
+  // rather than its own.
+  if (targetId === "stale" || targetId === "errorBlock") {
+    return heightAnchorStepperState({
       anchor: slot.anchor,
       total: slot.total,
       hasOlder: slot.hasOlder,
