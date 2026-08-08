@@ -499,3 +499,139 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
   await expect(page.locator("#nav-readout")).toContainText("#717,696");
   await expect(page.locator("#nav-readout")).not.toContainText("#946,213");
 });
+
+test("a shared link to an error block adopts that navigator target", async ({ page }) => {
+  // Direct selection, not the menu: restoring `?selected=<error block>` must
+  // switch the navigator away from whatever target it would otherwise settle
+  // on, populate the error-block readout, and leave stepping usable. The
+  // menu-driven test cannot cover this, because it locks the target first.
+  const treeRequests = [];
+  const navigatorRequests = [];
+  const errorHash = "e".repeat(64);
+  const olderHash = "f".repeat(64);
+  const errorHeight = 946213;
+  const olderHeight = 717696;
+
+  const errorRow = (hash, height) => ({
+    id: `error-block-${hash}`,
+    kind: "error-block",
+    primary_hash: hash,
+    label: `Error block #${height}`,
+    position: { axis: "height", min: height, max: height },
+    cursor: `opaque-error-cursor-${height}`,
+    branch: null,
+    orphan: null,
+    view: {
+      mode: "tree_window",
+      target_height: height,
+      tree_from: height - 16,
+      tree_to: height + 16,
+      select_hash: hash,
+      center_hash: hash,
+    },
+    view_error: null,
+  });
+
+  const envelope = (rows, mode) => ({
+    schema_version: "v1",
+    generated_at: 1779792000,
+    query: {
+      target: "error-block",
+      mode,
+      cursor: null,
+      direction: null,
+      anchor_hash: null,
+      classification: [],
+      limit: 1,
+    },
+    target: "error-block",
+    items: rows,
+    total: 33,
+    facets: {},
+    next_cursor: "opaque-error-cursor-next",
+    prev_cursor: null,
+  });
+
+  const blockPayload = (hash, height) => ({
+    schema_version: "v1",
+    generated_at: 1779792000,
+    block: {
+      hash,
+      height,
+      kind: "error_block",
+      btc_orphan_class: null,
+      error_block_reason: "time_below_mtp",
+      header: { time: 1779792000 },
+      bitcoin_miner_pool: { id: null, slug: null, name: "Unknown", known: false },
+      source_summary: {
+        sources: [],
+        distinct_sources: 0,
+        auxpow_chain_count: 0,
+        live_observed: false,
+        pow_validates_btc_target: true,
+      },
+      competition: null,
+      child_chain_evidence: [],
+    },
+    competition: null,
+    stale_branch: null,
+  });
+
+  await stubApi(page, treeRequests, {
+    treePayload: (query) => {
+      const from = Number(query.get("from_height") || 0);
+      const [hash, height] = from === olderHeight - 16
+        ? [olderHash, olderHeight]
+        : [errorHash, errorHeight];
+      return treeEnvelope(query, {
+        nodes: [makeNode(hash, height, null, "error_block", { id: 1, prev_id: null })],
+        edges: [],
+        legend: {
+          kinds: ["canonical", "stale", "error_block", "unknown", "near"],
+          edge_kinds: ["canonical", "stale_entry", "stale", "hidden"],
+        },
+      });
+    },
+    navigatorRequests,
+    navigator: (url) => {
+      if (url.searchParams.get("direction") === "older") {
+        return envelope([errorRow(olderHash, olderHeight)], "page");
+      }
+      const anchor = url.searchParams.get("anchor_hash");
+      if (anchor) {
+        return envelope(
+          [anchor === olderHash ? errorRow(olderHash, olderHeight) : errorRow(errorHash, errorHeight)],
+          "anchor",
+        );
+      }
+      return envelope([errorRow(errorHash, errorHeight)], "latest");
+    },
+    blockPayloads: {
+      [errorHash]: blockPayload(errorHash, errorHeight),
+      [olderHash]: blockPayload(olderHash, olderHeight),
+    },
+  });
+
+  await page.goto(`/?tree_height=${errorHeight}&selected=${errorHash}`);
+  await expect(page.getByRole("heading", { name: "Bitcoin Header Tree" })).toBeVisible();
+
+  // Selection alone hydrates the target through anchor mode.
+  await expect.poll(() => navigatorRequests.some((url) => (
+    url.pathname.endsWith("/api/v1/navigator/error-block")
+      && url.searchParams.get("anchor_hash") === errorHash
+  ))).toBe(true);
+
+  // The Go-to select names the adopted target, and the readout is populated.
+  await expect(page.locator("#nav-goto option[value='']")).toHaveText("Error blocks");
+  await expect(page.locator("#nav-readout")).toContainText("#946,213");
+  await expect(page.locator("#nav-readout")).toContainText("33 total");
+
+  // Stepping is enabled and works from the deep-linked block.
+  await expect(page.locator("#nav-older")).toBeEnabled();
+  await page.locator("#nav-older").click();
+  await expect.poll(() => navigatorRequests.some((url) => (
+    url.pathname.endsWith("/api/v1/navigator/error-block")
+      && url.searchParams.get("direction") === "older"
+  ))).toBe(true);
+  await expect(page.locator("#nav-readout")).toContainText("#717,696");
+});
