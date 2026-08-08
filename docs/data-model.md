@@ -75,6 +75,76 @@ fabricate substitutes.
 The API exposes these fields as nullable values and additionally surfaces an
 authenticated `child_header_hex` and `child_nbits` when present.
 
+### What `child_block_time` Means
+
+`child_block_time` is the child block's own claimed timestamp as its chain
+reports it: the header `nTime` for Namecoin-family chains, the RSK block
+timestamp, the Hathor block transaction timestamp. Whoever builds the child
+template writes it. It is not a broadcast time, not a capture time, and not a
+second opinion on when the Bitcoin block was found.
+
+It is fixed once set, whatever the AuxPoW format. The child data is committed
+into the Bitcoin coinbase before the Bitcoin work exists, so altering the stamp
+would void the proof of work; it cannot be refreshed when the proof is later
+submitted to the child chain.
+
+How far a stamp is evidence depends on the row, not on its source. The first
+two levels come apart in both directions, so check them separately:
+
+- `child_header_hex` present: bytes are stored to check the stamp against. That
+  is not the same as the check having run. A payload carrying both is validated
+  together, and the normalized publication contract carries this column, so an
+  imported row is re-derivable even though no import writes an AuxPoW proof.
+  But the two columns fill independently (`fill_existing_event` COALESCEs each
+  against the same stored field), so an event assembled from separate
+  observations can hold a header that was never compared with its stored
+  timestamp. Re-derive before relying on it.
+- `aux_proof` present: the Bitcoin block is proven to have committed to the
+  child data. Live Namecoin-family capture and Elastos carry this. Elastos
+  verifies the commitment without storing a header, so a missing header does
+  not imply an unproven stamp.
+- Neither: the value is the source's reported number. RSK sits here
+  permanently, because its proof format discards the parent coinbase. Hathor
+  capture sits here today but its stamp is recoverable: the sidecar retains the
+  RFC 0006 `funds_graph`, whose bytes carry the transaction timestamp and fold
+  into the committed auxiliary hash. Capture copies the RPC value without
+  cross-checking them, so it is unverified rather than uncheckable.
+
+A row the import CREATED is therefore proof-less: nothing shows the Bitcoin
+side committed to it. Whether it is also re-derivable depends on the row, since
+the contract accepts height- or hash-only child evidence and validation returns
+early with no header, so an import-created row can carry a timestamp and no
+header at all. Where an import instead refines an event live capture already
+created, the store preserves that event's existing `aux_merkle_proof`, so the
+row keeps its proof.
+
+Two reading rules follow, both bounded by the same fact: the database holds two
+claimed timestamps and nothing else, and both are miner-set.
+
+- A NEGATIVE offset is the ordinary case and is not lateness. A child header is
+  reused across successive Bitcoin jobs, so it is stamped earlier than the
+  parent that finally carries it. The magnitude reflects the refresh and
+  stamping policy behind each stamp, and the two need not share an operator,
+  since a Bitcoin pool may proxy child-chain operation through another (see
+  `docs/attribution.md`). Do not derive a verdict about a Bitcoin timestamp
+  from it.
+- A POSITIVE offset is an ordering disagreement worth investigating. It is
+  internal to the block only where the commitment was verified AND the stored
+  stamp was checked against the committed data. A verified proof alone does not
+  establish the second, for the same independence reason as above: the proof
+  and the timestamp can arrive from separate observations and never be
+  compared. Otherwise it says only that the source's reported child time
+  exceeds the Bitcoin header time. It is never proof that either number is
+  wrong.
+
+Neither direction can speak to block withholding. Every child stamp is sealed
+before the block is found, so nothing inside the block records when it was
+published. `event_discovered_at` does not answer it either: it is never
+advanced after the first write. For an event the backfill or import created it
+is therefore the import date rather than a first-observation time; where live
+capture inserted the event first and an import only refined it, the value stays
+the earlier live-ingestion time.
+
 Historical parent-coinbase evidence is also lossless. Structured full
 transactions populate the normal txid, script, and serialized-output fields,
 while the complete transaction bytes and normalized publication output text

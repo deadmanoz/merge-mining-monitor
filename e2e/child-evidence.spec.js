@@ -76,3 +76,204 @@ test("the block drawer renders authenticated and unavailable child evidence hone
   await expect(events.nth(1)).toContainText("1d00ffff");
   await expect(events.nth(1)).toContainText("2023-11-14T22:13:20Z");
 });
+
+// The offset is the only place the drawer subtracts two stamps. fmtDelta rounds
+// to the largest fitting unit, which is exactly what loses the distinction a
+// reader comparing two auxiliaries on one block needs, so the exact second count
+// has to survive alongside it and be visible without a pointer. -607s is the
+// case that proves it: it renders as -10m, so an assertion built on a round
+// -600 would pass whether or not the exact figure was kept at all.
+test("an auxiliary block's offset from the Bitcoin header time is shown only when both stamps exist", async ({
+  page,
+}) => {
+  const PARENT_TIME = 1_700_000_600;
+  const nodes = [makeNode(HASH, 700000, null, "canonical", { id: 1, prev_id: null })];
+  await stubApi(page, [], {
+    treePayload: (params) => treeEnvelope(params, { nodes }),
+    blockPayload: (hash) => {
+      const payload = blockPayload(hash, {
+        generated_at: GENERATED_AT,
+        event_details: [
+          // Committed at job start: the ordinary case, well behind the block,
+          // and by a span the compact form cannot express exactly.
+          event({ child_block_time: PARENT_TIME - 607 }),
+          // Stamped after the block it is committed to: the ordering disagreement.
+          event({ id: 2, child_chain: "namecoin", child_block_time: PARENT_TIME + 7 }),
+          // Tied to the second. Neither side gets a sign.
+          event({ id: 3, child_chain: "fractal", child_block_time: PARENT_TIME }),
+          // No child stamp to subtract.
+          event({ id: 4, child_chain: "syscoin", child_block_time: null }),
+        ],
+      });
+      payload.block.header = { time: PARENT_TIME };
+      return payload;
+    },
+  });
+
+  await page.goto(`/?selected=${HASH}`);
+  const events = page.locator("#drawer details.event-block");
+  await expect(events).toHaveCount(4);
+  for (const index of [0, 1, 2, 3]) {
+    await events.nth(index).locator("summary").click();
+  }
+
+  const offset = (index) => events.nth(index).locator(".child-time-offset");
+
+  // Lossy compaction keeps the exact figure VISIBLE, not just in the title: a
+  // reader with no pointer must still be able to tell -607s from -600s.
+  // toHaveText alone reads textContent and passes on a hidden element, which is
+  // the exact regression this is guarding against, so assert visibility too.
+  await expect(offset(0)).toBeVisible();
+  await expect(offset(0)).toHaveText("-10m (-607s) vs Bitcoin");
+  await expect(offset(0)).toHaveAttribute("title", "-607s from the Bitcoin header time");
+  // The offset annotates the stamp; it must not displace it.
+  await expect(events.nth(0).locator(`dt:has-text("Child Time") + dd`)).toContainText(
+    "2023-11-14T22:13:13Z",
+  );
+
+  // Already exact, so no redundant "+7s (+7s)".
+  await expect(offset(1)).toBeVisible();
+  await expect(offset(1)).toHaveText("+7s vs Bitcoin");
+  await expect(offset(1)).toHaveAttribute("title", "+7s from the Bitcoin header time");
+
+  // Equal stamps are neutral in both forms; a "+0s" would imply a direction.
+  await expect(offset(2)).toBeVisible();
+  await expect(offset(2)).toHaveText("0s vs Bitcoin");
+  await expect(offset(2)).toHaveAttribute("title", "0s from the Bitcoin header time");
+
+  await expect(offset(3)).toHaveCount(0);
+  await expect(
+    events.nth(3).locator(`dt:has-text("Child Time") + dd .null-value`),
+  ).toHaveText("unavailable");
+});
+
+// auxpowHelpFor falls back to an empty "AuxPoW" topic for an unknown key, so a
+// mis-keyed button or an emptied body would leave every other assertion here
+// green while the row's explanation silently vanished. Open it and check the
+// identity plus one load-bearing sentence.
+test("the Child Time row opens its own help topic", async ({ page }) => {
+  const nodes = [makeNode(HASH, 700000, null, "canonical", { id: 1, prev_id: null })];
+  await stubApi(page, [], {
+    treePayload: (params) => treeEnvelope(params, { nodes }),
+    blockPayload: (hash) =>
+      blockPayload(hash, {
+        generated_at: GENERATED_AT,
+        event_details: [event({ child_block_time: 1_700_000_000 })],
+      }),
+  });
+
+  await page.goto(`/?selected=${HASH}`);
+  const events = page.locator("#drawer details.event-block");
+  await events.nth(0).locator("summary").click();
+  await events.nth(0).getByRole("button", { name: "About Child Time" }).click();
+
+  const dialog = page.locator("#auxpow-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.locator("#auxpow-dialog-title")).toHaveText("Child Time");
+  await expect(page.locator("#auxpow-dialog-kicker")).toHaveText(
+    "The auxiliary block's own claimed timestamp, and its offset from Bitcoin",
+  );
+  // The two things the topic exists to convey: the stamp is a claim nobody
+  // observed being made, and a stored header is narrower than a commitment.
+  await expect(page.locator("#auxpow-dialog-body")).toContainText(
+    "the monitor observes no build and records only the claim",
+  );
+  await expect(page.locator("#auxpow-dialog-body")).toContainText(
+    "narrower than whether the Bitcoin block committed to it",
+  );
+});
+
+// Contract-wise `block.header.time` is a required non-null u32, so this stubs a
+// response the API does not produce. It is kept deliberately, as resilience
+// cover for the parent-side guard: the drawer reads `block.header?.time`, and a
+// malformed or future-shape payload must degrade to the child stamp alone rather
+// than subtract from undefined and print an offset from nothing.
+test("a malformed block detail with no Bitcoin header time renders the stamp without an offset", async ({
+  page,
+}) => {
+  const nodes = [makeNode(HASH, 700000, null, "canonical", { id: 1, prev_id: null })];
+  await stubApi(page, [], {
+    treePayload: (params) => treeEnvelope(params, { nodes }),
+    blockPayload: (hash) =>
+      blockPayload(hash, {
+        generated_at: GENERATED_AT,
+        event_details: [event({ child_block_time: 1_700_000_000 })],
+      }),
+  });
+
+  await page.goto(`/?selected=${HASH}`);
+  const events = page.locator("#drawer details.event-block");
+  await events.nth(0).locator("summary").click();
+  await expect(events.nth(0)).toContainText("2023-11-14T22:13:20Z");
+  await expect(events.nth(0).locator(".child-time-offset")).toHaveCount(0);
+});
+
+// child_block_time is an unbounded i64 by contract, so the guard has to cover
+// the operand AND the subtraction, which fail independently and so need fixtures
+// that isolate each. Event 1 is exact on its own and inexact once the parent
+// time is taken off it, which only the offset guard catches. Event 2 is the
+// mirror image: 9007199254740993 has no double representation, so JSON.parse
+// hands the page a rounded 9007199254740992, and the difference from there lands
+// back inside the safe range. Only the OPERAND guard stops that rendering as a
+// measured figure. Event 3 is exact throughout and must still render.
+//
+// The rounded operand has to arrive as a raw JSON lexeme: route.fulfill({json})
+// serializes through JSON.stringify, which cannot emit an integer the runtime
+// has already lost. A route registered after stubApi takes precedence, so the
+// shared helper stays untouched.
+test("an offset JavaScript cannot compute exactly is not rendered", async ({ page }) => {
+  const PARENT_TIME = 1_700_000_000;
+  const ROUNDED_STAMP = "__ROUNDED_CHILD_TIME__";
+  const nodes = [makeNode(HASH, 700000, null, "canonical", { id: 1, prev_id: null })];
+  await stubApi(page, [], {
+    treePayload: (params) => treeEnvelope(params, { nodes }),
+  });
+  await page.route("**/api/v1/block/**", async (route) => {
+    const hash = route.request().url().split("/").at(-1);
+    const payload = blockPayload(hash, {
+      generated_at: GENERATED_AT,
+      event_details: [
+        event({ child_block_time: -Number.MAX_SAFE_INTEGER }),
+        event({ id: 3, child_chain: "syscoin", child_block_time: ROUNDED_STAMP }),
+        event({
+          id: 2,
+          child_chain: "namecoin",
+          child_block_time: -Number.MAX_SAFE_INTEGER + PARENT_TIME,
+        }),
+      ],
+    });
+    payload.block.header = { time: PARENT_TIME };
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(payload).replace(`"${ROUNDED_STAMP}"`, "9007199254740993"),
+    });
+  });
+
+  await page.goto(`/?selected=${HASH}`);
+  const events = page.locator("#drawer details.event-block");
+  await expect(events).toHaveCount(3);
+  await events.nth(0).locator("summary").click();
+  await events.nth(1).locator("summary").click();
+  await events.nth(2).locator("summary").click();
+
+  // Inexact subtraction, exact operands.
+  await expect(events.nth(0).locator(".child-time-offset")).toHaveCount(0);
+  // The fallback is the stamp ALONE, not an empty cell: asserting only the
+  // missing offset would pass on a regression that dropped the time with it.
+  await expect(events.nth(0).locator(`dt:has-text("Child Time") + dd`)).toContainText(
+    String(-Number.MAX_SAFE_INTEGER),
+  );
+
+  // Rounded operand, safe-looking subtraction. The stamp still renders, at the
+  // rounded value the runtime actually holds; only the offset is withheld.
+  await expect(events.nth(1).locator(".child-time-offset")).toHaveCount(0);
+  await expect(events.nth(1).locator(`dt:has-text("Child Time") + dd`)).toContainText(
+    "9007199254740992",
+  );
+
+  // Exact throughout, so the offset renders.
+  await expect(events.nth(2).locator(".child-time-offset")).toHaveAttribute(
+    "title",
+    `-${Number.MAX_SAFE_INTEGER}s from the Bitcoin header time`,
+  );
+});

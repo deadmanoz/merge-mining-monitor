@@ -6,6 +6,15 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Explain `child_block_time` where it is read. The block drawer's Child Time row
+  gains a help topic covering what the stamp is, why AuxPoW's child-first
+  commitment settles it before the Bitcoin work exists, and how far the two
+  asymmetric reading rules actually reach, and shows each auxiliary block's
+  offset from that block's Bitcoin header time (omitted when either stamp is
+  unavailable or the difference is not exactly representable). Document the same
+  model in `docs/data-model.md`, including what a stored child header does and
+  does not prove.
+
 - Classify headers in the pinned research error-block catalogue as
   `error_block`, preserving their primary consensus rejection token through the
   read model, API, tree controls, and source-health counts. Keep this
