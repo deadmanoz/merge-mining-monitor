@@ -309,7 +309,7 @@ async fn static_index_is_served() {
 #[test]
 fn frontend_module_imports_pin_the_release_version() {
     let js_dir = test_www_dir().join("js");
-    let expected_suffix = format!(".js?v={}\";", env!("CARGO_PKG_VERSION"));
+    let expected_pin = format!("?v={}", env!("CARGO_PKG_VERSION"));
 
     for entry in std::fs::read_dir(js_dir).expect("read frontend module directory") {
         let path = entry.expect("read frontend module entry").path();
@@ -319,10 +319,23 @@ fn frontend_module_imports_pin_the_release_version() {
 
         let source = std::fs::read_to_string(&path).expect("read frontend module");
         for (index, line) in source.lines().enumerate() {
-            if line.contains("from \"./") || line.trim_start().starts_with("import \"./") {
+            // Every local specifier, not only static `from "./x.js"` forms. The
+            // suffix-matching predicate this replaces could not see a dynamic
+            // `await import("./x.js?v=...")`, which therefore kept a stale pin
+            // through a release and fetched a cached pre-release module at run
+            // time. Match on the `./` specifier itself so both forms are covered.
+            for start in local_specifier_starts(line) {
+                let rest = &line[start..];
+                let Some(end) = rest.find(['"', '\'']) else {
+                    continue;
+                };
+                let specifier = &rest[..end];
+                if !specifier.ends_with(".js") && !specifier.contains(".js?") {
+                    continue;
+                }
                 assert!(
-                    line.ends_with(&expected_suffix),
-                    "{}:{} local import is not pinned to release {}: {line}",
+                    specifier.ends_with(&expected_pin),
+                    "{}:{} local specifier {specifier:?} is not pinned to release {}",
                     path.display(),
                     index + 1,
                     env!("CARGO_PKG_VERSION"),
@@ -330,6 +343,21 @@ fn frontend_module_imports_pin_the_release_version() {
             }
         }
     }
+}
+
+/// Byte offsets just past every `"./` or `'./` opening in a line, i.e. the start
+/// of each relative module specifier, whether it was reached by `from "./x"`,
+/// `import "./x"`, or `import("./x")`.
+fn local_specifier_starts(line: &str) -> Vec<usize> {
+    let bytes = line.as_bytes();
+    (0..bytes.len().saturating_sub(2))
+        .filter(|index| {
+            (bytes[*index] == b'"' || bytes[*index] == b'\'')
+                && bytes[index + 1] == b'.'
+                && bytes[index + 2] == b'/'
+        })
+        .map(|index| index + 1)
+        .collect()
 }
 
 #[tokio::test]

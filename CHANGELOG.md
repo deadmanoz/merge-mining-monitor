@@ -6,6 +6,27 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-09
+
+- Navigate catalogued error blocks as a first-class Go to target, backed by
+  `/api/v1/navigator/error-block`. Ordering is Bitcoin height descending then
+  stored hash bytes ascending, because the catalogue carries more than one
+  block at some heights and paging on height alone would skip or repeat members
+  of a group. Selecting one directly, by click or shared link, hydrates the
+  target so stepping continues from it.
+- Render an error block's consensus rejection as prose with per-rule help
+  rather than the catalogue's raw token, fall back to the raw value without a
+  help control for a rule the frontend has not mapped, and replace the absent
+  competition panel with an explicit note that the block never raced.
+- Count catalogued error blocks against the tree-window node budget, and only
+  offer blocks the tree will render. The budget previously counted stale rows
+  alone, so a window containing an error block could be advertised and then
+  rejected by `/tree` as too large; sourceless catalogue rows are now excluded
+  from both the budget and the navigator, matching what the tree shows.
+- Reject height-axis navigator cursors whose bounds exceed a 32-bit height.
+  Such a cursor previously wrapped to a negative height and returned an
+  incorrect page as a success.
+
 - Explain `child_block_time` where it is read. The block drawer's Child Time row
   gains a help topic covering what the stamp is, why AuxPoW's child-first
   commitment settles it before the Bitcoin work exists, and how far the two
