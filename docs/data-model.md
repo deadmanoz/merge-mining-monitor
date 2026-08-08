@@ -91,22 +91,30 @@ submitted to the child chain.
 How far a stamp is evidence depends on the row, not on its source. The first
 two levels come apart in both directions, so check them separately:
 
-- `child_header_hex` present: the stamp is re-derivable from stored bytes.
+- `child_header_hex` present: the stamp is re-derivable from stored bytes. The
+  normalized publication contract carries this column and the importer
+  authenticates it, so an imported row is re-derivable even though no import
+  writes an AuxPoW proof.
 - `aux_proof` present: the Bitcoin block is proven to have committed to the
   child data. Live Namecoin-family capture and Elastos carry this. Elastos
   verifies the commitment without storing a header, so a missing header does
   not imply an unproven stamp.
-- Neither: the value is the source's reported number. Every chain recovered
-  through publication import sits here, and RSK always does, because its proof
-  format discards the parent coinbase.
+- Neither: the value is the source's reported number. RSK and Hathor capture
+  sit here, RSK permanently, because its proof format discards the parent
+  coinbase.
+
+An imported row is therefore proof-less, not evidence-less: it is re-derivable
+but nothing shows the Bitcoin side committed to it.
 
 Two reading rules follow, both bounded by the same fact: the database holds two
 claimed timestamps and nothing else, and both are miner-set.
 
 - A NEGATIVE offset is the ordinary case and is not lateness. A child header is
   reused across successive Bitcoin jobs, so it is stamped earlier than the
-  parent that finally carries it. The magnitude reflects the pool's own refresh
-  and stamping policy, so do not derive a verdict about a Bitcoin timestamp
+  parent that finally carries it. The magnitude reflects the refresh and
+  stamping policy behind each stamp, and the two need not share an operator,
+  since a Bitcoin pool may proxy child-chain operation through another (see
+  `docs/attribution.md`). Do not derive a verdict about a Bitcoin timestamp
   from it.
 - A POSITIVE offset is an ordering disagreement worth investigating. Where the
   commitment was verified, the disagreement is internal to the block; otherwise
@@ -116,8 +124,10 @@ claimed timestamps and nothing else, and both are miner-set.
 Neither direction can speak to block withholding. Every child stamp is sealed
 before the block is found, so nothing inside the block records when it was
 published. `event_discovered_at` does not answer it either: it is never
-advanced after the first write, so for backfilled or imported events it is the
-import date rather than a first-observation time.
+advanced after the first write. For an event the backfill or import created it
+is therefore the import date rather than a first-observation time; where live
+capture inserted the event first and an import only refined it, the value stays
+the earlier live-ingestion time.
 
 Historical parent-coinbase evidence is also lossless. Structured full
 transactions populate the normal txid, script, and serialized-output fields,
