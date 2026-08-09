@@ -1,6 +1,6 @@
-import { blockExplorer } from "./explorer-links.js?v=0.4.2";
-import { fmtDelta } from "./delta-scales.js?v=0.4.2";
-import { $, chainDisplayName, CLASSIFICATION_META, esc, formatEpoch, formatScalar, formatSourceList, formatSourceRef, state } from "./frontend-state.js?v=0.4.2";
+import { blockExplorer } from "./explorer-links.js?v=0.5.0";
+import { fmtDelta } from "./delta-scales.js?v=0.5.0";
+import { $, chainDisplayName, CLASSIFICATION_META, esc, formatEpoch, formatScalar, formatSourceList, formatSourceRef, state } from "./frontend-state.js?v=0.5.0";
 
 
 // Contextual help for the esoteric AuxPoW and merge-mining concepts in the
@@ -104,6 +104,133 @@ function auxpowHelpFor(topic) {
   return AUXPOW_HELP[topic] || { name: "AuxPoW", meta: "", body: [] };
 }
 
+// The Bitcoin consensus rules a catalogued error block is proven to break, keyed
+// by the research catalogue's primary `rejection_reason` token. Each entry names
+// the rule in prose and says what the block did wrong, so the drawer shows more
+// than a raw snake_case token.
+//
+// The vocabulary is fixed and small, but deliberately NOT exhaustive here: only
+// eight of these tokens have a committed catalogue row today, and the research
+// classifier can emit tokens this map has not seen yet. An unmapped token falls
+// back to its raw value with no help control (see `consensusRuleHelpFor` and
+// `renderParentBlock`) rather than opening an empty or mislabelled dialog.
+const CONSENSUS_RULE_HELP = {
+  bip34_v2_coinbase_height_mismatch: {
+    name: "BIP34 coinbase height mismatch (version 2+)",
+    meta: "Coinbase scriptSig does not begin with this block's height",
+    body: [
+      "BIP34 requires a version 2 or newer block to begin its coinbase scriptSig with its own height, serialized exactly. This block's coinbase carries a different height, so it is invalid regardless of its proof of work.",
+      "This is BIP34's first enforcement stage, active from height 224,413, where the rule bound only blocks that opted in to version 2.",
+    ],
+  },
+  bip34_coinbase_height_mismatch: {
+    name: "BIP34 coinbase height mismatch",
+    meta: "Coinbase height prefix mandatory and wrong here",
+    body: [
+      "From height 227,931 BIP34's coinbase-height prefix is mandatory for every valid block, and version 1 blocks are rejected outright. This block's coinbase scriptSig does not carry its own serialized height.",
+      "Bitcoin Core buries this deployment, so the monitor's catalogue applies the rule explicitly rather than relying on a node to replay it for an off-chain branch.",
+    ],
+  },
+  bip34_v2_coinbase_height_missing: {
+    name: "BIP34 coinbase height missing (version 2+)",
+    meta: "Version 2+ block with no coinbase height prefix at all",
+    body: [
+      "A version 2 or newer block from BIP34's first enforcement stage whose coinbase scriptSig carries no serialized height prefix at all, as distinct from carrying the wrong one.",
+    ],
+  },
+  bip34_coinbase_height_missing: {
+    name: "BIP34 coinbase height missing",
+    meta: "No coinbase height prefix where one is mandatory",
+    body: [
+      "From height 227,931 every valid block must carry its serialized height at the start of the coinbase scriptSig. This block carries none at all, as distinct from carrying the wrong one.",
+    ],
+  },
+  bip34_block_version_below_2: {
+    name: "Block version below 2 (BIP34)",
+    meta: "Version 1 block after BIP34 made version 2 the minimum",
+    body: [
+      "BIP34 set a minimum block version of 2 from height 227,931. This header declares a lower version.",
+      "The catalogue applies a hard height cutover at the observed activation height. Bitcoin Core's real rule was a rolling 750-of-1000 lock-in then 950-of-1000 enforcement, so treat a minimum-version verdict as a canonical-context judgement rather than a universal one.",
+    ],
+  },
+  bip66_block_version_below_3: {
+    name: "Block version below 3 (BIP66)",
+    meta: "Version predates BIP66's strict DER minimum",
+    body: [
+      "BIP66 set a minimum block version of 3 from height 363,725. This header declares a lower version.",
+      "As with the other minimum-version rules, the catalogue uses a hard height cutover at the observed activation height rather than replaying Bitcoin Core's rolling supermajority threshold.",
+    ],
+  },
+  bip65_block_version_below_4: {
+    name: "Block version below 4 (BIP65)",
+    meta: "Version predates BIP65's CHECKLOCKTIMEVERIFY minimum",
+    body: [
+      "BIP65 set a minimum block version of 4 from height 388,381. This header declares a lower version.",
+      "As with the other minimum-version rules, the catalogue uses a hard height cutover at the observed activation height rather than replaying Bitcoin Core's rolling supermajority threshold.",
+    ],
+  },
+  coinbase_scriptsig_length_above_100: {
+    name: "Coinbase scriptSig too long",
+    meta: "Serialized length outside the 2-100 byte bound",
+    body: [
+      "A coinbase scriptSig must serialize to between 2 and 100 bytes. This block's exceeds 100.",
+      "The token name is historical; the gate enforces the full two-sided bound.",
+    ],
+  },
+  coinbase_scriptsig_length_below_2: {
+    name: "Coinbase scriptSig too short",
+    meta: "Serialized length below the 2-byte minimum",
+    body: [
+      "A coinbase scriptSig must serialize to between 2 and 100 bytes. This block's is shorter than 2.",
+    ],
+  },
+  median_time_past_violation: {
+    name: "Block time not after median-time-past",
+    meta: "Timestamp violates the median-time-past rule",
+    body: [
+      "A block's timestamp must be strictly greater than the median-time-past of its parent, the median of the previous eleven block times. This block's is not.",
+      "The parent's median-time-past is committed canonical-chain context, so this rule re-derives offline with no live node.",
+    ],
+  },
+  time_below_mtp: {
+    name: "Block time at or below median-time-past",
+    meta: "Timestamp at or under the canonical parent's median-time-past",
+    body: [
+      "This block's nTime is at or below the median-time-past of its canonical parent, which the median-time-past rule forbids.",
+      "The parent's median-time-past is committed canonical-chain context, so this rule re-derives offline with no live node.",
+    ],
+  },
+  nbits_retarget_not_applied: {
+    name: "Retarget not applied",
+    meta: "Carries the previous epoch's nBits at a retarget boundary",
+    body: [
+      "At a difficulty retarget boundary (a height divisible by 2016) this block still carries the previous epoch's nBits instead of the newly retargeted value, while its header hash nonetheless meets Bitcoin's real target at that height.",
+      "This is distinct from an ordinary nBits mismatch away from a boundary, which usually means the header's difficulty context is another chain's rather than Bitcoin's. Such a header is not an error block at all.",
+    ],
+  },
+  time_beyond_future_limit: {
+    name: "Block time beyond the future limit",
+    meta: "Timestamp more than two hours ahead of network-adjusted time",
+    body: [
+      "Bitcoin rejects a block whose timestamp is more than two hours beyond network-adjusted time.",
+      "No catalogued block carries this token. Network-adjusted time cannot be reconstructed from committed offline evidence, so the rule is not mechanically re-checkable and the catalogue's offline validator rejects any row claiming it.",
+    ],
+  },
+};
+
+// Help for one catalogued consensus rule, or null when the token is outside the
+// mapped vocabulary. Null is meaningful: the caller renders the raw token with no
+// help control rather than an empty dialog.
+//
+// The own-property check matters: the token is server data, and a plain object's
+// bracket lookup also resolves inherited members, so tokens like `constructor`,
+// `toString` or `__proto__` would otherwise read as mapped rules and emit a help
+// control whose dialog then throws on the missing `body`.
+function consensusRuleHelpFor(token) {
+  if (!token || !Object.prototype.hasOwnProperty.call(CONSENSUS_RULE_HELP, token)) return null;
+  return CONSENSUS_RULE_HELP[token];
+}
+
 // A small `(i)` button that opens the AuxPoW help dialog for one topic. Models
 // the source-info-button; wired by a document-level delegation like the copy
 // buttons, so it survives drawer re-renders.
@@ -118,6 +245,27 @@ function auxpowInfoButton(topic) {
 // A detail section whose heading carries an AuxPoW help button.
 function detailSectionHelp(title, topic, body) {
   return `<section class="detail-section"><h3>${esc(title)} ${auxpowInfoButton(topic)}</h3>${body}</section>`;
+}
+
+// The consensus-rule twin of auxpowInfoButton, opening #consensus-rule-dialog.
+// Only ever emitted for a token consensusRuleHelpFor maps, so the dialog it
+// opens always has content.
+function consensusRuleInfoButton(token, help) {
+  const label = `About ${esc(help.name)}`;
+  return `<button class="icon-button auxpow-info-button" type="button" data-consensus-rule-info="${esc(token)}" aria-label="${label}" title="${label}">
+    <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 1 1 5.82 1c0 2-3 2-3 4" /><path d="M12 17h.01" /></svg>
+  </button>`;
+}
+
+// The "Consensus rejection" row value: the humanised rule name plus its help
+// control when the token is mapped, otherwise the raw token alone. A catalogue
+// row always carries a token, so the empty case is only reachable through a
+// malformed payload.
+function consensusRejectionValue(token) {
+  if (!token) return esc("catalogued consensus violation");
+  const help = consensusRuleHelpFor(token);
+  if (!help) return esc(token);
+  return `${esc(help.name)} ${consensusRuleInfoButton(token, help)}`;
 }
 
 function renderDrawer() {
@@ -150,6 +298,12 @@ function renderBlockDetailPayload(payload) {
     detailSection("Sources & capture", renderSourcesAndCapture(block.source_summary)),
     detailSection("Auxiliary blocks", renderEvents(payload.event_details || [], block.header?.time)),
     payload.competition ? detailSection("Competition", renderCompetition(payload.competition)) : "",
+    // An error block has no competition section because it never competed. Say
+    // so rather than leaving the reader to infer meaning from a missing panel
+    // that a stale block at the same height would have.
+    !payload.competition && block.kind === "error_block"
+      ? detailSection("Competition", `<div class="empty">This block never raced. It carries full Bitcoin proof of work but breaks a consensus rule, so it was never a valid contender for its height and has no canonical competitor.</div>`)
+      : "",
     payload.stale_branch ? detailSection("Stale Branch", renderStaleBranch(payload.stale_branch, block.hash)) : "",
   ].join("");
 }
@@ -168,7 +322,7 @@ function renderParentBlock(block) {
     rows.push(["Orphan class", esc(meta ? meta.name : (block.btc_orphan_class || "Pending"))]);
   }
   if (block.kind === "error_block") {
-    rows.push(["Consensus rejection", esc(block.error_block_reason || "catalogued consensus violation")]);
+    rows.push(["Consensus rejection", consensusRejectionValue(block.error_block_reason)]);
   }
   if (block.coinbase_tag) {
     rows.push(["Coinbase tag", esc(block.coinbase_tag)]);
@@ -519,6 +673,7 @@ function errorSummary(error, label) {
 
 export {
   auxpowHelpFor,
+  consensusRuleHelpFor,
   renderDrawer,
   kvRows,
   errorSummary,

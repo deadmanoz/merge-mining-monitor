@@ -52,6 +52,11 @@
       "scenario": "Unified navigator stale-branch target: multi-block stale branch item with branch metadata, opaque cursor, and tree-window view metadata"
     },
     {
+      "file": "navigator-error-block.json",
+      "endpoint_family": "/api/v1/navigator/error-block",
+      "scenario": "Unified navigator error-block target: an older-direction page landing inside a same-height group of catalogued consensus-invalid full-PoW blocks, ordered by stored hash bytes, with opaque cursors and tree-window view metadata"
+    },
+    {
       "file": "navigator-orphan.json",
       "endpoint_family": "/api/v1/navigator/orphan",
       "scenario": "Unified navigator orphan target: time-keyed BTC-orphan items with orphan class facets, opaque cursors, and unheighted-anchor view metadata"
@@ -74,7 +79,7 @@
     {
       "file": "version.json",
       "endpoint_family": "/api/v1/version",
-      "scenario": "Runtime application SemVer v0.4.2 plus the complete RELEASE_NOTES.md release-note projection for the About dialog"
+      "scenario": "Runtime application SemVer v0.5.0 plus the complete RELEASE_NOTES.md release-note projection for the About dialog"
     },
     {
       "file": "error-backbone-conflict.json",

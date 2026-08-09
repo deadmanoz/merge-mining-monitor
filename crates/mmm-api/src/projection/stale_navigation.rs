@@ -68,12 +68,19 @@ pub(super) struct NavigationReadiness {
     budget: NavigationWindowBudget,
 }
 
-/// Sorted stale heights in the loaded windows, used to count a window's visible
-/// nodes (canonical heights + the stale rows inside it) against
-/// `TREE_NODE_LIMIT` so navigation never proposes an over-budget tree window.
+/// Sorted heights of every off-spine row in the loaded windows, used to count a
+/// window's visible nodes (canonical heights plus the rows that render beside
+/// them) against `TREE_NODE_LIMIT` so navigation never proposes an over-budget
+/// tree window.
+///
+/// Both stale AND catalogued error blocks count: the compact tree keeps an
+/// in-window `error_block` row (see `tree/compact.rs`), so it occupies a node
+/// exactly like a stale row does. Counting only stales under-budgets any window
+/// containing one, and the navigator would advertise a target that `/tree` then
+/// rejects with `range_too_large`.
 #[derive(Debug, Clone)]
 pub(super) struct NavigationWindowBudget {
-    stale_heights: Vec<i32>,
+    off_spine_heights: Vec<i32>,
 }
 
 /// Decide a stale target's navigation: returns `Some(TreeNavigation)` when the
@@ -191,9 +198,16 @@ pub(super) async fn load_navigation_readiness(
     Ok(Some(NavigationReadiness { coverage, budget }))
 }
 
-/// Load the sorted stale heights inside the requested windows (lateral range
-/// lookup, ordered) so `NavigationWindowBudget` can count stales per window by
+/// Load the sorted off-spine heights inside the requested windows (lateral range
+/// lookup, ordered) so `NavigationWindowBudget` can count them per window by
 /// binary search.
+///
+/// The kind filter must match what the tree actually renders beside the
+/// canonical spine: stale rows, plus catalogued error blocks that carry at
+/// least one source. A sourceless error block is dropped by the tree's
+/// `min_sources` filter, so counting it here would consume budget for a node
+/// that never appears, needlessly narrowing the window or reporting a target as
+/// too large when the tree could in fact render it.
 async fn load_navigation_budget(
     client: &Client,
     windows: &[(i32, i32)],
@@ -205,21 +219,24 @@ async fn load_navigation_budget(
                  SELECT * FROM unnest($1::int[], $2::int[]) \
                     AS w(from_height, to_height) \
              ) \
-             SELECT stale.btc_height \
+             SELECT off_spine.btc_height \
              FROM requested w \
              JOIN LATERAL ( \
                  SELECT btc_height \
                  FROM block \
-                 WHERE kind = 'stale' \
-                   AND btc_height BETWEEN w.from_height AND w.to_height \
-             ) stale ON TRUE \
-             ORDER BY stale.btc_height",
+                 WHERE btc_height BETWEEN w.from_height AND w.to_height \
+                   AND ( \
+                        kind = 'stale' \
+                        OR (kind = 'error_block' AND distinct_sources >= 1) \
+                   ) \
+             ) off_spine ON TRUE \
+             ORDER BY off_spine.btc_height",
             &[&from_heights, &to_heights],
         )
         .await
-        .context("load navigation stale-node budget")?;
+        .context("load navigation off-spine node budget")?;
     Ok(NavigationWindowBudget {
-        stale_heights: rows.into_iter().map(|row| row.get(0)).collect(),
+        off_spine_heights: rows.into_iter().map(|row| row.get(0)).collect(),
     })
 }
 
@@ -294,24 +311,25 @@ impl NavigationWindowBudget {
         self.visible_node_budget(from_height, to_height) <= TREE_NODE_LIMIT as u64
     }
 
-    /// Visible tree nodes in a window: the inclusive height count plus the stale
-    /// rows inside it (each renders as an extra node).
+    /// Visible tree nodes in a window: the inclusive height count plus the
+    /// off-spine rows inside it (stale and catalogued error blocks, each
+    /// rendering as an extra node).
     fn visible_node_budget(&self, from_height: i32, to_height: i32) -> u64 {
         height_count(from_height, to_height)
-            .saturating_add(self.stale_count(from_height, to_height) as u64)
+            .saturating_add(self.off_spine_count(from_height, to_height) as u64)
     }
 
-    /// Number of stale rows with height in `[from, to]`, by binary search over the
-    /// sorted `stale_heights` (relies on the loader's ORDER BY).
-    fn stale_count(&self, from_height: i32, to_height: i32) -> usize {
+    /// Number of off-spine rows with height in `[from, to]`, by binary search over
+    /// the sorted `off_spine_heights` (relies on the loader's ORDER BY).
+    fn off_spine_count(&self, from_height: i32, to_height: i32) -> usize {
         if to_height < from_height {
             return 0;
         }
         let start = self
-            .stale_heights
+            .off_spine_heights
             .partition_point(|height| *height < from_height);
         let end = self
-            .stale_heights
+            .off_spine_heights
             .partition_point(|height| *height <= to_height);
         end.saturating_sub(start)
     }
@@ -336,7 +354,10 @@ fn target_window_too_large_error(target_height: i32) -> NavigationError {
         code: "target_window_too_large",
         target_height,
         message: "Navigation target is too large to render as one tree window",
-        action: "open a narrower stale block target",
+        // Target-neutral: this path is shared by stale, stale-branch and
+        // error-block targets, and an error block is always a single height, so
+        // naming a "stale block target" would be wrong guidance for it.
+        action: "open a narrower navigation target",
     }
 }
 
@@ -391,15 +412,17 @@ mod tests {
     }
 
     #[test]
-    fn navigation_budget_counts_stale_nodes_as_extra_visible_nodes() {
+    fn navigation_budget_counts_off_spine_nodes_as_extra_visible_nodes() {
+        // Heights come from the loader, which selects stale AND error-block rows;
+        // both render beside the canonical spine and so cost a node each.
         let budget = NavigationWindowBudget {
-            stale_heights: vec![90, 100, 100, 110],
+            off_spine_heights: vec![90, 100, 100, 110],
         };
 
-        assert_eq!(budget.stale_count(100, 100), 2);
+        assert_eq!(budget.off_spine_count(100, 100), 2);
         assert_eq!(budget.visible_node_budget(100, 100), 3);
         assert_eq!(budget.visible_node_budget(91, 109), 21);
-        assert_eq!(budget.stale_count(111, 110), 0);
+        assert_eq!(budget.off_spine_count(111, 110), 0);
     }
 
     #[test]

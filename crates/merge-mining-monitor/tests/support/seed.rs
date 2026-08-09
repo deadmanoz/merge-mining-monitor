@@ -194,6 +194,75 @@ pub async fn insert_block(
     Ok(())
 }
 
+/// Seed a catalogued error block.
+///
+/// `insert_block` cannot express this kind: `chk_block_kind_height` requires
+/// `btc_height_source = 'error-block-catalog'` for it, and
+/// `chk_block_error_block_reason` requires a reason exactly when the kind is
+/// `error_block`. Both are absent from the generic helper's canonical/stale
+/// height-source map.
+pub async fn insert_error_block(
+    client: &Client,
+    hash: &[u8],
+    prev_hash: &[u8],
+    height: i32,
+    header_time: i64,
+    rejection_reason: &str,
+) -> Result<()> {
+    insert_error_block_with_sources(
+        client,
+        hash,
+        prev_hash,
+        height,
+        header_time,
+        rejection_reason,
+        1,
+    )
+    .await
+}
+
+/// As `insert_error_block`, with an explicit distinct-source count. A catalogued
+/// error block is witnessed by definition, so the default is 1; pass 0 to build
+/// the sourceless row that `/tree` filters out under `min_sources`.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_error_block_with_sources(
+    client: &Client,
+    hash: &[u8],
+    prev_hash: &[u8],
+    height: i32,
+    header_time: i64,
+    rejection_reason: &str,
+    distinct_sources: i32,
+) -> Result<()> {
+    client
+        .execute(
+            "INSERT INTO block ( \
+                btc_header_hash, btc_prev_header_hash, btc_height, btc_height_source, \
+                kind, error_block_reason, btc_header_bytes, btc_header_time, \
+                bitcoin_miner_pool_id, btc_coinbase_script, btc_coinbase_status, \
+                canonical_competitor_hash, total_attestations, distinct_sources, \
+                auxpow_chain_count, live_observed, core_attested, pow_validated, \
+                created_at, updated_at \
+             ) VALUES ( \
+                $1, $2, $3, 'error-block-catalog', \
+                'error_block', $4, $5, $6, \
+                NULL, NULL, 'not_attempted', \
+                NULL, $7, $7, $7, FALSE, FALSE, TRUE, $6, $6 \
+             )",
+            &[
+                &hash,
+                &prev_hash,
+                &height,
+                &rejection_reason,
+                &header_bytes(hash, prev_hash),
+                &header_time,
+                &distinct_sources,
+            ],
+        )
+        .await?;
+    Ok(())
+}
+
 pub async fn block_kind(client: &Client, hash: &[u8]) -> Result<String> {
     Ok(client
         .query_one(

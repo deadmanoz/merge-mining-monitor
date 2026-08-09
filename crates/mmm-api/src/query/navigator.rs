@@ -12,6 +12,7 @@ use crate::normalize::Classification;
 pub enum NavigatorTarget {
     Stale,
     StaleBranch,
+    ErrorBlock,
     Orphan,
     OrphanBranch,
 }
@@ -21,6 +22,7 @@ impl NavigatorTarget {
         match raw {
             "stale" => Ok(Self::Stale),
             "stale-branch" => Ok(Self::StaleBranch),
+            "error-block" => Ok(Self::ErrorBlock),
             "orphan" => Ok(Self::Orphan),
             "orphan-branch" => Ok(Self::OrphanBranch),
             other => Err(ApiError::invalid_query(
@@ -34,18 +36,22 @@ impl NavigatorTarget {
         match self {
             Self::Stale => "stale",
             Self::StaleBranch => "stale-branch",
+            Self::ErrorBlock => "error-block",
             Self::Orphan => "orphan",
             Self::OrphanBranch => "orphan-branch",
         }
     }
 
+    /// Only the orphan targets carry an orphan-class facet. An error block is a
+    /// catalogue membership, not a refinement of `unknown`, so it has no
+    /// classification axis and rejects the parameter.
     pub fn accepts_classification(self) -> bool {
         matches!(self, Self::Orphan | Self::OrphanBranch)
     }
 
     fn axis(self) -> NavigatorAxis {
         match self {
-            Self::Stale | Self::StaleBranch => NavigatorAxis::Height,
+            Self::Stale | Self::StaleBranch | Self::ErrorBlock => NavigatorAxis::Height,
             Self::Orphan | Self::OrphanBranch => NavigatorAxis::Time,
         }
     }
@@ -151,6 +157,21 @@ impl NavigatorCursor {
         if cursor.min < 0 || cursor.max < 0 || cursor.min > cursor.max {
             return Err(ApiError::invalid_query(
                 "cursor bounds are invalid",
+                json!({
+                    "min": cursor.min,
+                    "max": cursor.max,
+                }),
+            ));
+        }
+        // Height-axis bounds are compared against `block.btc_height`, an int4.
+        // The cursor is attacker-supplied `i64`, so reject anything that cannot
+        // round-trip here rather than letting a downstream `as i32` wrap it into
+        // a negative height and silently return a wrong page.
+        if cursor.axis == NavigatorAxis::Height
+            && (i32::try_from(cursor.min).is_err() || i32::try_from(cursor.max).is_err())
+        {
+            return Err(ApiError::invalid_query(
+                "height cursor bounds are out of range",
                 json!({
                     "min": cursor.min,
                     "max": cursor.max,

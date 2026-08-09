@@ -55,7 +55,7 @@ From it you can:
   classification to isolate canonical, stale, catalogued error-block, or orphan
   evidence.
 - **Step through the record** with a single navigator across the latest stale
-  blocks, stale branches, orphans, and orphan branches.
+  blocks, stale branches, catalogued error blocks, orphans, and orphan branches.
 
 ## The chains
 
@@ -151,7 +151,9 @@ and orphan branches.
 Some headers meet Bitcoin's proof-of-work target but are mechanically known to
 violate a Bitcoin consensus rule. The monitor classifies a witnessed match in its
 pinned error-block catalogue separately, preserving the rejection reason without
-misstating it as a stale block or orphan candidate.
+misstating it as a stale block or orphan candidate. The navigator steps through
+them like any other target, and the block detail names the rule the block breaks
+and explains why it has no canonical competitor.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/stale-branch-dark.png" />

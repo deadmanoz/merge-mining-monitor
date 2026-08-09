@@ -378,8 +378,56 @@ test("a catalogued error block is a standalone tree node with its rejection reas
 
   await errorNode.click();
   await expect(page.locator("#drawer")).toContainText("Consensus rejection");
-  await expect(page.locator("#drawer")).toContainText("time_below_mtp");
+  // The rule renders in prose, not as the raw catalogue token.
+  await expect(page.locator("#drawer")).toContainText(
+    "Block time at or below median-time-past",
+  );
+  await expect(page.locator("#drawer")).not.toContainText("time_below_mtp");
   await expect(page.locator("#drawer")).not.toContainText("Orphan class");
+
+  // An error block never raced, so the absent Competition panel is explained
+  // rather than simply missing.
+  await expect(page.locator("#drawer")).toContainText("never raced");
+
+  // The rule's help control opens the consensus-rule dialog with its body.
+  await page
+    .locator('#drawer button[data-consensus-rule-info="time_below_mtp"]')
+    .click();
+  const ruleDialog = page.locator("#consensus-rule-dialog");
+  await expect(ruleDialog).toBeVisible();
+  await expect(ruleDialog).toContainText("median-time-past");
+});
+
+test("an unmapped consensus rule token falls back to the raw value with no help control", async ({ page }) => {
+  // The research classifier's rule vocabulary can grow ahead of the frontend
+  // map, so an unrecognised token must stay legible rather than rendering blank
+  // or offering a control that opens an empty dialog.
+  const errorHash = "e".repeat(64);
+  const errorBlock = {
+    ...makeNode(errorHash, 946213, null, "error_block"),
+    error_block_reason: "some_future_rule_token",
+  };
+  await stubApi(page, [], {
+    treePayload: (query) => treeEnvelope(query, {
+      nodes: [errorBlock],
+      edges: [],
+      legend: {
+        kinds: ["canonical", "stale", "error_block", "unknown", "near"],
+        edge_kinds: ["canonical", "stale_entry", "stale", "hidden"],
+      },
+    }),
+    blockPayload: () => ({
+      schema_version: "v1",
+      generated_at: GENERATED_AT,
+      block: errorBlock,
+    }),
+  });
+
+  await page.goto("/?tree_height=946213");
+  await page.locator('g.tree-node[aria-label*="error_block 946213"]').click();
+  await expect(page.locator("#drawer")).toContainText("Consensus rejection");
+  await expect(page.locator("#drawer")).toContainText("some_future_rule_token");
+  await expect(page.locator("#drawer button[data-consensus-rule-info]")).toHaveCount(0);
 });
 
 test("entering a date centers the era roughly on the window mid-height", async ({ page }) => {

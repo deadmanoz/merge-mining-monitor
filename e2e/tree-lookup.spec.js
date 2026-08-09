@@ -1,5 +1,5 @@
 const { expect, test } = require("@playwright/test");
-const { stubApi, treeEnvelope } = require("./support/api-stubs");
+const { makeNode, stubApi, treeEnvelope } = require("./support/api-stubs");
 
 test("height shared link requests compact tree height automatically", async ({ page }) => {
   const treeRequests = [];
@@ -319,4 +319,319 @@ test("stale node with child-inferred miner labels the pool instead of unknown", 
 
   await expect(page.locator(".tree-block-pool", { hasText: "F2Pool" })).toBeVisible();
   await expect(page.locator(".tree-block-pool", { hasText: "unknown miner" })).toHaveCount(0);
+});
+
+test("Latest error block uses the unified navigator endpoint and steps", async ({ page }) => {
+  const treeRequests = [];
+  const navigatorRequests = [];
+  const errorHash = "e".repeat(64);
+  const olderHash = "f".repeat(64);
+  const errorHeight = 946213;
+  const olderHeight = 717696;
+
+  const errorRow = (hash, height) => ({
+    id: `error-block-${hash}`,
+    kind: "error-block",
+    primary_hash: hash,
+    label: `Error block #${height}`,
+    position: { axis: "height", min: height, max: height },
+    cursor: `opaque-error-cursor-${height}`,
+    branch: null,
+    orphan: null,
+    view: {
+      mode: "tree_window",
+      target_height: height,
+      tree_from: height - 16,
+      tree_to: height + 16,
+      select_hash: hash,
+      center_hash: hash,
+    },
+    view_error: null,
+  });
+
+  const errorEnvelope = (rows, mode) => ({
+    schema_version: "v1",
+    generated_at: 1779792000,
+    query: {
+      target: "error-block",
+      mode,
+      cursor: null,
+      direction: null,
+      anchor_hash: null,
+      classification: [],
+      limit: 1,
+    },
+    target: "error-block",
+    items: rows,
+    total: 33,
+    facets: {},
+    next_cursor: "opaque-error-cursor-next",
+    prev_cursor: null,
+  });
+
+  const errorBlockPayload = (hash, height) => ({
+    schema_version: "v1",
+    generated_at: 1779792000,
+    block: {
+      hash,
+      height,
+      kind: "error_block",
+      btc_orphan_class: null,
+      error_block_reason: "time_below_mtp",
+      header: { time: 1779792000 },
+      bitcoin_miner_pool: { id: null, slug: null, name: "Unknown", known: false },
+      source_summary: {
+        sources: [],
+        distinct_sources: 0,
+        auxpow_chain_count: 0,
+        live_observed: false,
+        pow_validates_btc_target: true,
+      },
+      competition: null,
+      child_chain_evidence: [],
+    },
+    competition: null,
+    stale_branch: null,
+  });
+
+  await stubApi(page, treeRequests, {
+    // Render the error block the requested window is centred on. Without it the
+    // node never exists, centering silently falls back to the tip, and
+    // request/URL/readout assertions would still pass over a broken jump.
+    treePayload: (query) => {
+      const from = Number(query.get("from_height") || 0);
+      const [hash, height] = from === olderHeight - 16
+        ? [olderHash, olderHeight]
+        : [errorHash, errorHeight];
+      return treeEnvelope(query, {
+        nodes: [makeNode(hash, height, null, "error_block", { id: 1, prev_id: null })],
+        edges: [],
+        legend: {
+          kinds: ["canonical", "stale", "error_block", "unknown", "near"],
+          edge_kinds: ["canonical", "stale_entry", "stale", "hidden"],
+        },
+      });
+    },
+    navigatorRequests,
+    // Serve the newest row for latest/anchor modes and the older row once a
+    // cursor page is requested, so a step actually changes the readout.
+    navigator: (url) => {
+      if (url.searchParams.get("direction") === "older") {
+        return errorEnvelope([errorRow(olderHash, olderHeight)], "page");
+      }
+      // Anchor mode must honour the requested hash. Always returning the newest
+      // row would let selection-driven hydration overwrite the stepped-to state,
+      // and the readout assertion below could then pass on a transient value.
+      const anchor = url.searchParams.get("anchor_hash");
+      if (anchor) {
+        const row = anchor === olderHash
+          ? errorRow(olderHash, olderHeight)
+          : errorRow(errorHash, errorHeight);
+        return errorEnvelope([row], "anchor");
+      }
+      return errorEnvelope([errorRow(errorHash, errorHeight)], "latest");
+    },
+    blockPayloads: {
+      [errorHash]: errorBlockPayload(errorHash, errorHeight),
+      [olderHash]: errorBlockPayload(olderHash, olderHeight),
+    },
+  });
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Bitcoin Header Tree" })).toBeVisible();
+  await expect.poll(() => treeRequests.length).toBeGreaterThan(0);
+
+  // The menu option must be labelled, which is what a missing optionLabel breaks.
+  await expect(
+    page.locator('#nav-goto option[value="errorBlock"]'),
+  ).toHaveText("Latest error block");
+
+  await page.locator("#nav-goto").selectOption("errorBlock");
+
+  await expect.poll(() => navigatorRequests.some((url) => (
+    url.pathname.endsWith("/api/v1/navigator/error-block")
+      && url.searchParams.get("limit") === "1"
+  ))).toBe(true);
+  // The target must not send the orphan-only classification axis.
+  expect(
+    navigatorRequests
+      .filter((url) => url.pathname.endsWith("/api/v1/navigator/error-block"))
+      .every((url) => url.searchParams.get("classification") === null),
+  ).toBe(true);
+
+  await expect.poll(() => treeRequests.some((url) => (
+    url.searchParams.get("from_height") === String(errorHeight - 16)
+      && url.searchParams.get("to_height") === String(errorHeight + 16)
+  ))).toBe(true);
+
+  // The jump must land ON the block, not merely request its window.
+  await expect(
+    page.locator(`g.tree-node[aria-label*="error_block ${errorHeight}"]`),
+  ).toHaveCount(1);
+  await expect(page).toHaveURL(new RegExp(`selected=${errorHash}`));
+  // Selection also hydrates the target through anchor mode.
+  await expect.poll(() => navigatorRequests.some((url) => (
+    url.pathname.endsWith("/api/v1/navigator/error-block")
+      && url.searchParams.get("anchor_hash") === errorHash
+  ))).toBe(true);
+
+  // Height-plus-total readout, not the branch/orphan date-and-depth form.
+  await expect(page.locator("#nav-readout")).toContainText("#946,213");
+  await expect(page.locator("#nav-readout")).toContainText("33 total");
+
+  // A cursor-backed older step moves to the next catalogued block.
+  await page.locator("#nav-older").click();
+  await expect.poll(() => navigatorRequests.some((url) => (
+    url.pathname.endsWith("/api/v1/navigator/error-block")
+      && url.searchParams.get("direction") === "older"
+  ))).toBe(true);
+  // Assert the SETTLED state: selection-driven anchor hydration also fires
+  // here, so a readout check alone could pass on a transient value before
+  // hydration resolves. Wait for the tree window and URL to agree with it too.
+  await expect.poll(() => treeRequests.some((url) => (
+    url.searchParams.get("from_height") === String(olderHeight - 16)
+      && url.searchParams.get("to_height") === String(olderHeight + 16)
+  ))).toBe(true);
+  await expect(page).toHaveURL(new RegExp(`selected=${olderHash}`));
+  await expect(
+    page.locator(`g.tree-node[aria-label*="error_block ${olderHeight}"]`),
+  ).toHaveCount(1);
+  await expect(page.locator("#nav-readout")).toContainText("#717,696");
+  await expect(page.locator("#nav-readout")).not.toContainText("#946,213");
+});
+
+test("a shared link to an error block adopts that navigator target", async ({ page }) => {
+  // Direct selection, not the menu: restoring `?selected=<error block>` must
+  // switch the navigator away from whatever target it would otherwise settle
+  // on, populate the error-block readout, and leave stepping usable. The
+  // menu-driven test cannot cover this, because it locks the target first.
+  const treeRequests = [];
+  const navigatorRequests = [];
+  const errorHash = "e".repeat(64);
+  const olderHash = "f".repeat(64);
+  const errorHeight = 946213;
+  const olderHeight = 717696;
+
+  const errorRow = (hash, height) => ({
+    id: `error-block-${hash}`,
+    kind: "error-block",
+    primary_hash: hash,
+    label: `Error block #${height}`,
+    position: { axis: "height", min: height, max: height },
+    cursor: `opaque-error-cursor-${height}`,
+    branch: null,
+    orphan: null,
+    view: {
+      mode: "tree_window",
+      target_height: height,
+      tree_from: height - 16,
+      tree_to: height + 16,
+      select_hash: hash,
+      center_hash: hash,
+    },
+    view_error: null,
+  });
+
+  const envelope = (rows, mode) => ({
+    schema_version: "v1",
+    generated_at: 1779792000,
+    query: {
+      target: "error-block",
+      mode,
+      cursor: null,
+      direction: null,
+      anchor_hash: null,
+      classification: [],
+      limit: 1,
+    },
+    target: "error-block",
+    items: rows,
+    total: 33,
+    facets: {},
+    next_cursor: "opaque-error-cursor-next",
+    prev_cursor: null,
+  });
+
+  const blockPayload = (hash, height) => ({
+    schema_version: "v1",
+    generated_at: 1779792000,
+    block: {
+      hash,
+      height,
+      kind: "error_block",
+      btc_orphan_class: null,
+      error_block_reason: "time_below_mtp",
+      header: { time: 1779792000 },
+      bitcoin_miner_pool: { id: null, slug: null, name: "Unknown", known: false },
+      source_summary: {
+        sources: [],
+        distinct_sources: 0,
+        auxpow_chain_count: 0,
+        live_observed: false,
+        pow_validates_btc_target: true,
+      },
+      competition: null,
+      child_chain_evidence: [],
+    },
+    competition: null,
+    stale_branch: null,
+  });
+
+  await stubApi(page, treeRequests, {
+    treePayload: (query) => {
+      const from = Number(query.get("from_height") || 0);
+      const [hash, height] = from === olderHeight - 16
+        ? [olderHash, olderHeight]
+        : [errorHash, errorHeight];
+      return treeEnvelope(query, {
+        nodes: [makeNode(hash, height, null, "error_block", { id: 1, prev_id: null })],
+        edges: [],
+        legend: {
+          kinds: ["canonical", "stale", "error_block", "unknown", "near"],
+          edge_kinds: ["canonical", "stale_entry", "stale", "hidden"],
+        },
+      });
+    },
+    navigatorRequests,
+    navigator: (url) => {
+      if (url.searchParams.get("direction") === "older") {
+        return envelope([errorRow(olderHash, olderHeight)], "page");
+      }
+      const anchor = url.searchParams.get("anchor_hash");
+      if (anchor) {
+        return envelope(
+          [anchor === olderHash ? errorRow(olderHash, olderHeight) : errorRow(errorHash, errorHeight)],
+          "anchor",
+        );
+      }
+      return envelope([errorRow(errorHash, errorHeight)], "latest");
+    },
+    blockPayloads: {
+      [errorHash]: blockPayload(errorHash, errorHeight),
+      [olderHash]: blockPayload(olderHash, olderHeight),
+    },
+  });
+
+  await page.goto(`/?tree_height=${errorHeight}&selected=${errorHash}`);
+  await expect(page.getByRole("heading", { name: "Bitcoin Header Tree" })).toBeVisible();
+
+  // Selection alone hydrates the target through anchor mode.
+  await expect.poll(() => navigatorRequests.some((url) => (
+    url.pathname.endsWith("/api/v1/navigator/error-block")
+      && url.searchParams.get("anchor_hash") === errorHash
+  ))).toBe(true);
+
+  // The Go-to select names the adopted target, and the readout is populated.
+  await expect(page.locator("#nav-goto option[value='']")).toHaveText("Error blocks");
+  await expect(page.locator("#nav-readout")).toContainText("#946,213");
+  await expect(page.locator("#nav-readout")).toContainText("33 total");
+
+  // Stepping is enabled and works from the deep-linked block.
+  await expect(page.locator("#nav-older")).toBeEnabled();
+  await page.locator("#nav-older").click();
+  await expect.poll(() => navigatorRequests.some((url) => (
+    url.pathname.endsWith("/api/v1/navigator/error-block")
+      && url.searchParams.get("direction") === "older"
+  ))).toBe(true);
+  await expect(page.locator("#nav-readout")).toContainText("#717,696");
 });

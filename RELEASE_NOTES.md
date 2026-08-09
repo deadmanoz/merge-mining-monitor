@@ -1,5 +1,14 @@
 # Release Notes
 
+## [0.5.0] - 2026-08-09
+
+- Step through catalogued error blocks from the Go to menu, like stale blocks
+  and orphans. They were visible in the tree but unreachable without already
+  knowing a height or hash.
+- Name the Bitcoin consensus rule an error block breaks in plain language, with
+  help explaining the rule, and say why the block has no canonical competitor
+  instead of leaving the panel simply absent.
+
 ## [0.4.2] - 2026-07-30
 
 - Make the RSK pool-reclassification pass complete in minutes instead of days.

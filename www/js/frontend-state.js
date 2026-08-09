@@ -1,5 +1,5 @@
-import { CHAIN_COLORS, CHAIN_DISPLAY_NAMES, CHAIN_PROFILES, SOURCE_DISPLAY_ORDER, SOURCE_LIFECYCLE } from "./source-registry.generated.js?v=0.4.2";
-import { inputDateTimeToUtc, utcDateTimeToInput } from "./tree-lookup.js?v=0.4.2";
+import { CHAIN_COLORS, CHAIN_DISPLAY_NAMES, CHAIN_PROFILES, SOURCE_DISPLAY_ORDER, SOURCE_LIFECYCLE } from "./source-registry.generated.js?v=0.5.0";
+import { inputDateTimeToUtc, utcDateTimeToInput } from "./tree-lookup.js?v=0.5.0";
 
 
 const API_BASE = "/api/v1";
@@ -352,10 +352,14 @@ const state = {
   // both for the newer one rather than clobbering its result or its error.
   treeLoadSeq: 0,
   // Navigator targets: each stores the current server-owned item cursor,
-  // filtered total, edge flags, and a busy guard. Stale/orphan keep an `anchor`
-  // mirror for the existing readout helpers.
+  // filtered total, edge flags, and a busy guard. Stale/errorBlock/orphan keep an
+  // `anchor` mirror for the existing readout helpers. A target registered in
+  // nav-targets.js with no slot here resolves to undefined through
+  // `targetState`, which silently discards its payloads and leaves the stepper
+  // blank, so the two must be added together.
   stale: { item: null, anchor: null, total: null, hasOlder: false, hasNewer: false, busy: false },
   branch: { item: null, total: null, hasOlder: false, hasNewer: false, busy: false },
+  errorBlock: { item: null, anchor: null, total: null, hasOlder: false, hasNewer: false, busy: false },
   orphan: { item: null, anchor: null, total: null, counts: null, hasOlder: false, hasNewer: false, busy: false },
   orphanBranch: { item: null, total: null, hasOlder: false, hasNewer: false, busy: false },
   // True while a pointer is pressed on the tree SVG. The auto-refresh timer skips

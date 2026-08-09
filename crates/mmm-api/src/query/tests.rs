@@ -280,6 +280,106 @@ fn navigator_defaults_to_latest_with_target_specific_classification() {
 }
 
 #[test]
+fn error_block_navigator_parses_on_the_height_axis_without_a_classification() {
+    let target = NavigatorTarget::parse("error-block").unwrap();
+    assert_eq!(target, NavigatorTarget::ErrorBlock);
+    assert_eq!(target.as_str(), "error-block");
+    assert!(!target.accepts_classification());
+
+    let query = parse_navigator_query(target, None).unwrap();
+    assert!(matches!(query.mode, NavigatorMode::Latest));
+    assert!(query.classification.is_empty());
+    assert_eq!(query.query["target"], json!("error-block"));
+    assert_eq!(query.query["classification"], json!([]));
+
+    // An error block is a catalogue membership, not a refinement of `unknown`,
+    // so the orphan-only classification axis must be rejected rather than
+    // silently ignored.
+    let err = parse_navigator_query(target, Some("classification=strict_btc_orphan")).unwrap_err();
+    assert_eq!(err.code(), "invalid_query");
+}
+
+#[test]
+fn error_block_navigator_cursors_are_target_and_axis_bound() {
+    let hash = "cd".repeat(32);
+    let cursor = NavigatorCursor::new(
+        NavigatorTarget::ErrorBlock,
+        NavigatorAxis::Height,
+        229_388,
+        229_388,
+        hash.clone(),
+    )
+    .encode();
+
+    let ok = parse_navigator_query(
+        NavigatorTarget::ErrorBlock,
+        Some(&format!("cursor={cursor}&direction=older")),
+    )
+    .unwrap();
+    assert!(matches!(ok.mode, NavigatorMode::Page { .. }));
+
+    // A cursor minted for one target must not be replayable against another,
+    // and the height-axis cursor must not satisfy a time-axis target.
+    let wrong_target = parse_navigator_query(
+        NavigatorTarget::Stale,
+        Some(&format!("cursor={cursor}&direction=older")),
+    )
+    .unwrap_err();
+    assert_eq!(wrong_target.code(), "invalid_query");
+
+    // A height bound beyond i32 would wrap to a negative height through the
+    // projection's `as i32` casts and return a wrong page, so it is rejected at
+    // decode for every height-axis target.
+    let overflow_cursor = NavigatorCursor::new(
+        NavigatorTarget::ErrorBlock,
+        NavigatorAxis::Height,
+        i64::from(i32::MAX) + 1,
+        i64::from(i32::MAX) + 1,
+        "ab".repeat(32),
+    )
+    .encode();
+    let overflow = parse_navigator_query(
+        NavigatorTarget::ErrorBlock,
+        Some(&format!("cursor={overflow_cursor}&direction=older")),
+    )
+    .unwrap_err();
+    assert_eq!(overflow.code(), "invalid_query");
+
+    let stale_overflow_cursor = NavigatorCursor::new(
+        NavigatorTarget::Stale,
+        NavigatorAxis::Height,
+        i64::from(i32::MAX) + 1,
+        i64::from(i32::MAX) + 1,
+        "ab".repeat(32),
+    )
+    .encode();
+    assert_eq!(
+        parse_navigator_query(
+            NavigatorTarget::Stale,
+            Some(&format!("cursor={stale_overflow_cursor}&direction=older")),
+        )
+        .unwrap_err()
+        .code(),
+        "invalid_query"
+    );
+
+    let time_axis_cursor = NavigatorCursor::new(
+        NavigatorTarget::ErrorBlock,
+        NavigatorAxis::Time,
+        1_700_000_000,
+        1_700_000_000,
+        hash,
+    )
+    .encode();
+    let wrong_axis = parse_navigator_query(
+        NavigatorTarget::ErrorBlock,
+        Some(&format!("cursor={time_axis_cursor}&direction=older")),
+    )
+    .unwrap_err();
+    assert_eq!(wrong_axis.code(), "invalid_query");
+}
+
+#[test]
 fn navigator_accepts_anchor_and_cursor_modes() {
     let hash = "AB".repeat(32);
     let anchor = parse_navigator_query(

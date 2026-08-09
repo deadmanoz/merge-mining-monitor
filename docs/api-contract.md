@@ -102,12 +102,22 @@ Example:
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.4.2",
+  "version": "0.5.0",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 7,
+    "release_count": 8,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.5.0",
+        "date": "2026-08-09",
+        "items": [
+          "Step through catalogued error blocks from the Go to menu, like stale blocks and orphans. They were visible in the tree but unreachable without already knowing a height or hash.",
+          "Name the Bitcoin consensus rule an error block breaks in plain language, with help explaining the rule, and say why the block has no canonical competitor instead of leaving the panel simply absent."
+        ],
+        "item_count": 2,
+        "truncated": false
+      },
       {
         "version": "0.4.2",
         "date": "2026-07-30",
@@ -758,15 +768,23 @@ Stale branch positions are `root`, `interior`, `tip`, and `root_and_tip`.
 GET /api/v1/navigator/{target}?limit&cursor&direction&anchor_hash&classification
 ```
 
-Purpose: one bounded navigation API for the header-tree controls. The four
+Purpose: one bounded navigation API for the header-tree controls. The five
 targets are:
 
 | Target | Axis | Item scope | View |
 |---|---|---|---|
 | `stale` | `height` | proven stale blocks | `tree_window` |
 | `stale-branch` | `height` | current multi-block stale branches | `tree_window` |
+| `error-block` | `height` | catalogued consensus-invalid full-PoW blocks | `tree_window` |
 | `orphan` | `time` | BTC-orphan blocks | `unheighted_anchor` |
 | `orphan-branch` | `time` | multi-block BTC-orphan branches | `unheighted_anchor` |
+
+`error-block` items are single blocks with `kind = "error-block"`, ordered
+newest-first by height and then by stored hash bytes. The hash tie-break is
+load-bearing rather than cosmetic: the catalogue is not one block per height, so
+paging on height alone would skip or repeat members of a same-height group. Items
+never carry `branch` or `orphan`, because an error block never raced and so is
+neither a branch member nor an orphan.
 
 All targets use the same modes:
 
@@ -792,8 +810,10 @@ Query parameters:
   `strict_btc_orphan`, `weak_btc_orphan`, `excluded`, and `pending`.
 
 Supplying any other parameter, mixing `cursor` with `anchor_hash`, supplying only
-one of `cursor` / `direction`, or passing `classification` to a stale target is
-`invalid_query`.
+one of `cursor` / `direction`, or passing `classification` to a stale or
+error-block target is `invalid_query`. `error-block` rejects `classification`
+because catalogue membership is not a refinement of `unknown` and so has no
+orphan-class axis.
 
 Response fields:
 
@@ -817,8 +837,9 @@ Each `items[]` entry has this format:
 - `kind`: one of the target strings.
 - `primary_hash`: display/RPC hash for the block or branch root.
 - `label`: display label for the UI.
-- `position`: `{ axis, min, max }`; stale targets use Bitcoin height, orphan
-  targets use `btc_header_time`.
+- `position`: `{ axis, min, max }`; the stale and error-block targets use
+  Bitcoin height, orphan targets use `btc_header_time`. For `error-block`,
+  `min` and `max` are always equal, because each item is one block.
 - `cursor`: opaque item cursor. Clients must send it back as-is.
 - `branch`: `null` for single-block targets, or
   `{ branch_id, root_hash, tip_hashes, depth }` for branch targets.
@@ -835,6 +856,10 @@ Ordering is stable and target-specific:
 - `stale`: `btc_height` descending, then stored stale hash bytes ascending.
 - `stale-branch`: `btc_height_max` descending, then `btc_height_min` descending,
   then stored root hash bytes ascending.
+- `error-block`: `btc_height` descending, then stored header hash bytes
+  ascending. The hash tie-break is required rather than cosmetic: the catalogue
+  carries more than one block at some heights, so paging on height alone would
+  skip or repeat members of a group.
 - `orphan`: `btc_header_time` descending, then stored header hash bytes
   descending.
 - `orphan-branch`: `btc_header_time_max` descending, then

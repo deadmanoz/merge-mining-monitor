@@ -1,10 +1,10 @@
-import { clearStoredTreeTransform, markTreeSelection, RAILS, renderSourceControls, renderTreePanel, resetTreeToTip, setRailCollapsed } from "./controls.js?v=0.4.2";
-import { renderDrawer } from "./drawer-renderer.js?v=0.4.2";
-import { $, API_BASE, CLASSIFICATION_DEFAULT, CLASSIFICATION_META, classificationParam, CLASSIFICATIONS, readForm, state, writeForm } from "./frontend-state.js?v=0.4.2";
-import { anyNavTargetBusy, applyNavigatorPayload, isNavigatorTarget, navSelectionMatches, navSelectLabelForState, navigatorItemForStep, navigatorItemView, navigatorRoute, navigatorStepperState, orphanAnchorFromBlock, selectionTargetForState, setNavigatorBusy, targetState } from "./nav-targets.js?v=0.4.2";
-import { renderSourceStatus } from "./source-status.js?v=0.4.2";
-import { activateAnchorView, activateGeneratedWindow, activateHeightLookup, paramsFor, syncUrl, treePath, treeWindowError } from "./tree-query-state.js?v=0.4.2";
-import { anchorCameraOnTip, renderTree } from "./tree-renderer.js?v=0.4.2";
+import { clearStoredTreeTransform, markTreeSelection, RAILS, renderSourceControls, renderTreePanel, resetTreeToTip, setRailCollapsed } from "./controls.js?v=0.5.0";
+import { renderDrawer } from "./drawer-renderer.js?v=0.5.0";
+import { $, API_BASE, CLASSIFICATION_DEFAULT, CLASSIFICATION_META, classificationParam, CLASSIFICATIONS, readForm, state, writeForm } from "./frontend-state.js?v=0.5.0";
+import { anyNavTargetBusy, applyNavigatorPayload, isNavigatorTarget, navSelectionMatches, navSelectLabelForState, navigatorItemForStep, navigatorItemView, navigatorRoute, navigatorStepperState, orphanAnchorFromBlock, selectionTargetForState, setNavigatorBusy, targetState } from "./nav-targets.js?v=0.5.0";
+import { renderSourceStatus } from "./source-status.js?v=0.5.0";
+import { activateAnchorView, activateGeneratedWindow, activateHeightLookup, paramsFor, syncUrl, treePath, treeWindowError } from "./tree-query-state.js?v=0.5.0";
+import { anchorCameraOnTip, renderTree } from "./tree-renderer.js?v=0.5.0";
 
 async function fetchJson(key, path) {
   const seq = (state.seq[key] || 0) + 1;
@@ -542,6 +542,20 @@ function renderUpdated() {
     : "";
 }
 
+// An error block is a plain height-axis single block with no competitor and no
+// branch, so its anchor needs only a catalogued kind and a resolved height.
+// Without this, selecting one directly (a tree click or a `?selected=` deep
+// link) would leave whichever target was active still showing its own readout,
+// and stepping from the selected block would be impossible.
+function errorBlockAnchorFromBlock(payload, hash) {
+  const block = payload?.block;
+  if (!block || block.kind !== "error_block") return null;
+  const height = Number(block.height);
+  if (!Number.isInteger(height)) return null;
+  if ((block.hash || hash) !== hash) return null;
+  return { btc_height: height, hash };
+}
+
 function staleAnchorFromBlock(payload, hash) {
   const block = payload?.block;
   if (!block || block.kind !== "stale") return null;
@@ -577,6 +591,7 @@ async function loadBlock(hash) {
   const payload = await fetchJson("block", `${API_BASE}/block/${encodeURIComponent(hash)}`);
   if (payload) state.selectedBlock = payload;
   const staleAnchor = staleAnchorFromBlock(payload, hash);
+  const errorBlockAnchor = errorBlockAnchorFromBlock(payload, hash);
   const anchor = orphanAnchorFromBlock(payload, hash, state.query.classification);
   reconcileNavFromSelected();
   refreshNavControls();
@@ -585,6 +600,8 @@ async function loadBlock(hash) {
   const branchTarget = selectedNodeBranchTarget(hash);
   if (branchTarget) hydrateNavigatorAnchor(branchTarget, hash);
   else if (staleAnchor) hydrateNavigatorAnchor("stale", hash);
+  // Kinds are mutually exclusive, so this cannot race the stale hydrate above.
+  else if (errorBlockAnchor) hydrateNavigatorAnchor("errorBlock", hash);
   if (anchor && branchTarget !== "orphanBranch") hydrateNavigatorAnchor("orphan", hash);
 }
 
