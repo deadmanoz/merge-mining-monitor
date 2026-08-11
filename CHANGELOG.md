@@ -6,6 +6,12 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Remove the `reclassify-pools` RSK skip, so each run scans the active corpus
+  instead of usually paying for two fingerprint scans without short-circuiting.
+  The skip required an unchanged active set, which continuous RSK capture
+  normally invalidates every block. Migration `0009` drops the obsolete
+  `rsk_reclassify_watermark` singleton.
+
 ## [0.5.0] - 2026-08-09
 
 - Navigate catalogued error blocks as a first-class Go to target, backed by

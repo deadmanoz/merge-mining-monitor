@@ -141,64 +141,78 @@ async fn only_main_skips_the_rsk_pass() -> Result<()> {
 }
 
 #[tokio::test]
-async fn rsk_watermark_skips_unchanged_rerun() -> Result<()> {
+async fn watermark_table_is_retired_after_migrations() -> Result<()> {
+    crate::run_db_test!(client, {
+        let table_count: i64 = client
+            .query_one(
+                "SELECT count(*)::bigint FROM information_schema.tables \
+                 WHERE table_schema = current_schema() \
+                   AND table_name = 'rsk_reclassify_watermark'",
+                &[],
+            )
+            .await?
+            .get(0);
+        assert_eq!(table_count, 0, "migration 0009 must drop the singleton");
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn second_run_rescans_without_rewriting() -> Result<()> {
     crate::run_mut_db_test!(client, {
         insert_rsk_event(&client, 8_800_020, KNOWN_MINER, 1_780_000_400).await?;
-        // First run scans the corpus and records the watermark.
+        insert_rsk_event(&client, 8_800_021, KNOWN_MINER, 1_780_000_401).await?;
         let first = reclassify_pools(&mut client).await?;
-        assert_eq!(first.rsk_miner_rows_scanned, 1);
-        // An unchanged re-run (same registry, same active set) short-circuits.
-        let second = reclassify_pools(&mut client).await?;
-        assert_eq!(second.rsk_miner_rows_scanned, 0);
-        assert_eq!(second.rsk_miner_attribution_updates, 0);
-        Ok::<_, anyhow::Error>(())
-    })
-}
+        assert_eq!(first.rsk_miner_rows_scanned, 2);
 
-#[tokio::test]
-async fn rsk_watermark_does_not_skip_after_a_new_event() -> Result<()> {
-    crate::run_mut_db_test!(client, {
-        insert_rsk_event(&client, 8_800_021, KNOWN_MINER, 1_780_000_410).await?;
-        let first = reclassify_pools(&mut client).await?;
-        assert_eq!(first.rsk_miner_rows_scanned, 1);
-        // A newly captured RSK event advances the active-set fingerprint, so the
-        // next run must rescan, not skip.
-        insert_rsk_event(&client, 8_800_022, KNOWN_MINER, 1_780_000_411).await?;
+        // Nothing short-circuits a back-to-back run. The second pass rescans the
+        // whole active set and, because the first pass already resolved every
+        // row, writes nothing.
         let second = reclassify_pools(&mut client).await?;
         assert_eq!(second.rsk_miner_rows_scanned, 2);
+        assert_eq!(second.rsk_miner_attribution_updates, 0);
+        assert_eq!(second.rsk_miner_sidecar_late_fills, 0);
         Ok::<_, anyhow::Error>(())
     })
 }
 
 #[tokio::test]
-async fn rsk_watermark_never_skips_an_overwrite_run() -> Result<()> {
+async fn revoked_rsk_events_are_excluded_until_restored() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        insert_rsk_event(&client, 8_800_023, KNOWN_MINER, 1_780_000_420).await?;
-        // Prime the watermark with a default run.
-        reclassify_pools(&mut client).await?;
-        // --overwrite deliberately rewrites history, so it must ignore the
-        // watermark and rescan.
-        let overwrite = reclassify_pools_with_overwrite(&mut client).await?;
-        assert_eq!(overwrite.rsk_miner_rows_scanned, 1);
+        insert_rsk_event(&client, 8_800_026, KNOWN_MINER, 1_780_000_440).await?;
+        let revoked = insert_rsk_event(&client, 8_800_027, KNOWN_MINER, 1_780_000_441).await?;
+        set_revoked(&client, revoked, true).await?;
+
+        let first = reclassify_pools(&mut client).await?;
+        assert_eq!(first.rsk_miner_rows_scanned, 1);
+        assert_eq!(first.rsk_miner_attribution_updates, 1);
+        assert_eq!(first.rsk_miner_sidecar_late_fills, 1);
+
+        set_revoked(&client, revoked, false).await?;
+        let second = reclassify_pools(&mut client).await?;
+        assert_eq!(second.rsk_miner_rows_scanned, 2);
+        assert_eq!(second.rsk_miner_attribution_updates, 1);
+        assert_eq!(second.rsk_miner_sidecar_late_fills, 1);
         Ok::<_, anyhow::Error>(())
     })
 }
 
 #[tokio::test]
-async fn rsk_watermark_skip_still_enforces_the_seed_remap_conflict() -> Result<()> {
+async fn seed_remap_conflict_aborts_before_scanning() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // Prime the watermark over a clean default run (this also self-seeds the
-        // KNOWN_MINER -> f2pool identity).
+        // A clean default run self-seeds the KNOWN_MINER -> f2pool identity.
         insert_rsk_event(&client, 8_800_024, KNOWN_MINER, 1_780_000_430).await?;
         reclassify_pools(&mut client).await?;
         let f2pool = pool_id_for_slug(&client, "f2pool").await?;
         let antpool = pool_id_for_slug(&client, "antpool").await?;
         assert_ne!(f2pool, antpool);
 
-        // Corrupt the identity to a conflicting pool. This does NOT change the
-        // active-event set, so the watermark fingerprint is unchanged and the
-        // scan would be skipped - but the seed/conflict pass runs BEFORE the
-        // skip-check, so a default run must still bail.
+        // A second, still-unprocessed event: the scan would attribute it and
+        // late-fill its sidecar if it ever ran.
+        let unprocessed = insert_rsk_event(&client, 8_800_025, KNOWN_MINER, 1_780_000_431).await?;
+
+        // Corrupt the identity to a conflicting pool, which the seed rejects
+        // without --overwrite.
         client
             .execute(
                 "UPDATE pool_identity SET pool_id = $1 \
@@ -206,33 +220,30 @@ async fn rsk_watermark_skip_still_enforces_the_seed_remap_conflict() -> Result<(
                 &[&antpool, &KNOWN_MINER],
             )
             .await?;
-        let err = reclassify_pools(&mut client).await.expect_err(
-            "seed must bail on an unauthorized remap even when the watermark would skip",
-        );
+        let err = reclassify_pools(&mut client)
+            .await
+            .expect_err("seed must bail on an unauthorized identity remap");
         assert!(format!("{err:#}").contains("--overwrite"));
-        Ok::<_, anyhow::Error>(())
-    })
-}
 
-#[tokio::test]
-async fn rsk_watermark_detects_balanced_revoke_restore() -> Result<()> {
-    crate::run_mut_db_test!(client, {
-        let e1 = insert_rsk_event(&client, 8_800_025, KNOWN_MINER, 1_780_000_440).await?;
-        let _e2 = insert_rsk_event(&client, 8_800_026, KNOWN_MINER, 1_780_000_441).await?;
-        let e3 = insert_rsk_event(&client, 8_800_027, KNOWN_MINER, 1_780_000_442).await?;
-        let _e4 = insert_rsk_event(&client, 8_800_028, KNOWN_MINER, 1_780_000_443).await?;
-        // Start with e3 revoked: active set {e1, e2, e4}.
-        set_revoked(&client, e3, true).await?;
-        let first = reclassify_pools(&mut client).await?;
-        assert_eq!(first.rsk_miner_rows_scanned, 3);
-
-        // Balanced swap that preserves BOTH the active count and the max id:
-        // revoke e1, restore e3 -> active {e2, e3, e4}. Only the order-independent
-        // XOR digest distinguishes this from {e1, e2, e4}, so the run must rescan.
-        set_revoked(&client, e1, true).await?;
-        set_revoked(&client, e3, false).await?;
-        let second = reclassify_pools(&mut client).await?;
-        assert_eq!(second.rsk_miner_rows_scanned, 3);
+        // The ordering is what this pins: the seed runs BEFORE the scan, so the
+        // unprocessed event picked up neither an attribution nor a sidecar
+        // late-fill. Both would exist had the scan run first.
+        let attributions: i64 = client
+            .query_one(
+                "SELECT count(*) FROM event_pool_attribution WHERE event_id = $1",
+                &[&unprocessed],
+            )
+            .await?
+            .get(0);
+        assert_eq!(
+            attributions, 0,
+            "conflict check must abort before the scan writes attributions"
+        );
+        assert_eq!(
+            sidecar_identity(&client, unprocessed).await?,
+            None,
+            "conflict check must abort before the scan late-fills sidecars"
+        );
         Ok::<_, anyhow::Error>(())
     })
 }

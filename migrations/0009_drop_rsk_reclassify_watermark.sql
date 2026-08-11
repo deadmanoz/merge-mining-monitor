@@ -1,0 +1,29 @@
+-- 0009_drop_rsk_reclassify_watermark.sql
+--
+-- Retires the `rsk_reclassify_watermark` singleton created by the 0001
+-- baseline. It backed a skip in the `reclassify-pools` RSK miner-identity
+-- pass: a non-`--overwrite` run returned early when the embedded registry hash
+-- and the RSK active-set fingerprint both matched the stored row.
+--
+-- That skip is not useful during continuous live capture. The fingerprint is
+-- `count(*)` plus `bit_xor(hashtextextended(id))` over non-revoked RSK events,
+-- and RSK produces a block roughly every thirty seconds, so operator runs
+-- normally see different active sets and run the full pass anyway. Computing
+-- the fingerprint is itself a sequential scan of the RSK partition of
+-- `merge_mining_event` (7.7 seconds against 18.4M rows on production), paid
+-- twice per run. The scan it guarded now completes in about nine minutes after
+-- the keyset fix in 0.4.2, so the occasional skip does not justify its code and
+-- query cost.
+--
+-- Fresh databases still create the table in 0001 (migrations are append-only)
+-- and drop it here. Idempotent: `IF EXISTS` makes a re-run a no-op, and no
+-- foreign key references the table, so no `CASCADE` is required.
+--
+-- Deployment precondition: activate the watermark-free binary and confirm no
+-- older `reclassify-pools` process is running before applying this migration.
+-- An older run can read the singleton before the drop, commit batch writes,
+-- then fail when its final watermark upsert finds the table missing. After
+-- 0009, rolling back to an older binary requires recreating the empty singleton
+-- (the old command will repopulate it) or restoring the pre-migration backup.
+
+DROP TABLE IF EXISTS rsk_reclassify_watermark;
