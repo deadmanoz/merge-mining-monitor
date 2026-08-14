@@ -6,8 +6,8 @@
   "observed_at": "2025-04-22",
   "published_at": "2026-07-29",
   "affected_sources": ["auxpow:rsk", "auxpow:fractal"],
-  "summary": "Foundry's first merge-mined parents appear on RSK and Fractal on the same day, in the same Bitcoin block (height 893,543), opening the ~14-month window that the June 2026 pool-exit finding closes.",
-  "body": "Foundry USA's first merge-mined parent on RSK and on Fractal is the same Bitcoin block: height `893,543`, mined on April 22, 2025.[^2] The pool announced Rootstock merged mining publicly, and its Fractal participation began in the same template.[^1]\n\nThe window this opens runs ~14 months and closes the same way it opened, with a single Bitcoin block merge-mining both chains (height `955,218`, June 24, 2026). Paired findings like these give a pool's merge-mining tenure a precise, evidence-backed start and end.",
+  "summary": "Foundry's first merge-mined parents appear on RSK and Fractal on the same day, in the same Bitcoin block (height 893,543), establishing a shared operational start for both attributed series.",
+  "body": "Foundry USA's first merge-mined parent on RSK and on Fractal is the same Bitcoin block: height `893,543`, mined on April 22, 2025.[^2] The pool announced Rootstock merged mining publicly, and its Fractal participation began in the same template.[^1]\n\nThat shared parent makes the opening unusually precise: this is not two loosely dated launches, but one Bitcoin template beginning both attributed series. Weekly attributions remain present on both chains throughout the following two months, showing that the opening parent began sustained activity rather than recording an isolated observation.",
   "anchors": [
     { "kind": "btc-height", "value": "893543", "label": "first Foundry merge-mined parent" },
     { "kind": "source", "value": "auxpow:rsk" },
@@ -16,26 +16,55 @@
   ],
   "figures": [
     {
-      "kind": "event-timeline",
-      "caption": "The paired RSK and Fractal finding window opens and closes on shared Bitcoin parents.",
-      "accessible_summary": "Foundry's paired RSK and Fractal merge-mining window begins at Bitcoin height 893,543 on April 22, 2025 and ends at Bitcoin height 955,218 on June 24, 2026, about fourteen months later.",
+      "kind": "series-chart",
+      "caption": "Weekly Foundry-attributed merge-mined parents across the opening nine weekly bins.",
+      "accessible_summary": "Foundry's first attributed RSK and Fractal parents share Bitcoin height 893,543 on April 22, 2025. Both weekly series remain active across the next two months, with RSK ranging from 266 to 323 parents and Fractal from 142 to 224 parents per weekly bin.",
       "summary": [
-        { "label": "Paired window", "value": "14 months", "detail": "22 Apr 2025 to 24 Jun 2026" },
+        { "label": "Shared start", "value": "22 Apr 2025", "detail": "RSK and Fractal" },
         { "label": "Opening parent", "value": "BTC 893,543", "detail": "Both chains in one template" },
-        { "label": "Closing parent", "value": "BTC 955,218", "detail": "Both chains stop together" }
+        { "label": "Early follow-through", "value": "Both active", "detail": "First nine weekly bins" }
       ],
-      "events": [
-        { "t": "2025-04-22", "lane": "RSK", "label": "BTC 893,543", "detail": "Paired window opens" },
-        { "t": "2026-06-24", "lane": "RSK", "label": "BTC 955,218", "detail": "Paired window closes" },
-        { "t": "2025-04-22", "lane": "Fractal", "label": "BTC 893,543", "detail": "Paired window opens" },
-        { "t": "2026-06-24", "lane": "Fractal", "label": "BTC 955,218", "detail": "Paired window closes" }
+      "y_label": "attributed parents / week",
+      "y_min": 0,
+      "series": [
+        {
+          "label": "RSK",
+          "mark": "line",
+          "style": "solid",
+          "points": [
+            { "t": "2025-04-21", "v": 284 },
+            { "t": "2025-04-28", "v": 323 },
+            { "t": "2025-05-05", "v": 301 },
+            { "t": "2025-05-12", "v": 266 },
+            { "t": "2025-05-19", "v": 287 },
+            { "t": "2025-05-26", "v": 313 },
+            { "t": "2025-06-02", "v": 280 },
+            { "t": "2025-06-09", "v": 321 },
+            { "t": "2025-06-16", "v": 281 }
+          ]
+        },
+        {
+          "label": "Fractal",
+          "mark": "line",
+          "style": "dashed",
+          "points": [
+            { "t": "2025-04-21", "v": 142 },
+            { "t": "2025-04-28", "v": 222 },
+            { "t": "2025-05-05", "v": 216 },
+            { "t": "2025-05-12", "v": 178 },
+            { "t": "2025-05-19", "v": 197 },
+            { "t": "2025-05-26", "v": 224 },
+            { "t": "2025-06-02", "v": 184 },
+            { "t": "2025-06-09", "v": 222 },
+            { "t": "2025-06-16", "v": 207 }
+          ]
+        }
       ],
-      "intervals": [
-        { "from": "2025-04-22", "to": "2026-06-24", "lane": "RSK", "label": "Paired Foundry window" },
-        { "from": "2025-04-22", "to": "2026-06-24", "lane": "Fractal", "label": "Paired Foundry window" }
+      "markers": [
+        { "t": "2025-04-22", "label": "Shared first parent", "detail": "BTC 893,543 · 22 Apr 2025" }
       ],
-      "x_ticks": ["2025-04-22", "2025-09-01", "2026-01-01", "2026-06-24"],
-      "note": "Boundary parents are identified from this monitor's attributed AuxPoW event data; Bitcoin block times and heights are used at the presentation boundary."
+      "x_ticks": ["2025-04-21", "2025-05-12", "2025-06-16"],
+      "note": "Weeks start Monday; the first bin is partial because the shared first parent was mined on Tuesday 22 April. RSK uses the registered child miner address; Fractal uses independently reconciled Bitcoin parent coinbase attribution. Active, Bitcoin-target-valid events only."
     }
   ],
   "references": [
