@@ -102,12 +102,22 @@ Example:
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 8,
+    "release_count": 9,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.6.0",
+        "date": "2026-08-15",
+        "items": [
+          "Read each finding through a visual form matched to its evidence. The Foundry stories now separate the shared start from the shared exit and show the full 14-month RSK and Fractal weekly history through the zero tail.",
+          "Reclassify the current RSK attribution corpus on every pool-resolution run. Migration `0009` removes the obsolete skip watermark that continuous capture normally invalidated on the next block."
+        ],
+        "item_count": 2,
+        "truncated": false
+      },
       {
         "version": "0.5.0",
         "date": "2026-08-09",

@@ -1,5 +1,14 @@
 # Release Notes
 
+## [0.6.0] - 2026-08-15
+
+- Read each finding through a visual form matched to its evidence. The Foundry
+  stories now separate the shared start from the shared exit and show the full
+  14-month RSK and Fractal weekly history through the zero tail.
+- Reclassify the current RSK attribution corpus on every pool-resolution run.
+  Migration `0009` removes the obsolete skip watermark that continuous capture
+  normally invalidated on the next block.
+
 ## [0.5.0] - 2026-08-09
 
 - Step through catalogued error blocks from the Go to menu, like stale blocks
