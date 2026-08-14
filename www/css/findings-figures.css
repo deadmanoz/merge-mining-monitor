@@ -1,0 +1,294 @@
+/* Findings evidence figures: summary strip, reusable series marks, and event
+   timelines. Kept separate from article/feed CSS so both stay below the
+   frontend architecture budget. */
+
+.finding-figure {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-alt);
+  display: grid;
+  gap: 0;
+  height: max-content;
+  min-height: max-content;
+  width: 100%;
+  max-width: 900px;
+  margin: 2px 0 0;
+  overflow: hidden;
+}
+
+.figure-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+}
+
+.figure-summary-item {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 13px 16px;
+}
+
+.figure-summary-item + .figure-summary-item {
+  border-left: 1px solid var(--line);
+}
+
+.figure-summary-label {
+  color: var(--faint);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.figure-summary-item strong {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.figure-summary-detail {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.3;
+}
+
+.finding-figure-visual {
+  display: grid;
+  gap: 6px;
+  padding: 12px 12px 4px;
+}
+
+.figure-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  min-height: 18px;
+  padding: 0 8px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+
+.figure-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.figure-legend-swatch {
+  display: inline-block;
+  width: 34px;
+  height: 0;
+  border-top: 2px solid var(--text);
+}
+
+.figure-legend-swatch.fig-series-1 {
+  border-color: var(--focus);
+}
+
+.figure-legend-swatch.fig-style-dashed {
+  border-top-style: dashed;
+}
+
+.figure-legend-swatch.fig-mark-bar {
+  width: 12px;
+  height: 9px;
+  border: 0;
+  border-radius: 1px;
+  background: var(--focus);
+}
+
+.figure-legend-swatch.fig-mark-lollipop {
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--focus);
+  border-radius: 50%;
+}
+
+.figure-plot-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.figure-plot-scroll:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.figure-plot {
+  display: block;
+  width: 100%;
+  min-width: 670px;
+  height: auto;
+}
+
+.finding-figure .fig-tick,
+.finding-figure .fig-axis-title,
+.finding-figure .fig-annotation,
+.finding-figure .fig-marker-label,
+.finding-figure .fig-reference-label,
+.finding-figure .timeline-lane-label,
+.finding-figure .timeline-event-label {
+  font-family: var(--mono);
+}
+
+.finding-figure .fig-tick {
+  fill: var(--faint);
+  font-size: 10px;
+}
+
+.finding-figure .fig-axis-title {
+  fill: var(--muted);
+  font-size: 10.5px;
+}
+
+.fig-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+
+.fig-series {
+  stroke: var(--text);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+rect.fig-series {
+  fill: color-mix(in srgb, var(--focus) 70%, var(--surface));
+  stroke: none;
+}
+
+.fig-series-1 {
+  stroke: var(--focus);
+}
+
+.fig-style-dashed {
+  stroke-dasharray: 5 5;
+}
+
+.fig-series-end {
+  fill: var(--surface);
+  stroke: var(--text);
+  stroke-width: 2;
+}
+
+.fig-series-end.fig-series-1 {
+  stroke: var(--focus);
+}
+
+.fig-lollipop-stem {
+  stroke-width: 1.5;
+}
+
+.fig-lollipop-dot {
+  fill: var(--surface);
+  stroke-width: 2;
+}
+
+.fig-band rect {
+  fill: color-mix(in srgb, var(--line) 45%, transparent);
+}
+
+.finding-figure .fig-annotation,
+.finding-figure .fig-marker-label {
+  fill: var(--text);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.finding-figure .fig-annotation-detail {
+  fill: var(--muted);
+  font-size: 9.5px;
+  font-weight: 400;
+}
+
+.fig-marker,
+.fig-reference {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.finding-figure .fig-reference-label {
+  fill: var(--muted);
+  font-size: 9.5px;
+}
+
+.timeline-lane,
+.timeline-cadence {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.timeline-cadence {
+  stroke-dasharray: 2 5;
+}
+
+.finding-figure .timeline-lane-label {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.timeline-interval {
+  stroke: var(--text);
+  stroke-width: 8;
+  stroke-linecap: round;
+}
+
+.timeline-interval.fig-series-1 {
+  stroke: var(--focus);
+}
+
+.timeline-event-line {
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+
+.timeline-event-dot {
+  fill: var(--surface);
+  stroke: var(--focus);
+  stroke-width: 2.5;
+}
+
+.finding-figure .timeline-event-label {
+  fill: var(--text);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.finding-figure figcaption {
+  padding: 5px 14px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.fig-note {
+  padding: 2px 14px 11px;
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+@media (max-width: 760px) {
+  .figure-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .figure-summary-item + .figure-summary-item {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
+  .finding-figure-visual {
+    padding-inline: 6px;
+  }
+}

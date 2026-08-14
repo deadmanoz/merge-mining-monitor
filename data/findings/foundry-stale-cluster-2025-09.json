@@ -43,98 +43,57 @@
   ],
   "figures": [
     {
-      "kind": "line-series",
-      "caption": "Header-time deficit of each Foundry stale against its canonical winner",
+      "kind": "series-chart",
+      "caption": "Each Foundry stale is shown as a discrete header-time deficit, not a continuous trend.",
+      "accessible_summary": "Twenty discrete Foundry stale blocks occurred from September 11 to 12. Nineteen form a 17-hour cluster. Header-time deficits range from 6 to 1,621 seconds, with a median of 577.5 seconds across all twenty values.",
+      "summary": [
+        { "label": "Stale blocks", "value": "20", "detail": "Across 16 Bitcoin heights" },
+        { "label": "Cluster span", "value": "~17 hours", "detail": "19 blocks after the self-race" },
+        { "label": "Largest deficit", "value": "1,621s", "detail": "Bitcoin height 914,344" }
+      ],
       "y_label": "header-time deficit vs winner (s)",
-      "points": [
+      "y_min": 0,
+      "y_max": 1800,
+      "series": [
         {
-          "t": "2025-09-11T17:48",
-          "v": 0
-        },
-        {
-          "t": "2025-09-11T21:18",
-          "v": 963
-        },
-        {
-          "t": "2025-09-11T21:25",
-          "v": 549
-        },
-        {
-          "t": "2025-09-11T23:54",
-          "v": 6
-        },
-        {
-          "t": "2025-09-12T04:37",
-          "v": 135
-        },
-        {
-          "t": "2025-09-12T04:46",
-          "v": 616
-        },
-        {
-          "t": "2025-09-12T05:52",
-          "v": 1301
-        },
-        {
-          "t": "2025-09-12T06:22",
-          "v": 745
-        },
-        {
-          "t": "2025-09-12T06:44",
-          "v": 1454
-        },
-        {
-          "t": "2025-09-12T07:01",
-          "v": 421
-        },
-        {
-          "t": "2025-09-12T07:23",
-          "v": 203
-        },
-        {
-          "t": "2025-09-12T08:28",
-          "v": 559
-        },
-        {
-          "t": "2025-09-12T09:01",
-          "v": 1621
-        },
-        {
-          "t": "2025-09-12T09:11",
-          "v": 1016
-        },
-        {
-          "t": "2025-09-12T10:34",
-          "v": 302
-        },
-        {
-          "t": "2025-09-12T11:52",
-          "v": 596
-        },
-        {
-          "t": "2025-09-12T12:05",
-          "v": 711
-        },
-        {
-          "t": "2025-09-12T12:13",
-          "v": 207
-        },
-        {
-          "t": "2025-09-12T13:35",
-          "v": 731
-        },
-        {
-          "t": "2025-09-12T13:58",
-          "v": 465
+          "label": "One lollipop per stale block",
+          "mark": "lollipop",
+          "points": [
+            { "t": "2025-09-11T17:48", "v": 0 },
+            { "t": "2025-09-11T21:18", "v": 963 },
+            { "t": "2025-09-11T21:25", "v": 549 },
+            { "t": "2025-09-11T23:54", "v": 6 },
+            { "t": "2025-09-12T04:37", "v": 135 },
+            { "t": "2025-09-12T04:46", "v": 616 },
+            { "t": "2025-09-12T05:52", "v": 1301 },
+            { "t": "2025-09-12T06:22", "v": 745 },
+            { "t": "2025-09-12T06:44", "v": 1454 },
+            { "t": "2025-09-12T07:01", "v": 421 },
+            { "t": "2025-09-12T07:23", "v": 203 },
+            { "t": "2025-09-12T08:28", "v": 559 },
+            { "t": "2025-09-12T09:01", "v": 1621 },
+            { "t": "2025-09-12T09:11", "v": 1016 },
+            { "t": "2025-09-12T10:34", "v": 302 },
+            { "t": "2025-09-12T11:52", "v": 596 },
+            { "t": "2025-09-12T12:05", "v": 711 },
+            { "t": "2025-09-12T12:13", "v": 207 },
+            { "t": "2025-09-12T13:35", "v": 731 },
+            { "t": "2025-09-12T13:58", "v": 465 }
+          ]
         }
       ],
       "markers": [
         {
           "t": "2025-09-11T21:18",
-          "label": "cluster proper begins"
+          "label": "Cluster proper begins",
+          "detail": "19 blocks over ~17 hours"
         }
       ],
-      "note": "One point per stale block, from this monitor's competition data, queried 2026-07-29."
+      "references": [
+        { "v": 577.5, "label": "Median deficit 577.5s" }
+      ],
+      "x_ticks": ["2025-09-11T17:48", "2025-09-11T23:54", "2025-09-12T06:44", "2025-09-12T13:58"],
+      "note": "One discrete mark per stale block from this monitor's competition data, queried 2026-07-29. Header clocks are self-reported, not observation times."
     }
   ],
   "references": [

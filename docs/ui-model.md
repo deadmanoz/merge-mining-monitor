@@ -82,15 +82,32 @@ anchor/figure counts. Opening a card replaces the feed with the article
 (back control plus newer/older navigation over corpus order); the browser
 Back button does not close it, because the app is replaceState-only
 throughout. Articles render cited prose paragraphs, structured evidence
-figures (theme-aware line-series SVGs with event markers, drawn from data in
-the generated corpus, never committed bitmaps), typed evidence anchors, and a
-Sources list. A `btc-height` anchor jumps to the tree at that height and
+panels, typed evidence anchors, and a Sources list. Each evidence panel leads
+with compact claim metrics, then renders a validated series chart or event
+timeline from the generated corpus, never a committed bitmap. Series charts
+support separate labelled lines, fixed-period bars, discrete lollipops,
+horizontal comparisons, event markers, and highlighted intervals. Timelines
+support named lanes, active intervals, boundary events, and expected-cadence
+ticks. Every figure carries a prose equivalent for assistive technology;
+line style and mark shape keep comparisons understandable without color, and
+the plot becomes horizontally scrollable rather than shrinking labels past
+legibility on narrow screens. A `btc-height` anchor jumps to the tree at that height and
 carries no `finding=` into the tree URL; a `source` anchor opens the source
 detail dialog; `child-height` and `pool` anchors are informational chips. An
 unknown `finding=` slug degrades to the feed and clears the parameter, and a
 `finding=` supplied with a non-findings `view=` is dropped at hydration. The
 Category and Status rail filters are findings-local and not URL-persisted;
 the shared Source filter narrows the feed by each finding's affected sources.
+
+Visual form follows the claim. Foundry's RSK and Fractal exit uses separate
+weekly series across the full paired window, an exact last-parent marker, and
+an explicit zero tail. The Elastos halt uses weekly bars so the partial halt
+bucket is not mistaken for a complete week. The Foundry stale cluster uses
+one lollipop per stale block so irregular events are not connected into a
+false trend. Hathor keeps its long-window difficulty line but labels the
+pre-collapse regime, post-collapse floor, and work reduction directly. The
+Foundry entry and Terracoin findings use event timelines for tenure boundaries
+and sparse full-target wins.
 
 The topbar includes a compact About affordance beside the product name. It
 opens a modal with a step-through visual explainer of why merge-mined AuxPoW

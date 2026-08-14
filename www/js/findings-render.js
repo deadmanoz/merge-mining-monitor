@@ -5,6 +5,7 @@
 // chain profiles (and the jscpd gate stays quiet).
 
 import { esc } from "./frontend-state.js?v=0.5.0";
+import { renderFigure } from "./findings-figures.js?v=0.5.0";
 import {
   collectCitedReferenceIds,
   formatCitedText,
@@ -129,74 +130,6 @@ function anchorControl(anchor) {
   const kind = anchor.kind === "child-height" ? "Child" : "Pool";
   return `<span class="finding-anchor finding-anchor-static">
     <span class="fa-kind">${esc(kind)}</span>${value}${label}</span>`;
-}
-
-/// Format an axis value: integers with grouping, fractional values to one
-/// decimal (the corpus carries block weights and weekly counts).
-function figValue(v) {
-  return Number.isInteger(v) ? v.toLocaleString("en-US") : v.toFixed(1);
-}
-
-/// A `line-series` figure as an inline SVG on theme tokens. Time maps linearly
-/// to x; the y range pads 8% around the data so a flat tail stays visible.
-/// Markers draw as dashed verticals with a label at the top.
-function renderFigure(figure) {
-  const W = 560;
-  const H = 150;
-  const PAD = { left: 46, right: 14, top: 18, bottom: 20 };
-  const xs = figure.points.map((p) => instantMs(p.t));
-  const ys = figure.points.map((p) => p.v);
-  const x0 = xs[0];
-  const x1 = xs[xs.length - 1];
-  const yMin = Math.min(...ys);
-  const yMax = Math.max(...ys);
-  const yPad = (yMax - yMin || Math.abs(yMax) || 1) * 0.08;
-  const lo = yMin - yPad;
-  const hi = yMax + yPad;
-  const px = (t) => PAD.left + ((t - x0) / (x1 - x0 || 1)) * (W - PAD.left - PAD.right);
-  const py = (v) => PAD.top + ((hi - v) / (hi - lo)) * (H - PAD.top - PAD.bottom);
-
-  const path = figure.points
-    .map((p, i) => `${i ? "L" : "M"} ${px(instantMs(p.t)).toFixed(1)} ${py(p.v).toFixed(1)}`)
-    .join(" ");
-  const gridY = [yMax, yMin]
-    .map(
-      (v) => `<line x1="${PAD.left}" y1="${py(v).toFixed(1)}" x2="${W - PAD.right}" y2="${py(v).toFixed(1)}"
-        stroke="var(--line)" stroke-width="1" stroke-dasharray="2 4"/>
-      <text x="${PAD.left - 6}" y="${(py(v) + 3).toFixed(1)}" text-anchor="end" class="fig-tick">${esc(figValue(v))}</text>`,
-    )
-    .join("");
-  const markers = (figure.markers || [])
-    .map((m) => {
-      const x = px(instantMs(m.t));
-      // A center-anchored label at either plot edge would clip outside the
-      // viewBox (the Elastos halt marker sits on the final sample); re-anchor
-      // near the boundaries so the text stays inside the chart.
-      const EDGE = 60;
-      const anchor = x < PAD.left + EDGE ? "start" : x > W - PAD.right - EDGE ? "end" : "middle";
-      return `<line x1="${x.toFixed(1)}" y1="${PAD.top - 4}" x2="${x.toFixed(1)}" y2="${H - PAD.bottom}"
-          stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
-        <text x="${x.toFixed(1)}" y="${PAD.top - 7}" text-anchor="${anchor}" class="fig-tick">${esc(m.label)}</text>`;
-    })
-    .join("");
-  const last = figure.points[figure.points.length - 1];
-  const endDot = `<circle cx="${px(instantMs(last.t)).toFixed(1)}" cy="${py(last.v).toFixed(1)}" r="3.5"
-    fill="var(--focus)" stroke="var(--surface)" stroke-width="1.5"/>`;
-  const xLabels = `
-    <text x="${PAD.left}" y="${H - 5}" class="fig-tick">${esc(figure.points[0].t.slice(0, 10))}</text>
-    <text x="${W - PAD.right}" y="${H - 5}" text-anchor="end" class="fig-tick">${esc(last.t.slice(0, 10))}</text>`;
-
-  return `
-    <figure class="finding-figure">
-      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(figure.caption)}">
-        ${gridY}${markers}
-        <path d="${path}" fill="none" stroke="var(--focus)" stroke-width="2"
-          stroke-linejoin="round" stroke-linecap="round"/>
-        ${endDot}${xLabels}
-      </svg>
-      <figcaption>${esc(figure.caption)} <span class="fig-ylabel">(${esc(figure.y_label)})</span></figcaption>
-      <span class="fig-note">${esc(figure.note)}</span>
-    </figure>`;
 }
 
 /// The article: nav, meta, cited prose paragraphs, figures, anchors, Sources.

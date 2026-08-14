@@ -14,6 +14,30 @@
     { "kind": "source", "value": "auxpow:fractal" },
     { "kind": "pool", "value": "Foundry USA" }
   ],
+  "figures": [
+    {
+      "kind": "event-timeline",
+      "caption": "The paired RSK and Fractal finding window opens and closes on shared Bitcoin parents.",
+      "accessible_summary": "Foundry's paired RSK and Fractal merge-mining window begins at Bitcoin height 893,543 on April 22, 2025 and ends at Bitcoin height 955,218 on June 24, 2026, about fourteen months later.",
+      "summary": [
+        { "label": "Paired window", "value": "14 months", "detail": "22 Apr 2025 to 24 Jun 2026" },
+        { "label": "Opening parent", "value": "BTC 893,543", "detail": "Both chains in one template" },
+        { "label": "Closing parent", "value": "BTC 955,218", "detail": "Both chains stop together" }
+      ],
+      "events": [
+        { "t": "2025-04-22", "lane": "RSK", "label": "BTC 893,543", "detail": "Paired window opens" },
+        { "t": "2026-06-24", "lane": "RSK", "label": "BTC 955,218", "detail": "Paired window closes" },
+        { "t": "2025-04-22", "lane": "Fractal", "label": "BTC 893,543", "detail": "Paired window opens" },
+        { "t": "2026-06-24", "lane": "Fractal", "label": "BTC 955,218", "detail": "Paired window closes" }
+      ],
+      "intervals": [
+        { "from": "2025-04-22", "to": "2026-06-24", "lane": "RSK", "label": "Paired Foundry window" },
+        { "from": "2025-04-22", "to": "2026-06-24", "lane": "Fractal", "label": "Paired Foundry window" }
+      ],
+      "x_ticks": ["2025-04-22", "2025-09-01", "2026-01-01", "2026-06-24"],
+      "note": "Boundary parents are identified from this monitor's attributed AuxPoW event data; Bitcoin block times and heights are used at the presentation boundary."
+    }
+  ],
   "references": [
     {
       "id": 1,

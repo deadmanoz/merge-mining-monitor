@@ -6,6 +6,13 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Turn findings figures into claim-led evidence panels with compact metrics,
+  accessible summaries, multi-series charts, bars, discrete lollipops,
+  annotations, highlighted periods, and event timelines. Show Foundry's RSK
+  and Fractal exit across the full paired window with separate weekly series
+  and an explicit zero tail, and give every other published finding a visual
+  form suited to its evidence.
+
 - Remove the `reclassify-pools` RSK skip, so each run scans the active corpus
   instead of usually paying for two fingerprint scans without short-circuiting.
   The skip required an unchanged active set, which continuous RSK capture
