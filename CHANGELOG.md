@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-15
+
 - Turn findings figures into claim-led evidence panels with compact metrics,
   accessible summaries, multi-series charts, bars, discrete lollipops,
   annotations, highlighted periods, and event timelines. Show Foundry's RSK
