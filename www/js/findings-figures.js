@@ -116,9 +116,9 @@ function seriesMark(series, index, px, py, baselineY, xSpan) {
     .join("");
 }
 
-function annotationAnchor(x) {
-  if (x < CHART.pad.left + 100) return { anchor: "start", dx: 6 };
-  if (x > CHART.width - CHART.pad.right - 100) return { anchor: "end", dx: -6 };
+function annotationAnchor(x, width, pad) {
+  if (x < pad.left + 100) return { anchor: "start", dx: 6 };
+  if (x > width - pad.right - 100) return { anchor: "end", dx: -6 };
   return { anchor: "middle", dx: 0 };
 }
 
@@ -126,7 +126,7 @@ function renderSeriesChart(figure) {
   const { width: W, height: H, pad: PAD } = CHART;
   const points = figure.series.flatMap((series) => series.points);
   const xs = points.map((point) => instantMs(point.t));
-  const values = points.map((point) => point.v);
+  const values = [...points.map((point) => point.v), ...(figure.references || []).map((reference) => reference.v)];
   const x0 = Math.min(...xs);
   const x1 = Math.max(...xs);
   const xSpan = x1 - x0 || 1;
@@ -177,7 +177,7 @@ function renderSeriesChart(figure) {
   const markers = (figure.markers || [])
     .map((marker) => {
       const x = px(instantMs(marker.t));
-      const { anchor, dx } = annotationAnchor(x);
+      const { anchor, dx } = annotationAnchor(x, W, PAD);
       return `<line class="fig-marker" x1="${x.toFixed(1)}" y1="${PAD.top - 4}" x2="${x.toFixed(1)}" y2="${H - PAD.bottom}" />
         <text class="fig-marker-label" x="${(x + dx).toFixed(1)}" y="${PAD.top - 27}" text-anchor="${anchor}">
           <tspan x="${(x + dx).toFixed(1)}">${esc(marker.label)}</tspan>
@@ -251,7 +251,7 @@ function renderTimeline(figure) {
     .map((event, index) => {
       const x = px(instantMs(event.t));
       const y = laneY(event.lane);
-      const { anchor, dx } = annotationAnchor(x);
+      const { anchor, dx } = annotationAnchor(x, W, PAD);
       const above = index % 2 === 0;
       const labelY = above ? y - 20 : y + 28;
       return `<line class="timeline-event-line" x1="${x.toFixed(1)}" y1="${y - 13}" x2="${x.toFixed(1)}" y2="${y + 13}" />

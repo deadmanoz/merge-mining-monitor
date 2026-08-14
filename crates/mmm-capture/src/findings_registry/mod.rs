@@ -527,6 +527,23 @@ mod tests {
         })
     }
 
+    fn valid_event_timeline_json() -> serde_json::Value {
+        serde_json::json!({
+            "kind": "event-timeline",
+            "caption": "Test timeline",
+            "accessible_summary": "Two events occur ten days apart.",
+            "summary": [
+                { "label": "Events", "value": "2", "detail": "Across ten days" }
+            ],
+            "events": [
+                { "t": "2026-06-01", "lane": "Observed", "label": "First" },
+                { "t": "2026-06-10", "lane": "Observed", "label": "Second" }
+            ],
+            "cadence": { "days": 7, "label": "Expected weekly" },
+            "note": "test data"
+        })
+    }
+
     #[test]
     fn valid_figure_passes() {
         let mut v = valid_finding_json();
@@ -585,6 +602,17 @@ mod tests {
     }
 
     #[test]
+    fn y_bounds_excluding_reference_values_are_rejected() {
+        let mut fig = valid_figure_json();
+        fig["y_min"] = serde_json::json!(0.0);
+        fig["y_max"] = serde_json::json!(3.0);
+        fig["references"] = serde_json::json!([{ "v": 4.0, "label": "limit" }]);
+        let mut v = valid_finding_json();
+        v["figures"] = serde_json::json!([fig]);
+        expect_err(v, "y bounds exclude reference values");
+    }
+
+    #[test]
     fn malformed_figure_instant_is_rejected() {
         let mut fig = valid_figure_json();
         fig["series"][0]["points"][0]["t"] = serde_json::json!("June 1st");
@@ -596,22 +624,31 @@ mod tests {
     #[test]
     fn valid_event_timeline_passes() {
         let mut v = valid_finding_json();
-        v["figures"] = serde_json::json!([{
-            "kind": "event-timeline",
-            "caption": "Test timeline",
-            "accessible_summary": "Two events occur ten days apart.",
-            "summary": [
-                { "label": "Events", "value": "2", "detail": "Across ten days" }
-            ],
-            "events": [
-                { "t": "2026-06-01", "lane": "Observed", "label": "First" },
-                { "t": "2026-06-10", "lane": "Observed", "label": "Second" }
-            ],
-            "cadence": { "days": 7, "label": "Expected weekly" },
-            "note": "test data"
-        }]);
+        v["figures"] = serde_json::json!([valid_event_timeline_json()]);
         let finding = parse(v);
         validate_finding("test-finding", &finding).expect("valid timeline");
+    }
+
+    #[test]
+    fn event_timeline_markers_are_rejected() {
+        let mut timeline = valid_event_timeline_json();
+        timeline["markers"] = serde_json::json!([{ "t": "2026-06-05", "label": "Hidden marker" }]);
+        let mut v = valid_finding_json();
+        v["figures"] = serde_json::json!([timeline]);
+        expect_err(v, "event timeline cannot contain series-chart fields");
+    }
+
+    #[test]
+    fn event_timeline_bands_are_rejected() {
+        let mut timeline = valid_event_timeline_json();
+        timeline["bands"] = serde_json::json!([{
+            "from": "2026-06-02",
+            "to": "2026-06-05",
+            "label": "Hidden band"
+        }]);
+        let mut v = valid_finding_json();
+        v["figures"] = serde_json::json!([timeline]);
+        expect_err(v, "event timeline cannot contain series-chart fields");
     }
 
     #[test]

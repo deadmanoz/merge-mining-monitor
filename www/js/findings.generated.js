@@ -106,7 +106,7 @@ export const FINDINGS = [
           {
             "from": "2026-07-20",
             "to": "2026-07-27",
-            "label": "Post-halt",
+            "label": "Halt + zero tail",
             "detail": "68 events before the stop, then zero"
           }
         ],

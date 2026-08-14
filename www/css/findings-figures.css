@@ -100,14 +100,22 @@
   height: 9px;
   border: 0;
   border-radius: 1px;
-  background: var(--focus);
+  background: color-mix(in srgb, var(--text) 70%, var(--surface));
+}
+
+.figure-legend-swatch.fig-mark-bar.fig-series-1 {
+  background: color-mix(in srgb, var(--focus) 70%, var(--surface));
 }
 
 .figure-legend-swatch.fig-mark-lollipop {
   width: 8px;
   height: 8px;
-  border: 2px solid var(--focus);
+  border: 2px solid var(--text);
   border-radius: 50%;
+}
+
+.figure-legend-swatch.fig-mark-lollipop.fig-series-1 {
+  border-color: var(--focus);
 }
 
 .figure-plot-scroll {
@@ -163,8 +171,12 @@
 }
 
 rect.fig-series {
-  fill: color-mix(in srgb, var(--focus) 70%, var(--surface));
+  fill: color-mix(in srgb, var(--text) 70%, var(--surface));
   stroke: none;
+}
+
+rect.fig-series-1 {
+  fill: color-mix(in srgb, var(--focus) 70%, var(--surface));
 }
 
 .fig-series-1 {

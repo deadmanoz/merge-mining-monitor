@@ -275,6 +275,11 @@ fn validate_y_domain(
         if !reference.v.is_finite() {
             return Err(ctx("figure reference value must be finite".into()));
         }
+        if figure.y_min.is_some_and(|min| min > reference.v)
+            || figure.y_max.is_some_and(|max| max < reference.v)
+        {
+            return Err(ctx("figure y bounds exclude reference values".into()));
+        }
     }
     Ok(())
 }
@@ -287,6 +292,8 @@ fn validate_event_timeline(
         || figure.y_min.is_some()
         || figure.y_max.is_some()
         || !figure.series.is_empty()
+        || !figure.markers.is_empty()
+        || !figure.bands.is_empty()
         || !figure.references.is_empty()
     {
         return Err(ctx(

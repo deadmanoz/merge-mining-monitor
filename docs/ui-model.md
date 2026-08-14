@@ -106,8 +106,8 @@ bucket is not mistaken for a complete week. The Foundry stale cluster uses
 one lollipop per stale block so irregular events are not connected into a
 false trend. Hathor keeps its long-window difficulty line but labels the
 pre-collapse regime, post-collapse floor, and work reduction directly. The
-Foundry entry and Terracoin findings use event timelines for tenure boundaries
-and sparse full-target wins.
+Foundry's RSK and Fractal entry uses paired weekly series across its opening
+window, while Terracoin uses an event timeline for sparse full-target wins.
 
 The topbar includes a compact About affordance beside the product name. It
 opens a modal with a step-through visual explainer of why merge-mined AuxPoW
