@@ -228,7 +228,7 @@ function resolvePayload(payload, ...args) {
 
 // One findings-corpus entry with every render-critical field present, so a
 // spec only overrides what it is exercising. Mirrors the generated shape
-// (findings_registry.rs), not the authoring shape: newest-first ordering is
+// (findings_registry/mod.rs), not the authoring shape: newest-first ordering is
 // the caller's job, like the generator's.
 function makeFinding(overrides = {}) {
   return {

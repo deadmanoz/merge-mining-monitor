@@ -23,15 +23,40 @@ const CORPUS = [
     ],
     figures: [
       {
-        kind: "line-series",
-        caption: "Weekly captures",
+        kind: "series-chart",
+        caption: "Weekly captures by source",
+        accessible_summary: "Both series fall to zero after the halt.",
+        summary: [
+          { label: "Window", value: "3 weeks", detail: "6 to 20 July" },
+          { label: "Last value", value: "0", detail: "After the halt" },
+        ],
         y_label: "events / week",
-        points: [
-          { t: "2026-07-06", v: 480 },
-          { t: "2026-07-13", v: 538 },
-          { t: "2026-07-20", v: 68 },
+        y_min: 0,
+        series: [
+          {
+            label: "Primary",
+            mark: "line",
+            style: "solid",
+            points: [
+              { t: "2026-07-06", v: 480 },
+              { t: "2026-07-13", v: 538 },
+              { t: "2026-07-20", v: 0 },
+            ],
+          },
+          {
+            label: "Secondary",
+            mark: "line",
+            style: "dashed",
+            points: [
+              { t: "2026-07-06", v: 280 },
+              { t: "2026-07-13", v: 338 },
+              { t: "2026-07-20", v: 0 },
+            ],
+          },
         ],
         markers: [{ t: "2026-07-20", label: "halt" }],
+        bands: [{ from: "2026-07-13", to: "2026-07-20", label: "zero tail" }],
+        x_ticks: ["2026-07-06", "2026-07-13", "2026-07-20"],
         note: "test data",
       },
     ],
@@ -51,6 +76,22 @@ const CORPUS = [
     status: "concluded",
     observed_at: "2026-06-01",
     affected_sources: ["auxpow:namecoin"],
+    figures: [
+      {
+        kind: "event-timeline",
+        caption: "A test event window",
+        accessible_summary: "The window opens and closes on named events.",
+        summary: [{ label: "Window", value: "9 days", detail: "1 to 10 June" }],
+        events: [
+          { t: "2026-06-01", lane: "Observed", label: "opens" },
+          { t: "2026-06-10", lane: "Observed", label: "closes" },
+        ],
+        intervals: [
+          { from: "2026-06-01", to: "2026-06-10", lane: "Observed", label: "active" },
+        ],
+        note: "test timeline",
+      },
+    ],
   }),
 ];
 
@@ -177,17 +218,29 @@ test("pool and child-height anchors are informational, not clickable", async ({ 
   expect(await statics.first().evaluate((el) => el.tagName)).toBe("SPAN");
 });
 
-test("a line-series figure renders with its marker and caption", async ({ page }) => {
+test("a multi-series evidence figure renders its summary, styles, marker, and caption", async ({ page }) => {
   await openFindings(page, { path: "/?view=findings&finding=newest-incident" });
 
   const figure = page.locator(".finding-figure");
-  await expect(figure.locator("svg path")).toHaveCount(1);
-  const marker = figure.locator("svg text").filter({ hasText: "halt" });
+  await expect(figure.locator(".figure-summary-item")).toHaveCount(2);
+  await expect(figure.locator("svg path.fig-series")).toHaveCount(2);
+  await expect(figure.locator("svg path.fig-style-dashed")).toHaveCount(1);
+  const marker = figure.locator("svg text.fig-marker-label").filter({ hasText: "halt" });
   await expect(marker).toBeVisible();
-  // The marker sits on the final sample: a center anchor would clip its label
-  // outside the viewBox, so edge markers re-anchor inward.
   await expect(marker).toHaveAttribute("text-anchor", "end");
-  await expect(figure.locator("figcaption")).toContainText("Weekly captures");
+  await expect(figure.locator(".fig-band")).toContainText("zero tail");
+  await expect(figure.locator("figcaption")).toContainText("Weekly captures by source");
+  await expect(figure.locator("svg")).toHaveAttribute("aria-label", /fall to zero/);
+});
+
+test("an event timeline renders lanes, interval, and boundary events", async ({ page }) => {
+  await openFindings(page, { path: "/?view=findings&finding=oldest-note" });
+
+  const figure = page.locator(".finding-figure-event-timeline");
+  await expect(figure.locator(".timeline-lane-label")).toHaveText("Observed");
+  await expect(figure.locator(".timeline-interval")).toHaveCount(1);
+  await expect(figure.locator(".timeline-event-dot")).toHaveCount(2);
+  await expect(figure.locator("figcaption")).toContainText("test event window");
 });
 
 test("a citation click in a card summary does not open the article", async ({ page }) => {
@@ -242,7 +295,7 @@ test("wide screens bound and center the findings column", async ({ page }) => {
 });
 
 test("mobile widths collapse findings to a single column", async ({ page }) => {
-  await page.setViewportSize({ width: 700, height: 900 });
+  await page.setViewportSize({ width: 480, height: 900 });
   await openFindings(page);
 
   // The base findings grid override outranks the breakpoint's plain
@@ -256,6 +309,34 @@ test("mobile widths collapse findings to a single column", async ({ page }) => {
   });
   expect(layout.stacked).toBe(true);
   expect(layout.mainWidth).toBeGreaterThan(layout.workspaceWidth * 0.9);
+
+  await page.locator('article.finding-card[data-finding="newest-incident"]').click();
+  const figureLayout = await page.evaluate(() => {
+    const items = [...document.querySelectorAll(".figure-summary-item")].map((item) =>
+      item.getBoundingClientRect(),
+    );
+    const plot = document.querySelector(".figure-plot-scroll");
+    const figure = document.querySelector(".finding-figure");
+    return {
+      summaryStacked: items.length > 1 && items[1].top >= items[0].bottom,
+      plotScrollable: plot.scrollWidth > plot.clientWidth,
+      figureContained: figure.scrollHeight <= figure.clientHeight + 1,
+    };
+  });
+  expect(figureLayout.summaryStacked).toBe(true);
+  expect(figureLayout.plotScrollable).toBe(true);
+  expect(figureLayout.figureContained).toBe(true);
+});
+
+test("series fallback ticks use the global time extent", async ({ page }) => {
+  const finding = structuredClone(CORPUS[0]);
+  delete finding.figures[0].x_ticks;
+  finding.figures[0].series[1].points = finding.figures[0].series[1].points.slice(0, 2);
+  await openFindings(page, { corpus: [finding] });
+  await page.locator('article.finding-card[data-finding="newest-incident"]').click();
+
+  const ticks = await page.locator(".figure-plot .fig-tick").allTextContents();
+  expect(ticks).toEqual(expect.arrayContaining(["06 Jul", "20 Jul"]));
 });
 
 test("the article renders cited prose and a Sources list", async ({ page }) => {

@@ -12,6 +12,26 @@
     { "kind": "btc-height", "value": "950154", "label": "recovered canonical parent" },
     { "kind": "source", "value": "auxpow:terracoin" }
   ],
+  "figures": [
+    {
+      "kind": "event-timeline",
+      "caption": "Recent Terracoin parents that cleared Bitcoin's full target, compared with the six-week expectation while hashrate is present.",
+      "accessible_summary": "Terracoin recorded two full-difficulty Bitcoin parents three days apart in May 2025, then no further one until May 20, 2026. That 379-day gap is about nine times the six-week expectation, showing bursty rather than continuous hashrate.",
+      "summary": [
+        { "label": "Observed gap", "value": "379 days", "detail": "6 May 2025 to 20 May 2026" },
+        { "label": "Active-rate expectation", "value": "~6 weeks", "detail": "Only while hashrate points at Terracoin" },
+        { "label": "Latest parent", "value": "BTC 950,154", "detail": "20 May 2026" }
+      ],
+      "events": [
+        { "t": "2025-05-03T04:20", "lane": "Full-target parents", "label": "BTC 894,986", "detail": "3 May 2025" },
+        { "t": "2025-05-06T08:51", "lane": "Full-target parents", "label": "BTC 895,496", "detail": "6 May 2025" },
+        { "t": "2026-05-20T00:13", "lane": "Full-target parents", "label": "BTC 950,154", "detail": "20 May 2026" }
+      ],
+      "cadence": { "days": 42, "label": "Expected about every 6 weeks while hashrate is active" },
+      "x_ticks": ["2025-05-03T04:20", "2025-09-01", "2026-01-01", "2026-05-20"],
+      "note": "Full-target parents from this monitor's recovered Terracoin event data. Expected cadence uses the reported ~4.77e9 difficulty and observed ~2-minute child-block cadence."
+    }
+  ],
   "references": [
     {
       "id": 1,

@@ -288,45 +288,6 @@
   font-size: 13.5px;
 }
 
-/* ── Figures ──────────────────────────────────────────────── */
-
-.finding-figure {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-alt);
-  padding: 12px 12px 8px;
-  display: grid;
-  gap: 6px;
-  max-width: 640px;
-  margin: 0;
-}
-
-.finding-figure svg {
-  width: 100%;
-  height: auto;
-  display: block;
-}
-
-.finding-figure .fig-tick {
-  font-size: 9.5px;
-  fill: var(--faint);
-  font-family: var(--mono);
-}
-
-.finding-figure figcaption {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.fig-ylabel {
-  color: var(--faint);
-}
-
-.fig-note {
-  color: var(--faint);
-  font-size: 11.5px;
-}
-
 /* ── Anchors and sources ──────────────────────────────────── */
 
 .finding-anchors {

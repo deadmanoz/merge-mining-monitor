@@ -16,32 +16,55 @@
   ],
   "figures": [
     {
-      "kind": "line-series",
-      "caption": "Hathor block weight, February to July 2026",
+      "kind": "series-chart",
+      "caption": "Hathor block weight before, during, and after the June 2026 collapse.",
+      "accessible_summary": "Hathor block weight held near 68.7 through the first half of 2026, fell to 56.9 over two days beginning June 10, and stayed there through July. The 11.8-bit drop represents roughly 3,500 times less work per block.",
+      "summary": [
+        { "label": "Work reduction", "value": "~3,500×", "detail": "About 11.8 difficulty bits" },
+        { "label": "Before", "value": "~68.7", "detail": "Block weight through 10 Jun" },
+        { "label": "After", "value": "56.9", "detail": "New floor through 29 Jul" }
+      ],
       "y_label": "block weight (log2 difficulty)",
-      "points": [
-        { "t": "2026-02-14", "v": 67.86 },
-        { "t": "2026-03-21", "v": 68.19 },
-        { "t": "2026-04-25", "v": 68.09 },
-        { "t": "2026-05-12", "v": 68.03 },
-        { "t": "2026-05-30", "v": 69.08 },
-        { "t": "2026-06-06", "v": 68.84 },
-        { "t": "2026-06-08", "v": 68.78 },
-        { "t": "2026-06-10T01:20", "v": 68.68 },
-        { "t": "2026-06-10T11:44", "v": 68.66 },
-        { "t": "2026-06-10T12:30", "v": 66.21 },
-        { "t": "2026-06-10T13:12", "v": 64.04 },
-        { "t": "2026-06-10T13:48", "v": 62.10 },
-        { "t": "2026-06-10T14:23", "v": 60.30 },
-        { "t": "2026-06-12", "v": 56.91 },
-        { "t": "2026-06-24", "v": 56.91 },
-        { "t": "2026-07-07", "v": 56.91 },
-        { "t": "2026-07-21", "v": 56.91 },
-        { "t": "2026-07-29", "v": 56.91 }
+      "y_min": 56,
+      "y_max": 70,
+      "series": [
+        {
+          "label": "Hathor block weight",
+          "mark": "line",
+          "style": "solid",
+          "points": [
+            { "t": "2026-02-14", "v": 67.86 },
+            { "t": "2026-03-21", "v": 68.19 },
+            { "t": "2026-04-25", "v": 68.09 },
+            { "t": "2026-05-12", "v": 68.03 },
+            { "t": "2026-05-30", "v": 69.08 },
+            { "t": "2026-06-06", "v": 68.84 },
+            { "t": "2026-06-08", "v": 68.78 },
+            { "t": "2026-06-10T01:20", "v": 68.68 },
+            { "t": "2026-06-10T11:44", "v": 68.66 },
+            { "t": "2026-06-10T12:30", "v": 66.21 },
+            { "t": "2026-06-10T13:12", "v": 64.04 },
+            { "t": "2026-06-10T13:48", "v": 62.10 },
+            { "t": "2026-06-10T14:23", "v": 60.30 },
+            { "t": "2026-06-12", "v": 56.91 },
+            { "t": "2026-06-24", "v": 56.91 },
+            { "t": "2026-07-07", "v": 56.91 },
+            { "t": "2026-07-21", "v": 56.91 },
+            { "t": "2026-07-29", "v": 56.91 }
+          ]
+        }
       ],
       "markers": [
-        { "t": "2026-06-10T12:00", "label": "collapse begins" }
+        { "t": "2026-06-10T12:00", "label": "Collapse begins", "detail": "12:00 UTC, 10 Jun" }
       ],
+      "bands": [
+        { "from": "2026-06-10T12:00", "to": "2026-06-12", "label": "~3,500× less work", "detail": "68.7 → 56.9" }
+      ],
+      "references": [
+        { "v": 68.7, "label": "Pre-collapse regime ~68.7" },
+        { "v": 56.91, "label": "Post-collapse floor 56.9" }
+      ],
+      "x_ticks": ["2026-02-14", "2026-04-25", "2026-06-10", "2026-07-29"],
       "note": "Sampled per height window from the Hathor public node API, 2026-07-29."
     }
   ],
