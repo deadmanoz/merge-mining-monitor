@@ -109,6 +109,6 @@ justfile           # db, build, test, lint, serve, sync, poll, and backfill targ
   and emitted into `migrations/0002_seed_sources.sql` and
   `www/js/source-registry.generated.js`.
 - The generated findings corpus is owned by
-  `crates/mmm-capture/src/findings_registry.rs`, which validates the
+  `crates/mmm-capture/src/findings_registry/mod.rs`, which validates the
   hand-authored `data/findings/` files and emits
   `www/js/findings.generated.js`.

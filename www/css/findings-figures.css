@@ -8,8 +8,10 @@
   background: var(--surface-alt);
   display: grid;
   gap: 0;
+  /* The fixed-height findings grid may shrink an overflow-hidden item below
+     its contents. Preserve the intrinsic figure height so axes and captions
+     stay inside the rounded container and the parent scroller owns overflow. */
   height: max-content;
-  min-height: max-content;
   width: 100%;
   max-width: 900px;
   margin: 2px 0 0;

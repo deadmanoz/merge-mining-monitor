@@ -295,7 +295,7 @@ test("wide screens bound and center the findings column", async ({ page }) => {
 });
 
 test("mobile widths collapse findings to a single column", async ({ page }) => {
-  await page.setViewportSize({ width: 700, height: 900 });
+  await page.setViewportSize({ width: 480, height: 900 });
   await openFindings(page);
 
   // The base findings grid override outranks the breakpoint's plain
@@ -316,13 +316,27 @@ test("mobile widths collapse findings to a single column", async ({ page }) => {
       item.getBoundingClientRect(),
     );
     const plot = document.querySelector(".figure-plot-scroll");
+    const figure = document.querySelector(".finding-figure");
     return {
       summaryStacked: items.length > 1 && items[1].top >= items[0].bottom,
       plotScrollable: plot.scrollWidth > plot.clientWidth,
+      figureContained: figure.scrollHeight <= figure.clientHeight + 1,
     };
   });
   expect(figureLayout.summaryStacked).toBe(true);
   expect(figureLayout.plotScrollable).toBe(true);
+  expect(figureLayout.figureContained).toBe(true);
+});
+
+test("series fallback ticks use the global time extent", async ({ page }) => {
+  const finding = structuredClone(CORPUS[0]);
+  delete finding.figures[0].x_ticks;
+  finding.figures[0].series[1].points = finding.figures[0].series[1].points.slice(0, 2);
+  await openFindings(page, { corpus: [finding] });
+  await page.locator('article.finding-card[data-finding="newest-incident"]').click();
+
+  const ticks = await page.locator(".figure-plot .fig-tick").allTextContents();
+  expect(ticks).toEqual(expect.arrayContaining(["06 Jul", "20 Jul"]));
 });
 
 test("the article renders cited prose and a Sources list", async ({ page }) => {

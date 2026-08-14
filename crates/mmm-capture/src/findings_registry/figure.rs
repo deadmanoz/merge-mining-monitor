@@ -196,6 +196,10 @@ fn validate_series_chart(
     if !figure.events.is_empty() || !figure.intervals.is_empty() || figure.cadence.is_some() {
         return Err(ctx("series chart cannot contain timeline fields".into()));
     }
+    let mark = figure.series[0].mark;
+    if figure.series.iter().any(|series| series.mark != mark) {
+        return Err(ctx("series chart series must use the same mark".into()));
+    }
 
     let mut first = None;
     let mut last = None;

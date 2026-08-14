@@ -80,7 +80,7 @@ function yDomain(figure, values) {
   if (figure.y_min === undefined) lo = Math.floor(lo / step) * step;
   if (figure.y_max === undefined) hi = Math.ceil(hi / step) * step;
   if (lo === hi) hi = lo + 1;
-  return { lo, hi, step: niceStep(hi - lo) };
+  return { lo, hi };
 }
 
 function seriesMark(series, index, px, py, baselineY, xSpan) {
@@ -185,7 +185,8 @@ function renderSeriesChart(figure) {
         </text>`;
     })
     .join("");
-  const ticks = (figure.x_ticks?.length ? figure.x_ticks : [points[0].t, points[points.length - 1].t])
+  const fallbackTicks = [x0, x1].map((instant) => new Date(instant).toISOString().slice(0, 16));
+  const ticks = (figure.x_ticks?.length ? figure.x_ticks : fallbackTicks)
     .map((tick, index, all) => {
       const x = px(instantMs(tick));
       const anchor = index === 0 ? "start" : index === all.length - 1 ? "end" : "middle";
