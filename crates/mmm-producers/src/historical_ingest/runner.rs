@@ -257,7 +257,7 @@ pub async fn run_historical_import(
         None,
     )
     .await;
-    unlock_core_cache_after_historical_import(client, result).await
+    mmm_store::finish_bitcoin_core_header_cache_operation(client, result).await
 }
 
 async fn run_historical_import_with_cache(
@@ -477,7 +477,7 @@ async fn run_historical_import_configs(
     let result =
         run_historical_import_configs_locked(client, classifier, configs, preflighted_artifacts)
             .await;
-    unlock_core_cache_after_historical_import(client, result).await
+    mmm_store::finish_bitcoin_core_header_cache_operation(client, result).await
 }
 
 async fn run_historical_import_configs_locked(
@@ -538,21 +538,6 @@ async fn run_historical_import_configs_locked(
         reconcile_published_stale_branches(client, classifier, &nbits_table).await?;
     rebuild_historical_source_health(client).await?;
     Ok(summary)
-}
-
-async fn unlock_core_cache_after_historical_import<T>(
-    client: &mut Client,
-    result: Result<T>,
-) -> Result<T> {
-    let unlock_result = mmm_store::unlock_bitcoin_core_header_cache(client).await;
-    match (result, unlock_result) {
-        (Ok(value), Ok(())) => Ok(value),
-        (Err(error), Ok(())) => Err(error),
-        (Ok(_), Err(error)) => Err(error),
-        (Err(error), Err(unlock_error)) => Err(error.context(format!(
-            "also failed to unlock Core header cache after historical import: {unlock_error}"
-        ))),
-    }
 }
 
 /// Exercise the production multi-chain orchestration with explicit normalized

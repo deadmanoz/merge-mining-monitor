@@ -11,9 +11,9 @@ use mmm_producers::refresh_bitcoin_core_header_cache;
 use mmm_read_model::reconcile_from_merge_mining_event;
 use mmm_store::{
     BitcoinCoreHeader, complete_bitcoin_core_header_cache_reclassification,
-    load_bitcoin_core_nbits_table, load_bitcoin_core_nbits_table_if_present,
-    lock_bitcoin_core_header_cache, record_bitcoin_core_header, replace_bitcoin_core_header_cache,
-    unlock_bitcoin_core_header_cache, upsert_merge_mining_event,
+    finish_bitcoin_core_header_cache_operation, load_bitcoin_core_nbits_table,
+    load_bitcoin_core_nbits_table_if_present, lock_bitcoin_core_header_cache,
+    record_bitcoin_core_header, replace_bitcoin_core_header_cache, upsert_merge_mining_event,
 };
 
 use crate::support::db::connect_to_schema;
@@ -102,7 +102,6 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
             &header(100, 1, 100, 0x1d00_ffff),
         )
         .await?;
-        assert!(first.horizon_advanced);
         assert!(first.reclassification_needed);
         complete_bitcoin_core_header_cache_reclassification(&client).await?;
 
@@ -114,7 +113,6 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
             &header(101, 2, 99, 0x1d00_ffff),
         )
         .await?;
-        assert!(advanced_with_an_older_timestamp.horizon_advanced);
         assert!(advanced_with_an_older_timestamp.reclassification_needed);
         assert_eq!(
             load_bitcoin_core_nbits_table(&client).await?.horizon_time(),
@@ -208,7 +206,7 @@ async fn core_header_cache_refresh_lock_serializes_sessions() -> Result<()> {
         let waiting_client = connect_to_schema(&schema).await?;
         let mut waiter = tokio::spawn(async move {
             lock_bitcoin_core_header_cache(&waiting_client).await?;
-            unlock_bitcoin_core_header_cache(&waiting_client).await
+            finish_bitcoin_core_header_cache_operation(&waiting_client, Ok(())).await
         });
         assert!(
             tokio::time::timeout(std::time::Duration::from_millis(100), &mut waiter)
@@ -217,7 +215,7 @@ async fn core_header_cache_refresh_lock_serializes_sessions() -> Result<()> {
             "a second Core-cache refresh must wait for the current observation"
         );
 
-        unlock_bitcoin_core_header_cache(&client).await?;
+        finish_bitcoin_core_header_cache_operation(&client, Ok(())).await?;
         tokio::time::timeout(std::time::Duration::from_secs(1), &mut waiter)
             .await
             .expect("waiting Core-cache refresh did not resume")??;

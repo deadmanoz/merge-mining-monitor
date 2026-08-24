@@ -24,10 +24,10 @@ pub struct BitcoinCoreHeader {
 /// A changed shallow header can alter previously derived orphan placement, so
 /// callers must reclassify existing orphan rows before releasing the cache
 /// refresh lock.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BitcoinCoreHeaderCacheUpdate {
-    pub shallow_reorged: bool,
-    pub horizon_advanced: bool,
+    /// Existing pending or orphan rows must be reconsidered against the new
+    /// persisted Core coverage before the cache lock is released.
     pub reclassification_needed: bool,
 }
 
@@ -53,7 +53,7 @@ pub async fn lock_bitcoin_core_header_cache(client: &Client) -> Result<()> {
 }
 
 /// Release the session lock acquired by [`lock_bitcoin_core_header_cache`].
-pub async fn unlock_bitcoin_core_header_cache(client: &Client) -> Result<()> {
+async fn unlock_bitcoin_core_header_cache(client: &Client) -> Result<()> {
     let unlocked: bool = client
         .query_one(
             "SELECT pg_advisory_unlock($1)",
@@ -64,6 +64,26 @@ pub async fn unlock_bitcoin_core_header_cache(client: &Client) -> Result<()> {
         .get(0);
     ensure!(unlocked, "Core-header-cache refresh lock was not held");
     Ok(())
+}
+
+/// Complete an operation that holds the Core-header-cache advisory lock.
+///
+/// The lock is always released. When both the operation and unlock fail, the
+/// operation remains the primary error and carries the unlock failure as
+/// context.
+pub async fn finish_bitcoin_core_header_cache_operation<T>(
+    client: &Client,
+    result: Result<T>,
+) -> Result<T> {
+    let unlock_result = unlock_bitcoin_core_header_cache(client).await;
+    match (result, unlock_result) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(unlock_error)) => Err(error.context(format!(
+            "also failed to unlock Core header cache: {unlock_error}"
+        ))),
+    }
 }
 
 pub async fn record_bitcoin_core_header<C: GenericClient>(
@@ -312,8 +332,6 @@ async fn update_bitcoin_core_header_cache_state(
         .await
         .context("update Core-header-cache state")?;
     Ok(BitcoinCoreHeaderCacheUpdate {
-        shallow_reorged,
-        horizon_advanced,
         reclassification_needed,
     })
 }

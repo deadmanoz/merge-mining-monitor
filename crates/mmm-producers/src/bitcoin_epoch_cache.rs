@@ -40,15 +40,7 @@ pub async fn refresh_bitcoin_core_header_cache(
         Ok(table)
     }
     .await;
-    let unlock_result = mmm_store::unlock_bitcoin_core_header_cache(client).await;
-    match (result, unlock_result) {
-        (Ok(table), Ok(())) => Ok(table),
-        (Err(error), Ok(())) => Err(error),
-        (Ok(_), Err(error)) => Err(error),
-        (Err(error), Err(unlock_error)) => Err(error.context(format!(
-            "also failed to unlock Core header cache: {unlock_error}"
-        ))),
-    }
+    mmm_store::finish_bitcoin_core_header_cache_operation(client, result).await
 }
 
 async fn refresh_bitcoin_core_header_cache_locked(
@@ -97,12 +89,7 @@ async fn refresh_bitcoin_core_header_cache_snapshot(
             .canonical_header(height)
             .await
             .with_context(|| format!("fetch Bitcoin Core epoch header at {height}"))?;
-        final_epochs.push(mmm_store::BitcoinCoreHeader {
-            height: header.height,
-            block_hash: header.hash.to_byte_array().to_vec(),
-            block_time: header.header_time,
-            bits: header.nbits,
-        });
+        final_epochs.push(bitcoin_core_header_cache_row(header));
     }
 
     let current_epoch = daa_epoch_start(horizon_height);
@@ -115,12 +102,7 @@ async fn refresh_bitcoin_core_header_cache_snapshot(
             .with_context(|| {
                 format!("fetch shallow Bitcoin Core epoch header at {current_epoch}")
             })?;
-        Some(mmm_store::BitcoinCoreHeader {
-            height: header.height,
-            block_hash: header.hash.to_byte_array().to_vec(),
-            block_time: header.header_time,
-            bits: header.nbits,
-        })
+        Some(bitcoin_core_header_cache_row(header))
     } else {
         None
     };
@@ -152,18 +134,22 @@ async fn refresh_bitcoin_core_header_cache_snapshot(
         final_epoch,
         &final_epochs,
         shallow_epoch.as_ref(),
-        &mmm_store::BitcoinCoreHeader {
-            height: opening_horizon.height,
-            block_hash: opening_horizon.hash.to_byte_array().to_vec(),
-            block_time: opening_horizon.header_time,
-            bits: opening_horizon.nbits,
-        },
+        &bitcoin_core_header_cache_row(opening_horizon),
     )
     .await?;
     Ok(Some((
         mmm_store::load_bitcoin_core_nbits_table(client).await?,
         update,
     )))
+}
+
+fn bitcoin_core_header_cache_row(header: CoreHeader) -> mmm_store::BitcoinCoreHeader {
+    mmm_store::BitcoinCoreHeader {
+        height: header.height,
+        block_hash: header.hash.to_byte_array().to_vec(),
+        block_time: header.header_time,
+        bits: header.nbits,
+    }
 }
 
 fn cache_snapshot_is_current(
