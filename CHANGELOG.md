@@ -27,7 +27,9 @@ This changelog starts with the initial release.
   refresh waits for an in-flight classification transaction, so its completed
   sweep cannot miss a later commit made from an old cache snapshot. Cache
   readers acquire that shared lock before parent locks, and a non-mainnet Core
-  tip holds rather than revoking a claimed mainnet height.
+  tip holds rather than revoking a claimed mainnet height. A fresh Core tip
+  rejects a claimed BIP34 height more than 144 blocks beyond it even if a stale
+  cache already covers that height.
 
 - Atomically repair existing strict/weak classifications with an
   `import-known-stales` membership update.

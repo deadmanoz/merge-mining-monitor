@@ -202,7 +202,7 @@ async fn import_known_stales_repairs_contaminated_orphan_rows() -> Result<()> {
         let result = async {
             std::fs::write(
                 &csv_path,
-                format!("height,hash,header\\n400000,{display_hash},\\n"),
+                format!("height,hash,header\n400000,{display_hash},\n"),
             )?;
             let summary = mmm_producers::run_import_known_stales(
                 &mut client,

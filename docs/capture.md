@@ -98,4 +98,6 @@ for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
   imports retain that lock across candidate validation and
   the durable derived rebuild, so one import uses one table. Hathor and Elastos
   retry once after a cache-horizon hold. The read-only API serves the persisted
-  cache without making Core RPC calls.
+  cache without making Core RPC calls. A fresh Core tip also rejects a claimed
+  BIP34 height more than 144 blocks beyond it, even when a stale cache happens
+  to cover that height.

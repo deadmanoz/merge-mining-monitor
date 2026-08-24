@@ -9,7 +9,8 @@ use mmm_capture::capture::ClassificationProof;
 use mmm_capture::nbits_table::NbitsLookup;
 use mmm_producers::refresh_bitcoin_core_header_cache;
 use mmm_read_model::{
-    lock_block_hash, reconcile_from_merge_mining_event, revoke_merge_mining_event,
+    lock_block_hash, rebuild_source_health, reconcile_from_merge_mining_event,
+    revoke_merge_mining_event,
 };
 use mmm_store::{
     BitcoinCoreHeader, complete_bitcoin_core_header_cache_reclassification,
@@ -285,7 +286,7 @@ async fn core_header_cache_refresh_waits_for_an_in_flight_classification() -> Re
 
 #[tokio::test]
 async fn revocation_waits_for_cache_before_taking_a_parent_lock() -> Result<()> {
-    crate::run_db_test!(client, schema, {
+    crate::run_mut_db_test!(client, schema, {
         let (resolver, pool_ids_by_slug, source_id, parsed) = namecoin_fixture(&client).await?;
         let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
             .expect("Namecoin fixture carries a BIP34 parent height");
@@ -312,6 +313,9 @@ async fn revocation_waits_for_cache_before_taking_a_parent_lock() -> Result<()> 
         let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
             orphan_candidate_verdict(&parent_header),
         ));
+        // This test uses the low-level fixture writer, so materialize the
+        // parent before exercising its real revocation path.
+        reconcile_from_merge_mining_event(&mut client, event_id, &classifier, None).await?;
 
         let refresh = connect_to_schema(&schema).await?;
         lock_bitcoin_core_header_cache(&refresh).await?;
@@ -564,6 +568,9 @@ async fn shallow_cache_reorg_reclassifies_existing_orphans_and_source_health() -
         let event_id = upsert_merge_mining_event(&client, source_id, &payload)
             .await?
             .event_id;
+        // The fixture writer intentionally bypasses incremental maintenance;
+        // establish its derived baseline before testing a cache-driven update.
+        rebuild_source_health(&mut client).await?;
         let absent = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
             orphan_candidate_verdict(&parent_header),
         ));

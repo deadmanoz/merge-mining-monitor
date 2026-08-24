@@ -50,18 +50,28 @@ pub(crate) async fn cached_horizon_gate(
     cached_horizon: i32,
     bip34_height: i32,
 ) -> HorizonGate {
-    if bip34_height <= cached_horizon {
-        return HorizonGate::WithinTip;
-    }
     match classifier.synced_tip().await {
-        Ok(Some(tip)) if tip.is_mainnet => {
+        Ok(Some(tip)) if tip.is_mainnet && tip.fresh => {
             match horizon_gate(Some(tip.height), tip.fresh, bip34_height) {
                 HorizonGate::FarFuture => HorizonGate::FarFuture,
+                HorizonGate::WithinTip if bip34_height <= cached_horizon => HorizonGate::WithinTip,
                 HorizonGate::Hold | HorizonGate::WithinTip => HorizonGate::Hold,
             }
         }
-        Ok(Some(_)) => HorizonGate::Hold,
-        Ok(None) => HorizonGate::Hold,
+        // A cache-covered claim remains usable when this optional fresh-tip
+        // check is unavailable. The cached header itself came from a previously
+        // fresh, mainnet Core observation; only a fresh contradictory tip may
+        // demote it.
+        Ok(Some(_)) | Ok(None) if bip34_height <= cached_horizon => HorizonGate::WithinTip,
+        Ok(Some(_)) | Ok(None) => HorizonGate::Hold,
+        Err(err) if bip34_height <= cached_horizon => {
+            warn!(
+                bip34_height,
+                error = %err,
+                "Bitcoin Core synced-tip lookup failed; retaining cache-covered height claim"
+            );
+            HorizonGate::WithinTip
+        }
         Err(err) => {
             warn!(
                 bip34_height,
@@ -99,6 +109,16 @@ mod tests {
         assert_eq!(
             cached_horizon_gate(&current_epoch_claim, 100, 101).await,
             HorizonGate::Hold
+        );
+
+        let stale_cache = ConfiguredParentClassifier::Fake(
+            FakeParentClassifier::new(ParentClassification::unknown(&header))
+                .with_synced_tip_height(100),
+        );
+        assert_eq!(
+            cached_horizon_gate(&stale_cache, 1_000, 245).await,
+            HorizonGate::FarFuture,
+            "a fresh Core tip rejects a fabricated claim even when stale cache rows cover it"
         );
 
         let unavailable = ConfiguredParentClassifier::Fake(
