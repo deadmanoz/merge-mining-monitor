@@ -19,9 +19,9 @@ maintenance modes. Each refreshes the sparse `bitcoin_core_header` cache through
 the current synced tip before work begins. `serve` reads that cache from Postgres
 and makes no Core RPC calls.
 
-The current retarget boundary is re-read until it is 100 blocks behind that tip,
-then becomes an immutable cache entry. This lets a shallow reorg replace only the
-current cache suffix while retaining the settled epoch history.
+The current retarget boundary is marked final only after Core re-reads it at 100
+blocks behind that tip. This lets a shallow reorg replace only the current cache
+suffix while retaining the settled epoch history.
 
 After applying migration `0010`, configure and sync Core before running any
 command that writes or rebuilds monitor data, including

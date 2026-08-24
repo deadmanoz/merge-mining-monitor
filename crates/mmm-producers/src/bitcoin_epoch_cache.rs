@@ -27,7 +27,7 @@ pub async fn refresh_bitcoin_core_header_cache(
     );
     let horizon_height = tip.height;
     let final_epoch = daa_epoch_start(horizon_height.saturating_sub(CORE_HEADER_REORG_SAFE_DEPTH));
-    let next_epoch = mmm_store::highest_bitcoin_core_epoch_before(client, final_epoch)
+    let next_epoch = mmm_store::highest_final_bitcoin_core_epoch(client)
         .await?
         .map_or(0, |height| height + DAA_EPOCH_INTERVAL);
     let mut final_epochs = Vec::new();

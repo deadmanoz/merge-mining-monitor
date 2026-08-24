@@ -104,10 +104,6 @@ impl NbitsTable {
             .map(|header| (header.block_time, header.height))
             .collect::<Vec<_>>();
         epochs_by_time.sort_unstable();
-        ensure!(
-            epochs_by_time.windows(2).all(|pair| pair[0].0 < pair[1].0),
-            "Bitcoin Core epoch headers are not strictly ordered by time"
-        );
         Ok(Self {
             covered_max_height: last_epoch.height,
             horizon_height: horizon.height,
@@ -269,5 +265,12 @@ mod tests {
             },
         ];
         assert!(NbitsTable::from_bitcoin_core_headers(&gap).is_err());
+    }
+
+    #[test]
+    fn cache_tolerates_nonmonotonic_epoch_times() {
+        let mut nonmonotonic = headers();
+        nonmonotonic[2].block_time = 1_500;
+        assert!(NbitsTable::from_bitcoin_core_headers(&nonmonotonic).is_ok());
     }
 }

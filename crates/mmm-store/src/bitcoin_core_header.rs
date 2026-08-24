@@ -19,21 +19,34 @@ pub async fn record_bitcoin_core_header<C: GenericClient>(
     client: &C,
     header: &BitcoinCoreHeader,
 ) -> Result<()> {
+    record_bitcoin_core_header_with_finality(client, header, header.height % 2016 == 0).await
+}
+
+async fn record_bitcoin_core_header_with_finality<C: GenericClient>(
+    client: &C,
+    header: &BitcoinCoreHeader,
+    is_final: bool,
+) -> Result<()> {
     ensure!(
         header.block_hash.len() == 32,
         "Bitcoin Core header at height {} has an invalid hash length",
         header.height
     );
+    ensure!(
+        !is_final || header.height % 2016 == 0,
+        "only a Bitcoin difficulty boundary can be final"
+    );
     let inserted = client
         .execute(
-            "INSERT INTO bitcoin_core_header (height, block_hash, block_time, bits) \
-             VALUES ($1, $2, $3, $4) \
+            "INSERT INTO bitcoin_core_header (height, block_hash, block_time, bits, is_final) \
+             VALUES ($1, $2, $3, $4, $5) \
              ON CONFLICT (height) DO NOTHING",
             &[
                 &header.height,
                 &header.block_hash,
                 &header.block_time,
                 &i64::from(header.bits),
+                &is_final,
             ],
         )
         .await
@@ -44,7 +57,8 @@ pub async fn record_bitcoin_core_header<C: GenericClient>(
 
     let existing = client
         .query_one(
-            "SELECT block_hash, block_time, bits FROM bitcoin_core_header WHERE height = $1",
+            "SELECT block_hash, block_time, bits, is_final \
+             FROM bitcoin_core_header WHERE height = $1",
             &[&header.height],
         )
         .await
@@ -57,7 +71,8 @@ pub async fn record_bitcoin_core_header<C: GenericClient>(
     ensure!(
         existing.get::<_, Vec<u8>>(0) == header.block_hash
             && existing.get::<_, i64>(1) == header.block_time
-            && existing.get::<_, i64>(2) == i64::from(header.bits),
+            && existing.get::<_, i64>(2) == i64::from(header.bits)
+            && existing.get::<_, bool>(3) == is_final,
         "Bitcoin Core header at height {} disagrees with the persisted canonical header",
         header.height
     );
@@ -65,9 +80,8 @@ pub async fn record_bitcoin_core_header<C: GenericClient>(
 }
 
 /// Replace Core observations that are still shallow while retaining immutable,
-/// reorg-safe epoch boundaries. `final_epoch_height` is the latest boundary
-/// buried deeply enough to retain; later epoch rows and the moving horizon are
-/// deleted and re-read from Core in one transaction.
+/// reorg-safe epoch boundaries. `final_epochs` contains every boundary newly
+/// verified deeply enough to become final; earlier final rows remain untouched.
 pub async fn replace_bitcoin_core_header_cache(
     client: &mut Client,
     final_epoch_height: i32,
@@ -75,6 +89,22 @@ pub async fn replace_bitcoin_core_header_cache(
     shallow_epoch: Option<&BitcoinCoreHeader>,
     horizon: &BitcoinCoreHeader,
 ) -> Result<()> {
+    ensure!(
+        final_epochs
+            .iter()
+            .all(|header| header.height % 2016 == 0 && header.height <= final_epoch_height),
+        "final Bitcoin Core headers must be difficulty boundaries at or below the cutoff"
+    );
+    if let Some(header) = shallow_epoch {
+        ensure!(
+            header.height % 2016 == 0 && header.height > final_epoch_height,
+            "shallow Bitcoin Core header must be a boundary above the cutoff"
+        );
+    }
+    ensure!(
+        horizon.height >= final_epoch_height,
+        "Bitcoin Core cache horizon must not precede the final cutoff"
+    );
     let transaction = client
         .transaction()
         .await
@@ -84,19 +114,21 @@ pub async fn replace_bitcoin_core_header_cache(
         .await
         .context("lock Core-header-cache replacement")?;
     transaction
-        .execute(
-            "DELETE FROM bitcoin_core_header WHERE height > $1",
-            &[&final_epoch_height],
-        )
+        .execute("DELETE FROM bitcoin_core_header WHERE NOT is_final", &[])
         .await
         .context("remove shallow Core-header-cache rows")?;
     for header in final_epochs {
-        record_bitcoin_core_header(&transaction, header).await?;
+        record_bitcoin_core_header_with_finality(&transaction, header, true).await?;
     }
     if let Some(header) = shallow_epoch {
-        record_bitcoin_core_header(&transaction, header).await?;
+        record_bitcoin_core_header_with_finality(&transaction, header, false).await?;
     }
-    record_bitcoin_core_header(&transaction, horizon).await?;
+    record_bitcoin_core_header_with_finality(
+        &transaction,
+        horizon,
+        horizon.height == final_epoch_height,
+    )
+    .await?;
     transaction
         .commit()
         .await
@@ -141,21 +173,16 @@ pub async fn load_bitcoin_core_nbits_table<C: GenericClient>(client: &C) -> Resu
         .context("Bitcoin Core header cache is empty")
 }
 
-/// Highest cached epoch boundary strictly before the reorg-safe cutoff.
-///
-/// The cutoff itself must be fetched again before it becomes immutable, even
-/// when it was previously observed as the current shallow epoch.
-pub async fn highest_bitcoin_core_epoch_before<C: GenericClient>(
-    client: &C,
-    height: i32,
-) -> Result<Option<i32>> {
+/// Highest epoch boundary that has already been verified at the reorg-safe
+/// depth and made immutable.
+pub async fn highest_final_bitcoin_core_epoch<C: GenericClient>(client: &C) -> Result<Option<i32>> {
     client
         .query_one(
             "SELECT max(height) FROM bitcoin_core_header \
-             WHERE height % 2016 = 0 AND height < $1",
-            &[&height],
+             WHERE is_final",
+            &[],
         )
         .await
-        .context("load highest cached Bitcoin Core epoch before reorg-safe cutoff")
+        .context("load highest final Bitcoin Core epoch")
         .map(|row| row.get(0))
 }

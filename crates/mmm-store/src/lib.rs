@@ -20,7 +20,7 @@ mod poll_cursor;
 mod pool;
 
 pub use bitcoin_core_header::{
-    BitcoinCoreHeader, highest_bitcoin_core_epoch_before, load_bitcoin_core_nbits_table,
+    BitcoinCoreHeader, highest_final_bitcoin_core_epoch, load_bitcoin_core_nbits_table,
     load_bitcoin_core_nbits_table_if_present, record_bitcoin_core_header,
     replace_bitcoin_core_header_cache,
 };
