@@ -193,6 +193,7 @@ async fn import_known_stales_repairs_contaminated_orphan_rows() -> Result<()> {
             block_kind_and_class(&client, &parent_hash).await?,
             ("unknown".to_string(), Some("weak_btc_orphan".to_string()))
         );
+        let source_id = get_source_id(&client, SYSCOIN_SOURCE_CODE).await?;
 
         let csv_path = std::env::temp_dir().join(format!(
             "known-stale-import-repair-{}-{display_hash}.csv",
@@ -218,6 +219,11 @@ async fn import_known_stales_repairs_contaminated_orphan_rows() -> Result<()> {
                 block_kind_and_class(&client, &parent_hash).await?,
                 ("unknown".to_string(), Some("excluded".to_string())),
                 "membership import repairs classifications made before the membership existed"
+            );
+            assert_eq!(
+                weak_orphan_parents(&client, source_id).await?,
+                0,
+                "the import's in-transaction repair maintains source health"
             );
             Ok::<_, anyhow::Error>(())
         }

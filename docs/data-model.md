@@ -42,8 +42,8 @@ and the Core-cache-backed strict/weak orphan classifier. Before the strict/weak
 resolution runs, the classifier consults the operator-imported
 `known_stale_block` membership (loaded by `import-known-stales` from the
 upstream `bitcoin-data/stale-blocks` dataset): a catalogued stale is `excluded`
-outright, never labelled strict/weak, and `reclassify-known-stales`
-retroactively demotes rows classified before the membership was imported.
+outright, never labelled strict/weak, and `import-known-stales` atomically
+demotes rows classified before the membership was imported.
 Published direct-stale and stale-descendant provenance is also an exclusion
 from strict/weak orphan classification while a branch remains derived
 `unknown`.

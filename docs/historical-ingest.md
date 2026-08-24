@@ -165,14 +165,15 @@ Import known Bitcoin stale membership once per database before the publication:
 just import-known-stales \
   --csv path/to/stale-blocks.csv \
   --source-label "bitcoin-data/stale-blocks@<commit>"
-just reclassify-known-stales
 ```
 
 `import-dataset` and `import-all` refuse an empty `known_stale_block` table by
 default. Without it, a catalogued stale could be labelled a strict or weak BTC
 orphan. Published direct-stale and stale-descendant provenance is also an
 exclusion from strict/weak classification, including while its branch awaits
-derived placement.
+derived placement. The import atomically demotes any existing strict/weak rows
+that match its membership; `just reclassify-known-stales` is only needed to
+repeat that repair independently.
 
 Bitcoin Core is required for every historical import, including diagnostic
 imports. `--allow-empty-known-stales` exists only for a deliberately

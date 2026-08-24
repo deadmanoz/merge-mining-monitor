@@ -221,9 +221,9 @@ orphan classifier excludes any member from strict/weak classification. The
 import is atomic and strict by default (any malformed row aborts unless
 `--skip-malformed` is passed). On a database that already classified rows
 before the membership existed, the import immediately and idempotently demotes
-contaminated strict/weak rows to `excluded`, maintaining `source_health` through
-the reconciler. `just reclassify-known-stales` remains available to repeat that
-repair independently. See
+contaminated strict/weak rows to `excluded` in the same transaction, maintaining
+`source_health` through the reconciler. `just reclassify-known-stales` remains
+available to repeat that repair independently. See
 `docs/historical-ingest.md` for the full fresh-database ordering.
 
 ## Historical Publication

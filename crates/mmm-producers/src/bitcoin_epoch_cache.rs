@@ -25,7 +25,7 @@ pub async fn refresh_bitcoin_core_header_cache(
     let result = async {
         let (table, update) = refresh_bitcoin_core_header_cache_locked(client, classifier).await?;
         if update.reclassification_needed {
-            mmm_read_model::run_reclassify_unknown_parents(
+            mmm_read_model::run_reclassify_unknown_parents_strict(
                 client,
                 classifier,
                 mmm_read_model::ReclassifyUnknownParentsConfig {

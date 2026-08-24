@@ -20,14 +20,14 @@ pub(crate) async fn event_revoked_state<C: GenericClient>(
 }
 
 /// One unit of cascade work. `Event` carries an optional pre-computed
-/// `ParentClassification` (boxed to keep the enum small) so the seeding caller
-/// can hand reconcile a trusted classification and skip a re-classify;
+/// classification (boxed to keep the enum small) so the seeding caller can
+/// pin the event it verified and skip a re-classify;
 /// `enqueue_dependents` always pushes `Event(_, None)` because a cascaded child
 /// must be re-classified from current state. `Block` is a derived-table-grain
 /// item (orphan block or stale-competitor dependent) with no anchor event.
 #[derive(Debug)]
 pub(crate) enum ReconcileWork {
-    Event(i64, Option<Box<ParentClassification>>),
+    Event(i64, Option<Box<PreclassifiedParent>>),
     Block(Vec<u8>),
 }
 
@@ -238,12 +238,11 @@ pub(crate) async fn reconcile_one_event(
     client: &mut Client,
     event_id: i64,
     classifier: &ConfiguredParentClassifier,
-    preclassified: Option<ParentClassification>,
+    preclassified: Option<PreclassifiedParent>,
     nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
 ) -> Result<Vec<Vec<u8>>> {
-    let trusted_preclassified = preclassified.map(PreclassifiedParent::trusted);
     for attempt in 0..RECONCILE_LOCK_SET_RETRY_LIMIT {
-        let attempt_preclassified = match &trusted_preclassified {
+        let attempt_preclassified = match &preclassified {
             Some(preclassified) => Some(preclassified.clone()),
             None => preclassify_event_parent(client, event_id, classifier).await?,
         };
@@ -484,6 +483,16 @@ pub(crate) async fn classify_event_parent<C: GenericClient>(
     classifier: &ConfiguredParentClassifier,
     preclassified: Option<PreclassifiedParent>,
 ) -> Result<(Header, ParentClassification)> {
+    classify_event_parent_with_policy(client, event, classifier, preclassified, false).await
+}
+
+async fn classify_event_parent_with_policy<C: GenericClient>(
+    client: &C,
+    event: &MergeMiningEvent,
+    classifier: &ConfiguredParentClassifier,
+    preclassified: Option<PreclassifiedParent>,
+    strict_core_errors: bool,
+) -> Result<(Header, ParentClassification)> {
     let header: Header = deserialize(&event.btc_parent_header_bytes)
         .with_context(|| format!("deserialize parent header for event {}", event.id))?;
     let classification = if let Some(error_block) =
@@ -496,7 +505,13 @@ pub(crate) async fn classify_event_parent<C: GenericClient>(
             None => {
                 let preflight =
                     load_parent_preflight(client, &event.btc_parent_prev_header_hash).await?;
-                classifier.classify_parent(&header, preflight).await?
+                if strict_core_errors {
+                    classifier
+                        .classify_parent_strict(&header, preflight)
+                        .await?
+                } else {
+                    classifier.classify_parent(&header, preflight).await?
+                }
             }
         }
     };
@@ -514,6 +529,26 @@ pub(crate) async fn preclassify_event_parent(
     event_id: i64,
     classifier: &ConfiguredParentClassifier,
 ) -> Result<Option<PreclassifiedParent>> {
+    preclassify_event_parent_with_policy(client, event_id, classifier, false).await
+}
+
+/// Precompute one candidate with strict Core RPC error handling. A cache-driven
+/// orphan recheck must retain its durable retry marker when fresh Core evidence
+/// cannot be obtained.
+pub(crate) async fn preclassify_event_parent_strict(
+    client: &Client,
+    event_id: i64,
+    classifier: &ConfiguredParentClassifier,
+) -> Result<Option<PreclassifiedParent>> {
+    preclassify_event_parent_with_policy(client, event_id, classifier, true).await
+}
+
+async fn preclassify_event_parent_with_policy(
+    client: &Client,
+    event_id: i64,
+    classifier: &ConfiguredParentClassifier,
+    strict_core_errors: bool,
+) -> Result<Option<PreclassifiedParent>> {
     let event = load_event(client, event_id).await?;
     if event.skips_parent_read_model() {
         return Ok(None);
@@ -523,7 +558,9 @@ pub(crate) async fn preclassify_event_parent(
     {
         return Ok(None);
     }
-    let (_, classification) = classify_event_parent(client, &event, classifier, None).await?;
+    let (_, classification) =
+        classify_event_parent_with_policy(client, &event, classifier, None, strict_core_errors)
+            .await?;
     Ok(Some(PreclassifiedParent::for_event(&event, classification)))
 }
 

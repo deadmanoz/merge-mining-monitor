@@ -439,11 +439,14 @@ pub async fn load_bitcoin_core_nbits_table_if_present<C: GenericClient>(
 ) -> Result<Option<NbitsTable>> {
     let rows = client
         .query(
-            "SELECT height, block_time, bits FROM bitcoin_core_header ORDER BY height",
+            "SELECT h.height, h.block_time, h.bits, s.horizon_time \
+             FROM bitcoin_core_header h \
+             JOIN bitcoin_core_header_cache_state s ON s.singleton \
+             ORDER BY h.height",
             &[],
         )
         .await
-        .context("load cached Bitcoin Core headers")?;
+        .context("load cached Bitcoin Core headers and timestamp coverage")?;
     let headers = rows
         .iter()
         .map(|row| {
@@ -458,14 +461,7 @@ pub async fn load_bitcoin_core_nbits_table_if_present<C: GenericClient>(
     if headers.is_empty() {
         return Ok(None);
     }
-    let cached_horizon_time: i64 = client
-        .query_one(
-            "SELECT horizon_time FROM bitcoin_core_header_cache_state WHERE singleton",
-            &[],
-        )
-        .await
-        .context("load Core-header-cache timestamp coverage")?
-        .get(0);
+    let cached_horizon_time: i64 = rows[0].get(3);
     NbitsTable::from_bitcoin_core_headers_with_horizon_time(&headers, cached_horizon_time).map(Some)
 }
 

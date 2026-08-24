@@ -18,10 +18,12 @@ This changelog starts with the initial release.
   before retaining timestamp coverage. Retarget boundaries are marked final at
   100 blocks deep. Timestamp coverage does not regress when a valid later Core
   header has an older timestamp. The API remains Core-RPC-free by reading the
-  persisted cache.
-  Remove the `--allow-unclassified` import bypass.
+  persisted cache. A cache-driven recheck requires fresh Core evidence, so an
+  RPC failure leaves its durable retry marker set. Cache headers and timestamp
+  coverage are read from one database snapshot. The `--allow-unclassified`
+  import bypass is removed.
 
-- Repair existing strict/weak classifications immediately after an
+- Atomically repair existing strict/weak classifications with an
   `import-known-stales` membership update.
 
 - Retry transient Core-header-cache refresh failures in `sync-bitcoin-core --follow`

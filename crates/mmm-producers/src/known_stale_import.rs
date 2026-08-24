@@ -123,16 +123,18 @@ impl KnownStaleImportSummary {
 }
 
 /// Read the stale-blocks CSV and upsert every hash into `known_stale_block`
-/// in one transaction, then repair any existing strict/weak classifications.
+/// in one transaction, repairing any existing strict/weak classifications
+/// before the membership becomes visible.
 ///
 /// Malformed rows (missing/unparseable `hash`) are FATAL by default, as are a
 /// missing `hash` column and a file with no usable row: downstream guards
 /// only test membership emptiness, so a corrupt or wrong dataset must never
 /// count as initialized while silently omitting known stales.
 /// `--skip-malformed` opts into tallying malformed rows as skips and
-/// importing the valid subset. The membership write is atomic: all parsed rows commit
-/// together while holding the per-parent advisory locks (acquired through the
-/// read-model's sorted, deduped `lock_block_hashes`, honoring the global lock
+/// importing the valid subset. The membership write and derived repair are
+/// atomic: all parsed rows commit together while holding the per-parent
+/// advisory locks (acquired through the read-model's sorted, deduped
+/// `lock_block_hashes`, honoring the global lock
 /// order), so the import serializes with any in-flight classification of the
 /// same hashes AND a mid-import failure records nothing, never a partial
 /// membership that downstream empty-membership guards would treat as
@@ -217,19 +219,15 @@ pub async fn run_import_known_stales(
             );
         }
     }
+    let demoted = mmm_read_model::reclassify_known_stale_hashes_in_transaction(&txn, &hashes)
+        .await
+        .context("repair known-stale classifications in import transaction")?;
     txn.commit()
         .await
         .context("commit known-stale import transaction")?;
-    let repair = mmm_read_model::run_reclassify_known_stales(
-        client,
-        mmm_read_model::ReclassifyKnownStalesConfig::default(),
-    )
-    .await
-    .context("repair known-stale classifications after membership import")?;
     info!(
-        membership_size = repair.membership_size,
-        demoted = repair.demoted,
-        "repaired known-stale classifications after membership import"
+        imported = rows.len(),
+        demoted, "atomically repaired known-stale classifications during membership import"
     );
     Ok(summary)
 }
