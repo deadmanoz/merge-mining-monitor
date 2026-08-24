@@ -21,15 +21,23 @@ pub use known_stale_reclassify::{
     KnownStaleReclassifySummary, ReclassifyKnownStalesConfig,
     reclassify_known_stale_hashes_in_transaction, run_reclassify_known_stales,
 };
-#[cfg(feature = "db-integration")]
-pub use mutation::drain_historical_reconcile_queue_with_budget_for_test;
 pub use mutation::{
-    CommittedParentMutation, CoreCanonicalWrite, capture_in_txn, capture_preclassified_in_txn,
-    clear_authoritative_historical_provenance_in_transaction, drain_historical_reconcile_queue,
+    CommittedParentMutation, CoreCanonicalReplacement, CoreCanonicalWrite,
+    CoreSuffixReplacementSummary, ExpectedCoreCanonicalRow, capture_in_txn,
+    capture_preclassified_in_txn, clear_authoritative_historical_provenance_in_transaction,
+    drain_core_reconcile_queue, drain_historical_reconcile_queue,
     drain_historical_reconcile_queue_with_nbits_table, enqueue_historical_parent_reconcile,
     rebuild_historical_source_health, reconcile_authoritative_historical_source_in_transaction,
-    record_coinbase_failure, restore_merge_mining_event, revoke_merge_mining_event,
-    update_parent_events, write_core_canonical, write_historical_base_in_transaction,
+    record_coinbase_failure, replace_core_canonical_suffix,
+    replace_core_canonical_suffix_validated, restore_merge_mining_event,
+    revoke_merge_mining_event, run_exclusive_core_canonical_view_transaction,
+    update_parent_events, write_core_canonical, write_core_canonical_validated,
+    write_historical_base_in_transaction,
+};
+#[cfg(feature = "db-integration")]
+pub use mutation::{
+    drain_core_reconcile_queue_with_budget_for_test,
+    drain_historical_reconcile_queue_with_budget_for_test,
 };
 pub use source_health_sql::invalidate_source_health_in_transaction;
 #[cfg(any(test, feature = "db-integration"))]
@@ -330,9 +338,11 @@ impl ReconcileReadModelConfig {
 
 /// Reconcile the derived rows for one event's parent header, then drain the
 /// post-commit dependent cascade under `DEFAULT_CASCADE_BUDGET`. `preclassified`
-/// supplies a trusted classification (skips the Core preflight); `None` lets the
-/// reconciler classify from event-derived evidence. This is the parent-grain
-/// repair entry the reconcile/reclassify drivers loop over.
+/// supplies a trusted offline classification when the classifier is disabled;
+/// an enabled classifier re-resolves it after taking the shared Core-view
+/// barrier. `None` lets the reconciler classify from event-derived evidence.
+/// This is the parent-grain repair entry the reconcile/reclassify drivers loop
+/// over.
 pub async fn reconcile_from_merge_mining_event(
     client: &mut Client,
     event_id: i64,
@@ -403,11 +413,12 @@ async fn reconcile_by_block_hash_with_nbits_table(
     .await
 }
 
-/// Pre-classify a payload's parent header BEFORE the mutation opens its txn, so the
-/// slow Core preflight RPC happens outside the advisory-lock window. No-ops when
-/// PoW does not validate the BTC target or the classifier is disabled (returns
-/// `None`). On success it folds the classification proof back into `payload` and
-/// returns the classification for the in-txn lock-set computation.
+/// Classify a payload's parent header against Core. No-ops when PoW does not
+/// validate the BTC target or the classifier is disabled (returns `None`). On
+/// success it folds the classification proof back into `payload` and returns
+/// the classification for lock-set computation. Live capture calls this after
+/// taking its shared canonical-view barrier but before any per-parent locks;
+/// other repair paths may still preclassify before opening their transaction.
 pub(crate) async fn classify_payload_parent<C: GenericClient>(
     client: &C,
     payload: &mut MergeMiningEventPayload,

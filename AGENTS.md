@@ -56,6 +56,15 @@ Use `just` targets, not raw commands, when a target exists:
   transaction. Drain `historical_reconcile_queue` in bounded parent
   transactions and retain changed-hash seeds until dependent cascades succeed;
   never hold every parent advisory lock across a chain import.
+- Bitcoin Core follow mode repairs only bounded near-tip reorgs. Capture a
+  tip-pinned backward header view, replace the complete suffix atomically,
+  retain displaced blocks as stale evidence, and enqueue every affected old and
+  new hash in `bitcoin_core_reconcile_queue` before commit. Core-backed
+  classifiers and reconcilers take the shared canonical-view barrier;
+  canonical-row writers, sync bookkeeping, and suffix replacement take it
+  exclusively. Drain the queue's durable parent and expansion phases before
+  later sync work and fail closed when no common ancestor exists inside the
+  configured window.
 - Do not copy a sibling chain module to add a Namecoin-family source. Extend
   the shared source registry, chain spec, config, AuxPoW-family parser, poller,
   and write paths.

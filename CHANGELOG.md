@@ -6,6 +6,15 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Repair bounded near-tip Bitcoin reorgs in follow mode by capturing one
+  tip-pinned Core view, atomically replacing the divergent canonical suffix,
+  and retaining displaced blocks as stale evidence. Persist dependent
+  reconciliation and dependent expansion as restart-safe queue phases so a
+  process exit cannot lose a deeper cascade frontier. Serialize Core-backed
+  classification and ordinary backbone writes against the suffix switch, and
+  continue to fail closed when the common ancestor lies outside the configured
+  live window.
+
 - Replace the compiled Bitcoin nBits epoch table with a sparse Postgres cache
   populated from a required Bitcoin mainnet Core node. Capture, import, and
   reconciliation refresh Core headers through the synced tip before classifying

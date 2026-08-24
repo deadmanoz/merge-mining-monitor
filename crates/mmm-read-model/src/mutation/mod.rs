@@ -35,6 +35,15 @@ pub use historical_queue::{
     drain_historical_reconcile_queue, drain_historical_reconcile_queue_with_nbits_table,
 };
 
+mod core_suffix;
+#[cfg(feature = "db-integration")]
+pub use core_suffix::drain_core_reconcile_queue_with_budget_for_test;
+pub use core_suffix::{
+    CoreCanonicalReplacement, CoreSuffixReplacementSummary, ExpectedCoreCanonicalRow,
+    drain_core_reconcile_queue, replace_core_canonical_suffix,
+    replace_core_canonical_suffix_validated,
+};
+
 use super::{
     CoreCoinbaseStatus, DEFAULT_CASCADE_BUDGET, PreclassifiedParent,
     RECONCILE_LOCK_SET_RETRY_LIMIT, classify_payload_parent, is_reconcile_lock_set_changed,
@@ -48,11 +57,51 @@ fn retry_attempts() -> usize {
     RECONCILE_LOCK_SET_RETRY_LIMIT.max(1)
 }
 
+// Shared/exclusive barrier around the local Bitcoin Core canonical view.
+// Core-backed classifiers and reconcilers take the shared form before their
+// authoritative read and retain it through commit. Canonical-row writers,
+// cursor/target bookkeeping, and suffix replacement take the exclusive form
+// before final source validation or any block lock. A classifier therefore
+// either commits first and is reclassified by a later suffix, or observes the
+// already-switched view; competing Core writers serialize their final proof
+// and mutation.
+const CORE_CANONICAL_VIEW_LOCK_CLASS: i32 = 0x4243; // 'BC'
+const CORE_CANONICAL_VIEW_LOCK_OBJECT: i32 = 1;
+
+pub(crate) async fn lock_core_canonical_view_shared<C: GenericClient>(client: &C) -> Result<()> {
+    client
+        .execute(
+            "SELECT pg_advisory_xact_lock_shared($1, $2)",
+            &[
+                &CORE_CANONICAL_VIEW_LOCK_CLASS,
+                &CORE_CANONICAL_VIEW_LOCK_OBJECT,
+            ],
+        )
+        .await
+        .context("acquire shared Bitcoin Core canonical-view barrier")?;
+    Ok(())
+}
+
+pub(crate) async fn lock_core_canonical_view_exclusive<C: GenericClient>(client: &C) -> Result<()> {
+    client
+        .execute(
+            "SELECT pg_advisory_xact_lock($1, $2)",
+            &[
+                &CORE_CANONICAL_VIEW_LOCK_CLASS,
+                &CORE_CANONICAL_VIEW_LOCK_OBJECT,
+            ],
+        )
+        .await
+        .context("acquire exclusive Bitcoin Core canonical-view barrier")?;
+    Ok(())
+}
+
 /// Internal capture knob for an optional pre-decided parent classification.
 /// `Some` is the preclassified path
 /// (`capture_preclassified_in_txn`), where the caller already ran the Core
-/// verdict to gate the write; `None` lets `capture_event` classify the parent
-/// itself (the ordinary live-producer path via `capture_in_txn`).
+/// verdict to gate the write; an enabled classifier re-resolves it under the
+/// shared barrier. `None` lets `capture_event` classify the parent itself (the
+/// ordinary live-producer path via `capture_in_txn`).
 #[derive(Default)]
 struct CaptureEventOptions {
     parent_classification: Option<ParentClassification>,
@@ -110,9 +159,9 @@ pub(crate) enum PrimaryDiff<'a> {
     /// repair, and reclassify paths, where the reconcile's `before` is
     /// genuinely pre-mutation).
     Reconcile,
-    /// A caller-owned bulk transaction rebuilds source health from base tables
-    /// after all event changes, so this reconcile skips its incremental primary
-    /// diff.
+    /// The caller owns source-health accounting for the wider mutation, through
+    /// either a later base-table rebuild or a multi-parent bracket, so this
+    /// reconcile skips its incremental primary diff.
     BulkImport,
     /// A wrapper opened a bracket BEFORE its own base mutation and owns the
     /// primary diff; the reconcile must not diff the primary hash (it would
@@ -123,9 +172,9 @@ pub(crate) enum PrimaryDiff<'a> {
 }
 
 /// A committed parent-level mutation whose dependent reconcile cascade has not
-/// run yet. Returned by [`write_core_canonical`] so callers can interleave
-/// their own post-commit bookkeeping (the backbone's sync-state updates)
-/// before cascading; everything else in this module cascades inline.
+/// run yet. Returned by [`write_core_canonical`] so its transaction commits
+/// before callers cascade dependents; everything else in this module cascades
+/// inline.
 ///
 /// `#[must_use]` + the repo's `-D warnings` gate turn a forgotten cascade (the
 /// bug class fixed in 7d8f616) into a build failure.
@@ -246,9 +295,11 @@ where
 /// [`capture_in_txn`] variant for callers that already had to classify the
 /// parent before deciding whether a write is allowed.
 ///
-/// This keeps the gating decision and the transactional write on the same Core
-/// verdict. It is intentionally narrow; ordinary live producers should keep
-/// using [`capture_in_txn`] so the mutation module owns their preclassification.
+/// When the classifier is enabled, the supplied gating decision is re-resolved
+/// after the shared Core-view barrier is held and rejected if it changed. A
+/// disabled classifier accepts the caller's offline verdict directly. It is
+/// intentionally narrow; ordinary live producers should keep using
+/// [`capture_in_txn`] so the mutation module owns their classification.
 pub async fn capture_preclassified_in_txn<F>(
     client: &mut Client,
     source_id: i64,
@@ -329,9 +380,12 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
     publication_ref: &str,
     chain: &str,
 ) -> Result<u64> {
+    // Lock every removal target in the same stable event-row order used by the
+    // historical queue worker. The saved parent hashes are enqueued only after
+    // deletion, preserving the shared event -> queue order.
     let rows = txn
         .query(
-            "SELECT DISTINCT e.btc_parent_header_hash \
+            "SELECT e.btc_parent_header_hash \
              FROM merge_mining_event e \
              WHERE e.source_id = $1 \
                AND NOT EXISTS ( \
@@ -340,15 +394,18 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
                       AND p.publication_ref = $2 \
                       AND p.chain = $3 \
                ) \
-             ORDER BY e.btc_parent_header_hash",
+             ORDER BY e.id \
+             FOR UPDATE OF e",
             &[&source_id, &publication_ref, &chain],
         )
         .await
         .context("load authoritative historical removals")?;
-    for row in rows {
-        let hash: Vec<u8> = row.get(0);
-        enqueue_historical_parent(txn, &hash).await?;
-    }
+    let mut parent_hashes = rows
+        .into_iter()
+        .map(|row| row.get::<_, Vec<u8>>(0))
+        .collect::<Vec<_>>();
+    parent_hashes.sort();
+    parent_hashes.dedup();
 
     let removed = txn
         .execute(
@@ -364,6 +421,9 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
         )
         .await
         .context("remove events absent from authoritative historical snapshot")?;
+    for hash in parent_hashes {
+        enqueue_historical_parent(txn, &hash).await?;
+    }
     Ok(removed)
 }
 
@@ -403,12 +463,14 @@ pub async fn rebuild_historical_source_health(client: &mut Client) -> Result<()>
 /// Capture one merge-mining event: the shared per-block transactional sequence
 /// for every producer.
 ///
-/// Preclassify the parent (which may update `payload`), then run the bounded
-/// retry loop: begin transaction, acquire the payload's read-model lock set
-/// plus the parent-hash lock, open the source-health bracket, perform the
-/// chain-specific `upsert`, reconcile the event in-transaction unless the
-/// parent is `near`, close the bracket, and commit, rolling back and retrying
-/// on a lock-set change. Dependents are cascaded after commit.
+/// Run the bounded retry loop: begin a transaction, take the shared Core-view
+/// barrier, classify the parent (which may update `payload`), acquire the
+/// payload's read-model lock set plus the parent-hash lock, open the
+/// source-health bracket, perform the chain-specific `upsert`, reconcile the
+/// event in-transaction unless the parent is `near`, close the bracket, and
+/// commit. Dependents are cascaded after commit. Holding the shared barrier
+/// from classification through commit prevents a suffix switch from landing
+/// between those two points.
 ///
 /// The classified `payload` is passed INTO the callback rather than captured at
 /// the call site: this function holds the only `&mut` borrow of `payload` (it
@@ -431,13 +493,7 @@ async fn capture_event<F>(
 where
     F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
 {
-    let preclassified = match options.parent_classification {
-        Some(classification) => {
-            apply_classification_proof(payload, classification.to_proof())?;
-            Some(classification)
-        }
-        None => classify_payload_parent(client, payload, classifier).await?,
-    };
+    let supplied_preclassification = options.parent_classification;
     let mut attempts = 0;
     let (outcome, changed_hashes) = loop {
         let txn = client
@@ -445,6 +501,23 @@ where
             .await
             .with_context(|| format!("begin {chain_label} capture transaction"))?;
         lock_core_header_cache_for_reconcile(&txn, classifier, None).await?;
+        lock_core_canonical_view_shared(&txn).await?;
+        let preclassified = match &supplied_preclassification {
+            Some(supplied) if classifier.is_enabled() => {
+                let current = classify_payload_parent(&txn, payload, classifier).await?;
+                if current.as_ref() != Some(supplied) {
+                    bail!(
+                        "preclassified parent verdict changed before {chain_label} capture acquired the Core-view barrier"
+                    );
+                }
+                current
+            }
+            Some(supplied) => {
+                apply_classification_proof(payload, supplied.to_proof())?;
+                Some(supplied.clone())
+            }
+            None => classify_payload_parent(&txn, payload, classifier).await?,
+        };
         lock_payload_parent_read_model_in_txn(&txn, payload, preclassified.as_ref()).await?;
         // Ensure the parent is locked even for near / target-failing payloads (the
         // helper above no-ops for those), then open the source-health bracket
@@ -536,12 +609,13 @@ pub(crate) async fn set_event_revocation(
     let mut attempt = 0;
     let changed_hashes = loop {
         let retry_available = attempt + 1 < retry_attempts();
-        let attempt_preclassified = preclassify_event_parent(client, event_id, classifier).await?;
         let txn = client
             .transaction()
             .await
             .with_context(|| format!("begin {op} reconcile transaction"))?;
         lock_core_header_cache_for_reconcile(&txn, classifier, None).await?;
+        lock_core_canonical_view_shared(&txn).await?;
+        let attempt_preclassified = preclassify_event_parent(&txn, event_id, classifier).await?;
         // Pre-acquire the reconcile lock set and open the source-health bracket
         // BEFORE the revoked_at UPDATE (the membership change). This wrapper
         // owns the primary diff.
@@ -676,6 +750,7 @@ where
         if reconcile_anchor.is_some() {
             lock_core_header_cache_for_reconcile(&txn, classifier, None).await?;
         }
+        lock_core_canonical_view_shared(&txn).await?;
         // Advisory locks first, row locks second (the global order every
         // capture/revoke/restore transaction uses). For an anchored reconcile,
         // pre-acquire the anchor's full reconcile lock set so the later
@@ -741,14 +816,37 @@ pub struct CoreCanonicalWrite<'a> {
     pub coinbase: Option<BitcoinCoreBlockCoinbase>,
 }
 
+/// Run one caller-supplied operation while holding the exclusive
+/// canonical-view barrier through commit. Ordinary Core writers use this for
+/// their final source/topology validation, row mutation, and cursor bookkeeping
+/// so no shared classifier or competing writer can change the scanned view.
+pub async fn run_exclusive_core_canonical_view_transaction<T, F>(
+    client: &mut Client,
+    label: &str,
+    operation: F,
+) -> Result<T>
+where
+    F: AsyncFnOnce(&Transaction<'_>) -> Result<T>,
+{
+    let txn = client
+        .transaction()
+        .await
+        .with_context(|| format!("begin {label} transaction"))?;
+    lock_core_canonical_view_exclusive(&txn).await?;
+    let output = operation(&txn).await?;
+    txn.commit()
+        .await
+        .with_context(|| format!("commit {label} transaction"))?;
+    Ok(output)
+}
+
 /// Write one Bitcoin Core-attested canonical block row (backbone sync and
 /// Core-block enrichment), with the parent advisory lock and source-health
 /// bracket around the upsert plus the injected in-transaction extra (the
-/// backbone's coinbase-failure column update; a no-op elsewhere).
+/// backbone's sync-state or coinbase-failure bookkeeping; a no-op elsewhere).
 ///
-/// Returning the token (instead of cascading inline) lets the backbone interleave
-/// its sync-state bookkeeping between commit and cascade exactly as before,
-/// while `#[must_use]` keeps the cascade structurally non-forgettable.
+/// Returning the token instead of cascading inline keeps dependent work after
+/// commit, while `#[must_use]` makes the cascade structurally non-forgettable.
 pub async fn write_core_canonical<F>(
     client: &mut Client,
     write: CoreCanonicalWrite<'_>,
@@ -758,20 +856,37 @@ pub async fn write_core_canonical<F>(
 where
     F: AsyncFnOnce(&Transaction<'_>) -> Result<()>,
 {
+    write_core_canonical_validated(client, write, async |_txn| Ok(()), in_txn_extra, label).await
+}
+
+/// Write one Core canonical row after validating its source observation while
+/// holding the exclusive canonical-view barrier.
+/// The validator runs before any row mutation, so a suffix switch that committed
+/// after the caller fetched Core evidence cannot be undone by a delayed
+/// ordinary writer, and two catch-up writers cannot both fill the same empty
+/// height from different source views.
+pub async fn write_core_canonical_validated<V, F>(
+    client: &mut Client,
+    write: CoreCanonicalWrite<'_>,
+    validate: V,
+    in_txn_extra: F,
+    label: &str,
+) -> Result<CommittedParentMutation>
+where
+    V: AsyncFnOnce(&Transaction<'_>) -> Result<()>,
+    F: AsyncFnOnce(&Transaction<'_>) -> Result<()>,
+{
     let hash_bytes = write.header.block_hash().to_byte_array().to_vec();
-    let txn = client
-        .transaction()
-        .await
-        .with_context(|| format!("begin {label} transaction"))?;
-    lock_block_hash(&txn, &hash_bytes).await?;
-    let bracket = PrimarySourceHealthBracket::open(&txn, &hash_bytes).await?;
-    upsert_core_canonical_header_with_coinbase(&txn, write.header, write.height, write.coinbase)
-        .await?;
-    in_txn_extra(&txn).await?;
-    bracket.close(&txn).await?;
-    txn.commit()
-        .await
-        .with_context(|| format!("commit {label} transaction"))?;
+    run_exclusive_core_canonical_view_transaction(client, label, async |txn| {
+        validate(txn).await?;
+        lock_block_hash(txn, &hash_bytes).await?;
+        let bracket = PrimarySourceHealthBracket::open(txn, &hash_bytes).await?;
+        upsert_core_canonical_header_with_coinbase(txn, write.header, write.height, write.coinbase)
+            .await?;
+        in_txn_extra(txn).await?;
+        bracket.close(txn).await
+    })
+    .await?;
     Ok(CommittedParentMutation {
         changed_hashes: vec![hash_bytes],
     })

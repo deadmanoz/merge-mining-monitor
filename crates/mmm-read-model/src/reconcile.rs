@@ -241,12 +241,13 @@ pub(crate) async fn enqueue_dependents(
 /// / competitor hashes), which can shift if the event drifts under us between
 /// the pre-lock classify and the post-lock re-classify. When that happens
 /// `reconcile_one_event_in_txn` returns `ReconcileLockSetChanged`; this wrapper
-/// rolls back and retries up to `RECONCILE_LOCK_SET_RETRY_LIMIT` times,
-/// recomputing the preclassification each attempt unless the caller supplied a
-/// trusted one. This is the no-wrapper path, so it passes `PrimaryDiff::Reconcile`:
-/// it owns the primary parent's source_health diff (its `before` snapshot is
-/// genuinely pre-mutation). Used by the cascade drain and by block reconcile
-/// when the block has an anchor event.
+/// rolls back and retries up to `RECONCILE_LOCK_SET_RETRY_LIMIT` times. Each
+/// attempt takes the shared Core-view barrier before enabled classification and
+/// retains it through commit, so a concurrent canonical suffix switch cannot
+/// land between verdict and write. This is the no-wrapper path, so it passes
+/// `PrimaryDiff::Reconcile`: it owns the primary parent's source_health diff
+/// (its `before` snapshot is genuinely pre-mutation). Used by the cascade drain
+/// and by block reconcile when the block has an anchor event.
 pub(crate) async fn reconcile_one_event(
     client: &mut Client,
     event_id: i64,
@@ -254,15 +255,18 @@ pub(crate) async fn reconcile_one_event(
     preclassified: Option<PreclassifiedParent>,
     nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
 ) -> Result<Vec<Vec<u8>>> {
+    let trusted_preclassified = preclassified;
     for attempt in 0..RECONCILE_LOCK_SET_RETRY_LIMIT {
-        let attempt_preclassified = match &preclassified {
-            Some(preclassified) => Some(preclassified.clone()),
-            None => preclassify_event_parent(client, event_id, classifier).await?,
-        };
         let txn = client
             .transaction()
             .await
             .context("begin reconcile transaction")?;
+        lock_core_header_cache_for_reconcile(&txn, classifier, nbits_table).await?;
+        crate::mutation::lock_core_canonical_view_shared(&txn).await?;
+        let attempt_preclassified = match &trusted_preclassified {
+            Some(preclassified) if !classifier.is_enabled() => Some(preclassified.clone()),
+            Some(_) | None => preclassify_event_parent(&txn, event_id, classifier).await?,
+        };
         match reconcile_one_event_in_txn(
             &txn,
             event_id,
@@ -532,14 +536,15 @@ async fn classify_event_parent_with_policy<C: GenericClient>(
     Ok((header, classification))
 }
 
-/// Pre-compute a parent classification OUTSIDE the reconcile transaction so the
-/// in-txn body can skip the (potentially RPC-backed) classifier while holding
-/// locks. Returns `None` when the classifier is disabled or the event is near /
-/// target-failing (those reconcile to no derived state). The result carries the
-/// event's `expected_parent_hash` so reconcile can detect the event drifting
-/// under it and force the retry path.
-pub(crate) async fn preclassify_event_parent(
-    client: &Client,
+/// Pre-compute a parent classification before the in-transaction reconcile
+/// body takes per-block locks. Barrier-aware callers pass their open
+/// transaction after taking the shared canonical-view lock, so the
+/// potentially RPC-backed verdict remains valid through commit. Returns
+/// `None` when the classifier is disabled or the event is near / target-failing
+/// (those reconcile to no derived state). The result carries the event's
+/// `expected_parent_hash` so reconcile can detect event drift and retry.
+pub(crate) async fn preclassify_event_parent<C: GenericClient>(
+    client: &C,
     event_id: i64,
     classifier: &ConfiguredParentClassifier,
 ) -> Result<Option<PreclassifiedParent>> {
@@ -689,6 +694,7 @@ pub(crate) async fn reconcile_one_block(
         .await
         .context("begin block reconcile")?;
     lock_core_header_cache_for_reconcile(&txn, classifier, nbits_table).await?;
+    crate::mutation::lock_core_canonical_view_shared(&txn).await?;
     lock_block_hash(&txn, hash).await?;
     let before = load_block_cascade_state(&txn, hash).await?;
     let sh_before = crate::source_health_sql::snapshot_parent_contribution(&txn, hash).await?;

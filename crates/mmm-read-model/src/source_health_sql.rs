@@ -71,13 +71,101 @@ pub(crate) struct ParentContribution {
 /// adds (+1 on its `current_kind`). A parent contributes to exactly one kind
 /// bucket per snapshot, so the five fields stay mutually exclusive across a
 /// diff.
-#[derive(Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 struct KindDeltas {
     near: i64,
     unknown: i64,
     canonical: i64,
     stale: i64,
     error_block: i64,
+}
+
+/// Aggregate change to one source across one or more parent mutations.
+///
+/// A multi-parent mutation must apply the combined delta once per source. If it
+/// applied each parent independently, two concurrent suffix repairs could take
+/// `source_health` row locks in different interleavings even though every
+/// individual parent diff sorted its source ids. Combining first gives the
+/// whole transaction one globally sorted source-id order.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct SourceHealthDelta {
+    events: i64,
+    kinds: KindDeltas,
+    strict_orphans: i64,
+    weak_orphans: i64,
+    max_after_confirmed_at: Option<i64>,
+    recompute_last_event_seen: bool,
+}
+
+impl SourceHealthDelta {
+    fn add_parent_diff(
+        &mut self,
+        before: Option<&ParentSourceContribution>,
+        after: Option<&ParentSourceContribution>,
+    ) -> Result<()> {
+        self.events += after.map(|c| c.active_events).unwrap_or(0)
+            - before.map(|c| c.active_events).unwrap_or(0);
+
+        if let Some(before) = before {
+            self.kinds.add(&before.current_kind, -1)?;
+        }
+        if let Some(after) = after {
+            self.kinds.add(&after.current_kind, 1)?;
+            self.max_after_confirmed_at = Some(
+                self.max_after_confirmed_at
+                    .map_or(after.max_confirmed_at, |current| {
+                        current.max(after.max_confirmed_at)
+                    }),
+            );
+        }
+
+        let (before_strict, before_weak) = before.map(orphan_bucket).unwrap_or((0, 0));
+        let (after_strict, after_weak) = after.map(orphan_bucket).unwrap_or((0, 0));
+        self.strict_orphans += after_strict - before_strict;
+        self.weak_orphans += after_weak - before_weak;
+
+        // `last_event_seen` can only need lowering when this source's maximum
+        // on any affected parent drops or disappears. One such parent is enough
+        // to require a single authoritative recompute after every mutation in
+        // the batch has landed.
+        self.recompute_last_event_seen |= match (after, before) {
+            (_, None) => false,
+            (None, Some(_)) => true,
+            (Some(after), Some(before)) => after.max_confirmed_at < before.max_confirmed_at,
+        };
+        Ok(())
+    }
+}
+
+/// Build the aggregate per-source and global-invariant deltas for a set of
+/// parent before/after pairs. Kept pure so the multi-parent accounting can be
+/// tested independently of PostgreSQL.
+fn aggregate_source_health_diffs<'a>(
+    diffs: impl IntoIterator<Item = (&'a ParentContribution, &'a ParentContribution)>,
+) -> Result<(HashMap<i64, SourceHealthDelta>, i64)> {
+    let mut per_source = HashMap::<i64, SourceHealthDelta>::new();
+    let mut invalid_unknown_delta = 0_i64;
+
+    for (before, after) in diffs {
+        let mut source_ids: Vec<i64> = before
+            .per_source
+            .keys()
+            .chain(after.per_source.keys())
+            .copied()
+            .collect();
+        source_ids.sort_unstable();
+        source_ids.dedup();
+
+        for source_id in source_ids {
+            per_source.entry(source_id).or_default().add_parent_diff(
+                before.per_source.get(&source_id),
+                after.per_source.get(&source_id),
+            )?;
+        }
+        invalid_unknown_delta += (after.invalid_unknown as i64) - (before.invalid_unknown as i64);
+    }
+
+    Ok((per_source, invalid_unknown_delta))
 }
 
 impl KindDeltas {
@@ -161,38 +249,15 @@ pub(crate) async fn snapshot_parent_contribution<C: GenericClient>(
     Ok(contribution)
 }
 
-/// Apply one source's before/after contribution delta to its `source_health`
-/// row: the kind-bucket counters, the strict/weak orphan sub-counters, and the
-/// `last_event_seen` maintenance. Extracted from `apply_source_health_diff` so
-/// that function stays within the structural line budget.
+/// Apply one source's aggregate contribution delta to its `source_health` row:
+/// the kind-bucket counters, strict/weak orphan sub-counters, and
+/// `last_event_seen` maintenance.
 async fn apply_one_source_delta<C: GenericClient>(
     client: &C,
     source_id: i64,
-    b: Option<&ParentSourceContribution>,
-    a: Option<&ParentSourceContribution>,
+    delta: &SourceHealthDelta,
     now: i64,
 ) -> Result<()> {
-    let before_events = b.map(|c| c.active_events).unwrap_or(0);
-    let after_events = a.map(|c| c.active_events).unwrap_or(0);
-    let events_delta = after_events - before_events;
-
-    let mut deltas = KindDeltas::default();
-    if let Some(b) = b {
-        deltas.add(&b.current_kind, -1)?;
-    }
-    if let Some(a) = a {
-        deltas.add(&a.current_kind, 1)?;
-    }
-
-    // Strict/weak orphan deltas: a refinement WITHIN the unknown bucket, so they
-    // move on orphan-class transitions (NULL->strict/weak, strict<->weak) even
-    // when current_kind stays 'unknown'. The before/after snapshots read
-    // block.btc_orphan_class around the same reconcile that writes it.
-    let (b_strict, b_weak) = b.map(orphan_bucket).unwrap_or((0, 0));
-    let (a_strict, a_weak) = a.map(orphan_bucket).unwrap_or((0, 0));
-    let strict_delta = a_strict - b_strict;
-    let weak_delta = a_weak - b_weak;
-
     client
         .execute(
             "INSERT INTO source_health ( \
@@ -212,33 +277,25 @@ async fn apply_one_source_delta<C: GenericClient>(
                  updated_at = EXCLUDED.updated_at",
             &[
                 &source_id,
-                &events_delta,
-                &deltas.near,
-                &deltas.unknown,
-                &deltas.canonical,
-                &deltas.stale,
-                &deltas.error_block,
-                &strict_delta,
-                &weak_delta,
+                &delta.events,
+                &delta.kinds.near,
+                &delta.kinds.unknown,
+                &delta.kinds.canonical,
+                &delta.kinds.stale,
+                &delta.kinds.error_block,
+                &delta.strict_orphans,
+                &delta.weak_orphans,
                 &now,
             ],
         )
         .await
         .context("apply source_health counter delta")?;
 
-    // last_event_seen = max(confirmed_at) over ACTIVE events. A gain/refresh
-    // bumps via GREATEST (O(1)). The stored value can only need LOWERING when
-    // this source's max confirmed_at ON THIS PARENT drops (membership lost, or an
-    // event swapped for a lower-confirmed one even at equal count); in that case
-    // the global max may have moved, so recompute from base tables. A count drop
-    // that removes a NON-max event leaves this source's parent-max unchanged, so
-    // the GREATEST bump below is sufficient and no recompute is needed.
-    let max_dropped_or_lost = match (a, b) {
-        (_, None) => false,
-        (None, Some(_)) => true,
-        (Some(a), Some(b)) => a.max_confirmed_at < b.max_confirmed_at,
-    };
-    if max_dropped_or_lost {
+    // last_event_seen = max(confirmed_at) over ACTIVE events. Any affected
+    // parent's max lowering/removal requires one global recompute. Otherwise a
+    // single GREATEST bump with the largest post-mutation max in the batch is
+    // sufficient.
+    if delta.recompute_last_event_seen {
         client
             .execute(
                 "UPDATE source_health \
@@ -251,17 +308,62 @@ async fn apply_one_source_delta<C: GenericClient>(
             )
             .await
             .context("recompute source_health last_event_seen")?;
-    } else if let Some(a) = a {
+    } else if let Some(max_after_confirmed_at) = delta.max_after_confirmed_at {
         client
             .execute(
                 "UPDATE source_health \
                     SET last_event_seen = GREATEST(COALESCE(last_event_seen, $2), $2), \
                         updated_at = $3 \
                   WHERE source_id = $1",
-                &[&source_id, &a.max_confirmed_at, &now],
+                &[&source_id, &max_after_confirmed_at, &now],
             )
             .await
             .context("bump source_health last_event_seen")?;
+    }
+    Ok(())
+}
+
+/// Apply already-aggregated source-health deltas under one shared rebuild lock.
+/// Source rows are touched once each, in globally sorted `source_id` order, and
+/// the global invalid-unknown scalar receives one aggregate update.
+async fn apply_aggregated_source_health_diff<C: GenericClient>(
+    client: &C,
+    per_source: HashMap<i64, SourceHealthDelta>,
+    invalid_unknown_delta: i64,
+) -> Result<()> {
+    if per_source.is_empty() && invalid_unknown_delta == 0 {
+        return Ok(());
+    }
+
+    client
+        .execute(
+            "SELECT pg_advisory_xact_lock_shared($1, $2)",
+            &[&SOURCE_HEALTH_LOCK_CLASS, &SOURCE_HEALTH_LOCK_OBJ],
+        )
+        .await
+        .context("acquire shared source_health advisory lock")?;
+
+    let mut source_ids: Vec<i64> = per_source.keys().copied().collect();
+    source_ids.sort_unstable();
+
+    let now = mmm_capture::capture::now_epoch_seconds()?;
+    for source_id in source_ids {
+        let delta = per_source
+            .get(&source_id)
+            .expect("source id was collected from the aggregate delta map");
+        apply_one_source_delta(client, source_id, delta, now).await?;
+    }
+
+    if invalid_unknown_delta != 0 {
+        client
+            .execute(
+                "UPDATE read_model_invariant \
+                    SET invalid_unknown_parents = invalid_unknown_parents + $1, updated_at = $2 \
+                  WHERE id = TRUE",
+                &[&invalid_unknown_delta, &now],
+            )
+            .await
+            .context("apply read_model_invariant invalid_unknown delta")?;
     }
     Ok(())
 }
@@ -280,43 +382,60 @@ pub(crate) async fn apply_source_health_diff<C: GenericClient>(
     before: &ParentContribution,
     after: &ParentContribution,
 ) -> Result<()> {
-    client
-        .execute(
-            "SELECT pg_advisory_xact_lock_shared($1, $2)",
-            &[&SOURCE_HEALTH_LOCK_CLASS, &SOURCE_HEALTH_LOCK_OBJ],
-        )
-        .await
-        .context("acquire shared source_health advisory lock")?;
+    let (per_source, invalid_unknown_delta) =
+        aggregate_source_health_diffs(std::iter::once((before, after)))?;
+    apply_aggregated_source_health_diff(client, per_source, invalid_unknown_delta).await
+}
 
-    let mut source_ids: Vec<i64> = before
-        .per_source
-        .keys()
-        .chain(after.per_source.keys())
-        .copied()
-        .collect();
-    source_ids.sort_unstable();
-    source_ids.dedup();
+/// A before/after source-health bracket for a mutation that changes several
+/// parent hashes in one transaction.
+///
+/// The caller MUST already hold every parent advisory lock for the hashes it
+/// passes to [`MultiParentSourceHealthBracket::open`]. Hashes are sorted and
+/// deduplicated before the initial snapshots. [`close`](Self::close) snapshots
+/// the same set after all base/read-model mutations, combines every parent
+/// delta, takes the shared source-health lock once, then updates each affected
+/// `source_health` row once in globally sorted `source_id` order.
+pub(crate) struct MultiParentSourceHealthBracket {
+    before: Vec<(Vec<u8>, ParentContribution)>,
+}
 
-    let now = mmm_capture::capture::now_epoch_seconds()?;
-    for source_id in source_ids {
-        let b = before.per_source.get(&source_id);
-        let a = after.per_source.get(&source_id);
-        apply_one_source_delta(client, source_id, b, a, now).await?;
+impl MultiParentSourceHealthBracket {
+    pub(crate) async fn open<C, I, H>(client: &C, hashes: I) -> Result<Self>
+    where
+        C: GenericClient,
+        I: IntoIterator<Item = H>,
+        H: AsRef<[u8]>,
+    {
+        let mut hashes: Vec<Vec<u8>> = hashes
+            .into_iter()
+            .map(|hash| hash.as_ref().to_vec())
+            .collect();
+        hashes.sort_unstable();
+        hashes.dedup();
+
+        let mut before = Vec::with_capacity(hashes.len());
+        for hash in hashes {
+            let contribution = snapshot_parent_contribution(client, &hash).await?;
+            before.push((hash, contribution));
+        }
+        Ok(Self { before })
     }
 
-    let iu_delta = (after.invalid_unknown as i64) - (before.invalid_unknown as i64);
-    if iu_delta != 0 {
-        client
-            .execute(
-                "UPDATE read_model_invariant \
-                    SET invalid_unknown_parents = invalid_unknown_parents + $1, updated_at = $2 \
-                  WHERE id = TRUE",
-                &[&iu_delta, &now],
-            )
-            .await
-            .context("apply read_model_invariant invalid_unknown delta")?;
+    pub(crate) async fn close<C: GenericClient>(self, client: &C) -> Result<()> {
+        let mut after = Vec::with_capacity(self.before.len());
+        for (hash, _) in &self.before {
+            after.push(snapshot_parent_contribution(client, hash).await?);
+        }
+
+        let diffs = self
+            .before
+            .iter()
+            .zip(after.iter())
+            .map(|((_, before), after)| (before, after));
+        let (per_source, invalid_unknown_delta) = aggregate_source_health_diffs(diffs)?;
+        apply_aggregated_source_health_diff(client, per_source, invalid_unknown_delta).await
     }
-    Ok(())
 }
 
 /// One `source_health` row recomputed from base tables: the
@@ -558,4 +677,112 @@ pub(crate) async fn rebuild_source_health_in_transaction<C: GenericClient>(
         .await
         .context("set read_model_invariant on rebuild")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn source(
+        active_events: i64,
+        current_kind: &str,
+        orphan_class: Option<&str>,
+        max_confirmed_at: i64,
+    ) -> ParentSourceContribution {
+        ParentSourceContribution {
+            active_events,
+            current_kind: current_kind.to_owned(),
+            orphan_class: orphan_class.map(str::to_owned),
+            max_confirmed_at,
+        }
+    }
+
+    fn parent(
+        entries: impl IntoIterator<Item = (i64, ParentSourceContribution)>,
+        invalid_unknown: bool,
+    ) -> ParentContribution {
+        ParentContribution {
+            per_source: entries.into_iter().collect(),
+            invalid_unknown,
+        }
+    }
+
+    #[test]
+    fn aggregate_combines_parent_transitions_per_source() {
+        let before_a = parent(
+            [
+                (7, source(2, "canonical", None, 100)),
+                (9, source(1, "unknown", Some("strict_btc_orphan"), 80)),
+            ],
+            true,
+        );
+        let after_a = parent([(7, source(2, "stale", None, 100))], false);
+        let before_b = parent([(7, source(1, "near", None, 90))], false);
+        let after_b = parent(
+            [
+                (7, source(3, "canonical", None, 110)),
+                (9, source(1, "unknown", Some("weak_btc_orphan"), 70)),
+            ],
+            true,
+        );
+
+        let (deltas, invalid_unknown_delta) =
+            aggregate_source_health_diffs([(&before_a, &after_a), (&before_b, &after_b)])
+                .expect("valid kinds aggregate");
+
+        assert_eq!(invalid_unknown_delta, 0);
+        assert_eq!(
+            deltas.get(&7),
+            Some(&SourceHealthDelta {
+                events: 2,
+                kinds: KindDeltas {
+                    near: -1,
+                    canonical: 0,
+                    stale: 1,
+                    ..KindDeltas::default()
+                },
+                max_after_confirmed_at: Some(110),
+                ..SourceHealthDelta::default()
+            })
+        );
+        assert_eq!(
+            deltas.get(&9),
+            Some(&SourceHealthDelta {
+                strict_orphans: -1,
+                weak_orphans: 1,
+                max_after_confirmed_at: Some(70),
+                recompute_last_event_seen: true,
+                ..SourceHealthDelta::default()
+            })
+        );
+    }
+
+    #[test]
+    fn aggregate_recomputes_last_seen_if_any_parent_max_drops() {
+        let before_a = parent([(7, source(1, "canonical", None, 200))], false);
+        let after_a = parent([(7, source(1, "canonical", None, 150))], false);
+        let before_b = ParentContribution::default();
+        let after_b = parent([(7, source(1, "canonical", None, 300))], false);
+
+        let (deltas, _) =
+            aggregate_source_health_diffs([(&before_a, &after_a), (&before_b, &after_b)])
+                .expect("valid kinds aggregate");
+        let delta = deltas.get(&7).expect("source delta");
+
+        assert!(delta.recompute_last_event_seen);
+        assert_eq!(delta.max_after_confirmed_at, Some(300));
+        assert_eq!(delta.events, 1);
+        assert_eq!(delta.kinds.canonical, 1);
+    }
+
+    #[test]
+    fn aggregate_rejects_unknown_current_kind() {
+        let before = parent([(7, source(1, "surprise", None, 100))], false);
+        let after = ParentContribution::default();
+
+        let error = aggregate_source_health_diffs([(&before, &after)])
+            .expect_err("unexpected kind must fail loudly");
+
+        assert!(error.to_string().contains("unexpected current_kind"));
+    }
 }

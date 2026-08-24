@@ -29,11 +29,11 @@ and the API serves those derived projections without writing capture state.
 
 2. RECONCILE        read-model rebuilds derived tables from base evidence
 ──────────────────────────────────────────────────────────────────────
-   base tables ─────────┐
-   known_stale_block ───┼──> read-model ──> block
-   Bitcoin Core ────────┘    reconciler     attestation_proof
-   (backbone + classifier)   (known-stale   source_health
-                              exclusion gate)
+   base tables ───────────────────────────────┐
+   known_stale_block ─────────────────────────┼──> read-model ──> block
+   Bitcoin Core (backbone + classifier) ──────┤    reconciler     attestation_proof
+   bitcoin_core_reconcile_queue ──────────────┘    (known-stale   source_health
+                                                     exclusion gate)
 
 3. SERVE            the API projects derived tables to the frontend
 ──────────────────────────────────────────────────────────────────────
@@ -51,6 +51,19 @@ transaction. The read-model drains one parent at a time after commit and keeps
 the exact dependent-cascade seeds durable until that cascade succeeds. This
 preserves chain-level snapshot atomicity without retaining a transaction-level
 advisory lock for every parent in a broad publication.
+Bounded Bitcoin Core reorg repair uses the same durability principle at a
+different ownership boundary. The read-model atomically replaces the canonical
+suffix and enqueues every old and new parent in
+`bitcoin_core_reconcile_queue`; the producer drains those dependent-cascade
+seeds only after commit and resumes them before later sync work after a restart.
+The canonical spine therefore changes atomically. Dependent rows converge from
+a durable two-phase worklist, with the pending state exposed until every parent
+has been reconciled and its newly discovered dependents have been enqueued.
+Displaced Core and AuxPoW evidence remains queryable as stale.
+Core-backed classifiers and reconcilers hold a shared canonical-view barrier;
+canonical-row writers, sync-state bookkeeping, and suffix replacement hold it
+exclusively through commit. The suffix validates its pinned Core target after
+acquiring that barrier and again after staging the mutation.
 Derived state (`block`, `attestation_proof`, `source_health`) is rebuilt from
 that evidence by the read-model reconciler (stage 2), so a bad event can be
 revoked and the affected parent block recomputed. Bitcoin Core feeds the

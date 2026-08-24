@@ -154,12 +154,35 @@ failure and stops follow mode for operator repair.
 
 `--to-height` and `--limit` are mutually exclusive, so range and page semantics
 stay unambiguous. Follow mode keeps a contiguous local cursor and, during each
-interval, repairs a bounded near-tip window (`missing_only`) so sparse
-Core-attested rows cannot leave the Live tip view stale. That window defaults to
-64 heights and is tunable with `BITCOIN_CORE_SYNC_LIVE_WINDOW_HEIGHTS` (minimum
-16). After a repair, the producer verifies the window against Core: every
-expected height must have exactly one complete canonical row, prev-hash links
-must be contiguous, and the local tip hash must match the captured Core tip.
+interval, repairs a bounded near-tip window so sparse Core-attested rows cannot
+leave the Live tip view stale. That window defaults to 64 heights and is
+tunable with `BITCOIN_CORE_SYNC_LIVE_WINDOW_HEIGHTS` (minimum 16). The producer
+pins one Core tip, walks headers backward through the window plus one
+common-ancestor anchor, and rechecks that target after taking the exclusive
+canonical-view barrier and again immediately before commit. Missing or
+incomplete matching rows use the ordinary `missing_only` fill. A conflicting
+suffix inside the window is replaced in one transaction after every
+replacement coinbase has been fetched.
+
+The suffix transaction promotes the active Core headers, retains each displaced
+header as a Core-attested `stale` block pointing at its same-height canonical
+competitor, updates active AuxPoW event classifications and source health, and
+advances the contiguous cursor only when the replacement joins the already
+proven prefix. It also writes every changed parent to
+`bitcoin_core_reconcile_queue`. Follow mode drains that queue after the commit,
+and before later sync work, including the first follow tick after a restart.
+Each row persists both the parent reconcile and the later expansion that
+discovers deeper dependents, so a process exit or bounded-drain stop cannot lose
+the cascade frontier. While durable work remains, `/api/v1/sources` reports
+`backbone_reorg_reconcile_pending` instead of treating the Bitcoin source as
+healthy.
+
+After either gap fill or suffix replacement, the producer verifies the window
+against Core: every expected height must have exactly one complete canonical
+row, prev-hash links must be contiguous, and the local tip hash must match the
+captured Core target. One-shot and explicit historical sync commands retain
+their strict same-height and link-conflict guards; automatic suffix replacement
+is a follow-mode near-tip operation only.
 
 The tree endpoint never hydrates Core on demand. `/api/v1/tree` returns HTTP 409
 `backbone_unsynced` for heights that have not been synced yet, and
@@ -171,11 +194,16 @@ until `sync-bitcoin-core` has filled the windows you want to browse. Sync the
 newest default window and any historical ranges you need before treating
 `serve` as ready.
 
-Sync does not automatically rewrite already-synced rows after a near-tip
-Bitcoin reorg; automatic trailing reorg repair is not implemented yet. If
-`sync-bitcoin-core --tip` fails with `backbone_link_mismatch` after a reorg
-inside synced heights, stop `serve`, take a backup, and rebuild the affected
-canonical rows before rerunning sync.
+If the captured Core branch has no unique, complete matching ancestor inside
+the configured window, the producer records `near_tip_reorg_repair_failed`
+with `common_ancestor_outside_window` details and changes no chain rows. A
+temporary same-height canonical pair in the replacement suffix is repairable,
+but a duplicate or incomplete row cannot serve as the common ancestor. A
+regressed target or contiguous cursor also fails closed. For these deep or
+structurally ambiguous cases, stop `serve`, take a backup, inspect the recorded
+bounds and hashes, and rebuild the affected canonical rows under an
+operator-reviewed recovery before rerunning follow mode. Do not delete the
+displaced branch: it is stale-block evidence.
 
 ## Source Health And Classification Repair
 

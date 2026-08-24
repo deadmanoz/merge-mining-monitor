@@ -55,6 +55,7 @@ seed, and append-only forward migrations.
 | `0009_drop_rsk_reclassify_watermark.sql` | Drops the `rsk_reclassify_watermark` singleton created by `0001`, retiring the `reclassify-pools` RSK skip. Continuous RSK capture normally changes the active-set fingerprint every block, so the skip rarely avoided a run while its start and end fingerprints each scanned the RSK partition. Activate the watermark-free binary and confirm no older `reclassify-pools` process is running before applying it; see `docs/operations.md`. Idempotent (`IF EXISTS`); no foreign keys reference the table. Back-to-back reclassification runs now always rescan. |
 | `0010_add_bitcoin_core_header_cache.sql` | Adds `bitcoin_core_header`, the sparse canonical header cache populated from the required Bitcoin Core node. It marks difficulty boundaries final only after re-reading them 100 blocks deep, while refreshing the shallow current epoch and synced-tip horizon for nBits and timestamp classification. |
 | `0011_track_core_cache_orphan_rechecks.sql` | Separates the durable pending-coverage retry from the durable full-orphan-recheck retry, so ordinary tip advances do not rescan already classified orphans. |
+| `0012_add_bitcoin_core_reconcile_queue.sql` | Adds generation-protected two-phase work for atomic near-tip Bitcoin Core canonical suffix replacement. Each row persists primary reconciliation separately from dependent expansion, and generation checks keep newer work for the same hash queued across concurrent repair or replay. |
 
 `0002_seed_sources.sql` is only for fresh/reset databases. It intentionally
 raises if `source` is already populated, so a non-reset database fails cleanly
@@ -89,7 +90,6 @@ should land together with their owning consumers:
 | Object | Lands with |
 |--------|------------|
 | `tip_state` and full live-chaintip observation semantics | the Bitcoin Core live-chaintip producer |
-| `reconcile_queue` | queue-based reconcile workers |
 | `v_timeline_daily`, `v_pool_period_stats`, `v_near_miss_rollup` | API, UI, or analytics consumers |
 
 ## Postgres Type Choices

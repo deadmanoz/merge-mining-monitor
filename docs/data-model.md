@@ -158,6 +158,13 @@ and raw scriptPubKey forms that cannot be represented as a value-complete
 - Historical base snapshots enqueue parents transactionally. Primary parent
   rebuilds commit one at a time, store their changed-hash seeds transactionally,
   and delete queue work only after the dependent cascade succeeds.
+- A bounded Bitcoin Core reorg replaces the complete canonical suffix in one
+  read-model transaction. New active headers become canonical, displaced
+  headers become Core-attested stale competitors without losing coinbase,
+  pool, AuxPoW, or proof evidence, and all affected hashes enter
+  `bitcoin_core_reconcile_queue` before commit. Each seed durably separates its
+  primary reconcile from dependent expansion; queue generations prevent older
+  work from deleting or expanding over a newer change to the same hash.
 - A transient classifier `unknown` never demotes a previously proven canonical
   or stale row.
 - Bad evidence is removed with explicit event revocation, then the read model
@@ -197,6 +204,14 @@ lock while it replaces headers and sweeps derived rows; each ordinary
 classification takes the shared lock before parent advisory locks and holds it
 for its transaction, so the sweep cannot acknowledge a cache generation while
 an older verdict is still able to commit or form a lock-order cycle.
+
+Migration `0012_add_bitcoin_core_reconcile_queue.sql` adds generation-protected durable
+two-phase work for atomic near-tip Core suffix replacement. A
+`primary_pending` seed first reconciles its parent, then becomes an expansion
+seed that discovers and enqueues dependents atomically with its own deletion.
+The sync state remains in `backbone_reorg_reconcile_pending` until the queue
+drains, so a crash or budget exit is visible and restart-safe rather than a
+silent partial reconciliation.
 
 After a migration has reached a persistent database, do not edit it. Add a new
 forward migration. Real database migration runs go through `just db-migrate-dev`
