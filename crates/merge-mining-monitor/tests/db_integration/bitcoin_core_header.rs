@@ -445,6 +445,12 @@ async fn shallow_cache_reorg_reclassifies_existing_orphans_and_source_health() -
                     parent_header.bits.to_consensus() ^ 1,
                 ))
                 .with_canonical_header(core_header(
+                    parent_height,
+                    7,
+                    i64::from(parent_header.time) + 1,
+                    parent_header.bits.to_consensus(),
+                ))
+                .with_canonical_header(core_header(
                     core_tip,
                     8,
                     i64::from(parent_header.time) + 1,
@@ -497,6 +503,7 @@ async fn refresh_finalizes_a_shallow_boundary_after_a_missed_verification_window
             ))
             .with_synced_tip_height(4032)
             .with_canonical_header(core_header(2016, 9, 4, 0x1c00_ffff))
+            .with_canonical_header(core_header(2030, 8, 4, 0x1c00_ffff))
             .with_canonical_header(core_header(4032, 2, 3, 0x1c00_ffff)),
         );
         refresh_bitcoin_core_header_cache(&mut client, &reorged).await?;
