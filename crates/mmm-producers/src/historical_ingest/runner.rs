@@ -18,12 +18,13 @@ use mmm_capture::capture::{
     ClassificationProof, ResolvedPoolAttributions, build_event_payload_from_evidence,
     now_epoch_seconds, resolve_parent_pool_attribution_from_coinbase,
 };
+use mmm_capture::nbits_table::NbitsTable;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::{
-    clear_authoritative_historical_provenance_in_transaction, drain_historical_reconcile_queue,
-    enqueue_historical_parent_reconcile, invalidate_source_health_in_transaction,
-    rebuild_historical_source_health, reconcile_authoritative_historical_source_in_transaction,
-    write_historical_base_in_transaction,
+    clear_authoritative_historical_provenance_in_transaction,
+    drain_historical_reconcile_queue_with_nbits_table, enqueue_historical_parent_reconcile,
+    invalidate_source_health_in_transaction, rebuild_historical_source_health,
+    reconcile_authoritative_historical_source_in_transaction, write_historical_base_in_transaction,
 };
 use mmm_store::{
     EventWriteDisposition, upsert_merge_mining_event_with_attributions, upsert_pool_snapshot,
@@ -72,7 +73,7 @@ pub struct HistoricalImportSummary {
     /// strict/weak verdict at write time.
     pub excluded: u64,
     /// Ingested unknown rows whose persisted class is still NULL (beyond the
-    /// committed nBits table horizon, or a row reconciliation left without a
+    /// persisted Core-cache horizon, or a row reconciliation left without a
     /// block row).
     pub pending: u64,
     pub known_direct_branch_attestations: u64,
@@ -105,6 +106,7 @@ struct ChainImportContext<'a> {
     resolver: &'a PoolResolver,
     pool_ids_by_slug: &'a HashMap<String, i64>,
     classifications: &'a mut HashMap<Vec<u8>, ParentClassification>,
+    nbits_table: &'a NbitsTable,
 }
 
 impl HistoricalImportSummary {
@@ -232,11 +234,11 @@ impl HistoricalImportAllSummary {
 
 /// Stream the configured CSV and persist accepted rows, returning the tallies.
 ///
-/// Refuses to run without a live classifier unless `--allow-unclassified` is set
-/// (the orphan-import safety guard). Resolves the `source_id`, upserts the
-/// embedded pool snapshot, validates and classifies the complete input before
-/// opening the chain transaction, then iterates rows to capture them. Honors
-/// `--limit` (caps `ingested`) and logs progress every `batch_size` ingests.
+/// Requires a live Core classifier (the orphan-import safety guard). Resolves
+/// the `source_id`, upserts the embedded pool snapshot, validates and
+/// classifies the complete input before opening the chain transaction, then
+/// iterates rows to capture them. Honors `--limit` (caps `ingested`) and logs
+/// progress every `batch_size` ingests.
 /// Setup, validation, and capture errors propagate.
 pub async fn run_historical_import(
     client: &mut Client,
@@ -244,8 +246,18 @@ pub async fn run_historical_import(
     config: &HistoricalImportConfig,
 ) -> Result<HistoricalImportSummary> {
     let mut classifications = HashMap::new();
-    run_historical_import_with_cache(client, classifier, config, &mut classifications, None, true)
-        .await
+    mmm_store::lock_bitcoin_core_header_cache(client).await?;
+    let result = run_historical_import_with_cache(
+        client,
+        classifier,
+        config,
+        &mut classifications,
+        None,
+        true,
+        None,
+    )
+    .await;
+    mmm_store::finish_bitcoin_core_header_cache_operation(client, result).await
 }
 
 async fn run_historical_import_with_cache(
@@ -255,6 +267,7 @@ async fn run_historical_import_with_cache(
     classifications: &mut HashMap<Vec<u8>, ParentClassification>,
     preflighted_artifact: Option<ArtifactPreflight>,
     rebuild_source_health_after_import: bool,
+    shared_nbits_table: Option<&NbitsTable>,
 ) -> Result<HistoricalImportSummary> {
     if config.limit == Some(0) {
         bail!("--limit must be greater than zero");
@@ -266,6 +279,13 @@ async fn run_historical_import_with_cache(
         Some(artifact) => artifact,
         None => preflight_artifact(config, spec)?,
     };
+    let loaded_nbits_table = match shared_nbits_table {
+        Some(_) => None,
+        None => Some(mmm_store::load_bitcoin_core_nbits_table(client).await?),
+    };
+    let nbits_table = shared_nbits_table
+        .or(loaded_nbits_table.as_ref())
+        .expect("a historical import always has a Core nBits table");
     if !candidates_prepared {
         let import_configs = (!matches!(
             spec.lifecycle,
@@ -280,6 +300,7 @@ async fn run_historical_import_with_cache(
             spec,
             &mut artifact,
             classifications,
+            nbits_table,
         )
         .await?;
     }
@@ -311,6 +332,7 @@ async fn run_historical_import_with_cache(
             resolver: &resolver,
             pool_ids_by_slug: &pool_ids_by_slug,
             classifications,
+            nbits_table,
         },
         artifact,
     )
@@ -329,7 +351,13 @@ async fn run_historical_import_with_cache(
     txn.commit()
         .await
         .with_context(|| format!("commit {} historical chain transaction", spec.chain))?;
-    drain_historical_reconcile_queue(client, classifier, classifications).await?;
+    drain_historical_reconcile_queue_with_nbits_table(
+        client,
+        classifier,
+        classifications,
+        Some(nbits_table),
+    )
+    .await?;
     record_persisted_parent_counts(client, &mut summary, parent_counts).await?;
     if rebuild_source_health_after_import {
         rebuild_historical_source_health(client).await?;
@@ -368,6 +396,7 @@ async fn import_rows_in_transaction(
             &layout,
             &record,
             context.config.publication_ref(),
+            Some(context.nbits_table),
         ) {
             Ok(candidate) => candidate,
             Err(reason) => {
@@ -375,14 +404,8 @@ async fn import_rows_in_transaction(
                 continue;
             }
         };
-        let decision = import_decision(
-            txn,
-            context.classifier,
-            context.config,
-            &candidate,
-            context.classifications,
-        )
-        .await?;
+        let decision =
+            import_decision(txn, context.classifier, &candidate, context.classifications).await?;
         if let ImportDecision::Skip(reason) = decision {
             summary.skip(reason);
             continue;
@@ -450,6 +473,19 @@ async fn run_historical_import_configs(
         preflighted_artifacts.push(artifact);
     }
 
+    mmm_store::lock_bitcoin_core_header_cache(client).await?;
+    let result =
+        run_historical_import_configs_locked(client, classifier, configs, preflighted_artifacts)
+            .await;
+    mmm_store::finish_bitcoin_core_header_cache_operation(client, result).await
+}
+
+async fn run_historical_import_configs_locked(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    configs: Vec<HistoricalImportConfig>,
+    mut preflighted_artifacts: Vec<ArtifactPreflight>,
+) -> Result<HistoricalImportAllSummary> {
     let mut classifications = HashMap::new();
     let import_configs = configs
         .iter()
@@ -460,6 +496,7 @@ async fn run_historical_import_configs(
         })
         .collect::<Vec<_>>();
     ensure_import_environment(client, classifier, &import_configs).await?;
+    let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
     for (chain_config, artifact) in configs.iter().zip(&mut preflighted_artifacts) {
         let spec = historical_chain_spec(&chain_config.chain)
             .expect("chain configs are built from the source registry");
@@ -470,6 +507,7 @@ async fn run_historical_import_configs(
             spec,
             artifact,
             &mut classifications,
+            &nbits_table,
         )
         .await?;
     }
@@ -489,6 +527,7 @@ async fn run_historical_import_configs(
             &mut classifications,
             Some(artifact),
             false,
+            Some(&nbits_table),
         )
         .await?;
         summary
@@ -496,7 +535,7 @@ async fn run_historical_import_configs(
             .push((chain_config.chain.clone(), chain_summary));
     }
     summary.stale_branches_reconciled =
-        reconcile_published_stale_branches(client, classifier).await?;
+        reconcile_published_stale_branches(client, classifier, &nbits_table).await?;
     rebuild_historical_source_health(client).await?;
     Ok(summary)
 }
@@ -534,10 +573,17 @@ pub async fn run_manifest_historical_import_for_test(
 async fn reconcile_published_stale_branches(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
+    nbits_table: &NbitsTable,
 ) -> Result<u64> {
     let queued = enqueue_published_stale_branches(client).await?;
     let fresh_classifications = HashMap::new();
-    drain_historical_reconcile_queue(client, classifier, &fresh_classifications).await?;
+    drain_historical_reconcile_queue_with_nbits_table(
+        client,
+        classifier,
+        &fresh_classifications,
+        Some(nbits_table),
+    )
+    .await?;
     Ok(queued)
 }
 
@@ -591,10 +637,8 @@ async fn ensure_import_environment(
     if configs.is_empty() {
         return Ok(());
     }
-    if !classifier.is_enabled() && configs.iter().any(|config| !config.allow_unclassified) {
-        bail!(
-            "BITCOIN_RPC_URL is required for historical import unless --allow-unclassified is passed"
-        );
+    if !classifier.is_enabled() {
+        bail!("BITCOIN_RPC_URL is required for historical import");
     }
     // An empty membership means the orphan-class gate cannot exclude a known
     // stale. Refuse by default; the flag is only for disposable diagnostics.
@@ -656,19 +700,15 @@ async fn import_candidate(
     // reactivating writer so a conflict with a live row auto-revoked
     // `ELASTOS_REVOKE_NON_BTC` clears that reversible, evidence-based
     // revocation, exactly as a live re-Valid capture would -- but ONLY on the
-    // Core-attested (preclassified) path: an `--allow-unclassified` run gates
-    // rows on nothing stronger than the header's own encoded target, which is
-    // weaker than the Elastos producer's validity gate, so it must never
-    // resurrect a revoked row. Sticky and manual revocations stay untouched
-    // either way. Hathor deliberately stays on the generic upsert: its
+    // Core-attested path. Sticky and manual revocations stay untouched. Hathor
+    // deliberately stays on the generic upsert: its
     // reversible revocations (voided/superseded) track CURRENT child-DAG
     // state that a historical observation must not resurrect, and its writer
     // requires the RFC 0006 sidecar the exports cannot supply. Every other
     // chain writes the event alone. `pool_identity_id` stays NULL here --
     // the `reclassify-pools` late-fill path resolves it from the registry.
     let rsk_evidence = candidate.rsk_evidence.as_ref();
-    let use_elastos_writer =
-        context.chain == "elastos" && matches!(&decision, ImportDecision::CapturePreclassified(_));
+    let use_elastos_writer = context.chain == "elastos";
     let upsert = async |txn: &tokio_postgres::Transaction<'_>,
                         source_id: i64,
                         payload: &mmm_capture::capture::MergeMiningEventPayload| {
@@ -681,7 +721,6 @@ async fn import_candidate(
         }
     };
     let parent_classification = match decision {
-        ImportDecision::CaptureUnclassified => None,
         ImportDecision::CapturePreclassified(parent_classification) => Some(*parent_classification),
         ImportDecision::Skip(_) => unreachable!("skip decisions do not reach import_candidate"),
     };

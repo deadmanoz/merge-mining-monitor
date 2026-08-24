@@ -1,6 +1,7 @@
 use anyhow::Result;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier, ParentClassification};
 use mmm_capture::capture::HATHOR_REVOKE_NON_BTC;
+use mmm_capture::nbits_table::daa_epoch_start;
 use mmm_producers::chains::hathor::{
     HathorBlockMeta, HathorCaptureContext, HathorHeightOutcome, HathorRpc, HathorTransaction,
     process_hathor_height,
@@ -25,8 +26,8 @@ impl HathorRpc for FixtureHathorRpc {
 }
 
 /// An `unknown` parent classification over the BTC genesis header, for fake
-/// classifiers whose horizon outcome is driven by `synced_tip_height` /
-/// `epoch_nbits`, not `classify_parent`.
+/// classifiers whose horizon outcome is driven by `synced_tip_height`, not
+/// parent placement.
 fn unknown_genesis_parent() -> ParentClassification {
     ParentClassification::unknown(
         &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
@@ -37,6 +38,13 @@ async fn hathor_context(
     client: &Client,
     classifier: ConfiguredParentClassifier,
 ) -> Result<HathorCaptureContext> {
+    crate::support::db::seed_bitcoin_core_header_cache_through(
+        client,
+        710_969,
+        i64::MAX,
+        0x170c_69ea,
+    )
+    .await?;
     HathorCaptureContext::new_with_classifier(client, classifier).await
 }
 
@@ -59,6 +67,34 @@ fn hathor_1971823_fixture() -> (i32, FixtureHathorRpc) {
         timestamp: j["timestamp"].as_i64().unwrap(),
     };
     (height, FixtureHathorRpc { meta, tx })
+}
+
+async fn assert_revoked_hathor_event(client: &Client, source_id: i64, height: i32) -> Result<()> {
+    let row = client
+        .query_one(
+            "SELECT COUNT(*)::int8, \
+                    COUNT(*) FILTER (WHERE revoked_at IS NULL)::int8, \
+                    MAX(revocation_reason) \
+             FROM merge_mining_event \
+             WHERE source_id = $1 AND child_height = $2",
+            &[&source_id, &height],
+        )
+        .await?;
+    assert_eq!(
+        row.get::<_, i64>(0),
+        1,
+        "reprocess must not write a replacement row"
+    );
+    assert_eq!(
+        row.get::<_, i64>(1),
+        0,
+        "a rejected Hathor parent must revoke the active event"
+    );
+    assert_eq!(
+        row.get::<_, Option<String>>(2).as_deref(),
+        Some(HATHOR_REVOKE_NON_BTC)
+    );
+    Ok(())
 }
 
 #[tokio::test]
@@ -105,25 +141,38 @@ async fn hathor_in_table_valid_far_future_height_is_revoked_against_fresh_tip() 
             process_hathor_height(&mut client, &rpc, &revoke_context, height).await?,
             HathorHeightOutcome::NonBtcParentSkipped
         );
-        let row = client
-            .query_one(
-                "SELECT COUNT(*)::int8, \
-                        COUNT(*) FILTER (WHERE revoked_at IS NULL)::int8, \
-                        MAX(revocation_reason) \
-                 FROM merge_mining_event \
-                 WHERE source_id = $1 AND child_height = $2",
-                &[&revoke_context.source_id(), &height],
+        assert_revoked_hathor_event(&client, revoke_context.source_id(), height).await?;
+        Ok(())
+    })
+}
+
+#[tokio::test]
+async fn core_cache_nbits_mismatch_revokes_an_existing_event() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (height, rpc) = hathor_1971823_fixture();
+        let context = hathor_context(
+            &client,
+            ConfiguredParentClassifier::Fake(
+                FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(955_609),
+            ),
+        )
+        .await?;
+        assert_eq!(
+            process_hathor_height(&mut client, &rpc, &context, height).await?,
+            HathorHeightOutcome::AuxpowWritten
+        );
+
+        client
+            .execute(
+                "UPDATE bitcoin_core_header SET bits = $1 WHERE height = $2",
+                &[&i64::from(0x170c_69ea_u32 ^ 1), &daa_epoch_start(710_969)],
             )
             .await?;
-        let total_rows: i64 = row.get(0);
-        let active_rows: i64 = row.get(1);
-        let reason: Option<String> = row.get(2);
-        assert_eq!(total_rows, 1, "reprocess must not write a replacement row");
         assert_eq!(
-            active_rows, 0,
-            "fresh-tip far-future guard must revoke the active Hathor event"
+            process_hathor_height(&mut client, &rpc, &context, height).await?,
+            HathorHeightOutcome::NonBtcParentSkipped
         );
-        assert_eq!(reason.as_deref(), Some(HATHOR_REVOKE_NON_BTC));
+        assert_revoked_hathor_event(&client, context.source_id(), height).await?;
         Ok(())
     })
 }

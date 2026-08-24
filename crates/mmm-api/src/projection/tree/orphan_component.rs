@@ -26,10 +26,9 @@ pub(super) const ANCHOR_PLACEMENT_RADIUS: i32 = 16;
 /// `strict_btc_orphan` places by its validated BIP34 coinbase height (exact);
 /// `weak_btc_orphan` / `excluded` / pending place by the
 /// timestamp-selected DAA-epoch first-block height (approximate, `~`). The epoch
-/// lookup is monotonic by construction and RPC-free, reusing the weak classifier's
-/// own committed nBits table rather than binary-searching non-monotonic header
-/// times. Returns `(height, approx)`, or `None` when no height can be derived (the
-/// caller then falls back to the flat strip).
+/// lookup is monotonic and reads the persisted Core-derived cache, so the API
+/// stays RPC-free. Returns `(height, approx)`, or `None` when no height can be
+/// derived (the caller then falls back to the flat strip).
 pub(super) async fn anchor_placement_height(
     client: &Client,
     orphan: &BlockRow,
@@ -40,23 +39,28 @@ pub(super) async fn anchor_placement_height(
     {
         return Ok(Some((height, false)));
     }
-    let table = mmm_capture::nbits_table::table();
-    // Above the committed table's horizon the table genuinely cannot place the
+    let table = match mmm_store::load_bitcoin_core_nbits_table_if_present(client).await {
+        Ok(Some(table)) => table,
+        Ok(None) => return Ok(None),
+        Err(error) => {
+            warn!(error = %error, "Core header cache unavailable for orphan placement");
+            return Ok(None);
+        }
+    };
+    // Above the persisted Core cache horizon the table genuinely cannot place the
     // orphan (the same condition that makes it pending, not excluded). Leave it
     // unplaced (the caller falls back to the flat strip) rather than guessing it
     // near the local tip via the below-table fallback below.
-    if let Some(covered_max_time) = table.covered_max_time()
-        && orphan.header_time > covered_max_time
-    {
+    if orphan.header_time > table.horizon_time() {
         return Ok(None);
     }
     if let Some(height) = table.epoch_height_for_time(orphan.header_time) {
         return Ok(Some((height, true)));
     }
-    // Defensive fallback ONLY for a timestamp BELOW the committed table's first
-    // epoch (a degenerate pre-2009 time; above-horizon already returned None): the
-    // local nearest-time canonical block, if any. Sparse local rows make this a
-    // last resort, not the primary weak source.
+    // Defensive fallback ONLY for a timestamp BELOW the Core cache's first epoch
+    // (a degenerate pre-2009 time; above-horizon already returned None): the local
+    // nearest-time canonical block, if any. Sparse local rows make this a last
+    // resort, not the primary weak source.
     let row = client
         .query_opt(
             "SELECT btc_height FROM block \

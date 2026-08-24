@@ -10,10 +10,7 @@ pub(crate) mod identity_reresolve;
 pub(crate) mod rpc;
 
 #[cfg(any(test, feature = "db-integration"))]
-pub use capture::{
-    ElastosCaptureContext, ElastosHeightOutcome, process_elastos_height,
-    process_elastos_table_horizon_for_test,
-};
+pub use capture::{ElastosCaptureContext, ElastosHeightOutcome, process_elastos_height};
 #[cfg(any(test, feature = "db-integration"))]
 pub use identity::{
     ELASTOS_MINERINFO_NAMESPACE, ELASTOS_REWARD_ADDRESS_NAMESPACE, ELASTOS_RPC_MINERINFO_SOURCE,

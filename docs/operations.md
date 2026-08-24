@@ -13,7 +13,23 @@ just test
 ```
 
 Copy `.env.example` to `.env` and adjust endpoints before running live pollers
-or Bitcoin Core classification.
+or Bitcoin Core classification. A synced Bitcoin Core node is required for every
+capture, import, and reconciliation command, including database-only
+maintenance modes. Each refreshes the sparse `bitcoin_core_header` cache through
+the current synced tip before work begins. `serve` reads that cache from Postgres
+and makes no Core RPC calls.
+
+The current retarget boundary is marked final only after Core re-reads it at 100
+blocks behind that tip. Cache refreshes verify that Core's tip did not change
+while the sparse header snapshot was read. A shallow replacement reclassifies
+existing orphan rows before the cache lock is released, while settled epoch
+history is retained.
+
+After applying migration `0010`, configure and sync a **Bitcoin mainnet** Core
+node before running any command that writes or rebuilds monitor data, including
+`just rebuild-source-health`. There is intentionally no database-only bypass:
+the node is an operational requirement, while the API remains available from the
+persisted cache.
 
 ## Serving
 
@@ -130,6 +146,12 @@ just sync-bitcoin-core --from-height <start> --to-height <end> --missing-only  #
 just sync-bitcoin-core --follow                                 # long-lived catch-up-then-follow daemon
 ```
 
+In follow mode, each batch also refreshes the sparse Core header cache, even
+when no child-chain poller is running. A transient Core or database failure
+retries on the next interval without discarding backbone progress from that
+batch. A non-mainnet Core node or inconsistent persisted cache is an integrity
+failure and stops follow mode for operator repair.
+
 `--to-height` and `--limit` are mutually exclusive, so range and page semantics
 stay unambiguous. Follow mode keeps a contiguous local cursor and, during each
 interval, repairs a bounded near-tip window (`missing_only`) so sparse
@@ -201,9 +223,10 @@ membership, every producer entry path warns loudly when it is empty, and the
 orphan classifier excludes any member from strict/weak classification. The
 import is atomic and strict by default (any malformed row aborts unless
 `--skip-malformed` is passed). On a database that already classified rows
-before the membership existed, `just reclassify-known-stales` retroactively
-demotes contaminated strict/weak rows to `excluded`, idempotently, and
-maintains `source_health` through the reconciler. See
+before the membership existed, the import immediately and idempotently demotes
+contaminated strict/weak rows to `excluded` in the same transaction, maintaining
+`source_health` through the reconciler. `just reclassify-known-stales` remains
+available to repeat that repair independently. See
 `docs/historical-ingest.md` for the full fresh-database ordering.
 
 ## Historical Publication

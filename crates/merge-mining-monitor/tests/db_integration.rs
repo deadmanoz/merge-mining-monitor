@@ -2,6 +2,8 @@
 
 mod support;
 
+#[path = "db_integration/bitcoin_core_header.rs"]
+mod bitcoin_core_header;
 #[path = "db_integration/elastos.rs"]
 mod elastos;
 #[path = "db_integration/event_identity.rs"]

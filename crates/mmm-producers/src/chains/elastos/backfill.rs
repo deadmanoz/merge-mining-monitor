@@ -47,8 +47,7 @@ pub(crate) async fn backfill(rt: ProducerRuntime, config: BackfillConfig) -> Res
 /// the live tip, warn if it dips below the AuxPoW activation floor, self-verify and
 /// process each height (per-request throttle for the public endpoint), then run the
 /// post-backfill read-model repair over the range. Backfills never move
-/// `poll_cursor`. Bails (no silent gaps) if a height hits the nBits-table horizon:
-/// regenerate the table first.
+/// `poll_cursor`. Bails (no silent gaps) if a height hits the Core-cache horizon.
 pub(crate) async fn run_elastos_backfill(
     rt: ProducerRuntime,
     rpc: ElastosRpcClient,
@@ -124,12 +123,10 @@ fn elastos_backfill_effect(
             Ok(BackfillHeightEffect::NonAuxpowSkipped)
         }
         ElastosHeightOutcome::MalformedSkipped => Ok(BackfillHeightEffect::MalformedSkipped),
-        // A bounded backfill must not silently leave gaps. A beyond-horizon parent
-        // holds (and the backfill fails) only when Bitcoin Core cannot answer: a
-        // Core-enabled backfill resolves it from Core, a Core-disabled (offline)
-        // backfill fails here as before.
+        // A bounded backfill must not silently leave gaps. A beyond-horizon hold
+        // means the command's fresh Core cache did not cover the evidence.
         ElastosHeightOutcome::TableHorizonHold => bail!(
-            "Elastos backfill hit the nBits-table horizon at height {height} with no Core answer; enable BITCOIN_RPC_URL or regenerate the table (scripts/gen-nbits-table.py) before backfilling further"
+            "Elastos backfill hit the persisted Core-cache horizon at height {height}; ensure Bitcoin Core is fully synced before retrying"
         ),
     }
 }

@@ -6,6 +6,37 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Replace the compiled Bitcoin nBits epoch table with a sparse Postgres cache
+  populated from a required Bitcoin mainnet Core node. Capture, import, and
+  reconciliation refresh Core headers through the synced tip before classifying
+  evidence, while live pollers and backbone follow refresh a stable Core
+  snapshot on every tick. Historical imports retain one table through their
+  derived rebuild. Shallow replacements and timestamp-overlapping retarget
+  boundaries reclassify existing orphan rows while other expanded coverage
+  revisits pending rows, with durable retry markers for an interrupted sweep.
+  An advancing horizon verifies the old shallow horizon
+  before retaining timestamp coverage. Retarget boundaries are marked final at
+  100 blocks deep. Timestamp coverage does not regress when a valid later Core
+  header has an older timestamp. The API remains Core-RPC-free by reading the
+  persisted cache. A cache-driven recheck requires fresh Core evidence, so an
+  RPC failure leaves its durable retry marker set. Cache headers and timestamp
+  coverage are read from one database snapshot. The `--allow-unclassified`
+  import bypass is removed. A strict BIP34 claim above Core's cached horizon
+  remains pending even when its difficulty epoch is cached. The first Core-cache
+  population conservatively revisits existing orphan classifications. Cache
+  refresh waits for an in-flight classification transaction, so its completed
+  sweep cannot miss a later commit made from an old cache snapshot. Cache
+  readers acquire that shared lock before parent locks, and a non-mainnet Core
+  tip holds rather than revoking a claimed mainnet height. A fresh Core tip
+  rejects a claimed BIP34 height more than 144 blocks beyond it even if a stale
+  cache already covers that height.
+
+- Atomically repair existing strict/weak classifications with an
+  `import-known-stales` membership update.
+
+- Retry transient Core-header-cache refresh failures in `sync-bitcoin-core --follow`
+  without masking sync progress or a typed cache/backbone integrity failure.
+
 ## [0.6.0] - 2026-08-15
 
 - Turn findings figures into claim-led evidence panels with compact metrics,

@@ -28,16 +28,18 @@ use mmm_capture::capture::{MergeMiningEventPayload, ParentKind, apply_classifica
 use mmm_store::EventWriteOutcome;
 
 mod historical_queue;
-pub use historical_queue::drain_historical_reconcile_queue;
 #[cfg(feature = "db-integration")]
 pub use historical_queue::drain_historical_reconcile_queue_with_budget_for_test;
 use historical_queue::enqueue_historical_parent;
+pub use historical_queue::{
+    drain_historical_reconcile_queue, drain_historical_reconcile_queue_with_nbits_table,
+};
 
 use super::{
     CoreCoinbaseStatus, DEFAULT_CASCADE_BUDGET, PreclassifiedParent,
     RECONCILE_LOCK_SET_RETRY_LIMIT, classify_payload_parent, is_reconcile_lock_set_changed,
-    load_event, lock_block_hash, lock_event_for_source_health,
-    lock_payload_parent_read_model_in_txn, preclassify_event_parent,
+    load_event, lock_block_hash, lock_core_header_cache_for_reconcile,
+    lock_event_for_source_health, lock_payload_parent_read_model_in_txn, preclassify_event_parent,
     reconcile_dependents_after_changes_with_budget, reconcile_one_event_in_txn,
     upsert_core_canonical_header_with_coinbase,
 };
@@ -163,16 +165,40 @@ async fn cascade_changed(
     changed_hashes: Vec<Vec<u8>>,
     cascade_budget: usize,
 ) -> Result<()> {
+    cascade_changed_with_nbits_table(client, classifier, changed_hashes, cascade_budget, None).await
+}
+
+async fn cascade_changed_with_nbits_table(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    changed_hashes: Vec<Vec<u8>>,
+    cascade_budget: usize,
+    nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
+) -> Result<()> {
     if changed_hashes.is_empty() {
         return Ok(());
     }
-    reconcile_dependents_after_changes_with_budget(
-        client,
-        &changed_hashes,
-        classifier,
-        cascade_budget,
-    )
-    .await
+    match nbits_table {
+        Some(nbits_table) => {
+            super::reconcile::reconcile_dependents_after_changes_with_budget_and_nbits_table(
+                client,
+                &changed_hashes,
+                classifier,
+                cascade_budget,
+                Some(nbits_table),
+            )
+            .await
+        }
+        None => {
+            reconcile_dependents_after_changes_with_budget(
+                client,
+                &changed_hashes,
+                classifier,
+                cascade_budget,
+            )
+            .await
+        }
+    }
 }
 
 /// Shared per-block capture transaction sequence for every AuxPoW producer.
@@ -418,6 +444,7 @@ where
             .transaction()
             .await
             .with_context(|| format!("begin {chain_label} capture transaction"))?;
+        lock_core_header_cache_for_reconcile(&txn, classifier, None).await?;
         lock_payload_parent_read_model_in_txn(&txn, payload, preclassified.as_ref()).await?;
         // Ensure the parent is locked even for near / target-failing payloads (the
         // helper above no-ops for those), then open the source-health bracket
@@ -436,6 +463,7 @@ where
                 classifier,
                 preclassified.clone().map(PreclassifiedParent::trusted),
                 PrimaryDiff::Wrapper(&bracket),
+                None,
             )
             .await
         } else {
@@ -513,6 +541,7 @@ pub(crate) async fn set_event_revocation(
             .transaction()
             .await
             .with_context(|| format!("begin {op} reconcile transaction"))?;
+        lock_core_header_cache_for_reconcile(&txn, classifier, None).await?;
         // Pre-acquire the reconcile lock set and open the source-health bracket
         // BEFORE the revoked_at UPDATE (the membership change). This wrapper
         // owns the primary diff.
@@ -537,6 +566,7 @@ pub(crate) async fn set_event_revocation(
             classifier,
             attempt_preclassified,
             PrimaryDiff::Wrapper(&bracket),
+            None,
         )
         .await
         {
@@ -643,6 +673,9 @@ where
             .transaction()
             .await
             .with_context(|| format!("begin {label} transaction"))?;
+        if reconcile_anchor.is_some() {
+            lock_core_header_cache_for_reconcile(&txn, classifier, None).await?;
+        }
         // Advisory locks first, row locks second (the global order every
         // capture/revoke/restore transaction uses). For an anchored reconcile,
         // pre-acquire the anchor's full reconcile lock set so the later
@@ -663,6 +696,7 @@ where
                     classifier,
                     None,
                     PrimaryDiff::Reconcile,
+                    None,
                 )
                 .await
             }

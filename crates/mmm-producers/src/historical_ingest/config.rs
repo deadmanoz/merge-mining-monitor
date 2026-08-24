@@ -68,9 +68,6 @@ pub struct HistoricalImportConfig {
     pub require_pinned_checkout: bool,
     pub batch_size: usize,
     pub limit: Option<usize>,
-    /// Allows canonical/stale rows to be loaded without live Bitcoin Core.
-    /// Strict/weak unknown rows still require Core absence attestation.
-    pub allow_unclassified: bool,
     /// Allows a deliberately membership-free diagnostic database.
     pub allow_empty_known_stales: bool,
 }
@@ -82,7 +79,6 @@ pub struct HistoricalImportAllConfig {
     pub artifact_root: PathBuf,
     pub require_pinned_checkout: bool,
     pub batch_size: usize,
-    pub allow_unclassified: bool,
     pub allow_empty_known_stales: bool,
 }
 
@@ -99,7 +95,6 @@ impl HistoricalImportConfig {
             require_pinned_checkout: false,
             batch_size: DEFAULT_BATCH_SIZE,
             limit: None,
-            allow_unclassified: false,
             allow_empty_known_stales: false,
         }
     }
@@ -113,10 +108,7 @@ impl HistoricalImportConfig {
     }
 
     pub(super) fn is_authoritative_snapshot(&self, spec: &HistoricalChainSpec) -> bool {
-        self.manifest_path.is_some()
-            && self.limit.is_none()
-            && !self.allow_unclassified
-            && spec.is_authoritative()
+        self.manifest_path.is_some() && self.limit.is_none() && spec.is_authoritative()
     }
 
     /// Parse `import-dataset <chain> [flags...]`.
@@ -140,7 +132,6 @@ impl HistoricalImportConfig {
         let mut artifact_root = None;
         let mut batch_size = DEFAULT_BATCH_SIZE;
         let mut limit = None;
-        let mut allow_unclassified = false;
         let mut allow_empty_known_stales = false;
 
         while let Some(arg) = args.next() {
@@ -159,7 +150,6 @@ impl HistoricalImportConfig {
                     }
                 }
                 "--limit" => limit = Some(next_usize(&mut args, "--limit")?),
-                "--allow-unclassified" => allow_unclassified = true,
                 "--allow-empty-known-stales" => {
                     allow_empty_known_stales = true;
                 }
@@ -178,7 +168,6 @@ impl HistoricalImportConfig {
             let mut config = Self::for_csv(chain, csv_path);
             config.batch_size = batch_size;
             config.limit = limit;
-            config.allow_unclassified = allow_unclassified;
             config.allow_empty_known_stales = allow_empty_known_stales;
             return Ok(config);
         }
@@ -198,7 +187,6 @@ impl HistoricalImportConfig {
             require_pinned_checkout: !explicit_artifact_root,
             batch_size,
             limit,
-            allow_unclassified,
             allow_empty_known_stales,
         })
     }
@@ -209,7 +197,6 @@ impl HistoricalImportAllConfig {
         let mut manifest_path = PathBuf::from(DEFAULT_MANIFEST_PATH);
         let mut artifact_root = None;
         let mut batch_size = DEFAULT_BATCH_SIZE;
-        let mut allow_unclassified = false;
         let mut allow_empty_known_stales = false;
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -223,7 +210,6 @@ impl HistoricalImportAllConfig {
                         bail!("--batch-size must be greater than zero");
                     }
                 }
-                "--allow-unclassified" => allow_unclassified = true,
                 "--allow-empty-known-stales" => allow_empty_known_stales = true,
                 "-h" | "--help" => bail!(import_all_usage_message()),
                 other => bail!(
@@ -241,7 +227,6 @@ impl HistoricalImportAllConfig {
             artifact_root,
             require_pinned_checkout: !explicit_artifact_root,
             batch_size,
-            allow_unclassified,
             allow_empty_known_stales,
         })
     }
@@ -261,7 +246,6 @@ impl HistoricalImportAllConfig {
                     require_pinned_checkout: self.require_pinned_checkout,
                     batch_size: self.batch_size,
                     limit: None,
-                    allow_unclassified: self.allow_unclassified,
                     allow_empty_known_stales: self.allow_empty_known_stales,
                 })
             })
@@ -286,13 +270,13 @@ fn next_usize(args: &mut std::env::Args, flag: &str) -> Result<usize> {
 
 fn usage_message() -> &'static str {
     "usage: import-dataset <chain> [--csv PATH | --artifact-root DIR] \
-     [--manifest PATH] [--batch-size N] [--limit N] [--allow-unclassified] \
+     [--manifest PATH] [--batch-size N] [--limit N] \
      [--allow-empty-known-stales]"
 }
 
 fn import_all_usage_message() -> &'static str {
     "usage: import-all [--artifact-root DIR] [--manifest PATH] [--batch-size N] \
-     [--allow-unclassified] [--allow-empty-known-stales]"
+     [--allow-empty-known-stales]"
 }
 
 fn resolve_manifest_csv_path(
@@ -359,16 +343,12 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_manifest_diagnostics_are_not_authoritative() {
+    fn limited_manifest_import_is_not_authoritative() {
         let spec = historical_chain_spec("devcoin").unwrap();
         let mut config = HistoricalImportConfig::for_csv("devcoin", "fixture.csv");
         config.manifest_path = Some(PathBuf::from("manifest.json"));
         assert!(config.is_authoritative_snapshot(spec));
 
-        config.allow_unclassified = true;
-        assert!(!config.is_authoritative_snapshot(spec));
-
-        config.allow_unclassified = false;
         config.limit = Some(1);
         assert!(!config.is_authoritative_snapshot(spec));
     }

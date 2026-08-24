@@ -1063,6 +1063,7 @@ dependencies = [
  "hex",
  "mmm-capture",
  "mmm-pg",
+ "mmm-store",
  "serde",
  "serde_json",
  "serde_urlencoded",

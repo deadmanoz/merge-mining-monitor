@@ -57,14 +57,14 @@ impl ParsedHeader {
         self.header.block_hash()
     }
 
-    /// The header `nTime` (seconds). Carried for nBits-table horizon
+    /// The header `nTime` (seconds). Carried for Core-cache horizon
     /// classification of the parent header by time.
     pub fn time(&self) -> u32 {
         self.header.time
     }
 
     /// The header `nBits` compact target. Fed to `validates_target` for the
-    /// PoW-target gate and to the nBits-table difficulty classification.
+    /// PoW-target gate and to the Core-cache difficulty classification.
     pub fn bits(&self) -> CompactTarget {
         self.header.bits
     }

@@ -55,6 +55,7 @@ pub(crate) async fn compute_block_orphan_class<C: GenericClient>(
     classification: &ParentClassification,
     header: &Header,
     difficulty_epoch_ok: Option<bool>,
+    nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
 ) -> Result<Option<String>> {
     if kind != BlockKind::Unknown {
         return Ok(None);
@@ -85,13 +86,24 @@ pub(crate) async fn compute_block_orphan_class<C: GenericClient>(
         return Ok(BtcOrphanVerdict::Excluded.as_db_str().map(str::to_string));
     }
     let strict_height = load_strict_bip34_height(client, hash).await?;
-    let (verdict, reason) = classify_btc_orphan(header.time as i64, header.bits, strict_height);
+    let loaded_nbits_table = match nbits_table {
+        Some(_) => None,
+        None => Some(mmm_store::load_bitcoin_core_nbits_table(client).await?),
+    };
+    let nbits_table = nbits_table
+        .or(loaded_nbits_table.as_ref())
+        .expect("Core nBits table is loaded when no shared table was supplied");
+    let (verdict, reason) = mmm_capture::btc_orphan::classify_btc_orphan_with(
+        nbits_table,
+        header.time as i64,
+        header.bits,
+        strict_height,
+    );
     if matches!(verdict, BtcOrphanVerdict::Pending) {
         debug!(
             hash = %hex::encode(hash),
             reason,
-            "btc orphan classification pending: nBits table horizon reached; regenerate \
-             scripts/gen-nbits-table.py and rerun reclassify-unknown-parents --recheck-orphans"
+            "btc orphan classification pending: the Core header cache has not reached this evidence"
         );
     }
     Ok(verdict.as_db_str().map(str::to_string))

@@ -3,13 +3,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use bitcoin::block::Header;
-use bitcoin::consensus::{deserialize, serialize};
+use bitcoin::consensus::serialize;
 use bitcoin::hashes::{Hash as _, sha256, sha256d};
 use mmm_bitcoin_core::{
     ConfiguredParentClassifier, FakeParentClassifier, FakeParentClassifierGate,
 };
-use mmm_capture::auxpow::parse_bip34_height;
-use mmm_capture::btc_orphan::{BtcOrphanVerdict, classify_btc_orphan};
 use mmm_producers::{
     HistoricalImportAllConfig, HistoricalImportConfig, enqueue_published_stale_branches_for_test,
     run_historical_import, run_historical_import_configs_for_test,
@@ -26,7 +24,8 @@ use crate::support::scenario::{
 };
 use crate::support::seed::insert_block;
 use crate::support::{
-    absent_classifier, btc_400000_coinbase_script, btc_400000_header, header_meeting_bits,
+    absent_classifier, btc_400000_coinbase_script, btc_400000_header, btc_400000_orphan_fixture,
+    header_meeting_bits,
 };
 
 const NORMALIZED_HEADER: &str = "chain,source_kind,source_path,source_row_number,artifact_scope,provenance,child_height,child_block_hash,child_header_hex,child_block_time,child_nbits,btc_height,btc_header_hash,btc_prev_hash,btc_time,btc_bits,btc_nonce,btc_header_hex,coinbase_scriptsig_hex,coinbase_outputs,full_coinbase_hex,classification,validation_status,expected_nbits,rejection_reason,btc_stale_relevance,relevance_reason\n";
@@ -241,35 +240,6 @@ async fn operator_csv_retains_per_row_skip_accounting() -> Result<()> {
             assert_eq!(summary.ingested, 1);
             assert_eq!(summary.skipped.get("hash_mismatch"), Some(&1));
             assert_eq!(summary.skipped.get("near"), Some(&1));
-            Ok::<_, anyhow::Error>(())
-        }
-        .await;
-        finish_import_with_cleanup(result, &[&csv_path])
-    })
-}
-
-#[tokio::test]
-async fn catalogued_error_block_is_skipped_before_unclassified_override() -> Result<()> {
-    crate::run_mut_db_test!(client, {
-        let header = catalogued_error_block_header()?;
-        let csv_path =
-            write_normalized_csv(&header, "canonical", "", "canonical_parent", &[], 946_213)?;
-        let result = async {
-            let mut config = devcoin_import_config(&csv_path);
-            config.allow_unclassified = true;
-
-            let summary =
-                run_historical_import(&mut client, &ConfiguredParentClassifier::Disabled, &config)
-                    .await?;
-
-            assert_eq!(summary.rows_seen, 1);
-            assert_eq!(summary.candidates, 0);
-            assert_eq!(summary.ingested, 0);
-            assert_eq!(summary.skipped.get("unsupported_classification"), Some(&1));
-            assert_eq!(
-                active_source_event_count(&client, "auxpow:devcoin").await?,
-                0
-            );
             Ok::<_, anyhow::Error>(())
         }
         .await;
@@ -843,19 +813,7 @@ async fn import_refuses_without_known_stale_membership() -> Result<()> {
 #[tokio::test]
 async fn import_dataset_persists_core_attested_strict_or_weak_unknown() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        let header = btc_400000_header()?;
-        let coinbase_script = btc_400000_coinbase_script()?;
-        let verdict = classify_btc_orphan(
-            i64::from(header.time),
-            header.bits,
-            parse_bip34_height(&coinbase_script),
-        )
-        .0;
-        let relevance = match verdict {
-            BtcOrphanVerdict::Strict => "strict_btc_orphan",
-            BtcOrphanVerdict::Weak => "weak_btc_orphan",
-            other => panic!("fixture must be strict/weak, got {other:?}"),
-        };
+        let (header, coinbase_script, relevance) = btc_400000_orphan_fixture(&client).await?;
         let csv_path = write_normalized_csv(
             &header,
             "unknown",
@@ -1031,110 +989,6 @@ async fn authoritative_import_removes_rows_absent_from_the_snapshot() -> Result<
         .await;
         std::fs::remove_dir_all(&fixture.root)
             .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
-        result
-    })
-}
-
-#[tokio::test]
-async fn allow_unclassified_manifest_import_does_not_replace_authoritative_rows() -> Result<()> {
-    crate::run_mut_db_test!(client, {
-        let header = header_meeting_bits(0x207f_ffff, 1_700_000_064, 64);
-        let fixture = write_manifest_fixture(&header)?;
-        let unknown_header = btc_400000_header()?;
-        let unknown_coinbase = btc_400000_coinbase_script()?;
-        let unknown_relevance = match classify_btc_orphan(
-            i64::from(unknown_header.time),
-            unknown_header.bits,
-            parse_bip34_height(&unknown_coinbase),
-        )
-        .0
-        {
-            BtcOrphanVerdict::Strict => "strict_btc_orphan",
-            BtcOrphanVerdict::Weak => "weak_btc_orphan",
-            other => panic!("fixture must be strict/weak, got {other:?}"),
-        };
-        let unknown_row = normalized_csv_line(
-            &unknown_header,
-            &NormalizedCsvRow {
-                chain: "devcoin",
-                source_row_number: 2,
-                classification: "unknown",
-                relevance: unknown_relevance,
-                relevance_reason: "published_orphan_verdict",
-                coinbase_script: &unknown_coinbase,
-                btc_height: 400_000,
-                child_height: 13,
-                child_hash: None,
-            },
-        );
-        let canonical_row = normalized_csv_line(
-            &header,
-            &NormalizedCsvRow {
-                chain: "devcoin",
-                source_row_number: 1,
-                classification: "canonical",
-                relevance: "",
-                relevance_reason: "canonical_parent",
-                coinbase_script: &[],
-                btc_height: 700_000,
-                child_height: 12,
-                child_hash: None,
-            },
-        );
-        let mut diagnostic_counts = serde_json::json!({
-            "canonical": 1,
-            "stale": 0,
-            "stale_descendant": 0,
-            "strict_btc_orphan": 0,
-            "weak_btc_orphan": 0
-        });
-        diagnostic_counts[unknown_relevance] = serde_json::json!(1);
-        let diagnostic_fixture = write_manifest_fixture_rows_with_counts(
-            &[canonical_row, unknown_row],
-            diagnostic_counts,
-        )?;
-        let result = async {
-            let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
-                canonical_verdict(&header, 700_000),
-            ));
-            run_manifest_historical_import_for_test(
-                &mut client,
-                &classifier,
-                &fixture.config,
-                "devcoin",
-            )
-            .await?;
-            seed_unpublished_event(&client, "auxpow:devcoin", 65, vec![0x65; 32]).await?;
-            assert_eq!(
-                active_source_event_count(&client, "auxpow:devcoin").await?,
-                2
-            );
-
-            let mut diagnostic = diagnostic_fixture.config.clone();
-            diagnostic.allow_unclassified = true;
-            let summary = run_manifest_historical_import_for_test(
-                &mut client,
-                &ConfiguredParentClassifier::Disabled,
-                &diagnostic,
-                "devcoin",
-            )
-            .await?;
-            assert_eq!(summary.ingested, 1);
-            assert_eq!(summary.skipped.get("unclassified"), Some(&1));
-            assert_eq!(summary.removed, 0);
-            assert_eq!(
-                active_source_event_count(&client, "auxpow:devcoin").await?,
-                2,
-                "an incomplete diagnostic import must not replace the snapshot"
-            );
-            Ok::<_, anyhow::Error>(())
-        }
-        .await;
-        std::fs::remove_dir_all(&fixture.root)
-            .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
-        std::fs::remove_dir_all(&diagnostic_fixture.root).with_context(|| {
-            format!("remove fixture root {}", diagnostic_fixture.root.display())
-        })?;
         result
     })
 }
@@ -1478,12 +1332,6 @@ fn devcoin_import_config(csv_path: &Path) -> HistoricalImportConfig {
     config
 }
 
-fn catalogued_error_block_header() -> Result<Header> {
-    Ok(deserialize(&hex::decode(
-        "00a0032bb223f1aad55892df75d0ff4712f0543959c5065ab89d000000000000000000005eba715327fc82c765fa651bd6226c4b4a6a846cd60197bcd76d47ada0611cfce335df696913021725806e70",
-    )?)?)
-}
-
 struct ManifestFixture {
     root: PathBuf,
     artifact_path: PathBuf,
@@ -1598,7 +1446,6 @@ fn write_manifest_fixture_rows_with_counts(
             artifact_root: root.clone(),
             require_pinned_checkout: false,
             batch_size: 10,
-            allow_unclassified: false,
             allow_empty_known_stales: true,
         },
         root,

@@ -8,9 +8,49 @@ use crate::support::seed::{
 };
 
 use crate::helpers::{
-    classify_all_unknowns_strict, expect_tree_api_error, insert_unknown_block, project_tree,
-    seed_canonical_chain, set_orphan_class,
+    expect_tree_api_error, insert_unknown_block, project_tree, seed_canonical_chain,
+    set_orphan_class,
 };
+
+const BIP34_PLACEMENT_HEIGHT: i32 = 227_940; // >= the BIP34 floor (227_931)
+const BIP34_COINBASE: &[u8] = &[0x03, 0x64, 0x7a, 0x03];
+
+async fn attach_strict_bip34_event(
+    client: &tokio_postgres::Client,
+    parent_hash: &[u8],
+    prev_hash: &[u8],
+    parent_time: i64,
+) -> Result<()> {
+    let namecoin = get_source_id(client, NAMECOIN_SOURCE_CODE).await?;
+    insert_event(
+        client,
+        EventSeed {
+            source_id: namecoin,
+            child_height: 9,
+            child_hash: hash_bytes(0x0c01),
+            parent_hash: parent_hash.to_vec(),
+            prev_hash: prev_hash.to_vec(),
+            parent_time,
+            kind: "unknown",
+            pow_validates_btc_target: true,
+            btc_height: None,
+            pool_id: None,
+        },
+    )
+    .await?;
+    assert_eq!(
+        mmm_capture::auxpow::parse_bip34_height(BIP34_COINBASE),
+        Some(BIP34_PLACEMENT_HEIGHT),
+        "premise: the crafted coinbase decodes to the strict height"
+    );
+    client
+        .execute(
+            "UPDATE merge_mining_event SET btc_parent_coinbase_script = $1 WHERE btc_parent_header_hash = $2",
+            &[&BIP34_COINBASE, &parent_hash],
+        )
+        .await?;
+    Ok(())
+}
 
 async fn project_unheighted_anchor_tree(
     client: &tokio_postgres::Client,
@@ -83,14 +123,14 @@ async fn anchor_tree_orphan_filter_excludes_pending_and_excluded() -> Result<()>
 #[tokio::test]
 async fn anchor_tree_not_found_for_absent_or_non_unknown_anchor() -> Result<()> {
     crate::run_db_test!(client, {
-        let canonical = hash_bytes(0x0c01);
+        let canonical = hash_bytes((BIP34_PLACEMENT_HEIGHT - 1) as u32);
         insert_block(
             &client,
             &canonical,
-            &hash_bytes(0x0c00),
-            Some(7),
+            &hash_bytes((BIP34_PLACEMENT_HEIGHT - 2) as u32),
+            Some(BIP34_PLACEMENT_HEIGHT - 1),
             "canonical",
-            1000,
+            1_300_000_000,
             None,
         )
         .await?;
@@ -103,10 +143,11 @@ async fn anchor_tree_not_found_for_absent_or_non_unknown_anchor() -> Result<()> 
             )
             .await?;
         let unknown = hash_bytes(0x0a01);
-        insert_unknown_block(&client, &unknown, &hash_bytes(0x0b01), 2000).await?;
+        insert_unknown_block(&client, &unknown, &canonical, 1_300_000_500).await?;
         // The genuine unknown is classified so it resolves under the default
         // strict+weak anchor filter; the husk stays pending (pow_validated=false).
-        classify_all_unknowns_strict(&client).await?;
+        set_orphan_class(&client, &unknown, "strict_btc_orphan").await?;
+        attach_strict_bip34_event(&client, &unknown, &canonical, 1_300_000_500).await?;
 
         // A canonical, a revocation husk, and a never-inserted hash are all not
         // PoW-valid unknowns, so an anchor on any of them is `not_found`.
@@ -125,8 +166,7 @@ async fn anchor_tree_not_found_for_absent_or_non_unknown_anchor() -> Result<()> 
         }
 
         // A real PoW-valid unknown anchor resolves and is placed as a fork in the
-        // canonical window: the inserted canonical at height 7 is the nearest-time
-        // placement target, so the orphan node is present alongside spine context.
+        // canonical window: its verified BIP34 height gives it an exact placement.
         let payload = project_unheighted_anchor_tree(&client, &unknown).await?;
         assert!(
             payload
@@ -145,22 +185,34 @@ async fn anchor_tree_not_found_for_absent_or_non_unknown_anchor() -> Result<()> 
 #[tokio::test]
 async fn anchor_tree_renders_whole_orphan_component_with_member_edges_and_branch() -> Result<()> {
     crate::run_db_test!(client, {
-        // Canonical context so the placement window has a spine. Times are chosen so
-        // the nearest-time canonical fallback places the component root at height 101.
-        seed_canonical_chain(&client, 100..=103, 0x0c64, 0x0c63, 1000, None).await?;
+        // Canonical context so the component's verified root placement has a spine.
+        let canonical = seed_canonical_chain(
+            &client,
+            (BIP34_PLACEMENT_HEIGHT - 1)..=(BIP34_PLACEMENT_HEIGHT + 2),
+            (BIP34_PLACEMENT_HEIGHT - 1) as u32,
+            (BIP34_PLACEMENT_HEIGHT - 2) as u32,
+            1_300_000_000,
+            None,
+        )
+        .await?;
+        let root_prev = canonical
+            .get(&(BIP34_PLACEMENT_HEIGHT - 1))
+            .expect("canonical predecessor seeded");
 
-        // A 2-member orphan component: root -> tip. root.prev is absent; tip.prev=root.
+        // A 2-member orphan component: root -> tip. root forks from the canonical
+        // predecessor; tip carries only the component link and remains weak.
         let root = hash_bytes(0x0a10);
         let tip = hash_bytes(0x0a11);
         insert_orphan(
             &client,
             &root,
-            &hash_bytes(0x0b10),
-            1001,
+            root_prev,
+            1_300_000_500,
             "strict_btc_orphan",
         )
         .await?;
-        insert_orphan(&client, &tip, &root, 1002, "strict_btc_orphan").await?;
+        insert_orphan(&client, &tip, &root, 1_300_000_501, "weak_btc_orphan").await?;
+        attach_strict_bip34_event(&client, &root, root_prev, 1_300_000_500).await?;
 
         // Anchoring on the TIP must render the WHOLE component, not just the tip.
         let payload = project_unheighted_anchor_tree(&client, &tip).await?;
@@ -235,11 +287,19 @@ async fn anchor_tree_renders_whole_orphan_component_with_member_edges_and_branch
 #[tokio::test]
 async fn anchor_tree_places_weak_orphan_in_canonical_window() -> Result<()> {
     crate::run_db_test!(client, {
-        // A weak orphan places by its timestamp-selected DAA-epoch height (the same
-        // committed table the weak classifier uses), dangling off the nearest
+        // A weak orphan places by its timestamp-selected Core-cache epoch height,
+        // dangling off the nearest
         // in-window canonical via the approximate edge.
         let orphan_time = 1_240_000_000i64;
-        let ph = mmm_capture::nbits_table::table()
+        crate::support::db::seed_bitcoin_core_header_cache_through(
+            &client,
+            300_000,
+            orphan_time,
+            0x1d00_ffff,
+        )
+        .await?;
+        let ph = mmm_store::load_bitcoin_core_nbits_table(&client)
+            .await?
             .epoch_height_for_time(orphan_time)
             .expect("a covered header time has an epoch placement height");
         assert!(
@@ -298,8 +358,7 @@ async fn anchor_tree_places_strict_orphan_with_verified_solid_edge() -> Result<(
         // A strict orphan places by its validated BIP34 coinbase height with a solid
         // `orphan` edge to the canonical at placement_height - 1, because its stored
         // prev_hash matches that block.
-        let namecoin = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
-        let ph = 227_940i32; // >= the BIP34 floor (227_931)
+        let ph = BIP34_PLACEMENT_HEIGHT;
         let prev = hash_bytes(ph as u32 - 1); // the canonical at ph-1
         seed_canonical_chain(
             &client,
@@ -314,36 +373,7 @@ async fn anchor_tree_places_strict_orphan_with_verified_solid_edge() -> Result<(
         let orphan = hash_bytes(0x0051_5200);
         insert_unknown_block(&client, &orphan, &prev, 1_300_000_500).await?;
         set_orphan_class(&client, &orphan, "strict_btc_orphan").await?;
-        insert_event(
-            &client,
-            EventSeed {
-                source_id: namecoin,
-                child_height: 9,
-                child_hash: hash_bytes(0x0c01),
-                parent_hash: orphan.clone(),
-                prev_hash: prev.clone(),
-                parent_time: 1_300_000_500,
-                kind: "unknown",
-                pow_validates_btc_target: true,
-                btc_height: None,
-                pool_id: None,
-            },
-        )
-        .await?;
-        // A BIP34 coinbase scriptSig: a 3-byte little-endian push of height 227_940.
-        let coinbase = vec![0x03u8, 0x64, 0x7a, 0x03];
-        assert_eq!(
-            mmm_capture::auxpow::parse_bip34_height(&coinbase),
-            Some(ph),
-            "premise: the crafted coinbase decodes to the strict height"
-        );
-        client
-            .execute(
-                "UPDATE merge_mining_event SET btc_parent_coinbase_script = $1 \
-                 WHERE btc_parent_header_hash = $2",
-                &[&coinbase, &orphan],
-            )
-            .await?;
+        attach_strict_bip34_event(&client, &orphan, &prev, 1_300_000_500).await?;
 
         let payload = project_unheighted_anchor_tree(&client, &orphan).await?;
 

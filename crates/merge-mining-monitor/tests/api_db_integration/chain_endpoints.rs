@@ -360,6 +360,13 @@ async fn hathor_state_machine_drives_capture_void_restore_and_hold() -> Result<(
     }
 
     crate::run_mut_db_test!(client, {
+        crate::support::db::seed_bitcoin_core_header_cache_through(
+            &client,
+            710_969,
+            i64::MAX,
+            0x170c_69ea,
+        )
+        .await?;
         let context = HathorCaptureContext::new_with_classifier(
             &client,
             ConfiguredParentClassifier::Disabled,
@@ -421,6 +428,13 @@ async fn hathor_cache_ingest_streams_counts_and_is_idempotent() -> Result<()> {
     };
 
     crate::run_mut_db_test!(client, {
+        crate::support::db::seed_bitcoin_core_header_cache_through(
+            &client,
+            710_969,
+            i64::MAX,
+            0x170c_69ea,
+        )
+        .await?;
         let context = HathorCaptureContext::new_with_classifier(
             &client,
             ConfiguredParentClassifier::Disabled,

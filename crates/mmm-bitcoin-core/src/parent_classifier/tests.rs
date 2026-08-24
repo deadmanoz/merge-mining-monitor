@@ -209,6 +209,7 @@ async fn configured_classifier_exposes_only_synced_core_tip_height() {
 
     let synced_source = Arc::new(MockCoreHeaderSource::default());
     synced_source.set_chain_status(MockResult::Ok(BitcoinCoreChainStatus {
+        is_mainnet: true,
         blocks: 953_305,
         headers: 953_305,
         initial_block_download: false,
@@ -224,6 +225,7 @@ async fn configured_classifier_exposes_only_synced_core_tip_height() {
 
     let unsynced_source = Arc::new(MockCoreHeaderSource::default());
     unsynced_source.set_chain_status(MockResult::Ok(BitcoinCoreChainStatus {
+        is_mainnet: true,
         blocks: 953_304,
         headers: 953_305,
         initial_block_download: false,
@@ -248,7 +250,7 @@ async fn configured_classifier_exposes_only_synced_core_tip_height() {
 }
 
 #[tokio::test]
-async fn epoch_nbits_fetches_header_only_and_memoizes() {
+async fn canonical_header_fetches_header_only() {
     let source = Arc::new(MockCoreHeaderSource::default());
     // `test_header` carries time = 1; bits is the Elastos live-stall epoch nBits.
     let header = test_header(7, 0x1702_40c3);
@@ -257,59 +259,28 @@ async fn epoch_nbits_fetches_header_only_and_memoizes() {
     source.set_block_header(hash, MockResult::Ok(header));
     let classifier = BitcoinCoreParentClassifier::from_source(source.clone());
 
-    // A buried epoch (tip well past REORG_SAFE_DEPTH below the start) is memoized.
-    let buried_tip = 956_000;
-    let first = classifier.epoch_nbits(955_584, buried_tip).await.unwrap();
+    let first = classifier.canonical_header(955_584).await.unwrap();
     assert_eq!(
         first,
-        EpochNbits {
+        CoreHeader {
+            height: 955_584,
+            hash,
             nbits: 0x1702_40c3,
             header_time: 1,
         }
     );
 
-    // A second lookup for the same epoch is a memo hit: no further Core calls.
-    let second = classifier.epoch_nbits(955_584, buried_tip).await.unwrap();
-    assert_eq!(second, first);
-
-    assert_eq!(
-        source.block_hash_calls(),
-        1,
-        "one getblockhash per epoch miss"
-    );
+    assert_eq!(source.block_hash_calls(), 1, "one getblockhash per header");
     assert_eq!(
         source.block_header_calls(),
         1,
-        "one header-only getblockheader per epoch miss"
+        "one header-only getblockheader per header"
     );
     assert_eq!(
         source.coinbase_calls(),
         0,
-        "epoch nBits path must not fetch the coinbase / full block"
+        "header-cache path must not fetch the coinbase / full block"
     );
-}
-
-#[tokio::test]
-async fn epoch_nbits_does_not_cache_a_reorg_shallow_epoch() {
-    let source = Arc::new(MockCoreHeaderSource::default());
-    let header = test_header(8, 0x1702_40c3);
-    let hash = header.block_hash();
-    source.set_block_hash(955_584, MockResult::Ok(hash));
-    source.set_block_header(hash, MockResult::Ok(header));
-    let classifier = BitcoinCoreParentClassifier::from_source(source.clone());
-
-    // The tip is only ~16 blocks past the epoch start, so the start is NOT buried
-    // past REORG_SAFE_DEPTH: a reorg across the retarget boundary could still change
-    // its nBits, so it is re-fetched each call rather than cached.
-    let shallow_tip = 955_600;
-    classifier.epoch_nbits(955_584, shallow_tip).await.unwrap();
-    classifier.epoch_nbits(955_584, shallow_tip).await.unwrap();
-    assert_eq!(
-        source.block_hash_calls(),
-        2,
-        "a reorg-shallow epoch is re-fetched fresh, never cached"
-    );
-    assert_eq!(source.block_header_calls(), 2);
 }
 
 #[test]

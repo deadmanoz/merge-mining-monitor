@@ -14,9 +14,7 @@ use crate::chains::backfill::BackfillConfig;
 use crate::chains::rsk::capture::{HeightOutcome, RskCaptureContext, write_rsk_bundle};
 use crate::chains::rsk::rpc::RskRpcClient;
 use crate::chains::rsk::traverse::fetch_rsk_height_bundle;
-use crate::producer_runtime::{
-    ProducerRuntime, run_post_backfill_repair, warn_backfill_classifier_enabled,
-};
+use crate::producer_runtime::{ProducerRuntime, run_post_backfill_repair};
 use mmm_capture::capture::now_epoch_seconds;
 
 /// Default bounded prefetch concurrency for the RSK historical backfill. Each
@@ -104,7 +102,6 @@ pub(crate) async fn run_rsk_backfill(
     }
 
     let context = RskCaptureContext::new_with_classifier(&client, parent_classifier).await?;
-    warn_backfill_classifier_enabled("RSK", context.parent_classifier());
     let fetch_concurrency = crate::chains::config::rsk_backfill_fetch_concurrency()?;
     info!(
         start_height = config.start_height,

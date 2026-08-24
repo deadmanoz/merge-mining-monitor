@@ -67,7 +67,7 @@ that annotate those rows.
 | `mmm-capture` | Offline parsing, normalization, pool resolution, source registry, and Bitcoin nBits/orphan helpers. No network or database I/O in normal builds. |
 | `mmm-rpc` | Shared HTTP transport policy for child-chain clients. |
 | `mmm-bitcoin-core` | The only crate that links `corepc-client`; wraps Bitcoin Core RPC and parent classification. |
-| `mmm-store` | Producer-side SQL for base tables: events, sidecars, cursors, and seed helpers. |
+| `mmm-store` | SQL for producer base tables: events, sidecars, cursors, and seed helpers. It also exposes the read-only Core-header-cache loader shared by reconciliation and the API. |
 | `mmm-read-model` | Sole writer of derived tables: `block`, `attestation_proof`, and `source_health`. |
 | `mmm-producers` | Runtime engines: chain pollers/backfills, historical importer, Bitcoin Core backbone sync, and pool reclassification. |
 | `mmm-api` | Read-only API views plus static frontend serving. |
@@ -92,6 +92,7 @@ justfile           # db, build, test, lint, serve, sync, poll, and backfill targ
 
 - Producers do not write derived tables.
 - `mmm-api` does not import producer internals.
+- `mmm-api` may read the persisted Core-header cache through `mmm-store`; it never calls Core RPC.
 - Bitcoin Core access is isolated in `mmm-bitcoin-core`.
 - Hash byte order follows rust-bitcoin newtypes: store `to_byte_array()` bytes
   directly and use display/RPC hex only at presentation boundaries.

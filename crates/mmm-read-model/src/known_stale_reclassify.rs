@@ -11,7 +11,7 @@
 //! and Core-free (the demotion is a pure membership fact, not a re-classification).
 
 use anyhow::{Context, Result, bail};
-use tokio_postgres::Client;
+use tokio_postgres::{Client, GenericClient};
 use tracing::warn;
 
 use crate::mutation::PrimarySourceHealthBracket;
@@ -139,6 +139,36 @@ pub async fn run_reclassify_known_stales(
     })
 }
 
+/// Repair strict/weak orphan rows for membership hashes in an existing
+/// transaction.
+///
+/// The caller must hold the parent advisory locks for `hashes` before changing
+/// the membership. This keeps the membership update, derived demotion, and
+/// source-health delta atomic for `import-known-stales`.
+pub async fn reclassify_known_stale_hashes_in_transaction<C: GenericClient>(
+    client: &C,
+    hashes: &[Vec<u8>],
+) -> Result<u64> {
+    let mut demoted = 0;
+    for hash in hashes {
+        let health = PrimarySourceHealthBracket::open(client, hash).await?;
+        demoted += client
+            .execute(
+                "UPDATE block \
+                    SET btc_orphan_class = 'excluded', \
+                        updated_at = extract(epoch from now())::bigint \
+                  WHERE btc_header_hash = $1 \
+                    AND kind = 'unknown' \
+                    AND btc_orphan_class IN ('strict_btc_orphan', 'weak_btc_orphan')",
+                &[&hash],
+            )
+            .await
+            .context("demote known-stale orphan block to excluded")?;
+        health.close(client).await?;
+    }
+    Ok(demoted)
+}
+
 /// Demote one parent's block row inside a transaction, maintaining
 /// `source_health`. Returns the rows demoted (0 if a concurrent pass already
 /// cleared it, keeping the outer scan safe to re-run).
@@ -148,20 +178,7 @@ async fn demote_one(client: &mut Client, hash: &[u8]) -> Result<u64> {
         .await
         .context("begin known-stale demotion transaction")?;
     lock_block_hash(&txn, hash).await?;
-    let health = PrimarySourceHealthBracket::open(&txn, hash).await?;
-    let demoted = txn
-        .execute(
-            "UPDATE block \
-                SET btc_orphan_class = 'excluded', \
-                    updated_at = extract(epoch from now())::bigint \
-              WHERE btc_header_hash = $1 \
-                AND kind = 'unknown' \
-                AND btc_orphan_class IN ('strict_btc_orphan', 'weak_btc_orphan')",
-            &[&hash],
-        )
-        .await
-        .context("demote known-stale orphan block to excluded")?;
-    health.close(&txn).await?;
+    let demoted = reclassify_known_stale_hashes_in_transaction(&txn, &[hash.to_vec()]).await?;
     txn.commit()
         .await
         .context("commit known-stale demotion transaction")?;

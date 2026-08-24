@@ -58,6 +58,9 @@ pub(crate) struct BitcoinCoreHeaderStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BitcoinCoreChainStatus {
+    /// `getblockchaininfo.chain == "main"`. The monitor's Core-derived cache
+    /// always represents Bitcoin mainnet.
+    pub is_mainnet: bool,
     pub blocks: i32,
     pub headers: i32,
     pub initial_block_download: bool,
@@ -123,6 +126,7 @@ impl BitcoinCoreRpcClient {
         self.rpc_call(move || {
             let info = client.get_blockchain_info()?;
             Ok(BitcoinCoreChainStatus {
+                is_mainnet: info.chain == "main",
                 blocks: rpc_height_to_i32(info.blocks)
                     .context("Bitcoin Core blocks overflows i32")?,
                 headers: rpc_height_to_i32(info.headers)
@@ -598,6 +602,7 @@ mod tests {
     fn chain_status_sync_requires_blocks_equal_headers_and_not_ibd() {
         assert!(
             BitcoinCoreChainStatus {
+                is_mainnet: true,
                 blocks: 953_305,
                 headers: 953_305,
                 initial_block_download: false,
@@ -607,6 +612,7 @@ mod tests {
         );
         assert!(
             !BitcoinCoreChainStatus {
+                is_mainnet: true,
                 blocks: 953_304,
                 headers: 953_305,
                 initial_block_download: false,
@@ -616,6 +622,7 @@ mod tests {
         );
         assert!(
             !BitcoinCoreChainStatus {
+                is_mainnet: true,
                 blocks: 953_305,
                 headers: 953_305,
                 initial_block_download: true,

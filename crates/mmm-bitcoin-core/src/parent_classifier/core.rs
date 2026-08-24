@@ -3,14 +3,11 @@
 
 use super::*;
 
-use std::collections::HashMap;
-use std::sync::Mutex;
-
-/// Canonical Bitcoin nBits (compact form) and header time at a DAA epoch-start
-/// height, resolved from Bitcoin Core for the beyond-horizon contamination check.
-/// Immutable once buried, so it can be memoized per epoch.
+/// Canonical header data fetched from Bitcoin Core by height.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EpochNbits {
+pub struct CoreHeader {
+    pub height: i32,
+    pub hash: BlockHash,
     pub nbits: u32,
     pub header_time: i64,
 }
@@ -22,6 +19,7 @@ pub struct EpochNbits {
 /// valid beyond-horizon parent as a fabricated far-future height.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SyncedTip {
+    pub is_mainnet: bool,
     pub height: i32,
     pub fresh: bool,
 }
@@ -32,14 +30,6 @@ pub struct SyncedTip {
 /// tolerance can a genuine parent exceed `tip + tolerance`, and a tip that far
 /// behind has a median time at least this old.
 const MAX_TIP_AGE_SECS: i64 = 86_400;
-
-/// Confirmation depth past which a DAA epoch start is treated as reorg-immune and
-/// its nBits may be memoized. The most recent epoch (just after a retarget, which
-/// this feature targets) is shallow and reorg-vulnerable: a reorg across the
-/// retarget boundary could change the epoch-start block and its nBits. A BTC reorg
-/// of 100 blocks is far beyond anything ever observed, so a start buried this deep
-/// is safe to cache; shallower starts are re-fetched fresh each call.
-const REORG_SAFE_DEPTH: i32 = 100;
 
 /// Whether a tip whose median time is `median_time` is fresh as of `now_secs`.
 /// Pure, so the freshness policy is unit-tested without a clock.
@@ -59,10 +49,6 @@ fn now_unix_secs() -> i64 {
 pub struct BitcoinCoreParentClassifier {
     source: Arc<dyn CoreHeaderSource>,
     max_concurrency: usize,
-    /// Per-process memo of Core-resolved epoch nBits, keyed by DAA epoch-start
-    /// height. The value is immutable once buried, so a per-process cache is
-    /// sufficient; it refills cheaply from Core on restart.
-    epoch_nbits_cache: Arc<Mutex<HashMap<i32, EpochNbits>>>,
 }
 
 pub(crate) struct CoreRpcHeaderSource {
@@ -88,7 +74,6 @@ impl BitcoinCoreParentClassifier {
         Ok(Self {
             source: Arc::new(CoreRpcHeaderSource { client }),
             max_concurrency,
-            epoch_nbits_cache: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -97,7 +82,6 @@ impl BitcoinCoreParentClassifier {
         Self {
             source,
             max_concurrency: 1,
-            epoch_nbits_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -229,53 +213,24 @@ impl BitcoinCoreParentClassifier {
             return Ok(None);
         }
         Ok(Some(SyncedTip {
+            is_mainnet: status.is_mainnet,
             height: status.blocks,
             fresh: tip_is_fresh(status.median_time, now_unix_secs()),
         }))
     }
 
-    /// Canonical Bitcoin nBits + header time at `epoch_start_height` (a 2016-block
-    /// DAA boundary), resolved from Core and memoized per epoch. Header-only RPC
-    /// RPC sequence: `getblockhash` + `getblockheader` (no coinbase / full block). The
-    /// caller resolves only epoch starts already proven `<= synced tip`, so a
-    /// not-found here is an error, not a normal far-future condition. The resolved
-    /// value is memoized only when the epoch start is buried past
-    /// [`REORG_SAFE_DEPTH`] below `synced_tip`; a shallow (recent) epoch is
-    /// re-fetched each call so a reorg across the retarget boundary cannot leave a
-    /// stale cached nBits driving accept/revoke decisions until restart.
-    pub async fn epoch_nbits(
-        &self,
-        epoch_start_height: i32,
-        synced_tip: i32,
-    ) -> Result<EpochNbits> {
-        if let Some(cached) = self.cached_epoch_nbits(epoch_start_height) {
-            return Ok(cached);
-        }
-        let height = u64::try_from(epoch_start_height)
-            .with_context(|| format!("epoch start height {epoch_start_height} is negative"))?;
-        let hash = self.source.get_block_hash(height).await?;
+    /// Resolve a canonical header by height without fetching its block body.
+    pub async fn canonical_header(&self, height: i32) -> Result<CoreHeader> {
+        let height_u64 = u64::try_from(height)
+            .with_context(|| format!("Bitcoin Core header height {height} is negative"))?;
+        let hash = self.source.get_block_hash(height_u64).await?;
         let header = self.source.get_block_header(hash).await?;
-        let resolved = EpochNbits {
+        Ok(CoreHeader {
+            height,
+            hash,
             nbits: header.bits.to_consensus(),
             header_time: i64::from(header.time),
-        };
-        if epoch_start_height.saturating_add(REORG_SAFE_DEPTH) <= synced_tip {
-            self.epoch_nbits_cache
-                .lock()
-                .expect("epoch nBits cache mutex poisoned")
-                .insert(epoch_start_height, resolved);
-        }
-        Ok(resolved)
-    }
-
-    /// Lock-scoped memo read, kept separate so no `MutexGuard` is held across the
-    /// `await` points in [`Self::epoch_nbits`].
-    fn cached_epoch_nbits(&self, epoch_start_height: i32) -> Option<EpochNbits> {
-        self.epoch_nbits_cache
-            .lock()
-            .expect("epoch nBits cache mutex poisoned")
-            .get(&epoch_start_height)
-            .copied()
+        })
     }
 
     async fn classify_core_unknown(

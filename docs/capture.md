@@ -82,7 +82,22 @@ for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
 - Live capture is additive. Historical and partial publication sources reconcile
   as authoritative snapshots through the shared source lifecycle, while live
   publication imports never remove live events.
-- Long child-chain backfills may run with `BITCOIN_RPC_URL` unset, then upgrade
-  the deferred `unknown` parents afterward with
-  `just reclassify-unknown-parents`. Dataset imports are stricter: see
-  `docs/historical-ingest.md`.
+- Capture, backfills, historical imports, and reconciliation require
+  `BITCOIN_RPC_URL`. Each command refreshes the Core-header cache through the
+  current synced tip before it starts. Long-lived pollers and
+  `sync-bitcoin-core --follow` refresh the cache on every tick, verifying that
+  Core's horizon did not move while the sparse snapshot was read, and that an
+  advancing tip still descends from the prior shallow horizon. A changed shallow
+  suffix reclassifies existing and pending orphan rows; expanded coverage revisits
+  pending rows unless a new retarget boundary falls within existing timestamp
+  coverage, in which case it also rechecks existing orphans. The cache records
+  that work durably; cache-driven rechecks require fresh Core evidence, so a
+  Core RPC failure leaves the marker for the next refresh. Its
+  timestamp coverage does
+  not regress when a valid newer Core header has an older timestamp. Historical
+  imports retain that lock across candidate validation and
+  the durable derived rebuild, so one import uses one table. Hathor and Elastos
+  retry once after a cache-horizon hold. The read-only API serves the persisted
+  cache without making Core RPC calls. A fresh Core tip also rejects a claimed
+  BIP34 height more than 144 blocks beyond it, even when a stale cache happens
+  to cover that height.

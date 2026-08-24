@@ -6,13 +6,14 @@ use anyhow::{Context, Result, bail};
 use tokio_postgres::{Client, GenericClient};
 
 use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
+use mmm_capture::nbits_table::NbitsTable;
 
-use super::{PrimaryDiff, cascade_changed};
+use super::{PrimaryDiff, cascade_changed_with_nbits_table};
 use crate::{
     DEFAULT_CASCADE_BUDGET, PreclassifiedParent, RECONCILE_LOCK_SET_RETRY_LIMIT,
     find_anchor_event_for_block, is_reconcile_lock_set_changed, load_block_cascade_state,
-    lock_block_hash, preclassify_event_parent, rebuild_parent_read_model,
-    reconcile_one_event_in_txn,
+    lock_block_hash, lock_core_header_cache_for_reconcile, preclassify_event_parent,
+    rebuild_parent_read_model, reconcile_one_event_in_txn,
 };
 
 /// Drain durable historical parent work to completion.
@@ -30,11 +31,23 @@ pub async fn drain_historical_reconcile_queue(
     classifier: &ConfiguredParentClassifier,
     classifications: &HashMap<Vec<u8>, ParentClassification>,
 ) -> Result<()> {
+    drain_historical_reconcile_queue_with_nbits_table(client, classifier, classifications, None)
+        .await
+}
+
+/// Drain historical work against one supplied Core-cache snapshot.
+pub async fn drain_historical_reconcile_queue_with_nbits_table(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    classifications: &HashMap<Vec<u8>, ParentClassification>,
+    nbits_table: Option<&NbitsTable>,
+) -> Result<()> {
     drain_historical_reconcile_queue_with_budget(
         client,
         classifier,
         classifications,
         DEFAULT_CASCADE_BUDGET,
+        nbits_table,
     )
     .await
 }
@@ -52,6 +65,7 @@ pub async fn drain_historical_reconcile_queue_with_budget_for_test(
         classifier,
         classifications,
         cascade_budget,
+        None,
     )
     .await
 }
@@ -61,6 +75,7 @@ async fn drain_historical_reconcile_queue_with_budget(
     classifier: &ConfiguredParentClassifier,
     classifications: &HashMap<Vec<u8>, ParentClassification>,
     cascade_budget: usize,
+    nbits_table: Option<&NbitsTable>,
 ) -> Result<()> {
     loop {
         let Some(row) = client
@@ -88,19 +103,26 @@ async fn drain_historical_reconcile_queue_with_budget(
                 &parent_hash,
                 generation,
                 classifications.get(&parent_hash).cloned(),
+                nbits_table,
             )
             .await?;
             continue;
         }
 
-        cascade_changed(client, classifier, changed_hashes.clone(), cascade_budget)
-            .await
-            .with_context(|| {
-                format!(
-                    "cascade durable historical parent {}",
-                    hex::encode(&parent_hash)
-                )
-            })?;
+        cascade_changed_with_nbits_table(
+            client,
+            classifier,
+            changed_hashes.clone(),
+            cascade_budget,
+            nbits_table,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "cascade durable historical parent {}",
+                hex::encode(&parent_hash)
+            )
+        })?;
         client
             .execute(
                 "DELETE FROM historical_reconcile_queue \
@@ -140,6 +162,7 @@ async fn reconcile_historical_primary(
     parent_hash: &[u8],
     generation: i64,
     classification: Option<ParentClassification>,
+    nbits_table: Option<&NbitsTable>,
 ) -> Result<()> {
     let anchor = find_anchor_event_for_block(client, parent_hash).await?;
     match anchor {
@@ -154,6 +177,7 @@ async fn reconcile_historical_primary(
                     .transaction()
                     .await
                     .context("begin historical parent reconcile")?;
+                lock_core_header_cache_for_reconcile(&txn, classifier, nbits_table).await?;
                 // Base writers lock the event before they enqueue its parent.
                 // Match that order so a concurrent replay cannot hold the
                 // queue row while waiting on an event row the replay owns.
@@ -175,6 +199,7 @@ async fn reconcile_historical_primary(
                     classifier,
                     preclassified,
                     PrimaryDiff::BulkImport,
+                    nbits_table,
                 )
                 .await
                 {
@@ -207,6 +232,7 @@ async fn reconcile_historical_primary(
                 .transaction()
                 .await
                 .context("begin historical orphaned-block reconcile")?;
+            lock_core_header_cache_for_reconcile(&txn, classifier, nbits_table).await?;
             if !lock_current_historical_primary(&txn, parent_hash, generation).await? {
                 txn.rollback()
                     .await
@@ -215,7 +241,7 @@ async fn reconcile_historical_primary(
             }
             lock_block_hash(&txn, parent_hash).await?;
             let before = load_block_cascade_state(&txn, parent_hash).await?;
-            rebuild_parent_read_model(&txn, parent_hash, None).await?;
+            rebuild_parent_read_model(&txn, parent_hash, None, nbits_table).await?;
             let after = load_block_cascade_state(&txn, parent_hash).await?;
             let changed_hashes = if before != after {
                 vec![parent_hash.to_vec()]

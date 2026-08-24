@@ -147,6 +147,7 @@ pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
     client: &C,
     hash: &[u8],
     classification: Option<&ParentClassification>,
+    nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
 ) -> Result<()> {
     let rollup = load_parent_rollup(client, hash).await?;
 
@@ -220,6 +221,7 @@ pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
         &classification,
         &header,
         difficulty_epoch_ok,
+        nbits_table,
     )
     .await?;
     let coinbase = coinbase_columns(classification.coinbase.as_ref());

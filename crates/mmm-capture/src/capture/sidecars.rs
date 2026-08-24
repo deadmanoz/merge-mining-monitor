@@ -66,13 +66,13 @@ pub const HATHOR_REVOKE_VOIDED: &str = "hathor_voided";
 pub const HATHOR_REVOKE_SUPERSEDED: &str = "hathor_superseded";
 pub const HATHOR_REVOKE_NBITS_CONFLICT: &str = "hathor_nbits_classifier_conflict";
 /// Reversible: the current canonical block's parent classified as non-BTC under
-/// the offline nBits verdict (BCH/indeterminate). If the embedded nBits table is
-/// later corrected so the block is Valid, a recapture auto-restores it.
+/// the Core-cache nBits verdict (BCH/indeterminate). If the persisted cache is
+/// later refreshed so the block is Valid, a recapture auto-restores it.
 pub const HATHOR_REVOKE_NON_BTC: &str = "hathor_non_btc";
 
 /// Revocation reasons the Elastos producer applies automatically when a captured
-/// height's verdict flips to rejected on a replay/backfill (a regenerated nBits
-/// table or a now-enabled classifier). A later Valid recapture of the same
+/// height's verdict flips to rejected on a replay/backfill (a refreshed Core
+/// cache or classifier evidence). A later Valid recapture of the same
 /// `(source, height, hash)` auto-restores ONLY the reversible
 /// `ELASTOS_REVOKE_NON_BTC`; an `ELASTOS_REVOKE_CLASSIFIER_CONFLICT` or any manual
 /// revoke is sticky.

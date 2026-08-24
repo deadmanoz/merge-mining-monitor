@@ -52,8 +52,7 @@ async fn main() -> Result<()> {
 
 async fn cmd_import_all(args: std::env::Args) -> Result<()> {
     let config = mmm_producers::HistoricalImportAllConfig::from_args(args)?;
-    let classifier = mmm_bitcoin_core::ConfiguredParentClassifier::from_env()?;
-    let mut pg_client = mmm_producers::connect_from_env().await?;
+    let (mut pg_client, classifier) = mmm_producers::connect_core_required_from_env().await?;
     let summary =
         mmm_producers::run_historical_import_all(&mut pg_client, &classifier, &config).await?;
     summary.print();
@@ -62,8 +61,7 @@ async fn cmd_import_all(args: std::env::Args) -> Result<()> {
 
 async fn cmd_import_dataset(args: std::env::Args) -> Result<()> {
     let config = mmm_producers::HistoricalImportConfig::from_args(args)?;
-    let classifier = mmm_bitcoin_core::ConfiguredParentClassifier::from_env()?;
-    let mut pg_client = mmm_producers::connect_from_env().await?;
+    let (mut pg_client, classifier) = mmm_producers::connect_core_required_from_env().await?;
     let summary =
         mmm_producers::run_historical_import(&mut pg_client, &classifier, &config).await?;
     summary.print();
@@ -73,7 +71,7 @@ async fn cmd_import_dataset(args: std::env::Args) -> Result<()> {
 
 async fn cmd_import_known_stales(args: std::env::Args) -> Result<()> {
     let config = mmm_producers::KnownStaleImportConfig::from_args(args)?;
-    let mut pg_client = mmm_producers::connect_from_env().await?;
+    let (mut pg_client, _) = mmm_producers::connect_core_required_from_env().await?;
     let summary = mmm_producers::run_import_known_stales(&mut pg_client, &config).await?;
     summary.print();
 
@@ -82,7 +80,7 @@ async fn cmd_import_known_stales(args: std::env::Args) -> Result<()> {
 
 async fn cmd_reclassify_known_stales(args: std::env::Args) -> Result<()> {
     let config = mmm_read_model::ReclassifyKnownStalesConfig::from_args(args)?;
-    let mut pg_client = mmm_producers::connect_from_env().await?;
+    let (mut pg_client, _) = mmm_producers::connect_core_required_from_env().await?;
     let summary = mmm_read_model::run_reclassify_known_stales(&mut pg_client, config).await?;
     summary.print();
 
@@ -91,8 +89,7 @@ async fn cmd_reclassify_known_stales(args: std::env::Args) -> Result<()> {
 
 async fn cmd_reclassify_unknown_parents(args: std::env::Args) -> Result<()> {
     let config = mmm_read_model::ReclassifyUnknownParentsConfig::from_args(args)?;
-    let mut pg_client = mmm_producers::connect_from_env().await?;
-    let classifier = mmm_bitcoin_core::ConfiguredParentClassifier::from_env()?;
+    let (mut pg_client, classifier) = mmm_producers::connect_core_required_from_env().await?;
     let count =
         mmm_read_model::run_reclassify_unknown_parents(&mut pg_client, &classifier, config).await?;
     info!(count, "reclassified unknown Bitcoin parent headers");
@@ -102,7 +99,7 @@ async fn cmd_reclassify_unknown_parents(args: std::env::Args) -> Result<()> {
 
 async fn cmd_reclassify_pools(args: std::env::Args) -> Result<()> {
     let config = mmm_producers::ReclassifyPoolsConfig::from_args(args)?;
-    let mut pg_client = mmm_producers::connect_from_env().await?;
+    let (mut pg_client, _) = mmm_producers::connect_core_required_from_env().await?;
     let stats = mmm_producers::run_reclassify_pools(&mut pg_client, config).await?;
     info!(
         parent_pool_updates = stats.parent_pool_updates,
@@ -119,12 +116,13 @@ async fn cmd_reclassify_pools(args: std::env::Args) -> Result<()> {
 async fn cmd_sync_bitcoin_core(args: std::env::Args) -> Result<()> {
     let config = mmm_producers::BitcoinCoreSyncConfig::from_args(args)?;
     let rpc = bitcoin_core_rpc_for_command("sync-bitcoin-core")?;
-    let mut pg_client = mmm_producers::connect_from_env().await?;
+    let (mut pg_client, classifier) = mmm_producers::connect_core_required_from_env().await?;
     if config.follow {
         // Long-lived managed-service daemon: catch up to tip then follow
         // it, with its own SIGINT/SIGTERM handling. Returns only on a
         // clean shutdown or a fatal backbone integrity error.
-        mmm_producers::run_sync_bitcoin_core_follow(&mut pg_client, &rpc, config).await?;
+        mmm_producers::run_sync_bitcoin_core_follow(&mut pg_client, &rpc, &classifier, config)
+            .await?;
     } else {
         let stats = mmm_producers::run_sync_bitcoin_core(&mut pg_client, &rpc, config).await?;
         info!(
@@ -141,16 +139,9 @@ async fn cmd_sync_bitcoin_core(args: std::env::Args) -> Result<()> {
 
 async fn cmd_reconcile_read_model(args: std::env::Args) -> Result<()> {
     let config = mmm_read_model::ReconcileReadModelConfig::from_args(args)?;
-    let mut pg_client = mmm_producers::connect_from_env().await?;
-    // A `--rebuild-source-health` rebuild is DB-only and never classifies,
-    // so do not build the Bitcoin Core classifier from env for it: a
-    // post-migration rebuild must not fail on unrelated BITCOIN_RPC_*
-    // config and leave /sources stuck fail-closed.
-    let classifier = if config.rebuild_source_health {
-        mmm_bitcoin_core::ConfiguredParentClassifier::Disabled
-    } else {
-        mmm_bitcoin_core::ConfiguredParentClassifier::from_env()?
-    };
+    // Core is deliberately mandatory even for source-health-only maintenance:
+    // bootstrap keeps the persisted cache current before read-model maintenance.
+    let (mut pg_client, classifier) = mmm_producers::connect_core_required_from_env().await?;
     let count =
         mmm_read_model::run_reconcile_read_model(&mut pg_client, &classifier, config).await?;
     info!(count, "reconciled read-model work items");
@@ -173,8 +164,7 @@ async fn cmd_revoke_merge_mining_event(mut args: std::env::Args) -> Result<()> {
     if reason.trim().is_empty() {
         anyhow::bail!("reason must be non-empty");
     }
-    let mut pg_client = mmm_producers::connect_from_env().await?;
-    let classifier = mmm_bitcoin_core::ConfiguredParentClassifier::from_env()?;
+    let (mut pg_client, classifier) = mmm_producers::connect_core_required_from_env().await?;
     mmm_read_model::revoke_merge_mining_event(&mut pg_client, event_id, &reason, &classifier)
         .await?;
     info!(event_id, "revoked merge_mining_event");
@@ -191,8 +181,7 @@ async fn cmd_restore_merge_mining_event(mut args: std::env::Args) -> Result<()> 
     if event_id <= 0 {
         anyhow::bail!("event-id must be positive");
     }
-    let mut pg_client = mmm_producers::connect_from_env().await?;
-    let classifier = mmm_bitcoin_core::ConfiguredParentClassifier::from_env()?;
+    let (mut pg_client, classifier) = mmm_producers::connect_core_required_from_env().await?;
     mmm_read_model::restore_merge_mining_event(&mut pg_client, event_id, &classifier).await?;
     info!(event_id, "restored merge_mining_event");
 

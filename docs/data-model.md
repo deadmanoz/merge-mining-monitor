@@ -38,12 +38,12 @@ tree view from that evidence.
 Orphan status is not a `btc_parent_kind`. It is the derived
 `block.btc_orphan_class` (`strict_btc_orphan`, `weak_btc_orphan`, or
 `excluded`; NULL while pending), set only after a Core-absence-attested verdict
-and the offline strict/weak orphan classifier. Before the strict/weak
+and the Core-cache-backed strict/weak orphan classifier. Before the strict/weak
 resolution runs, the classifier consults the operator-imported
 `known_stale_block` membership (loaded by `import-known-stales` from the
 upstream `bitcoin-data/stale-blocks` dataset): a catalogued stale is `excluded`
-outright, never labelled strict/weak, and `reclassify-known-stales`
-retroactively demotes rows classified before the membership was imported.
+outright, never labelled strict/weak, and `import-known-stales` atomically
+demotes rows classified before the membership was imported.
 Published direct-stale and stale-descendant provenance is also an exclusion
 from strict/weak orphan classification while a branch remains derived
 `unknown`.
@@ -181,6 +181,22 @@ provenance. Existing event values are preserved by the migration. The migration
 fails before altering the schema if legacy rows contain duplicate exact
 `(source_id, child_block_hash)` identities; see the audit query in
 `docs/operations.md`.
+
+Migration `0010_add_bitcoin_core_header_cache.sql` adds the sparse Core-derived
+header cache and its singleton state. Boundaries are marked final only after
+Core re-reads them 100 blocks behind the synced tip. The current shallow epoch
+and moving horizon are refreshed from Core on every command. The state retains
+a safe timestamp-coverage high-water mark for valid non-monotonic header times
+and separately records pending-coverage and full-orphan-recheck retries. nBits and
+timestamp classification read this cache, so the monitor has no compiled
+Bitcoin epoch dataset. A strict BIP34 claim above the cached Core horizon stays
+pending, even when the surrounding difficulty epoch is cached. The first cache
+population conservatively revisits existing orphan classifications that could
+have been derived before the cache existed. A cache refresh holds the exclusive
+lock while it replaces headers and sweeps derived rows; each ordinary
+classification takes the shared lock before parent advisory locks and holds it
+for its transaction, so the sweep cannot acknowledge a cache generation while
+an older verdict is still able to commit or form a lock-order cycle.
 
 After a migration has reached a persistent database, do not edit it. Add a new
 forward migration. Real database migration runs go through `just db-migrate-dev`

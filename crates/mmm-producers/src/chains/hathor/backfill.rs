@@ -1,7 +1,7 @@
 //! Bounded Hathor historical backfill. Intentionally divergent from the shared
 //! family runner: public-REST range cap, per-height delay, and the
 //! absent/transient hold policy (`HATHOR_BACKFILL_SKIP_HOLDS`; a
-//! nBits-table-horizon hold always stops the backfill). Env reads route
+//! Core-cache-horizon hold always stops the backfill). Env reads route
 //! through `chains::config`; behavior unchanged.
 
 use anyhow::{Context, Result, bail};
@@ -42,8 +42,8 @@ pub(crate) async fn backfill(rt: ProducerRuntime, config: BackfillConfig) -> Res
 
 /// Drive the inclusive `[start, end]` range through the shared capture path over
 /// the public REST API, then run the post-backfill read-model repair. A bounded
-/// backfill must not leave silent gaps: the nBits-table horizon always aborts
-/// (regenerate the table first), and absent/transient holds abort by default
+/// backfill must not leave silent gaps: the Core-cache horizon always aborts,
+/// and absent/transient holds abort by default
 /// unless `HATHOR_BACKFILL_SKIP_HOLDS` downgrades them to logged skips. Honors
 /// the per-height delay; does NOT move the live poll cursor.
 pub(crate) async fn run_hathor_backfill(
@@ -119,12 +119,11 @@ fn hathor_backfill_effect(
         | HathorHeightOutcome::NonBtcParentSkipped
         | HathorHeightOutcome::ConflictSkipped => Ok(BackfillHeightEffect::NonAuxpowSkipped),
         HathorHeightOutcome::MalformedSkipped => Ok(BackfillHeightEffect::MalformedSkipped),
-        // A bounded backfill must not silently leave gaps. A beyond-horizon parent
-        // holds (and the backfill fails) only when Bitcoin Core cannot answer: a
-        // Core-enabled backfill resolves it from Core. Transient/absent holds fail
-        // by default, with an explicit skip override.
+        // A bounded backfill must not silently leave gaps. A beyond-horizon
+        // hold means the command's fresh Core cache did not cover the evidence.
+        // Transient/absent holds fail by default, with an explicit skip override.
         HathorHeightOutcome::TableHorizonHold => bail!(
-            "Hathor backfill hit the nBits-table horizon at height {height} with no Core answer; enable BITCOIN_RPC_URL or regenerate the table (scripts/gen-nbits-table.py) before backfilling further"
+            "Hathor backfill hit the persisted Core-cache horizon at height {height}; ensure Bitcoin Core is fully synced before retrying"
         ),
         HathorHeightOutcome::AbsentHold | HathorHeightOutcome::TransientHold => {
             if skip_holds {

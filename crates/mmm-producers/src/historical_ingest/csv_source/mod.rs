@@ -9,10 +9,11 @@ use bitcoin::block::Header;
 use bitcoin::consensus::deserialize;
 use bitcoin::hashes::{Hash as _, sha256d};
 use mmm_capture::auxpow::{parse_bip34_height, validates_target};
-use mmm_capture::btc_orphan::{BtcOrphanVerdict, classify_btc_orphan, is_strict_bip34_chain};
+use mmm_capture::btc_orphan::{BtcOrphanVerdict, is_strict_bip34_chain};
 use mmm_capture::capture::{
     HistoricalEventProvenance, NormalizedEventEvidence, RskEvidencePayload,
 };
+use mmm_capture::nbits_table::NbitsTable;
 
 use super::config::HistoricalChainSpec;
 use super::publication::NORMALIZED_COLUMNS;
@@ -188,6 +189,7 @@ pub(super) fn candidate_from_record(
     layout: &CsvLayout,
     record: &csv::StringRecord,
     publication_ref: &str,
+    nbits_table: Option<&NbitsTable>,
 ) -> Result<ImportCandidate, SkipReason> {
     if record.get(layout.chain).map(str::trim) != Some(spec.chain) {
         return Err(SkipReason::Malformed);
@@ -202,8 +204,17 @@ pub(super) fn candidate_from_record(
         .map(|nbits| validates_target(header.block_hash(), CompactTarget::from_consensus(nbits)));
 
     let coinbase = parse_parent_coinbase_fields(layout, record)?;
-    let orphan_verdict = if taxonomy.source_classification == SourceClassification::Unknown {
-        let verdict = orphan_verdict(spec.chain, &header, coinbase.script.as_deref());
+    let orphan_verdict = if taxonomy.source_classification == SourceClassification::Unknown
+        && !matches!(
+            taxonomy.relevance_selection,
+            Some(RelevanceSelection::KnownDirectStale | RelevanceSelection::KnownStaleDescendant)
+        ) {
+        let verdict = orphan_verdict(
+            nbits_table.ok_or(SkipReason::OrphanPending)?,
+            spec.chain,
+            &header,
+            coinbase.script.as_deref(),
+        );
         filter_unknown(verdict, taxonomy.relevance_selection)?;
         Some(verdict)
     } else {
@@ -463,6 +474,7 @@ fn filter_unknown(
 }
 
 fn orphan_verdict(
+    nbits_table: &NbitsTable,
     chain: &str,
     header: &Header,
     coinbase_script: Option<&[u8]>,
@@ -470,7 +482,13 @@ fn orphan_verdict(
     let strict_height = is_strict_bip34_chain(chain)
         .then(|| coinbase_script.and_then(parse_bip34_height))
         .flatten();
-    classify_btc_orphan(header.time as i64, header.bits, strict_height).0
+    mmm_capture::btc_orphan::classify_btc_orphan_with(
+        nbits_table,
+        header.time as i64,
+        header.bits,
+        strict_height,
+    )
+    .0
 }
 
 pub(super) fn required_header(headers: &csv::StringRecord, name: &str) -> Result<usize> {
@@ -696,7 +714,7 @@ mod tests {
         let mut reader = csv::Reader::from_reader(input.as_bytes());
         let layout = CsvLayout::new(reader.headers().unwrap(), spec).unwrap();
         let record = reader.records().next().unwrap().unwrap();
-        candidate_from_record(spec, &layout, &record, PINNED_RESEARCH_COMMIT)
+        candidate_from_record(spec, &layout, &record, PINNED_RESEARCH_COMMIT, None)
     }
 
     fn child_identity() -> (String, String) {

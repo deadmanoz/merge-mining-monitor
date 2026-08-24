@@ -8,11 +8,12 @@ use super::*;
 pub struct FakeParentClassifier {
     state: Arc<tokio::sync::Mutex<FakeParentClassifierState>>,
     first_call_gate: Option<Arc<FakeParentClassifierGate>>,
+    synced_tip_is_mainnet: bool,
     synced_tip_height: Option<i32>,
     synced_tip_fresh: bool,
     fail_synced_tip: bool,
-    epoch_nbits: std::collections::HashMap<i32, EpochNbits>,
-    fail_epoch_nbits: bool,
+    canonical_headers:
+        Arc<tokio::sync::Mutex<std::collections::HashMap<i32, VecDeque<CoreHeader>>>>,
     max_concurrency: usize,
 }
 
@@ -50,11 +51,11 @@ impl FakeParentClassifier {
                 calls: 0,
             })),
             first_call_gate: None,
+            synced_tip_is_mainnet: true,
             synced_tip_height: None,
             synced_tip_fresh: true,
             fail_synced_tip: false,
-            epoch_nbits: std::collections::HashMap::new(),
-            fail_epoch_nbits: false,
+            canonical_headers: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             max_concurrency: 1,
         }
     }
@@ -75,6 +76,14 @@ impl FakeParentClassifier {
         self
     }
 
+    /// A synced non-mainnet tip, for commands that must refuse to populate the
+    /// monitor's Bitcoin-mainnet cache from a testnet, signet, or regtest node.
+    pub fn with_non_mainnet_synced_tip(mut self, height: i32) -> Self {
+        self.synced_tip_height = Some(height);
+        self.synced_tip_is_mainnet = false;
+        self
+    }
+
     /// A synced tip that is STALE (its median time is too old): the far-future
     /// resolver must HOLD rather than revoke a beyond-tolerance parent against a
     /// lagging / isolated node.
@@ -91,22 +100,35 @@ impl FakeParentClassifier {
         self
     }
 
-    /// Register the canonical nBits + header time for a DAA epoch-start height.
-    pub fn with_epoch_nbits(
-        mut self,
-        epoch_start_height: i32,
-        nbits: u32,
-        header_time: i64,
-    ) -> Self {
-        self.epoch_nbits
-            .insert(epoch_start_height, EpochNbits { nbits, header_time });
+    /// Register one canonical Core header for the persisted cache refresher.
+    pub fn with_canonical_header(mut self, header: CoreHeader) -> Self {
+        Arc::get_mut(&mut self.canonical_headers)
+            .expect("fake canonical-header registry has not been cloned")
+            .get_mut()
+            .insert(header.height, VecDeque::from([header]));
         self
     }
 
-    /// Make `epoch_nbits` return `Err` (epoch-header fetch fails), so the
-    /// resolver's fail-closed-to-Hold path can be exercised.
-    pub fn with_epoch_nbits_error(mut self) -> Self {
-        self.fail_epoch_nbits = true;
+    /// Register successive responses for one height. The last header remains
+    /// active after the sequence is consumed, which models a same-height Core
+    /// reorg settling before a cache refresh retry.
+    pub fn with_canonical_header_sequence<I>(mut self, headers: I) -> Self
+    where
+        I: IntoIterator<Item = CoreHeader>,
+    {
+        let headers = headers.into_iter().collect::<VecDeque<_>>();
+        let height = headers
+            .front()
+            .expect("fake canonical-header sequence must not be empty")
+            .height;
+        assert!(
+            headers.iter().all(|header| header.height == height),
+            "fake canonical-header sequence must have one height"
+        );
+        Arc::get_mut(&mut self.canonical_headers)
+            .expect("fake canonical-header registry has not been cloned")
+            .get_mut()
+            .insert(height, headers);
         self
     }
 
@@ -122,23 +144,27 @@ impl FakeParentClassifier {
             bail!("fake classifier: injected synced_tip error");
         }
         Ok(self.synced_tip_height.map(|height| SyncedTip {
+            is_mainnet: self.synced_tip_is_mainnet,
             height,
             fresh: self.synced_tip_fresh,
         }))
     }
 
-    pub(crate) async fn epoch_nbits(
-        &self,
-        epoch_start_height: i32,
-        _synced_tip: i32,
-    ) -> Result<EpochNbits> {
-        if self.fail_epoch_nbits {
-            bail!("fake classifier: injected epoch_nbits error");
+    pub(crate) async fn canonical_header(&self, height: i32) -> Result<CoreHeader> {
+        let mut headers = self.canonical_headers.lock().await;
+        let sequence = headers
+            .get_mut(&height)
+            .with_context(|| format!("fake classifier: no canonical header at {height}"))?;
+        if sequence.len() > 1 {
+            Ok(sequence
+                .pop_front()
+                .expect("non-empty fake canonical-header sequence"))
+        } else {
+            sequence
+                .front()
+                .copied()
+                .context("fake canonical-header sequence became empty")
         }
-        self.epoch_nbits
-            .get(&epoch_start_height)
-            .copied()
-            .with_context(|| format!("fake classifier: no epoch nBits for {epoch_start_height}"))
     }
 
     pub(crate) async fn classify_parent(
