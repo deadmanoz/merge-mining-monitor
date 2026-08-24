@@ -60,11 +60,12 @@ Use `just` targets, not raw commands, when a target exists:
   tip-pinned backward header view, replace the complete suffix atomically,
   retain displaced blocks as stale evidence, and enqueue every affected old and
   new hash in `bitcoin_core_reconcile_queue` before commit. Core-backed
-  classifiers and reconcilers take the shared canonical-view barrier;
-  canonical-row writers, sync bookkeeping, and suffix replacement take it
-  exclusively. Drain the queue's durable parent and expansion phases before
-  later sync work and fail closed when no common ancestor exists inside the
-  configured window.
+  classifiers and reconcilers take the shared header-cache lock before the
+  shared canonical-view barrier. Suffix replacement takes the shared cache lock
+  before the canonical barrier exclusively; ordinary canonical-row writers and
+  sync bookkeeping take only the exclusive canonical barrier. Drain the queue's
+  durable parent and expansion phases before cache refresh or later sync work,
+  and fail closed when no common ancestor exists inside the configured window.
 - Do not copy a sibling chain module to add a Namecoin-family source. Extend
   the shared source registry, chain spec, config, AuxPoW-family parser, poller,
   and write paths.

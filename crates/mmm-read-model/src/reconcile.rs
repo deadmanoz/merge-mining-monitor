@@ -40,10 +40,9 @@ pub(crate) enum ReconcileWork {
 /// exclusive cache lock.
 pub(crate) async fn lock_core_header_cache_for_reconcile<C: GenericClient>(
     client: &C,
-    classifier: &ConfiguredParentClassifier,
     nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
 ) -> Result<()> {
-    if classifier.is_enabled() && nbits_table.is_none() {
+    if nbits_table.is_none() {
         mmm_store::lock_bitcoin_core_header_cache_shared_in_transaction(client).await?;
     }
     Ok(())
@@ -256,15 +255,20 @@ pub(crate) async fn reconcile_one_event(
     nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
 ) -> Result<Vec<Vec<u8>>> {
     let trusted_preclassified = preclassified;
+    let strict_core_errors = trusted_preclassified
+        .as_ref()
+        .is_some_and(|preclassified| preclassified.strict_core_errors);
     for attempt in 0..RECONCILE_LOCK_SET_RETRY_LIMIT {
         let txn = client
             .transaction()
             .await
             .context("begin reconcile transaction")?;
-        lock_core_header_cache_for_reconcile(&txn, classifier, nbits_table).await?;
-        crate::mutation::lock_core_canonical_view_shared(&txn).await?;
+        crate::mutation::lock_core_classification_view_shared(&txn, nbits_table).await?;
         let attempt_preclassified = match &trusted_preclassified {
             Some(preclassified) if !classifier.is_enabled() => Some(preclassified.clone()),
+            Some(_) if strict_core_errors => {
+                preclassify_event_parent_strict(&txn, event_id, classifier).await?
+            }
             Some(_) | None => preclassify_event_parent(&txn, event_id, classifier).await?,
         };
         match reconcile_one_event_in_txn(
@@ -363,7 +367,6 @@ pub(crate) async fn reconcile_one_event_in_txn<C: GenericClient>(
     if initial_event.skips_parent_read_model() {
         return Ok(Vec::new());
     }
-    lock_core_header_cache_for_reconcile(client, classifier, nbits_table).await?;
     if preclassified
         .as_ref()
         .and_then(|preclassified| preclassified.expected_parent_hash.as_ref())
@@ -554,16 +557,16 @@ pub(crate) async fn preclassify_event_parent<C: GenericClient>(
 /// Precompute one candidate with strict Core RPC error handling. A cache-driven
 /// orphan recheck must retain its durable retry marker when fresh Core evidence
 /// cannot be obtained.
-pub(crate) async fn preclassify_event_parent_strict(
-    client: &Client,
+pub(crate) async fn preclassify_event_parent_strict<C: GenericClient>(
+    client: &C,
     event_id: i64,
     classifier: &ConfiguredParentClassifier,
 ) -> Result<Option<PreclassifiedParent>> {
     preclassify_event_parent_with_policy(client, event_id, classifier, true).await
 }
 
-async fn preclassify_event_parent_with_policy(
-    client: &Client,
+async fn preclassify_event_parent_with_policy<C: GenericClient>(
+    client: &C,
     event_id: i64,
     classifier: &ConfiguredParentClassifier,
     strict_core_errors: bool,
@@ -580,7 +583,11 @@ async fn preclassify_event_parent_with_policy(
     let (_, classification) =
         classify_event_parent_with_policy(client, &event, classifier, None, strict_core_errors)
             .await?;
-    Ok(Some(PreclassifiedParent::for_event(&event, classification)))
+    Ok(Some(PreclassifiedParent::for_event(
+        &event,
+        classification,
+        strict_core_errors,
+    )))
 }
 
 /// The full advisory-lock hash set for an event: the parent hash, its prev
@@ -693,8 +700,7 @@ pub(crate) async fn reconcile_one_block(
         .transaction()
         .await
         .context("begin block reconcile")?;
-    lock_core_header_cache_for_reconcile(&txn, classifier, nbits_table).await?;
-    crate::mutation::lock_core_canonical_view_shared(&txn).await?;
+    crate::mutation::lock_core_classification_view_shared(&txn, nbits_table).await?;
     lock_block_hash(&txn, hash).await?;
     let before = load_block_cascade_state(&txn, hash).await?;
     let sh_before = crate::source_health_sql::snapshot_parent_contribution(&txn, hash).await?;

@@ -93,8 +93,8 @@ impl LockedCanonicalRow {
 /// Replace a bounded canonical suffix and enqueue its post-commit cascades.
 ///
 /// Every replacement has a complete Core coinbase before this function starts.
-/// After taking the exclusive canonical-view barrier, the transaction re-checks
-/// the producer's canonical view and sync cursor, locks every
+/// After taking the shared cache lock and exclusive canonical-view barrier, the
+/// transaction re-checks the producer's canonical view and sync cursor, locks every
 /// old/new/predecessor/competitor hash in global order,
 /// promotes the new suffix, demotes displaced rows to Core-attested stale rows,
 /// reconciles any active events, advances the cursor only when the common
@@ -165,6 +165,10 @@ where
         .transaction()
         .await
         .context("begin Bitcoin Core canonical suffix replacement")?;
+    // Cache refresh drains committed suffix work while holding its exclusive
+    // lock. Taking the shared counterpart first makes a suffix either commit
+    // before that drain check or wait until the refresh has completed.
+    mmm_store::lock_bitcoin_core_header_cache_shared_in_transaction(&txn).await?;
     lock_core_canonical_view_exclusive(&txn).await?;
     validate_before(&txn).await?;
     let contiguous_complete_height =
@@ -603,12 +607,12 @@ async fn drain_core_reconcile_queue_with_budget(
                 None,
             )
             .await
-                .with_context(|| {
-                    format!(
-                        "reconcile durable Bitcoin Core dependent {}",
-                        hex::encode(&work.hash)
-                    )
-                })?;
+            .with_context(|| {
+                format!(
+                    "reconcile durable Bitcoin Core dependent {}",
+                    hex::encode(&work.hash)
+                )
+            })?;
             parents_reconciled += 1;
             mark_core_primary_reconciled(client, source_id, &work).await?;
         } else {
@@ -754,7 +758,14 @@ async fn expand_core_reconcile_work(
 }
 
 async fn lock_sync_state<C: GenericClient>(client: &C, source_id: i64) -> Result<()> {
-    client
+    if !try_lock_sync_state(client, source_id).await? {
+        bail!("Bitcoin Core contiguous sync state is missing");
+    }
+    Ok(())
+}
+
+async fn try_lock_sync_state<C: GenericClient>(client: &C, source_id: i64) -> Result<bool> {
+    Ok(client
         .query_opt(
             "SELECT 1 FROM bitcoin_core_sync_state \
              WHERE source_id = $1 AND sync_mode = $2 FOR UPDATE",
@@ -762,8 +773,7 @@ async fn lock_sync_state<C: GenericClient>(client: &C, source_id: i64) -> Result
         )
         .await
         .context("lock Bitcoin Core sync state while completing reconcile queue")?
-        .context("Bitcoin Core contiguous sync state is missing")?;
-    Ok(())
+        .is_some())
 }
 
 async fn clear_pending_error_in_transaction<C: GenericClient>(
@@ -799,8 +809,9 @@ async fn clear_pending_error_if_queue_empty(client: &mut Client, source_id: i64)
         .transaction()
         .await
         .context("begin Bitcoin Core pending-status check")?;
-    lock_sync_state(&txn, source_id).await?;
-    clear_pending_error_in_transaction(&txn, source_id).await?;
+    if try_lock_sync_state(&txn, source_id).await? {
+        clear_pending_error_in_transaction(&txn, source_id).await?;
+    }
     txn.commit()
         .await
         .context("commit Bitcoin Core pending-status check")

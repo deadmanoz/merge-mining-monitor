@@ -9,14 +9,11 @@ use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
 use mmm_capture::capture::ParentKind;
 use mmm_capture::nbits_table::NbitsTable;
 
-use super::{
-    PrimaryDiff, cascade_changed_with_nbits_table, lock_core_canonical_view_shared,
-};
+use super::{PrimaryDiff, cascade_changed_with_nbits_table, lock_core_classification_view_shared};
 use crate::{
     DEFAULT_CASCADE_BUDGET, PreclassifiedParent, RECONCILE_LOCK_SET_RETRY_LIMIT,
     find_anchor_event_for_block, is_reconcile_lock_set_changed, load_block_cascade_state,
     load_event, lock_block_hash, lock_event_for_source_health, preclassify_event_parent,
-    lock_core_header_cache_for_reconcile,
     rebuild_parent_read_model, reconcile_one_event_in_txn,
 };
 
@@ -169,122 +166,145 @@ async fn reconcile_historical_primary(
     classification: Option<ParentClassification>,
     nbits_table: Option<&NbitsTable>,
 ) -> Result<()> {
-    let anchor = find_anchor_event_for_block(client, parent_hash).await?;
-    match anchor {
+    match find_anchor_event_for_block(client, parent_hash).await? {
         Some(event_id) => {
-            let trusted = classification.map(PreclassifiedParent::trusted);
-            for attempt in 0..RECONCILE_LOCK_SET_RETRY_LIMIT {
-                let txn = client
-                    .transaction()
-                    .await
-                    .context("begin historical parent reconcile")?;
-                lock_core_header_cache_for_reconcile(&txn, classifier, nbits_table).await?;
-                lock_core_canonical_view_shared(&txn).await?;
-                let (preclassified, cached_rejected) = match &trusted {
-                    Some(preclassified) if !classifier.is_enabled() => {
-                        (Some(preclassified.clone()), false)
-                    }
-                    Some(preclassified)
-                        if cached_classification_matches_core_view(
-                            &txn,
-                            parent_hash,
-                            &preclassified.classification,
-                        )
-                        .await? =>
-                    {
-                        (Some(preclassified.clone()), false)
-                    }
-                    Some(_) => (
-                        preclassify_event_parent(&txn, event_id, classifier).await?,
-                        true,
-                    ),
-                    None => (
-                        preclassify_event_parent(&txn, event_id, classifier).await?,
-                        false,
-                    ),
-                };
-                // Acquire the full sorted block-lock set before the event rows,
-                // matching capture/reconcile ordering. The queue row remains
-                // last so a base importer that already owns the event can
-                // enqueue and commit before this worker checks its generation.
-                let event = load_event(&txn, event_id).await?;
-                lock_event_for_source_health(&txn, &event, classifier, preclassified.clone())
-                    .await?;
-                if !lock_historical_parent_events(&txn, parent_hash, event_id).await? {
-                    txn.rollback()
-                        .await
-                        .context("rollback missing historical reconcile anchor")?;
-                    return Ok(());
-                }
-                if !lock_current_historical_primary(&txn, parent_hash, generation).await? {
-                    txn.rollback()
-                        .await
-                        .context("rollback superseded historical parent reconcile")?;
-                    return Ok(());
-                }
-                if cached_rejected
-                    && preclassified
-                        .as_ref()
-                        .is_some_and(|parent| parent.classification.kind == ParentKind::Unknown)
-                {
-                    txn.rollback()
-                        .await
-                        .context("rollback unresolved invalidated historical classification")?;
-                    bail!(
-                        "cached historical classification no longer matches the Core view and fresh classification is unknown for parent {}",
-                        hex::encode(parent_hash)
-                    );
-                }
-                match reconcile_one_event_in_txn(
-                    &txn,
-                    event_id,
-                    classifier,
-                    preclassified,
-                    PrimaryDiff::BulkImport,
-                    nbits_table,
-                )
-                .await
-                {
-                    Ok(changed_hashes) => {
-                        persist_historical_primary(&txn, parent_hash, generation, &changed_hashes)
-                            .await?;
-                        txn.commit()
-                            .await
-                            .context("commit historical parent reconcile")?;
-                        return Ok(());
-                    }
-                    Err(err)
-                        if is_reconcile_lock_set_changed(&err)
-                            && attempt + 1 < RECONCILE_LOCK_SET_RETRY_LIMIT =>
-                    {
-                        txn.rollback()
-                            .await
-                            .context("rollback historical reconcile after lock-set change")?;
-                    }
-                    Err(err) => {
-                        let _ = txn.rollback().await;
-                        return Err(err);
-                    }
-                }
-            }
-            unreachable!("historical reconcile retry loop always returns")
-        }
-        None => {
-            reconcile_historical_orphan_primary(
+            reconcile_historical_anchored_primary(
                 client,
                 classifier,
                 parent_hash,
+                event_id,
                 generation,
+                classification,
                 nbits_table,
             )
             .await
         }
+        None => {
+            reconcile_historical_orphan_primary(client, parent_hash, generation, nbits_table).await
+        }
+    }
+}
+
+async fn reconcile_historical_anchored_primary(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    parent_hash: &[u8],
+    event_id: i64,
+    generation: i64,
+    classification: Option<ParentClassification>,
+    nbits_table: Option<&NbitsTable>,
+) -> Result<()> {
+    let trusted = classification.map(PreclassifiedParent::trusted);
+    for attempt in 0..RECONCILE_LOCK_SET_RETRY_LIMIT {
+        let txn = client
+            .transaction()
+            .await
+            .context("begin historical parent reconcile")?;
+        lock_core_classification_view_shared(&txn, nbits_table).await?;
+        let (preclassified, cached_rejected) = resolve_historical_preclassification(
+            &txn,
+            classifier,
+            parent_hash,
+            event_id,
+            trusted.as_ref(),
+        )
+        .await?;
+        // Acquire the full sorted block-lock set before the event rows, matching
+        // capture/reconcile ordering. The queue row remains last so a base
+        // importer that already owns the event can enqueue and commit first.
+        let event = load_event(&txn, event_id).await?;
+        lock_event_for_source_health(&txn, &event, classifier, preclassified.clone()).await?;
+        if !lock_historical_parent_events(&txn, parent_hash, event_id).await? {
+            txn.rollback()
+                .await
+                .context("rollback missing historical reconcile anchor")?;
+            return Ok(());
+        }
+        if !lock_current_historical_primary(&txn, parent_hash, generation).await? {
+            txn.rollback()
+                .await
+                .context("rollback superseded historical parent reconcile")?;
+            return Ok(());
+        }
+        if cached_rejected
+            && preclassified
+                .as_ref()
+                .is_some_and(|parent| parent.classification.kind == ParentKind::Unknown)
+        {
+            txn.rollback()
+                .await
+                .context("rollback unresolved invalidated historical classification")?;
+            bail!(
+                "cached historical classification no longer matches the Core view and fresh classification is unknown for parent {}",
+                hex::encode(parent_hash)
+            );
+        }
+        match reconcile_one_event_in_txn(
+            &txn,
+            event_id,
+            classifier,
+            preclassified,
+            PrimaryDiff::BulkImport,
+            nbits_table,
+        )
+        .await
+        {
+            Ok(changed_hashes) => {
+                persist_historical_primary(&txn, parent_hash, generation, &changed_hashes).await?;
+                txn.commit()
+                    .await
+                    .context("commit historical parent reconcile")?;
+                return Ok(());
+            }
+            Err(err)
+                if is_reconcile_lock_set_changed(&err)
+                    && attempt + 1 < RECONCILE_LOCK_SET_RETRY_LIMIT =>
+            {
+                txn.rollback()
+                    .await
+                    .context("rollback historical reconcile after lock-set change")?;
+            }
+            Err(err) => {
+                let _ = txn.rollback().await;
+                return Err(err);
+            }
+        }
+    }
+    unreachable!("historical reconcile retry loop always returns")
+}
+
+async fn resolve_historical_preclassification<C: GenericClient>(
+    client: &C,
+    classifier: &ConfiguredParentClassifier,
+    parent_hash: &[u8],
+    event_id: i64,
+    trusted: Option<&PreclassifiedParent>,
+) -> Result<(Option<PreclassifiedParent>, bool)> {
+    match trusted {
+        Some(preclassified) if !classifier.is_enabled() => Ok((Some(preclassified.clone()), false)),
+        Some(preclassified)
+            if cached_classification_matches_core_view(
+                client,
+                parent_hash,
+                &preclassified.classification,
+            )
+            .await? =>
+        {
+            Ok((Some(preclassified.clone()), false))
+        }
+        Some(_) => Ok((
+            preclassify_event_parent(client, event_id, classifier).await?,
+            true,
+        )),
+        None => Ok((
+            preclassify_event_parent(client, event_id, classifier).await?,
+            false,
+        )),
     }
 }
 
 async fn reconcile_historical_orphan_primary(
     client: &mut Client,
-    classifier: &ConfiguredParentClassifier,
     parent_hash: &[u8],
     generation: i64,
     nbits_table: Option<&NbitsTable>,
@@ -293,8 +313,7 @@ async fn reconcile_historical_orphan_primary(
         .transaction()
         .await
         .context("begin historical orphaned-block reconcile")?;
-    lock_core_header_cache_for_reconcile(&txn, classifier, nbits_table).await?;
-    lock_core_canonical_view_shared(&txn).await?;
+    lock_core_classification_view_shared(&txn, nbits_table).await?;
     // Keep the orphan path on the same global order as anchored reconcile:
     // block advisory locks before the durable queue row. An importer writes its
     // event before enqueueing this parent, so taking the queue row first could

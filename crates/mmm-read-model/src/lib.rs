@@ -29,10 +29,9 @@ pub use mutation::{
     drain_historical_reconcile_queue_with_nbits_table, enqueue_historical_parent_reconcile,
     rebuild_historical_source_health, reconcile_authoritative_historical_source_in_transaction,
     record_coinbase_failure, replace_core_canonical_suffix,
-    replace_core_canonical_suffix_validated, restore_merge_mining_event,
-    revoke_merge_mining_event, run_exclusive_core_canonical_view_transaction,
-    update_parent_events, write_core_canonical, write_core_canonical_validated,
-    write_historical_base_in_transaction,
+    replace_core_canonical_suffix_validated, restore_merge_mining_event, revoke_merge_mining_event,
+    run_exclusive_core_canonical_view_transaction, update_parent_events, write_core_canonical,
+    write_core_canonical_validated, write_historical_base_in_transaction,
 };
 #[cfg(feature = "db-integration")]
 pub use mutation::{
@@ -109,10 +108,12 @@ impl MergeMiningEvent {
 /// to. `for_event` pins `expected_parent_hash` so the reconcile can detect the
 /// header shifting under it (lock-set change); `trusted` carries no expected hash
 /// for callers that already hold the correct parent (e.g. capture's own preclassify).
+/// Strict tokens require the barrier-time revalidation to propagate Core errors.
 #[derive(Debug, Clone)]
 struct PreclassifiedParent {
     expected_parent_hash: Option<Vec<u8>>,
     classification: ParentClassification,
+    strict_core_errors: bool,
 }
 
 impl PreclassifiedParent {
@@ -120,13 +121,19 @@ impl PreclassifiedParent {
         Self {
             expected_parent_hash: None,
             classification,
+            strict_core_errors: false,
         }
     }
 
-    fn for_event(event: &MergeMiningEvent, classification: ParentClassification) -> Self {
+    fn for_event(
+        event: &MergeMiningEvent,
+        classification: ParentClassification,
+        strict_core_errors: bool,
+    ) -> Self {
         Self {
             expected_parent_hash: Some(event.btc_parent_header_hash.clone()),
             classification,
+            strict_core_errors,
         }
     }
 }

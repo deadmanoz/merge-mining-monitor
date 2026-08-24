@@ -60,10 +60,14 @@ The canonical spine therefore changes atomically. Dependent rows converge from
 a durable two-phase worklist, with the pending state exposed until every parent
 has been reconciled and its newly discovered dependents have been enqueued.
 Displaced Core and AuxPoW evidence remains queryable as stale.
-Core-backed classifiers and reconcilers hold a shared canonical-view barrier;
-canonical-row writers, sync-state bookkeeping, and suffix replacement hold it
-exclusively through commit. The suffix validates its pinned Core target after
-acquiring that barrier and again after staging the mutation.
+Core-backed classifiers and reconcilers take the shared header-cache lock before
+the shared canonical-view barrier. Suffix replacement takes the shared cache
+lock before holding the canonical barrier exclusively through commit; ordinary
+canonical-row writers and sync-state bookkeeping take only the exclusive
+canonical barrier. This ordering lets cache refresh drain a committed suffix
+queue before reclassification without a cache/canonical lock cycle. The suffix
+validates its pinned Core target after acquiring the barriers and again after
+staging the mutation.
 Derived state (`block`, `attestation_proof`, `source_health`) is rebuilt from
 that evidence by the read-model reconciler (stage 2), so a bad event can be
 revoked and the affected parent block recomputed. Bitcoin Core feeds the

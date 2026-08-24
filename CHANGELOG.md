@@ -11,7 +11,8 @@ This changelog starts with the initial release.
   and retaining displaced blocks as stale evidence. Persist dependent
   reconciliation and dependent expansion as restart-safe queue phases so a
   process exit cannot lose a deeper cascade frontier. Serialize Core-backed
-  classification and ordinary backbone writes against the suffix switch, and
+  classification and ordinary backbone writes against the suffix switch, drain
+  pending suffix work before a Core-header-cache refresh reclassifies rows, and
   continue to fail closed when the common ancestor lies outside the configured
   live window.
 

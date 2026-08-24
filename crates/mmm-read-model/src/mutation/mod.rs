@@ -82,6 +82,19 @@ pub(crate) async fn lock_core_canonical_view_shared<C: GenericClient>(client: &C
     Ok(())
 }
 
+/// Acquire the stable Core-backed classification view in global lock order.
+///
+/// Cache refresh holds the exclusive cache lock before reclassifying against
+/// the canonical view. Readers must therefore take cache-shared first and the
+/// canonical-view barrier second, before any parent advisory or event-row lock.
+pub(crate) async fn lock_core_classification_view_shared<C: GenericClient>(
+    client: &C,
+    nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
+) -> Result<()> {
+    lock_core_header_cache_for_reconcile(client, nbits_table).await?;
+    lock_core_canonical_view_shared(client).await
+}
+
 pub(crate) async fn lock_core_canonical_view_exclusive<C: GenericClient>(client: &C) -> Result<()> {
     client
         .execute(
@@ -500,8 +513,7 @@ where
             .transaction()
             .await
             .with_context(|| format!("begin {chain_label} capture transaction"))?;
-        lock_core_header_cache_for_reconcile(&txn, classifier, None).await?;
-        lock_core_canonical_view_shared(&txn).await?;
+        lock_core_classification_view_shared(&txn, None).await?;
         let preclassified = match &supplied_preclassification {
             Some(supplied) if classifier.is_enabled() => {
                 let current = classify_payload_parent(&txn, payload, classifier).await?;
@@ -613,8 +625,7 @@ pub(crate) async fn set_event_revocation(
             .transaction()
             .await
             .with_context(|| format!("begin {op} reconcile transaction"))?;
-        lock_core_header_cache_for_reconcile(&txn, classifier, None).await?;
-        lock_core_canonical_view_shared(&txn).await?;
+        lock_core_classification_view_shared(&txn, None).await?;
         let attempt_preclassified = preclassify_event_parent(&txn, event_id, classifier).await?;
         // Pre-acquire the reconcile lock set and open the source-health bracket
         // BEFORE the revoked_at UPDATE (the membership change). This wrapper
@@ -748,9 +759,10 @@ where
             .await
             .with_context(|| format!("begin {label} transaction"))?;
         if reconcile_anchor.is_some() {
-            lock_core_header_cache_for_reconcile(&txn, classifier, None).await?;
+            lock_core_classification_view_shared(&txn, None).await?;
+        } else {
+            lock_core_canonical_view_shared(&txn).await?;
         }
-        lock_core_canonical_view_shared(&txn).await?;
         // Advisory locks first, row locks second (the global order every
         // capture/revoke/restore transaction uses). For an anchored reconcile,
         // pre-acquire the anchor's full reconcile lock set so the later

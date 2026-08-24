@@ -15,9 +15,9 @@ just test
 Copy `.env.example` to `.env` and adjust endpoints before running live pollers
 or Bitcoin Core classification. A synced Bitcoin Core node is required for every
 capture, import, and reconciliation command, including database-only
-maintenance modes. Each refreshes the sparse `bitcoin_core_header` cache through
-the current synced tip before work begins. `serve` reads that cache from Postgres
-and makes no Core RPC calls.
+maintenance modes. Each drains committed Core-suffix reconciliation before
+refreshing the sparse `bitcoin_core_header` cache through the current synced tip.
+`serve` reads that cache from Postgres and makes no Core RPC calls.
 
 The current retarget boundary is marked final only after Core re-reads it at 100
 blocks behind that tip. Cache refreshes verify that Core's tip did not change
@@ -170,7 +170,10 @@ competitor, updates active AuxPoW event classifications and source health, and
 advances the contiguous cursor only when the replacement joins the already
 proven prefix. It also writes every changed parent to
 `bitcoin_core_reconcile_queue`. Follow mode drains that queue after the commit,
-and before later sync work, including the first follow tick after a restart.
+and before later sync or cache-refresh work, including process bootstrap and the
+first follow tick after a restart. The suffix takes the shared cache lock before
+the exclusive canonical-view barrier, so a concurrent cache refresh either
+drains its committed queue or finishes before the suffix can commit.
 Each row persists both the parent reconcile and the later expansion that
 discovers deeper dependents, so a process exit or bounded-drain stop cannot lose
 the cascade frontier. While durable work remains, `/api/v1/sources` reports

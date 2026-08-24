@@ -387,6 +387,20 @@ where
         let progress_after = load_follow_progress(self.client, self.source_id).await.ok();
         bookkeeping_failure_outcome_from(progress_before, progress_after)
     }
+
+    async fn repair_near_tip(&mut self, schedule: NearTipRepairSchedule) -> Result<bool> {
+        let (last_repair, repair_succeeded) = repair_near_tip_backbone_if_due(
+            self.client,
+            self.source,
+            self.source_id,
+            schedule,
+            self.config.delay,
+            self.config.near_tip_repair_window_heights,
+        )
+        .await?;
+        self.last_near_tip_repair_at = last_repair;
+        Ok(repair_succeeded)
+    }
 }
 
 fn bookkeeping_failure_outcome_from(
@@ -444,7 +458,7 @@ where
                 error = format!("{err:#}"),
                 "Bitcoin Core pending reorg cascade failed; retrying before further sync work"
             );
-            return Ok(self.bookkeeping_failure_outcome().await);
+            return Ok(self.bookkeeping_failure_outcome(None).await);
         }
 
         let progress_before = match load_follow_progress(self.client, self.source_id).await {
@@ -458,19 +472,12 @@ where
             }
         };
 
-        let (last_repair, repair_succeeded) = repair_near_tip_backbone_if_due(
-            self.client,
-            self.source,
-            self.source_id,
-            NearTipRepairSchedule::IfDue {
+        let repair_succeeded = self
+            .repair_near_tip(NearTipRepairSchedule::IfDue {
                 last_repair: self.last_near_tip_repair_at,
                 interval: self.config.follow_interval,
-            },
-            self.config.delay,
-            self.config.near_tip_repair_window_heights,
-        )
-        .await?;
-        self.last_near_tip_repair_at = last_repair;
+            })
+            .await?;
         if !repair_succeeded {
             return Ok(TickOutcome {
                 // A partial gap/suffix commit is not safe progress until the
@@ -492,16 +499,7 @@ where
                     error = format!("{err:#}"),
                     "Bitcoin Core ordinary live batch found a backbone conflict; forcing bounded repair"
                 );
-                let (last_repair, repair_succeeded) = repair_near_tip_backbone_if_due(
-                    self.client,
-                    self.source,
-                    self.source_id,
-                    NearTipRepairSchedule::Force,
-                    self.config.delay,
-                    self.config.near_tip_repair_window_heights,
-                )
-                .await?;
-                self.last_near_tip_repair_at = last_repair;
+                let repair_succeeded = self.repair_near_tip(NearTipRepairSchedule::Force).await?;
                 if !repair_succeeded {
                     return Ok(TickOutcome {
                         progressed: false,

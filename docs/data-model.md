@@ -200,13 +200,15 @@ Bitcoin epoch dataset. A strict BIP34 claim above the cached Core horizon stays
 pending, even when the surrounding difficulty epoch is cached. The first cache
 population conservatively revisits existing orphan classifications that could
 have been derived before the cache existed. A cache refresh holds the exclusive
-lock while it replaces headers and sweeps derived rows; each ordinary
-classification takes the shared lock before parent advisory locks and holds it
-for its transaction, so the sweep cannot acknowledge a cache generation while
-an older verdict is still able to commit or form a lock-order cycle.
+cache lock while it drains pending suffix work, replaces headers, and sweeps
+derived rows. Each ordinary classification takes the shared cache lock before
+the shared canonical-view barrier and parent advisory locks, then holds both for
+its transaction. Suffix replacement takes the shared cache lock before the
+canonical barrier exclusively. The sweep therefore cannot acknowledge a cache
+generation while an older verdict can still commit or form a lock-order cycle.
 
-Migration `0012_add_bitcoin_core_reconcile_queue.sql` adds generation-protected durable
-two-phase work for atomic near-tip Core suffix replacement. A
+Migration `0012_add_bitcoin_core_reconcile_queue.sql` adds generation-protected
+durable two-phase work for atomic near-tip Core suffix replacement. A
 `primary_pending` seed first reconciles its parent, then becomes an expansion
 seed that discovers and enqueues dependents atomically with its own deletion.
 The sync state remains in `backbone_reorg_reconcile_pending` until the queue
