@@ -8,7 +8,9 @@ use mmm_capture::auxpow::parse_bip34_height;
 use mmm_capture::capture::ClassificationProof;
 use mmm_capture::nbits_table::NbitsLookup;
 use mmm_producers::refresh_bitcoin_core_header_cache;
-use mmm_read_model::reconcile_from_merge_mining_event;
+use mmm_read_model::{
+    lock_block_hash, reconcile_from_merge_mining_event, revoke_merge_mining_event,
+};
 use mmm_store::{
     BitcoinCoreHeader, complete_bitcoin_core_header_cache_reclassification,
     finish_bitcoin_core_header_cache_operation, load_bitcoin_core_nbits_table,
@@ -276,6 +278,104 @@ async fn core_header_cache_refresh_waits_for_an_in_flight_classification() -> Re
         tokio::time::timeout(std::time::Duration::from_secs(1), &mut waiter)
             .await
             .expect("waiting Core-cache refresh did not resume")??;
+        Ok(())
+    })
+}
+
+#[tokio::test]
+async fn revocation_waits_for_cache_before_taking_a_parent_lock() -> Result<()> {
+    crate::run_db_test!(client, schema, {
+        let (resolver, pool_ids_by_slug, source_id, parsed) = namecoin_fixture(&client).await?;
+        let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
+            .expect("Namecoin fixture carries a BIP34 parent height");
+        let parent_header = parsed.parent_header.header;
+        crate::support::db::seed_bitcoin_core_header_cache_through(
+            &client,
+            parent_height,
+            i64::from(parent_header.time),
+            parent_header.bits.to_consensus(),
+        )
+        .await?;
+        let payload = namecoin_event_payload(
+            &parsed,
+            &resolver,
+            &pool_ids_by_slug,
+            500_000,
+            ClassificationProof::default(),
+            1_000,
+        )?;
+        let event_id = upsert_merge_mining_event(&client, source_id, &payload)
+            .await?
+            .event_id;
+        let parent_hash = parsed.parent_header.hash().to_byte_array().to_vec();
+        let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+            orphan_candidate_verdict(&parent_header),
+        ));
+
+        let refresh = connect_to_schema(&schema).await?;
+        lock_bitcoin_core_header_cache(&refresh).await?;
+        let mut revoker = connect_to_schema(&schema).await?;
+        let revoker_pid: i32 = revoker
+            .query_one("SELECT pg_backend_pid()", &[])
+            .await?
+            .get(0);
+        let revoker_classifier = classifier.clone();
+        let mut revocation = tokio::spawn(async move {
+            revoke_merge_mining_event(
+                &mut revoker,
+                event_id,
+                "cache_lock_order",
+                &revoker_classifier,
+            )
+            .await
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                let waiting: i64 = client
+                    .query_one(
+                        "SELECT COUNT(*)::int8 FROM pg_locks \
+                         WHERE locktype = 'advisory' \
+                           AND pid = $1 \
+                           AND mode = 'ShareLock' \
+                           AND NOT granted",
+                        &[&revoker_pid],
+                    )
+                    .await?
+                    .get(0);
+                if waiting > 0 {
+                    return Ok::<(), anyhow::Error>(());
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await??;
+
+        let mut parent_locker = connect_to_schema(&schema).await?;
+        let mut probe = tokio::spawn(async move {
+            let transaction = parent_locker.transaction().await?;
+            lock_block_hash(&transaction, &parent_hash).await?;
+            transaction.commit().await?;
+            Ok::<(), anyhow::Error>(())
+        });
+        let probe_result =
+            tokio::time::timeout(std::time::Duration::from_millis(100), &mut probe).await;
+
+        finish_bitcoin_core_header_cache_operation(&refresh, Ok(())).await?;
+        tokio::time::timeout(std::time::Duration::from_secs(1), &mut revocation)
+            .await
+            .expect("revocation did not resume after cache refresh")??;
+        match probe_result {
+            Ok(result) => result??,
+            Err(_) => {
+                tokio::time::timeout(std::time::Duration::from_secs(1), &mut probe)
+                    .await
+                    .expect("parent-lock probe did not resume")??;
+                anyhow::bail!(
+                    "revocation held a parent lock while waiting for the Core-cache reader lock"
+                );
+            }
+        }
         Ok(())
     })
 }

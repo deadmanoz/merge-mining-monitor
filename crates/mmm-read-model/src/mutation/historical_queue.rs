@@ -12,8 +12,8 @@ use super::{PrimaryDiff, cascade_changed_with_nbits_table};
 use crate::{
     DEFAULT_CASCADE_BUDGET, PreclassifiedParent, RECONCILE_LOCK_SET_RETRY_LIMIT,
     find_anchor_event_for_block, is_reconcile_lock_set_changed, load_block_cascade_state,
-    lock_block_hash, preclassify_event_parent, rebuild_parent_read_model,
-    reconcile_one_event_in_txn,
+    lock_block_hash, lock_core_header_cache_for_reconcile, preclassify_event_parent,
+    rebuild_parent_read_model, reconcile_one_event_in_txn,
 };
 
 /// Drain durable historical parent work to completion.
@@ -177,6 +177,7 @@ async fn reconcile_historical_primary(
                     .transaction()
                     .await
                     .context("begin historical parent reconcile")?;
+                lock_core_header_cache_for_reconcile(&txn, classifier, nbits_table).await?;
                 // Base writers lock the event before they enqueue its parent.
                 // Match that order so a concurrent replay cannot hold the
                 // queue row while waiting on an event row the replay owns.
@@ -231,6 +232,7 @@ async fn reconcile_historical_primary(
                 .transaction()
                 .await
                 .context("begin historical orphaned-block reconcile")?;
+            lock_core_header_cache_for_reconcile(&txn, classifier, nbits_table).await?;
             if !lock_current_historical_primary(&txn, parent_hash, generation).await? {
                 txn.rollback()
                     .await

@@ -31,6 +31,24 @@ pub(crate) enum ReconcileWork {
     Block(Vec<u8>),
 }
 
+/// Take the Core-header-cache reader lock before taking any parent lock.
+///
+/// Cache refresh takes the exclusive lock before its derived-row sweep. Every
+/// mutation wrapper must therefore take this shared lock before its parent
+/// advisory locks, or refresh and capture could wait on one another in reverse
+/// order. A supplied table belongs to an operation that already holds the
+/// exclusive cache lock.
+pub(crate) async fn lock_core_header_cache_for_reconcile<C: GenericClient>(
+    client: &C,
+    classifier: &ConfiguredParentClassifier,
+    nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
+) -> Result<()> {
+    if classifier.is_enabled() && nbits_table.is_none() {
+        mmm_store::lock_bitcoin_core_header_cache_shared_in_transaction(client).await?;
+    }
+    Ok(())
+}
+
 /// Drain the cascade queue to a fixed point, reconciling each parent once.
 ///
 /// FIFO work-list, not recursion: each dequeued item is reconciled, then its
@@ -341,9 +359,7 @@ pub(crate) async fn reconcile_one_event_in_txn<C: GenericClient>(
     if initial_event.skips_parent_read_model() {
         return Ok(Vec::new());
     }
-    if classifier.is_enabled() && nbits_table.is_none() {
-        mmm_store::lock_bitcoin_core_header_cache_shared_in_transaction(client).await?;
-    }
+    lock_core_header_cache_for_reconcile(client, classifier, nbits_table).await?;
     if preclassified
         .as_ref()
         .and_then(|preclassified| preclassified.expected_parent_hash.as_ref())
@@ -672,9 +688,7 @@ pub(crate) async fn reconcile_one_block(
         .transaction()
         .await
         .context("begin block reconcile")?;
-    if classifier.is_enabled() && nbits_table.is_none() {
-        mmm_store::lock_bitcoin_core_header_cache_shared_in_transaction(&txn).await?;
-    }
+    lock_core_header_cache_for_reconcile(&txn, classifier, nbits_table).await?;
     lock_block_hash(&txn, hash).await?;
     let before = load_block_cascade_state(&txn, hash).await?;
     let sh_before = crate::source_health_sql::snapshot_parent_contribution(&txn, hash).await?;

@@ -25,7 +25,9 @@ This changelog starts with the initial release.
   remains pending even when its difficulty epoch is cached. The first Core-cache
   population conservatively revisits existing orphan classifications. Cache
   refresh waits for an in-flight classification transaction, so its completed
-  sweep cannot miss a later commit made from an old cache snapshot.
+  sweep cannot miss a later commit made from an old cache snapshot. Cache
+  readers acquire that shared lock before parent locks, and a non-mainnet Core
+  tip holds rather than revoking a claimed mainnet height.
 
 - Atomically repair existing strict/weak classifications with an
   `import-known-stales` membership update.

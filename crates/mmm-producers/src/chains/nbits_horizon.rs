@@ -54,10 +54,13 @@ pub(crate) async fn cached_horizon_gate(
         return HorizonGate::WithinTip;
     }
     match classifier.synced_tip().await {
-        Ok(Some(tip)) => match horizon_gate(Some(tip.height), tip.fresh, bip34_height) {
-            HorizonGate::FarFuture => HorizonGate::FarFuture,
-            HorizonGate::Hold | HorizonGate::WithinTip => HorizonGate::Hold,
-        },
+        Ok(Some(tip)) if tip.is_mainnet => {
+            match horizon_gate(Some(tip.height), tip.fresh, bip34_height) {
+                HorizonGate::FarFuture => HorizonGate::FarFuture,
+                HorizonGate::Hold | HorizonGate::WithinTip => HorizonGate::Hold,
+            }
+        }
+        Ok(Some(_)) => HorizonGate::Hold,
         Ok(None) => HorizonGate::Hold,
         Err(err) => {
             warn!(
@@ -104,6 +107,15 @@ mod tests {
         );
         assert_eq!(
             cached_horizon_gate(&unavailable, 100, 101).await,
+            HorizonGate::Hold
+        );
+
+        let non_mainnet = ConfiguredParentClassifier::Fake(
+            FakeParentClassifier::new(ParentClassification::unknown(&header))
+                .with_non_mainnet_synced_tip(100),
+        );
+        assert_eq!(
+            cached_horizon_gate(&non_mainnet, 100, 245).await,
             HorizonGate::Hold
         );
     }
