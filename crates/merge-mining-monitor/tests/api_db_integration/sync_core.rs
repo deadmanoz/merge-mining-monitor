@@ -19,8 +19,8 @@ use mmm_capture::source_registry::{BITCOIN_SOURCE_CODE, NAMECOIN_SOURCE_CODE};
 use mmm_producers::{
     BitcoinCoreBackboneSource, BitcoinCoreBackboneTip, BitcoinCoreSyncConfig,
     accept_live_repaired_target_for_test, initialize_follow_state,
-    repair_near_tip_backbone_for_test, run_bitcoin_core_follow_tick_for_test,
-    run_sync_bitcoin_core,
+    record_retryable_repair_failure_for_test, repair_near_tip_backbone_for_test,
+    run_bitcoin_core_follow_tick_for_test, run_sync_bitcoin_core,
 };
 use mmm_read_model::{
     CoreCanonicalReplacement, ExpectedCoreCanonicalRow, compute_source_health_from_base,

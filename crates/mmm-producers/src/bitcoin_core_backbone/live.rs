@@ -189,7 +189,7 @@ where
 }
 
 async fn record_retryable_repair_error(
-    client: &Client,
+    client: &mut Client,
     source_id: i64,
     target: Option<BitcoinCoreBackboneTip>,
     reason: &str,
@@ -199,22 +199,54 @@ async fn record_retryable_repair_error(
 }
 
 async fn record_retryable_repair_message(
-    client: &Client,
+    client: &mut Client,
     source_id: i64,
     target: Option<BitcoinCoreBackboneTip>,
     reason: &str,
     message: &str,
 ) {
-    let state = match load_or_init_sync_state(client, source_id).await {
-        Ok(state) => state,
-        Err(record_err) => {
-            tracing::warn!(
-                error = format!("{record_err:#}"),
-                "could not load Bitcoin Core sync state to record retryable near-tip repair failure"
-            );
-            return;
-        }
-    };
+    if let Err(record_err) =
+        try_record_retryable_repair_message(client, source_id, target, reason, message).await
+    {
+        tracing::warn!(
+            error = format!("{record_err:#}"),
+            "could not persist retryable Bitcoin Core near-tip repair failure"
+        );
+    }
+}
+
+async fn try_record_retryable_repair_message(
+    client: &mut Client,
+    source_id: i64,
+    target: Option<BitcoinCoreBackboneTip>,
+    reason: &str,
+    message: &str,
+) -> Result<()> {
+    let txn = client
+        .transaction()
+        .await
+        .context("begin retryable Bitcoin Core repair status update")?;
+    // The upsert locks the sync-state row. Check the queue in a separate
+    // READ COMMITTED statement so a suffix writer that held the row first is
+    // visible after this transaction waits for it.
+    let state = load_or_init_sync_state(&txn, source_id).await?;
+    let reconcile_pending: bool = txn
+        .query_one(
+            "SELECT EXISTS ( \
+                 SELECT 1 FROM bitcoin_core_reconcile_queue WHERE source_id = $1 \
+             )",
+            &[&source_id],
+        )
+        .await
+        .context("check pending Bitcoin Core reconciliation before recording retry")?
+        .get(0);
+    if reconcile_pending {
+        txn.commit()
+            .await
+            .context("commit preserved Bitcoin Core reconcile-pending status")?;
+        return Ok(());
+    }
+
     let height = target
         .map(|target| target.height)
         .or(state.target_tip_height)
@@ -225,21 +257,34 @@ async fn record_retryable_repair_message(
         "target_tip_height": target.map(|target| target.height),
         "target_tip_hash": target.map(|target| target.hash.to_string()),
     });
-    if let Err(record_err) = update_sync_error(
-        client,
+    update_sync_error(
+        &txn,
         source_id,
         height,
         RETRYABLE_REPAIR_ERROR_CODE,
         message,
         details,
     )
+    .await?;
+    txn.commit()
+        .await
+        .context("commit retryable Bitcoin Core repair status")
+}
+
+#[cfg(any(test, feature = "db-integration"))]
+#[doc(hidden)]
+pub async fn record_retryable_repair_failure_for_test(
+    client: &mut Client,
+    source_id: i64,
+) -> Result<()> {
+    try_record_retryable_repair_message(
+        client,
+        source_id,
+        None,
+        "test_retryable_failure",
+        "test retryable Bitcoin Core near-tip repair failure",
+    )
     .await
-    {
-        tracing::warn!(
-            error = format!("{record_err:#}"),
-            "could not persist retryable Bitcoin Core near-tip repair failure"
-        );
-    }
 }
 
 /// Classify a repair sweep's outcome into "verify the window now" (`Ok(true)`)

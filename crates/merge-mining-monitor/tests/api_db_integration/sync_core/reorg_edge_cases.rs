@@ -547,7 +547,7 @@ async fn follow_repair_diagnoses_stale_cursor_below_current_view() -> Result<()>
 }
 
 #[tokio::test]
-async fn core_suffix_queue_survives_partial_cascade_and_restart_drain() -> Result<()> {
+async fn core_suffix_queue_preserves_pending_status_and_survives_restart_drain() -> Result<()> {
     crate::run_mut_db_test!(client, schema, {
         let bitcoin = get_source_id(&client, BITCOIN_SOURCE_CODE).await?;
         let namecoin = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
@@ -593,6 +593,30 @@ async fn core_suffix_queue_survives_partial_cascade_and_restart_drain() -> Resul
         replace_core_canonical_suffix(&mut client, bitcoin, 3, 2, &expected, &replacements).await?;
 
         assert_pending_core_queue(&client, bitcoin, 3).await?;
+        let pending_details: Json<serde_json::Value> = client
+            .query_one(
+                "SELECT last_error_details FROM bitcoin_core_sync_state WHERE source_id = $1",
+                &[&bitcoin],
+            )
+            .await?
+            .get(0);
+        record_retryable_repair_failure_for_test(&mut client, bitcoin).await?;
+        let preserved = client
+            .query_one(
+                "SELECT last_error_code, last_error_details \
+                 FROM bitcoin_core_sync_state WHERE source_id = $1",
+                &[&bitcoin],
+            )
+            .await?;
+        assert_eq!(
+            preserved.get::<_, Option<String>>(0).as_deref(),
+            Some("backbone_reorg_reconcile_pending")
+        );
+        assert_eq!(
+            preserved.get::<_, Json<serde_json::Value>>(1).0,
+            pending_details.0,
+            "retryable repair bookkeeping must not replace durable queue status"
+        );
         drain_until_partial_core_frontier(&mut client, bitcoin, &dependent_hash, &grandchild_hash)
             .await?;
 

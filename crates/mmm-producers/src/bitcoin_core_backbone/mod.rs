@@ -34,7 +34,10 @@ mod sync_state;
 // this module reopens under db-integration for tests.
 pub use live::run_sync_bitcoin_core_follow;
 #[cfg(any(test, feature = "db-integration"))]
-pub use live::{initialize_follow_state, run_bitcoin_core_follow_tick_for_test};
+pub use live::{
+    initialize_follow_state, record_retryable_repair_failure_for_test,
+    run_bitcoin_core_follow_tick_for_test,
+};
 use live_window::live_backbone_window_start_height;
 pub(crate) use live_window::{repair_near_tip_gaps_to_target, verify_live_backbone_window};
 #[cfg(any(test, feature = "db-integration"))]
