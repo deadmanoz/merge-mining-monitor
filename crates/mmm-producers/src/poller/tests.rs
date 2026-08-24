@@ -345,7 +345,7 @@ async fn tick_policy_hold_stops_without_advancing() -> Result<()> {
 
 #[tokio::test]
 async fn tick_policy_new_height_abort_bails() -> Result<()> {
-    // The Hathor nBits-table horizon maps TableHorizonHold -> Abort: a new
+    // The Hathor Core-cache horizon maps TableHorizonHold -> Abort: a new
     // height returning Abort must error the tick (not silently Hold like a
     // not-yet-captured height), after advancing the heights below it.
     let mut cursor = 4;

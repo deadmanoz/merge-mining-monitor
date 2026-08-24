@@ -235,11 +235,19 @@ async fn anchor_tree_renders_whole_orphan_component_with_member_edges_and_branch
 #[tokio::test]
 async fn anchor_tree_places_weak_orphan_in_canonical_window() -> Result<()> {
     crate::run_db_test!(client, {
-        // A weak orphan places by its timestamp-selected DAA-epoch height (the same
-        // committed table the weak classifier uses), dangling off the nearest
+        // A weak orphan places by its timestamp-selected Core-cache epoch height,
+        // dangling off the nearest
         // in-window canonical via the approximate edge.
         let orphan_time = 1_240_000_000i64;
-        let ph = mmm_capture::nbits_table::table()
+        crate::support::db::seed_bitcoin_core_header_cache_through(
+            &client,
+            300_000,
+            orphan_time,
+            0x1d00_ffff,
+        )
+        .await?;
+        let ph = mmm_store::load_bitcoin_core_nbits_table(&client)
+            .await?
             .epoch_height_for_time(orphan_time)
             .expect("a covered header time has an epoch placement height");
         assert!(

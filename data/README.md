@@ -12,8 +12,6 @@ directories.
   by the pool snapshot generator.
 - `pools/child-identities/` - curated child-chain identity registries used for
   pool attribution. See `pools/README.md`.
-- `consensus/btc_nbits_by_epoch.json` - generated Bitcoin nBits epoch table.
-  Regenerate with `scripts/gen-nbits-table.py` when extending offline coverage.
 - `consensus/error_blocks.csv` - compact mirror of the pinned
   `merge-mining-research` error-block catalogue. It classifies a captured,
   full-proof-of-work invalid header as `error_block`, never as stale or an

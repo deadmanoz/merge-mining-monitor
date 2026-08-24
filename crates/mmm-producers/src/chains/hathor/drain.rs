@@ -63,9 +63,8 @@ pub(crate) async fn drain_pending(
 }
 
 /// Re-run a held height. A cursor-blocking horizon hold is left queued (it clears
-/// when Bitcoin Core becomes available / catches up and returns a verdict, or an
-/// offline run regenerates the nBits table); a best-effort hold bumps the attempt
-/// count and ages the row out past [`MAX_PENDING_ATTEMPTS`]; any definitive
+/// when a later command refreshes the Core cache); a best-effort hold bumps the
+/// attempt count and ages the row out past [`MAX_PENDING_ATTEMPTS`]; any definitive
 /// resolution deletes the row.
 async fn drain_reconcile(
     client: &mut Client,
@@ -76,8 +75,7 @@ async fn drain_reconcile(
     let outcome = process_hathor_height(client, rpc, context, row.height).await?;
     match outcome {
         // A cursor-blocking horizon hold is not aged out; it persists until the
-        // height resolves (Bitcoin Core answers, or an offline run regenerates the
-        // nBits table).
+        // height resolves after a later command refreshes the Core cache.
         HathorHeightOutcome::TableHorizonHold => Ok(()),
         // Still a best-effort hold: bump attempts; age out loudly past the cap so
         // a permanently-stuck rescan never accumulates forever.

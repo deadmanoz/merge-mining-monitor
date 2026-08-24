@@ -11,6 +11,7 @@
 //! pool-identity adapters) lives under `chains/<chain>.rs`. A new merge-mined
 //! chain is a new `chains/<chain>.rs`, not an append to one god file.
 
+mod bitcoin_core_header;
 mod chains;
 mod event;
 mod known_stale;
@@ -18,6 +19,10 @@ mod pending_reconcile;
 mod poll_cursor;
 mod pool;
 
+pub use bitcoin_core_header::{
+    BitcoinCoreHeader, highest_bitcoin_core_epoch, load_bitcoin_core_nbits_table,
+    record_bitcoin_core_header, replace_bitcoin_core_header_horizon,
+};
 pub use chains::elastos::{
     ElastosIdentityReresolveRow, active_event_ids_at_height, load_elastos_identity_reresolve_batch,
     write_elastos_capture_in_txn,

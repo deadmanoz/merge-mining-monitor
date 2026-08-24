@@ -495,19 +495,13 @@ pub async fn run_hathor_cache_ingest<R: BufRead>(
             .await
             .with_context(|| format!("ingest cached Hathor height {}", row.height))?;
         match outcome {
-            // A horizon verdict on a historical archive row: with Bitcoin Core
-            // disabled (the cache-ingest default) the parent's beyond-table BIP34
-            // height holds and is counted + ledgered (a Core-enabled run would
-            // resolve it from Core, like the live poller). Most archive rows decode
-            // to a real BTC parent era well inside the table (observed live: Hathor
-            // 1118451, a Jan-2021 block whose real BTC parent era is ~667k); a
-            // junk/contaminant claim beyond the table is the one that holds here.
-            // A genuinely stale table still surfaces in verification: the
-            // target-zero check fails with the held rows clustered at the archive end.
+            // A horizon verdict on a historical archive row means the Core cache
+            // refreshed for this command does not cover the claimed BIP34 height.
+            // Record it in the ledger rather than misclassifying the evidence.
             HathorHeightOutcome::TableHorizonHold => {
                 warn!(
                     height = row.height,
-                    "nBits-table horizon verdict on an archive row; counted + ledgered"
+                    "Core-cache horizon verdict on an archive row; counted + ledgered"
                 );
                 ledger_skip_line(ledger, row.height, outcome)?;
             }

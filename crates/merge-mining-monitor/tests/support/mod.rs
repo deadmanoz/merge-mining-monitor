@@ -19,6 +19,8 @@ use {
     mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier, ParentClassification},
     mmm_capture::{
         auxpow::ParsedAuxpowBlock,
+        auxpow::parse_bip34_height,
+        btc_orphan::{BtcOrphanVerdict, classify_btc_orphan_with},
         capture::{
             ClassificationProof, MergeMiningEventPayload, ParentKind, build_event_payload,
             resolve_event_pools,
@@ -27,7 +29,10 @@ use {
         source_registry::NAMECOIN_SOURCE_CODE,
     },
     mmm_read_model::capture_in_txn,
-    mmm_store::{get_source_id, upsert_merge_mining_event, upsert_pool_snapshot},
+    mmm_store::{
+        get_source_id, load_bitcoin_core_nbits_table, upsert_merge_mining_event,
+        upsert_pool_snapshot,
+    },
     std::collections::HashMap,
     tokio_postgres::Client,
 };
@@ -72,6 +77,33 @@ pub fn btc_400000_header() -> Result<Header> {
 #[cfg(feature = "db-integration")]
 pub fn btc_400000_coinbase_script() -> Result<Vec<u8>> {
     Ok(hex::decode(BTC_400000_COINBASE_SCRIPTSIG_HEX)?)
+}
+
+#[cfg(feature = "db-integration")]
+pub async fn btc_400000_orphan_fixture(client: &Client) -> Result<(Header, Vec<u8>, &'static str)> {
+    let header = btc_400000_header()?;
+    let coinbase_script = btc_400000_coinbase_script()?;
+    db::seed_bitcoin_core_header_cache_through(
+        client,
+        400_000,
+        i64::from(header.time),
+        header.bits.to_consensus(),
+    )
+    .await?;
+    let nbits_table = load_bitcoin_core_nbits_table(client).await?;
+    let relevance = match classify_btc_orphan_with(
+        &nbits_table,
+        i64::from(header.time),
+        header.bits,
+        parse_bip34_height(&coinbase_script),
+    )
+    .0
+    {
+        BtcOrphanVerdict::Strict => "strict_btc_orphan",
+        BtcOrphanVerdict::Weak => "weak_btc_orphan",
+        other => panic!("fixture must be strict/weak, got {other:?}"),
+    };
+    Ok((header, coinbase_script, relevance))
 }
 
 #[cfg(feature = "db-integration")]

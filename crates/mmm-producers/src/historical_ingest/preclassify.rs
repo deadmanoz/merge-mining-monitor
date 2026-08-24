@@ -8,6 +8,7 @@ use futures::{TryStreamExt, stream::FuturesUnordered};
 use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
 use mmm_capture::btc_orphan::BtcOrphanVerdict;
 use mmm_capture::capture::ParentKind;
+use mmm_capture::nbits_table::NbitsTable;
 use tokio_postgres::GenericClient;
 
 use super::config::{HistoricalChainSpec, HistoricalImportConfig};
@@ -48,6 +49,7 @@ pub(super) async fn preflight_and_classify_candidates<C: GenericClient>(
     spec: &HistoricalChainSpec,
     artifact: &mut ArtifactPreflight,
     classifications: &mut HashMap<Vec<u8>, ParentClassification>,
+    nbits_table: &NbitsTable,
 ) -> Result<()> {
     let expected_rows = artifact.row_count;
     let (mut reader, layout) = artifact.open_reader(spec)?;
@@ -66,19 +68,24 @@ pub(super) async fn preflight_and_classify_candidates<C: GenericClient>(
             )
         })?;
         rows += 1;
-        let candidate =
-            match candidate_from_record(spec, &layout, &record, config.publication_ref()) {
-                Ok(candidate) => candidate,
-                Err(_) if config.manifest_path.is_none() => continue,
-                Err(reason) => {
-                    bail!(
-                        "normalized artifact {} row {} failed {}",
-                        config.csv_path.display(),
-                        offset + 2,
-                        reason.as_str()
-                    );
-                }
-            };
+        let candidate = match candidate_from_record(
+            spec,
+            &layout,
+            &record,
+            config.publication_ref(),
+            Some(nbits_table),
+        ) {
+            Ok(candidate) => candidate,
+            Err(_) if config.manifest_path.is_none() => continue,
+            Err(reason) => {
+                bail!(
+                    "normalized artifact {} row {} failed {}",
+                    config.csv_path.display(),
+                    offset + 2,
+                    reason.as_str()
+                );
+            }
+        };
         if preflight_skips_catalogued_error_block(config, &candidate, offset + 2)? {
             continue;
         }

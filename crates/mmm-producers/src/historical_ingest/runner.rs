@@ -18,6 +18,7 @@ use mmm_capture::capture::{
     ClassificationProof, ResolvedPoolAttributions, build_event_payload_from_evidence,
     now_epoch_seconds, resolve_parent_pool_attribution_from_coinbase,
 };
+use mmm_capture::nbits_table::NbitsTable;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::{
     clear_authoritative_historical_provenance_in_transaction, drain_historical_reconcile_queue,
@@ -72,7 +73,7 @@ pub struct HistoricalImportSummary {
     /// strict/weak verdict at write time.
     pub excluded: u64,
     /// Ingested unknown rows whose persisted class is still NULL (beyond the
-    /// committed nBits table horizon, or a row reconciliation left without a
+    /// persisted Core-cache horizon, or a row reconciliation left without a
     /// block row).
     pub pending: u64,
     pub known_direct_branch_attestations: u64,
@@ -105,6 +106,7 @@ struct ChainImportContext<'a> {
     resolver: &'a PoolResolver,
     pool_ids_by_slug: &'a HashMap<String, i64>,
     classifications: &'a mut HashMap<Vec<u8>, ParentClassification>,
+    nbits_table: &'a NbitsTable,
 }
 
 impl HistoricalImportSummary {
@@ -266,6 +268,7 @@ async fn run_historical_import_with_cache(
         Some(artifact) => artifact,
         None => preflight_artifact(config, spec)?,
     };
+    let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
     if !candidates_prepared {
         let import_configs = (!matches!(
             spec.lifecycle,
@@ -280,6 +283,7 @@ async fn run_historical_import_with_cache(
             spec,
             &mut artifact,
             classifications,
+            &nbits_table,
         )
         .await?;
     }
@@ -311,6 +315,7 @@ async fn run_historical_import_with_cache(
             resolver: &resolver,
             pool_ids_by_slug: &pool_ids_by_slug,
             classifications,
+            nbits_table: &nbits_table,
         },
         artifact,
     )
@@ -368,6 +373,7 @@ async fn import_rows_in_transaction(
             &layout,
             &record,
             context.config.publication_ref(),
+            Some(context.nbits_table),
         ) {
             Ok(candidate) => candidate,
             Err(reason) => {
@@ -460,6 +466,7 @@ async fn run_historical_import_configs(
         })
         .collect::<Vec<_>>();
     ensure_import_environment(client, classifier, &import_configs).await?;
+    let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
     for (chain_config, artifact) in configs.iter().zip(&mut preflighted_artifacts) {
         let spec = historical_chain_spec(&chain_config.chain)
             .expect("chain configs are built from the source registry");
@@ -470,6 +477,7 @@ async fn run_historical_import_configs(
             spec,
             artifact,
             &mut classifications,
+            &nbits_table,
         )
         .await?;
     }

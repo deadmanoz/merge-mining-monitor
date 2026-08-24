@@ -26,6 +26,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use mmm_pg::{PgConfig, connect};
+use mmm_store::{BitcoinCoreHeader, record_bitcoin_core_header};
 use tokio_postgres::Client;
 
 /// Standard test prelude: connect from env (`PgConfig::from_env`), create a
@@ -34,6 +35,7 @@ pub async fn new_test_db() -> Result<(Client, String)> {
     let client = connect(&PgConfig::from_env()?).await?;
     let schema = unique_schema();
     apply_migrations(&client, &schema).await?;
+    seed_minimum_bitcoin_core_header_cache(&client).await?;
     Ok((client, schema))
 }
 
@@ -150,6 +152,71 @@ pub async fn apply_migrations(client: &Client, schema: &str) -> Result<()> {
         .batch_execute(&format!("SET search_path TO {schema}, public;"))
         .await?;
     Ok(())
+}
+
+/// Seed the smallest valid cache for tests that exercise DB bootstrap without
+/// exercising nBits classification. Tests that classify an unknown parent add
+/// the specific Core epoch they need with
+/// [`seed_bitcoin_core_header_cache_through`].
+async fn seed_minimum_bitcoin_core_header_cache(client: &Client) -> Result<()> {
+    record_bitcoin_core_header(
+        client,
+        &BitcoinCoreHeader {
+            height: 0,
+            block_hash: core_header_hash(0),
+            block_time: 1,
+            bits: 0x1d00_ffff,
+        },
+    )
+    .await
+}
+
+/// Seed a synthetic Core-derived cache through one fixture parent. The helper
+/// models Core's sparse epoch and confirmed-horizon rows without carrying any
+/// production chain data in the test harness.
+pub async fn seed_bitcoin_core_header_cache_through(
+    client: &Client,
+    horizon_height: i32,
+    horizon_time: i64,
+    horizon_bits: u32,
+) -> Result<()> {
+    let epoch_height = mmm_capture::nbits_table::daa_epoch_start(horizon_height);
+    for height in (0..=epoch_height).step_by(mmm_capture::nbits_table::DAA_EPOCH_INTERVAL as usize)
+    {
+        record_bitcoin_core_header(
+            client,
+            &BitcoinCoreHeader {
+                height,
+                block_hash: core_header_hash(height),
+                block_time: i64::from(height) + 1,
+                bits: if height == epoch_height {
+                    horizon_bits
+                } else {
+                    0x1d00_ffff
+                },
+            },
+        )
+        .await?;
+    }
+    if horizon_height > epoch_height {
+        record_bitcoin_core_header(
+            client,
+            &BitcoinCoreHeader {
+                height: horizon_height,
+                block_hash: core_header_hash(horizon_height),
+                block_time: horizon_time,
+                bits: horizon_bits,
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+fn core_header_hash(height: i32) -> Vec<u8> {
+    let mut hash = vec![0; 32];
+    hash[28..].copy_from_slice(&height.to_be_bytes());
+    hash
 }
 
 async fn apply_migration_paths(

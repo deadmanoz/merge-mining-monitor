@@ -1,11 +1,12 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier, ParentClassification};
-use mmm_capture::capture::{CHILD_PAYOUT_REGISTRY_SOURCE, ELASTOS_REVOKE_NON_BTC};
+use mmm_capture::auxpow::{parse_bip34_height, parse_elastos_auxpow};
+use mmm_capture::capture::CHILD_PAYOUT_REGISTRY_SOURCE;
 use mmm_capture::source_registry::ELASTOS_SOURCE_CODE;
 use mmm_producers::chains::elastos::{
     ELASTOS_MINERINFO_NAMESPACE, ELASTOS_REWARD_ADDRESS_NAMESPACE, ELASTOS_RPC_MINERINFO_SOURCE,
     ELASTOS_RPC_REWARD_ADDRESS_SOURCE, ElastosBlock, ElastosCaptureContext, ElastosHeightOutcome,
-    ElastosRpc, process_elastos_height, process_elastos_table_horizon_for_test,
+    ElastosRpc, process_elastos_height,
 };
 use mmm_producers::{ReclassifyPoolsConfig, run_reclassify_pools};
 use mmm_store::get_source_id;
@@ -33,6 +34,7 @@ async fn capture_unknown_elastos_block(
     client: &mut Client,
     block: ElastosBlock,
 ) -> Result<(i64, i64)> {
+    seed_core_cache_for_elastos(client, &block).await?;
     let context =
         ElastosCaptureContext::new_with_classifier(&*client, unknown_classifier()).await?;
     let source_id = context.source_id();
@@ -45,73 +47,22 @@ async fn capture_unknown_elastos_block(
 }
 
 #[tokio::test]
-async fn far_future_table_horizon_parent_revokes_active_event_and_advances() -> Result<()> {
+async fn core_cache_match_writes_the_event_end_to_end() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        let block = writable_elastos_block_without_identity();
-        let height = block.height;
-        let classifier = ConfiguredParentClassifier::Fake(
-            FakeParentClassifier::new(ParentClassification::unknown(
-                &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
-            ))
-            .with_synced_tip_height(953_305),
-        );
-        let context = ElastosCaptureContext::new_with_classifier(&client, classifier).await?;
-        let rpc = FixtureElastosRpc { block };
-
-        let write_outcome = process_elastos_height(&mut client, &rpc, &context, height).await?;
-        assert_eq!(write_outcome, ElastosHeightOutcome::AuxpowWritten);
-
-        // A claimed BIP34 height 954,814 is far beyond the synced tip 953,305
-        // (> tolerance 144), so it is a fabricated far-future height regardless of
-        // the parent's nBits: revoke as non-BTC.
-        let outcome = process_elastos_table_horizon_for_test(
-            &mut client,
-            &context,
-            height,
-            954_814,
-            bitcoin::CompactTarget::from_consensus(0x1702_40c3),
-        )
-        .await?;
-
-        assert_eq!(outcome, ElastosHeightOutcome::NonBtcParentSkipped);
-        let row = client
-            .query_one(
-                "SELECT revoked_at IS NOT NULL, revocation_reason \
-                 FROM merge_mining_event \
-                 WHERE source_id = $1 AND child_height = $2",
-                &[&context.source_id(), &height],
-            )
-            .await?;
-        let revoked: bool = row.get(0);
-        let reason: Option<String> = row.get(1);
-        assert!(
-            revoked,
-            "far-future table-horizon downgrade must revoke the active event"
-        );
-        assert_eq!(reason.as_deref(), Some(ELASTOS_REVOKE_NON_BTC));
-        Ok(())
-    })
-}
-
-#[tokio::test]
-async fn above_horizon_core_match_writes_the_event_end_to_end() -> Result<()> {
-    crate::run_mut_db_test!(client, {
-        // The real stuck block: Elastos child 2,243,660, parent BIP34 955,585 (epoch
-        // 955,584, beyond the embedded table horizon). A fresh Core tip resolves the
-        // epoch nBits to the parent's own (17021a42) -> Valid -> the event is WRITTEN
-        // through the full production path (`write_valid_capture`), not just decided.
+        // The real stuck block: Elastos child 2,243,660, parent BIP34 955,585.
+        // Its matching nBits is supplied by the persisted Core cache, then the
+        // full production path writes the event.
         let block: ElastosBlock = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../fixtures/elastos/ela-2243660.json"
         )))
         .expect("deserialize Elastos 2243660 fixture");
         let height = block.height;
+        seed_core_cache_for_elastos(&client, &block).await?;
         let context = ElastosCaptureContext::new_with_classifier(
             &client,
             ConfiguredParentClassifier::Fake(
-                FakeParentClassifier::new(unknown_genesis_parent())
-                    .with_synced_tip_height(955_609)
-                    .with_epoch_nbits(955_584, 0x1702_1a42, 1_782_525_607),
+                FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(955_609),
             ),
         )
         .await?;
@@ -128,7 +79,7 @@ async fn above_horizon_core_match_writes_the_event_end_to_end() -> Result<()> {
             .get(0);
         assert_eq!(
             active, 1,
-            "an above-horizon Core-Valid parent must write one active event"
+            "a Core-cache-valid parent must write one active event"
         );
         Ok(())
     })
@@ -139,6 +90,7 @@ async fn in_table_valid_far_future_height_is_revoked_against_fresh_tip() -> Resu
     crate::run_mut_db_test!(client, {
         let block = writable_elastos_block_without_identity();
         let height = block.height;
+        seed_core_cache_for_elastos(&client, &block).await?;
         // The fixture's parent is a real in-table BTC block (height 572,333, nBits
         // match -> in-table Valid). A FRESH Core tip far below that claimed height
         // proves it fabricated-far-future, so it must be revoked, not written, even
@@ -158,67 +110,12 @@ async fn in_table_valid_far_future_height_is_revoked_against_fresh_tip() -> Resu
 }
 
 /// An `unknown` parent classification over the BTC genesis header, for fake
-/// classifiers whose horizon outcome is driven by `synced_tip_height` /
-/// `epoch_nbits`, not `classify_parent`.
+/// classifiers whose horizon outcome is driven by `synced_tip_height`, not
+/// parent placement.
 fn unknown_genesis_parent() -> ParentClassification {
     ParentClassification::unknown(
         &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
     )
-}
-
-async fn event_revoked_non_btc(client: &Client, source_id: i64, height: i32) -> Result<bool> {
-    let row = client
-        .query_one(
-            "SELECT revoked_at IS NOT NULL AND revocation_reason = $3 \
-             FROM merge_mining_event WHERE source_id = $1 AND child_height = $2",
-            &[&source_id, &height, &ELASTOS_REVOKE_NON_BTC],
-        )
-        .await?;
-    Ok(row.get(0))
-}
-
-#[tokio::test]
-async fn beyond_horizon_core_mismatch_revokes_non_btc() -> Result<()> {
-    crate::run_mut_db_test!(client, {
-        let block = writable_elastos_block_without_identity();
-        let height = block.height;
-        // Write a valid in-table event first, so we can observe the later revoke.
-        let context = ElastosCaptureContext::new_with_classifier(
-            &client,
-            ConfiguredParentClassifier::Fake(
-                FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(955_609),
-            ),
-        )
-        .await?;
-        let rpc = FixtureElastosRpc { block };
-        assert_eq!(
-            process_elastos_height(&mut client, &rpc, &context, height).await?,
-            ElastosHeightOutcome::AuxpowWritten
-        );
-
-        // The Core-resolved epoch nBits (170240c3) differs from the parent's
-        // BCH-shaped nBits (1a0fffff): contaminant -> revoke as non-BTC.
-        let context = ElastosCaptureContext::new_with_classifier(
-            &client,
-            ConfiguredParentClassifier::Fake(
-                FakeParentClassifier::new(unknown_genesis_parent())
-                    .with_synced_tip_height(955_609)
-                    .with_epoch_nbits(955_584, 0x1702_40c3, 1_782_525_607),
-            ),
-        )
-        .await?;
-        let outcome = process_elastos_table_horizon_for_test(
-            &mut client,
-            &context,
-            height,
-            955_585,
-            bitcoin::CompactTarget::from_consensus(0x1a0f_ffff),
-        )
-        .await?;
-        assert_eq!(outcome, ElastosHeightOutcome::NonBtcParentSkipped);
-        assert!(event_revoked_non_btc(&client, context.source_id(), height).await?);
-        Ok(())
-    })
 }
 
 #[tokio::test]
@@ -416,6 +313,24 @@ fn writable_elastos_block_without_identity() -> ElastosBlock {
         "/../../fixtures/elastos/ela-360062.json"
     )))
     .expect("deserialize Elastos 360062 fixture")
+}
+
+async fn seed_core_cache_for_elastos(client: &Client, block: &ElastosBlock) -> Result<()> {
+    let reconstructed = block.reconstruct()?;
+    let auxpow = reconstructed
+        .auxpow
+        .as_deref()
+        .context("Elastos fixture must carry AuxPoW")?;
+    let parsed = parse_elastos_auxpow(reconstructed.prefix_header, auxpow)?;
+    let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
+        .context("Elastos fixture must carry a BIP34 parent height")?;
+    crate::support::db::seed_bitcoin_core_header_cache_through(
+        client,
+        parent_height,
+        i64::from(parsed.parent_header.time()),
+        parsed.parent_header.bits().to_consensus(),
+    )
+    .await
 }
 
 fn writable_elastos_block_with_identity(minerinfo: Option<&str>) -> ElastosBlock {

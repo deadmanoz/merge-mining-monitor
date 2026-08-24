@@ -16,6 +16,7 @@ db-integration = []
 [dependencies]
 mmm-capture.workspace = true
 mmm-pg.workspace = true
+mmm-store.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 bitcoin.workspace = true

@@ -37,7 +37,7 @@ struct OfflineValidClassifierConflict;
 
 impl std::fmt::Display for OfflineValidClassifierConflict {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "offline nBits verdict conflicts with classifier")
+        write!(f, "Core-cache nBits verdict conflicts with classifier")
     }
 }
 
@@ -160,11 +160,6 @@ where
         rt.parent_classifier,
     )
     .await?;
-    crate::producer_runtime::warn_backfill_classifier_enabled(
-        "Hathor cache",
-        context.parent_classifier(),
-    );
-
     let csv = std::fs::File::open(&config.csv_path).map(std::io::BufReader::new)?;
     let ledger_path = config.skip_ledger_path();
     let mut ledger = std::fs::OpenOptions::new()

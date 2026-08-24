@@ -1,9 +1,8 @@
 //! On-demand Bitcoin parent-header classification.
 //!
 //! This is a narrow, on-demand classification boundary, not the future
-//! live-chaintip producer. The classifier is optional: with `BITCOIN_RPC_URL`
-//! unset it returns `unknown` for BTC-PoW-valid parents and capture remains
-//! fully local to the child-chain RPCs.
+//! live-chaintip producer. Production monitor commands require the Core-backed
+//! classifier; `Disabled` remains for local library use and tests.
 
 #[cfg(any(test, feature = "db-integration"))]
 use std::collections::VecDeque;
@@ -221,6 +220,17 @@ impl ConfiguredParentClassifier {
         }
     }
 
+    /// Build the production classifier. Mutating monitor commands require a
+    /// healthy Bitcoin Core source rather than degrading evidence to unknown.
+    pub fn from_env_required() -> Result<Self> {
+        match Self::from_env()? {
+            Self::Disabled => {
+                bail!("BITCOIN_RPC_URL is required for monitor capture and classification")
+            }
+            classifier => Ok(classifier),
+        }
+    }
+
     pub fn is_enabled(&self) -> bool {
         !matches!(self, Self::Disabled)
     }
@@ -326,24 +336,16 @@ impl ConfiguredParentClassifier {
         }
     }
 
-    /// Canonical Bitcoin nBits + header time at a DAA epoch-start height, resolved
-    /// from Core (memoized per epoch). `Disabled` errors: the caller gates on
-    /// [`Self::synced_tip_height`] first, which `Disabled` answers `None`, so the
-    /// resolver holds before ever reaching here.
-    pub async fn epoch_nbits(
-        &self,
-        epoch_start_height: i32,
-        synced_tip: i32,
-    ) -> Result<EpochNbits> {
+    /// Resolve a canonical Bitcoin header by height for the durable Core header
+    /// cache. A disabled classifier cannot service mutating monitor commands.
+    pub async fn canonical_header(&self, height: i32) -> Result<CoreHeader> {
         match self {
             Self::Disabled => {
-                bail!("Bitcoin Core classifier disabled; cannot resolve epoch nBits")
+                bail!("Bitcoin Core classifier disabled; cannot resolve canonical header")
             }
-            Self::BitcoinCore(classifier) => {
-                classifier.epoch_nbits(epoch_start_height, synced_tip).await
-            }
+            Self::BitcoinCore(classifier) => classifier.canonical_header(height).await,
             #[cfg(any(test, feature = "db-integration"))]
-            Self::Fake(classifier) => classifier.epoch_nbits(epoch_start_height, synced_tip).await,
+            Self::Fake(classifier) => classifier.canonical_header(height).await,
         }
     }
 }
@@ -354,6 +356,6 @@ mod fake;
 #[cfg(test)]
 mod tests;
 
-pub use core::{BitcoinCoreParentClassifier, EpochNbits, SyncedTip};
+pub use core::{BitcoinCoreParentClassifier, CoreHeader, SyncedTip};
 #[cfg(any(test, feature = "db-integration"))]
 pub use fake::{FakeParentClassifier, FakeParentClassifierGate};

@@ -5,6 +5,7 @@
 //! of its own (store and read-model helpers are called with data).
 
 mod bitcoin_core_backbone;
+mod bitcoin_epoch_cache;
 #[cfg(any(test, feature = "db-integration"))]
 pub mod chains;
 #[cfg(not(any(test, feature = "db-integration")))]
@@ -24,6 +25,7 @@ pub use bitcoin_core_backbone::{
     BitcoinCoreSyncConfig, BitcoinCoreSyncStats, run_sync_bitcoin_core,
     run_sync_bitcoin_core_follow,
 };
+pub use bitcoin_epoch_cache::refresh_bitcoin_core_header_cache;
 pub use chains::{
     is_producer_command, no_command_help, run_hathor_cache_command, run_producer_command,
     unknown_command_message,
@@ -42,5 +44,5 @@ pub use known_stale_import::{
 };
 #[cfg(any(test, feature = "db-integration"))]
 pub use poller::{ChainPoller, ChainPollerState, HeightProgress, Poller, PollerConfig};
-pub use producer_runtime::connect_from_env;
+pub use producer_runtime::{connect_core_required_from_env, connect_from_env};
 pub use reclassify_pools::{ReclassifyPoolsConfig, ReclassifyPoolsStats, run_reclassify_pools};

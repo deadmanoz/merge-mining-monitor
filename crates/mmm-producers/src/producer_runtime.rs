@@ -19,11 +19,14 @@ use tokio_postgres::Client;
 use tracing::warn;
 
 use mmm_bitcoin_core::ConfiguredParentClassifier;
+use mmm_capture::nbits_table::NbitsTable;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::{
     ReconcileReadModelConfig, is_reconcile_budget_exhausted, run_reconcile_read_model,
 };
 use mmm_store::{self, get_source_id, upsert_pool_snapshot};
+
+use crate::bitcoin_epoch_cache::refresh_bitcoin_core_header_cache;
 
 /// The three fields EVERY producer holds. Chain contexts embed this as `base`
 /// and delegate their `source_id()` / `parent_classifier()` accessors to it.
@@ -32,6 +35,7 @@ pub(crate) struct ProducerContext {
     pool_ids_by_slug: HashMap<String, i64>,
     source_id: i64,
     parent_classifier: ConfiguredParentClassifier,
+    nbits_table: NbitsTable,
 }
 
 impl ProducerContext {
@@ -50,10 +54,12 @@ impl ProducerContext {
     ) -> Result<Self> {
         let pool_ids_by_slug = upsert_pool_snapshot(client, resolver.snapshot()).await?;
         let source_id = get_source_id(client, source_code).await?;
+        let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
         Ok(Self {
             pool_ids_by_slug,
             source_id,
             parent_classifier,
+            nbits_table,
         })
     }
 
@@ -67,10 +73,19 @@ impl ProducerContext {
         source_id: i64,
         parent_classifier: ConfiguredParentClassifier,
     ) -> Self {
+        let nbits_table = NbitsTable::from_bitcoin_core_headers(&[
+            mmm_capture::nbits_table::BitcoinEpochHeader {
+                height: 0,
+                block_time: 1,
+                bits: 0x1d00_ffff,
+            },
+        ])
+        .expect("the minimal test Core header cache is valid");
         Self {
             pool_ids_by_slug,
             source_id,
             parent_classifier,
+            nbits_table,
         }
     }
 
@@ -80,11 +95,14 @@ impl ProducerContext {
         self.source_id
     }
 
-    /// The injected Bitcoin Core parent classifier. `Disabled` on the
-    /// historical-backfill path (no `BITCOIN_RPC_*`); a live classifier on the
-    /// poll path.
+    /// The injected Bitcoin Core parent classifier. Production runtimes always
+    /// provide the Core-backed variant; `Disabled` is only for library tests.
     pub(crate) fn parent_classifier(&self) -> &ConfiguredParentClassifier {
         &self.parent_classifier
+    }
+
+    pub(crate) fn nbits_table(&self) -> &NbitsTable {
+        &self.nbits_table
     }
 
     /// Snapshot of `pool.slug -> pool.id` taken at bootstrap, the map capture
@@ -103,7 +121,7 @@ impl ProducerContext {
 }
 
 /// The non-chain runtime a producer command needs, built in `main.rs` BEFORE
-/// any chain command runs: the DB connection (`PG*`) and the optional parent
+/// any chain command runs: the DB connection (`PG*`) and required Bitcoin Core
 /// classifier (`BITCOIN_RPC_*`). Those env families belong to this module and
 /// to `parent_classifier`/`bitcoin_rpc` - never to `src/chains/`.
 pub(crate) struct ProducerRuntime {
@@ -112,15 +130,24 @@ pub(crate) struct ProducerRuntime {
 }
 
 impl ProducerRuntime {
-    /// Read both env families and connect: errors if `PG*` connect fails or if
-    /// `BITCOIN_RPC_*` is set but malformed (an unset RPC yields a `Disabled`
-    /// classifier, not an error, which is the historical-backfill default).
+    /// Read both env families, require a fresh Core tip, and refresh the header
+    /// cache before a chain command can classify a parent.
     pub(crate) async fn from_env() -> Result<Self> {
+        let (pg_client, parent_classifier) = connect_core_required_from_env().await?;
         Ok(Self {
-            pg_client: connect_from_env().await?,
-            parent_classifier: ConfiguredParentClassifier::from_env()?,
+            pg_client,
+            parent_classifier,
         })
     }
+}
+
+/// Connect Postgres and require a fresh Bitcoin Core node, then synchronize the
+/// sparse Core-header cache used by nBits classification in this command.
+pub async fn connect_core_required_from_env() -> Result<(Client, ConfiguredParentClassifier)> {
+    let mut pg_client = connect_from_env().await?;
+    let parent_classifier = ConfiguredParentClassifier::from_env_required()?;
+    refresh_bitcoin_core_header_cache(&mut pg_client, &parent_classifier).await?;
+    Ok((pg_client, parent_classifier))
 }
 
 /// `PgConfig::from_env` + `connect`, the two-line DB setup the 12 poll/backfill
@@ -171,23 +198,6 @@ pub(crate) async fn run_post_backfill_repair(
             Ok(())
         }
         Err(err) => Err(err).context(format!("repair read model after {context_label}")),
-    }
-}
-
-/// The classifier-enabled backfill warning, character-for-character identical
-/// mod the chain name across its four users (Namecoin, Syscoin, Fractal, RSK).
-/// A no-op when the classifier is disabled. The per-chain activation-floor
-/// warnings are deliberately NOT consolidated here: each carries a
-/// chain-specific skip-reason message, so they stay local in their runners.
-pub(crate) fn warn_backfill_classifier_enabled(
-    chain: &str,
-    classifier: &ConfiguredParentClassifier,
-) {
-    if classifier.is_enabled() {
-        warn!(
-            "Bitcoin Core classifier is enabled during {} backfill; unset BITCOIN_RPC_URL for faster initial historical loads and run reclassify-unknown-parents afterward",
-            chain
-        );
     }
 }
 

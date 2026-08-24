@@ -3,9 +3,10 @@
 //! Replays stored BYTEA coinbase columns
 //! (`btc_parent_coinbase_script`, `btc_parent_coinbase_outputs`,
 //! `child_coinbase_script`) against the embedded, expanded `PoolResolver` and
-//! materializes source-scoped `event_pool_attribution` rows. No RPC, no
-//! `BITCOIN_RPC_URL`: read-model reconciliation runs with a disabled classifier
-//! exactly like the missing-only startup repair.
+//! materializes source-scoped `event_pool_attribution` rows. The CLI refreshes
+//! the required Core cache before invoking this DB-only replay; its read-model
+//! reconciliation deliberately uses a disabled classifier, exactly like the
+//! missing-only startup repair.
 //!
 //! Self-contained: it seeds the expanded `pool` snapshot, RSK-only pool slugs,
 //! and child identity registries itself, so `pool_ids_by_slug` is populated

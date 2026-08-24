@@ -69,7 +69,7 @@ pub enum HeightProgress {
     /// The height could not be captured yet (e.g. an absent RSK canonical
     /// block) and must be retried on a later tick, not skipped.
     Hold,
-    /// A cursor-blocking condition (the Hathor nBits-table horizon): the tick
+    /// A cursor-blocking condition (the Hathor Core-cache horizon): the tick
     /// must STOP in both the replay and new sub-ranges rather than advance or be
     /// counted as processed, until an operator resolves it.
     Abort,

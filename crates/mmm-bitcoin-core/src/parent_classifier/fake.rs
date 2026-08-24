@@ -11,8 +11,7 @@ pub struct FakeParentClassifier {
     synced_tip_height: Option<i32>,
     synced_tip_fresh: bool,
     fail_synced_tip: bool,
-    epoch_nbits: std::collections::HashMap<i32, EpochNbits>,
-    fail_epoch_nbits: bool,
+    canonical_headers: std::collections::HashMap<i32, CoreHeader>,
     max_concurrency: usize,
 }
 
@@ -53,8 +52,7 @@ impl FakeParentClassifier {
             synced_tip_height: None,
             synced_tip_fresh: true,
             fail_synced_tip: false,
-            epoch_nbits: std::collections::HashMap::new(),
-            fail_epoch_nbits: false,
+            canonical_headers: std::collections::HashMap::new(),
             max_concurrency: 1,
         }
     }
@@ -91,22 +89,9 @@ impl FakeParentClassifier {
         self
     }
 
-    /// Register the canonical nBits + header time for a DAA epoch-start height.
-    pub fn with_epoch_nbits(
-        mut self,
-        epoch_start_height: i32,
-        nbits: u32,
-        header_time: i64,
-    ) -> Self {
-        self.epoch_nbits
-            .insert(epoch_start_height, EpochNbits { nbits, header_time });
-        self
-    }
-
-    /// Make `epoch_nbits` return `Err` (epoch-header fetch fails), so the
-    /// resolver's fail-closed-to-Hold path can be exercised.
-    pub fn with_epoch_nbits_error(mut self) -> Self {
-        self.fail_epoch_nbits = true;
+    /// Register one canonical Core header for the persisted cache refresher.
+    pub fn with_canonical_header(mut self, header: CoreHeader) -> Self {
+        self.canonical_headers.insert(header.height, header);
         self
     }
 
@@ -127,18 +112,11 @@ impl FakeParentClassifier {
         }))
     }
 
-    pub(crate) async fn epoch_nbits(
-        &self,
-        epoch_start_height: i32,
-        _synced_tip: i32,
-    ) -> Result<EpochNbits> {
-        if self.fail_epoch_nbits {
-            bail!("fake classifier: injected epoch_nbits error");
-        }
-        self.epoch_nbits
-            .get(&epoch_start_height)
+    pub(crate) async fn canonical_header(&self, height: i32) -> Result<CoreHeader> {
+        self.canonical_headers
+            .get(&height)
             .copied()
-            .with_context(|| format!("fake classifier: no epoch nBits for {epoch_start_height}"))
+            .with_context(|| format!("fake classifier: no canonical header at {height}"))
     }
 
     pub(crate) async fn classify_parent(

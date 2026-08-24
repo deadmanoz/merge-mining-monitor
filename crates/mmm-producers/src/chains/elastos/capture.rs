@@ -7,7 +7,7 @@
 //! self-verified before any DB write: the child header reconstruction + hash
 //! guard ([`crate::chains::elastos::rpc::ElastosBlock::reconstruct`]), the full CAuxPow
 //! commitment ([`verify_auxpow_commitment`]), the BTC parent-target gate, the
-//! child AuxPoW-target gate, and the offline nBits contamination verdict.
+//! child AuxPoW-target gate, and the Core-cache nBits contamination verdict.
 //!
 //! Unlike the own-node Namecoin-family producers, the Elastos child header is an
 //! 84-byte header (the height is hashed in), so the child block hash is computed
@@ -33,9 +33,7 @@ use crate::chains::elastos::identity::{
     upsert_elastos_reward_address_pool_identities,
 };
 use crate::chains::elastos::rpc::{ElastosBlock, ElastosRpc, ReconstructedBlock};
-use crate::chains::nbits_horizon::{
-    HorizonOutcome, far_future_against_fresh_tip, resolve_horizon_nbits,
-};
+use crate::chains::nbits_horizon::far_future_against_fresh_tip;
 use crate::chains::{
     ensure_offline_valid_not_classifier_conflict, is_offline_valid_classifier_conflict,
 };
@@ -51,7 +49,7 @@ use mmm_capture::capture::{
     now_epoch_seconds, resolve_parent_pool_attribution_from_coinbase,
 };
 use mmm_capture::child_payout::PoolIdentityLookup;
-use mmm_capture::nbits_table::{NbitsVerdict, classify_nbits};
+use mmm_capture::nbits_table::{NbitsTable, NbitsVerdict};
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_capture::source_registry::ELASTOS_SOURCE_CODE;
 use mmm_read_model::capture_in_txn;
@@ -124,6 +122,10 @@ impl ElastosCaptureContext {
     pub fn parent_classifier(&self) -> &ConfiguredParentClassifier {
         self.base.parent_classifier()
     }
+
+    fn nbits_table(&self) -> &NbitsTable {
+        self.base.nbits_table()
+    }
 }
 
 /// Per-height capture outcome. The poller maps `TableHorizonHold` to
@@ -140,15 +142,15 @@ pub enum ElastosHeightOutcome {
     NearSkipped,
     /// The parent header fails the child AuxPoW target; never written.
     ChildTargetSkipped,
-    /// The offline nBits verdict is non-BTC (BCH/BSV contaminant or
+    /// The Core-cache nBits verdict is non-BTC (BCH/BSV contaminant or
     /// indeterminate); any prior active row is revoked, no event written.
     NonBtcParentSkipped,
-    /// The offline verdict was Valid but an enabled classifier contradicted it
+    /// The Core-cache verdict was Valid but the classifier contradicted it
     /// (`difficulty_epoch_ok = false`); the write was blocked.
     ClassifierConflictSkipped,
     /// The block was inconsistent / the proof malformed; skipped without a write.
     MalformedSkipped,
-    /// The parent BIP34 height is beyond the nBits-table horizon (cursor-blocking).
+    /// The parent BIP34 height is beyond the Core-cache horizon (cursor-blocking).
     TableHorizonHold,
 }
 
@@ -157,16 +159,8 @@ pub enum ElastosHeightOutcome {
 enum ElastosEvaluation {
     /// Terminal skip, no DB mutation.
     Skip(ElastosHeightOutcome),
-    /// The embedded nBits table cannot classify the parent (beyond its horizon).
-    /// The async driver resolves the canonical epoch nBits from Bitcoin Core: a
-    /// match writes, a mismatch / fabricated far-future height revokes, and an
-    /// unanswerable Core holds the cursor. Carries the parsed parent + reconstructed
-    /// block so the Core-Valid path can write without re-evaluating.
-    TableHorizon {
-        bip34_height: i32,
-        parsed: Box<ParsedAuxpowBlock>,
-        recon: Box<ReconstructedBlock>,
-    },
+    /// The persisted Core cache cannot classify the parent yet.
+    TableHorizon,
     /// A non-BTC parent: revoke any prior active row at the height, then skip.
     RevokeNonBtc,
     /// A verified Valid BTC parent: write the event.
@@ -188,24 +182,9 @@ pub async fn process_elastos_height(
         .await
         .with_context(|| format!("fetch Elastos block at height {height}"))?;
 
-    match evaluate_elastos_block(height, &block) {
+    match evaluate_elastos_block(height, &block, context.nbits_table()) {
         ElastosEvaluation::Skip(outcome) => Ok(outcome),
-        ElastosEvaluation::TableHorizon {
-            bip34_height,
-            parsed,
-            recon,
-        } => {
-            handle_table_horizon_parent(
-                client,
-                context,
-                height,
-                bip34_height,
-                &block,
-                &parsed,
-                &recon,
-            )
-            .await
-        }
+        ElastosEvaluation::TableHorizon => Ok(ElastosHeightOutcome::TableHorizonHold),
         ElastosEvaluation::RevokeNonBtc => {
             revoke_active_at_height(client, context, height, ELASTOS_REVOKE_NON_BTC).await?;
             Ok(ElastosHeightOutcome::NonBtcParentSkipped)
@@ -228,67 +207,17 @@ pub async fn process_elastos_height(
     }
 }
 
-/// Resolve an above-table-horizon parent against Bitcoin Core (see
-/// [`resolve_horizon_nbits`]): a Core-confirmed nBits match writes the capture; a
-/// mismatch or a fabricated far-future height revokes as non-BTC; an unanswerable
-/// Core (disabled / IBD / unreachable / lagging / transient error) holds the cursor
-/// exactly as the old stale-table behaviour did.
-async fn handle_table_horizon_parent(
-    client: &mut Client,
-    context: &ElastosCaptureContext,
-    height: i32,
-    bip34_height: i32,
-    block: &ElastosBlock,
-    parsed: &ParsedAuxpowBlock,
-    recon: &ReconstructedBlock,
-) -> Result<ElastosHeightOutcome> {
-    match resolve_horizon_nbits(
-        context.parent_classifier(),
-        bip34_height,
-        parsed.parent_header.bits(),
-    )
-    .await
-    {
-        HorizonOutcome::Valid => {
-            write_valid_capture(client, context, height, block, parsed, recon).await
-        }
-        HorizonOutcome::Contaminant | HorizonOutcome::FarFuture => {
-            revoke_active_at_height(client, context, height, ELASTOS_REVOKE_NON_BTC).await?;
-            Ok(ElastosHeightOutcome::NonBtcParentSkipped)
-        }
-        HorizonOutcome::Hold => Ok(ElastosHeightOutcome::TableHorizonHold),
-    }
-}
-
-/// Test-only harness for injected active-row revocation cases after a real row
-/// has already been written. It remains for synthetic `Contaminant` coverage and
-/// the focused `FarFuture` revocation seam; the pure gate and async fail-closed
-/// resolver paths live in `chains::nbits_horizon` unit tests.
-#[cfg(any(test, feature = "db-integration"))]
-pub async fn process_elastos_table_horizon_for_test(
-    client: &mut Client,
-    context: &ElastosCaptureContext,
-    height: i32,
-    bip34_height: i32,
-    actual_bits: bitcoin::CompactTarget,
-) -> Result<ElastosHeightOutcome> {
-    match resolve_horizon_nbits(context.parent_classifier(), bip34_height, actual_bits).await {
-        HorizonOutcome::Valid => Ok(ElastosHeightOutcome::AuxpowWritten),
-        HorizonOutcome::Contaminant | HorizonOutcome::FarFuture => {
-            revoke_active_at_height(client, context, height, ELASTOS_REVOKE_NON_BTC).await?;
-            Ok(ElastosHeightOutcome::NonBtcParentSkipped)
-        }
-        HorizonOutcome::Hold => Ok(ElastosHeightOutcome::TableHorizonHold),
-    }
-}
-
 /// Run every offline gate over a fetched block. No DB, no RPC: pure, so the gate
 /// order and verdicts are unit-testable over committed fixtures.
 ///
 /// Order (each fails closed): requested-height match -> reconstruct + hash guard
 /// -> auxpow presence -> parse -> PARENT-side dummy filter -> commitment verify ->
 /// BTC parent target -> child target -> nBits contamination verdict.
-fn evaluate_elastos_block(requested_height: i32, block: &ElastosBlock) -> ElastosEvaluation {
+fn evaluate_elastos_block(
+    requested_height: i32,
+    block: &ElastosBlock,
+    nbits_table: &NbitsTable,
+) -> ElastosEvaluation {
     let Some((parsed, recon)) = (match reconstruct_and_parse_auxpow(requested_height, block) {
         Ok(parsed) => parsed,
         Err(outcome) => return ElastosEvaluation::Skip(outcome),
@@ -300,7 +229,7 @@ fn evaluate_elastos_block(requested_height: i32, block: &ElastosBlock) -> Elasto
         return ElastosEvaluation::Skip(outcome);
     }
 
-    classify_elastos_parent_nbits(parsed, recon)
+    classify_elastos_parent_nbits(parsed, recon, nbits_table)
 }
 
 fn reconstruct_and_parse_auxpow(
@@ -379,21 +308,12 @@ fn auxpow_gate_skip(
 fn classify_elastos_parent_nbits(
     parsed: ParsedAuxpowBlock,
     recon: ReconstructedBlock,
+    nbits_table: &NbitsTable,
 ) -> ElastosEvaluation {
-    // Offline BCH/BSV contamination verdict against the embedded table. Beyond the
-    // table horizon the async driver resolves the canonical epoch nBits from Core
-    // (no operator regen needed), so this no longer warns here.
+    // BCH/BSV contamination verdict against the persisted Core cache.
     let bip34_height = parse_bip34_height(&parsed.parent_coinbase_script);
-    match classify_nbits(bip34_height, parsed.parent_header.bits()) {
-        NbitsVerdict::AboveTableHorizon => {
-            let bip34_height =
-                bip34_height.expect("AboveTableHorizon requires a parsed BIP34 height");
-            ElastosEvaluation::TableHorizon {
-                bip34_height,
-                parsed: Box::new(parsed),
-                recon: Box::new(recon),
-            }
-        }
+    match nbits_table.classify_nbits(bip34_height, parsed.parent_header.bits()) {
+        NbitsVerdict::AboveTableHorizon => ElastosEvaluation::TableHorizon,
         NbitsVerdict::Contaminant | NbitsVerdict::Indeterminate => ElastosEvaluation::RevokeNonBtc,
         NbitsVerdict::Valid => ElastosEvaluation::Write {
             parsed: Box::new(parsed),
@@ -467,7 +387,7 @@ async fn write_valid_capture(
         async |txn, source_id, payload| {
             // Pre-upsert classifier-conflict guard: only Valid rows reach here, so
             // a preclassified difficulty_epoch_ok == Some(false) is a contaminant
-            // the offline table missed. Abort rather than store the contradiction.
+            // the Core cache missed. Abort rather than store the contradiction.
             ensure_offline_valid_not_classifier_conflict(payload)?;
             write_elastos_capture_in_txn(txn, source_id, payload).await
         },
@@ -525,7 +445,7 @@ use crate::chains::spec::{ChainId, by_id};
 use crate::poller::{ChainPoller, ChainPollerState, HeightProgress};
 
 /// Elastos live capture chain. Monotonic like the Namecoin family, but maps the
-/// rich [`ElastosHeightOutcome`] so the nBits-table horizon is cursor-blocking
+/// rich [`ElastosHeightOutcome`] so the Core-cache horizon is cursor-blocking
 /// (`Abort`); every other outcome advances.
 pub(crate) struct ElastosChainPoller {
     state: ChainPollerState,
@@ -563,7 +483,7 @@ impl ChainPoller for ElastosChainPoller {
     }
 
     /// Process one height, then translate the outcome to poll progress: only the
-    /// nBits-table horizon hold is cursor-blocking (`Abort`); every other outcome
+    /// Core-cache horizon hold is cursor-blocking (`Abort`); every other outcome
     /// (write, revoke, any skip) advances. Elastos is monotonic, so there is no
     /// transient-hold/retry path.
     async fn process_height(&mut self, height: i32) -> Result<HeightProgress> {
@@ -585,16 +505,47 @@ mod tests {
         serde_json::from_str(fixture).expect("deserialize Elastos fixture")
     }
 
+    fn table_for(block: &ElastosBlock) -> NbitsTable {
+        let minimal = || {
+            NbitsTable::from_bitcoin_core_headers(&[mmm_capture::nbits_table::BitcoinEpochHeader {
+                height: 0,
+                block_time: 1,
+                bits: 0x1d00_ffff,
+            }])
+            .unwrap()
+        };
+        let Ok(Some((parsed, _))) = reconstruct_and_parse_auxpow(block.height, block) else {
+            return minimal();
+        };
+        let Some(height) = parse_bip34_height(&parsed.parent_coinbase_script) else {
+            return minimal();
+        };
+        let epoch = mmm_capture::nbits_table::daa_epoch_start(height);
+        let headers = (0..=epoch)
+            .step_by(mmm_capture::nbits_table::DAA_EPOCH_INTERVAL as usize)
+            .map(|height| mmm_capture::nbits_table::BitcoinEpochHeader {
+                height,
+                block_time: i64::from(height / mmm_capture::nbits_table::DAA_EPOCH_INTERVAL) + 1,
+                bits: if height == epoch {
+                    parsed.parent_header.bits().to_consensus()
+                } else {
+                    0x1d00_ffff
+                },
+            })
+            .collect::<Vec<_>>();
+        NbitsTable::from_bitcoin_core_headers(&headers).unwrap()
+    }
+
     #[test]
     fn evaluates_known_stale_block_as_write() {
-        // ELA 360062: a verified stale (BTC parent 572,333, within the committed
-        // nBits table) passes recon + commitment + both targets + a Valid verdict.
+        // ELA 360062: a verified stale (BTC parent 572,333, within the test
+        // Core cache) passes recon + commitment + both targets + a Valid verdict.
         let b = block(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../fixtures/elastos/ela-360062.json"
         )));
         assert!(matches!(
-            evaluate_elastos_block(b.height, &b),
+            evaluate_elastos_block(b.height, &b, &table_for(&b)),
             ElastosEvaluation::Write { .. }
         ));
     }
@@ -608,7 +559,7 @@ mod tests {
             "/../../fixtures/elastos/ela-100000.json"
         )));
         assert!(matches!(
-            evaluate_elastos_block(b.height, &b),
+            evaluate_elastos_block(b.height, &b, &table_for(&b)),
             ElastosEvaluation::Skip(ElastosHeightOutcome::NonAuxpowSkipped)
         ));
     }
@@ -630,7 +581,7 @@ mod tests {
             )),
         ] {
             let b = block(fixture);
-            let eval = evaluate_elastos_block(b.height, &b);
+            let eval = evaluate_elastos_block(b.height, &b, &table_for(&b));
             assert!(
                 !matches!(
                     eval,
@@ -652,7 +603,7 @@ mod tests {
         )));
         b.hash = "00".repeat(32);
         assert!(matches!(
-            evaluate_elastos_block(b.height, &b),
+            evaluate_elastos_block(b.height, &b, &table_for(&b)),
             ElastosEvaluation::Skip(ElastosHeightOutcome::MalformedSkipped)
         ));
     }
@@ -666,23 +617,8 @@ mod tests {
             "/../../fixtures/elastos/ela-360062.json"
         )));
         assert!(matches!(
-            evaluate_elastos_block(b.height + 1, &b),
+            evaluate_elastos_block(b.height + 1, &b, &table_for(&b)),
             ElastosEvaluation::Skip(ElastosHeightOutcome::MalformedSkipped)
-        ));
-    }
-
-    #[test]
-    fn stalled_2232276_parent_is_covered_non_btc_in_table() {
-        // ELA 2,232,276 was the original far-future horizon regression. Its parent
-        // nBits is in-table and classified directly as non-BTC (the far-future
-        // height/tolerance gate now lives in `chains::nbits_horizon`).
-        let b = block(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/elastos/ela-2232276.json"
-        )));
-        assert!(matches!(
-            evaluate_elastos_block(b.height, &b),
-            ElastosEvaluation::RevokeNonBtc
         ));
     }
 }

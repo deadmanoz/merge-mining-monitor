@@ -2,7 +2,7 @@
 //!
 //! Producers own `merge_mining_event` (and RSK's sidecar). This module derives
 //! the local `block` and `attestation_proof` rows from committed base evidence
-//! plus optional Bitcoin Core classifier results.
+//! plus Bitcoin Core classifier results.
 //!
 //! Parent-level base-evidence mutations (producer capture, revoke/restore,
 //! pool reclassification, Core canonical writes) enter through root-level
@@ -51,7 +51,7 @@ use mmm_bitcoin_core::{
     ParentPreflight,
 };
 use mmm_capture::auxpow::parse_bip34_height;
-use mmm_capture::btc_orphan::{self, BtcOrphanVerdict, classify_btc_orphan};
+use mmm_capture::btc_orphan::{self, BtcOrphanVerdict};
 use mmm_capture::capture::{MergeMiningEventPayload, ParentKind, apply_classification_proof};
 use mmm_capture::core_coinbase::resolve_btc_pool_from_coinbase;
 use mmm_capture::pool_resolver::PoolResolver;
@@ -323,13 +323,13 @@ impl ReconcileReadModelConfig {
 
 /// Config for `run_reclassify_unknown_parents`. By default re-scans only parents
 /// with no `block.btc_orphan_class` yet; `recheck_orphans` re-includes
-/// already-orphan-classified parents after an nbits-table regen or classifier-logic
+/// already-orphan-classified parents after a Core-cache refresh or classifier-logic
 /// change. `batch_size` bounds the keyset page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReclassifyUnknownParentsConfig {
     pub batch_size: i64,
     /// Re-include parents whose `block.btc_orphan_class` is already set (default
-    /// skips them). Use after a `gen-nbits-table.py` regen or a classifier-logic
+    /// skips them). Use after refreshing the Core header cache or changing classifier logic
     /// change to re-evaluate previously classified orphans.
     pub recheck_orphans: bool,
 }

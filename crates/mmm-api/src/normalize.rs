@@ -111,7 +111,7 @@ pub(crate) fn parse_kinds(raw: Option<&str>) -> Result<Vec<ParentKind>, ApiError
 /// NOT a structural parent kind, so it is deliberately a SEPARATE parameter from
 /// `kinds=` and never smuggled through [`ParentKind`]. `Pending` is the
 /// `btc_orphan_class IS NULL` transient (never Core-checked, or beyond the
-/// committed nBits table horizon).
+/// persisted Core-cache horizon).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Classification {
     StrictBtcOrphan,

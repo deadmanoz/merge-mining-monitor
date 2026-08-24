@@ -82,7 +82,7 @@ for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
 - Live capture is additive. Historical and partial publication sources reconcile
   as authoritative snapshots through the shared source lifecycle, while live
   publication imports never remove live events.
-- Long child-chain backfills may run with `BITCOIN_RPC_URL` unset, then upgrade
-  the deferred `unknown` parents afterward with
-  `just reclassify-unknown-parents`. Dataset imports are stricter: see
-  `docs/historical-ingest.md`.
+- Capture, backfills, historical imports, and reconciliation require
+  `BITCOIN_RPC_URL`. Each command refreshes the confirmed Core-header cache
+  before it starts; the read-only API serves the persisted cache without making
+  Core RPC calls.

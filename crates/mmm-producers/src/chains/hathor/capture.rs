@@ -6,7 +6,7 @@
 //! third-party public REST API. Because the API is untrusted the slice
 //! self-verifies the BTC evidence: RFC 0006 reconstruction identity + the
 //! "Hath" marker (in [`crate::chains::hathor::auxpow`]) + the BTC parent PoW + the
-//! offline nBits contamination verdict. Hathor DAG membership/height stays
+//! Core-cache nBits contamination verdict. Hathor DAG membership/height stays
 //! RPC-asserted.
 //!
 //! Hathor blocks can be VOIDED (DAG reorg) or replaced at a height, so the
@@ -28,9 +28,7 @@ use crate::chains::hathor::identity::upsert_hathor_reward_pool_identities;
 use crate::chains::hathor::reconstruct::{HathorReconstructedParent, reconstruct_or_skip};
 use crate::chains::hathor::reward::{HATHOR_REWARD_ADDRESS_NAMESPACE, parse_hathor_reward_outputs};
 use crate::chains::hathor::rpc::{HathorBlockMeta, HathorRpc, HathorTransaction};
-use crate::chains::nbits_horizon::{
-    HorizonOutcome, far_future_against_fresh_tip, resolve_horizon_nbits,
-};
+use crate::chains::nbits_horizon::far_future_against_fresh_tip;
 use crate::chains::{
     ensure_offline_valid_not_classifier_conflict, is_offline_valid_classifier_conflict,
 };
@@ -44,7 +42,7 @@ use mmm_capture::capture::{
     now_epoch_seconds, resolve_parent_pool_attribution_from_coinbase,
 };
 use mmm_capture::child_payout::PoolIdentityLookup;
-use mmm_capture::nbits_table::{NbitsLookup, NbitsVerdict, classify_nbits, table};
+use mmm_capture::nbits_table::{NbitsLookup, NbitsTable, NbitsVerdict};
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_capture::source_registry::HATHOR_SOURCE_CODE;
 use mmm_read_model::capture_in_txn;
@@ -110,6 +108,10 @@ impl HathorCaptureContext {
     pub fn parent_classifier(&self) -> &ConfiguredParentClassifier {
         self.base.parent_classifier()
     }
+
+    fn nbits_table(&self) -> &NbitsTable {
+        self.base.nbits_table()
+    }
 }
 
 /// Per-height capture outcome. The poller maps the `*Hold` variants to
@@ -128,21 +130,20 @@ pub enum HathorHeightOutcome {
     /// A validated Hathor block whose parent is non-BTC (BCH contaminant or
     /// indeterminate); no event.
     NonBtcParentSkipped,
-    /// The offline nBits verdict was Valid but an enabled classifier contradicted
+    /// The Core-cache nBits verdict was Valid but the classifier contradicted
     /// it (difficulty_epoch_ok = false); the write was blocked.
     ConflictSkipped,
     /// The block was definitively absent (best-effort hold).
     AbsentHold,
     /// A transient REST failure (best-effort hold).
     TransientHold,
-    /// The parent BIP34 height is beyond the nBits-table horizon (cursor-blocking).
+    /// The parent BIP34 height is beyond the Core-cache horizon (cursor-blocking).
     TableHorizonHold,
 }
 
 /// Everything assembled offline from a reconstructed parent, before the write
 /// decision. Built first so the `verdict` (Valid / non-BTC / above-horizon)
-/// can route to write-vs-revoke without re-deriving the evidence. `bip34_height`
-/// is carried so the above-horizon arm can resolve the epoch nBits from Core.
+/// can route to write-vs-revoke without re-deriving the evidence.
 struct BuiltCapture {
     evidence: NormalizedEventEvidence,
     sidecar: HathorEvidencePayload,
@@ -324,40 +325,11 @@ async fn apply_hathor_verdict(
     built: BuiltCapture,
 ) -> Result<HathorHeightOutcome> {
     match built.verdict {
-        NbitsVerdict::AboveTableHorizon => {
-            // Beyond the embedded table: resolve the canonical epoch nBits from
-            // Bitcoin Core instead of cursor-pinning. Core-disabled (offline
-            // backfill / cache ingest) reports no synced tip, so this holds exactly
-            // as before. A match writes, a mismatch / fabricated far-future height
-            // revokes, an unanswerable Core holds.
-            let bip34_height = built
-                .bip34_height
-                .expect("AboveTableHorizon requires a parsed BIP34 height");
-            let actual_bits = built.evidence.btc_parent_header.bits;
-            match resolve_horizon_nbits(context.parent_classifier(), bip34_height, actual_bits)
-                .await
-            {
-                HorizonOutcome::Valid => {
-                    write_valid_capture(client, context, height, prior, current_hash, built).await
-                }
-                HorizonOutcome::Contaminant | HorizonOutcome::FarFuture => {
-                    revoke_current_and_superseded(
-                        client,
-                        context,
-                        prior,
-                        current_hash,
-                        HATHOR_REVOKE_NON_BTC,
-                    )
-                    .await?;
-                    Ok(HathorHeightOutcome::NonBtcParentSkipped)
-                }
-                HorizonOutcome::Hold => Ok(HathorHeightOutcome::TableHorizonHold),
-            }
-        }
+        NbitsVerdict::AboveTableHorizon => Ok(HathorHeightOutcome::TableHorizonHold),
         NbitsVerdict::Contaminant | NbitsVerdict::Indeterminate => {
             // A validated Hathor block with a non-BTC parent writes no event AND
             // revokes any active capture at this height, including a SAME-HASH row
-            // whose verdict flipped after capture (e.g. an nBits-table
+            // whose verdict flipped after capture (e.g. a Core-cache
             // correction). The non-BTC reason is reversible, so a later re-Valid
             // recapture restores it.
             revoke_current_and_superseded(
@@ -632,8 +604,9 @@ fn build_hathor_capture(
     let coinbase_txid = coinbase.compute_txid();
 
     let nbits = recon.header.bits;
-    let verdict = classify_nbits(bip34_height, nbits);
-    let expected_btc_nbits = match table().expected_nbits(bip34_height.unwrap_or(-1)) {
+    let nbits_table = context.nbits_table();
+    let verdict = nbits_table.classify_nbits(bip34_height, nbits);
+    let expected_btc_nbits = match nbits_table.expected_nbits(bip34_height.unwrap_or(-1)) {
         NbitsLookup::Found(bits) => i64::from(bits),
         _ => i64::from(nbits.to_consensus()),
     };
@@ -872,10 +845,6 @@ mod tests {
             bip34,
             Some(710_969),
             "BIP34 parses to the BTC parent height"
-        );
-        assert_eq!(
-            classify_nbits(bip34, recon.header.bits),
-            NbitsVerdict::Valid
         );
         // The Hathor block hash IS the reconstructed BTC parent header hash.
         assert_eq!(recon.header.block_hash(), expected);

@@ -38,7 +38,7 @@ tree view from that evidence.
 Orphan status is not a `btc_parent_kind`. It is the derived
 `block.btc_orphan_class` (`strict_btc_orphan`, `weak_btc_orphan`, or
 `excluded`; NULL while pending), set only after a Core-absence-attested verdict
-and the offline strict/weak orphan classifier. Before the strict/weak
+and the Core-cache-backed strict/weak orphan classifier. Before the strict/weak
 resolution runs, the classifier consults the operator-imported
 `known_stale_block` membership (loaded by `import-known-stales` from the
 upstream `bitcoin-data/stale-blocks` dataset): a catalogued stale is `excluded`
@@ -181,6 +181,11 @@ provenance. Existing event values are preserved by the migration. The migration
 fails before altering the schema if legacy rows contain duplicate exact
 `(source_id, child_block_hash)` identities; see the audit query in
 `docs/operations.md`.
+
+Migration `0010_add_bitcoin_core_header_cache.sql` adds the sparse Core-derived
+header cache. It retains every 2016-block difficulty boundary plus the latest
+confirmed horizon. nBits and timestamp classification read this cache, so the
+monitor has no compiled Bitcoin epoch dataset.
 
 After a migration has reached a persistent database, do not edit it. Add a new
 forward migration. Real database migration runs go through `just db-migrate-dev`

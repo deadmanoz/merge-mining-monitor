@@ -1,7 +1,8 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bitcoin::block::Header;
 use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier};
+use mmm_capture::auxpow::parse_bip34_height;
 use mmm_capture::capture::ClassificationProof;
 use mmm_read_model::{
     ReclassifyUnknownParentsConfig, reconcile_from_merge_mining_event,
@@ -289,6 +290,15 @@ async fn reclassify_skips_classified_orphans_unless_recheck() -> Result<()> {
 
 async fn insert_unknown_parent_event(client: &Client) -> Result<UnknownParentFixture> {
     let (resolver, pool_ids_by_slug, source_id, parsed) = namecoin_fixture(client).await?;
+    let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
+        .context("Namecoin fixture must carry a BIP34 parent height")?;
+    crate::support::db::seed_bitcoin_core_header_cache_through(
+        client,
+        parent_height,
+        i64::from(parsed.parent_header.header.time),
+        parsed.parent_header.header.bits.to_consensus(),
+    )
+    .await?;
     let payload = namecoin_event_payload(
         &parsed,
         &resolver,

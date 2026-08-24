@@ -25,8 +25,8 @@ impl HathorRpc for FixtureHathorRpc {
 }
 
 /// An `unknown` parent classification over the BTC genesis header, for fake
-/// classifiers whose horizon outcome is driven by `synced_tip_height` /
-/// `epoch_nbits`, not `classify_parent`.
+/// classifiers whose horizon outcome is driven by `synced_tip_height`, not
+/// parent placement.
 fn unknown_genesis_parent() -> ParentClassification {
     ParentClassification::unknown(
         &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
@@ -37,6 +37,13 @@ async fn hathor_context(
     client: &Client,
     classifier: ConfiguredParentClassifier,
 ) -> Result<HathorCaptureContext> {
+    crate::support::db::seed_bitcoin_core_header_cache_through(
+        client,
+        710_969,
+        i64::MAX,
+        0x170c_69ea,
+    )
+    .await?;
     HathorCaptureContext::new_with_classifier(client, classifier).await
 }
 

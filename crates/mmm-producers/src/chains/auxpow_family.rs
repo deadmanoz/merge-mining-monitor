@@ -18,9 +18,7 @@ use crate::chains::bitcoind_rpc::BitcoindRpcClient;
 use crate::chains::child_payout_registry::seed_child_payout_identities_for;
 use crate::chains::spec::{ChainSpec, FamilySpec, FetchStrategy, RepairScope};
 use crate::poller::{ChainPoller, ChainPollerState, HeightProgress, Poller};
-use crate::producer_runtime::{
-    ProducerContext, ProducerRuntime, run_post_backfill_repair, warn_backfill_classifier_enabled,
-};
+use crate::producer_runtime::{ProducerContext, ProducerRuntime, run_post_backfill_repair};
 use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::auxpow::{
     ParsedAuxpowBlock, ParsedNamecoinBlock, attach_child_block_coinbase, parse_auxpow_header_blob,
@@ -92,8 +90,8 @@ impl AuxpowCaptureContext {
         self.base.source_id()
     }
 
-    /// The configured BTC parent classifier (live: usually disabled; backfill:
-    /// the runtime decides) used by `capture_in_txn` to place the parent.
+    /// The configured Core-backed BTC parent classifier used by `capture_in_txn`
+    /// to place the parent.
     fn parent_classifier(&self) -> &ConfiguredParentClassifier {
         self.base.parent_classifier()
     }
@@ -436,7 +434,6 @@ pub(crate) async fn run_auxpow_backfill(
 
     let context =
         AuxpowCaptureContext::new_with_classifier(&client, spec, parent_classifier).await?;
-    warn_backfill_classifier_enabled(family.label, context.parent_classifier());
     info!(
         chain = spec.slug,
         start_height = config.start_height,

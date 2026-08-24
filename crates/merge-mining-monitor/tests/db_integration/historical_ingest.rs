@@ -8,8 +8,6 @@ use bitcoin::hashes::{Hash as _, sha256, sha256d};
 use mmm_bitcoin_core::{
     ConfiguredParentClassifier, FakeParentClassifier, FakeParentClassifierGate,
 };
-use mmm_capture::auxpow::parse_bip34_height;
-use mmm_capture::btc_orphan::{BtcOrphanVerdict, classify_btc_orphan};
 use mmm_producers::{
     HistoricalImportAllConfig, HistoricalImportConfig, enqueue_published_stale_branches_for_test,
     run_historical_import, run_historical_import_configs_for_test,
@@ -26,7 +24,8 @@ use crate::support::scenario::{
 };
 use crate::support::seed::insert_block;
 use crate::support::{
-    absent_classifier, btc_400000_coinbase_script, btc_400000_header, header_meeting_bits,
+    absent_classifier, btc_400000_coinbase_script, btc_400000_header, btc_400000_orphan_fixture,
+    header_meeting_bits,
 };
 
 const NORMALIZED_HEADER: &str = "chain,source_kind,source_path,source_row_number,artifact_scope,provenance,child_height,child_block_hash,child_header_hex,child_block_time,child_nbits,btc_height,btc_header_hash,btc_prev_hash,btc_time,btc_bits,btc_nonce,btc_header_hex,coinbase_scriptsig_hex,coinbase_outputs,full_coinbase_hex,classification,validation_status,expected_nbits,rejection_reason,btc_stale_relevance,relevance_reason\n";
@@ -843,19 +842,7 @@ async fn import_refuses_without_known_stale_membership() -> Result<()> {
 #[tokio::test]
 async fn import_dataset_persists_core_attested_strict_or_weak_unknown() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        let header = btc_400000_header()?;
-        let coinbase_script = btc_400000_coinbase_script()?;
-        let verdict = classify_btc_orphan(
-            i64::from(header.time),
-            header.bits,
-            parse_bip34_height(&coinbase_script),
-        )
-        .0;
-        let relevance = match verdict {
-            BtcOrphanVerdict::Strict => "strict_btc_orphan",
-            BtcOrphanVerdict::Weak => "weak_btc_orphan",
-            other => panic!("fixture must be strict/weak, got {other:?}"),
-        };
+        let (header, coinbase_script, relevance) = btc_400000_orphan_fixture(&client).await?;
         let csv_path = write_normalized_csv(
             &header,
             "unknown",
@@ -1040,19 +1027,8 @@ async fn allow_unclassified_manifest_import_does_not_replace_authoritative_rows(
     crate::run_mut_db_test!(client, {
         let header = header_meeting_bits(0x207f_ffff, 1_700_000_064, 64);
         let fixture = write_manifest_fixture(&header)?;
-        let unknown_header = btc_400000_header()?;
-        let unknown_coinbase = btc_400000_coinbase_script()?;
-        let unknown_relevance = match classify_btc_orphan(
-            i64::from(unknown_header.time),
-            unknown_header.bits,
-            parse_bip34_height(&unknown_coinbase),
-        )
-        .0
-        {
-            BtcOrphanVerdict::Strict => "strict_btc_orphan",
-            BtcOrphanVerdict::Weak => "weak_btc_orphan",
-            other => panic!("fixture must be strict/weak, got {other:?}"),
-        };
+        let (unknown_header, unknown_coinbase, unknown_relevance) =
+            btc_400000_orphan_fixture(&client).await?;
         let unknown_row = normalized_csv_line(
             &unknown_header,
             &NormalizedCsvRow {
