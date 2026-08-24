@@ -10,7 +10,8 @@ use mmm_capture::nbits_table::NbitsLookup;
 use mmm_producers::refresh_bitcoin_core_header_cache;
 use mmm_read_model::reconcile_from_merge_mining_event;
 use mmm_store::{
-    BitcoinCoreHeader, load_bitcoin_core_nbits_table, load_bitcoin_core_nbits_table_if_present,
+    BitcoinCoreHeader, complete_bitcoin_core_header_cache_reclassification,
+    load_bitcoin_core_nbits_table, load_bitcoin_core_nbits_table_if_present,
     lock_bitcoin_core_header_cache, record_bitcoin_core_header, replace_bitcoin_core_header_cache,
     unlock_bitcoin_core_header_cache, upsert_merge_mining_event,
 };
@@ -78,6 +79,68 @@ async fn core_header_cache_retains_epochs_replaces_horizon_and_rejects_conflicts
             .await
             .expect_err("a conflicting Core observation must fail closed");
         assert!(err.to_string().contains("disagrees"));
+        Ok(())
+    })
+}
+
+#[tokio::test]
+async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sweep() -> Result<()>
+{
+    crate::run_mut_db_test!(client, {
+        client
+            .execute(
+                "UPDATE bitcoin_core_header_cache_state \
+                 SET horizon_time = 0, reclassification_needed = FALSE",
+                &[],
+            )
+            .await?;
+        let first = replace_bitcoin_core_header_cache(
+            &mut client,
+            0,
+            &[],
+            None,
+            &header(100, 1, 100, 0x1d00_ffff),
+        )
+        .await?;
+        assert!(first.horizon_advanced);
+        assert!(first.reclassification_needed);
+        complete_bitcoin_core_header_cache_reclassification(&client).await?;
+
+        let advanced_with_an_older_timestamp = replace_bitcoin_core_header_cache(
+            &mut client,
+            0,
+            &[],
+            None,
+            &header(101, 2, 99, 0x1d00_ffff),
+        )
+        .await?;
+        assert!(advanced_with_an_older_timestamp.horizon_advanced);
+        assert!(advanced_with_an_older_timestamp.reclassification_needed);
+        assert_eq!(
+            load_bitcoin_core_nbits_table(&client).await?.horizon_time(),
+            100
+        );
+
+        let retry = replace_bitcoin_core_header_cache(
+            &mut client,
+            0,
+            &[],
+            None,
+            &header(101, 2, 99, 0x1d00_ffff),
+        )
+        .await?;
+        assert!(retry.reclassification_needed);
+        complete_bitcoin_core_header_cache_reclassification(&client).await?;
+
+        let settled = replace_bitcoin_core_header_cache(
+            &mut client,
+            0,
+            &[],
+            None,
+            &header(101, 2, 99, 0x1d00_ffff),
+        )
+        .await?;
+        assert!(!settled.reclassification_needed);
         Ok(())
     })
 }

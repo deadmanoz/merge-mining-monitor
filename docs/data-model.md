@@ -183,10 +183,13 @@ fails before altering the schema if legacy rows contain duplicate exact
 `docs/operations.md`.
 
 Migration `0010_add_bitcoin_core_header_cache.sql` adds the sparse Core-derived
-header cache. Boundaries are marked final only after Core re-reads them 100
-blocks behind the synced tip. The current shallow epoch and moving horizon are
-refreshed from Core on every command. nBits and timestamp classification read
-this cache, so the monitor has no compiled Bitcoin epoch dataset.
+header cache and its singleton state. Boundaries are marked final only after
+Core re-reads them 100 blocks behind the synced tip. The current shallow epoch
+and moving horizon are refreshed from Core on every command. The state retains
+a safe timestamp-coverage high-water mark for valid non-monotonic header times
+and records an incomplete orphan reclassification sweep for retry. nBits and
+timestamp classification read this cache, so the monitor has no compiled
+Bitcoin epoch dataset.
 
 After a migration has reached a persistent database, do not edit it. Add a new
 forward migration. Real database migration runs go through `just db-migrate-dev`

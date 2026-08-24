@@ -87,8 +87,11 @@ for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
   current synced tip before it starts. Long-lived pollers and
   `sync-bitcoin-core --follow` refresh the cache on every tick, verifying that
   Core's horizon did not move while the sparse snapshot was read. A changed
-  shallow suffix reclassifies existing orphan rows before the cache lock is
-  released. Historical imports retain that lock across candidate validation and
+  shallow suffix or expanded coverage reclassifies existing and pending orphan
+  rows before the cache lock is released. The cache records that sweep durably,
+  so a failed pass is retried by the next refresh. Its timestamp coverage does
+  not regress when a valid newer Core header has an older timestamp. Historical
+  imports retain that lock across candidate validation and
   the durable derived rebuild, so one import uses one table. Hathor and Elastos
   retry once after a cache-horizon hold. The read-only API serves the persisted
   cache without making Core RPC calls.

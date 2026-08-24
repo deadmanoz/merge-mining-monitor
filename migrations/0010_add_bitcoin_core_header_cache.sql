@@ -16,5 +16,16 @@ CREATE UNIQUE INDEX bitcoin_core_header_single_horizon
     ON bitcoin_core_header ((true))
     WHERE height % 2016 <> 0;
 
+CREATE TABLE bitcoin_core_header_cache_state (
+    singleton               BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    horizon_time            BIGINT NOT NULL DEFAULT 0 CHECK (horizon_time >= 0),
+    reclassification_needed BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+INSERT INTO bitcoin_core_header_cache_state (singleton) VALUES (TRUE);
+
 COMMENT ON TABLE bitcoin_core_header IS
   'Sparse canonical Bitcoin headers fetched from the required Core node: final difficulty-epoch boundaries after the reorg-safe depth, plus the replaceable current epoch and synced-tip horizon.';
+
+COMMENT ON TABLE bitcoin_core_header_cache_state IS
+  'Singleton cache metadata: a non-regressing timestamp coverage bound and an orphan reclassification retry marker.';

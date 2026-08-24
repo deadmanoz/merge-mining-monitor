@@ -52,6 +52,16 @@ pub enum WeakVerdict {
 
 impl NbitsTable {
     pub fn from_bitcoin_core_headers(headers: &[BitcoinEpochHeader]) -> Result<Self> {
+        Self::from_bitcoin_core_headers_with_horizon_time(headers, 0)
+    }
+
+    /// Construct a table with a persisted Core timestamp high-water mark.
+    /// Bitcoin header timestamps are not monotonic, so a newer canonical tip
+    /// can legitimately be older than its predecessor.
+    pub fn from_bitcoin_core_headers_with_horizon_time(
+        headers: &[BitcoinEpochHeader],
+        cached_horizon_time: i64,
+    ) -> Result<Self> {
         let horizon = headers
             .last()
             .copied()
@@ -104,10 +114,15 @@ impl NbitsTable {
             .map(|header| (header.block_time, header.height))
             .collect::<Vec<_>>();
         epochs_by_time.sort_unstable();
+        let observed_horizon_time = headers
+            .iter()
+            .map(|header| header.block_time)
+            .max()
+            .expect("non-empty cache has a timestamp");
         Ok(Self {
             covered_max_height: last_epoch.height,
             horizon_height: horizon.height,
-            horizon_time: horizon.block_time,
+            horizon_time: cached_horizon_time.max(observed_horizon_time),
             by_epoch,
             epochs_by_time,
         })
@@ -272,5 +287,27 @@ mod tests {
         let mut nonmonotonic = headers();
         nonmonotonic[2].block_time = 1_500;
         assert!(NbitsTable::from_bitcoin_core_headers(&nonmonotonic).is_ok());
+    }
+
+    #[test]
+    fn timestamp_coverage_does_not_regress_when_a_later_tip_is_older() {
+        let mut cache = headers();
+        cache.insert(
+            3,
+            BitcoinEpochHeader {
+                height: 4_499,
+                block_time: 3_500,
+                bits: 0x1b00_ffff,
+            },
+        );
+        cache[4].block_time = 3_400;
+
+        let table = NbitsTable::from_bitcoin_core_headers(&cache).unwrap();
+        assert_eq!(table.horizon_height(), 4_500);
+        assert_eq!(table.horizon_time(), 3_500);
+        assert_ne!(
+            table.classify_nbits_by_time(3_450, CompactTarget::from_consensus(0x1b00_ffff)),
+            WeakVerdict::AboveHorizon
+        );
     }
 }

@@ -24,7 +24,7 @@ pub async fn refresh_bitcoin_core_header_cache(
     mmm_store::lock_bitcoin_core_header_cache(client).await?;
     let result = async {
         let (table, update) = refresh_bitcoin_core_header_cache_locked(client, classifier).await?;
-        if update.shallow_reorged {
+        if update.reclassification_needed {
             mmm_read_model::run_reclassify_unknown_parents(
                 client,
                 classifier,
@@ -34,7 +34,8 @@ pub async fn refresh_bitcoin_core_header_cache(
                 },
             )
             .await
-            .context("reclassify orphan placements after shallow Core-cache reorg")?;
+            .context("reclassify orphan placements after Core-cache coverage change")?;
+            mmm_store::complete_bitcoin_core_header_cache_reclassification(client).await?;
         }
         Ok(table)
     }
@@ -81,6 +82,12 @@ async fn refresh_bitcoin_core_header_cache_snapshot(
         "Bitcoin Core must be connected to mainnet; refusing monitor work"
     );
     let horizon_height = tip.height;
+    let opening_horizon = classifier
+        .canonical_header(horizon_height)
+        .await
+        .with_context(|| {
+            format!("fetch opening Bitcoin Core header-cache horizon at {horizon_height}")
+        })?;
     let final_epoch = daa_epoch_start(horizon_height.saturating_sub(CORE_HEADER_REORG_SAFE_DEPTH));
     let highest_final = mmm_store::highest_final_bitcoin_core_epoch(client).await?;
     let next_epoch = highest_final.map_or(0, |height| height + DAA_EPOCH_INTERVAL);
@@ -118,10 +125,6 @@ async fn refresh_bitcoin_core_header_cache_snapshot(
         None
     };
 
-    let horizon = classifier
-        .canonical_header(horizon_height)
-        .await
-        .with_context(|| format!("fetch Bitcoin Core header-cache horizon at {horizon_height}"))?;
     let closing_tip = classifier
         .synced_tip()
         .await?
@@ -140,7 +143,7 @@ async fn refresh_bitcoin_core_header_cache_snapshot(
         .with_context(|| {
             format!("recheck Bitcoin Core header-cache horizon at {horizon_height}")
         })?;
-    if !cache_snapshot_is_current(tip, horizon, closing_tip, closing_horizon) {
+    if !cache_snapshot_is_current(tip, opening_horizon, closing_tip, closing_horizon) {
         return Ok(None);
     }
 
@@ -150,10 +153,10 @@ async fn refresh_bitcoin_core_header_cache_snapshot(
         &final_epochs,
         shallow_epoch.as_ref(),
         &mmm_store::BitcoinCoreHeader {
-            height: horizon.height,
-            block_hash: horizon.hash.to_byte_array().to_vec(),
-            block_time: horizon.header_time,
-            bits: horizon.nbits,
+            height: opening_horizon.height,
+            block_hash: opening_horizon.hash.to_byte_array().to_vec(),
+            block_time: opening_horizon.header_time,
+            bits: opening_horizon.nbits,
         },
     )
     .await?;

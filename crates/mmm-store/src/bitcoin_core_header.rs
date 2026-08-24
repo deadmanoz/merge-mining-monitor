@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result, ensure};
 use mmm_capture::nbits_table::{BitcoinEpochHeader, NbitsTable};
-use tokio_postgres::{Client, GenericClient};
+use tokio_postgres::{Client, GenericClient, Transaction};
 
 // Stable, monitor-specific advisory-lock key. The refresh reads a Core snapshot
 // before replacing the shallow suffix, so one session must own both operations.
@@ -27,6 +27,14 @@ pub struct BitcoinCoreHeader {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BitcoinCoreHeaderCacheUpdate {
     pub shallow_reorged: bool,
+    pub horizon_advanced: bool,
+    pub reclassification_needed: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BitcoinCoreHeaderCacheState {
+    horizon_time: i64,
+    reclassification_needed: bool,
 }
 
 /// Serialize a Core observation and its cache replacement on this connection.
@@ -152,6 +160,7 @@ pub async fn replace_bitcoin_core_header_cache(
         .batch_execute("LOCK TABLE bitcoin_core_header IN SHARE ROW EXCLUSIVE MODE")
         .await
         .context("lock Core-header-cache replacement")?;
+    let previous_state = lock_bitcoin_core_header_cache_state(&transaction).await?;
     let highest_final: Option<i32> = transaction
         .query_one(
             "SELECT max(height) FROM bitcoin_core_header WHERE is_final",
@@ -168,26 +177,13 @@ pub async fn replace_bitcoin_core_header_cache(
         highest_final.is_none_or(|height| horizon.height >= height),
         "Bitcoin Core cache horizon must not precede the highest finalized epoch"
     );
-
-    let previous_shallow = transaction
-        .query(
-            "SELECT height, block_hash, block_time, bits \
-             FROM bitcoin_core_header WHERE NOT is_final",
-            &[],
-        )
+    let previous_horizon_height: Option<i32> = transaction
+        .query_one("SELECT max(height) FROM bitcoin_core_header", &[])
         .await
-        .context("load previous shallow Core-header-cache rows")?
-        .into_iter()
-        .map(|row| {
-            Ok(BitcoinCoreHeader {
-                height: row.get(0),
-                block_hash: row.get(1),
-                block_time: row.get(2),
-                bits: u32::try_from(row.get::<_, i64>(3))
-                    .context("cached Bitcoin Core header bits exceed u32")?,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+        .context("load previous Core-header-cache horizon")?
+        .get(0);
+
+    let previous_shallow = load_previous_shallow_bitcoin_core_headers(&transaction).await?;
     let incoming = final_epochs
         .iter()
         .chain(shallow_epoch)
@@ -221,11 +217,122 @@ pub async fn replace_bitcoin_core_header_cache(
             || highest_final.is_some_and(|height| horizon.height == height),
     )
     .await?;
+    let update = update_bitcoin_core_header_cache_state(
+        &transaction,
+        previous_state,
+        previous_horizon_height,
+        horizon,
+        shallow_reorged,
+    )
+    .await?;
     transaction
         .commit()
         .await
         .context("commit Core-header-cache replacement")?;
-    Ok(BitcoinCoreHeaderCacheUpdate { shallow_reorged })
+    Ok(update)
+}
+
+async fn load_previous_shallow_bitcoin_core_headers(
+    transaction: &Transaction<'_>,
+) -> Result<Vec<BitcoinCoreHeader>> {
+    transaction
+        .query(
+            "SELECT height, block_hash, block_time, bits \
+             FROM bitcoin_core_header WHERE NOT is_final",
+            &[],
+        )
+        .await
+        .context("load previous shallow Core-header-cache rows")?
+        .into_iter()
+        .map(|row| {
+            Ok(BitcoinCoreHeader {
+                height: row.get(0),
+                block_hash: row.get(1),
+                block_time: row.get(2),
+                bits: u32::try_from(row.get::<_, i64>(3))
+                    .context("cached Bitcoin Core header bits exceed u32")?,
+            })
+        })
+        .collect()
+}
+
+async fn lock_bitcoin_core_header_cache_state(
+    transaction: &Transaction<'_>,
+) -> Result<BitcoinCoreHeaderCacheState> {
+    transaction
+        .execute(
+            "INSERT INTO bitcoin_core_header_cache_state (singleton) VALUES (TRUE) \
+             ON CONFLICT (singleton) DO NOTHING",
+            &[],
+        )
+        .await
+        .context("initialize Core-header-cache state")?;
+    let row = transaction
+        .query_one(
+            "SELECT horizon_time, reclassification_needed \
+             FROM bitcoin_core_header_cache_state WHERE singleton FOR UPDATE",
+            &[],
+        )
+        .await
+        .context("lock Core-header-cache state")?;
+    Ok(BitcoinCoreHeaderCacheState {
+        horizon_time: row.get(0),
+        reclassification_needed: row.get(1),
+    })
+}
+
+async fn update_bitcoin_core_header_cache_state(
+    transaction: &Transaction<'_>,
+    previous: BitcoinCoreHeaderCacheState,
+    previous_horizon_height: Option<i32>,
+    horizon: &BitcoinCoreHeader,
+    shallow_reorged: bool,
+) -> Result<BitcoinCoreHeaderCacheUpdate> {
+    let current_observed_time: i64 = transaction
+        .query_one("SELECT max(block_time) FROM bitcoin_core_header", &[])
+        .await
+        .context("load current Core-header-cache timestamp coverage")?
+        .get(0);
+    let horizon_advanced = previous_horizon_height.is_none_or(|height| horizon.height > height);
+    let horizon_time = if shallow_reorged {
+        current_observed_time
+    } else {
+        previous.horizon_time.max(current_observed_time)
+    };
+    let reclassification_needed = previous.reclassification_needed
+        || shallow_reorged
+        || horizon_advanced
+        || horizon_time > previous.horizon_time;
+    transaction
+        .execute(
+            "UPDATE bitcoin_core_header_cache_state \
+             SET horizon_time = $1, reclassification_needed = $2 WHERE singleton",
+            &[&horizon_time, &reclassification_needed],
+        )
+        .await
+        .context("update Core-header-cache state")?;
+    Ok(BitcoinCoreHeaderCacheUpdate {
+        shallow_reorged,
+        horizon_advanced,
+        reclassification_needed,
+    })
+}
+
+/// Acknowledge a successful orphan sweep while holding the cache advisory lock.
+/// A failed sweep leaves its durable marker set for the next refresh.
+pub async fn complete_bitcoin_core_header_cache_reclassification<C: GenericClient>(
+    client: &C,
+) -> Result<()> {
+    let updated = client
+        .execute(
+            "UPDATE bitcoin_core_header_cache_state \
+             SET reclassification_needed = FALSE WHERE singleton",
+            &[],
+        )
+        .await
+        .context("mark Core-header-cache reclassification complete")?;
+    ensure!(updated == 1, "Core-header-cache state is missing");
+    Ok(())
 }
 
 /// Load the cache when it has been initialized by a Core-backed command.
@@ -256,7 +363,15 @@ pub async fn load_bitcoin_core_nbits_table_if_present<C: GenericClient>(
     if headers.is_empty() {
         return Ok(None);
     }
-    NbitsTable::from_bitcoin_core_headers(&headers).map(Some)
+    let cached_horizon_time: i64 = client
+        .query_one(
+            "SELECT horizon_time FROM bitcoin_core_header_cache_state WHERE singleton",
+            &[],
+        )
+        .await
+        .context("load Core-header-cache timestamp coverage")?
+        .get(0);
+    NbitsTable::from_bitcoin_core_headers_with_horizon_time(&headers, cached_horizon_time).map(Some)
 }
 
 /// Load the initialized cache for a command that requires nBits classification.
