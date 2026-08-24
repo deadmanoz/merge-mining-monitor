@@ -138,8 +138,8 @@ async fn cmd_sync_bitcoin_core(args: std::env::Args) -> Result<()> {
 
 async fn cmd_reconcile_read_model(args: std::env::Args) -> Result<()> {
     let config = mmm_read_model::ReconcileReadModelConfig::from_args(args)?;
-    // Even the DB-only source-health mode shares the command bootstrap so the
-    // persisted Core cache is current before any read-model maintenance runs.
+    // Core is deliberately mandatory even for source-health-only maintenance:
+    // bootstrap keeps the persisted cache current before read-model maintenance.
     let (mut pg_client, classifier) = mmm_producers::connect_core_required_from_env().await?;
     let count =
         mmm_read_model::run_reconcile_read_model(&mut pg_client, &classifier, config).await?;

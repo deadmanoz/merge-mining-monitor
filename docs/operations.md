@@ -19,6 +19,12 @@ maintenance modes. Each refreshes the sparse `bitcoin_core_header` cache through
 the current synced tip before work begins. `serve` reads that cache from Postgres
 and makes no Core RPC calls.
 
+After applying migration `0010`, configure and sync Core before running any
+command that writes or rebuilds monitor data, including
+`just rebuild-source-health`. There is intentionally no database-only bypass:
+the node is an operational requirement, while the API remains available from the
+persisted cache.
+
 ## Serving
 
 ```bash

@@ -49,6 +49,7 @@ pub(crate) async fn drain_reconcile_queue(
     classifier: &ConfiguredParentClassifier,
     mut queue: VecDeque<ReconcileWork>,
     budget: Option<usize>,
+    nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
 ) -> Result<ReconcileStats> {
     let mut stats = ReconcileStats {
         parents_reconciled: 0,
@@ -71,7 +72,8 @@ pub(crate) async fn drain_reconcile_queue(
                 }
                 let preclassified = preclassified.map(|classification| *classification);
                 let changed_hashes =
-                    reconcile_one_event(client, event_id, classifier, preclassified).await?;
+                    reconcile_one_event(client, event_id, classifier, preclassified, nbits_table)
+                        .await?;
                 stats.parents_reconciled += 1;
                 changed_hashes
             }
@@ -79,7 +81,8 @@ pub(crate) async fn drain_reconcile_queue(
                 if !visited_blocks.insert(hash.clone()) {
                     continue;
                 }
-                let changed_hashes = reconcile_one_block(client, &hash, classifier).await?;
+                let changed_hashes =
+                    reconcile_one_block(client, &hash, classifier, nbits_table).await?;
                 stats.parents_reconciled += 1;
                 changed_hashes
             }
@@ -128,7 +131,19 @@ pub(crate) async fn reconcile_dependents_after_changes_with_budget(
         .await?;
     }
     if !queue.is_empty() {
-        drain_reconcile_queue(client, classifier, queue, Some(cascade_budget)).await?;
+        let nbits_table = if classifier.is_enabled() {
+            Some(mmm_store::load_bitcoin_core_nbits_table(client).await?)
+        } else {
+            None
+        };
+        drain_reconcile_queue(
+            client,
+            classifier,
+            queue,
+            Some(cascade_budget),
+            nbits_table.as_ref(),
+        )
+        .await?;
     }
     Ok(())
 }
@@ -211,6 +226,7 @@ pub(crate) async fn reconcile_one_event(
     event_id: i64,
     classifier: &ConfiguredParentClassifier,
     preclassified: Option<ParentClassification>,
+    nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
 ) -> Result<Vec<Vec<u8>>> {
     let trusted_preclassified = preclassified.map(PreclassifiedParent::trusted);
     for attempt in 0..RECONCILE_LOCK_SET_RETRY_LIMIT {
@@ -229,6 +245,7 @@ pub(crate) async fn reconcile_one_event(
             attempt_preclassified.clone(),
             // No wrapper: this path owns the primary source_health diff.
             PrimaryDiff::Reconcile,
+            nbits_table,
         )
         .await
         {
@@ -311,6 +328,7 @@ pub(crate) async fn reconcile_one_event_in_txn<C: GenericClient>(
     // too. The variant requires an opened bracket, so ownership can no longer
     // be claimed without the snapshot having been taken.
     primary: PrimaryDiff<'_>,
+    nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
 ) -> Result<Vec<Vec<u8>>> {
     let initial_event = load_event(client, event_id).await?;
     if initial_event.skips_parent_read_model() {
@@ -394,7 +412,13 @@ pub(crate) async fn reconcile_one_event_in_txn<C: GenericClient>(
         }
     }
 
-    rebuild_parent_read_model(client, &event.btc_parent_header_hash, Some(&classification)).await?;
+    rebuild_parent_read_model(
+        client,
+        &event.btc_parent_header_hash,
+        Some(&classification),
+        nbits_table,
+    )
+    .await?;
     let after = load_block_cascade_state(client, &event.btc_parent_header_hash).await?;
     if let Some(sh_before) = sh_primary_before {
         let sh_after = crate::source_health_sql::snapshot_parent_contribution(
@@ -590,9 +614,10 @@ pub(crate) async fn reconcile_one_block(
     client: &mut Client,
     hash: &[u8],
     classifier: &ConfiguredParentClassifier,
+    nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
 ) -> Result<Vec<Vec<u8>>> {
     if let Some(event_id) = find_anchor_event_for_block(client, hash).await? {
-        return reconcile_one_event(client, event_id, classifier, None).await;
+        return reconcile_one_event(client, event_id, classifier, None, nbits_table).await;
     }
 
     let txn = client
@@ -602,7 +627,7 @@ pub(crate) async fn reconcile_one_block(
     lock_block_hash(&txn, hash).await?;
     let before = load_block_cascade_state(&txn, hash).await?;
     let sh_before = crate::source_health_sql::snapshot_parent_contribution(&txn, hash).await?;
-    rebuild_parent_read_model(&txn, hash, None).await?;
+    rebuild_parent_read_model(&txn, hash, None, nbits_table).await?;
     let after = load_block_cascade_state(&txn, hash).await?;
     let sh_after = crate::source_health_sql::snapshot_parent_contribution(&txn, hash).await?;
     crate::source_health_sql::apply_source_health_diff(&txn, &sh_before, &sh_after).await?;

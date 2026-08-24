@@ -436,6 +436,7 @@ where
                 classifier,
                 preclassified.clone().map(PreclassifiedParent::trusted),
                 PrimaryDiff::Wrapper(&bracket),
+                None,
             )
             .await
         } else {
@@ -537,6 +538,7 @@ pub(crate) async fn set_event_revocation(
             classifier,
             attempt_preclassified,
             PrimaryDiff::Wrapper(&bracket),
+            None,
         )
         .await
         {
@@ -663,6 +665,7 @@ where
                     classifier,
                     None,
                     PrimaryDiff::Reconcile,
+                    None,
                 )
                 .await
             }

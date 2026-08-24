@@ -54,6 +54,7 @@ use mmm_capture::auxpow::parse_bip34_height;
 use mmm_capture::btc_orphan::{self, BtcOrphanVerdict};
 use mmm_capture::capture::{MergeMiningEventPayload, ParentKind, apply_classification_proof};
 use mmm_capture::core_coinbase::resolve_btc_pool_from_coinbase;
+use mmm_capture::nbits_table::NbitsTable;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_store::get_source_id;
 
@@ -383,22 +384,56 @@ pub async fn reconcile_from_merge_mining_event(
     classifier: &ConfiguredParentClassifier,
     preclassified: Option<ParentClassification>,
 ) -> Result<ReconcileStats> {
-    let mut queue = VecDeque::new();
-    queue.push_back(ReconcileWork::Event(event_id, preclassified.map(Box::new)));
-    drain_reconcile_queue(client, classifier, queue, Some(DEFAULT_CASCADE_BUDGET)).await
+    let nbits_table = if classifier.is_enabled() {
+        Some(mmm_store::load_bitcoin_core_nbits_table(client).await?)
+    } else {
+        None
+    };
+    reconcile_from_merge_mining_event_with_nbits_table(
+        client,
+        event_id,
+        classifier,
+        preclassified,
+        nbits_table.as_ref(),
+    )
+    .await
 }
 
-/// Reconcile the derived block row keyed by `btc_header_hash` (no event id), then
-/// drain the dependent cascade. Used by the `--all`/missing-only scan for orphaned
-/// `block` rows that have no live `merge_mining_event` pointing at them.
-pub(crate) async fn reconcile_by_block_hash(
+async fn reconcile_from_merge_mining_event_with_nbits_table(
+    client: &mut Client,
+    event_id: i64,
+    classifier: &ConfiguredParentClassifier,
+    preclassified: Option<ParentClassification>,
+    nbits_table: Option<&NbitsTable>,
+) -> Result<ReconcileStats> {
+    let mut queue = VecDeque::new();
+    queue.push_back(ReconcileWork::Event(event_id, preclassified.map(Box::new)));
+    drain_reconcile_queue(
+        client,
+        classifier,
+        queue,
+        Some(DEFAULT_CASCADE_BUDGET),
+        nbits_table,
+    )
+    .await
+}
+
+async fn reconcile_by_block_hash_with_nbits_table(
     client: &mut Client,
     hash: &[u8],
     classifier: &ConfiguredParentClassifier,
+    nbits_table: Option<&NbitsTable>,
 ) -> Result<ReconcileStats> {
     let mut queue = VecDeque::new();
     queue.push_back(ReconcileWork::Block(hash.to_vec()));
-    drain_reconcile_queue(client, classifier, queue, Some(DEFAULT_CASCADE_BUDGET)).await
+    drain_reconcile_queue(
+        client,
+        classifier,
+        queue,
+        Some(DEFAULT_CASCADE_BUDGET),
+        nbits_table,
+    )
+    .await
 }
 
 /// Pre-classify a payload's parent header BEFORE the mutation opens its txn, so the
@@ -499,6 +534,7 @@ pub async fn run_reclassify_unknown_parents(
              with import-known-stales."
         );
     }
+    let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
     let mut changed = 0;
     let mut cursor: Option<(i64, i64)> = None;
     loop {
@@ -554,7 +590,14 @@ pub async fn run_reclassify_unknown_parents(
             let before_class: Option<String> = row.get(2);
             cursor = Some((child_height, event_id));
 
-            reconcile_from_merge_mining_event(client, event_id, classifier, None).await?;
+            reconcile_from_merge_mining_event_with_nbits_table(
+                client,
+                event_id,
+                classifier,
+                None,
+                Some(&nbits_table),
+            )
+            .await?;
             // Count progress only on a genuine change: a canonical/stale promotion
             // (event kind leaves 'unknown') or a different orphan class than before
             // (NULL -> non-NULL on a first pass, or a verdict change on --recheck).
@@ -617,11 +660,17 @@ pub async fn run_reconcile_read_model(
         );
     }
 
+    let nbits_table = if classifier.is_enabled() {
+        Some(mmm_store::load_bitcoin_core_nbits_table(client).await?)
+    } else {
+        None
+    };
     if !config.missing_only {
-        return run_reconcile_all_read_model(client, classifier, &config).await;
+        return run_reconcile_all_read_model(client, classifier, &config, nbits_table.as_ref())
+            .await;
     }
 
-    run_reconcile_missing_read_model(client, classifier, &config).await
+    run_reconcile_missing_read_model(client, classifier, &config, nbits_table.as_ref()).await
 }
 
 /// `--missing-only` mode: repeatedly scan for missing/stale derived rows until
@@ -631,6 +680,7 @@ async fn run_reconcile_missing_read_model(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
     config: &ReconcileReadModelConfig,
+    nbits_table: Option<&NbitsTable>,
 ) -> Result<usize> {
     let mut repaired = 0;
     for iteration in 0..config.max_iterations {
@@ -643,10 +693,23 @@ async fn run_reconcile_missing_read_model(
         for candidate in candidates {
             match candidate {
                 ReconcileCandidate::Event(id) => {
-                    reconcile_from_merge_mining_event(client, id, classifier, None).await?;
+                    reconcile_from_merge_mining_event_with_nbits_table(
+                        client,
+                        id,
+                        classifier,
+                        None,
+                        nbits_table,
+                    )
+                    .await?;
                 }
                 ReconcileCandidate::Block(hash) => {
-                    reconcile_by_block_hash(client, &hash, classifier).await?;
+                    reconcile_by_block_hash_with_nbits_table(
+                        client,
+                        &hash,
+                        classifier,
+                        nbits_table,
+                    )
+                    .await?;
                 }
             }
             repaired += 1;
@@ -665,6 +728,7 @@ async fn run_reconcile_all_read_model(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
     config: &ReconcileReadModelConfig,
+    nbits_table: Option<&NbitsTable>,
 ) -> Result<usize> {
     let source_id = match &config.source_code {
         Some(code) => Some(get_source_id(client, code).await?),
@@ -710,7 +774,14 @@ async fn run_reconcile_all_read_model(
             let event_id: i64 = row.get(0);
             let child_height: i64 = row.get(1);
             cursor = Some((child_height, event_id));
-            reconcile_from_merge_mining_event(client, event_id, classifier, None).await?;
+            reconcile_from_merge_mining_event_with_nbits_table(
+                client,
+                event_id,
+                classifier,
+                None,
+                nbits_table,
+            )
+            .await?;
             repaired += 1;
         }
     }

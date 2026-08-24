@@ -175,6 +175,7 @@ async fn reconcile_historical_primary(
                     classifier,
                     preclassified,
                     PrimaryDiff::BulkImport,
+                    None,
                 )
                 .await
                 {
@@ -215,7 +216,7 @@ async fn reconcile_historical_primary(
             }
             lock_block_hash(&txn, parent_hash).await?;
             let before = load_block_cascade_state(&txn, parent_hash).await?;
-            rebuild_parent_read_model(&txn, parent_hash, None).await?;
+            rebuild_parent_read_model(&txn, parent_hash, None, None).await?;
             let after = load_block_cascade_state(&txn, parent_hash).await?;
             let changed_hashes = if before != after {
                 vec![parent_hash.to_vec()]
