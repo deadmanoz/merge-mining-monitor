@@ -89,8 +89,10 @@ for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
   Core's horizon did not move while the sparse snapshot was read, and that an
   advancing tip still descends from the prior shallow horizon. A changed shallow
   suffix reclassifies existing and pending orphan rows; expanded coverage revisits
-  pending rows only. The cache records that work durably,
-  so a failed pass is retried by the next refresh. Its timestamp coverage does
+  pending rows unless a new retarget boundary falls within existing timestamp
+  coverage, in which case it also rechecks existing orphans. The cache records
+  that work durably, so a failed pass is retried by the next refresh. Its
+  timestamp coverage does
   not regress when a valid newer Core header has an older timestamp. Historical
   imports retain that lock across candidate validation and
   the durable derived rebuild, so one import uses one table. Hathor and Elastos

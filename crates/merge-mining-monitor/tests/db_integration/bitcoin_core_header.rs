@@ -153,6 +153,20 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
         )
         .await?;
         assert!(!settled.reclassification_needed);
+
+        let boundary_overlaps_existing_coverage = replace_bitcoin_core_header_cache(
+            &mut client,
+            2016,
+            &[header(2016, 3, 99, 0x1c00_ffff)],
+            None,
+            &header(2116, 4, 101, 0x1c00_ffff),
+            false,
+        )
+        .await?;
+        assert!(
+            boundary_overlaps_existing_coverage.recheck_orphans,
+            "a new retarget boundary inside prior timestamp coverage can change existing verdicts"
+        );
         Ok(())
     })
 }

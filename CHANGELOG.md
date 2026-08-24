@@ -11,9 +11,10 @@ This changelog starts with the initial release.
   reconciliation refresh Core headers through the synced tip before classifying
   evidence, while live pollers and backbone follow refresh a stable Core
   snapshot on every tick. Historical imports retain one table through their
-  derived rebuild. Shallow replacements reclassify existing orphan rows while
-  expanded coverage revisits pending rows, with durable retry markers for an
-  interrupted sweep. An advancing horizon verifies the old shallow horizon
+  derived rebuild. Shallow replacements and timestamp-overlapping retarget
+  boundaries reclassify existing orphan rows while other expanded coverage
+  revisits pending rows, with durable retry markers for an interrupted sweep.
+  An advancing horizon verifies the old shallow horizon
   before retaining timestamp coverage. Retarget boundaries are marked final at
   100 blocks deep. Timestamp coverage does not regress when a valid later Core
   header has an older timestamp. The API remains Core-RPC-free by reading the

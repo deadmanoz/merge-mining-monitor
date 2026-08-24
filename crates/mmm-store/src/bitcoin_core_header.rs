@@ -30,7 +30,8 @@ pub struct BitcoinCoreHeaderCacheUpdate {
     /// coverage before the cache lock is released.
     pub reclassification_needed: bool,
     /// Existing orphan verdicts may have changed because Core replaced the
-    /// shallow suffix, so the retry must revisit them as well as pending rows.
+    /// shallow suffix or added an epoch boundary inside existing timestamp
+    /// coverage, so the retry must revisit them as well as pending rows.
     pub recheck_orphans: bool,
 }
 
@@ -214,18 +215,18 @@ pub async fn replace_bitcoin_core_header_cache(
         .chain(shallow_epoch)
         .chain(std::iter::once(horizon))
         .collect::<Vec<_>>();
-    let shallow_reorged = prior_horizon_reorged
-        || previous_shallow.iter().any(|previous| {
-            incoming
-                .iter()
-                .find(|incoming| incoming.height == previous.height)
-                .is_some_and(|incoming| *incoming != previous)
-        })
-        || previous_shallow
-            .iter()
-            .map(|header| header.height)
-            .max()
-            .is_some_and(|height| height > horizon.height);
+    let epoch_coverage_overlaps_prior_horizon = cache_epoch_coverage_overlaps_prior_horizon(
+        highest_final,
+        &previous_shallow,
+        &incoming,
+        previous_state.horizon_time,
+    );
+    let shallow_reorged = shallow_cache_reorged(
+        &previous_shallow,
+        &incoming,
+        horizon.height,
+        prior_horizon_reorged,
+    );
 
     transaction
         .execute("DELETE FROM bitcoin_core_header WHERE NOT is_final", &[])
@@ -250,6 +251,7 @@ pub async fn replace_bitcoin_core_header_cache(
         previous_horizon_height,
         horizon,
         shallow_reorged,
+        epoch_coverage_overlaps_prior_horizon,
     )
     .await?;
     transaction
@@ -257,6 +259,48 @@ pub async fn replace_bitcoin_core_header_cache(
         .await
         .context("commit Core-header-cache replacement")?;
     Ok(update)
+}
+
+fn cache_epoch_coverage_overlaps_prior_horizon(
+    highest_final: Option<i32>,
+    previous_shallow: &[BitcoinCoreHeader],
+    incoming: &[&BitcoinCoreHeader],
+    previous_horizon_time: i64,
+) -> bool {
+    let previous_epoch_height = highest_final
+        .into_iter()
+        .chain(
+            previous_shallow
+                .iter()
+                .filter(|header| header.height % 2016 == 0)
+                .map(|header| header.height),
+        )
+        .max();
+    incoming.iter().any(|header| {
+        header.height % 2016 == 0
+            && previous_epoch_height.is_none_or(|height| header.height > height)
+            && header.block_time <= previous_horizon_time
+    })
+}
+
+fn shallow_cache_reorged(
+    previous_shallow: &[BitcoinCoreHeader],
+    incoming: &[&BitcoinCoreHeader],
+    horizon_height: i32,
+    prior_horizon_reorged: bool,
+) -> bool {
+    prior_horizon_reorged
+        || previous_shallow.iter().any(|previous| {
+            incoming
+                .iter()
+                .find(|incoming| incoming.height == previous.height)
+                .is_some_and(|incoming| *incoming != previous)
+        })
+        || previous_shallow
+            .iter()
+            .map(|header| header.height)
+            .max()
+            .is_some_and(|height| height > horizon_height)
 }
 
 /// Load the highest cached Core observation so a later snapshot can verify
@@ -334,6 +378,7 @@ async fn update_bitcoin_core_header_cache_state(
     previous_horizon_height: Option<i32>,
     horizon: &BitcoinCoreHeader,
     shallow_reorged: bool,
+    epoch_coverage_overlaps_prior_horizon: bool,
 ) -> Result<BitcoinCoreHeaderCacheUpdate> {
     let current_observed_time: i64 = transaction
         .query_one("SELECT max(block_time) FROM bitcoin_core_header", &[])
@@ -346,7 +391,8 @@ async fn update_bitcoin_core_header_cache_state(
     } else {
         previous.horizon_time.max(current_observed_time)
     };
-    let recheck_orphans = previous.orphan_recheck_needed || shallow_reorged;
+    let recheck_orphans =
+        previous.orphan_recheck_needed || shallow_reorged || epoch_coverage_overlaps_prior_horizon;
     let reclassification_needed = previous.reclassification_needed
         || recheck_orphans
         || horizon_advanced
