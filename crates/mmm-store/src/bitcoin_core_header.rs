@@ -64,31 +64,43 @@ pub async fn record_bitcoin_core_header<C: GenericClient>(
     Ok(())
 }
 
-/// Replace the moving non-epoch horizon while retaining all epoch boundaries.
-pub async fn replace_bitcoin_core_header_horizon(
+/// Replace Core observations that are still shallow while retaining immutable,
+/// reorg-safe epoch boundaries. `final_epoch_height` is the latest boundary
+/// buried deeply enough to retain; later epoch rows and the moving horizon are
+/// deleted and re-read from Core in one transaction.
+pub async fn replace_bitcoin_core_header_cache(
     client: &mut Client,
-    header: &BitcoinCoreHeader,
+    final_epoch_height: i32,
+    final_epochs: &[BitcoinCoreHeader],
+    shallow_epoch: Option<&BitcoinCoreHeader>,
+    horizon: &BitcoinCoreHeader,
 ) -> Result<()> {
     let transaction = client
         .transaction()
         .await
-        .context("start Core-header-cache horizon replacement")?;
+        .context("start Core-header-cache replacement")?;
     transaction
         .batch_execute("LOCK TABLE bitcoin_core_header IN SHARE ROW EXCLUSIVE MODE")
         .await
-        .context("lock Core-header-cache horizon replacement")?;
+        .context("lock Core-header-cache replacement")?;
     transaction
         .execute(
-            "DELETE FROM bitcoin_core_header WHERE height % 2016 <> 0",
-            &[],
+            "DELETE FROM bitcoin_core_header WHERE height > $1",
+            &[&final_epoch_height],
         )
         .await
-        .context("remove superseded Core-header-cache horizon")?;
-    record_bitcoin_core_header(&transaction, header).await?;
+        .context("remove shallow Core-header-cache rows")?;
+    for header in final_epochs {
+        record_bitcoin_core_header(&transaction, header).await?;
+    }
+    if let Some(header) = shallow_epoch {
+        record_bitcoin_core_header(&transaction, header).await?;
+    }
+    record_bitcoin_core_header(&transaction, horizon).await?;
     transaction
         .commit()
         .await
-        .context("commit Core-header-cache horizon replacement")
+        .context("commit Core-header-cache replacement")
 }
 
 /// Load the cache when it has been initialized by a Core-backed command.
@@ -129,13 +141,18 @@ pub async fn load_bitcoin_core_nbits_table<C: GenericClient>(client: &C) -> Resu
         .context("Bitcoin Core header cache is empty")
 }
 
-pub async fn highest_bitcoin_core_epoch<C: GenericClient>(client: &C) -> Result<Option<i32>> {
+/// Highest cached epoch boundary at or below the caller's reorg-safe cutoff.
+pub async fn highest_bitcoin_core_epoch_at_or_below<C: GenericClient>(
+    client: &C,
+    height: i32,
+) -> Result<Option<i32>> {
     client
         .query_one(
-            "SELECT max(height) FROM bitcoin_core_header WHERE height % 2016 = 0",
-            &[],
+            "SELECT max(height) FROM bitcoin_core_header \
+             WHERE height % 2016 = 0 AND height <= $1",
+            &[&height],
         )
         .await
-        .context("load highest cached Bitcoin Core epoch")
+        .context("load highest reorg-safe cached Bitcoin Core epoch")
         .map(|row| row.get(0))
 }

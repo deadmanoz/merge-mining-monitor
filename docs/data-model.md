@@ -183,9 +183,10 @@ fails before altering the schema if legacy rows contain duplicate exact
 `docs/operations.md`.
 
 Migration `0010_add_bitcoin_core_header_cache.sql` adds the sparse Core-derived
-header cache. It retains every 2016-block difficulty boundary plus the current
-synced-tip horizon. nBits and timestamp classification read this cache, so the
-monitor has no compiled Bitcoin epoch dataset.
+header cache. It retains each difficulty boundary once it is 100 blocks behind
+the synced tip, while refreshing the current shallow epoch and moving horizon
+from Core on every command. nBits and timestamp classification read this cache,
+so the monitor has no compiled Bitcoin epoch dataset.
 
 After a migration has reached a persistent database, do not edit it. Add a new
 forward migration. Real database migration runs go through `just db-migrate-dev`

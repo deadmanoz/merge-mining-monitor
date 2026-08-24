@@ -329,7 +329,24 @@ async fn apply_hathor_verdict(
     built: BuiltCapture,
 ) -> Result<HathorHeightOutcome> {
     match built.verdict {
-        NbitsVerdict::AboveTableHorizon => Ok(HathorHeightOutcome::TableHorizonHold),
+        NbitsVerdict::AboveTableHorizon => {
+            let bip34_height = built
+                .bip34_height
+                .expect("AboveTableHorizon requires a parsed BIP34 height");
+            if far_future_against_fresh_tip(context.parent_classifier(), bip34_height).await {
+                revoke_current_and_superseded(
+                    client,
+                    context,
+                    prior,
+                    current_hash,
+                    HATHOR_REVOKE_NON_BTC,
+                )
+                .await?;
+                Ok(HathorHeightOutcome::NonBtcParentSkipped)
+            } else {
+                Ok(HathorHeightOutcome::TableHorizonHold)
+            }
+        }
         NbitsVerdict::Contaminant | NbitsVerdict::Indeterminate => {
             // A validated Hathor block with a non-BTC parent writes no event AND
             // revokes any active capture at this height, including a SAME-HASH row

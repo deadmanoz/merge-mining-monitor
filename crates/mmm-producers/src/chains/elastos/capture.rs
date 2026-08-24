@@ -164,7 +164,7 @@ enum ElastosEvaluation {
     /// Terminal skip, no DB mutation.
     Skip(ElastosHeightOutcome),
     /// The persisted Core cache cannot classify the parent yet.
-    TableHorizon,
+    TableHorizon { bip34_height: i32 },
     /// A non-BTC parent: revoke any prior active row at the height, then skip.
     RevokeNonBtc,
     /// A verified Valid BTC parent: write the event.
@@ -188,7 +188,14 @@ pub async fn process_elastos_height(
 
     match evaluate_elastos_block(height, &block, context.nbits_table()) {
         ElastosEvaluation::Skip(outcome) => Ok(outcome),
-        ElastosEvaluation::TableHorizon => Ok(ElastosHeightOutcome::TableHorizonHold),
+        ElastosEvaluation::TableHorizon { bip34_height } => {
+            if far_future_against_fresh_tip(context.parent_classifier(), bip34_height).await {
+                revoke_active_at_height(client, context, height, ELASTOS_REVOKE_NON_BTC).await?;
+                Ok(ElastosHeightOutcome::NonBtcParentSkipped)
+            } else {
+                Ok(ElastosHeightOutcome::TableHorizonHold)
+            }
+        }
         ElastosEvaluation::RevokeNonBtc => {
             revoke_active_at_height(client, context, height, ELASTOS_REVOKE_NON_BTC).await?;
             Ok(ElastosHeightOutcome::NonBtcParentSkipped)
@@ -317,7 +324,9 @@ fn classify_elastos_parent_nbits(
     // BCH/BSV contamination verdict against the persisted Core cache.
     let bip34_height = parse_bip34_height(&parsed.parent_coinbase_script);
     match nbits_table.classify_nbits(bip34_height, parsed.parent_header.bits()) {
-        NbitsVerdict::AboveTableHorizon => ElastosEvaluation::TableHorizon,
+        NbitsVerdict::AboveTableHorizon => ElastosEvaluation::TableHorizon {
+            bip34_height: bip34_height.expect("AboveTableHorizon requires a parsed BIP34 height"),
+        },
         NbitsVerdict::Contaminant | NbitsVerdict::Indeterminate => ElastosEvaluation::RevokeNonBtc,
         NbitsVerdict::Valid => ElastosEvaluation::Write {
             parsed: Box::new(parsed),
