@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier, ParentClassification};
 use mmm_capture::auxpow::{parse_bip34_height, parse_elastos_auxpow};
-use mmm_capture::capture::CHILD_PAYOUT_REGISTRY_SOURCE;
+use mmm_capture::capture::{CHILD_PAYOUT_REGISTRY_SOURCE, ELASTOS_REVOKE_NON_BTC};
+use mmm_capture::nbits_table::daa_epoch_start;
 use mmm_capture::source_registry::ELASTOS_SOURCE_CODE;
 use mmm_producers::chains::elastos::{
     ELASTOS_MINERINFO_NAMESPACE, ELASTOS_REWARD_ADDRESS_NAMESPACE, ELASTOS_RPC_MINERINFO_SOURCE,
@@ -80,6 +81,78 @@ async fn core_cache_match_writes_the_event_end_to_end() -> Result<()> {
         assert_eq!(
             active, 1,
             "a Core-cache-valid parent must write one active event"
+        );
+        Ok(())
+    })
+}
+
+#[tokio::test]
+async fn core_cache_nbits_mismatch_revokes_an_existing_event() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let block = writable_elastos_block_without_identity();
+        let height = block.height;
+        seed_core_cache_for_elastos(&client, &block).await?;
+        let context = ElastosCaptureContext::new_with_classifier(
+            &client,
+            ConfiguredParentClassifier::Fake(
+                FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(955_609),
+            ),
+        )
+        .await?;
+        let rpc = FixtureElastosRpc {
+            block: block.clone(),
+        };
+        assert_eq!(
+            process_elastos_height(&mut client, &rpc, &context, height).await?,
+            ElastosHeightOutcome::AuxpowWritten
+        );
+
+        let reconstructed = block.reconstruct()?;
+        let auxpow = reconstructed
+            .auxpow
+            .as_deref()
+            .context("Elastos fixture must carry AuxPoW")?;
+        let parsed = parse_elastos_auxpow(reconstructed.prefix_header, auxpow)?;
+        let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
+            .context("Elastos fixture must carry a BIP34 parent height")?;
+        let mismatching_bits = parsed.parent_header.bits().to_consensus() ^ 1;
+        client
+            .execute(
+                "UPDATE bitcoin_core_header SET bits = $1 WHERE height = $2",
+                &[
+                    &i64::from(mismatching_bits),
+                    &daa_epoch_start(parent_height),
+                ],
+            )
+            .await?;
+
+        assert_eq!(
+            process_elastos_height(&mut client, &rpc, &context, height).await?,
+            ElastosHeightOutcome::NonBtcParentSkipped
+        );
+        let row = client
+            .query_one(
+                "SELECT COUNT(*)::int8, \
+                        COUNT(*) FILTER (WHERE revoked_at IS NULL)::int8, \
+                        MAX(revocation_reason) \
+                 FROM merge_mining_event \
+                 WHERE source_id = $1 AND child_height = $2",
+                &[&context.source_id(), &height],
+            )
+            .await?;
+        assert_eq!(
+            row.get::<_, i64>(0),
+            1,
+            "reprocess must not write a replacement row"
+        );
+        assert_eq!(
+            row.get::<_, i64>(1),
+            0,
+            "mismatched Core nBits must revoke the event"
+        );
+        assert_eq!(
+            row.get::<_, Option<String>>(2).as_deref(),
+            Some(ELASTOS_REVOKE_NON_BTC)
         );
         Ok(())
     })

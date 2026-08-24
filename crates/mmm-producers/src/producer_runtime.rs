@@ -19,7 +19,6 @@ use tokio_postgres::Client;
 use tracing::warn;
 
 use mmm_bitcoin_core::ConfiguredParentClassifier;
-use mmm_capture::nbits_table::NbitsTable;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::{
     ReconcileReadModelConfig, is_reconcile_budget_exhausted, run_reconcile_read_model,
@@ -35,7 +34,6 @@ pub(crate) struct ProducerContext {
     pool_ids_by_slug: HashMap<String, i64>,
     source_id: i64,
     parent_classifier: ConfiguredParentClassifier,
-    nbits_table: NbitsTable,
 }
 
 impl ProducerContext {
@@ -54,12 +52,10 @@ impl ProducerContext {
     ) -> Result<Self> {
         let pool_ids_by_slug = upsert_pool_snapshot(client, resolver.snapshot()).await?;
         let source_id = get_source_id(client, source_code).await?;
-        let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
         Ok(Self {
             pool_ids_by_slug,
             source_id,
             parent_classifier,
-            nbits_table,
         })
     }
 
@@ -73,19 +69,10 @@ impl ProducerContext {
         source_id: i64,
         parent_classifier: ConfiguredParentClassifier,
     ) -> Self {
-        let nbits_table = NbitsTable::from_bitcoin_core_headers(&[
-            mmm_capture::nbits_table::BitcoinEpochHeader {
-                height: 0,
-                block_time: 1,
-                bits: 0x1d00_ffff,
-            },
-        ])
-        .expect("the minimal test Core header cache is valid");
         Self {
             pool_ids_by_slug,
             source_id,
             parent_classifier,
-            nbits_table,
         }
     }
 
@@ -101,14 +88,9 @@ impl ProducerContext {
         &self.parent_classifier
     }
 
-    pub(crate) fn nbits_table(&self) -> &NbitsTable {
-        &self.nbits_table
-    }
-
-    /// Refresh the in-memory view from the required Core node.
-    pub(crate) async fn refresh_nbits_table(&mut self, client: &mut Client) -> Result<()> {
-        self.nbits_table =
-            refresh_bitcoin_core_header_cache(client, &self.parent_classifier).await?;
+    /// Refresh the durable Core-header cache before capture resumes.
+    pub(crate) async fn refresh_core_header_cache(&self, client: &mut Client) -> Result<()> {
+        refresh_bitcoin_core_header_cache(client, &self.parent_classifier).await?;
         Ok(())
     }
 

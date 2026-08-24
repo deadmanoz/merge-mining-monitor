@@ -123,12 +123,8 @@ impl ElastosCaptureContext {
         self.base.parent_classifier()
     }
 
-    fn nbits_table(&self) -> &NbitsTable {
-        self.base.nbits_table()
-    }
-
-    async fn refresh_nbits_table(&mut self, client: &mut Client) -> Result<()> {
-        self.base.refresh_nbits_table(client).await
+    async fn refresh_core_header_cache(&self, client: &mut Client) -> Result<()> {
+        self.base.refresh_core_header_cache(client).await
     }
 }
 
@@ -186,12 +182,28 @@ pub async fn process_elastos_height(
         .await
         .with_context(|| format!("fetch Elastos block at height {height}"))?;
 
-    match evaluate_elastos_block(height, &block, context.nbits_table()) {
+    mmm_store::lock_bitcoin_core_header_cache_shared(client).await?;
+    let result = async {
+        let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
+        apply_elastos_evaluation(client, context, height, &block, &nbits_table).await
+    }
+    .await;
+    mmm_store::finish_bitcoin_core_header_cache_shared_operation(client, result).await
+}
+
+async fn apply_elastos_evaluation(
+    client: &mut Client,
+    context: &ElastosCaptureContext,
+    height: i32,
+    block: &ElastosBlock,
+    nbits_table: &NbitsTable,
+) -> Result<ElastosHeightOutcome> {
+    match evaluate_elastos_block(height, block, nbits_table) {
         ElastosEvaluation::Skip(outcome) => Ok(outcome),
         ElastosEvaluation::TableHorizon { bip34_height } => {
             match cached_horizon_gate(
                 context.parent_classifier(),
-                context.nbits_table().horizon_height(),
+                nbits_table.horizon_height(),
                 bip34_height,
             )
             .await
@@ -219,7 +231,7 @@ pub async fn process_elastos_height(
             if let Some(height_claim) = bip34_height {
                 match cached_horizon_gate(
                     context.parent_classifier(),
-                    context.nbits_table().horizon_height(),
+                    nbits_table.horizon_height(),
                     height_claim,
                 )
                 .await
@@ -231,11 +243,11 @@ pub async fn process_elastos_height(
                     }
                     HorizonGate::Hold => Ok(ElastosHeightOutcome::TableHorizonHold),
                     HorizonGate::WithinTip => {
-                        write_valid_capture(client, context, height, &block, &parsed, &recon).await
+                        write_valid_capture(client, context, height, block, &parsed, &recon).await
                     }
                 }
             } else {
-                write_valid_capture(client, context, height, &block, &parsed, &recon).await
+                write_valid_capture(client, context, height, block, &parsed, &recon).await
             }
         }
     }
@@ -520,7 +532,7 @@ impl ChainPoller for ElastosChainPoller {
 
     async fn refresh_core_cache(&mut self) -> Result<()> {
         self.context
-            .refresh_nbits_table(&mut self.state.client)
+            .refresh_core_header_cache(&mut self.state.client)
             .await?;
         Ok(())
     }
@@ -536,7 +548,7 @@ impl ChainPoller for ElastosChainPoller {
         if matches!(outcome, ElastosHeightOutcome::TableHorizonHold) {
             match self
                 .context
-                .refresh_nbits_table(&mut self.state.client)
+                .refresh_core_header_cache(&mut self.state.client)
                 .await
             {
                 Ok(()) => {

@@ -35,10 +35,10 @@ Most modules are flat single-job files; the four with internal structure
 re-export keeps that restructuring API-compatible for the six consumer crates,
 so a split is never a breaking change. Separately, a few helpers reachable only
 from tests are gated behind `#[cfg(any(test, feature = "test-support"))]`
-(`auxpow::auxpow_blob_summary`, the `nbits_table::classify_nbits_by_time` free
-function, `source_registry::{live, historical, partial, surveyed, catalogued}`):
-they are absent from the normal
-build intentionally and are not part of the consumer API.
+(`auxpow::auxpow_blob_summary`,
+`source_registry::{live, historical, partial, surveyed, catalogued}`): they
+are absent from the normal build intentionally and are not part of the consumer
+API.
 
 | Module | Responsibility |
 |--------|----------------|

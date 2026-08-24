@@ -104,7 +104,6 @@ async fn run_reclassify_unknown_parents_with_policy(
              with import-known-stales."
         );
     }
-    let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
     let mut changed = 0;
     let mut cursor: Option<(i64, i64)> = None;
     loop {
@@ -170,7 +169,7 @@ async fn run_reclassify_unknown_parents_with_policy(
                 event_id,
                 classifier,
                 preclassified,
-                Some(&nbits_table),
+                None,
             )
             .await?;
             // Count progress only on a genuine change: a canonical/stale promotion

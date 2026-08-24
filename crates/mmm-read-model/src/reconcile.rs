@@ -112,17 +112,12 @@ pub(crate) async fn reconcile_dependents_after_changes_with_budget(
     classifier: &ConfiguredParentClassifier,
     cascade_budget: usize,
 ) -> Result<()> {
-    let nbits_table = if classifier.is_enabled() {
-        Some(mmm_store::load_bitcoin_core_nbits_table(client).await?)
-    } else {
-        None
-    };
     reconcile_dependents_after_changes_with_budget_and_nbits_table(
         client,
         hashes,
         classifier,
         cascade_budget,
-        nbits_table.as_ref(),
+        None,
     )
     .await
 }
@@ -345,6 +340,9 @@ pub(crate) async fn reconcile_one_event_in_txn<C: GenericClient>(
     let initial_event = load_event(client, event_id).await?;
     if initial_event.skips_parent_read_model() {
         return Ok(Vec::new());
+    }
+    if classifier.is_enabled() && nbits_table.is_none() {
+        mmm_store::lock_bitcoin_core_header_cache_shared_in_transaction(client).await?;
     }
     if preclassified
         .as_ref()
@@ -674,6 +672,9 @@ pub(crate) async fn reconcile_one_block(
         .transaction()
         .await
         .context("begin block reconcile")?;
+    if classifier.is_enabled() && nbits_table.is_none() {
+        mmm_store::lock_bitcoin_core_header_cache_shared_in_transaction(&txn).await?;
+    }
     lock_block_hash(&txn, hash).await?;
     let before = load_block_cascade_state(&txn, hash).await?;
     let sh_before = crate::source_health_sql::snapshot_parent_contribution(&txn, hash).await?;

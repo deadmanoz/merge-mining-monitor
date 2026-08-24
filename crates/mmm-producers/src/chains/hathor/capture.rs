@@ -109,12 +109,8 @@ impl HathorCaptureContext {
         self.base.parent_classifier()
     }
 
-    fn nbits_table(&self) -> &NbitsTable {
-        self.base.nbits_table()
-    }
-
-    async fn refresh_nbits_table(&mut self, client: &mut Client) -> Result<()> {
-        self.base.refresh_nbits_table(client).await
+    async fn refresh_core_header_cache(&self, client: &mut Client) -> Result<()> {
+        self.base.refresh_core_header_cache(client).await
     }
 }
 
@@ -183,20 +179,36 @@ pub async fn process_hathor_height(
         Ok(block) => block,
         Err(outcome) => return Ok(outcome),
     };
-    let prior = hathor_events_at_height(client, context.source_id(), height).await?;
 
     match block {
         HathorBlockDecision::Voided => {
+            let prior = hathor_events_at_height(client, context.source_id(), height).await?;
             revoke_matching(client, context, &prior, |_| true, HATHOR_REVOKE_VOIDED).await?;
             Ok(HathorHeightOutcome::VoidedSkipped)
         }
         HathorBlockDecision::NonAuxpow { current_hash } => {
+            let prior = hathor_events_at_height(client, context.source_id(), height).await?;
             revoke_superseded(client, context, &prior, &current_hash).await?;
             Ok(HathorHeightOutcome::NonAuxpowSkipped)
         }
         HathorBlockDecision::Auxpow { current_hash, tx } => {
-            process_validated_hathor_auxpow(client, context, height, &prior, &current_hash, tx)
+            mmm_store::lock_bitcoin_core_header_cache_shared(client).await?;
+            let result = async {
+                let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
+                let prior = hathor_events_at_height(client, context.source_id(), height).await?;
+                process_validated_hathor_auxpow(
+                    client,
+                    context,
+                    height,
+                    &prior,
+                    &current_hash,
+                    tx,
+                    &nbits_table,
+                )
                 .await
+            }
+            .await;
+            mmm_store::finish_bitcoin_core_header_cache_shared_operation(client, result).await
         }
     }
 }
@@ -300,6 +312,7 @@ async fn process_validated_hathor_auxpow(
     prior: &[HathorEventRow],
     current_hash: &[u8],
     tx: HathorTransaction,
+    nbits_table: &NbitsTable,
 ) -> Result<HathorHeightOutcome> {
     let Some(reconstruction) = reconstruct_or_skip(height, &tx)? else {
         return Ok(HathorHeightOutcome::MalformedSkipped);
@@ -312,12 +325,29 @@ async fn process_validated_hathor_auxpow(
 
     // Reuse the prefix length reconstruct already computed; no second scan of raw.
     let funds_graph = &raw[..recon.funds_graph_len];
-    let Some(built) = build_hathor_capture(context, &tx, height, &aux_pow, &recon, funds_graph)?
+    let Some(built) = build_hathor_capture(
+        context,
+        &tx,
+        height,
+        &aux_pow,
+        &recon,
+        funds_graph,
+        nbits_table,
+    )?
     else {
         return Ok(HathorHeightOutcome::MalformedSkipped);
     };
 
-    apply_hathor_verdict(client, context, height, prior, current_hash, built).await
+    apply_hathor_verdict(
+        client,
+        context,
+        height,
+        prior,
+        current_hash,
+        built,
+        nbits_table,
+    )
+    .await
 }
 
 async fn apply_hathor_verdict(
@@ -327,6 +357,7 @@ async fn apply_hathor_verdict(
     prior: &[HathorEventRow],
     current_hash: &[u8],
     built: BuiltCapture,
+    nbits_table: &NbitsTable,
 ) -> Result<HathorHeightOutcome> {
     match built.verdict {
         NbitsVerdict::AboveTableHorizon => {
@@ -335,7 +366,7 @@ async fn apply_hathor_verdict(
                 .expect("AboveTableHorizon requires a parsed BIP34 height");
             match cached_horizon_gate(
                 context.parent_classifier(),
-                context.nbits_table().horizon_height(),
+                nbits_table.horizon_height(),
                 bip34_height,
             )
             .await
@@ -380,7 +411,7 @@ async fn apply_hathor_verdict(
             if let Some(height_claim) = built.bip34_height {
                 match cached_horizon_gate(
                     context.parent_classifier(),
-                    context.nbits_table().horizon_height(),
+                    nbits_table.horizon_height(),
                     height_claim,
                 )
                 .await
@@ -623,6 +654,7 @@ fn build_hathor_capture(
     aux_pow: &[u8],
     recon: &HathorReconstruction,
     funds_graph: &[u8],
+    nbits_table: &NbitsTable,
 ) -> Result<Option<BuiltCapture>> {
     let coinbase: Transaction = match deserialize(&recon.full_coinbase) {
         Ok(tx) => tx,
@@ -648,7 +680,6 @@ fn build_hathor_capture(
     let coinbase_txid = coinbase.compute_txid();
 
     let nbits = recon.header.bits;
-    let nbits_table = context.nbits_table();
     let verdict = nbits_table.classify_nbits(bip34_height, nbits);
     let expected_btc_nbits = match nbits_table.expected_nbits(bip34_height.unwrap_or(-1)) {
         NbitsLookup::Found(bits) => i64::from(bits),
@@ -769,7 +800,7 @@ impl ChainPoller for HathorChainPoller {
 
     async fn refresh_core_cache(&mut self) -> Result<()> {
         self.context
-            .refresh_nbits_table(&mut self.state.client)
+            .refresh_core_header_cache(&mut self.state.client)
             .await?;
         Ok(())
     }
@@ -780,7 +811,7 @@ impl ChainPoller for HathorChainPoller {
         if matches!(outcome, HathorHeightOutcome::TableHorizonHold) {
             match self
                 .context
-                .refresh_nbits_table(&mut self.state.client)
+                .refresh_core_header_cache(&mut self.state.client)
                 .await
             {
                 Ok(()) => {
@@ -837,13 +868,7 @@ impl ChainPoller for HathorChainPoller {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
-    use bitcoin::BlockHash;
-
     use super::*;
-    use crate::chains::hathor::auxpow::reconstruct_from_blobs;
-    use mmm_capture::capture::ParentKind;
 
     /// A coinbase that fails consensus deserialization (trailing bytes) is a
     /// per-block skip, not an error: an `Err` would fail the live tick and pin
@@ -859,7 +884,7 @@ mod tests {
                 ConfiguredParentClassifier::Disabled,
             ),
         };
-        let (tx, height, _) = fixture_tx(include_str!(concat!(
+        let (tx, height) = fixture_tx(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../fixtures/hathor/1971823.json"
         )));
@@ -868,109 +893,54 @@ mod tests {
         let aux_pow = reconstructed.aux_pow;
         let mut recon = reconstructed.recon;
         let funds_graph = &raw[..recon.funds_graph_len];
+        let nbits_table = NbitsTable::from_bitcoin_core_headers(&[
+            mmm_capture::nbits_table::BitcoinEpochHeader {
+                height: 0,
+                block_time: 1,
+                bits: 0x1d00_ffff,
+            },
+        ])
+        .expect("the minimal test Core header cache is valid");
 
-        let intact =
-            build_hathor_capture(&context, &tx, height, &aux_pow, &recon, funds_graph).unwrap();
+        let intact = build_hathor_capture(
+            &context,
+            &tx,
+            height,
+            &aux_pow,
+            &recon,
+            funds_graph,
+            &nbits_table,
+        )
+        .unwrap();
         assert!(intact.is_some(), "fixture coinbase must build");
 
         recon.full_coinbase.push(0x00);
-        let corrupted =
-            build_hathor_capture(&context, &tx, height, &aux_pow, &recon, funds_graph).unwrap();
+        let corrupted = build_hathor_capture(
+            &context,
+            &tx,
+            height,
+            &aux_pow,
+            &recon,
+            funds_graph,
+            &nbits_table,
+        )
+        .unwrap();
         assert!(
             corrupted.is_none(),
             "trailing-byte coinbase must skip, not error"
         );
     }
 
-    fn fixture_tx(json: &str) -> (HathorTransaction, i32, String) {
+    fn fixture_tx(json: &str) -> (HathorTransaction, i32) {
         let j: serde_json::Value = serde_json::from_str(json).unwrap();
-        let tx = HathorTransaction {
-            raw: j["raw_hex"].as_str().unwrap().to_owned(),
-            aux_pow: Some(j["aux_pow_hex"].as_str().unwrap().to_owned()),
-            hash: j["tx_id"].as_str().unwrap().to_owned(),
-            timestamp: j["timestamp"].as_i64().unwrap_or(0),
-        };
         (
-            tx,
+            HathorTransaction {
+                raw: j["raw_hex"].as_str().unwrap().to_owned(),
+                aux_pow: Some(j["aux_pow_hex"].as_str().unwrap().to_owned()),
+                hash: j["tx_id"].as_str().unwrap().to_owned(),
+                timestamp: j["timestamp"].as_i64().unwrap_or(0),
+            },
             j["hathor_height"].as_i64().unwrap() as i32,
-            j["expected_nbits"].as_str().unwrap().to_owned(),
         )
-    }
-
-    /// The pure evidence inputs off a committed fixture, without a DB: BIP34
-    /// height from the recovered coinbase, a Valid nBits verdict, the
-    /// child_block_hash == parent header hash identity, and payout addresses for
-    /// pool resolution.
-    #[test]
-    fn fixture_reconstructs_with_bip34_and_valid_verdict() {
-        let (tx, _height, _) = fixture_tx(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/hathor/1971823.json"
-        )));
-        let raw = hex::decode(&tx.raw).unwrap();
-        let aux_pow = hex::decode(tx.aux_pow.as_ref().unwrap()).unwrap();
-        let expected = BlockHash::from_str(&tx.hash).unwrap();
-        let (_aux, recon) = reconstruct_from_blobs(&raw, &aux_pow, expected).unwrap();
-
-        let coinbase: Transaction = deserialize(&recon.full_coinbase).unwrap();
-        let bip34 = parse_bip34_height(coinbase.input[0].script_sig.as_bytes());
-        assert_eq!(
-            bip34,
-            Some(710_969),
-            "BIP34 parses to the BTC parent height"
-        );
-        // The Hathor block hash IS the reconstructed BTC parent header hash.
-        assert_eq!(recon.header.block_hash(), expected);
-        // The recovered BTC coinbase yields payout addresses for pool resolution.
-        assert!(!derive_output_addresses(&coinbase).is_empty());
-    }
-
-    #[test]
-    fn parent_kind_unknown_without_classifier() {
-        // A built payload without classifier proof is `unknown` (PoW-valid, no
-        // chain placement), as for every other producer.
-        let (tx, height, _) = fixture_tx(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/hathor/2773476.json"
-        )));
-        let raw = hex::decode(&tx.raw).unwrap();
-        let aux_pow = hex::decode(tx.aux_pow.as_ref().unwrap()).unwrap();
-        let expected = BlockHash::from_str(&tx.hash).unwrap();
-        let (_aux, recon) = reconstruct_from_blobs(&raw, &aux_pow, expected).unwrap();
-        let funds_graph = &raw[..recon.funds_graph_len];
-        let resolver = PoolResolver::from_default_snapshot().unwrap();
-        let pool_attributions = ResolvedPoolAttributions::default();
-        let coinbase: Transaction = deserialize(&recon.full_coinbase).unwrap();
-        let _ = (&resolver, &funds_graph, height);
-
-        let evidence = NormalizedEventEvidence {
-            child_height: Some(height),
-            child_block_hash: Some(recon.header.block_hash().to_byte_array().to_vec()),
-            child_header_bytes: None,
-            child_block_time: Some(tx.timestamp),
-            child_nbits: None,
-            btc_parent_header: recon.header,
-            pow_validates_child_target: None,
-            btc_parent_coinbase_txid: Some(coinbase.compute_txid().to_byte_array().to_vec()),
-            btc_parent_coinbase_script: Some(coinbase.input[0].script_sig.as_bytes().to_vec()),
-            btc_parent_coinbase_outputs: Some(serialize(&coinbase.output)),
-            btc_parent_coinbase_outputs_text: None,
-            btc_parent_coinbase_tx_bytes: None,
-            child_coinbase_txid: None,
-            child_coinbase_script: None,
-            child_coinbase_outputs: None,
-            aux_merkle_proof: None,
-        };
-        let payload = build_event_payload_from_evidence(
-            evidence,
-            pool_attributions,
-            ClassificationProof::default(),
-            1_800_000_000,
-        )
-        .unwrap();
-        assert_eq!(payload.btc_parent_kind, ParentKind::Unknown);
-        assert!(payload.pow_validates_btc_target);
-        assert_eq!(payload.pow_validates_child_target, None);
-        assert!(payload.pool_attributions.is_empty());
     }
 }

@@ -192,7 +192,10 @@ timestamp classification read this cache, so the monitor has no compiled
 Bitcoin epoch dataset. A strict BIP34 claim above the cached Core horizon stays
 pending, even when the surrounding difficulty epoch is cached. The first cache
 population conservatively revisits existing orphan classifications that could
-have been derived before the cache existed.
+have been derived before the cache existed. A cache refresh holds the exclusive
+lock while it replaces headers and sweeps derived rows; each ordinary
+classification holds the shared lock for its transaction, so the sweep cannot
+acknowledge a cache generation while an older verdict is still able to commit.
 
 After a migration has reached a persistent database, do not edit it. Add a new
 forward migration. Real database migration runs go through `just db-migrate-dev`

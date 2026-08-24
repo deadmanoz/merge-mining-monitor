@@ -339,17 +339,12 @@ pub async fn reconcile_from_merge_mining_event(
     classifier: &ConfiguredParentClassifier,
     preclassified: Option<ParentClassification>,
 ) -> Result<ReconcileStats> {
-    let nbits_table = if classifier.is_enabled() {
-        Some(mmm_store::load_bitcoin_core_nbits_table(client).await?)
-    } else {
-        None
-    };
     reconcile_from_merge_mining_event_with_nbits_table(
         client,
         event_id,
         classifier,
         preclassified,
-        nbits_table.as_ref(),
+        None,
     )
     .await
 }
@@ -508,17 +503,11 @@ pub async fn run_reconcile_read_model(
         );
     }
 
-    let nbits_table = if classifier.is_enabled() {
-        Some(mmm_store::load_bitcoin_core_nbits_table(client).await?)
-    } else {
-        None
-    };
     if !config.missing_only {
-        return run_reconcile_all_read_model(client, classifier, &config, nbits_table.as_ref())
-            .await;
+        return run_reconcile_all_read_model(client, classifier, &config, None).await;
     }
 
-    run_reconcile_missing_read_model(client, classifier, &config, nbits_table.as_ref()).await
+    run_reconcile_missing_read_model(client, classifier, &config, None).await
 }
 
 /// `--missing-only` mode: repeatedly scan for missing/stale derived rows until

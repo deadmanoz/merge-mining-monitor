@@ -23,7 +23,9 @@ This changelog starts with the initial release.
   coverage are read from one database snapshot. The `--allow-unclassified`
   import bypass is removed. A strict BIP34 claim above Core's cached horizon
   remains pending even when its difficulty epoch is cached. The first Core-cache
-  population conservatively revisits existing orphan classifications.
+  population conservatively revisits existing orphan classifications. Cache
+  refresh waits for an in-flight classification transaction, so its completed
+  sweep cannot miss a later commit made from an old cache snapshot.
 
 - Atomically repair existing strict/weak classifications with an
   `import-known-stales` membership update.

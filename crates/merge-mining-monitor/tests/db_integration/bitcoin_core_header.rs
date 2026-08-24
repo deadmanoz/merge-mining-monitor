@@ -13,7 +13,8 @@ use mmm_store::{
     BitcoinCoreHeader, complete_bitcoin_core_header_cache_reclassification,
     finish_bitcoin_core_header_cache_operation, load_bitcoin_core_nbits_table,
     load_bitcoin_core_nbits_table_if_present, lock_bitcoin_core_header_cache,
-    record_bitcoin_core_header, replace_bitcoin_core_header_cache, upsert_merge_mining_event,
+    lock_bitcoin_core_header_cache_shared_in_transaction, record_bitcoin_core_header,
+    replace_bitcoin_core_header_cache, upsert_merge_mining_event,
 };
 
 use crate::support::db::connect_to_schema;
@@ -247,6 +248,31 @@ async fn core_header_cache_refresh_lock_serializes_sessions() -> Result<()> {
         );
 
         finish_bitcoin_core_header_cache_operation(&client, Ok(())).await?;
+        tokio::time::timeout(std::time::Duration::from_secs(1), &mut waiter)
+            .await
+            .expect("waiting Core-cache refresh did not resume")??;
+        Ok(())
+    })
+}
+
+#[tokio::test]
+async fn core_header_cache_refresh_waits_for_an_in_flight_classification() -> Result<()> {
+    crate::run_mut_db_test!(client, schema, {
+        let classification = client.transaction().await?;
+        lock_bitcoin_core_header_cache_shared_in_transaction(&classification).await?;
+        let waiting_client = connect_to_schema(&schema).await?;
+        let mut waiter = tokio::spawn(async move {
+            lock_bitcoin_core_header_cache(&waiting_client).await?;
+            finish_bitcoin_core_header_cache_operation(&waiting_client, Ok(())).await
+        });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), &mut waiter)
+                .await
+                .is_err(),
+            "a cache refresh must wait until a classification transaction commits"
+        );
+
+        classification.commit().await?;
         tokio::time::timeout(std::time::Duration::from_secs(1), &mut waiter)
             .await
             .expect("waiting Core-cache refresh did not resume")??;

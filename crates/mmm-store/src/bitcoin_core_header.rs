@@ -57,17 +57,55 @@ pub async fn lock_bitcoin_core_header_cache(client: &Client) -> Result<()> {
     Ok(())
 }
 
-/// Release the session lock acquired by [`lock_bitcoin_core_header_cache`].
-async fn unlock_bitcoin_core_header_cache(client: &Client) -> Result<()> {
-    let unlocked: bool = client
+/// Hold a shared cache lock across a classification and its dependent write.
+///
+/// A refresh holds the exclusive counterpart through its replacement and
+/// reclassification sweep. Readers therefore cannot commit a verdict from an
+/// old cache after that sweep has acknowledged the new one.
+pub async fn lock_bitcoin_core_header_cache_shared(client: &Client) -> Result<()> {
+    client
         .query_one(
-            "SELECT pg_advisory_unlock($1)",
+            "SELECT pg_advisory_lock_shared($1)",
             &[&BITCOIN_CORE_HEADER_CACHE_LOCK],
         )
         .await
-        .context("unlock Core-header-cache refresh")?
+        .context("lock Core-header-cache classification")?;
+    Ok(())
+}
+
+/// Hold the shared cache lock until the caller's transaction completes.
+///
+/// This is deliberately generic so read-model transactions can acquire it
+/// without exposing their concrete transaction type to the store crate.
+pub async fn lock_bitcoin_core_header_cache_shared_in_transaction<C: GenericClient>(
+    client: &C,
+) -> Result<()> {
+    client
+        .query_one(
+            "SELECT pg_advisory_xact_lock_shared($1)",
+            &[&BITCOIN_CORE_HEADER_CACHE_LOCK],
+        )
+        .await
+        .context("lock Core-header-cache classification transaction")?;
+    Ok(())
+}
+
+/// Release the session lock acquired by [`lock_bitcoin_core_header_cache`].
+async fn unlock_bitcoin_core_header_cache(client: &Client, shared: bool) -> Result<()> {
+    let function = if shared {
+        "pg_advisory_unlock_shared"
+    } else {
+        "pg_advisory_unlock"
+    };
+    let unlocked: bool = client
+        .query_one(
+            &format!("SELECT {function}($1)"),
+            &[&BITCOIN_CORE_HEADER_CACHE_LOCK],
+        )
+        .await
+        .context("unlock Core-header-cache operation")?
         .get(0);
-    ensure!(unlocked, "Core-header-cache refresh lock was not held");
+    ensure!(unlocked, "Core-header-cache operation lock was not held");
     Ok(())
 }
 
@@ -80,7 +118,23 @@ pub async fn finish_bitcoin_core_header_cache_operation<T>(
     client: &Client,
     result: Result<T>,
 ) -> Result<T> {
-    let unlock_result = unlock_bitcoin_core_header_cache(client).await;
+    finish_bitcoin_core_header_cache_lock_operation(client, result, false).await
+}
+
+/// Complete an operation that holds the shared Core-header-cache lock.
+pub async fn finish_bitcoin_core_header_cache_shared_operation<T>(
+    client: &Client,
+    result: Result<T>,
+) -> Result<T> {
+    finish_bitcoin_core_header_cache_lock_operation(client, result, true).await
+}
+
+async fn finish_bitcoin_core_header_cache_lock_operation<T>(
+    client: &Client,
+    result: Result<T>,
+    shared: bool,
+) -> Result<T> {
+    let unlock_result = unlock_bitcoin_core_header_cache(client, shared).await;
     match (result, unlock_result) {
         (Ok(value), Ok(())) => Ok(value),
         (Err(error), Ok(())) => Err(error),
