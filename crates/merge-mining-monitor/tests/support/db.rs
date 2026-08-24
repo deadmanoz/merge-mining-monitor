@@ -24,7 +24,7 @@
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use mmm_pg::{PgConfig, connect};
 use mmm_store::{BitcoinCoreHeader, record_bitcoin_core_header};
 use tokio_postgres::Client;
@@ -180,6 +180,10 @@ pub async fn seed_bitcoin_core_header_cache_through(
     horizon_time: i64,
     horizon_bits: u32,
 ) -> Result<()> {
+    ensure!(
+        horizon_height >= mmm_capture::nbits_table::DAA_EPOCH_INTERVAL,
+        "synthetic Core cache horizon must be at least one difficulty epoch"
+    );
     let epoch_height = mmm_capture::nbits_table::daa_epoch_start(horizon_height);
     for height in (0..=epoch_height).step_by(mmm_capture::nbits_table::DAA_EPOCH_INTERVAL as usize)
     {

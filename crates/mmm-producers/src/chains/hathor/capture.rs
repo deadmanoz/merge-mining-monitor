@@ -112,6 +112,10 @@ impl HathorCaptureContext {
     fn nbits_table(&self) -> &NbitsTable {
         self.base.nbits_table()
     }
+
+    async fn refresh_nbits_table(&mut self, client: &mut Client) -> Result<()> {
+        self.base.refresh_nbits_table(client).await
+    }
 }
 
 /// Per-height capture outcome. The poller maps the `*Hold` variants to
@@ -724,8 +728,30 @@ impl ChainPoller for HathorChainPoller {
     }
 
     async fn process_height(&mut self, height: i32) -> Result<HeightProgress> {
-        let outcome =
+        let mut outcome =
             process_hathor_height(&mut self.state.client, &self.rpc, &self.context, height).await?;
+        if matches!(outcome, HathorHeightOutcome::TableHorizonHold) {
+            match self
+                .context
+                .refresh_nbits_table(&mut self.state.client)
+                .await
+            {
+                Ok(()) => {
+                    outcome = process_hathor_height(
+                        &mut self.state.client,
+                        &self.rpc,
+                        &self.context,
+                        height,
+                    )
+                    .await?;
+                }
+                Err(error) => warn!(
+                    height,
+                    error = %error,
+                    "failed to refresh the Core header cache after a Hathor horizon hold"
+                ),
+            }
+        }
         Ok(match outcome {
             HathorHeightOutcome::TableHorizonHold => HeightProgress::Abort,
             HathorHeightOutcome::AbsentHold | HathorHeightOutcome::TransientHold => {

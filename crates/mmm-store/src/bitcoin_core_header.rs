@@ -91,7 +91,13 @@ pub async fn replace_bitcoin_core_header_horizon(
         .context("commit Core-header-cache horizon replacement")
 }
 
-pub async fn load_bitcoin_core_nbits_table<C: GenericClient>(client: &C) -> Result<NbitsTable> {
+/// Load the cache when it has been initialized by a Core-backed command.
+///
+/// Read-only API handlers use `None` to degrade optional placement rather than
+/// failing during the migration-to-first-refresh interval.
+pub async fn load_bitcoin_core_nbits_table_if_present<C: GenericClient>(
+    client: &C,
+) -> Result<Option<NbitsTable>> {
     let rows = client
         .query(
             "SELECT height, block_time, bits FROM bitcoin_core_header ORDER BY height",
@@ -110,7 +116,17 @@ pub async fn load_bitcoin_core_nbits_table<C: GenericClient>(client: &C) -> Resu
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    NbitsTable::from_bitcoin_core_headers(&headers)
+    if headers.is_empty() {
+        return Ok(None);
+    }
+    NbitsTable::from_bitcoin_core_headers(&headers).map(Some)
+}
+
+/// Load the initialized cache for a command that requires nBits classification.
+pub async fn load_bitcoin_core_nbits_table<C: GenericClient>(client: &C) -> Result<NbitsTable> {
+    load_bitcoin_core_nbits_table_if_present(client)
+        .await?
+        .context("Bitcoin Core header cache is empty")
 }
 
 pub async fn highest_bitcoin_core_epoch<C: GenericClient>(client: &C) -> Result<Option<i32>> {

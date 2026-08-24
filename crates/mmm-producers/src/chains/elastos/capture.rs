@@ -117,14 +117,18 @@ impl ElastosCaptureContext {
         self.base.source_id()
     }
 
-    /// The configured BTC parent classifier, shared with `capture_in_txn` and the
-    /// beyond-horizon nBits resolver (`chains::nbits_horizon`).
+    /// The configured BTC parent classifier, shared with `capture_in_txn` and
+    /// the fresh-tip guard (`chains::nbits_horizon`).
     pub fn parent_classifier(&self) -> &ConfiguredParentClassifier {
         self.base.parent_classifier()
     }
 
     fn nbits_table(&self) -> &NbitsTable {
         self.base.nbits_table()
+    }
+
+    async fn refresh_nbits_table(&mut self, client: &mut Client) -> Result<()> {
+        self.base.refresh_nbits_table(client).await
     }
 }
 
@@ -487,9 +491,31 @@ impl ChainPoller for ElastosChainPoller {
     /// (write, revoke, any skip) advances. Elastos is monotonic, so there is no
     /// transient-hold/retry path.
     async fn process_height(&mut self, height: i32) -> Result<HeightProgress> {
-        let outcome =
+        let mut outcome =
             process_elastos_height(&mut self.state.client, &self.rpc, &self.context, height)
                 .await?;
+        if matches!(outcome, ElastosHeightOutcome::TableHorizonHold) {
+            match self
+                .context
+                .refresh_nbits_table(&mut self.state.client)
+                .await
+            {
+                Ok(()) => {
+                    outcome = process_elastos_height(
+                        &mut self.state.client,
+                        &self.rpc,
+                        &self.context,
+                        height,
+                    )
+                    .await?;
+                }
+                Err(error) => warn!(
+                    height,
+                    error = %error,
+                    "failed to refresh the Core header cache after an Elastos horizon hold"
+                ),
+            }
+        }
         Ok(match outcome {
             ElastosHeightOutcome::TableHorizonHold => HeightProgress::Abort,
             _ => HeightProgress::Advance,

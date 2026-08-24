@@ -7,8 +7,8 @@ use mmm_bitcoin_core::{
 use mmm_capture::nbits_table::NbitsLookup;
 use mmm_producers::refresh_bitcoin_core_header_cache;
 use mmm_store::{
-    BitcoinCoreHeader, load_bitcoin_core_nbits_table, record_bitcoin_core_header,
-    replace_bitcoin_core_header_horizon,
+    BitcoinCoreHeader, load_bitcoin_core_nbits_table, load_bitcoin_core_nbits_table_if_present,
+    record_bitcoin_core_header, replace_bitcoin_core_header_horizon,
 };
 
 fn header(height: i32, hash_byte: u8, block_time: i64, bits: u32) -> BitcoinCoreHeader {
@@ -66,6 +66,11 @@ async fn refresh_reads_epoch_boundaries_and_a_confirmed_horizon_from_core() -> R
         client
             .execute("DELETE FROM bitcoin_core_header", &[])
             .await?;
+        assert!(
+            load_bitcoin_core_nbits_table_if_present(&client)
+                .await?
+                .is_none()
+        );
         let classifier = ConfiguredParentClassifier::Fake(
             FakeParentClassifier::new(ParentClassification::unknown(
                 &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,

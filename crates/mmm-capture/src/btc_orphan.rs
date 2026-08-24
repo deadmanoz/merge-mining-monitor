@@ -64,6 +64,14 @@ pub fn classify_btc_orphan_with(
     strict_height: Option<i32>,
 ) -> (BtcOrphanVerdict, &'static str) {
     let strict_height = strict_height.filter(|&height| height >= BIP34_HEIGHT);
+    if let Some(height) = strict_height
+        && matches!(
+            nbits.expected_nbits(height),
+            crate::nbits_table::NbitsLookup::AboveTable
+        )
+    {
+        return (BtcOrphanVerdict::Pending, "above_nbits_height_horizon");
+    }
     if header_time > nbits.horizon_time() {
         return (BtcOrphanVerdict::Pending, "above_nbits_time_horizon");
     }
@@ -143,5 +151,17 @@ mod tests {
             .0,
             BtcOrphanVerdict::Excluded
         );
+    }
+
+    #[test]
+    fn strict_height_above_the_cache_horizon_stays_pending() {
+        let (verdict, reason) = classify_btc_orphan_with(
+            &table(),
+            1_475,
+            CompactTarget::from_consensus(0x1d00_aaaa),
+            Some(500_000),
+        );
+        assert_eq!(verdict, BtcOrphanVerdict::Pending);
+        assert_eq!(reason, "above_nbits_height_horizon");
     }
 }

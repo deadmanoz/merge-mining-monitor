@@ -123,7 +123,7 @@ fn hathor_backfill_effect(
         // hold means the command's fresh Core cache did not cover the evidence.
         // Transient/absent holds fail by default, with an explicit skip override.
         HathorHeightOutcome::TableHorizonHold => bail!(
-            "Hathor backfill hit the persisted Core-cache horizon at height {height}; refresh the Bitcoin Core cache before backfilling further"
+            "Hathor backfill hit the persisted Core-cache horizon at height {height}; ensure Bitcoin Core is fully synced before retrying"
         ),
         HathorHeightOutcome::AbsentHold | HathorHeightOutcome::TransientHold => {
             if skip_holds {

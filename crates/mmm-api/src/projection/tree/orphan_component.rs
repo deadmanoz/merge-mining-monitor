@@ -39,7 +39,14 @@ pub(super) async fn anchor_placement_height(
     {
         return Ok(Some((height, false)));
     }
-    let table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
+    let table = match mmm_store::load_bitcoin_core_nbits_table_if_present(client).await {
+        Ok(Some(table)) => table,
+        Ok(None) => return Ok(None),
+        Err(error) => {
+            warn!(error = %error, "Core header cache unavailable for orphan placement");
+            return Ok(None);
+        }
+    };
     // Above the persisted Core cache horizon the table genuinely cannot place the
     // orphan (the same condition that makes it pending, not excluded). Leave it
     // unplaced (the caller falls back to the flat strip) rather than guessing it
@@ -52,10 +59,10 @@ pub(super) async fn anchor_placement_height(
     if let Some(height) = table.epoch_height_for_time(orphan.header_time) {
         return Ok(Some((height, true)));
     }
-    // Defensive fallback ONLY for a timestamp BELOW the committed table's first
-    // epoch (a degenerate pre-2009 time; above-horizon already returned None): the
-    // local nearest-time canonical block, if any. Sparse local rows make this a
-    // last resort, not the primary weak source.
+    // Defensive fallback ONLY for a timestamp BELOW the Core cache's first epoch
+    // (a degenerate pre-2009 time; above-horizon already returned None): the local
+    // nearest-time canonical block, if any. Sparse local rows make this a last
+    // resort, not the primary weak source.
     let row = client
         .query_opt(
             "SELECT btc_height FROM block \

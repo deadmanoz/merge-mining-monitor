@@ -478,7 +478,7 @@ pub(crate) async fn lock_payload_parent_read_model_in_txn<C: GenericClient>(
 /// a change only on a real transition (promotion off `unknown`, or a different
 /// orphan class than the pre-pass value captured at scan time), so `count=0` keeps
 /// meaning "nothing changed" across repeated rechecks. Above-horizon pending
-/// verdicts stay NULL and remain eligible for a later table regen.
+/// verdicts stay NULL and remain eligible for a later Core-cache refresh.
 pub async fn run_reclassify_unknown_parents(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -510,7 +510,7 @@ pub async fn run_reclassify_unknown_parents(
         // non-NULL `block.btc_orphan_class`. Without the block join those orphan
         // rows would be rescanned forever. `--recheck-orphans` ($4) re-includes
         // them. Rows still pending (NULL after an above-horizon verdict) stay
-        // eligible so a later table regen picks them up.
+        // eligible so a later Core-cache refresh picks them up.
         let rows = client
             .query(
                 "SELECT id, sort_child_height, before_class \
