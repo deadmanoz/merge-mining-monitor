@@ -21,7 +21,8 @@ This changelog starts with the initial release.
   persisted cache. A cache-driven recheck requires fresh Core evidence, so an
   RPC failure leaves its durable retry marker set. Cache headers and timestamp
   coverage are read from one database snapshot. The `--allow-unclassified`
-  import bypass is removed.
+  import bypass is removed. A strict BIP34 claim above Core's cached horizon
+  remains pending even when its difficulty epoch is cached.
 
 - Atomically repair existing strict/weak classifications with an
   `import-known-stales` membership update.

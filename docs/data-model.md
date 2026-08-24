@@ -189,7 +189,8 @@ and moving horizon are refreshed from Core on every command. The state retains
 a safe timestamp-coverage high-water mark for valid non-monotonic header times
 and separately records pending-coverage and full-orphan-recheck retries. nBits and
 timestamp classification read this cache, so the monitor has no compiled
-Bitcoin epoch dataset.
+Bitcoin epoch dataset. A strict BIP34 claim above the cached Core horizon stays
+pending, even when the surrounding difficulty epoch is cached.
 
 After a migration has reached a persistent database, do not edit it. Add a new
 forward migration. Real database migration runs go through `just db-migrate-dev`
