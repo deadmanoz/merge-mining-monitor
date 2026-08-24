@@ -14,9 +14,10 @@ just test
 
 Copy `.env.example` to `.env` and adjust endpoints before running live pollers
 or Bitcoin Core classification. A synced Bitcoin Core node is required for every
-capture, import, and reconciliation command; each refreshes the sparse
-`bitcoin_core_header` cache before work begins. `serve` reads that cache from
-Postgres and makes no Core RPC calls.
+capture, import, and reconciliation command, including database-only
+maintenance modes. Each refreshes the sparse `bitcoin_core_header` cache through
+the current synced tip before work begins. `serve` reads that cache from Postgres
+and makes no Core RPC calls.
 
 ## Serving
 

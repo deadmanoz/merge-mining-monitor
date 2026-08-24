@@ -172,7 +172,7 @@ async fn seed_minimum_bitcoin_core_header_cache(client: &Client) -> Result<()> {
 }
 
 /// Seed a synthetic Core-derived cache through one fixture parent. The helper
-/// models Core's sparse epoch and confirmed-horizon rows without carrying any
+/// models Core's sparse epoch and current-horizon rows without carrying any
 /// production chain data in the test harness.
 pub async fn seed_bitcoin_core_header_cache_through(
     client: &Client,

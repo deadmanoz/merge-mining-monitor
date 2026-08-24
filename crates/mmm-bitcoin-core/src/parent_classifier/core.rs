@@ -218,7 +218,6 @@ impl BitcoinCoreParentClassifier {
     }
 
     /// Resolve a canonical header by height without fetching its block body.
-    /// Callers decide when the result is sufficiently confirmed to persist.
     pub async fn canonical_header(&self, height: i32) -> Result<CoreHeader> {
         let height_u64 = u64::try_from(height)
             .with_context(|| format!("Bitcoin Core header height {height} is negative"))?;

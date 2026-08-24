@@ -6,10 +6,7 @@ use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::nbits_table::{DAA_EPOCH_INTERVAL, NbitsTable, daa_epoch_start};
 use tokio_postgres::Client;
 
-/// A header is persisted only once it is this far behind a synced Core tip.
-pub const CORE_HEADER_CONFIRMATIONS: i32 = 6;
-
-/// Bring the sparse Core-header cache through the current confirmed horizon and
+/// Bring the sparse Core-header cache through the current synced Core tip and
 /// return the classification table for this command.
 pub async fn refresh_bitcoin_core_header_cache(
     client: &mut Client,
@@ -23,13 +20,7 @@ pub async fn refresh_bitcoin_core_header_cache(
         tip.fresh,
         "Bitcoin Core tip is stale; refusing monitor work"
     );
-    let horizon_height = tip.height - CORE_HEADER_CONFIRMATIONS;
-    ensure!(
-        horizon_height >= 0,
-        "Bitcoin Core tip {} has not reached the header confirmation depth {}",
-        tip.height,
-        CORE_HEADER_CONFIRMATIONS
-    );
+    let horizon_height = tip.height;
 
     let required_epoch = daa_epoch_start(horizon_height);
     let next_epoch = mmm_store::highest_bitcoin_core_epoch(client)
@@ -55,7 +46,7 @@ pub async fn refresh_bitcoin_core_header_cache(
     let horizon = classifier
         .canonical_header(horizon_height)
         .await
-        .with_context(|| format!("fetch Bitcoin Core confirmed horizon at {horizon_height}"))?;
+        .with_context(|| format!("fetch Bitcoin Core header-cache horizon at {horizon_height}"))?;
     mmm_store::replace_bitcoin_core_header_horizon(
         client,
         &mmm_store::BitcoinCoreHeader {

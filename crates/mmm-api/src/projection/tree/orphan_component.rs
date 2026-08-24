@@ -51,9 +51,7 @@ pub(super) async fn anchor_placement_height(
     // orphan (the same condition that makes it pending, not excluded). Leave it
     // unplaced (the caller falls back to the flat strip) rather than guessing it
     // near the local tip via the below-table fallback below.
-    if let Some(covered_max_time) = table.covered_max_time()
-        && orphan.header_time > covered_max_time
-    {
+    if orphan.header_time > table.horizon_time() {
         return Ok(None);
     }
     if let Some(height) = table.epoch_height_for_time(orphan.header_time) {

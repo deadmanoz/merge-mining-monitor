@@ -8,7 +8,7 @@ This changelog starts with the initial release.
 
 - Replace the compiled Bitcoin nBits epoch table with a sparse Postgres cache
   populated from the required Bitcoin Core node. Capture, import, and
-  reconciliation refresh confirmed Core headers before classifying evidence;
+  reconciliation refresh Core headers through the synced tip before classifying evidence;
   the API remains Core-RPC-free by reading the persisted cache.
 
 ## [0.6.0] - 2026-08-15

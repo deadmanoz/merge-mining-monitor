@@ -1,7 +1,7 @@
 //! Bitcoin nBits classification over Core-derived cached headers.
 //!
 //! Callers supply the sparse header cache persisted by `mmm-store`: every
-//! 2,016-block epoch boundary and the highest confirmed horizon header. This
+//! 2,016-block epoch boundary and the current Core-tip horizon header. This
 //! crate deliberately has no embedded chain history or offline seed.
 
 use std::collections::HashMap;
@@ -131,10 +131,6 @@ impl NbitsTable {
 
     pub fn height_coverage_max(&self) -> i32 {
         self.covered_max_height + DAA_EPOCH_INTERVAL - 1
-    }
-
-    pub fn covered_max_time(&self) -> Option<i64> {
-        Some(self.horizon_time)
     }
 
     pub fn expected_nbits(&self, height: i32) -> NbitsLookup {

@@ -83,7 +83,8 @@ for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
   as authoritative snapshots through the shared source lifecycle, while live
   publication imports never remove live events.
 - Capture, backfills, historical imports, and reconciliation require
-  `BITCOIN_RPC_URL`. Each command refreshes the confirmed Core-header cache
+  `BITCOIN_RPC_URL`. Each command refreshes the Core-header cache through the
+  current synced tip
   before it starts. Long-lived Hathor and Elastos pollers refresh and retry once
   when they reach its horizon; the read-only API serves the persisted cache
   without making Core RPC calls.

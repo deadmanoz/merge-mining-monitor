@@ -61,7 +61,7 @@ async fn core_header_cache_retains_epochs_replaces_horizon_and_rejects_conflicts
 }
 
 #[tokio::test]
-async fn refresh_reads_epoch_boundaries_and_a_confirmed_horizon_from_core() -> Result<()> {
+async fn refresh_reads_epoch_boundaries_and_the_current_horizon_from_core() -> Result<()> {
     crate::run_mut_db_test!(client, {
         client
             .execute("DELETE FROM bitcoin_core_header", &[])
@@ -78,11 +78,11 @@ async fn refresh_reads_epoch_boundaries_and_a_confirmed_horizon_from_core() -> R
             .with_synced_tip_height(2030)
             .with_canonical_header(core_header(0, 0, 1, 0x1d00_ffff))
             .with_canonical_header(core_header(2016, 1, 2, 0x1c00_ffff))
-            .with_canonical_header(core_header(2024, 2, 3, 0x1c00_ffff)),
+            .with_canonical_header(core_header(2030, 2, 3, 0x1c00_ffff)),
         );
 
         let table = refresh_bitcoin_core_header_cache(&mut client, &classifier).await?;
-        assert_eq!(table.horizon_height(), 2024);
+        assert_eq!(table.horizon_height(), 2030);
         assert_eq!(table.expected_nbits(2017), NbitsLookup::Found(0x1c00_ffff));
 
         let heights = client
@@ -94,7 +94,7 @@ async fn refresh_reads_epoch_boundaries_and_a_confirmed_horizon_from_core() -> R
             .iter()
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>();
-        assert_eq!(heights, [0, 2016, 2024]);
+        assert_eq!(heights, [0, 2016, 2030]);
         Ok(())
     })
 }

@@ -106,7 +106,7 @@ impl ProducerContext {
     }
 
     /// Refresh the in-memory view after a long-lived poller reaches its cached
-    /// horizon, then retry that height once against the new confirmed Core view.
+    /// horizon, then retry that height once against the new Core view.
     pub(crate) async fn refresh_nbits_table(&mut self, client: &mut Client) -> Result<()> {
         self.nbits_table =
             refresh_bitcoin_core_header_cache(client, &self.parent_classifier).await?;
