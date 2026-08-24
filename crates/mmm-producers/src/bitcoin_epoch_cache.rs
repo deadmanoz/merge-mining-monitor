@@ -7,13 +7,30 @@ use mmm_capture::nbits_table::{DAA_EPOCH_INTERVAL, NbitsTable, daa_epoch_start};
 use tokio_postgres::Client;
 
 /// A retarget boundary is re-read from Core until it is this far behind a fresh
-/// tip. After that, the boundary's hash, time, and nBits are immutable cache
+/// tip. After that, the boundary's hash, time, and nBits are final cache
 /// evidence; a shallower reorg replaces only the moving cache suffix.
 pub const CORE_HEADER_REORG_SAFE_DEPTH: i32 = 100;
 
 /// Bring the sparse Core-header cache through the current synced Core tip and
 /// return the classification table for this command.
 pub async fn refresh_bitcoin_core_header_cache(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+) -> Result<NbitsTable> {
+    mmm_store::lock_bitcoin_core_header_cache(client).await?;
+    let result = refresh_bitcoin_core_header_cache_locked(client, classifier).await;
+    let unlock_result = mmm_store::unlock_bitcoin_core_header_cache(client).await;
+    match (result, unlock_result) {
+        (Ok(table), Ok(())) => Ok(table),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(unlock_error)) => Err(error.context(format!(
+            "also failed to unlock Core header cache: {unlock_error}"
+        ))),
+    }
+}
+
+async fn refresh_bitcoin_core_header_cache_locked(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
 ) -> Result<NbitsTable> {
@@ -24,6 +41,10 @@ pub async fn refresh_bitcoin_core_header_cache(
     ensure!(
         tip.fresh,
         "Bitcoin Core tip is stale; refusing monitor work"
+    );
+    ensure!(
+        tip.is_mainnet,
+        "Bitcoin Core must be connected to mainnet; refusing monitor work"
     );
     let horizon_height = tip.height;
     let final_epoch = daa_epoch_start(horizon_height.saturating_sub(CORE_HEADER_REORG_SAFE_DEPTH));

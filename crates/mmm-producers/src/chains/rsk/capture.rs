@@ -701,6 +701,14 @@ impl ChainPoller for RskChainPoller {
         i32::try_from(tip).with_context(|| format!("RSK tip {tip} overflows i32"))
     }
 
+    async fn refresh_core_cache(&mut self) -> Result<()> {
+        self.context
+            .base
+            .refresh_nbits_table_if_tip_advanced(&mut self.state.client)
+            .await?;
+        Ok(())
+    }
+
     async fn process_height(&mut self, height: i32) -> Result<HeightProgress> {
         let outcome = process_rsk_height(
             &mut self.state.client,

@@ -220,6 +220,12 @@ pub trait ChainPoller {
     async fn chain_tip(&self) -> Result<i32>;
     /// Capture a single height. Returns whether the cursor may advance past it.
     async fn process_height(&mut self, height: i32) -> Result<HeightProgress>;
+    /// Advance the required Core-backed nBits cache before this child-chain
+    /// poll tick. Most test pollers do not own that cache, so the default is a
+    /// no-op.
+    async fn refresh_core_cache(&mut self) -> Result<()> {
+        Ok(())
+    }
     /// Drain durable per-source pending work (best-effort, each tick). Default
     /// no-op; only Hathor implements it (the `poll_pending_reconcile` queue).
     async fn drain_pending(&mut self) -> Result<()> {
@@ -315,6 +321,7 @@ impl<C: ChainPoller> Poller<C> {
     /// the partial progress is persisted before the error propagates so completed
     /// heights are not reprocessed. Returns the count of heights processed.
     pub async fn poll_tick(&mut self) -> Result<usize> {
+        self.chain.refresh_core_cache().await?;
         self.drain_pending_best_effort().await;
         let tip = self.fetch_tip_and_persist_target().await?;
         let Some(window) = self.tick_window(tip) else {

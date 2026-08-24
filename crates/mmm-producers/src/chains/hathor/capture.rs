@@ -113,8 +113,8 @@ impl HathorCaptureContext {
         self.base.nbits_table()
     }
 
-    async fn refresh_nbits_table(&mut self, client: &mut Client) -> Result<()> {
-        self.base.refresh_nbits_table(client).await
+    async fn refresh_nbits_table_if_tip_advanced(&mut self, client: &mut Client) -> Result<bool> {
+        self.base.refresh_nbits_table_if_tip_advanced(client).await
     }
 }
 
@@ -744,16 +744,23 @@ impl ChainPoller for HathorChainPoller {
         self.rpc.get_chain_tip().await
     }
 
+    async fn refresh_core_cache(&mut self) -> Result<()> {
+        self.context
+            .refresh_nbits_table_if_tip_advanced(&mut self.state.client)
+            .await?;
+        Ok(())
+    }
+
     async fn process_height(&mut self, height: i32) -> Result<HeightProgress> {
         let mut outcome =
             process_hathor_height(&mut self.state.client, &self.rpc, &self.context, height).await?;
         if matches!(outcome, HathorHeightOutcome::TableHorizonHold) {
             match self
                 .context
-                .refresh_nbits_table(&mut self.state.client)
+                .refresh_nbits_table_if_tip_advanced(&mut self.state.client)
                 .await
             {
-                Ok(()) => {
+                Ok(true) => {
                     outcome = process_hathor_height(
                         &mut self.state.client,
                         &self.rpc,
@@ -762,6 +769,7 @@ impl ChainPoller for HathorChainPoller {
                     )
                     .await?;
                 }
+                Ok(false) => {}
                 Err(error) => warn!(
                     height,
                     error = %error,

@@ -19,6 +19,7 @@ pub struct CoreHeader {
 /// valid beyond-horizon parent as a fabricated far-future height.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SyncedTip {
+    pub is_mainnet: bool,
     pub height: i32,
     pub fresh: bool,
 }
@@ -212,6 +213,7 @@ impl BitcoinCoreParentClassifier {
             return Ok(None);
         }
         Ok(Some(SyncedTip {
+            is_mainnet: status.is_mainnet,
             height: status.blocks,
             fresh: tip_is_fresh(status.median_time, now_unix_secs()),
         }))

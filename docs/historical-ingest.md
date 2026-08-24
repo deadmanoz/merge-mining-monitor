@@ -174,11 +174,11 @@ orphan. Published direct-stale and stale-descendant provenance is also an
 exclusion from strict/weak classification, including while its branch awaits
 derived placement.
 
-`--allow-empty-known-stales` and `--allow-unclassified` exist for disposable
-diagnostic databases. They are not production cutover options. A manifest
-import using `--allow-unclassified` is additive because its skipped unknown rows
-make it incomplete; it never clears provenance or removes rows from the prior
-authoritative snapshot. `--limit` must be greater than zero.
+Bitcoin Core is required for every historical import, including diagnostic
+imports. `--allow-empty-known-stales` exists only for a deliberately
+membership-free diagnostic database. It is not a production cutover option.
+`--limit` must be greater than zero and makes a manifest import additive rather
+than authoritative.
 
 ## Import
 

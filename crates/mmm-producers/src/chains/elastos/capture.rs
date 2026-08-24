@@ -127,8 +127,8 @@ impl ElastosCaptureContext {
         self.base.nbits_table()
     }
 
-    async fn refresh_nbits_table(&mut self, client: &mut Client) -> Result<()> {
-        self.base.refresh_nbits_table(client).await
+    async fn refresh_nbits_table_if_tip_advanced(&mut self, client: &mut Client) -> Result<bool> {
+        self.base.refresh_nbits_table_if_tip_advanced(client).await
     }
 }
 
@@ -495,6 +495,13 @@ impl ChainPoller for ElastosChainPoller {
         self.rpc.get_current_height().await
     }
 
+    async fn refresh_core_cache(&mut self) -> Result<()> {
+        self.context
+            .refresh_nbits_table_if_tip_advanced(&mut self.state.client)
+            .await?;
+        Ok(())
+    }
+
     /// Process one height, then translate the outcome to poll progress: only the
     /// Core-cache horizon hold is cursor-blocking (`Abort`); every other outcome
     /// (write, revoke, any skip) advances. Elastos is monotonic, so there is no
@@ -506,10 +513,10 @@ impl ChainPoller for ElastosChainPoller {
         if matches!(outcome, ElastosHeightOutcome::TableHorizonHold) {
             match self
                 .context
-                .refresh_nbits_table(&mut self.state.client)
+                .refresh_nbits_table_if_tip_advanced(&mut self.state.client)
                 .await
             {
-                Ok(()) => {
+                Ok(true) => {
                     outcome = process_elastos_height(
                         &mut self.state.client,
                         &self.rpc,
@@ -518,6 +525,7 @@ impl ChainPoller for ElastosChainPoller {
                     )
                     .await?;
                 }
+                Ok(false) => {}
                 Err(error) => warn!(
                     height,
                     error = %error,

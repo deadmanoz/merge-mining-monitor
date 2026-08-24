@@ -86,6 +86,13 @@ async fn orphans_classifies_real_header_weak_then_strict_and_tracks_revocation()
         // excluded. The fake verdict's absence attestation is what
         // makes the (in reality canonical) header an orphan candidate here.
         let parent: Header = deserialize(&hex::decode(BTC_400000_HEADER_HEX)?)?;
+        crate::support::db::seed_bitcoin_core_header_cache_through(
+            &client,
+            400_000,
+            i64::from(parent.time),
+            parent.bits.to_consensus(),
+        )
+        .await?;
         let parent_hash = header_hash_bytes(&parent);
 
         // First capture the header WITHOUT its coinbase scriptSig: no BIP34

@@ -209,6 +209,7 @@ async fn configured_classifier_exposes_only_synced_core_tip_height() {
 
     let synced_source = Arc::new(MockCoreHeaderSource::default());
     synced_source.set_chain_status(MockResult::Ok(BitcoinCoreChainStatus {
+        is_mainnet: true,
         blocks: 953_305,
         headers: 953_305,
         initial_block_download: false,
@@ -224,6 +225,7 @@ async fn configured_classifier_exposes_only_synced_core_tip_height() {
 
     let unsynced_source = Arc::new(MockCoreHeaderSource::default());
     unsynced_source.set_chain_status(MockResult::Ok(BitcoinCoreChainStatus {
+        is_mainnet: true,
         blocks: 953_304,
         headers: 953_305,
         initial_block_download: false,

@@ -368,6 +368,14 @@ impl ChainPoller for AuxpowFamilyPoller {
         self.rpc.get_block_count().await
     }
 
+    async fn refresh_core_cache(&mut self) -> Result<()> {
+        self.context
+            .base
+            .refresh_nbits_table_if_tip_advanced(&mut self.state.client)
+            .await?;
+        Ok(())
+    }
+
     /// Capture one height, then always `Advance`: every height up to the tip
     /// exists in a bitcoind chain, so there is no Retry case here (unlike the
     /// header-pull divergent chains).

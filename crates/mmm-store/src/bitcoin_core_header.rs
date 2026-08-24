@@ -7,12 +7,45 @@ use anyhow::{Context, Result, ensure};
 use mmm_capture::nbits_table::{BitcoinEpochHeader, NbitsTable};
 use tokio_postgres::{Client, GenericClient};
 
+// Stable, monitor-specific advisory-lock key. The refresh reads a Core snapshot
+// before replacing the shallow suffix, so one session must own both operations.
+const BITCOIN_CORE_HEADER_CACHE_LOCK: i64 = 0x4d4d4d43_4f524543;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BitcoinCoreHeader {
     pub height: i32,
     pub block_hash: Vec<u8>,
     pub block_time: i64,
     pub bits: u32,
+}
+
+/// Serialize a Core observation and its cache replacement on this connection.
+///
+/// A table lock inside the replacement transaction cannot prevent a slower
+/// refresh from fetching an older Core snapshot before the faster one commits.
+pub async fn lock_bitcoin_core_header_cache(client: &Client) -> Result<()> {
+    client
+        .query_one(
+            "SELECT pg_advisory_lock($1)",
+            &[&BITCOIN_CORE_HEADER_CACHE_LOCK],
+        )
+        .await
+        .context("lock Core-header-cache refresh")?;
+    Ok(())
+}
+
+/// Release the session lock acquired by [`lock_bitcoin_core_header_cache`].
+pub async fn unlock_bitcoin_core_header_cache(client: &Client) -> Result<()> {
+    let unlocked: bool = client
+        .query_one(
+            "SELECT pg_advisory_unlock($1)",
+            &[&BITCOIN_CORE_HEADER_CACHE_LOCK],
+        )
+        .await
+        .context("unlock Core-header-cache refresh")?
+        .get(0);
+    ensure!(unlocked, "Core-header-cache refresh lock was not held");
+    Ok(())
 }
 
 pub async fn record_bitcoin_core_header<C: GenericClient>(
@@ -79,7 +112,7 @@ async fn record_bitcoin_core_header_with_finality<C: GenericClient>(
     Ok(())
 }
 
-/// Replace Core observations that are still shallow while retaining immutable,
+/// Replace Core observations that are still shallow while retaining final
 /// reorg-safe epoch boundaries. `final_epochs` contains every boundary newly
 /// verified deeply enough to become final; earlier final rows remain untouched.
 pub async fn replace_bitcoin_core_header_cache(
@@ -174,7 +207,7 @@ pub async fn load_bitcoin_core_nbits_table<C: GenericClient>(client: &C) -> Resu
 }
 
 /// Highest epoch boundary that has already been verified at the reorg-safe
-/// depth and made immutable.
+/// depth and made final.
 pub async fn highest_final_bitcoin_core_epoch<C: GenericClient>(client: &C) -> Result<Option<i32>> {
     client
         .query_one(

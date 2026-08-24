@@ -234,11 +234,11 @@ impl HistoricalImportAllSummary {
 
 /// Stream the configured CSV and persist accepted rows, returning the tallies.
 ///
-/// Refuses to run without a live classifier unless `--allow-unclassified` is set
-/// (the orphan-import safety guard). Resolves the `source_id`, upserts the
-/// embedded pool snapshot, validates and classifies the complete input before
-/// opening the chain transaction, then iterates rows to capture them. Honors
-/// `--limit` (caps `ingested`) and logs progress every `batch_size` ingests.
+/// Requires a live Core classifier (the orphan-import safety guard). Resolves
+/// the `source_id`, upserts the embedded pool snapshot, validates and
+/// classifies the complete input before opening the chain transaction, then
+/// iterates rows to capture them. Honors `--limit` (caps `ingested`) and logs
+/// progress every `batch_size` ingests.
 /// Setup, validation, and capture errors propagate.
 pub async fn run_historical_import(
     client: &mut Client,
@@ -381,14 +381,8 @@ async fn import_rows_in_transaction(
                 continue;
             }
         };
-        let decision = import_decision(
-            txn,
-            context.classifier,
-            context.config,
-            &candidate,
-            context.classifications,
-        )
-        .await?;
+        let decision =
+            import_decision(txn, context.classifier, &candidate, context.classifications).await?;
         if let ImportDecision::Skip(reason) = decision {
             summary.skip(reason);
             continue;
@@ -599,10 +593,8 @@ async fn ensure_import_environment(
     if configs.is_empty() {
         return Ok(());
     }
-    if !classifier.is_enabled() && configs.iter().any(|config| !config.allow_unclassified) {
-        bail!(
-            "BITCOIN_RPC_URL is required for historical import unless --allow-unclassified is passed"
-        );
+    if !classifier.is_enabled() {
+        bail!("BITCOIN_RPC_URL is required for historical import");
     }
     // An empty membership means the orphan-class gate cannot exclude a known
     // stale. Refuse by default; the flag is only for disposable diagnostics.
@@ -664,19 +656,15 @@ async fn import_candidate(
     // reactivating writer so a conflict with a live row auto-revoked
     // `ELASTOS_REVOKE_NON_BTC` clears that reversible, evidence-based
     // revocation, exactly as a live re-Valid capture would -- but ONLY on the
-    // Core-attested (preclassified) path: an `--allow-unclassified` run gates
-    // rows on nothing stronger than the header's own encoded target, which is
-    // weaker than the Elastos producer's validity gate, so it must never
-    // resurrect a revoked row. Sticky and manual revocations stay untouched
-    // either way. Hathor deliberately stays on the generic upsert: its
+    // Core-attested path. Sticky and manual revocations stay untouched. Hathor
+    // deliberately stays on the generic upsert: its
     // reversible revocations (voided/superseded) track CURRENT child-DAG
     // state that a historical observation must not resurrect, and its writer
     // requires the RFC 0006 sidecar the exports cannot supply. Every other
     // chain writes the event alone. `pool_identity_id` stays NULL here --
     // the `reclassify-pools` late-fill path resolves it from the registry.
     let rsk_evidence = candidate.rsk_evidence.as_ref();
-    let use_elastos_writer =
-        context.chain == "elastos" && matches!(&decision, ImportDecision::CapturePreclassified(_));
+    let use_elastos_writer = context.chain == "elastos";
     let upsert = async |txn: &tokio_postgres::Transaction<'_>,
                         source_id: i64,
                         payload: &mmm_capture::capture::MergeMiningEventPayload| {
@@ -689,7 +677,6 @@ async fn import_candidate(
         }
     };
     let parent_classification = match decision {
-        ImportDecision::CaptureUnclassified => None,
         ImportDecision::CapturePreclassified(parent_classification) => Some(*parent_classification),
         ImportDecision::Skip(_) => unreachable!("skip decisions do not reach import_candidate"),
     };

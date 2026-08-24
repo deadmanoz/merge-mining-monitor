@@ -18,7 +18,7 @@ use mmm_store::{get_source_id, upsert_known_stale_block};
 use tokio_postgres::Client;
 
 use crate::support::scenario::{ChildEvidence, capture_child_event, orphan_candidate_verdict};
-use crate::support::{absent_classifier, btc_400000_coinbase_script, btc_400000_header};
+use crate::support::{absent_classifier, btc_400000_header, btc_400000_orphan_fixture};
 
 // Real Bitcoin block 400000 header + coinbase scriptSig: genuine BTC PoW and era
 // nBits, so the offline classifier renders a real strict/weak verdict (a crafted
@@ -49,7 +49,7 @@ async fn weak_orphan_parents(client: &Client, source_id: i64) -> Result<i64> {
 #[tokio::test]
 async fn membership_hash_is_excluded_never_strict_or_weak() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        let parent = btc_400000_header()?;
+        let (parent, coinbase_script, _) = btc_400000_orphan_fixture(&client).await?;
         let parent_hash = parent.block_hash().to_byte_array().to_vec();
 
         // Baseline: a strict-eligible syscoin parent with its real BIP34 coinbase,
@@ -66,7 +66,7 @@ async fn membership_hash_is_excluded_never_strict_or_weak() -> Result<()> {
                 orphan_candidate_verdict(&parent),
                 1_000,
             )
-            .with_parent_coinbase_script(btc_400000_coinbase_script()?),
+            .with_parent_coinbase_script(coinbase_script),
         )
         .await?;
         assert_eq!(
@@ -103,7 +103,7 @@ async fn membership_hash_is_excluded_never_strict_or_weak() -> Result<()> {
 async fn reclassify_known_stales_demotes_contaminated_row_and_keeps_source_health_consistent()
 -> Result<()> {
     crate::run_mut_db_test!(client, {
-        let parent = btc_400000_header()?;
+        let (parent, _, _) = btc_400000_orphan_fixture(&client).await?;
         let parent_hash = parent.block_hash().to_byte_array().to_vec();
 
         // Contaminate: capture WITHOUT the coinbase so the syscoin parent lands a

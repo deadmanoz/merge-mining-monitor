@@ -19,7 +19,6 @@ use super::publication::ArtifactPreflight;
 
 /// The per-row verdict, deciding which capture path (if any) a candidate takes.
 pub(super) enum ImportDecision {
-    CaptureUnclassified,
     CapturePreclassified(Box<ParentClassification>),
     Skip(SkipReason),
 }
@@ -209,13 +208,11 @@ fn drain_ready_publication_decisions(
 }
 
 /// Decide a candidate's fate where live Core classification meets the dataset's
-/// own labels. Without a classifier, non-unknown rows capture unclassified and
-/// unknown rows are skipped. With a classifier, only matching or independently
-/// attested rows reach the preclassified capture path.
+/// own labels. Historical imports require a Core classifier, so only matching
+/// or independently attested rows reach the preclassified capture path.
 pub(super) async fn import_decision<C: GenericClient>(
     client: &C,
     classifier: &ConfiguredParentClassifier,
-    config: &HistoricalImportConfig,
     candidate: &ImportCandidate,
     classifications: &mut HashMap<Vec<u8>, ParentClassification>,
 ) -> Result<ImportDecision> {
@@ -223,11 +220,6 @@ pub(super) async fn import_decision<C: GenericClient>(
         return Ok(ImportDecision::Skip(reason));
     }
     if !classifier.is_enabled() {
-        if config.allow_unclassified
-            && candidate.source_classification != SourceClassification::Unknown
-        {
-            return Ok(ImportDecision::CaptureUnclassified);
-        }
         return Ok(ImportDecision::Skip(SkipReason::Unclassified));
     }
     let parent_hash = candidate
@@ -267,8 +259,8 @@ pub(super) async fn import_decision<C: GenericClient>(
 }
 
 /// Keep catalogued consensus-invalid parents out of the historical valid-evidence
-/// import path before either the disabled override or a Core classifier decides
-/// how to handle the row. Live capture still records these as `error_block`.
+/// import path before a Core classifier decides how to handle the row. Live
+/// capture still records these as `error_block`.
 fn catalogued_error_block_skip_reason(candidate: &ImportCandidate) -> Option<SkipReason> {
     let parent_hash = candidate
         .evidence

@@ -880,7 +880,6 @@ mod tests {
             artifact_root: root.clone(),
             require_pinned_checkout: false,
             batch_size: 10,
-            allow_unclassified: false,
             allow_empty_known_stales: true,
         };
 

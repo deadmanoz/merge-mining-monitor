@@ -8,6 +8,7 @@ use super::*;
 pub struct FakeParentClassifier {
     state: Arc<tokio::sync::Mutex<FakeParentClassifierState>>,
     first_call_gate: Option<Arc<FakeParentClassifierGate>>,
+    synced_tip_is_mainnet: bool,
     synced_tip_height: Option<i32>,
     synced_tip_fresh: bool,
     fail_synced_tip: bool,
@@ -49,6 +50,7 @@ impl FakeParentClassifier {
                 calls: 0,
             })),
             first_call_gate: None,
+            synced_tip_is_mainnet: true,
             synced_tip_height: None,
             synced_tip_fresh: true,
             fail_synced_tip: false,
@@ -70,6 +72,14 @@ impl FakeParentClassifier {
 
     pub fn with_synced_tip_height(mut self, height: i32) -> Self {
         self.synced_tip_height = Some(height);
+        self
+    }
+
+    /// A synced non-mainnet tip, for commands that must refuse to populate the
+    /// monitor's Bitcoin-mainnet cache from a testnet, signet, or regtest node.
+    pub fn with_non_mainnet_synced_tip(mut self, height: i32) -> Self {
+        self.synced_tip_height = Some(height);
+        self.synced_tip_is_mainnet = false;
         self
     }
 
@@ -107,6 +117,7 @@ impl FakeParentClassifier {
             bail!("fake classifier: injected synced_tip error");
         }
         Ok(self.synced_tip_height.map(|height| SyncedTip {
+            is_mainnet: self.synced_tip_is_mainnet,
             height,
             fresh: self.synced_tip_fresh,
         }))

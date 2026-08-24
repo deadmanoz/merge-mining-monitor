@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use tokio_postgres::Client;
 use tracing::warn;
 
@@ -28,7 +28,7 @@ use mmm_store::{self, get_source_id, upsert_pool_snapshot};
 
 use crate::bitcoin_epoch_cache::refresh_bitcoin_core_header_cache;
 
-/// The three fields EVERY producer holds. Chain contexts embed this as `base`
+/// The shared fields EVERY producer holds. Chain contexts embed this as `base`
 /// and delegate their `source_id()` / `parent_classifier()` accessors to it.
 #[derive(Debug)]
 pub(crate) struct ProducerContext {
@@ -105,12 +105,39 @@ impl ProducerContext {
         &self.nbits_table
     }
 
-    /// Refresh the in-memory view after a long-lived poller reaches its cached
-    /// horizon, then retry that height once against the new Core view.
+    /// Refresh the in-memory view from the required Core node.
     pub(crate) async fn refresh_nbits_table(&mut self, client: &mut Client) -> Result<()> {
         self.nbits_table =
             refresh_bitcoin_core_header_cache(client, &self.parent_classifier).await?;
         Ok(())
+    }
+
+    /// Refresh after the synced Core tip advances beyond the cache horizon.
+    ///
+    /// Pollers call this before each child-chain tick, so weak-parent placement
+    /// and the current shallow epoch cannot remain stale for a process lifetime.
+    pub(crate) async fn refresh_nbits_table_if_tip_advanced(
+        &mut self,
+        client: &mut Client,
+    ) -> Result<bool> {
+        let tip = self
+            .parent_classifier
+            .synced_tip()
+            .await?
+            .context("Bitcoin Core must be synced before monitor work can continue")?;
+        ensure!(
+            tip.fresh,
+            "Bitcoin Core tip is stale; refusing monitor work"
+        );
+        ensure!(
+            tip.is_mainnet,
+            "Bitcoin Core must be connected to mainnet; refusing monitor work"
+        );
+        if tip.height <= self.nbits_table.horizon_height() {
+            return Ok(false);
+        }
+        self.refresh_nbits_table(client).await?;
+        Ok(true)
     }
 
     /// Snapshot of `pool.slug -> pool.id` taken at bootstrap, the map capture

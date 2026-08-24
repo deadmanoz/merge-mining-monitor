@@ -3,6 +3,7 @@ use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::{
     ConfiguredParentClassifier, FakeParentClassifier, HeightSource, ParentClassification,
 };
+use mmm_capture::auxpow::parse_bip34_height;
 use mmm_capture::capture::{ClassificationProof, ParentKind};
 use mmm_capture::source_registry::RSK_SOURCE_CODE;
 use mmm_read_model::{
@@ -347,6 +348,15 @@ async fn source_health_matches_recompute_on_orphan_class_transition() -> Result<
         let fixture = NamecoinEventFixture::new(&client).await?;
         let namecoin = fixture.source_id;
         let header = fixture.parsed.parent_header.header;
+        let parent_height = parse_bip34_height(&fixture.parsed.parent_coinbase_script)
+            .expect("Namecoin fixture must carry a BIP34 parent height");
+        crate::support::db::seed_bitcoin_core_header_cache_through(
+            &client,
+            parent_height,
+            i64::from(header.time),
+            header.bits.to_consensus(),
+        )
+        .await?;
         let parent_hash = fixture.parsed.parent_header.hash().to_byte_array().to_vec();
         let disabled = ConfiguredParentClassifier::Disabled;
         let height = 700_020;

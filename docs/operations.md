@@ -23,8 +23,8 @@ The current retarget boundary is marked final only after Core re-reads it at 100
 blocks behind that tip. This lets a shallow reorg replace only the current cache
 suffix while retaining the settled epoch history.
 
-After applying migration `0010`, configure and sync Core before running any
-command that writes or rebuilds monitor data, including
+After applying migration `0010`, configure and sync a **Bitcoin mainnet** Core
+node before running any command that writes or rebuilds monitor data, including
 `just rebuild-source-health`. There is intentionally no database-only bypass:
 the node is an operational requirement, while the API remains available from the
 persisted cache.
