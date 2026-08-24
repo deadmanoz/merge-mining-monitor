@@ -33,7 +33,7 @@ use crate::chains::elastos::identity::{
     upsert_elastos_reward_address_pool_identities,
 };
 use crate::chains::elastos::rpc::{ElastosBlock, ElastosRpc, ReconstructedBlock};
-use crate::chains::nbits_horizon::far_future_against_fresh_tip;
+use crate::chains::nbits_horizon::{HorizonGate, cached_horizon_gate};
 use crate::chains::{
     ensure_offline_valid_not_classifier_conflict, is_offline_valid_classifier_conflict,
 };
@@ -189,11 +189,21 @@ pub async fn process_elastos_height(
     match evaluate_elastos_block(height, &block, context.nbits_table()) {
         ElastosEvaluation::Skip(outcome) => Ok(outcome),
         ElastosEvaluation::TableHorizon { bip34_height } => {
-            if far_future_against_fresh_tip(context.parent_classifier(), bip34_height).await {
-                revoke_active_at_height(client, context, height, ELASTOS_REVOKE_NON_BTC).await?;
-                Ok(ElastosHeightOutcome::NonBtcParentSkipped)
-            } else {
-                Ok(ElastosHeightOutcome::TableHorizonHold)
+            match cached_horizon_gate(
+                context.parent_classifier(),
+                context.nbits_table().horizon_height(),
+                bip34_height,
+            )
+            .await
+            {
+                HorizonGate::FarFuture => {
+                    revoke_active_at_height(client, context, height, ELASTOS_REVOKE_NON_BTC)
+                        .await?;
+                    Ok(ElastosHeightOutcome::NonBtcParentSkipped)
+                }
+                HorizonGate::Hold | HorizonGate::WithinTip => {
+                    Ok(ElastosHeightOutcome::TableHorizonHold)
+                }
             }
         }
         ElastosEvaluation::RevokeNonBtc => {
@@ -201,16 +211,29 @@ pub async fn process_elastos_height(
             Ok(ElastosHeightOutcome::NonBtcParentSkipped)
         }
         ElastosEvaluation::Write { parsed, recon } => {
-            // Guard the in-table Valid path too: a fabricated far-future BIP34 height
-            // inside a covered epoch (whose nBits happened to match) must be revoked,
-            // not written. A fresh synced Core tip is the only authority that can
-            // prove it; otherwise the offline Valid verdict stands.
+            // A matching nBits value is not enough to write a claimed BIP34
+            // height beyond the persisted Core horizon, even within the current
+            // difficulty epoch. A fresh tip can demote a clearly fabricated
+            // claim; all other unobserved claims hold for a cache refresh.
             let bip34_height = parse_bip34_height(&parsed.parent_coinbase_script);
-            if let Some(height_claim) = bip34_height
-                && far_future_against_fresh_tip(context.parent_classifier(), height_claim).await
-            {
-                revoke_active_at_height(client, context, height, ELASTOS_REVOKE_NON_BTC).await?;
-                Ok(ElastosHeightOutcome::NonBtcParentSkipped)
+            if let Some(height_claim) = bip34_height {
+                match cached_horizon_gate(
+                    context.parent_classifier(),
+                    context.nbits_table().horizon_height(),
+                    height_claim,
+                )
+                .await
+                {
+                    HorizonGate::FarFuture => {
+                        revoke_active_at_height(client, context, height, ELASTOS_REVOKE_NON_BTC)
+                            .await?;
+                        Ok(ElastosHeightOutcome::NonBtcParentSkipped)
+                    }
+                    HorizonGate::Hold => Ok(ElastosHeightOutcome::TableHorizonHold),
+                    HorizonGate::WithinTip => {
+                        write_valid_capture(client, context, height, &block, &parsed, &recon).await
+                    }
+                }
             } else {
                 write_valid_capture(client, context, height, &block, &parsed, &recon).await
             }

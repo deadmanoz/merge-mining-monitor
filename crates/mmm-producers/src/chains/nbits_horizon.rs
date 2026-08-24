@@ -40,23 +40,32 @@ pub(crate) fn horizon_gate(
     }
 }
 
-pub(crate) async fn far_future_against_fresh_tip(
+/// Gate a claimed height against the persisted cache and a fresh Core tip.
+///
+/// `WithinTip` means the cache itself covers the claim. A Core tip that is
+/// ahead of the cache does not authorize a write: the caller must refresh the
+/// cache first, so every higher claim is either `Hold` or `FarFuture`.
+pub(crate) async fn cached_horizon_gate(
     classifier: &ConfiguredParentClassifier,
+    cached_horizon: i32,
     bip34_height: i32,
-) -> bool {
+) -> HorizonGate {
+    if bip34_height <= cached_horizon {
+        return HorizonGate::WithinTip;
+    }
     match classifier.synced_tip().await {
-        Ok(Some(tip)) => matches!(
-            horizon_gate(Some(tip.height), tip.fresh, bip34_height),
-            HorizonGate::FarFuture
-        ),
-        Ok(None) => false,
+        Ok(Some(tip)) => match horizon_gate(Some(tip.height), tip.fresh, bip34_height) {
+            HorizonGate::FarFuture => HorizonGate::FarFuture,
+            HorizonGate::Hold | HorizonGate::WithinTip => HorizonGate::Hold,
+        },
+        Ok(None) => HorizonGate::Hold,
         Err(err) => {
             warn!(
                 bip34_height,
                 error = %err,
-                "Bitcoin Core synced-tip lookup failed; not overriding the cached nBits verdict"
+                "Bitcoin Core synced-tip lookup failed; holding Core-cache height claim"
             );
-            false
+            HorizonGate::Hold
         }
     }
 }
@@ -67,9 +76,35 @@ mod tests {
 
     #[test]
     fn only_a_fresh_tip_can_prove_a_height_fabricated() {
+        assert_eq!(horizon_gate(Some(100), true, 101), HorizonGate::Hold);
         assert_eq!(horizon_gate(Some(100), true, 244), HorizonGate::Hold);
         assert_eq!(horizon_gate(Some(100), true, 245), HorizonGate::FarFuture);
         assert_eq!(horizon_gate(Some(100), false, 245), HorizonGate::Hold);
         assert_eq!(horizon_gate(None, true, 245), HorizonGate::Hold);
+    }
+
+    #[tokio::test]
+    async fn cached_horizon_holds_unobserved_and_unavailable_claims() {
+        use bitcoin::Network;
+        use mmm_bitcoin_core::{FakeParentClassifier, ParentClassification};
+
+        let header = bitcoin::blockdata::constants::genesis_block(Network::Bitcoin).header;
+        let current_epoch_claim = ConfiguredParentClassifier::Fake(
+            FakeParentClassifier::new(ParentClassification::unknown(&header))
+                .with_synced_tip_height(100),
+        );
+        assert_eq!(
+            cached_horizon_gate(&current_epoch_claim, 100, 101).await,
+            HorizonGate::Hold
+        );
+
+        let unavailable = ConfiguredParentClassifier::Fake(
+            FakeParentClassifier::new(ParentClassification::unknown(&header))
+                .with_synced_tip_error(),
+        );
+        assert_eq!(
+            cached_horizon_gate(&unavailable, 100, 101).await,
+            HorizonGate::Hold
+        );
     }
 }

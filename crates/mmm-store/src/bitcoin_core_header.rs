@@ -386,13 +386,16 @@ async fn update_bitcoin_core_header_cache_state(
         .context("load current Core-header-cache timestamp coverage")?
         .get(0);
     let horizon_advanced = previous_horizon_height.is_none_or(|height| horizon.height > height);
+    let cache_was_empty = previous_horizon_height.is_none();
     let horizon_time = if shallow_reorged {
         current_observed_time
     } else {
         previous.horizon_time.max(current_observed_time)
     };
-    let recheck_orphans =
-        previous.orphan_recheck_needed || shallow_reorged || epoch_coverage_overlaps_prior_horizon;
+    let recheck_orphans = previous.orphan_recheck_needed
+        || shallow_reorged
+        || epoch_coverage_overlaps_prior_horizon
+        || cache_was_empty;
     let reclassification_needed = previous.reclassification_needed
         || recheck_orphans
         || horizon_advanced

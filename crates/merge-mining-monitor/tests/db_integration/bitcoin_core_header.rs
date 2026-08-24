@@ -90,6 +90,9 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
 {
     crate::run_mut_db_test!(client, {
         client
+            .execute("DELETE FROM bitcoin_core_header", &[])
+            .await?;
+        client
             .execute(
                 "UPDATE bitcoin_core_header_cache_state \
                  SET horizon_time = 0, reclassification_needed = FALSE",
@@ -99,7 +102,7 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
         let first = replace_bitcoin_core_header_cache(
             &mut client,
             0,
-            &[],
+            &[header(0, 0, 1, 0x1d00_ffff)],
             None,
             &header(100, 1, 100, 0x1d00_ffff),
             false,
@@ -107,8 +110,8 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
         .await?;
         assert!(first.reclassification_needed);
         assert!(
-            !first.recheck_orphans,
-            "initial coverage classifies pending rows without sweeping existing orphans"
+            first.recheck_orphans,
+            "initial Core-cache population revisits classifications made before the cache existed"
         );
         complete_bitcoin_core_header_cache_reclassification(&client).await?;
 

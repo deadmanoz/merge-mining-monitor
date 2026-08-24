@@ -28,7 +28,7 @@ use crate::chains::hathor::identity::upsert_hathor_reward_pool_identities;
 use crate::chains::hathor::reconstruct::{HathorReconstructedParent, reconstruct_or_skip};
 use crate::chains::hathor::reward::{HATHOR_REWARD_ADDRESS_NAMESPACE, parse_hathor_reward_outputs};
 use crate::chains::hathor::rpc::{HathorBlockMeta, HathorRpc, HathorTransaction};
-use crate::chains::nbits_horizon::far_future_against_fresh_tip;
+use crate::chains::nbits_horizon::{HorizonGate, cached_horizon_gate};
 use crate::chains::{
     ensure_offline_valid_not_classifier_conflict, is_offline_valid_classifier_conflict,
 };
@@ -333,18 +333,27 @@ async fn apply_hathor_verdict(
             let bip34_height = built
                 .bip34_height
                 .expect("AboveTableHorizon requires a parsed BIP34 height");
-            if far_future_against_fresh_tip(context.parent_classifier(), bip34_height).await {
-                revoke_current_and_superseded(
-                    client,
-                    context,
-                    prior,
-                    current_hash,
-                    HATHOR_REVOKE_NON_BTC,
-                )
-                .await?;
-                Ok(HathorHeightOutcome::NonBtcParentSkipped)
-            } else {
-                Ok(HathorHeightOutcome::TableHorizonHold)
+            match cached_horizon_gate(
+                context.parent_classifier(),
+                context.nbits_table().horizon_height(),
+                bip34_height,
+            )
+            .await
+            {
+                HorizonGate::FarFuture => {
+                    revoke_current_and_superseded(
+                        client,
+                        context,
+                        prior,
+                        current_hash,
+                        HATHOR_REVOKE_NON_BTC,
+                    )
+                    .await?;
+                    Ok(HathorHeightOutcome::NonBtcParentSkipped)
+                }
+                HorizonGate::Hold | HorizonGate::WithinTip => {
+                    Ok(HathorHeightOutcome::TableHorizonHold)
+                }
             }
         }
         NbitsVerdict::Contaminant | NbitsVerdict::Indeterminate => {
@@ -364,21 +373,35 @@ async fn apply_hathor_verdict(
             Ok(HathorHeightOutcome::NonBtcParentSkipped)
         }
         NbitsVerdict::Valid => {
-            // Guard the in-table Valid path too: a fabricated far-future BIP34 height
-            // inside a covered epoch (whose nBits happened to match) must be revoked,
-            // not written, when a fresh synced Core tip proves it fabricated.
-            if let Some(height_claim) = built.bip34_height
-                && far_future_against_fresh_tip(context.parent_classifier(), height_claim).await
-            {
-                revoke_current_and_superseded(
-                    client,
-                    context,
-                    prior,
-                    current_hash,
-                    HATHOR_REVOKE_NON_BTC,
+            // A matching nBits value is not enough to write a claimed BIP34
+            // height beyond the persisted Core horizon, even within the current
+            // difficulty epoch. A fresh tip can demote a clearly fabricated
+            // claim; all other unobserved claims hold for a cache refresh.
+            if let Some(height_claim) = built.bip34_height {
+                match cached_horizon_gate(
+                    context.parent_classifier(),
+                    context.nbits_table().horizon_height(),
+                    height_claim,
                 )
-                .await?;
-                Ok(HathorHeightOutcome::NonBtcParentSkipped)
+                .await
+                {
+                    HorizonGate::FarFuture => {
+                        revoke_current_and_superseded(
+                            client,
+                            context,
+                            prior,
+                            current_hash,
+                            HATHOR_REVOKE_NON_BTC,
+                        )
+                        .await?;
+                        Ok(HathorHeightOutcome::NonBtcParentSkipped)
+                    }
+                    HorizonGate::Hold => Ok(HathorHeightOutcome::TableHorizonHold),
+                    HorizonGate::WithinTip => {
+                        write_valid_capture(client, context, height, prior, current_hash, built)
+                            .await
+                    }
+                }
             } else {
                 write_valid_capture(client, context, height, prior, current_hash, built).await
             }
