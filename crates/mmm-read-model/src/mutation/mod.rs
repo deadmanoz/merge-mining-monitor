@@ -28,10 +28,12 @@ use mmm_capture::capture::{MergeMiningEventPayload, ParentKind, apply_classifica
 use mmm_store::EventWriteOutcome;
 
 mod historical_queue;
-pub use historical_queue::drain_historical_reconcile_queue;
 #[cfg(feature = "db-integration")]
 pub use historical_queue::drain_historical_reconcile_queue_with_budget_for_test;
 use historical_queue::enqueue_historical_parent;
+pub use historical_queue::{
+    drain_historical_reconcile_queue, drain_historical_reconcile_queue_with_nbits_table,
+};
 
 use super::{
     CoreCoinbaseStatus, DEFAULT_CASCADE_BUDGET, PreclassifiedParent,
@@ -163,16 +165,40 @@ async fn cascade_changed(
     changed_hashes: Vec<Vec<u8>>,
     cascade_budget: usize,
 ) -> Result<()> {
+    cascade_changed_with_nbits_table(client, classifier, changed_hashes, cascade_budget, None).await
+}
+
+async fn cascade_changed_with_nbits_table(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    changed_hashes: Vec<Vec<u8>>,
+    cascade_budget: usize,
+    nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
+) -> Result<()> {
     if changed_hashes.is_empty() {
         return Ok(());
     }
-    reconcile_dependents_after_changes_with_budget(
-        client,
-        &changed_hashes,
-        classifier,
-        cascade_budget,
-    )
-    .await
+    match nbits_table {
+        Some(nbits_table) => {
+            super::reconcile::reconcile_dependents_after_changes_with_budget_and_nbits_table(
+                client,
+                &changed_hashes,
+                classifier,
+                cascade_budget,
+                Some(nbits_table),
+            )
+            .await
+        }
+        None => {
+            reconcile_dependents_after_changes_with_budget(
+                client,
+                &changed_hashes,
+                classifier,
+                cascade_budget,
+            )
+            .await
+        }
+    }
 }
 
 /// Shared per-block capture transaction sequence for every AuxPoW producer.

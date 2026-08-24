@@ -21,10 +21,10 @@ use mmm_capture::capture::{
 use mmm_capture::nbits_table::NbitsTable;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::{
-    clear_authoritative_historical_provenance_in_transaction, drain_historical_reconcile_queue,
-    enqueue_historical_parent_reconcile, invalidate_source_health_in_transaction,
-    rebuild_historical_source_health, reconcile_authoritative_historical_source_in_transaction,
-    write_historical_base_in_transaction,
+    clear_authoritative_historical_provenance_in_transaction,
+    drain_historical_reconcile_queue_with_nbits_table, enqueue_historical_parent_reconcile,
+    invalidate_source_health_in_transaction, rebuild_historical_source_health,
+    reconcile_authoritative_historical_source_in_transaction, write_historical_base_in_transaction,
 };
 use mmm_store::{
     EventWriteDisposition, upsert_merge_mining_event_with_attributions, upsert_pool_snapshot,
@@ -246,8 +246,18 @@ pub async fn run_historical_import(
     config: &HistoricalImportConfig,
 ) -> Result<HistoricalImportSummary> {
     let mut classifications = HashMap::new();
-    run_historical_import_with_cache(client, classifier, config, &mut classifications, None, true)
-        .await
+    mmm_store::lock_bitcoin_core_header_cache(client).await?;
+    let result = run_historical_import_with_cache(
+        client,
+        classifier,
+        config,
+        &mut classifications,
+        None,
+        true,
+        None,
+    )
+    .await;
+    unlock_core_cache_after_historical_import(client, result).await
 }
 
 async fn run_historical_import_with_cache(
@@ -257,6 +267,7 @@ async fn run_historical_import_with_cache(
     classifications: &mut HashMap<Vec<u8>, ParentClassification>,
     preflighted_artifact: Option<ArtifactPreflight>,
     rebuild_source_health_after_import: bool,
+    shared_nbits_table: Option<&NbitsTable>,
 ) -> Result<HistoricalImportSummary> {
     if config.limit == Some(0) {
         bail!("--limit must be greater than zero");
@@ -268,7 +279,13 @@ async fn run_historical_import_with_cache(
         Some(artifact) => artifact,
         None => preflight_artifact(config, spec)?,
     };
-    let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
+    let loaded_nbits_table = match shared_nbits_table {
+        Some(_) => None,
+        None => Some(mmm_store::load_bitcoin_core_nbits_table(client).await?),
+    };
+    let nbits_table = shared_nbits_table
+        .or(loaded_nbits_table.as_ref())
+        .expect("a historical import always has a Core nBits table");
     if !candidates_prepared {
         let import_configs = (!matches!(
             spec.lifecycle,
@@ -283,7 +300,7 @@ async fn run_historical_import_with_cache(
             spec,
             &mut artifact,
             classifications,
-            &nbits_table,
+            nbits_table,
         )
         .await?;
     }
@@ -315,7 +332,7 @@ async fn run_historical_import_with_cache(
             resolver: &resolver,
             pool_ids_by_slug: &pool_ids_by_slug,
             classifications,
-            nbits_table: &nbits_table,
+            nbits_table,
         },
         artifact,
     )
@@ -334,7 +351,13 @@ async fn run_historical_import_with_cache(
     txn.commit()
         .await
         .with_context(|| format!("commit {} historical chain transaction", spec.chain))?;
-    drain_historical_reconcile_queue(client, classifier, classifications).await?;
+    drain_historical_reconcile_queue_with_nbits_table(
+        client,
+        classifier,
+        classifications,
+        Some(nbits_table),
+    )
+    .await?;
     record_persisted_parent_counts(client, &mut summary, parent_counts).await?;
     if rebuild_source_health_after_import {
         rebuild_historical_source_health(client).await?;
@@ -450,6 +473,19 @@ async fn run_historical_import_configs(
         preflighted_artifacts.push(artifact);
     }
 
+    mmm_store::lock_bitcoin_core_header_cache(client).await?;
+    let result =
+        run_historical_import_configs_locked(client, classifier, configs, preflighted_artifacts)
+            .await;
+    unlock_core_cache_after_historical_import(client, result).await
+}
+
+async fn run_historical_import_configs_locked(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    configs: Vec<HistoricalImportConfig>,
+    mut preflighted_artifacts: Vec<ArtifactPreflight>,
+) -> Result<HistoricalImportAllSummary> {
     let mut classifications = HashMap::new();
     let import_configs = configs
         .iter()
@@ -491,6 +527,7 @@ async fn run_historical_import_configs(
             &mut classifications,
             Some(artifact),
             false,
+            Some(&nbits_table),
         )
         .await?;
         summary
@@ -498,9 +535,24 @@ async fn run_historical_import_configs(
             .push((chain_config.chain.clone(), chain_summary));
     }
     summary.stale_branches_reconciled =
-        reconcile_published_stale_branches(client, classifier).await?;
+        reconcile_published_stale_branches(client, classifier, &nbits_table).await?;
     rebuild_historical_source_health(client).await?;
     Ok(summary)
+}
+
+async fn unlock_core_cache_after_historical_import<T>(
+    client: &mut Client,
+    result: Result<T>,
+) -> Result<T> {
+    let unlock_result = mmm_store::unlock_bitcoin_core_header_cache(client).await;
+    match (result, unlock_result) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(unlock_error)) => Err(error.context(format!(
+            "also failed to unlock Core header cache after historical import: {unlock_error}"
+        ))),
+    }
 }
 
 /// Exercise the production multi-chain orchestration with explicit normalized
@@ -536,10 +588,17 @@ pub async fn run_manifest_historical_import_for_test(
 async fn reconcile_published_stale_branches(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
+    nbits_table: &NbitsTable,
 ) -> Result<u64> {
     let queued = enqueue_published_stale_branches(client).await?;
     let fresh_classifications = HashMap::new();
-    drain_historical_reconcile_queue(client, classifier, &fresh_classifications).await?;
+    drain_historical_reconcile_queue_with_nbits_table(
+        client,
+        classifier,
+        &fresh_classifications,
+        Some(nbits_table),
+    )
+    .await?;
     Ok(queued)
 }
 

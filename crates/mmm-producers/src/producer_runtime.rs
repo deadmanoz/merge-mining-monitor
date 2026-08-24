@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use tokio_postgres::Client;
 use tracing::warn;
 
@@ -110,34 +110,6 @@ impl ProducerContext {
         self.nbits_table =
             refresh_bitcoin_core_header_cache(client, &self.parent_classifier).await?;
         Ok(())
-    }
-
-    /// Refresh after the synced Core tip advances beyond the cache horizon.
-    ///
-    /// Pollers call this before each child-chain tick, so weak-parent placement
-    /// and the current shallow epoch cannot remain stale for a process lifetime.
-    pub(crate) async fn refresh_nbits_table_if_tip_advanced(
-        &mut self,
-        client: &mut Client,
-    ) -> Result<bool> {
-        let tip = self
-            .parent_classifier
-            .synced_tip()
-            .await?
-            .context("Bitcoin Core must be synced before monitor work can continue")?;
-        ensure!(
-            tip.fresh,
-            "Bitcoin Core tip is stale; refusing monitor work"
-        );
-        ensure!(
-            tip.is_mainnet,
-            "Bitcoin Core must be connected to mainnet; refusing monitor work"
-        );
-        if tip.height <= self.nbits_table.horizon_height() {
-            return Ok(false);
-        }
-        self.refresh_nbits_table(client).await?;
-        Ok(true)
     }
 
     /// Snapshot of `pool.slug -> pool.id` taken at bootstrap, the map capture

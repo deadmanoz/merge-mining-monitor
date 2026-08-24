@@ -112,6 +112,31 @@ pub(crate) async fn reconcile_dependents_after_changes_with_budget(
     classifier: &ConfiguredParentClassifier,
     cascade_budget: usize,
 ) -> Result<()> {
+    let nbits_table = if classifier.is_enabled() {
+        Some(mmm_store::load_bitcoin_core_nbits_table(client).await?)
+    } else {
+        None
+    };
+    reconcile_dependents_after_changes_with_budget_and_nbits_table(
+        client,
+        hashes,
+        classifier,
+        cascade_budget,
+        nbits_table.as_ref(),
+    )
+    .await
+}
+
+/// Cascade dependent rows with a table already validated by the caller's
+/// operation. Historical imports use this so every parent sees one Core-cache
+/// snapshot from preflight through derived reconciliation.
+pub(crate) async fn reconcile_dependents_after_changes_with_budget_and_nbits_table(
+    client: &mut Client,
+    hashes: &[Vec<u8>],
+    classifier: &ConfiguredParentClassifier,
+    cascade_budget: usize,
+    nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
+) -> Result<()> {
     let mut queue = VecDeque::new();
     let visited_events = HashSet::new();
     let visited_blocks = HashSet::new();
@@ -131,19 +156,7 @@ pub(crate) async fn reconcile_dependents_after_changes_with_budget(
         .await?;
     }
     if !queue.is_empty() {
-        let nbits_table = if classifier.is_enabled() {
-            Some(mmm_store::load_bitcoin_core_nbits_table(client).await?)
-        } else {
-            None
-        };
-        drain_reconcile_queue(
-            client,
-            classifier,
-            queue,
-            Some(cascade_budget),
-            nbits_table.as_ref(),
-        )
-        .await?;
+        drain_reconcile_queue(client, classifier, queue, Some(cascade_budget), nbits_table).await?;
     }
     Ok(())
 }

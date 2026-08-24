@@ -151,6 +151,31 @@ mod tests {
             .0,
             BtcOrphanVerdict::Excluded
         );
+        assert_eq!(
+            classify_btc_orphan_with(
+                &table,
+                1_475,
+                CompactTarget::from_consensus(0x1d00_bbbb),
+                None,
+            )
+            .0,
+            BtcOrphanVerdict::Weak
+        );
+        assert_eq!(
+            classify_btc_orphan_with(&table, -1, CompactTarget::from_consensus(0x1d00_bbbb), None,)
+                .0,
+            BtcOrphanVerdict::Excluded
+        );
+        assert_eq!(
+            classify_btc_orphan_with(
+                &table,
+                2_001,
+                CompactTarget::from_consensus(0x1d00_bbbb),
+                None,
+            )
+            .0,
+            BtcOrphanVerdict::Pending
+        );
     }
 
     #[test]

@@ -4,15 +4,20 @@ use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::{
     ConfiguredParentClassifier, CoreHeader, FakeParentClassifier, ParentClassification,
 };
+use mmm_capture::auxpow::parse_bip34_height;
+use mmm_capture::capture::ClassificationProof;
 use mmm_capture::nbits_table::NbitsLookup;
 use mmm_producers::refresh_bitcoin_core_header_cache;
+use mmm_read_model::reconcile_from_merge_mining_event;
 use mmm_store::{
     BitcoinCoreHeader, load_bitcoin_core_nbits_table, load_bitcoin_core_nbits_table_if_present,
     lock_bitcoin_core_header_cache, record_bitcoin_core_header, replace_bitcoin_core_header_cache,
-    unlock_bitcoin_core_header_cache,
+    unlock_bitcoin_core_header_cache, upsert_merge_mining_event,
 };
 
 use crate::support::db::connect_to_schema;
+use crate::support::scenario::orphan_candidate_verdict;
+use crate::support::{namecoin_event_payload, namecoin_fixture};
 
 fn header(height: i32, hash_byte: u8, block_time: i64, bits: u32) -> BitcoinCoreHeader {
     BitcoinCoreHeader {
@@ -192,6 +197,160 @@ async fn refresh_replaces_a_shallow_epoch_boundary_from_core() -> Result<()> {
             .await?
             .get(0);
         assert_eq!(block_hash, vec![9; 32]);
+        Ok(())
+    })
+}
+
+#[tokio::test]
+async fn refresh_retries_a_same_height_core_reorg_before_writing() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        client
+            .execute("DELETE FROM bitcoin_core_header", &[])
+            .await?;
+        let classifier = ConfiguredParentClassifier::Fake(
+            FakeParentClassifier::new(ParentClassification::unknown(
+                &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
+            ))
+            .with_synced_tip_height(2030)
+            .with_canonical_header(core_header(0, 0, 1, 0x1d00_ffff))
+            .with_canonical_header(core_header(2016, 1, 2, 0x1c00_ffff))
+            .with_canonical_header_sequence([
+                core_header(2030, 2, 3, 0x1c00_ffff),
+                core_header(2030, 9, 4, 0x1c00_ffff),
+            ]),
+        );
+
+        let table = refresh_bitcoin_core_header_cache(&mut client, &classifier).await?;
+        assert_eq!(table.horizon_height(), 2030);
+        let horizon_hash: Vec<u8> = client
+            .query_one(
+                "SELECT block_hash FROM bitcoin_core_header WHERE height = 2030",
+                &[],
+            )
+            .await?
+            .get(0);
+        assert_eq!(horizon_hash, vec![9; 32]);
+        Ok(())
+    })
+}
+
+#[tokio::test]
+async fn refresh_rejects_a_horizon_below_an_existing_final_epoch() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        client
+            .execute("DELETE FROM bitcoin_core_header", &[])
+            .await?;
+        let finalized = ConfiguredParentClassifier::Fake(
+            FakeParentClassifier::new(ParentClassification::unknown(
+                &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
+            ))
+            .with_synced_tip_height(2116)
+            .with_canonical_header(core_header(0, 0, 1, 0x1d00_ffff))
+            .with_canonical_header(core_header(2016, 1, 2, 0x1c00_ffff))
+            .with_canonical_header(core_header(2116, 2, 3, 0x1c00_ffff)),
+        );
+        refresh_bitcoin_core_header_cache(&mut client, &finalized).await?;
+
+        let lagging = ConfiguredParentClassifier::Fake(
+            FakeParentClassifier::new(ParentClassification::unknown(
+                &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
+            ))
+            .with_synced_tip_height(2015)
+            .with_canonical_header(core_header(2015, 3, 4, 0x1d00_ffff)),
+        );
+        let error = refresh_bitcoin_core_header_cache(&mut client, &lagging)
+            .await
+            .expect_err("a lagging Core node must not move the cache before a finalized epoch");
+        assert!(
+            error.to_string().contains("highest finalized epoch"),
+            "unexpected error: {error:#}"
+        );
+        Ok(())
+    })
+}
+
+#[tokio::test]
+async fn shallow_cache_reorg_reclassifies_existing_orphans_and_source_health() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (resolver, pool_ids_by_slug, source_id, parsed) = namecoin_fixture(&client).await?;
+        let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
+            .expect("Namecoin fixture carries a BIP34 parent height");
+        let parent_header = parsed.parent_header.header;
+        crate::support::db::seed_bitcoin_core_header_cache_through(
+            &client,
+            parent_height,
+            i64::from(parent_header.time),
+            parent_header.bits.to_consensus(),
+        )
+        .await?;
+        let epoch = mmm_capture::nbits_table::daa_epoch_start(parent_height);
+        client
+            .execute(
+                "UPDATE bitcoin_core_header SET is_final = FALSE WHERE height = $1",
+                &[&epoch],
+            )
+            .await?;
+        let payload = namecoin_event_payload(
+            &parsed,
+            &resolver,
+            &pool_ids_by_slug,
+            500_000,
+            ClassificationProof::default(),
+            1_000,
+        )?;
+        let event_id = upsert_merge_mining_event(&client, source_id, &payload)
+            .await?
+            .event_id;
+        let absent = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+            orphan_candidate_verdict(&parent_header),
+        ));
+        reconcile_from_merge_mining_event(&mut client, event_id, &absent, None).await?;
+        let parent_hash = parsed.parent_header.hash().to_byte_array().to_vec();
+        let before: Option<String> = client
+            .query_one(
+                "SELECT btc_orphan_class FROM block WHERE btc_header_hash = $1",
+                &[&parent_hash],
+            )
+            .await?
+            .get(0);
+        assert_eq!(before.as_deref(), Some("strict_btc_orphan"));
+
+        let core_tip = parent_height + 100;
+        let reorged = ConfiguredParentClassifier::Fake(
+            FakeParentClassifier::new(orphan_candidate_verdict(&parent_header))
+                .with_synced_tip_height(core_tip)
+                .with_canonical_header(core_header(
+                    epoch,
+                    9,
+                    i64::from(epoch) + 1,
+                    parent_header.bits.to_consensus() ^ 1,
+                ))
+                .with_canonical_header(core_header(
+                    core_tip,
+                    8,
+                    i64::from(parent_header.time) + 1,
+                    parent_header.bits.to_consensus(),
+                )),
+        );
+        refresh_bitcoin_core_header_cache(&mut client, &reorged).await?;
+
+        let after: Option<String> = client
+            .query_one(
+                "SELECT btc_orphan_class FROM block WHERE btc_header_hash = $1",
+                &[&parent_hash],
+            )
+            .await?
+            .get(0);
+        assert_eq!(after.as_deref(), Some("excluded"));
+        let source_health = client
+            .query_one(
+                "SELECT strict_orphan_parents, unknown_parents \
+                 FROM source_health WHERE source_id = $1",
+                &[&source_id],
+            )
+            .await?;
+        assert_eq!(source_health.get::<_, i64>(0), 0);
+        assert_eq!(source_health.get::<_, i64>(1), 1);
         Ok(())
     })
 }

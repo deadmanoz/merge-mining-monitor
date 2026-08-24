@@ -8,8 +8,10 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use mmm_bitcoin_core::ConfiguredParentClassifier;
 use tokio_postgres::Client;
 
+use crate::bitcoin_epoch_cache::refresh_bitcoin_core_header_cache;
 use crate::live_loop::{LiveProducer, TickOutcome, run_live_loop};
 
 use super::{
@@ -214,6 +216,7 @@ where
     source: &'a S,
     source_id: i64,
     initial_cch: i32,
+    header_cache_classifier: &'a ConfiguredParentClassifier,
     config: BitcoinCoreSyncConfig,
     stall: usize,
     last_near_tip_repair_at: Option<Instant>,
@@ -267,6 +270,10 @@ where
                 "Bitcoin Core backbone live batch failed; retrying after interval"
             ),
         }
+
+        refresh_bitcoin_core_header_cache(self.client, self.header_cache_classifier)
+            .await
+            .context("refresh Core header cache after Bitcoin backbone follow batch")?;
 
         self.last_near_tip_repair_at = repair_near_tip_gaps_if_due(
             self.client,
@@ -338,11 +345,13 @@ where
 pub async fn run_sync_bitcoin_core_follow<S>(
     client: &mut Client,
     source: &S,
-    mut config: BitcoinCoreSyncConfig,
+    header_cache_classifier: &ConfiguredParentClassifier,
+    config: BitcoinCoreSyncConfig,
 ) -> Result<()>
 where
     S: BitcoinCoreBackboneSource,
 {
+    let mut config = config;
     normalize_follow_config(&mut config);
     let source_id = get_source_id(client, BITCOIN_SOURCE_CODE).await?;
     let initial_cch = initialize_follow_state(client, source_id).await?;
@@ -351,6 +360,7 @@ where
         source,
         source_id,
         initial_cch,
+        header_cache_classifier,
         config,
         stall: 0,
         last_near_tip_repair_at: None,

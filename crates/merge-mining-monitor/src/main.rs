@@ -116,12 +116,13 @@ async fn cmd_reclassify_pools(args: std::env::Args) -> Result<()> {
 async fn cmd_sync_bitcoin_core(args: std::env::Args) -> Result<()> {
     let config = mmm_producers::BitcoinCoreSyncConfig::from_args(args)?;
     let rpc = bitcoin_core_rpc_for_command("sync-bitcoin-core")?;
-    let (mut pg_client, _) = mmm_producers::connect_core_required_from_env().await?;
+    let (mut pg_client, classifier) = mmm_producers::connect_core_required_from_env().await?;
     if config.follow {
         // Long-lived managed-service daemon: catch up to tip then follow
         // it, with its own SIGINT/SIGTERM handling. Returns only on a
         // clean shutdown or a fatal backbone integrity error.
-        mmm_producers::run_sync_bitcoin_core_follow(&mut pg_client, &rpc, config).await?;
+        mmm_producers::run_sync_bitcoin_core_follow(&mut pg_client, &rpc, &classifier, config)
+            .await?;
     } else {
         let stats = mmm_producers::run_sync_bitcoin_core(&mut pg_client, &rpc, config).await?;
         info!(

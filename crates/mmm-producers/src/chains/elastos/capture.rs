@@ -127,8 +127,8 @@ impl ElastosCaptureContext {
         self.base.nbits_table()
     }
 
-    async fn refresh_nbits_table_if_tip_advanced(&mut self, client: &mut Client) -> Result<bool> {
-        self.base.refresh_nbits_table_if_tip_advanced(client).await
+    async fn refresh_nbits_table(&mut self, client: &mut Client) -> Result<()> {
+        self.base.refresh_nbits_table(client).await
     }
 }
 
@@ -497,7 +497,7 @@ impl ChainPoller for ElastosChainPoller {
 
     async fn refresh_core_cache(&mut self) -> Result<()> {
         self.context
-            .refresh_nbits_table_if_tip_advanced(&mut self.state.client)
+            .refresh_nbits_table(&mut self.state.client)
             .await?;
         Ok(())
     }
@@ -513,10 +513,10 @@ impl ChainPoller for ElastosChainPoller {
         if matches!(outcome, ElastosHeightOutcome::TableHorizonHold) {
             match self
                 .context
-                .refresh_nbits_table_if_tip_advanced(&mut self.state.client)
+                .refresh_nbits_table(&mut self.state.client)
                 .await
             {
-                Ok(true) => {
+                Ok(()) => {
                     outcome = process_elastos_height(
                         &mut self.state.client,
                         &self.rpc,
@@ -525,7 +525,6 @@ impl ChainPoller for ElastosChainPoller {
                     )
                     .await?;
                 }
-                Ok(false) => {}
                 Err(error) => warn!(
                     height,
                     error = %error,

@@ -20,9 +20,9 @@ mod poll_cursor;
 mod pool;
 
 pub use bitcoin_core_header::{
-    BitcoinCoreHeader, highest_final_bitcoin_core_epoch, load_bitcoin_core_nbits_table,
-    load_bitcoin_core_nbits_table_if_present, lock_bitcoin_core_header_cache,
-    record_bitcoin_core_header, replace_bitcoin_core_header_cache,
+    BitcoinCoreHeader, BitcoinCoreHeaderCacheUpdate, highest_final_bitcoin_core_epoch,
+    load_bitcoin_core_nbits_table, load_bitcoin_core_nbits_table_if_present,
+    lock_bitcoin_core_header_cache, record_bitcoin_core_header, replace_bitcoin_core_header_cache,
     unlock_bitcoin_core_header_cache,
 };
 pub use chains::elastos::{

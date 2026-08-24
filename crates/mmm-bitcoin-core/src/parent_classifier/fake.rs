@@ -12,7 +12,8 @@ pub struct FakeParentClassifier {
     synced_tip_height: Option<i32>,
     synced_tip_fresh: bool,
     fail_synced_tip: bool,
-    canonical_headers: std::collections::HashMap<i32, CoreHeader>,
+    canonical_headers:
+        Arc<tokio::sync::Mutex<std::collections::HashMap<i32, VecDeque<CoreHeader>>>>,
     max_concurrency: usize,
 }
 
@@ -54,7 +55,7 @@ impl FakeParentClassifier {
             synced_tip_height: None,
             synced_tip_fresh: true,
             fail_synced_tip: false,
-            canonical_headers: std::collections::HashMap::new(),
+            canonical_headers: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             max_concurrency: 1,
         }
     }
@@ -101,7 +102,33 @@ impl FakeParentClassifier {
 
     /// Register one canonical Core header for the persisted cache refresher.
     pub fn with_canonical_header(mut self, header: CoreHeader) -> Self {
-        self.canonical_headers.insert(header.height, header);
+        Arc::get_mut(&mut self.canonical_headers)
+            .expect("fake canonical-header registry has not been cloned")
+            .get_mut()
+            .insert(header.height, VecDeque::from([header]));
+        self
+    }
+
+    /// Register successive responses for one height. The last header remains
+    /// active after the sequence is consumed, which models a same-height Core
+    /// reorg settling before a cache refresh retry.
+    pub fn with_canonical_header_sequence<I>(mut self, headers: I) -> Self
+    where
+        I: IntoIterator<Item = CoreHeader>,
+    {
+        let headers = headers.into_iter().collect::<VecDeque<_>>();
+        let height = headers
+            .front()
+            .expect("fake canonical-header sequence must not be empty")
+            .height;
+        assert!(
+            headers.iter().all(|header| header.height == height),
+            "fake canonical-header sequence must have one height"
+        );
+        Arc::get_mut(&mut self.canonical_headers)
+            .expect("fake canonical-header registry has not been cloned")
+            .get_mut()
+            .insert(height, headers);
         self
     }
 
@@ -124,10 +151,20 @@ impl FakeParentClassifier {
     }
 
     pub(crate) async fn canonical_header(&self, height: i32) -> Result<CoreHeader> {
-        self.canonical_headers
-            .get(&height)
-            .copied()
-            .with_context(|| format!("fake classifier: no canonical header at {height}"))
+        let mut headers = self.canonical_headers.lock().await;
+        let sequence = headers
+            .get_mut(&height)
+            .with_context(|| format!("fake classifier: no canonical header at {height}"))?;
+        if sequence.len() > 1 {
+            Ok(sequence
+                .pop_front()
+                .expect("non-empty fake canonical-header sequence"))
+        } else {
+            sequence
+                .front()
+                .copied()
+                .context("fake canonical-header sequence became empty")
+        }
     }
 
     pub(crate) async fn classify_parent(

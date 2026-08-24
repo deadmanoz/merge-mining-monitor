@@ -19,6 +19,16 @@ pub struct BitcoinCoreHeader {
     pub bits: u32,
 }
 
+/// The meaningful effect of replacing the mutable cache suffix.
+///
+/// A changed shallow header can alter previously derived orphan placement, so
+/// callers must reclassify existing orphan rows before releasing the cache
+/// refresh lock.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BitcoinCoreHeaderCacheUpdate {
+    pub shallow_reorged: bool,
+}
+
 /// Serialize a Core observation and its cache replacement on this connection.
 ///
 /// A table lock inside the replacement transaction cannot prevent a slower
@@ -121,7 +131,7 @@ pub async fn replace_bitcoin_core_header_cache(
     final_epochs: &[BitcoinCoreHeader],
     shallow_epoch: Option<&BitcoinCoreHeader>,
     horizon: &BitcoinCoreHeader,
-) -> Result<()> {
+) -> Result<BitcoinCoreHeaderCacheUpdate> {
     ensure!(
         final_epochs
             .iter()
@@ -134,10 +144,6 @@ pub async fn replace_bitcoin_core_header_cache(
             "shallow Bitcoin Core header must be a boundary above the cutoff"
         );
     }
-    ensure!(
-        horizon.height >= final_epoch_height,
-        "Bitcoin Core cache horizon must not precede the final cutoff"
-    );
     let transaction = client
         .transaction()
         .await
@@ -146,6 +152,58 @@ pub async fn replace_bitcoin_core_header_cache(
         .batch_execute("LOCK TABLE bitcoin_core_header IN SHARE ROW EXCLUSIVE MODE")
         .await
         .context("lock Core-header-cache replacement")?;
+    let highest_final: Option<i32> = transaction
+        .query_one(
+            "SELECT max(height) FROM bitcoin_core_header WHERE is_final",
+            &[],
+        )
+        .await
+        .context("load highest final Core-header-cache epoch during replacement")?
+        .get(0);
+    ensure!(
+        horizon.height >= final_epoch_height,
+        "Bitcoin Core cache horizon must not precede the final cutoff"
+    );
+    ensure!(
+        highest_final.is_none_or(|height| horizon.height >= height),
+        "Bitcoin Core cache horizon must not precede the highest finalized epoch"
+    );
+
+    let previous_shallow = transaction
+        .query(
+            "SELECT height, block_hash, block_time, bits \
+             FROM bitcoin_core_header WHERE NOT is_final",
+            &[],
+        )
+        .await
+        .context("load previous shallow Core-header-cache rows")?
+        .into_iter()
+        .map(|row| {
+            Ok(BitcoinCoreHeader {
+                height: row.get(0),
+                block_hash: row.get(1),
+                block_time: row.get(2),
+                bits: u32::try_from(row.get::<_, i64>(3))
+                    .context("cached Bitcoin Core header bits exceed u32")?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let incoming = final_epochs
+        .iter()
+        .chain(shallow_epoch)
+        .chain(std::iter::once(horizon))
+        .collect::<Vec<_>>();
+    let shallow_reorged = previous_shallow.iter().any(|previous| {
+        incoming
+            .iter()
+            .find(|incoming| incoming.height == previous.height)
+            .is_some_and(|incoming| *incoming != previous)
+    }) || previous_shallow
+        .iter()
+        .map(|header| header.height)
+        .max()
+        .is_some_and(|height| height > horizon.height);
+
     transaction
         .execute("DELETE FROM bitcoin_core_header WHERE NOT is_final", &[])
         .await
@@ -159,13 +217,15 @@ pub async fn replace_bitcoin_core_header_cache(
     record_bitcoin_core_header_with_finality(
         &transaction,
         horizon,
-        horizon.height == final_epoch_height,
+        horizon.height == final_epoch_height
+            || highest_final.is_some_and(|height| horizon.height == height),
     )
     .await?;
     transaction
         .commit()
         .await
-        .context("commit Core-header-cache replacement")
+        .context("commit Core-header-cache replacement")?;
+    Ok(BitcoinCoreHeaderCacheUpdate { shallow_reorged })
 }
 
 /// Load the cache when it has been initialized by a Core-backed command.

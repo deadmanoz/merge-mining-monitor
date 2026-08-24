@@ -20,8 +20,10 @@ the current synced tip before work begins. `serve` reads that cache from Postgre
 and makes no Core RPC calls.
 
 The current retarget boundary is marked final only after Core re-reads it at 100
-blocks behind that tip. This lets a shallow reorg replace only the current cache
-suffix while retaining the settled epoch history.
+blocks behind that tip. Cache refreshes verify that Core's tip did not change
+while the sparse header snapshot was read. A shallow replacement reclassifies
+existing orphan rows before the cache lock is released, while settled epoch
+history is retained.
 
 After applying migration `0010`, configure and sync a **Bitcoin mainnet** Core
 node before running any command that writes or rebuilds monitor data, including
@@ -143,6 +145,9 @@ just sync-bitcoin-core --from-height <start> --to-height <end>  # bounded histor
 just sync-bitcoin-core --from-height <start> --to-height <end> --missing-only  # repair gaps in a range
 just sync-bitcoin-core --follow                                 # long-lived catch-up-then-follow daemon
 ```
+
+In follow mode, each batch also refreshes the sparse Core header cache, even
+when no child-chain poller is running.
 
 `--to-height` and `--limit` are mutually exclusive, so range and page semantics
 stay unambiguous. Follow mode keeps a contiguous local cursor and, during each

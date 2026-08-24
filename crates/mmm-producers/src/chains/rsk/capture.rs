@@ -704,7 +704,7 @@ impl ChainPoller for RskChainPoller {
     async fn refresh_core_cache(&mut self) -> Result<()> {
         self.context
             .base
-            .refresh_nbits_table_if_tip_advanced(&mut self.state.client)
+            .refresh_nbits_table(&mut self.state.client)
             .await?;
         Ok(())
     }

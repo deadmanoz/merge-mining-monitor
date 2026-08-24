@@ -9,9 +9,11 @@ This changelog starts with the initial release.
 - Replace the compiled Bitcoin nBits epoch table with a sparse Postgres cache
   populated from a required Bitcoin mainnet Core node. Capture, import, and
   reconciliation refresh Core headers through the synced tip before classifying
-  evidence, and live pollers advance the cache when Core advances. Shallow
-  retarget boundaries are re-read and marked final at 100 blocks deep. The
-  API remains Core-RPC-free by reading the persisted cache. Remove the
+  evidence, while live pollers and backbone follow refresh a stable Core
+  snapshot on every tick. Historical imports retain one table through their
+  derived rebuild. Shallow replacements reclassify existing orphan rows, and
+  retarget boundaries are marked final at 100 blocks deep. The API remains
+  Core-RPC-free by reading the persisted cache. Remove the
   `--allow-unclassified` import bypass.
 
 ## [0.6.0] - 2026-08-15
