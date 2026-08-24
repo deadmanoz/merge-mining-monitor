@@ -141,18 +141,21 @@ pub async fn load_bitcoin_core_nbits_table<C: GenericClient>(client: &C) -> Resu
         .context("Bitcoin Core header cache is empty")
 }
 
-/// Highest cached epoch boundary at or below the caller's reorg-safe cutoff.
-pub async fn highest_bitcoin_core_epoch_at_or_below<C: GenericClient>(
+/// Highest cached epoch boundary strictly before the reorg-safe cutoff.
+///
+/// The cutoff itself must be fetched again before it becomes immutable, even
+/// when it was previously observed as the current shallow epoch.
+pub async fn highest_bitcoin_core_epoch_before<C: GenericClient>(
     client: &C,
     height: i32,
 ) -> Result<Option<i32>> {
     client
         .query_one(
             "SELECT max(height) FROM bitcoin_core_header \
-             WHERE height % 2016 = 0 AND height <= $1",
+             WHERE height % 2016 = 0 AND height < $1",
             &[&height],
         )
         .await
-        .context("load highest reorg-safe cached Bitcoin Core epoch")
+        .context("load highest cached Bitcoin Core epoch before reorg-safe cutoff")
         .map(|row| row.get(0))
 }

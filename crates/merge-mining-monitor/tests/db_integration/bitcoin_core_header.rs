@@ -151,3 +151,40 @@ async fn refresh_replaces_a_shallow_epoch_boundary_from_core() -> Result<()> {
         Ok(())
     })
 }
+
+#[tokio::test]
+async fn refresh_revalidates_a_boundary_when_it_becomes_reorg_safe() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        client
+            .execute("DELETE FROM bitcoin_core_header", &[])
+            .await?;
+        let first = ConfiguredParentClassifier::Fake(
+            FakeParentClassifier::new(ParentClassification::unknown(
+                &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
+            ))
+            .with_synced_tip_height(2030)
+            .with_canonical_header(core_header(0, 0, 1, 0x1d00_ffff))
+            .with_canonical_header(core_header(2016, 1, 2, 0x1c00_ffff))
+            .with_canonical_header(core_header(2030, 2, 3, 0x1c00_ffff)),
+        );
+        refresh_bitcoin_core_header_cache(&mut client, &first).await?;
+
+        let reorged = ConfiguredParentClassifier::Fake(
+            FakeParentClassifier::new(ParentClassification::unknown(
+                &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
+            ))
+            .with_synced_tip_height(2116)
+            .with_canonical_header(core_header(2016, 9, 4, 0x1c00_ffff))
+            .with_canonical_header(core_header(2116, 2, 3, 0x1c00_ffff)),
+        );
+        let error = refresh_bitcoin_core_header_cache(&mut client, &reorged)
+            .await
+            .expect_err("a changed boundary must fail closed as it becomes immutable");
+        assert!(
+            error
+                .to_string()
+                .contains("disagrees with the persisted canonical header")
+        );
+        Ok(())
+    })
+}
