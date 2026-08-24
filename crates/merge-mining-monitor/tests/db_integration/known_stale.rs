@@ -171,6 +171,63 @@ async fn reclassify_known_stales_demotes_contaminated_row_and_keeps_source_healt
 }
 
 #[tokio::test]
+async fn import_known_stales_repairs_contaminated_orphan_rows() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (parent, _, _) = btc_400000_orphan_fixture(&client).await?;
+        let parent_hash = parent.block_hash().to_byte_array().to_vec();
+        let display_hash = parent.block_hash();
+        capture_child_event(
+            &mut client,
+            ChildEvidence::new(
+                "known_stale_import_repair",
+                SYSCOIN_SOURCE_CODE,
+                2_248_410,
+                0x5c,
+                parent,
+                orphan_candidate_verdict(&parent),
+                1_000,
+            ),
+        )
+        .await?;
+        assert_eq!(
+            block_kind_and_class(&client, &parent_hash).await?,
+            ("unknown".to_string(), Some("weak_btc_orphan".to_string()))
+        );
+
+        let csv_path = std::env::temp_dir().join(format!(
+            "known-stale-import-repair-{}-{display_hash}.csv",
+            std::process::id()
+        ));
+        let result = async {
+            std::fs::write(
+                &csv_path,
+                format!("height,hash,header\\n400000,{display_hash},\\n"),
+            )?;
+            let summary = mmm_producers::run_import_known_stales(
+                &mut client,
+                &mmm_producers::KnownStaleImportConfig {
+                    csv_path: csv_path.clone(),
+                    source_label: "import-repair-test".to_string(),
+                    batch_size: 100,
+                    skip_malformed: false,
+                },
+            )
+            .await?;
+            assert_eq!(summary.inserted, 1);
+            assert_eq!(
+                block_kind_and_class(&client, &parent_hash).await?,
+                ("unknown".to_string(), Some("excluded".to_string())),
+                "membership import repairs classifications made before the membership existed"
+            );
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        let _ = std::fs::remove_file(&csv_path);
+        result
+    })
+}
+
+#[tokio::test]
 async fn import_known_stales_serializes_with_parent_advisory_lock() -> Result<()> {
     crate::run_mut_db_test!(client, schema, {
         let header = btc_400000_header()?;

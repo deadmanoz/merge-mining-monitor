@@ -187,7 +187,7 @@ header cache and its singleton state. Boundaries are marked final only after
 Core re-reads them 100 blocks behind the synced tip. The current shallow epoch
 and moving horizon are refreshed from Core on every command. The state retains
 a safe timestamp-coverage high-water mark for valid non-monotonic header times
-and records an incomplete orphan reclassification sweep for retry. nBits and
+and separately records pending-coverage and full-orphan-recheck retries. nBits and
 timestamp classification read this cache, so the monitor has no compiled
 Bitcoin epoch dataset.
 

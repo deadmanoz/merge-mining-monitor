@@ -86,9 +86,10 @@ for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
   `BITCOIN_RPC_URL`. Each command refreshes the Core-header cache through the
   current synced tip before it starts. Long-lived pollers and
   `sync-bitcoin-core --follow` refresh the cache on every tick, verifying that
-  Core's horizon did not move while the sparse snapshot was read. A changed
-  shallow suffix or expanded coverage reclassifies existing and pending orphan
-  rows before the cache lock is released. The cache records that sweep durably,
+  Core's horizon did not move while the sparse snapshot was read, and that an
+  advancing tip still descends from the prior shallow horizon. A changed shallow
+  suffix reclassifies existing and pending orphan rows; expanded coverage revisits
+  pending rows only. The cache records that work durably,
   so a failed pass is retried by the next refresh. Its timestamp coverage does
   not regress when a valid newer Core header has an older timestamp. Historical
   imports retain that lock across candidate validation and

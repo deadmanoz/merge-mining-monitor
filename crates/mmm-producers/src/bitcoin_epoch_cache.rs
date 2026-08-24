@@ -29,7 +29,7 @@ pub async fn refresh_bitcoin_core_header_cache(
                 client,
                 classifier,
                 mmm_read_model::ReclassifyUnknownParentsConfig {
-                    recheck_orphans: true,
+                    recheck_orphans: update.recheck_orphans,
                     ..Default::default()
                 },
             )
@@ -74,12 +74,29 @@ async fn refresh_bitcoin_core_header_cache_snapshot(
         "Bitcoin Core must be connected to mainnet; refusing monitor work"
     );
     let horizon_height = tip.height;
+    let prior_horizon = mmm_store::load_bitcoin_core_header_cache_horizon(client).await?;
     let opening_horizon = classifier
         .canonical_header(horizon_height)
         .await
         .with_context(|| {
             format!("fetch opening Bitcoin Core header-cache horizon at {horizon_height}")
         })?;
+    let prior_horizon_reorged = match prior_horizon.filter(|header| header.height < horizon_height)
+    {
+        Some(cached) => {
+            let observed = classifier
+                .canonical_header(cached.height)
+                .await
+                .with_context(|| {
+                    format!(
+                        "verify prior Bitcoin Core header-cache horizon at {}",
+                        cached.height
+                    )
+                })?;
+            bitcoin_core_header_cache_row(observed).block_hash != cached.block_hash
+        }
+        None => false,
+    };
     let final_epoch = daa_epoch_start(horizon_height.saturating_sub(CORE_HEADER_REORG_SAFE_DEPTH));
     let highest_final = mmm_store::highest_final_bitcoin_core_epoch(client).await?;
     let next_epoch = highest_final.map_or(0, |height| height + DAA_EPOCH_INTERVAL);
@@ -135,6 +152,7 @@ async fn refresh_bitcoin_core_header_cache_snapshot(
         &final_epochs,
         shallow_epoch.as_ref(),
         &bitcoin_core_header_cache_row(opening_horizon),
+        prior_horizon_reorged,
     )
     .await?;
     Ok(Some((

@@ -11,12 +11,20 @@ This changelog starts with the initial release.
   reconciliation refresh Core headers through the synced tip before classifying
   evidence, while live pollers and backbone follow refresh a stable Core
   snapshot on every tick. Historical imports retain one table through their
-  derived rebuild. Shallow replacements and expanded coverage reclassify orphan
-  rows, with a durable retry marker for an interrupted sweep, and retarget
-  boundaries are marked final at 100 blocks deep. Timestamp coverage does not
-  regress when a valid later Core header has an older timestamp. The API remains
-  Core-RPC-free by reading the persisted cache. Remove the
-  `--allow-unclassified` import bypass.
+  derived rebuild. Shallow replacements reclassify existing orphan rows while
+  expanded coverage revisits pending rows, with durable retry markers for an
+  interrupted sweep. An advancing horizon verifies the old shallow horizon
+  before retaining timestamp coverage. Retarget boundaries are marked final at
+  100 blocks deep. Timestamp coverage does not regress when a valid later Core
+  header has an older timestamp. The API remains Core-RPC-free by reading the
+  persisted cache.
+  Remove the `--allow-unclassified` import bypass.
+
+- Repair existing strict/weak classifications immediately after an
+  `import-known-stales` membership update.
+
+- Retry transient Core-header-cache refresh failures in `sync-bitcoin-core --follow`
+  without masking a typed backbone integrity failure.
 
 ## [0.6.0] - 2026-08-15
 

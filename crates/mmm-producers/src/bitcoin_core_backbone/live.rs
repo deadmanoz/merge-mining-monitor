@@ -242,6 +242,23 @@ fn bookkeeping_failure_outcome_from(best_effort_progress: Option<FollowProgress>
     }
 }
 
+/// Return whether follow mode can continue this tick after refreshing the
+/// derived Core-header cache. Cache transport and database failures are retried
+/// like the backbone batch; typed backbone integrity failures still fail-stop.
+fn handle_header_cache_refresh_result(result: Result<()>) -> Result<bool> {
+    match result {
+        Ok(()) => Ok(true),
+        Err(err) if is_backbone_integrity_error(&err) => Err(err),
+        Err(err) => {
+            tracing::warn!(
+                error = format!("{err:#}"),
+                "Bitcoin Core header-cache refresh failed; retrying after interval"
+            );
+            Ok(false)
+        }
+    }
+}
+
 impl<S> LiveProducer for BitcoinCoreLiveProducer<'_, S>
 where
     S: BitcoinCoreBackboneSource,
@@ -271,9 +288,15 @@ where
             ),
         }
 
-        refresh_bitcoin_core_header_cache(self.client, self.header_cache_classifier)
-            .await
-            .context("refresh Core header cache after Bitcoin backbone follow batch")?;
+        let refreshed = handle_header_cache_refresh_result(
+            refresh_bitcoin_core_header_cache(self.client, self.header_cache_classifier)
+                .await
+                .context("refresh Core header cache after Bitcoin backbone follow batch")
+                .map(|_| ()),
+        )?;
+        if !refreshed {
+            return Ok(self.bookkeeping_failure_outcome().await);
+        }
 
         self.last_near_tip_repair_at = repair_near_tip_gaps_if_due(
             self.client,
@@ -569,6 +592,27 @@ mod tests {
             handle_near_tip_repair_result(953_621, Ok(BitcoinCoreSyncStats::default()))
                 .expect("successful repair stats are accepted"),
             "successful repair stats are accepted"
+        );
+    }
+
+    #[test]
+    fn header_cache_refresh_policy_retries_transient_errors() {
+        assert!(
+            !handle_header_cache_refresh_result(Err(anyhow!("temporary cache RPC outage")))
+                .expect("transient cache errors are retryable"),
+            "a cache refresh outage must not terminate follow mode"
+        );
+        let structural = integrity_error(
+            BackboneIntegrityError::HeightConflict,
+            "same-height conflict detail".to_owned(),
+        );
+        assert!(
+            handle_header_cache_refresh_result(Err(structural)).is_err(),
+            "integrity failures still fail-stop follow mode"
+        );
+        assert!(
+            handle_header_cache_refresh_result(Ok(())).expect("success is accepted"),
+            "successful cache refresh continues follow mode"
         );
     }
 

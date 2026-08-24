@@ -123,14 +123,14 @@ impl KnownStaleImportSummary {
 }
 
 /// Read the stale-blocks CSV and upsert every hash into `known_stale_block`
-/// in ONE transaction.
+/// in one transaction, then repair any existing strict/weak classifications.
 ///
 /// Malformed rows (missing/unparseable `hash`) are FATAL by default, as are a
 /// missing `hash` column and a file with no usable row: downstream guards
 /// only test membership emptiness, so a corrupt or wrong dataset must never
 /// count as initialized while silently omitting known stales.
 /// `--skip-malformed` opts into tallying malformed rows as skips and
-/// importing the valid subset. The write is atomic: all parsed rows commit
+/// importing the valid subset. The membership write is atomic: all parsed rows commit
 /// together while holding the per-parent advisory locks (acquired through the
 /// read-model's sorted, deduped `lock_block_hashes`, honoring the global lock
 /// order), so the import serializes with any in-flight classification of the
@@ -220,6 +220,17 @@ pub async fn run_import_known_stales(
     txn.commit()
         .await
         .context("commit known-stale import transaction")?;
+    let repair = mmm_read_model::run_reclassify_known_stales(
+        client,
+        mmm_read_model::ReclassifyKnownStalesConfig::default(),
+    )
+    .await
+    .context("repair known-stale classifications after membership import")?;
+    info!(
+        membership_size = repair.membership_size,
+        demoted = repair.demoted,
+        "repaired known-stale classifications after membership import"
+    );
     Ok(summary)
 }
 

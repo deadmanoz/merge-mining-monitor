@@ -51,6 +51,7 @@ async fn core_header_cache_retains_epochs_replaces_horizon_and_rejects_conflicts
             &[],
             None,
             &header(2020, 2, 3, 0x1c00_ffff),
+            false,
         )
         .await?;
         replace_bitcoin_core_header_cache(
@@ -59,6 +60,7 @@ async fn core_header_cache_retains_epochs_replaces_horizon_and_rejects_conflicts
             &[],
             None,
             &header(2030, 3, 4, 0x1c00_ffff),
+            false,
         )
         .await?;
 
@@ -100,9 +102,14 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
             &[],
             None,
             &header(100, 1, 100, 0x1d00_ffff),
+            false,
         )
         .await?;
         assert!(first.reclassification_needed);
+        assert!(
+            !first.recheck_orphans,
+            "initial coverage classifies pending rows without sweeping existing orphans"
+        );
         complete_bitcoin_core_header_cache_reclassification(&client).await?;
 
         let advanced_with_an_older_timestamp = replace_bitcoin_core_header_cache(
@@ -111,9 +118,14 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
             &[],
             None,
             &header(101, 2, 99, 0x1d00_ffff),
+            false,
         )
         .await?;
         assert!(advanced_with_an_older_timestamp.reclassification_needed);
+        assert!(
+            !advanced_with_an_older_timestamp.recheck_orphans,
+            "ordinary horizon advances do not revisit already classified orphans"
+        );
         assert_eq!(
             load_bitcoin_core_nbits_table(&client).await?.horizon_time(),
             100
@@ -125,6 +137,7 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
             &[],
             None,
             &header(101, 2, 99, 0x1d00_ffff),
+            false,
         )
         .await?;
         assert!(retry.reclassification_needed);
@@ -136,6 +149,7 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
             &[],
             None,
             &header(101, 2, 99, 0x1d00_ffff),
+            false,
         )
         .await?;
         assert!(!settled.reclassification_needed);
@@ -291,6 +305,50 @@ async fn refresh_retries_a_same_height_core_reorg_before_writing() -> Result<()>
             .await?
             .get(0);
         assert_eq!(horizon_hash, vec![9; 32]);
+        Ok(())
+    })
+}
+
+#[tokio::test]
+async fn refresh_detects_an_advancing_tip_reorg_at_the_prior_horizon() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        client
+            .execute("DELETE FROM bitcoin_core_header", &[])
+            .await?;
+        let first = ConfiguredParentClassifier::Fake(
+            FakeParentClassifier::new(ParentClassification::unknown(
+                &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
+            ))
+            .with_synced_tip_height(2030)
+            .with_canonical_header(core_header(0, 0, 1, 0x1d00_ffff))
+            .with_canonical_header(core_header(2016, 1, 2, 0x1c00_ffff))
+            .with_canonical_header(core_header(2030, 2, 100, 0x1c00_ffff)),
+        );
+        refresh_bitcoin_core_header_cache(&mut client, &first).await?;
+        assert_eq!(
+            load_bitcoin_core_nbits_table(&client).await?.horizon_time(),
+            100
+        );
+
+        // A new tip can conceal a reorg at the old horizon because that height
+        // is no longer part of the next sparse replacement. The refresh must
+        // verify it directly before preserving the prior timestamp high-water.
+        let reorged = ConfiguredParentClassifier::Fake(
+            FakeParentClassifier::new(ParentClassification::unknown(
+                &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
+            ))
+            .with_synced_tip_height(2031)
+            .with_canonical_header(core_header(0, 0, 1, 0x1d00_ffff))
+            .with_canonical_header(core_header(2016, 1, 2, 0x1c00_ffff))
+            .with_canonical_header(core_header(2030, 9, 2, 0x1c00_ffff))
+            .with_canonical_header(core_header(2031, 8, 3, 0x1c00_ffff)),
+        );
+        refresh_bitcoin_core_header_cache(&mut client, &reorged).await?;
+        assert_eq!(
+            load_bitcoin_core_nbits_table(&client).await?.horizon_time(),
+            3,
+            "a reorg replaces, rather than preserves, the stale timestamp horizon"
+        );
         Ok(())
     })
 }
