@@ -13,10 +13,10 @@ use mmm_read_model::{
 };
 use mmm_store::{
     BitcoinCoreHeader, complete_bitcoin_core_header_cache_reclassification,
-    finish_bitcoin_core_header_cache_operation, load_bitcoin_core_nbits_table,
-    load_bitcoin_core_nbits_table_if_present, lock_bitcoin_core_header_cache,
-    lock_bitcoin_core_header_cache_shared_in_transaction, record_bitcoin_core_header,
-    replace_bitcoin_core_header_cache, upsert_merge_mining_event,
+    finish_bitcoin_core_header_cache_operation, is_bitcoin_core_header_cache_integrity_error,
+    load_bitcoin_core_nbits_table, load_bitcoin_core_nbits_table_if_present,
+    lock_bitcoin_core_header_cache, lock_bitcoin_core_header_cache_shared_in_transaction,
+    record_bitcoin_core_header, replace_bitcoin_core_header_cache, upsert_merge_mining_event,
 };
 
 use crate::support::db::connect_to_schema;
@@ -84,6 +84,7 @@ async fn core_header_cache_retains_epochs_replaces_horizon_and_rejects_conflicts
             .await
             .expect_err("a conflicting Core observation must fail closed");
         assert!(err.to_string().contains("disagrees"));
+        assert!(is_bitcoin_core_header_cache_integrity_error(&err));
         Ok(())
     })
 }

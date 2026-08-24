@@ -33,7 +33,7 @@ This changelog starts with the initial release.
   `import-known-stales` membership update.
 
 - Retry transient Core-header-cache refresh failures in `sync-bitcoin-core --follow`
-  without masking a typed backbone integrity failure.
+  without masking sync progress or a typed cache/backbone integrity failure.
 
 ## [0.6.0] - 2026-08-15
 

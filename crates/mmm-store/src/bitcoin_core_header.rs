@@ -3,13 +3,49 @@
 //! Rows are observed from the required Bitcoin Core node after the caller has
 //! applied its confirmation policy. A disagreement is an integrity error.
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Error, Result, ensure};
 use mmm_capture::nbits_table::{BitcoinEpochHeader, NbitsTable};
 use tokio_postgres::{Client, GenericClient, Row, Transaction};
 
 // Stable, monitor-specific advisory-lock key. The refresh reads a Core snapshot
 // before replacing the shallow suffix, so one session must own both operations.
 const BITCOIN_CORE_HEADER_CACHE_LOCK: i64 = 0x4d4d4d43_4f524543;
+
+/// Persisted Core-header evidence is internally inconsistent and cannot be
+/// repaired by retrying the same monitor operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BitcoinCoreHeaderCacheIntegrityError;
+
+impl std::fmt::Display for BitcoinCoreHeaderCacheIntegrityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Bitcoin Core header cache integrity failed")
+    }
+}
+
+impl std::error::Error for BitcoinCoreHeaderCacheIntegrityError {}
+
+/// Whether `err` reports a non-retryable Core-header-cache integrity failure.
+pub fn is_bitcoin_core_header_cache_integrity_error(err: &Error) -> bool {
+    err.downcast_ref::<BitcoinCoreHeaderCacheIntegrityError>()
+        .is_some()
+}
+
+/// Build a non-retryable Core-header-cache integrity error with `message` as
+/// its operator-facing detail.
+pub fn bitcoin_core_header_cache_integrity_error(message: impl Into<String>) -> Error {
+    Error::new(BitcoinCoreHeaderCacheIntegrityError).context(message.into())
+}
+
+fn ensure_bitcoin_core_header_cache_integrity(
+    condition: bool,
+    message: impl Into<String>,
+) -> Result<()> {
+    if condition {
+        Ok(())
+    } else {
+        Err(bitcoin_core_header_cache_integrity_error(message))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BitcoinCoreHeader {
@@ -157,15 +193,17 @@ async fn record_bitcoin_core_header_with_finality<C: GenericClient>(
     header: &BitcoinCoreHeader,
     is_final: bool,
 ) -> Result<()> {
-    ensure!(
+    ensure_bitcoin_core_header_cache_integrity(
         header.block_hash.len() == 32,
-        "Bitcoin Core header at height {} has an invalid hash length",
-        header.height
-    );
-    ensure!(
+        format!(
+            "Bitcoin Core header at height {} has an invalid hash length",
+            header.height
+        ),
+    )?;
+    ensure_bitcoin_core_header_cache_integrity(
         !is_final || header.height % 2016 == 0,
-        "only a Bitcoin difficulty boundary can be final"
-    );
+        "only a Bitcoin difficulty boundary can be final",
+    )?;
     let inserted = client
         .execute(
             "INSERT INTO bitcoin_core_header (height, block_hash, block_time, bits, is_final) \
@@ -198,14 +236,16 @@ async fn record_bitcoin_core_header_with_finality<C: GenericClient>(
                 header.height
             )
         })?;
-    ensure!(
+    ensure_bitcoin_core_header_cache_integrity(
         existing.get::<_, Vec<u8>>(0) == header.block_hash
             && existing.get::<_, i64>(1) == header.block_time
             && existing.get::<_, i64>(2) == i64::from(header.bits)
             && existing.get::<_, bool>(3) == is_final,
-        "Bitcoin Core header at height {} disagrees with the persisted canonical header",
-        header.height
-    );
+        format!(
+            "Bitcoin Core header at height {} disagrees with the persisted canonical header",
+            header.height
+        ),
+    )?;
     Ok(())
 }
 
@@ -220,17 +260,17 @@ pub async fn replace_bitcoin_core_header_cache(
     horizon: &BitcoinCoreHeader,
     prior_horizon_reorged: bool,
 ) -> Result<BitcoinCoreHeaderCacheUpdate> {
-    ensure!(
+    ensure_bitcoin_core_header_cache_integrity(
         final_epochs
             .iter()
             .all(|header| header.height % 2016 == 0 && header.height <= final_epoch_height),
-        "final Bitcoin Core headers must be difficulty boundaries at or below the cutoff"
-    );
+        "final Bitcoin Core headers must be difficulty boundaries at or below the cutoff",
+    )?;
     if let Some(header) = shallow_epoch {
-        ensure!(
+        ensure_bitcoin_core_header_cache_integrity(
             header.height % 2016 == 0 && header.height > final_epoch_height,
-            "shallow Bitcoin Core header must be a boundary above the cutoff"
-        );
+            "shallow Bitcoin Core header must be a boundary above the cutoff",
+        )?;
     }
     let transaction = client
         .transaction()
@@ -249,14 +289,14 @@ pub async fn replace_bitcoin_core_header_cache(
         .await
         .context("load highest final Core-header-cache epoch during replacement")?
         .get(0);
-    ensure!(
+    ensure_bitcoin_core_header_cache_integrity(
         horizon.height >= final_epoch_height,
-        "Bitcoin Core cache horizon must not precede the final cutoff"
-    );
-    ensure!(
+        "Bitcoin Core cache horizon must not precede the final cutoff",
+    )?;
+    ensure_bitcoin_core_header_cache_integrity(
         highest_final.is_none_or(|height| horizon.height >= height),
-        "Bitcoin Core cache horizon must not precede the highest finalized epoch"
-    );
+        "Bitcoin Core cache horizon must not precede the highest finalized epoch",
+    )?;
     let previous_horizon_height: Option<i32> = transaction
         .query_one("SELECT max(height) FROM bitcoin_core_header", &[])
         .await
@@ -395,8 +435,9 @@ fn bitcoin_core_header_from_row(row: &Row) -> Result<BitcoinCoreHeader> {
         height: row.get(0),
         block_hash: row.get(1),
         block_time: row.get(2),
-        bits: u32::try_from(row.get::<_, i64>(3))
-            .context("cached Bitcoin Core header bits exceed u32")?,
+        bits: u32::try_from(row.get::<_, i64>(3)).map_err(|_| {
+            bitcoin_core_header_cache_integrity_error("cached Bitcoin Core header bits exceed u32")
+        })?,
     })
 }
 
@@ -483,7 +524,7 @@ pub async fn complete_bitcoin_core_header_cache_reclassification<C: GenericClien
         )
         .await
         .context("mark Core-header-cache reclassification complete")?;
-    ensure!(updated == 1, "Core-header-cache state is missing");
+    ensure_bitcoin_core_header_cache_integrity(updated == 1, "Core-header-cache state is missing")?;
     Ok(())
 }
 
@@ -510,8 +551,11 @@ pub async fn load_bitcoin_core_nbits_table_if_present<C: GenericClient>(
             Ok(BitcoinEpochHeader {
                 height: row.get(0),
                 block_time: row.get(1),
-                bits: u32::try_from(row.get::<_, i64>(2))
-                    .context("cached Bitcoin Core header bits exceed u32")?,
+                bits: u32::try_from(row.get::<_, i64>(2)).map_err(|_| {
+                    bitcoin_core_header_cache_integrity_error(
+                        "cached Bitcoin Core header bits exceed u32",
+                    )
+                })?,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -519,14 +563,18 @@ pub async fn load_bitcoin_core_nbits_table_if_present<C: GenericClient>(
         return Ok(None);
     }
     let cached_horizon_time: i64 = rows[0].get(3);
-    NbitsTable::from_bitcoin_core_headers_with_horizon_time(&headers, cached_horizon_time).map(Some)
+    NbitsTable::from_bitcoin_core_headers_with_horizon_time(&headers, cached_horizon_time)
+        .map(Some)
+        .map_err(|err| bitcoin_core_header_cache_integrity_error(err.to_string()))
 }
 
 /// Load the initialized cache for a command that requires nBits classification.
 pub async fn load_bitcoin_core_nbits_table<C: GenericClient>(client: &C) -> Result<NbitsTable> {
     load_bitcoin_core_nbits_table_if_present(client)
         .await?
-        .context("Bitcoin Core header cache is empty")
+        .ok_or_else(|| {
+            bitcoin_core_header_cache_integrity_error("Bitcoin Core header cache is empty")
+        })
 }
 
 /// Highest epoch boundary that has already been verified at the reorg-safe

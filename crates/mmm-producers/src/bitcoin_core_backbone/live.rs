@@ -226,29 +226,46 @@ impl<S> BitcoinCoreLiveProducer<'_, S>
 where
     S: BitcoinCoreBackboneSource,
 {
-    async fn bookkeeping_failure_outcome(&self) -> TickOutcome {
-        let best_effort_progress = load_follow_progress(self.client, self.source_id).await.ok();
-        bookkeeping_failure_outcome_from(best_effort_progress)
+    async fn bookkeeping_failure_outcome(
+        &self,
+        progress_before: Option<FollowProgress>,
+    ) -> TickOutcome {
+        let progress_after = load_follow_progress(self.client, self.source_id).await.ok();
+        bookkeeping_failure_outcome_from(progress_before, progress_after)
     }
 }
 
-fn bookkeeping_failure_outcome_from(best_effort_progress: Option<FollowProgress>) -> TickOutcome {
-    let idle_at_target = best_effort_progress
+fn bookkeeping_failure_outcome_from(
+    progress_before: Option<FollowProgress>,
+    progress_after: Option<FollowProgress>,
+) -> TickOutcome {
+    let progressed = progress_before
+        .zip(progress_after)
+        .is_some_and(|(before, after)| {
+            after.contiguous_complete_height > before.contiguous_complete_height
+        });
+    let idle_at_target = progress_after
+        .or(progress_before)
         .map(FollowProgress::caught_up)
         .unwrap_or(false);
     TickOutcome {
-        progressed: false,
+        progressed,
         idle_at_target,
     }
 }
 
 /// Return whether follow mode can continue this tick after refreshing the
 /// derived Core-header cache. Cache transport and database failures are retried
-/// like the backbone batch; typed backbone integrity failures still fail-stop.
+/// like the backbone batch; typed cache or backbone integrity failures fail-stop.
 fn handle_header_cache_refresh_result(result: Result<()>) -> Result<bool> {
     match result {
         Ok(()) => Ok(true),
-        Err(err) if is_backbone_integrity_error(&err) => Err(err),
+        Err(err)
+            if is_backbone_integrity_error(&err)
+                || mmm_store::is_bitcoin_core_header_cache_integrity_error(&err) =>
+        {
+            Err(err)
+        }
         Err(err) => {
             tracing::warn!(
                 error = format!("{err:#}"),
@@ -275,7 +292,7 @@ where
                     error = format!("{err:#}"),
                     "Bitcoin Core backbone live bookkeeping read failed before batch; retrying after interval"
                 );
-                return Ok(self.bookkeeping_failure_outcome().await);
+                return Ok(self.bookkeeping_failure_outcome(None).await);
             }
         };
 
@@ -295,7 +312,9 @@ where
                 .map(|_| ()),
         )?;
         if !refreshed {
-            return Ok(self.bookkeeping_failure_outcome().await);
+            return Ok(self
+                .bookkeeping_failure_outcome(Some(progress_before))
+                .await);
         }
 
         self.last_near_tip_repair_at = repair_near_tip_gaps_if_due(
@@ -315,7 +334,9 @@ where
                     error = format!("{err:#}"),
                     "Bitcoin Core backbone live bookkeeping read failed after batch; retrying after interval"
                 );
-                return Ok(self.bookkeeping_failure_outcome().await);
+                return Ok(self
+                    .bookkeeping_failure_outcome(Some(progress_before))
+                    .await);
             }
         };
 
@@ -507,7 +528,7 @@ mod tests {
     #[test]
     fn bookkeeping_failure_outcome_uses_best_effort_caught_up() {
         assert_eq!(
-            bookkeeping_failure_outcome_from(None),
+            bookkeeping_failure_outcome_from(None, None),
             TickOutcome {
                 progressed: false,
                 idle_at_target: false
@@ -515,10 +536,16 @@ mod tests {
             "unknown progress counts below target"
         );
         assert_eq!(
-            bookkeeping_failure_outcome_from(Some(FollowProgress {
-                contiguous_complete_height: 9,
-                target_tip_height: Some(10),
-            })),
+            bookkeeping_failure_outcome_from(
+                Some(FollowProgress {
+                    contiguous_complete_height: 9,
+                    target_tip_height: Some(10),
+                }),
+                Some(FollowProgress {
+                    contiguous_complete_height: 9,
+                    target_tip_height: Some(10),
+                }),
+            ),
             TickOutcome {
                 progressed: false,
                 idle_at_target: false
@@ -526,21 +553,30 @@ mod tests {
             "known below-target progress contributes to stall"
         );
         assert_eq!(
-            bookkeeping_failure_outcome_from(Some(FollowProgress {
-                contiguous_complete_height: 10,
-                target_tip_height: Some(10),
-            })),
+            bookkeeping_failure_outcome_from(
+                Some(FollowProgress {
+                    contiguous_complete_height: 9,
+                    target_tip_height: Some(10),
+                }),
+                Some(FollowProgress {
+                    contiguous_complete_height: 10,
+                    target_tip_height: Some(10),
+                }),
+            ),
             TickOutcome {
-                progressed: false,
+                progressed: true,
                 idle_at_target: true
             },
-            "known caught-up progress idles instead of stalling"
+            "a failed cache refresh retains progress made by its backbone batch"
         );
         assert_eq!(
-            bookkeeping_failure_outcome_from(Some(FollowProgress {
-                contiguous_complete_height: 10,
-                target_tip_height: None,
-            })),
+            bookkeeping_failure_outcome_from(
+                Some(FollowProgress {
+                    contiguous_complete_height: 10,
+                    target_tip_height: None,
+                }),
+                None,
+            ),
             TickOutcome {
                 progressed: false,
                 idle_at_target: false
@@ -609,6 +645,13 @@ mod tests {
         assert!(
             handle_header_cache_refresh_result(Err(structural)).is_err(),
             "integrity failures still fail-stop follow mode"
+        );
+        let cache_integrity = mmm_store::bitcoin_core_header_cache_integrity_error(
+            "persisted Core header disagrees with the refreshed header",
+        );
+        assert!(
+            handle_header_cache_refresh_result(Err(cache_integrity)).is_err(),
+            "Core-header cache integrity failures fail-stop follow mode"
         );
         assert!(
             handle_header_cache_refresh_result(Ok(())).expect("success is accepted"),

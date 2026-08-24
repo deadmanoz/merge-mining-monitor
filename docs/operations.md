@@ -147,7 +147,10 @@ just sync-bitcoin-core --follow                                 # long-lived cat
 ```
 
 In follow mode, each batch also refreshes the sparse Core header cache, even
-when no child-chain poller is running.
+when no child-chain poller is running. A transient Core or database failure
+retries on the next interval without discarding backbone progress from that
+batch. A non-mainnet Core node or inconsistent persisted cache is an integrity
+failure and stops follow mode for operator repair.
 
 `--to-height` and `--limit` are mutually exclusive, so range and page semantics
 stay unambiguous. Follow mode keeps a contiguous local cursor and, during each

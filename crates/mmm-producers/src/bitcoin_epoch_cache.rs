@@ -69,10 +69,11 @@ async fn refresh_bitcoin_core_header_cache_snapshot(
         tip.fresh,
         "Bitcoin Core tip is stale; refusing monitor work"
     );
-    ensure!(
-        tip.is_mainnet,
-        "Bitcoin Core must be connected to mainnet; refusing monitor work"
-    );
+    if !tip.is_mainnet {
+        return Err(mmm_store::bitcoin_core_header_cache_integrity_error(
+            "Bitcoin Core must be connected to mainnet; refusing monitor work",
+        ));
+    }
     let horizon_height = tip.height;
     let prior_horizon = mmm_store::load_bitcoin_core_header_cache_horizon(client).await?;
     let opening_horizon = classifier
@@ -132,10 +133,11 @@ async fn refresh_bitcoin_core_header_cache_snapshot(
         closing_tip.fresh,
         "Bitcoin Core tip became stale during header-cache refresh"
     );
-    ensure!(
-        closing_tip.is_mainnet,
-        "Bitcoin Core left mainnet during header-cache refresh"
-    );
+    if !closing_tip.is_mainnet {
+        return Err(mmm_store::bitcoin_core_header_cache_integrity_error(
+            "Bitcoin Core left mainnet during header-cache refresh",
+        ));
+    }
     let closing_horizon = classifier
         .canonical_header(horizon_height)
         .await
