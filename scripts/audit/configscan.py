@@ -18,6 +18,7 @@ Advisory; stdlib-only. Emits the shared finding schema with --json.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 
 import _report
@@ -104,6 +105,34 @@ def env_keys(text: str) -> set[str]:
     return set(re.findall(r"^\s*#?\s*([A-Z][A-Z0-9_]+)=", text, flags=re.M))
 
 
+# A `$VAR` / `${VAR}` shell reference to an UPPER_SNAKE variable.
+SHELL_VAR = re.compile(r"\$\{?([A-Z][A-Z0-9_]{2,})\}?")
+
+
+def tooling_referenced_keys() -> set[str]:
+    """UPPER_SNAKE env names referenced by non-Rust operational files - the `justfile`
+    and `scripts/**` shell scripts - as `$VAR`/`${VAR}`.
+
+    A key consumed only by tooling (e.g. `${MMM_POOLS_DIR:-}` in a `just` recipe) is
+    genuinely *read*, just not by the Rust binary, so the stale-config check must not
+    report it. Located via the git root so it works regardless of the scan root."""
+    root = _scan._git_root()
+    if not root:
+        return set()
+    files = [os.path.join(root, "justfile")]
+    scripts = os.path.join(root, "scripts")
+    for dp, dns, fns in os.walk(scripts):
+        dns[:] = [d for d in dns if d != "audit"]  # our own tooling, not app config
+        files += [os.path.join(dp, f) for f in fns if f.endswith((".sh", ".bash"))]
+    refs: set[str] = set()
+    for p in files:
+        try:
+            refs.update(SHELL_VAR.findall(open(p, encoding="utf-8", errors="ignore").read()))
+        except OSError:
+            continue
+    return refs
+
+
 def doc_tokens(docs: str, prefixes: list[str]) -> tuple[set[str], set[str], set[str]]:
     """Full keys, all per-chain suffixes, and template-only suffixes documented in
     configuration.md.
@@ -161,11 +190,15 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
     const_global: dict[str, str] = {}
     const_ambig: set[str] = set()
     ident_calls: list[tuple[str, str, _report.Loc]] = []  # (ident, file, loc)
-    # Names of local fns whose body reads the environment, plus every
-    # `fn_name("KEY", ..)` candidate, both resolved after the whole tree is scanned
-    # (a helper is commonly defined in a different file from its callers).
-    env_helpers: set[str] = set()
-    helper_calls: list[tuple[str, str, _report.Loc]] = []  # (fn_name, key, loc)
+    # Discovered env-reading helper fns, tracked per file plus a repo-wide view with
+    # a counter-set of same-named fns that do NOT read env. A `NAME("KEY", ..)` call
+    # is credited only via a same-file env-reading definition or an unambiguous
+    # repo-wide one, so a common name (`from_env`, `parse_env_or`) reused for an
+    # unrelated fn in another crate does not turn that crate's literals into keys.
+    helper_env_by_file: dict[str, set[str]] = {}
+    helper_env_names: set[str] = set()
+    helper_nonenv_names: set[str] = set()
+    helper_calls: list[tuple[str, str, _report.Loc]] = []  # (fn_name, key, loc); loc.file scopes it
 
     for path in _scan.iter_rust_files(root, skip_tests=not include_tests):
         src = read_text(path)
@@ -204,10 +237,14 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
         # A fn whose (de-noised) body performs an env read is an env helper; its name
         # qualifies the literal keys its callers pass. Bodies use `stripped` so a read
         # in a comment/string does not count; call sites use `decommented` to keep the
-        # literal key text.
+        # literal key text. Track env vs non-env defs per file and repo-wide so a
+        # reused name can be disambiguated at resolution time.
         for fn in _scan.find_functions(stripped, path):
             if ENV_READ.search(fn.body):
-                env_helpers.add(fn.name)
+                helper_env_by_file.setdefault(rel, set()).add(fn.name)
+                helper_env_names.add(fn.name)
+            else:
+                helper_nonenv_names.add(fn.name)
         for m in HELPER_CALL.finditer(decommented):
             fn_name, key = m.group(1), m.group(2)
             if fn_name in READ_PRIMITIVES or _is_build_env(key):
@@ -232,9 +269,18 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
             key_locs.setdefault(key, []).append(loc)
 
     # Attribute keys passed to discovered env-reading helpers (`_is_build_env` was
-    # already applied when collecting the candidates).
+    # already applied when collecting the candidates). A same-file env-reading
+    # definition is authoritative; otherwise credit the key only when the name is an
+    # unambiguous env helper repo-wide (never also a non-env fn), so a cross-module
+    # name collision is skipped rather than inventing keys.
     for fn_name, key, loc in helper_calls:
-        if fn_name in env_helpers:
+        if fn_name in helper_env_by_file.get(loc.file, ()):
+            is_env = True
+        elif fn_name in helper_env_names and fn_name not in helper_nonenv_names:
+            is_env = True
+        else:
+            is_env = False
+        if is_env:
             key_locs.setdefault(key, []).append(loc)
 
     # Collapse duplicate locations per key: the same call site can match more than one
@@ -350,6 +396,30 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
             summary=f"{len(drift)} documented key(s)/family(ies) absent from .env.example: {', '.join(drift)}",
             score=float(len(drift)), severity="medium",
             metrics={"keys": doc_not_ex, "suffix_families": doc_suf_not_ex},
+        ))
+
+    # Fourth direction, closing the three-way audit: a full key advertised in BOTH
+    # docs and .env.example that code no longer reads is stale operator config. No
+    # other predicate catches it - the code-side checks flag only *undocumented*
+    # reads, and the two reverse checks compare docs and example only with each
+    # other. Requiring presence in both docs and example keeps this high-confidence
+    # (a deliberately advertised key, not a stray mention). Per-chain instances are
+    # compared as suffix families, not full keys, since code builds them via format!.
+    # A key referenced only by tooling (justfile/shell) is still read, not stale, so
+    # it is excluded rather than reported.
+    tooling = tooling_referenced_keys()
+    unread_full = sorted(
+        k for k in (doc_full & example)
+        if not is_chain_scoped(k, prefixes) and k not in code_full and k not in tooling
+    )
+    unread_suf = sorted((doc_suffixes & example_suffixes) - code_suffixes)
+    stale = unread_full + [f"<PREFIX>{s}" for s in unread_suf]
+    if stale:
+        findings.append(_report.Finding(
+            tool="configscan", kind="config-unread",
+            summary=f"{len(stale)} documented+example key(s)/family(ies) never read in code: {', '.join(stale)}",
+            score=float(len(stale)), severity="medium",
+            metrics={"keys": unread_full, "suffix_families": unread_suf},
         ))
 
     return findings

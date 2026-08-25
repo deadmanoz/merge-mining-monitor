@@ -31,6 +31,13 @@ SQL_STMT = re.compile(r"^\s*(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|WITH)\b",
 # A PostgreSQL dollar-quote opener: `$$` or `$tag$` where the tag is a valid
 # identifier (never starting with a digit, so `$1` positional binds don't match).
 DOLLAR_OPEN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
+# A Rust string-continuation escape: a backslash immediately before a newline is
+# removed together with the newline and the next line's leading indentation, so
+# `"SELECT 1 \\\n    FROM t"` denotes `SELECT 1 FROM t`. Applied only to non-raw
+# literals (a raw string's backslash is literal); without it the same query wrapped
+# differently in source keeps a stray `\` token and normalizes apart, splitting a
+# real exact-duplicate group.
+LINE_CONT = re.compile(r"\\\r?\n[ \t]*")
 
 
 def extract_sql(src: str):
@@ -38,7 +45,11 @@ def extract_sql(src: str):
     # token boundary (so a word ending in `r` before a `"` is never a raw opener),
     # honors matched raw delimiters, and skips comments/char literals - the whole
     # class of quote-desync bugs a hand-rolled regex hits.
-    for content, off in _scan.iter_string_literals(src):
+    for content, off, is_raw in _scan.iter_string_literals_ex(src):
+        # Decode Rust line continuations first (non-raw only) so a wrapped literal is
+        # compared as the string it actually denotes, not with an embedded `\`.
+        if not is_raw:
+            content = LINE_CONT.sub("", content)
         # Admit a literal that either starts with a command keyword (an anchored
         # single-clause statement) or carries >= 2 recognized clauses (a fragment
         # like a `JOIN ... WHERE ...` builder piece that does not start a statement).

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 from dataclasses import dataclass
 
 RUST_KEYWORDS_KEPT = {
@@ -239,15 +240,19 @@ def strip_comments(src: str) -> str:
     return "".join(out)
 
 
-def iter_string_literals(src: str):
-    """Yield `(content, start_index)` for each Rust string literal (normal and
-    raw), skipping line/block comments and char literals.
+def iter_string_literals_ex(src: str):
+    """Yield `(content, start_index, is_raw)` for each Rust string literal (normal
+    and raw), skipping line/block comments and char literals.
 
     A naive `"..."` regex on raw source pairs quotes across a `'"'` char literal
     or a `"` inside a comment and swallows whole spans of code; this single-pass
     scanner (mirroring `strip_noise`) tokenizes correctly. Content is the literal's
     inner text verbatim, so callers can inspect embedded keys/placeholders that
     `strip_noise` would have collapsed to `"s"`.
+
+    `is_raw` distinguishes raw/byte-raw literals (`r"..."`, `br#"..."#`) - where a
+    backslash is an ordinary character - from normal literals, where a backslash
+    introduces an escape (so a caller can decode escapes only where they apply).
     """
     i, n = 0, len(src)
     while i < n:
@@ -281,7 +286,7 @@ def iter_string_literals(src: str):
                     closer = '"' + "#" * (h - (k + 1))
                     j = src.find(closer, h + 1)
                     end = n if j < 0 else j
-                    yield src[h + 1 : end], i
+                    yield src[h + 1 : end], i, True
                     i = n if j < 0 else end + len(closer)
                     continue
         if c == '"':
@@ -293,7 +298,7 @@ def iter_string_literals(src: str):
                 if src[j] == '"':
                     break
                 j += 1
-            yield src[i + 1 : j], i
+            yield src[i + 1 : j], i, False
             i = min(j + 1, n)
             continue
         if c == "'":
@@ -301,6 +306,15 @@ def iter_string_literals(src: str):
             i = m.end() if m else i + 1
             continue
         i += 1
+
+
+def iter_string_literals(src: str):
+    """`(content, start_index)` for each string literal (raw-ness dropped).
+
+    A thin projection of `iter_string_literals_ex` for callers that do not care
+    whether the literal was raw."""
+    for content, start, _is_raw in iter_string_literals_ex(src):
+        yield content, start
 
 
 def find_signature_end(src: str, start: int) -> tuple[str, int]:
@@ -441,6 +455,41 @@ def load_functions(root: str, skip_tests: bool = True) -> list[Function]:
     return funcs
 
 
+_GIT_ROOT_CACHE: list = []  # [resolved_root_or_None]; one-shot cache
+
+
+def _git_root() -> str | None:
+    """Absolute path of the enclosing git work tree, or None outside one."""
+    if not _GIT_ROOT_CACHE:
+        try:
+            out = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                capture_output=True, text=True, check=True,
+            ).stdout.strip()
+            _GIT_ROOT_CACHE.append(out or None)
+        except (OSError, subprocess.CalledProcessError):
+            _GIT_ROOT_CACHE.append(None)
+    return _GIT_ROOT_CACHE[0]
+
+
 def rel(path: str) -> str:
-    """Trim the noisy `crates/` prefix for compact reporting."""
-    return path[len("crates/"):] if path.startswith("crates/") else path
+    """Repository-relative path for compact, portable reporting.
+
+    A scan root may be passed as `crates`, `./crates`, or an absolute path; each
+    would otherwise leak a different location string (`mmm-api/...` vs `./crates/...`
+    vs `/abs/.../crates/...`). Normalizing every path against the git work-tree root
+    yields one deterministic form (`crates/mmm-api/src/...`) - the same
+    repository-relative shape `coupling.py` already emits from `git` - so the
+    aggregate JSON is a single consistent format across clones and invocation styles.
+    Outside a git tree (or for a path above the root) it falls back to a plain
+    `normpath`, and the historical bare `crates/`-stripped form is no longer emitted.
+    """
+    root = _git_root()
+    if root:
+        try:
+            r = os.path.relpath(os.path.abspath(path), root)
+            if not r.startswith(".."):  # inside the work tree
+                return r
+        except ValueError:  # e.g. different drive on Windows
+            pass
+    return os.path.normpath(path)
