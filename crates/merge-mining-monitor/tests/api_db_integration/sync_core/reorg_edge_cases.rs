@@ -757,7 +757,7 @@ async fn repair_status_preserves_unrelated_error_and_clears_repair_owned_errors(
     crate::run_mut_db_test!(client, {
         let bitcoin = get_source_id(&client, BITCOIN_SOURCE_CODE).await?;
         let headers = test_header_chain(3, 1_800_027_800);
-        let source = FakeBitcoinCoreBackboneSource::new(2, headers);
+        let source = FakeBitcoinCoreBackboneSource::new(2, headers.clone());
         run_sync_bitcoin_core(
             &mut client,
             &source,
@@ -785,6 +785,21 @@ async fn repair_status_preserves_unrelated_error_and_clears_repair_owned_errors(
                 &[&bitcoin, &coinbase_details],
             )
             .await?;
+
+        let regressed_source = FakeBitcoinCoreBackboneSource::new(1, headers);
+        let err = repair_near_tip_backbone_for_test(
+            &mut client,
+            &regressed_source,
+            regressed_source.tip().await?,
+            Duration::ZERO,
+            4,
+        )
+        .await
+        .expect_err("a target below the contiguous cursor must fail closed");
+        assert!(
+            err.to_string()
+                .contains("below the proven contiguous cursor")
+        );
 
         record_retryable_repair_failure_for_test(&mut client, bitcoin).await?;
         accept_live_repaired_target_for_test(&mut client, &source, bitcoin, target).await?;

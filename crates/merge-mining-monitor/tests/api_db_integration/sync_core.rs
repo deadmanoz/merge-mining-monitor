@@ -1351,9 +1351,10 @@ async fn forced_repair_propagates_structural_conflict_below_bounded_view() -> Re
             .await?;
         assert_eq!(
             state.get::<_, Option<String>>(0).as_deref(),
-            Some("near_tip_reorg_repair_failed")
+            Some("backbone_link_mismatch"),
+            "repair-only telemetry must not mask the earlier sync failure"
         );
-        assert_eq!(state.get::<_, Option<i32>>(1), Some(2));
+        assert_eq!(state.get::<_, Option<i32>>(1), Some(3));
 
         Ok::<_, anyhow::Error>(())
     })

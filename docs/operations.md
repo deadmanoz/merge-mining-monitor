@@ -180,6 +180,11 @@ the cascade frontier. While durable work remains, `/api/v1/sources` reports
 `backbone_reorg_reconcile_pending` instead of treating the Bitcoin source as
 healthy.
 
+Repair-only statuses are cleared after the producer accepts a verified live
+target, but they never replace an unrelated persisted producer failure. This
+keeps an incomplete lower cursor visible after a temporary repair failure has
+resolved.
+
 After either gap fill or suffix replacement, the producer verifies the window
 against Core: every expected height must have exactly one complete canonical
 row, prev-hash links must be contiguous, and the local tip hash must match the

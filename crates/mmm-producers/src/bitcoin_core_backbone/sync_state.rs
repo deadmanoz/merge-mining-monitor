@@ -10,9 +10,8 @@ use mmm_read_model::run_exclusive_core_canonical_view_transaction;
 
 use super::{
     BackboneIntegrityError, BackboneIntegrityFailure, BitcoinCoreBackboneSource,
-    BitcoinCoreBackboneTip, LIVE_WINDOW_INVARIANT_ERROR_CODE, REORG_REPAIR_ERROR_CODE,
-    RETRYABLE_REPAIR_ERROR_CODE, SYNC_MODE_CONTIGUOUS, TARGET_TIP_CHANGED_ERROR_CODE,
-    target_stability_failure,
+    BitcoinCoreBackboneTip, REPAIR_OWNED_ERROR_CODES, SYNC_MODE_CONTIGUOUS,
+    TARGET_TIP_CHANGED_ERROR_CODE, target_stability_failure,
 };
 
 /// In-memory mirror of the `bitcoin_core_sync_state` cursor row for one batch.
@@ -160,16 +159,16 @@ where
                 "UPDATE bitcoin_core_sync_state \
                  SET target_tip_height = $3, target_tip_hash = $4, \
                      last_error_code = CASE \
-                         WHEN last_error_code IN ($5, $6, $7, $8) THEN NULL \
+                         WHEN last_error_code = ANY($5::text[]) THEN NULL \
                          ELSE last_error_code END, \
                      last_error_height = CASE \
-                         WHEN last_error_code IN ($5, $6, $7, $8) THEN NULL \
+                         WHEN last_error_code = ANY($5::text[]) THEN NULL \
                          ELSE last_error_height END, \
                      last_error = CASE \
-                         WHEN last_error_code IN ($5, $6, $7, $8) THEN NULL \
+                         WHEN last_error_code = ANY($5::text[]) THEN NULL \
                          ELSE last_error END, \
                      last_error_details = CASE \
-                         WHEN last_error_code IN ($5, $6, $7, $8) THEN '{}'::jsonb \
+                         WHEN last_error_code = ANY($5::text[]) THEN '{}'::jsonb \
                          ELSE last_error_details END, \
                      updated_at = extract(epoch from now())::bigint \
                  WHERE source_id = $1 AND sync_mode = $2",
@@ -178,10 +177,7 @@ where
                     &SYNC_MODE_CONTIGUOUS,
                     &target.height,
                     &target_hash,
-                    &RETRYABLE_REPAIR_ERROR_CODE,
-                    &TARGET_TIP_CHANGED_ERROR_CODE,
-                    &REORG_REPAIR_ERROR_CODE,
-                    &LIVE_WINDOW_INVARIANT_ERROR_CODE,
+                    &REPAIR_OWNED_ERROR_CODES.as_slice(),
                 ],
             )
             .await
@@ -346,9 +342,11 @@ pub(super) async fn update_sync_progress<C: GenericClient>(
 /// Record a stable error code, height, message, and structured details.
 ///
 /// A committed suffix replacement owns the visible status until its durable
-/// reconcile queue drains. The predicate is deliberately on the target row:
-/// PostgreSQL rechecks it after a concurrent row-lock wait, so a stale error
-/// writer cannot replace a newly committed reconcile-pending status.
+/// reconcile queue drains. Repair-only telemetry also cannot displace an
+/// unrelated producer error because target acceptance could not reconstruct
+/// that error after clearing the repair status. These ownership predicates are
+/// deliberately on the target row: PostgreSQL rechecks them after a concurrent
+/// row-lock wait.
 pub(super) async fn update_sync_error<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -368,7 +366,12 @@ pub(super) async fn update_sync_error<C: GenericClient>(
                  last_error_details = $6, \
                  updated_at = extract(epoch from now())::bigint \
              WHERE source_id = $1 AND sync_mode = $2 \
-               AND last_error_code IS DISTINCT FROM 'backbone_reorg_reconcile_pending'",
+               AND last_error_code IS DISTINCT FROM 'backbone_reorg_reconcile_pending' \
+               AND ( \
+                   $4 <> ALL($7::text[]) \
+                   OR last_error_code IS NULL \
+                   OR last_error_code = ANY($7::text[]) \
+               )",
             &[
                 &source_id,
                 &SYNC_MODE_CONTIGUOUS,
@@ -376,6 +379,7 @@ pub(super) async fn update_sync_error<C: GenericClient>(
                 &code,
                 &message,
                 &Json(&details),
+                &REPAIR_OWNED_ERROR_CODES.as_slice(),
             ],
         )
         .await

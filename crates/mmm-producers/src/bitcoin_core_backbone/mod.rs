@@ -87,6 +87,12 @@ const RETRYABLE_REPAIR_ERROR_CODE: &str = "near_tip_reorg_repair_retry";
 const TARGET_TIP_CHANGED_ERROR_CODE: &str = "target_tip_changed";
 const REORG_REPAIR_ERROR_CODE: &str = "near_tip_reorg_repair_failed";
 const LIVE_WINDOW_INVARIANT_ERROR_CODE: &str = "live_window_invariant_failed";
+const REPAIR_OWNED_ERROR_CODES: [&str; 4] = [
+    RETRYABLE_REPAIR_ERROR_CODE,
+    TARGET_TIP_CHANGED_ERROR_CODE,
+    REORG_REPAIR_ERROR_CODE,
+    LIVE_WINDOW_INVARIANT_ERROR_CODE,
+];
 
 /// A Bitcoin Core tip observation: the active-chain height and its block hash.
 /// Carried as a unit so `verify_or_set_target_tip` can detect a same-height tip
