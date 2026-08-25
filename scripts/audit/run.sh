@@ -19,6 +19,9 @@ python3 "$here/clones.py" "$root" || true
 section "SQL-LITERAL DUPLICATION"
 python3 "$here/sqldup.py" "$root" || true
 
+section "SCATTERED CONFIG + DOC DRIFT"
+python3 "$here/configscan.py" "$root" || true
+
 section "NAMING-PATTERN CLUSTERS"
 python3 "$here/naming.py" "$root" || true
 
@@ -27,3 +30,8 @@ python3 "$here/complexity.py" "$root" || true
 
 section "GIT CHURN + TEMPORAL COUPLING"
 python3 "$here/coupling.py" || true
+
+echo
+echo "For one ranked report (Markdown or --json data contract):"
+echo "  python3 $here/report.py $root         # ranked Markdown"
+echo "  python3 $here/report.py $root --json   # findings data contract for an LLM/tool"

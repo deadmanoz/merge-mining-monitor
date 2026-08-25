@@ -7,7 +7,7 @@ lens: raw decision-point count, which flags functions that are branch-dense
 (simplification candidates) even when they are within the line budget.
 
 A proxy, not a real metric - it counts control-flow tokens, `&&`/`||`, `?`, and
-`.await`. Stdlib-only.
+`.await`. Advisory; stdlib-only. --json supported.
 """
 
 from __future__ import annotations
@@ -15,9 +15,38 @@ from __future__ import annotations
 import argparse
 import re
 
+import _report
 import _scan
 
 DECISION = re.compile(r"\b(if|match|for|while|loop)\b|&&|\|\||\?\s*[.;)]|=>|\.await")
+
+
+def _severity(dp: int) -> str:
+    if dp >= 40:
+        return "high"
+    if dp >= 30:
+        return "medium"
+    return "low"
+
+
+def collect(root: str, min_dp: int = 25, include_tests: bool = False) -> list[_report.Finding]:
+    findings: list[_report.Finding] = []
+    for fn in _scan.load_functions(root, skip_tests=not include_tests):
+        if fn.name.startswith("test") or "#[test]" in fn.body:
+            continue
+        dp = len(DECISION.findall(fn.body))
+        if dp < min_dp:
+            continue
+        lines = fn.body.count("\n") + 1
+        findings.append(_report.Finding(
+            tool="complexity", kind="complexity-hotspot",
+            summary=f"{fn.name} has {dp} decision points across {lines} lines",
+            score=float(dp), severity=_severity(dp),
+            locations=[_report.Loc(fn.path, fn.line, fn.name)],
+            metrics={"decision_points": dp, "lines": lines},
+        ))
+    findings.sort(key=lambda f: f.score, reverse=True)
+    return findings
 
 
 def main() -> int:
@@ -26,21 +55,18 @@ def main() -> int:
     ap.add_argument("--min", type=int, default=25, help="only show functions with >= N decision points (default: 25)")
     ap.add_argument("--limit", type=int, default=25, help="max rows (default: 25)")
     ap.add_argument("--include-tests", action="store_true")
+    ap.add_argument("--json", action="store_true", help="emit the shared finding schema as JSON")
     args = ap.parse_args()
 
-    rows = []
-    for fn in _scan.load_functions(args.root, skip_tests=not args.include_tests):
-        # Skip inline unit tests that survive file-level filtering.
-        if fn.name.startswith("test") or "#[test]" in fn.body:
-            continue
-        dp = len(DECISION.findall(fn.body))
-        if dp >= args.min:
-            rows.append((dp, fn.body.count("\n") + 1, fn.name, fn.path, fn.line))
-    rows.sort(reverse=True)
+    findings = collect(args.root, args.min, args.include_tests)
+    if args.json:
+        _report.print_json(findings)
+        return 0
     print("  dp  lines  function (file:line)")
-    for dp, lines, name, path, line in rows[: args.limit]:
-        print(f"{dp:4d}  {lines:5d}  {name} ({path}:{line})")
-    print(f"# {len(rows)} functions >= {args.min} decision points")
+    for f in findings[: args.limit]:
+        loc = f.locations[0]
+        print(f"{int(f.score):4d}  {f.metrics['lines']:5d}  {loc.name} ({loc.file}:{loc.line})")
+    print(f"# {len(findings)} functions >= {args.min} decision points")
     return 0
 
 

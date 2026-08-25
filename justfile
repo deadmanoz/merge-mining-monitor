@@ -103,6 +103,12 @@ arch-lint:
 audit root="crates":
     ./scripts/audit/run.sh {{root}}
 
+# One ranked consolidation report across all audit detectors. Markdown by
+# default; `just audit-report crates --json` emits the machine-readable findings
+# "data contract" for an LLM refactoring loop (see scripts/audit/prompts/).
+audit-report *args="crates":
+    python3 scripts/audit/report.py {{args}}
+
 format:
     cargo fmt --all
 

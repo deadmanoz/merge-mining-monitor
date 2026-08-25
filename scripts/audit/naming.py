@@ -4,7 +4,7 @@
 Collapses domain tokens (chain names, entity nouns) in every `fn` name to `*`,
 then groups the results. A cluster like `run_*_backfill -> {rsk, hathor,
 elastos}` is a cheap hint that those bodies may share structure worth a shared
-helper - cross-check with `clones.py`. Stdlib-only.
+helper - cross-check with `clones.py`. Advisory; stdlib-only. --json supported.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import argparse
 import re
 from collections import defaultdict
 
+import _report
 import _scan
 
 # Domain tokens that vary across otherwise-parallel functions. Hand-tuned to this
@@ -25,27 +26,48 @@ DOMAIN = {
 }
 
 
+def collect(root: str, min_family: int = 3, include_tests: bool = False) -> list[_report.Finding]:
+    names_at: dict[str, list[_report.Loc]] = defaultdict(list)
+    for path in _scan.iter_rust_files(root, skip_tests=not include_tests):
+        src = open(path, encoding="utf-8", errors="ignore").read()
+        for m in re.finditer(r"\bfn\s+([a-z][a-z0-9_]+)", src):
+            names_at[m.group(1)].append(_report.Loc(_scan.rel(path), src.count("\n", 0, m.start()) + 1, m.group(1)))
+
+    skeletons: dict[tuple, set] = defaultdict(set)
+    for n in names_at:
+        key = tuple("*" if p in DOMAIN else p for p in n.split("_"))
+        skeletons[key].add(n)
+
+    findings: list[_report.Finding] = []
+    for key, members in skeletons.items():
+        if len(members) < min_family:
+            continue
+        locs = [loc for n in sorted(members) for loc in names_at[n][:1]]
+        findings.append(_report.Finding(
+            tool="naming", kind="naming-family",
+            summary=f"{'_'.join(key)} -> {', '.join(sorted(members))}",
+            score=float(len(members)), severity="low",
+            locations=locs, metrics={"skeleton": "_".join(key), "members": sorted(members)},
+        ))
+    findings.sort(key=lambda f: f.score, reverse=True)
+    return findings
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("root", nargs="?", default="crates")
     ap.add_argument("--min", type=int, default=3, help="minimum family size to report (default: 3)")
     ap.add_argument("--include-tests", action="store_true")
+    ap.add_argument("--json", action="store_true", help="emit the shared finding schema as JSON")
     args = ap.parse_args()
 
-    names = []
-    for path in _scan.iter_rust_files(args.root, skip_tests=not args.include_tests):
-        src = open(path, encoding="utf-8", errors="ignore").read()
-        names += re.findall(r"\bfn\s+([a-z][a-z0-9_]+)", src)
-
-    skeletons = defaultdict(set)
-    for n in names:
-        key = tuple("*" if p in DOMAIN else p for p in n.split("_"))
-        skeletons[key].add(n)
-
-    rows = sorted(((len(v), k, sorted(v)) for k, v in skeletons.items() if len(v) >= args.min), reverse=True)
-    for cnt, key, members in rows:
-        print("%2d  %-32s -> %s" % (cnt, "_".join(key), ", ".join(members)))
-    print(f"# {len(rows)} parallel families (>= {args.min} members)")
+    findings = collect(args.root, args.min, args.include_tests)
+    if args.json:
+        _report.print_json(findings)
+        return 0
+    for f in findings:
+        print("%2d  %-32s -> %s" % (int(f.score), f.metrics["skeleton"], ", ".join(f.metrics["members"])))
+    print(f"# {len(findings)} parallel families (>= {args.min} members)")
     return 0
 
 
