@@ -233,6 +233,7 @@ struct BlockCascadeState {
     kind: BlockKind,
     btc_height: Option<i32>,
     btc_height_source: Option<HeightSource>,
+    error_block_reason: Option<String>,
     canonical_competitor_hash: Option<Vec<u8>>,
     core_attested: bool,
     difficulty_epoch_ok: Option<bool>,
@@ -366,6 +367,39 @@ pub async fn reconcile_from_merge_mining_event(
     .await
 }
 
+/// Reconcile the one active parent evidence set identified by its Bitcoin
+/// header hash. This is the narrow operator repair path for a newly-supported
+/// consensus rule; it delegates to the normal event reconciler so it takes the
+/// Core-view barrier, applies source-health diffs, and drains dependents exactly
+/// as capture and bulk repair do.
+pub async fn run_reclassify_parent(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    hash: &[u8],
+) -> Result<ReconcileStats> {
+    if !classifier.is_enabled() {
+        bail!("reclassify-parent requires a Bitcoin Core classifier");
+    }
+    let event_id = find_anchor_event_for_block(client, hash)
+        .await?
+        .with_context(|| {
+            format!(
+                "no active merge-mining event for parent {}",
+                hex::encode(hash)
+            )
+        })?;
+    let mut queue = VecDeque::new();
+    queue.push_back(ReconcileWork::StrictEvent(event_id));
+    drain_reconcile_queue(
+        client,
+        classifier,
+        queue,
+        Some(DEFAULT_CASCADE_BUDGET),
+        None,
+    )
+    .await
+}
+
 async fn reconcile_from_merge_mining_event_with_nbits_table(
     client: &mut Client,
     event_id: i64,
@@ -437,16 +471,18 @@ pub(crate) async fn classify_payload_parent<C: GenericClient>(
 
     let header: Header = deserialize(&payload.btc_parent_header_bytes)
         .context("deserialize payload parent header for classification")?;
-    if let Some(error_block) = mmm_capture::error_blocks::lookup(&payload.btc_parent_header_hash) {
-        let classification = ParentClassification::error_block(&header, error_block.height);
-        apply_classification_proof(payload, classification.to_proof())?;
-        return Ok(Some(classification));
-    }
-    if !classifier.is_enabled() {
+    if !classifier.is_enabled()
+        && mmm_capture::error_blocks::lookup(&payload.btc_parent_header_hash).is_none()
+    {
         return Ok(None);
     }
-    let preflight = load_parent_preflight(client, &payload.btc_parent_prev_header_hash).await?;
-    let classification = classifier.classify_parent(&header, preflight).await?;
+    let live = if classifier.is_enabled() {
+        let preflight = load_parent_preflight(client, &payload.btc_parent_prev_header_hash).await?;
+        Some(classifier.classify_parent(&header, preflight).await?)
+    } else {
+        None
+    };
+    let classification = resolve_parent_classification(&header, live)?;
     apply_classification_proof(payload, classification.to_proof())?;
     Ok(Some(classification))
 }

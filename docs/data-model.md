@@ -17,7 +17,7 @@ tree view from that evidence.
 | chain sidecars | One-to-one evidence details for chains with extra structured data, such as RSK and Hathor. |
 | `event_pool_attribution` | Attribution rows connecting an event to a pool with source/provenance details. |
 | `poll_cursor` | Live poll progress. Backfills never move the cursor. |
-| `block` | Derived Bitcoin parent block state: canonical, stale, catalogued consensus-invalid error block, or unknown. |
+| `block` | Derived Bitcoin parent block state: canonical, stale, consensus-invalid error block, or unknown. |
 | `attestation_proof` | Derived proof rows supporting a block. |
 | `source_health` | Per-source rollup counters for UI/API health reporting. |
 
@@ -30,10 +30,13 @@ tree view from that evidence.
   membership proof is available.
 - `canonical` - Bitcoin Core proves the parent is on the active chain.
 - `stale` - Bitcoin Core proves the parent is a valid off-chain Bitcoin block.
-- `error_block` - parent hash meets Bitcoin's target but matches the pinned
-  research catalogue of reproducibly validated consensus-invalid headers. It is
-  neither stale nor an orphan; `block.error_block_reason` records its primary
-  rejection token.
+- `error_block` - parent hash meets Bitcoin's target but violates a Bitcoin
+  consensus rule. The live classifier currently derives `time_below_mtp` from
+  the exact eleven-header predecessor window returned by Core; the pinned
+  research catalogue remains the fallback for other reproducibly validated
+  rules. It is neither stale nor an orphan; `block.error_block_reason` records
+  its primary rejection token and `btc_height_source` records whether its height
+  came from the catalogue or a canonical/stale predecessor.
 
 Orphan status is not a `btc_parent_kind`. It is the derived
 `block.btc_orphan_class` (`strict_btc_orphan`, `weak_btc_orphan`, or

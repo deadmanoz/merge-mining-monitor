@@ -373,6 +373,7 @@ mod tests {
             canonical_competitor_hash: Some(vec![2; 32]),
             coinbase: None,
             difficulty_epoch_ok: Some(true),
+            rejection_reason: None,
             live_observed: true,
             core_attested,
             core_absence_attested: false,

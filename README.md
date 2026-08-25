@@ -52,10 +52,10 @@ From it you can:
   height/hash/header/time/`nBits` evidence where available, and external
   explorer links.
 - **Filter by source** to see which headers a given chain touched, and by
-  classification to isolate canonical, stale, catalogued error-block, or orphan
+  classification to isolate canonical, stale, consensus-invalid error-block, or orphan
   evidence.
 - **Step through the record** with a single navigator across the latest stale
-  blocks, stale branches, catalogued error blocks, orphans, and orphan branches.
+  blocks, stale branches, consensus-invalid error blocks, orphans, and orphan branches.
 
 ## The chains
 
@@ -149,11 +149,11 @@ competition is not always a single block, so the tree also renders multi-block s
 and orphan branches.
 
 Some headers meet Bitcoin's proof-of-work target but are mechanically known to
-violate a Bitcoin consensus rule. The monitor classifies a witnessed match in its
-pinned error-block catalogue separately, preserving the rejection reason without
-misstating it as a stale block or orphan candidate. The navigator steps through
-them like any other target, and the block detail names the rule the block breaks
-and explains why it has no canonical competitor.
+violate a Bitcoin consensus rule. The monitor derives supported rules from
+Bitcoin Core and retains a pinned catalogue as a fallback, preserving the
+rejection reason without misstating the block as stale or orphan evidence. The
+navigator steps through these error blocks like any other target, and the block
+detail names the rule it breaks and explains why it has no canonical competitor.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/stale-branch-dark.png" />

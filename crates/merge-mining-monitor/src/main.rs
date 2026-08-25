@@ -1,4 +1,7 @@
 use anyhow::{Context, Result};
+use bitcoin::BlockHash;
+use bitcoin::hashes::Hash as _;
+use std::str::FromStr;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -29,6 +32,7 @@ async fn main() -> Result<()> {
         Some("import-all") => cmd_import_all(args).await?,
         Some("import-known-stales") => cmd_import_known_stales(args).await?,
         Some("reclassify-unknown-parents") => cmd_reclassify_unknown_parents(args).await?,
+        Some("reclassify-parent") => cmd_reclassify_parent(args).await?,
         Some("reclassify-known-stales") => cmd_reclassify_known_stales(args).await?,
         Some("reclassify-pools") => cmd_reclassify_pools(args).await?,
         Some("sync-bitcoin-core") => cmd_sync_bitcoin_core(args).await?,
@@ -93,6 +97,29 @@ async fn cmd_reclassify_unknown_parents(args: std::env::Args) -> Result<()> {
     let count =
         mmm_read_model::run_reclassify_unknown_parents(&mut pg_client, &classifier, config).await?;
     info!(count, "reclassified unknown Bitcoin parent headers");
+
+    Ok(())
+}
+
+async fn cmd_reclassify_parent(mut args: std::env::Args) -> Result<()> {
+    let hash = args
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("usage: reclassify-parent <bitcoin-header-hash>"))?;
+    if args.next().is_some() {
+        anyhow::bail!("usage: reclassify-parent <bitcoin-header-hash>");
+    }
+    let hash =
+        BlockHash::from_str(&hash).context("bitcoin-header-hash must be a valid block hash")?;
+    let (mut pg_client, classifier) = mmm_producers::connect_core_required_from_env().await?;
+    let stats =
+        mmm_read_model::run_reclassify_parent(&mut pg_client, &classifier, &hash.to_byte_array())
+            .await?;
+    info!(
+        hash = %hash,
+        parents_reconciled = stats.parents_reconciled,
+        descendants_reconciled = stats.descendants_reconciled,
+        "reclassified Bitcoin parent"
+    );
 
     Ok(())
 }

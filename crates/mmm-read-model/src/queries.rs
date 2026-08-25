@@ -135,8 +135,8 @@ pub(crate) async fn load_block_cascade_state<C: GenericClient>(
 ) -> Result<Option<BlockCascadeState>> {
     let row = client
         .query_opt(
-            "SELECT kind, btc_height, btc_height_source, canonical_competitor_hash, \
-                    core_attested, difficulty_epoch_ok, btc_coinbase_script \
+            "SELECT kind, btc_height, btc_height_source, error_block_reason, \
+                    canonical_competitor_hash, core_attested, difficulty_epoch_ok, btc_coinbase_script \
              FROM block \
              WHERE btc_header_hash = $1",
             &[&hash],
@@ -154,10 +154,11 @@ pub(crate) async fn load_block_cascade_state<C: GenericClient>(
                 .as_deref()
                 .map(HeightSource::from_db_str)
                 .transpose()?,
-            canonical_competitor_hash: row.get(3),
-            core_attested: row.get(4),
-            difficulty_epoch_ok: row.get(5),
-            btc_coinbase_script: row.get(6),
+            error_block_reason: row.get(3),
+            canonical_competitor_hash: row.get(4),
+            core_attested: row.get(5),
+            difficulty_epoch_ok: row.get(6),
+            btc_coinbase_script: row.get(7),
         })
     })
     .transpose()
@@ -406,7 +407,9 @@ const RECONCILE_CANDIDATES_SQL: &str = "WITH parent_scope AS ( \
                        OR b.btc_height IS DISTINCT FROM re.expected_height \
                        OR (re.expected_kind IN ('canonical','stale') AND b.btc_height_source IS NULL) \
                        OR (re.expected_kind = 'error_block' \
-                           AND b.btc_height_source IS DISTINCT FROM 'error-block-catalog') \
+                           AND b.btc_height_source IS DISTINCT FROM 'error-block-catalog' \
+                           AND b.btc_height_source IS DISTINCT FROM 'prev-canonical' \
+                           AND b.btc_height_source IS DISTINCT FROM 'prev-stale') \
                        OR (re.expected_kind = 'unknown' AND b.btc_height_source IS NOT NULL) \
                        OR b.difficulty_epoch_ok IS DISTINCT FROM pr.difficulty_epoch_ok \
                        OR ap.evidence -> 'contributing_event_ids' IS DISTINCT FROM p.ids \

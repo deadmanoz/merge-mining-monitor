@@ -16,6 +16,10 @@ use bitcoin::hashes::Hash as _;
 
 const ERROR_BLOCKS_CSV: &str = include_str!("../../../data/consensus/error_blocks.csv");
 
+/// Canonical rejection token for a parent whose timestamp is not strictly
+/// greater than its predecessor median time past.
+pub const TIME_BELOW_MTP: &str = "time_below_mtp";
+
 /// A pinned, mechanically re-derived Bitcoin consensus failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ErrorBlock {
@@ -97,7 +101,7 @@ mod tests {
             lookup(&hash.to_byte_array()),
             Some(ErrorBlock {
                 height: 946_213,
-                rejection_reason: "time_below_mtp",
+                rejection_reason: TIME_BELOW_MTP,
             })
         );
     }

@@ -4,7 +4,7 @@
 > the block detail drawer, flanked by collapsible, drag-resizable rails. The
 > left Controls rail starts with direct Height and native UTC Date/Time
 > tree lookup controls, followed by Classification and Source controls.
-> Canonical, stale, and catalogued error blocks are client-side highlights that fade non-matching blocks
+> Canonical, stale, and consensus-invalid error blocks are client-side highlights that fade non-matching blocks
 > rather than refetch; strict and weak orphan are the server-side orphan
 > signal. The detail drawer starts collapsed and auto-expands on selection.
 > A topbar switcher selects between the header tree, the Header Time Delta
@@ -175,14 +175,14 @@ advertise a generated tree window carry `view_error` instead, and the tree
 panel reports the supplied action. Clicking any branch member hydrates the
 matching branch through `anchor_hash`, so interior members resolve too.
 
-"Latest error block" navigates catalogued consensus-invalid, full-proof-of-work
+"Latest error block" navigates consensus-invalid, full-proof-of-work
 blocks, backed by `/api/v1/navigator/error-block`. The readout is the same
 height-plus-total form as "Latest stale", for example `#946,213 · 33 total`,
 because each item is a single block on the height axis. Ordering is newest-first
-by height and then by stored hash bytes: the catalogue carries more than one
-block at some heights, so the hash tie-break is what makes stepping return every
-member exactly once. It accepts no `classification` filter, since catalogue
-membership is not a refinement of `unknown`. Jumps use the row's server-provided
+by height and then by stored hash bytes: more than one error block can share a
+height, so the hash tie-break is what makes stepping return every member exactly
+once. It accepts no `classification` filter, since consensus invalidity is not a
+refinement of `unknown`. Jumps use the row's server-provided
 `view` tree window exactly as "Latest stale" does, and rows that cannot
 advertise one carry `view_error` instead. Selecting an error block
 directly, by clicking its tree node or restoring a `?selected=` link, hydrates

@@ -4,7 +4,10 @@ use anyhow::{Context, Result};
 use bitcoin::hashes::Hash as _;
 use bitcoin::{block::Header, consensus::deserialize};
 use mmm_bitcoin_core::BitcoinCoreBlockCoinbase;
-use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier};
+use mmm_bitcoin_core::{
+    ConfiguredParentClassifier, FakeParentClassifier, HeightSource, ParentClassification,
+    TIME_BELOW_MTP,
+};
 use mmm_capture::capture::{
     ClassificationProof, EventPoolAttribution, MergeMiningEventPayload, NormalizedEventEvidence,
     ParentKind, PoolAttributionConfidence, PoolAttributionSide, ResolvedPoolAttributions,
@@ -15,7 +18,7 @@ use mmm_capture::test_support::header_meeting_bits_with_prev;
 use mmm_read_model::{
     CoreCanonicalWrite, drain_historical_reconcile_queue,
     drain_historical_reconcile_queue_with_budget_for_test, rebuild_source_health,
-    run_reconcile_read_model, update_parent_events, write_core_canonical,
+    run_reclassify_parent, run_reconcile_read_model, update_parent_events, write_core_canonical,
 };
 use mmm_read_model::{
     ReconcileReadModelConfig, restore_merge_mining_event, revoke_merge_mining_event,
@@ -153,6 +156,21 @@ async fn capture_catalogued_error_block(client: &mut Client) -> Result<(i64, i64
     Ok((namecoin, event_id, parent_hash))
 }
 
+async fn error_block_state(
+    client: &mut Client,
+    parent_hash: &[u8],
+) -> Result<(String, i32, String, Option<String>)> {
+    client
+        .query_one(
+            "SELECT kind, btc_height, btc_height_source, error_block_reason \
+             FROM block WHERE btc_header_hash = $1",
+            &[&parent_hash],
+        )
+        .await
+        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
+        .map_err(Into::into)
+}
+
 // These tests exercise read_model::mutation transaction entry points: capture,
 // revoke/restore, Core writes, and event-pool cascade updates. Each scenario
 // pairs table assertions with the source_health recompute oracle.
@@ -172,16 +190,8 @@ async fn mutation_catalogued_error_block_is_never_stale_or_unknown() -> Result<(
             .map(|row| (row.get(0), row.get(1)))?;
         assert_eq!(event, ("error_block".to_owned(), Some(946_213)));
 
-        let block: (String, i32, String, Option<String>) = client
-            .query_one(
-                "SELECT kind, btc_height, btc_height_source, error_block_reason \
-                 FROM block WHERE btc_header_hash = $1",
-                &[&parent_hash],
-            )
-            .await
-            .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))?;
         assert_eq!(
-            block,
+            error_block_state(&mut client, &parent_hash).await?,
             (
                 "error_block".to_owned(),
                 946_213,
@@ -215,6 +225,85 @@ async fn mutation_catalogued_error_block_is_never_stale_or_unknown() -> Result<(
             .get(0);
         assert_eq!(error_block_count, 1);
         assert_source_health_matches_recompute(&client, "after catalogued error-block capture")
+            .await?;
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn targeted_repair_persists_a_live_error_block_without_catalogue_membership() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (_, namecoin) = mutation_pool_snapshot(&mut client).await?;
+        let header = header_meeting_bits_with_prev(
+            0x207f_ffff,
+            1_700_000_500,
+            0x6d,
+            bitcoin::BlockHash::all_zeros(),
+        );
+        let parent_hash = header.block_hash().to_byte_array().to_vec();
+        assert!(mmm_capture::error_blocks::lookup(&parent_hash).is_none());
+
+        let mut payload = crafted_unknown_payload(header, 710_013, 0x57, 500)?;
+        let event_id = capture_test_payload(
+            &mut client,
+            namecoin,
+            &ConfiguredParentClassifier::Disabled,
+            &mut payload,
+        )
+        .await?;
+        let live_error = ParentClassification::error_block(
+            &header,
+            720_010,
+            HeightSource::PrevCanonical,
+            Some(true),
+            TIME_BELOW_MTP,
+        );
+        let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(live_error));
+        let stats = run_reclassify_parent(&mut client, &classifier, &parent_hash).await?;
+        assert_eq!(stats.parents_reconciled, 1);
+        assert_eq!(stats.descendants_reconciled, 0);
+
+        let event: (String, Option<i32>) = client
+            .query_one(
+                "SELECT btc_parent_kind, btc_parent_height FROM merge_mining_event WHERE id = $1",
+                &[&event_id],
+            )
+            .await
+            .map(|row| (row.get(0), row.get(1)))?;
+        assert_eq!(event, ("error_block".to_owned(), Some(720_010)));
+
+        assert_eq!(
+            error_block_state(&mut client, &parent_hash).await?,
+            (
+                "error_block".to_owned(),
+                720_010,
+                "prev-canonical".to_owned(),
+                Some(TIME_BELOW_MTP.to_owned()),
+            )
+        );
+
+        // A Core-off rebuild may replay a live verdict already persisted in
+        // Postgres, but must not invent one for an unclassified header.
+        let repaired = run_reconcile_read_model(
+            &mut client,
+            &ConfiguredParentClassifier::Disabled,
+            ReconcileReadModelConfig {
+                missing_only: false,
+                ..ReconcileReadModelConfig::default()
+            },
+        )
+        .await?;
+        assert_eq!(repaired, 1);
+        assert_eq!(
+            error_block_state(&mut client, &parent_hash).await?,
+            (
+                "error_block".to_owned(),
+                720_010,
+                "prev-canonical".to_owned(),
+                Some(TIME_BELOW_MTP.to_owned()),
+            )
+        );
+        assert_source_health_matches_recompute(&client, "after live error-block targeted repair")
             .await?;
         Ok::<_, anyhow::Error>(())
     })

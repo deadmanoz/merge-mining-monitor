@@ -13,7 +13,7 @@ preserved the proof.
 The first screen is an analytical workspace that opens directly on the data,
 not a marketing page:
 
-- a windowed Bitcoin header tree for canonical, stale, catalogued error-block,
+- a windowed Bitcoin header tree for canonical, stale, consensus-invalid error-block,
   unknown, and near
   parent headers;
 - a control rail for classification and source filtering plus direct height
@@ -66,11 +66,11 @@ interpretation: canonical and stale verdicts, same-height competition, branch
 context, and the strict/weak orphan refinement for valid blocks Bitcoin Core
 has never seen.
 
-The monitor also preserves a pinned catalogue of full-proof-of-work headers that
-are nonetheless consensus-invalid. These `error_block` records are explicitly
-separate from stale and orphan evidence, and the detail view names the primary
-validated rejection rule so invalid work cannot be mistaken for a lost Bitcoin
-fork race.
+The monitor derives supported consensus-invalid full-proof-of-work headers from
+Bitcoin Core and preserves a pinned catalogue as a fallback for other validated
+rules. These `error_block` records are explicitly separate from stale and orphan
+evidence, and the detail view names the primary rejection rule so invalid work
+cannot be mistaken for a lost Bitcoin fork race.
 
 ## Multi-Block Stale Branches
 

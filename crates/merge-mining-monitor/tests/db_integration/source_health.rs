@@ -206,6 +206,7 @@ fn canonical_at(prev_hash: Vec<u8>, height: i32) -> ParentClassification {
         canonical_competitor_hash: None,
         coinbase: None,
         difficulty_epoch_ok: Some(true),
+        rejection_reason: None,
         live_observed: true,
         core_attested: true,
         core_absence_attested: false,

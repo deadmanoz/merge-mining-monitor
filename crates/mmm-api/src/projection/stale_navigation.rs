@@ -73,7 +73,7 @@ pub(super) struct NavigationReadiness {
 /// them) against `TREE_NODE_LIMIT` so navigation never proposes an over-budget
 /// tree window.
 ///
-/// Both stale AND catalogued error blocks count: the compact tree keeps an
+/// Both stale AND consensus-invalid error blocks count: the compact tree keeps an
 /// in-window `error_block` row (see `tree/compact.rs`), so it occupies a node
 /// exactly like a stale row does. Counting only stales under-budgets any window
 /// containing one, and the navigator would advertise a target that `/tree` then
@@ -203,7 +203,7 @@ pub(super) async fn load_navigation_readiness(
 /// binary search.
 ///
 /// The kind filter must match what the tree actually renders beside the
-/// canonical spine: stale rows, plus catalogued error blocks that carry at
+/// canonical spine: stale rows, plus consensus-invalid error blocks that carry at
 /// least one source. A sourceless error block is dropped by the tree's
 /// `min_sources` filter, so counting it here would consume budget for a node
 /// that never appears, needlessly narrowing the window or reporting a target as
@@ -312,7 +312,7 @@ impl NavigationWindowBudget {
     }
 
     /// Visible tree nodes in a window: the inclusive height count plus the
-    /// off-spine rows inside it (stale and catalogued error blocks, each
+    /// off-spine rows inside it (stale and consensus-invalid error blocks, each
     /// rendering as an extra node).
     fn visible_node_budget(&self, from_height: i32, to_height: i32) -> u64 {
         height_count(from_height, to_height)

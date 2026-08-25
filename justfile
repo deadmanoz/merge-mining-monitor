@@ -189,6 +189,9 @@ reclassify-known-stales *args:
 reclassify-unknown-parents *args:
     cargo run -- reclassify-unknown-parents {{args}}
 
+reclassify-parent hash:
+    cargo run -- reclassify-parent {{hash}}
+
 # Offline historical pool re-resolution. Self-seeds the expanded pool snapshot
 # and child identity registries, then re-attributes merge_mining_event pool IDs
 # from stored coinbase columns plus persisted child-chain identity fields.

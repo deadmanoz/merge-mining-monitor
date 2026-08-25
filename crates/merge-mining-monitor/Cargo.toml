@@ -37,6 +37,7 @@ mmm-bitcoin-core.workspace = true
 mmm-producers.workspace = true
 mmm-read-model.workspace = true
 anyhow.workspace = true
+bitcoin.workspace = true
 mmm-capture = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 tokio.workspace = true
