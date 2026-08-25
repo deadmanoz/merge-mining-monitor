@@ -46,6 +46,14 @@ ENV_READ = re.compile(r"\benv::var(?:_os)?\b|\benv_lookup\b")
 KEYCALL = re.compile(
     r'(?:env::var(?:_os)?|std::env::var(?:_os)?|env_lookup|\blookup|getenv)\s*\(\s*&?\s*"([A-Z][A-Z0-9_]{2,})"'
 )
+# The same read calls, but with a bare identifier argument (a key passed through a
+# constant). Paired with CONST_KEY, this recovers keys KEYCALL's literal form misses.
+KEYCALL_IDENT = re.compile(
+    r'(?:env::var(?:_os)?|std::env::var(?:_os)?|env_lookup|\blookup|getenv)\s*\(\s*&?\s*([A-Z][A-Z0-9_]{2,})\s*\)'
+)
+CONST_KEY = re.compile(
+    r'\b(?:const|static)\s+([A-Z][A-Z0-9_]*)\s*:\s*&\s*(?:\'static\s+)?str\s*=\s*"([A-Z][A-Z0-9_]{2,})"'
+)
 CONFIG_STRUCT = re.compile(r"\bstruct\s+([A-Za-z0-9_]*Config)\b")
 DEFAULT_PREFIXES = ["NAMECOIN", "RSK", "SYSCOIN", "FRACTAL", "HATHOR", "ELASTOS"]
 
@@ -108,26 +116,45 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
     struct_locs: list[_report.Loc] = []
     key_locs: dict[str, list[_report.Loc]] = {}
     code_suffixes: set[str] = set()
+    # `const KEY_ENV: &str = "SOME_KEY"` declarations, resolved after the scan so a
+    # `var_os(KEY_ENV)` call site counts against the real key, not a phantom.
+    const_map: dict[str, str] = {}
+    ident_calls: list[tuple[str, _report.Loc]] = []
 
     for path in _scan.iter_rust_files(root, skip_tests=not include_tests):
         src = read_text(path)
         if not src:
             continue
         rel = _scan.rel(path)
-        reads = len(ENV_READ.findall(src))
+        # Structural/count matches run on de-noised source so a `//! uses env::var`
+        # doc line or a struct name inside a string is not miscounted. Newline count
+        # is preserved, so match offsets still map to the correct original line.
+        stripped = _scan.strip_noise(src)
+        reads = len(ENV_READ.findall(stripped))
         if reads:
             read_files[rel] = reads
-        for m in CONFIG_STRUCT.finditer(src):
-            struct_locs.append(_report.Loc(rel, src.count("\n", 0, m.start()) + 1, m.group(1)))
+        for m in CONFIG_STRUCT.finditer(stripped):
+            struct_locs.append(_report.Loc(rel, stripped.count("\n", 0, m.start()) + 1, m.group(1)))
         for m in KEYCALL.finditer(src):
             key = m.group(1)
             if not _is_build_env(key):
                 key_locs.setdefault(key, []).append(_report.Loc(rel, src.count("\n", 0, m.start()) + 1))
+        for m in CONST_KEY.finditer(src):
+            const_map[m.group(1)] = m.group(2)
+        for m in KEYCALL_IDENT.finditer(src):
+            ident_calls.append((m.group(1), _report.Loc(rel, src.count("\n", 0, m.start()) + 1)))
         for lit, _off in _scan.iter_string_literals(src):
             if SUFFIX.match(lit):
                 code_suffixes.add(lit)
             for fm in FORMAT_SUFFIX.finditer(lit):
                 code_suffixes.add(fm.group(1))
+
+    # Resolve constant-passed keys once every declaration has been seen (a const may
+    # be defined in a different file from its use).
+    for ident, loc in ident_calls:
+        key = const_map.get(ident)
+        if key and not _is_build_env(key):
+            key_locs.setdefault(key, []).append(loc)
 
     code_full = set(key_locs)
     example = env_keys(read_text(env_example))

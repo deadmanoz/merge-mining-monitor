@@ -25,12 +25,28 @@ ENTRY = {"lib", "main", "mod"}
 
 
 def crate_src_dirs(root: str) -> list[tuple[str, str]]:
+    """Crate `(name, src_dir)` pairs under `root`.
+
+    Handles both a crates container passed directly (`crates/<crate>/src`) and a
+    repository root (`.`) whose crates live under a nested `crates/` dir - a whole
+    -repo report would otherwise analyze zero crates while every other detector
+    scans the tree.
+    """
     out: list[tuple[str, str]] = []
-    if os.path.isdir(root):
-        for name in sorted(os.listdir(root)):
-            src = os.path.join(root, name, "src")
-            if os.path.isdir(src):
+    seen: set[str] = set()
+
+    def add_members(container: str) -> None:
+        if not os.path.isdir(container):
+            return
+        for name in sorted(os.listdir(container)):
+            src = os.path.join(container, name, "src")
+            if os.path.isdir(src) and src not in seen:
+                seen.add(src)
                 out.append((name, src))
+
+    if os.path.isdir(root):
+        add_members(root)                          # <root>/<crate>/src
+        add_members(os.path.join(root, "crates"))  # <root>/crates/<crate>/src (workspace layout)
     if not out and os.path.isdir(os.path.join(root, "src")):
         out.append((os.path.basename(os.path.abspath(root)), os.path.join(root, "src")))
     return out

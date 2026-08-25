@@ -30,7 +30,11 @@ EXCLUDE = ("generated", "Cargo.lock", "/vendor/", "node_modules/")
 
 
 def _scope_prefix(root: str | None) -> str | None:
-    """Normalize a requested root to a repo-relative path prefix (or None = whole repo)."""
+    """Normalize a requested root to a repo-relative path prefix (or None = whole repo).
+
+    Git emits paths as `crates/...`, so a `./crates` or `crates/` form must be
+    collapsed or the prefix match silently excludes everything.
+    """
     if not root or root in (".", "./"):
         return None
     r = root
@@ -43,9 +47,10 @@ def _scope_prefix(root: str | None) -> str | None:
             r = os.path.relpath(r, top)
         except Exception:
             return None
-        if r == "." or r.startswith(".."):
-            return None
-    return r.strip("/") or None
+    r = os.path.normpath(r)  # ./crates -> crates, crates/ -> crates, a/./b -> a/b
+    if r == "." or r == os.curdir or r.startswith(".."):
+        return None
+    return r or None
 
 
 def _under(path: str, prefix: str | None) -> bool:

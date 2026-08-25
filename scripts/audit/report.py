@@ -58,6 +58,19 @@ def _rank(findings: list[_report.Finding]) -> list[_report.Finding]:
     )
 
 
+def _fmt_locs(f: _report.Finding, limit: int = 6) -> str:
+    """All of a finding's locations, not just the first. A line of 0 (a file-level
+    finding with no single line, e.g. config drift) renders as the bare path rather
+    than a misleading `:0`."""
+    parts = [
+        f"`{loc.file}:{loc.line}`" if loc.line else f"`{loc.file}`"
+        for loc in f.locations[:limit]
+    ]
+    if len(f.locations) > limit:
+        parts.append(f"_+{len(f.locations) - limit} more_")
+    return ", ".join(parts)
+
+
 def markdown(findings: list[_report.Finding], root: str, top: int) -> str:
     ts = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
     by_tool: dict[str, list[_report.Finding]] = {s: [] for s in SECTIONS}
@@ -82,8 +95,8 @@ def markdown(findings: list[_report.Finding], root: str, top: int) -> str:
     ]
     top_findings = [f for f in _rank(findings) if f.severity in ("high", "medium")][:top]
     for f in top_findings:
-        loc = f.locations[0] if f.locations else None
-        where = f" - `{loc.file}:{loc.line}`" if loc and loc.line else (f" - `{loc.file}`" if loc else "")
+        locs = _fmt_locs(f)
+        where = f" - {locs}" if locs else ""
         out.append(f"- **[{f.severity}] {f.tool}/{f.kind}** (score {f.score}): {f.summary}{where}")
     if not top_findings:
         out.append("- _None above the medium bar. The mechanical gates are holding._")
@@ -96,8 +109,8 @@ def markdown(findings: list[_report.Finding], root: str, top: int) -> str:
         out.append(f"## {tool} ({len(items)})")
         out.append("")
         for f in items[:top]:
-            loc = f.locations[0] if f.locations else None
-            where = f" `{loc.file}:{loc.line}`" if loc and loc.line else ""
+            locs = _fmt_locs(f)
+            where = f" {locs}" if locs else ""
             out.append(f"- [{f.severity}] {f.summary}{where}")
         if len(items) > top:
             out.append(f"- _...and {len(items) - top} more (run `{tool}.py` directly)._")

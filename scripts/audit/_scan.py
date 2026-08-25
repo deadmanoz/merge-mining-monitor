@@ -55,6 +55,9 @@ def iter_rust_files(root: str, skip_tests: bool = True):
     inside production files are not stripped (that needs a real parser); the
     heuristic accepts that residue."""
     for dirpath, dirs, files in os.walk(root):
+        # Prune heavy/irrelevant subtrees in place so os.walk never descends into
+        # them (a populated `target/` can be hundreds of thousands of entries).
+        dirs[:] = [d for d in dirs if d != "target" and not (skip_tests and d == "tests")]
         dirs.sort()  # deterministic traversal -> stable output across machines
         if "/target/" in dirpath or dirpath.endswith("/target"):
             continue

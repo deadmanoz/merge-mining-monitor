@@ -25,22 +25,13 @@ SQL_KW = re.compile(r"\b(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|JOIN|WHERE|VA
 
 
 def extract_sql(src: str):
-    out = []
-    chars = list(src)
-    # Raw strings: the closing delimiter is `"` followed by the SAME number of `#`
-    # as the opener, so `r#"SELECT "id" FROM t"#` must not terminate at the inner
-    # quote. Capture the hash run and backreference it (`\1`) for the closer.
-    for m in re.finditer(r'r(#*)"(.*?)"\1', src, flags=re.S):
-        out.append((m.group(2), src[: m.start()].count("\n") + 1))
-        for k in range(m.start(), m.end()):
-            if chars[k] != "\n":
-                chars[k] = " "
-    masked = "".join(chars)
-    for m in re.finditer(r'"((?:\\.|[^"\\])*)"', masked, flags=re.S):
-        out.append((m.group(1), masked[: m.start()].count("\n") + 1))
-    for s, line in out:
-        if len(s) >= 40 and len(SQL_KW.findall(s)) >= 2:
-            yield line, s
+    # Tokenize via the shared scanner: it recognizes raw/byte strings only at a
+    # token boundary (so a word ending in `r` before a `"` is never a raw opener),
+    # honors matched raw delimiters, and skips comments/char literals - the whole
+    # class of quote-desync bugs a hand-rolled regex hits.
+    for content, off in _scan.iter_string_literals(src):
+        if len(content) >= 40 and len(SQL_KW.findall(content)) >= 2:
+            yield src[:off].count("\n") + 1, content
 
 
 def norm(s: str) -> str:
