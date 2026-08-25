@@ -156,6 +156,21 @@ async fn capture_catalogued_error_block(client: &mut Client) -> Result<(i64, i64
     Ok((namecoin, event_id, parent_hash))
 }
 
+async fn error_block_state(
+    client: &mut Client,
+    parent_hash: &[u8],
+) -> Result<(String, i32, String, Option<String>)> {
+    client
+        .query_one(
+            "SELECT kind, btc_height, btc_height_source, error_block_reason \\
+             FROM block WHERE btc_header_hash = $1",
+            &[&parent_hash],
+        )
+        .await
+        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
+        .map_err(Into::into)
+}
+
 // These tests exercise read_model::mutation transaction entry points: capture,
 // revoke/restore, Core writes, and event-pool cascade updates. Each scenario
 // pairs table assertions with the source_health recompute oracle.
@@ -175,16 +190,8 @@ async fn mutation_catalogued_error_block_is_never_stale_or_unknown() -> Result<(
             .map(|row| (row.get(0), row.get(1)))?;
         assert_eq!(event, ("error_block".to_owned(), Some(946_213)));
 
-        let block: (String, i32, String, Option<String>) = client
-            .query_one(
-                "SELECT kind, btc_height, btc_height_source, error_block_reason \
-                 FROM block WHERE btc_header_hash = $1",
-                &[&parent_hash],
-            )
-            .await
-            .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))?;
         assert_eq!(
-            block,
+            error_block_state(&mut client, &parent_hash).await?,
             (
                 "error_block".to_owned(),
                 946_213,
@@ -265,16 +272,8 @@ async fn targeted_repair_persists_a_live_error_block_without_catalogue_membershi
             .map(|row| (row.get(0), row.get(1)))?;
         assert_eq!(event, ("error_block".to_owned(), Some(720_010)));
 
-        let block: (String, i32, String, Option<String>) = client
-            .query_one(
-                "SELECT kind, btc_height, btc_height_source, error_block_reason \
-                 FROM block WHERE btc_header_hash = $1",
-                &[&parent_hash],
-            )
-            .await
-            .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))?;
         assert_eq!(
-            block,
+            error_block_state(&mut client, &parent_hash).await?,
             (
                 "error_block".to_owned(),
                 720_010,
@@ -295,18 +294,11 @@ async fn targeted_repair_persists_a_live_error_block_without_catalogue_membershi
         )
         .await?;
         assert_eq!(repaired, 1);
-        let replayed: (String, String, Option<String>) = client
-            .query_one(
-                "SELECT kind, btc_height_source, error_block_reason \
-                 FROM block WHERE btc_header_hash = $1",
-                &[&parent_hash],
-            )
-            .await
-            .map(|row| (row.get(0), row.get(1), row.get(2)))?;
         assert_eq!(
-            replayed,
+            error_block_state(&mut client, &parent_hash).await?,
             (
                 "error_block".to_owned(),
+                720_010,
                 "prev-canonical".to_owned(),
                 Some(TIME_BELOW_MTP.to_owned()),
             )

@@ -319,17 +319,17 @@ impl BitcoinCoreParentClassifier {
         }
 
         match self
-            .check_median_time_past(header, fail_on_rpc_error)
+            .median_time_past_passes(header, fail_on_rpc_error)
             .await?
         {
-            MedianTimePast::Valid => Ok(classify_inferred_stale_with_competitor(
+            Some(true) => Ok(classify_inferred_stale_with_competitor(
                 header,
                 height,
                 predecessor,
                 prev_kind,
                 Some(competitor),
             )),
-            MedianTimePast::Below => Ok(ParentClassification::error_block(
+            Some(false) => Ok(ParentClassification::error_block(
                 header,
                 height,
                 inferred_height_source(prev_kind),
@@ -339,9 +339,7 @@ impl BitcoinCoreParentClassifier {
             // Without all eleven linked headers we do not know whether the
             // candidate is stale or consensus-invalid, and must not promote it
             // to an orphan merely because Core lacks the candidate itself.
-            MedianTimePast::Incomplete | MedianTimePast::Unavailable => {
-                Ok(ParentClassification::unknown(header))
-            }
+            None => Ok(ParentClassification::unknown(header)),
         }
     }
 
@@ -349,11 +347,11 @@ impl BitcoinCoreParentClassifier {
     /// Starting at its declared predecessor and re-hashing each response
     /// proves the fetched sequence is one linked ancestor chain rather than a
     /// collection of headers chosen by height.
-    async fn check_median_time_past(
+    async fn median_time_past_passes(
         &self,
         candidate: &Header,
         fail_on_rpc_error: bool,
-    ) -> Result<MedianTimePast> {
+    ) -> Result<Option<bool>> {
         let mut expected_hash = candidate.prev_blockhash;
         let mut times = [0_u32; MTP_WINDOW];
         for (depth, time) in times.iter_mut().enumerate() {
@@ -367,7 +365,7 @@ impl BitcoinCoreParentClassifier {
                     );
                 }
                 Err(err) if bitcoin_rpc::is_not_found(&err) => {
-                    return Ok(MedianTimePast::Incomplete);
+                    return Ok(None);
                 }
                 Err(err) => {
                     if fail_on_rpc_error {
@@ -383,7 +381,7 @@ impl BitcoinCoreParentClassifier {
                         hash = %expected_hash,
                         "Bitcoin Core MTP ancestor fetch failed"
                     );
-                    return Ok(MedianTimePast::Unavailable);
+                    return Ok(None);
                 }
             };
             *time = ancestor.time;
@@ -391,11 +389,7 @@ impl BitcoinCoreParentClassifier {
         }
 
         times.sort_unstable();
-        Ok(if candidate.time <= times[MTP_WINDOW / 2] {
-            MedianTimePast::Below
-        } else {
-            MedianTimePast::Valid
-        })
+        Ok(Some(candidate.time > times[MTP_WINDOW / 2]))
     }
 
     async fn fetch_competitor(
@@ -627,14 +621,6 @@ fn core_absence_unknown(header: &Header) -> ParentClassification {
         core_absence_attested: true,
         ..ParentClassification::unknown(header)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MedianTimePast {
-    Valid,
-    Below,
-    Incomplete,
-    Unavailable,
 }
 
 fn bits_match_expected(header: &Header, expected: CompactTarget) -> bool {
