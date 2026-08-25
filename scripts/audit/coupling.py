@@ -62,22 +62,33 @@ def _under(path: str, prefix: str | None) -> bool:
 
 
 def commits():
+    """Yield `(total_changed, code_files)` per commit.
+
+    `total_changed` counts *every* path the commit touched (Rust, SQL, migrations,
+    docs, config, ...), so sweep detection sees the true commit size; `code_files`
+    is the `.rs`/`.js` subset (minus generated/vendored paths) used for churn and
+    co-change pairs. Filtering to code before counting would let a bulk commit of
+    two Rust files plus a hundred migrations masquerade as a focused change.
+    """
     out = subprocess.run(
         ["git", "log", "--all", "--pretty=format:%H", "--name-only"],
         capture_output=True, text=True, check=True,
     ).stdout
+    total = 0
     files: list[str] = []
     for line in out.splitlines():
         if not line.strip():
             continue
         if len(line) == 40 and all(c in "0123456789abcdef" for c in line):
-            if files:
-                yield files
-            files = []
-        elif line.endswith(TRACKED_SUFFIXES) and not any(e in line for e in EXCLUDE):
-            files.append(line)
-    if files:
-        yield files
+            if total or files:
+                yield total, files
+            total, files = 0, []
+        else:
+            total += 1  # every changed path counts toward the sweep size
+            if line.endswith(TRACKED_SUFFIXES) and not any(e in line for e in EXCLUDE):
+                files.append(line)
+    if total or files:
+        yield total, files
 
 
 def collect(min_co: int = 5, min_ratio: float = 0.6, max_commit_files: int = 30, root: str | None = None) -> tuple[list[_report.Finding], Counter]:
@@ -85,13 +96,13 @@ def collect(min_co: int = 5, min_ratio: float = 0.6, max_commit_files: int = 30,
     churn: Counter[str] = Counter()      # scoped files across all commits (churn report)
     co_churn: Counter[str] = Counter()   # scoped files in non-sweep commits (ratio denominator)
     co: Counter[tuple[str, str]] = Counter()
-    for files in commits():
-        full = set(files)
-        # Sweep detection uses the full commit; a mass commit is a sweep whether or
-        # not the subtree filter keeps only a few of its files.
-        scoped = sorted(f for f in full if _under(f, prefix))
+    for total_changed, files in commits():
+        # Sweep detection uses the commit's *total* changed-file count (all types),
+        # so a mass commit is recognized as a sweep even when only a few of its
+        # files are code; the subtree/suffix filter applies to churn and pairs only.
+        scoped = sorted(f for f in set(files) if _under(f, prefix))
         churn.update(scoped)
-        if len(full) > max_commit_files:
+        if total_changed > max_commit_files:
             continue
         co_churn.update(scoped)
         for a, b in combinations(scoped, 2):
@@ -121,7 +132,7 @@ def main() -> int:
     ap.add_argument("root", nargs="?", default=None, help="optional repo-relative subtree to scope every metric to (default: whole repo)")
     ap.add_argument("--min-co", type=int, default=5, help="minimum co-changes for a coupled pair (default: 5)")
     ap.add_argument("--min-ratio", type=float, default=0.6, help="minimum coupling ratio (default: 0.6)")
-    ap.add_argument("--max-commit-files", type=int, default=30, help="ignore commits touching more than N tracked files (default: 30)")
+    ap.add_argument("--max-commit-files", type=int, default=30, help="ignore commits touching more than N changed files of any type (default: 30)")
     ap.add_argument("--limit", type=int, default=25)
     ap.add_argument("--json", action="store_true", help="emit the shared finding schema as JSON")
     args = ap.parse_args()

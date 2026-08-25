@@ -303,6 +303,61 @@ def iter_string_literals(src: str):
         i += 1
 
 
+def find_signature_end(src: str, start: int) -> tuple[str, int]:
+    """Classify a `fn` signature starting at `start` (just past `fn <name>`).
+
+    Returns `("body", idx)` when the signature ends at the body's opening `{`,
+    `("decl", idx)` when it ends at a top-level `;` (a bodyless declaration, e.g. a
+    required trait method), or `("eof", last)` if neither is found.
+
+    Depth is tracked for four bracket kinds because each can carry a character that
+    would otherwise be misread as the terminator:
+      * `( )` params;
+      * `[ ]` a fixed-size array type (`-> Result<[u8; N]>`) whose `;` is not a
+        bodyless-declaration terminator;
+      * `< >` generics, so a const-generic brace argument is seen as nested;
+      * `{ }` a const-generic / const expression (`-> Foo<{ N + 1 }>`) whose brace
+        is NOT the body brace.
+    `->` is consumed as a unit so its `>` never closes a generic; angle tracking is
+    suspended inside a const-expression brace, where `<`/`>` are shift/compare
+    operators, not generics. `src` should be `strip_noise`d so braces/semicolons in
+    strings or comments cannot unbalance the walk. Shared by `find_functions` and
+    the trait-surface detector so both classify signatures identically.
+    """
+    n = len(src)
+    j = start
+    paren = bracket = angle = brace = 0
+    while j < n:
+        c = src[j]
+        if c == "-" and src[j : j + 2] == "->":
+            j += 2
+            continue
+        if c == "(":
+            paren += 1
+        elif c == ")":
+            paren -= 1
+        elif c == "[":
+            bracket += 1
+        elif c == "]":
+            bracket -= 1
+        elif c == "<" and brace == 0:
+            angle += 1
+        elif c == ">" and brace == 0:
+            if angle > 0:
+                angle -= 1
+        elif c == "{":
+            if paren <= 0 and bracket <= 0 and angle <= 0 and brace == 0:
+                return "body", j
+            brace += 1  # a const-generic / const-expression brace
+        elif c == "}":
+            if brace > 0:
+                brace -= 1
+        elif c == ";" and paren <= 0 and bracket <= 0 and angle <= 0 and brace == 0:
+            return "decl", j
+        j += 1
+    return "eof", n - 1
+
+
 def find_functions(src: str, path: str) -> list[Function]:
     """Extract `fn` bodies via brace matching.
 
@@ -313,51 +368,8 @@ def find_functions(src: str, path: str) -> list[Function]:
     out: list[Function] = []
     n = len(src)
     for m in re.finditer(r"\bfn\s+([A-Za-z0-9_]+)", src):
-        # Walk to the body's opening brace, skipping everything nested in the
-        # signature. Depth is tracked for four bracket kinds because each can carry
-        # a character that would otherwise be misread:
-        #   * `( )` params;
-        #   * `[ ]` a fixed-size array type (`-> Result<[u8; N]>`) whose `;` is not
-        #     a bodyless-declaration terminator;
-        #   * `< >` generics, so a const-generic brace argument is seen as nested;
-        #   * `{ }` a const-generic / const expression (`-> Foo<{ N + 1 }>`) whose
-        #     brace is NOT the body brace.
-        # `->` is consumed as a unit so its `>` never closes a generic. Angle
-        # tracking is suspended inside a const-expression brace, where `<`/`>` are
-        # shift/compare operators, not generics. Only a genuinely top-level `{`
-        # opens the body and only a top-level `;` means "no body".
-        j = m.end()
-        paren = bracket = angle = brace = 0
-        while j < n:
-            c = src[j]
-            if c == "-" and src[j : j + 2] == "->":
-                j += 2
-                continue
-            if c == "(":
-                paren += 1
-            elif c == ")":
-                paren -= 1
-            elif c == "[":
-                bracket += 1
-            elif c == "]":
-                bracket -= 1
-            elif c == "<" and brace == 0:
-                angle += 1
-            elif c == ">" and brace == 0:
-                if angle > 0:
-                    angle -= 1
-            elif c == "{":
-                if paren <= 0 and bracket <= 0 and angle <= 0 and brace == 0:
-                    break  # the body brace
-                brace += 1  # a const-generic / const-expression brace
-            elif c == "}":
-                if brace > 0:
-                    brace -= 1
-            elif c == ";" and paren <= 0 and bracket <= 0 and angle <= 0 and brace == 0:
-                j = -1
-                break
-            j += 1
-        if j < 0 or j >= n:
+        kind, j = find_signature_end(src, m.end())
+        if kind != "body" or j >= n:
             continue
         # Brace-match the body.
         depth = 0

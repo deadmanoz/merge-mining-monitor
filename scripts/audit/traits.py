@@ -36,37 +36,25 @@ def _match_brace(src: str, open_idx: int) -> int:
     return len(src) - 1
 
 
-def _sig_terminator(src: str, start: int) -> tuple[str, int]:
-    """Classify a `fn` signature from `start`: does it end in `{` (a default
-    body, "prov") or `;` (a required method, "req")? Track only paren/bracket
-    depth - trait method signatures carry no other top-level `{`/`;`."""
-    paren = 0
-    for j in range(start, len(src)):
-        c = src[j]
-        if c in "([":
-            paren += 1
-        elif c in ")]":
-            paren -= 1
-        elif c == "{" and paren <= 0:
-            return "prov", j
-        elif c == ";" and paren <= 0:
-            return "req", j
-    return "eof", len(src) - 1
-
-
 def _count_methods(body: str) -> tuple[int, int]:
-    """(required, provided) fn count in a trait body, skipping nested bodies."""
+    """(required, provided) fn count in a trait body, skipping nested bodies.
+
+    Signature classification is delegated to `_scan.find_signature_end` so a
+    const-generic argument in a required method's return type
+    (`fn digest() -> Foo<{ 1 + 1 }>;`) is not mistaken for a default-method body -
+    which would wrongly count the method as provided and mask a facade candidate.
+    """
     req = prov = 0
     i = 0
     while True:
         m = FN.search(body, i)
         if not m:
             break
-        kind, pos = _sig_terminator(body, m.end())
-        if kind == "req":
+        kind, pos = _scan.find_signature_end(body, m.end())
+        if kind == "decl":  # ends in `;` -> required method
             req += 1
             i = pos + 1
-        elif kind == "prov":
+        elif kind == "body":  # ends in `{` -> default (provided) method
             prov += 1
             i = _match_brace(body, pos) + 1
         else:

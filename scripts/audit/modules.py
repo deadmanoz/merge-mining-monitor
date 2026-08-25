@@ -21,6 +21,10 @@ import _report
 import _scan
 
 CRATE_REF = re.compile(r"\bcrate::([a-z_][a-z0-9_]*)")
+# A relative path through one or more `super::` hops, e.g. `super::reconcile` or
+# `super::super::sync`. The captured hop-run's length says how many parents to
+# ascend; the trailing identifier is the referenced module.
+SUPER_REF = re.compile(r"\b((?:super::)+)([a-z_][a-z0-9_]*)")
 ENTRY = {"lib", "main", "mod"}
 
 
@@ -71,6 +75,21 @@ def _module_of(rel_parts: list[str]) -> str | None:
         stem = first[:-3] if first.endswith(".rs") else first
         return None if stem in ENTRY else stem
     return first
+
+
+def _module_path_parts(rel_parts: list[str]) -> list[str]:
+    """Full module path (crate-root-relative) for a source file, as segments.
+
+    `foo/mod.rs` -> `[foo]`; `foo/bar.rs` -> `[foo, bar]`; `foo.rs` -> `[foo]`;
+    `lib.rs`/`main.rs` -> `[]` (the crate root). The length is the module's depth,
+    which tells `super::` resolution how many parents a hop-run ascends.
+    """
+    parts = list(rel_parts)
+    last = parts[-1]
+    if last.endswith(".rs"):
+        stem = last[:-3]
+        parts = parts[:-1] if stem in ENTRY else parts[:-1] + [stem]
+    return parts
 
 
 def _sccs(nodes: list[str], adj: dict[str, set[str]]) -> list[list[str]]:
@@ -128,6 +147,18 @@ def collect(root: str = "crates", include_tests: bool = False) -> list[_report.F
             for ref in CRATE_REF.findall(text):
                 if ref in mods and ref != owner:
                     adj[owner].add(ref)
+            # Relative `super::` hops. From a module at depth d, k `super`s ascend to
+            # mp[:d-k]; the referenced identifier is a crate-level (top-level) module
+            # only when the hops reach exactly the crate root (k == d) - otherwise it
+            # still resolves inside `owner` (a self-edge). Without this, a sibling
+            # cycle expressed as `super::other` (paired with the other side's
+            # `crate::owner`) is invisible and the whole crate looks acyclic.
+            depth = len(_module_path_parts(rel_parts))
+            for sm in SUPER_REF.finditer(text):
+                if sm.group(1).count("super") == depth:
+                    target = sm.group(2)
+                    if target in mods and target != owner:
+                        adj[owner].add(target)
         for comp in _sccs(list(mods), adj):
             if len(comp) < 2:
                 continue

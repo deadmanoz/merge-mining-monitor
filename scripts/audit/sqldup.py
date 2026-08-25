@@ -22,6 +22,9 @@ import _report
 import _scan
 
 SQL_KW = re.compile(r"\b(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|JOIN|WHERE|VALUES|ON\s+CONFLICT|RETURNING|WITH)\b", re.I)
+# A PostgreSQL dollar-quote opener: `$$` or `$tag$` where the tag is a valid
+# identifier (never starting with a digit, so `$1` positional binds don't match).
+DOLLAR_OPEN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
 
 
 def extract_sql(src: str):
@@ -44,6 +47,11 @@ def norm(s: str) -> str:
     bytes are preserved verbatim. SQL escapes a quote by doubling it (`''`), which
     is handled here. (A quote written as a Rust `\\"` escape inside a non-raw string
     literal is a rare edge this heuristic does not unescape.)
+
+    A PostgreSQL dollar-quoted span (`$$...$$` or `$tag$...$tag$`) is likewise
+    case- and whitespace-significant (it commonly carries a function body or a
+    literal), so it is copied verbatim too. Its tag cannot start with a digit, so a
+    positional placeholder like `$1` is never mistaken for a dollar-quote opener.
 
     Placeholders are canonicalized by first-occurrence order ($3 -> $1) rather than
     all collapsed to one token, so their *equivalence pattern* survives: reusing one
@@ -80,8 +88,21 @@ def norm(s: str) -> str:
             out.append("".join(buf))  # quoted span: preserved verbatim
             i = j
             continue
+        if c == "$":
+            mo = DOLLAR_OPEN.match(s, i)
+            if mo:
+                closer = mo.group(0)  # "$$" or "$tag$"
+                end = s.find(closer, mo.end())
+                stop = n if end < 0 else end + len(closer)  # unterminated -> rest verbatim
+                out.append(s[i:stop])  # dollar-quoted span: preserved verbatim
+                i = stop
+                continue
         j = i
-        while j < n and s[j] not in "'\"":
+        while j < n:
+            if s[j] in "'\"":
+                break
+            if s[j] == "$" and DOLLAR_OPEN.match(s, j):
+                break
             j += 1
         seg = re.sub(r"\$\d+", canon, s[i:j])
         out.append(re.sub(r"\s+", " ", seg).lower())

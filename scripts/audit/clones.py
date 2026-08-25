@@ -79,7 +79,11 @@ def collect(root: str, min_tokens: int = 45, k: int = 8, df_max: int = 40,
         if count < min_shared:
             continue
         fi, fj = kept[i], kept[j]
-        if fi.name == fj.name and fi.path == fj.path:
+        # Skip only a function compared with itself (same file AND same line). Two
+        # *different* methods that share a name in one file - e.g. `from_json_str` in
+        # separate impl blocks - are legitimate clone candidates, so keying the
+        # self-check on name+path (which such siblings share) wrongly dropped them.
+        if fi.path == fj.path and fi.line == fj.line:
             continue
         inter = len(fps[i] & fps[j])
         if not inter:
