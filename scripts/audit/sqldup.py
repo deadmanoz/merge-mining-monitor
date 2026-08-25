@@ -52,6 +52,21 @@ def is_test(path: str) -> bool:
     return "/tests/" in path or path.endswith(("tests.rs", "_tests.rs", "test_fixtures.rs"))
 
 
+def _pick_cross(locs_i, locs_j):
+    """A representative pair from *different* files (preferring prod/prod), so the
+    two reported locations actually demonstrate the cross-file duplication."""
+    li_s, lj_s = sorted(locs_i), sorted(locs_j)
+    fallback = None
+    for a in li_s:
+        for b in lj_s:
+            if a[0] != b[0]:
+                if not is_test(a[0]) and not is_test(b[0]):
+                    return a, b
+                if fallback is None:
+                    fallback = (a, b)
+    return fallback if fallback else (li_s[0], lj_s[0])
+
+
 def collect(root: str, near: float = 0.85) -> list[_report.Finding]:
     items = []  # (path, line, normalized)
     for path in _scan.iter_rust_files(root, skip_tests=False):
@@ -105,11 +120,8 @@ def collect(root: str, near: float = 0.85) -> list[_report.Finding]:
                 continue
             r = sm.ratio()
             if near <= r < 0.999:
-                li = sorted(groups[ni])[0]
-                lj = next((l for l in sorted(groups[nj]) if l[0] != li[0]), sorted(groups[nj])[0])
-                prod_i = {p for p in files_i if not is_test(p)}
-                prod_j = {p for p in files_j if not is_test(p)}
-                both_prod = any(pi != pj for pi in prod_i for pj in prod_j)
+                li, lj = _pick_cross(groups[ni], groups[nj])
+                both_prod = not is_test(li[0]) and not is_test(lj[0])
                 findings.append(_report.Finding(
                     tool="sqldup", kind="sql-near-dup",
                     summary=f"{r:.2f} similar SQL across files ({'prod' if both_prod else 'test'})",

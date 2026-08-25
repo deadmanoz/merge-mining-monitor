@@ -35,7 +35,7 @@ section "COMPLEXITY HOTSPOTS (decision-point proxy)"
 python3 "$here/complexity.py" "$root" || true
 
 section "GIT CHURN + TEMPORAL COUPLING"
-python3 "$here/coupling.py" || true
+python3 "$here/coupling.py" "$root" || true
 
 echo
 echo "For one ranked report (Markdown or --json data contract):"

@@ -34,7 +34,9 @@ def _is_build_env(key: str) -> bool:
 
 FULLKEY = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
 SUFFIX = re.compile(r"^_[A-Z0-9]+(?:_[A-Z0-9]+)*$")
-STRLIT = re.compile(r'"((?:\\.|[^"\\])*)"')
+# A per-chain key built as format!("{prefix}_RPC_USER"): the literal is
+# `{...}_SUFFIX`, so the suffix follows the placeholder, not the string start.
+FORMAT_SUFFIX = re.compile(r"\{[^}]*\}(_[A-Z0-9]+(?:_[A-Z0-9]+)*)")
 # Only actual read calls, not the `std::env` namespace itself (which also prefixes
 # `std::env::args()`, `std::env::Args`, ...). `env::var(_os)` also matches the tail
 # of `std::env::var(_os)`.
@@ -121,19 +123,30 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
             key = m.group(1)
             if not _is_build_env(key):
                 key_locs.setdefault(key, []).append(_report.Loc(rel, src.count("\n", 0, m.start()) + 1))
-        for m in STRLIT.finditer(src):
-            lit = m.group(1)
+        for lit, _off in _scan.iter_string_literals(src):
             if SUFFIX.match(lit):
                 code_suffixes.add(lit)
+            for fm in FORMAT_SUFFIX.finditer(lit):
+                code_suffixes.add(fm.group(1))
 
     code_full = set(key_locs)
     example = env_keys(read_text(env_example))
-    _doc_full, doc_suffixes = doc_tokens(docs, prefixes)
-    # Per-chain suffixes seen via full example keys (e.g. NAMECOIN_RPC_URL -> _RPC_URL).
+    doc_full, doc_suffixes = doc_tokens(docs, prefixes)
+    # Per-chain suffixes present in .env.example (e.g. NAMECOIN_RPC_URL -> _RPC_URL);
+    # tracked separately so a documented per-chain key covered by the example via its
+    # suffix is not flagged as missing.
+    example_suffixes: set[str] = set()
     for k in example:
         for p in prefixes:
             if k.startswith(p + "_"):
-                doc_suffixes.add(k[len(p):])
+                example_suffixes.add(k[len(p):])
+    doc_suffixes |= example_suffixes
+
+    def suffix_of(key: str) -> str | None:
+        for p in prefixes:
+            if key.startswith(p + "_"):
+                return key[len(p):]
+        return None
 
     def in_docs(key: str) -> bool:
         return re.search(rf"\b{re.escape(key)}\b", docs) is not None
@@ -188,6 +201,19 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
             tool="configscan", kind="config-doc-drift",
             summary=f"{len(ex_not_doc)} key(s) in .env.example but not in docs/configuration.md: {', '.join(ex_not_doc)}",
             score=float(len(ex_not_doc)), severity="medium", metrics={"keys": ex_not_doc},
+        ))
+
+    # Reverse direction: a full key documented in configuration.md but absent from
+    # .env.example (a per-chain key covered by an example suffix is not drift).
+    doc_not_ex = sorted(
+        k for k in doc_full
+        if k not in example and (suffix_of(k) is None or suffix_of(k) not in example_suffixes)
+    )
+    if doc_not_ex:
+        findings.append(_report.Finding(
+            tool="configscan", kind="config-example-drift",
+            summary=f"{len(doc_not_ex)} key(s) in docs/configuration.md but not in .env.example: {', '.join(doc_not_ex)}",
+            score=float(len(doc_not_ex)), severity="medium", metrics={"keys": doc_not_ex},
         ))
 
     return findings

@@ -104,7 +104,9 @@ def collect(root: str = "crates", include_tests: bool = False) -> list[_report.F
             if owner is None or owner not in mods:
                 continue
             try:
-                text = open(path, encoding="utf-8", errors="ignore").read()
+                # Strip comments/strings first: a `crate::other` in a doc link or
+                # string literal is prose, not a compiled dependency edge.
+                text = _scan.strip_noise(open(path, encoding="utf-8", errors="ignore").read())
             except OSError:
                 continue
             for ref in CRATE_REF.findall(text):

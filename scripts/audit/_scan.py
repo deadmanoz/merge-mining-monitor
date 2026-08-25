@@ -102,8 +102,18 @@ def strip_noise(src: str) -> str:
             i = n if j < 0 else j  # keep the newline itself
             continue
         if two == "/*":
-            j = src.find("*/", i + 2)
-            end = n if j < 0 else j + 2
+            # Rust block comments nest: `/* /* */ */` is one comment. Track depth
+            # so an inner terminator does not leak the remainder back as source.
+            depth, j = 1, i + 2
+            while j < n and depth > 0:
+                pair = src[j : j + 2]
+                if pair == "/*":
+                    depth, j = depth + 1, j + 2
+                elif pair == "*/":
+                    depth, j = depth - 1, j + 2
+                else:
+                    j += 1
+            end = j if depth == 0 else n
             out.append("\n" * src.count("\n", i, end))
             i = end
             continue
@@ -148,6 +158,70 @@ def strip_noise(src: str) -> str:
         out.append(c)
         i += 1
     return "".join(out)
+
+
+def iter_string_literals(src: str):
+    """Yield `(content, start_index)` for each Rust string literal (normal and
+    raw), skipping line/block comments and char literals.
+
+    A naive `"..."` regex on raw source pairs quotes across a `'"'` char literal
+    or a `"` inside a comment and swallows whole spans of code; this single-pass
+    scanner (mirroring `strip_noise`) tokenizes correctly. Content is the literal's
+    inner text verbatim, so callers can inspect embedded keys/placeholders that
+    `strip_noise` would have collapsed to `"s"`.
+    """
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        two = src[i : i + 2]
+        if two == "//":
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if two == "/*":
+            depth, j = 1, i + 2
+            while j < n and depth > 0:
+                pair = src[j : j + 2]
+                if pair == "/*":
+                    depth, j = depth + 1, j + 2
+                elif pair == "*/":
+                    depth, j = depth - 1, j + 2
+                else:
+                    j += 1
+            i = j if depth == 0 else n
+            continue
+        if c in "rb" and (i == 0 or not (src[i - 1].isalnum() or src[i - 1] == "_")):
+            k = i
+            if src[k] == "b" and k + 1 < n and src[k + 1] == "r":
+                k += 1
+            if src[k] == "r":
+                h = k + 1
+                while h < n and src[h] == "#":
+                    h += 1
+                if h < n and src[h] == '"':
+                    closer = '"' + "#" * (h - (k + 1))
+                    j = src.find(closer, h + 1)
+                    end = n if j < 0 else j
+                    yield src[h + 1 : end], i
+                    i = n if j < 0 else end + len(closer)
+                    continue
+        if c == '"':
+            j = i + 1
+            while j < n:
+                if src[j] == "\\":
+                    j += 2
+                    continue
+                if src[j] == '"':
+                    break
+                j += 1
+            yield src[i + 1 : j], i
+            i = min(j + 1, n)
+            continue
+        if c == "'":
+            m = _CHAR_LIT.match(src, i)
+            i = m.end() if m else i + 1
+            continue
+        i += 1
 
 
 def find_functions(src: str, path: str) -> list[Function]:

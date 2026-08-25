@@ -18,7 +18,9 @@ import re
 import _report
 import _scan
 
-DECISION = re.compile(r"\b(if|match|for|while|loop)\b|&&|\|\||\?\s*[.;)]|=>|\.await")
+# Count every `?` try operator (on strip_noise'd source, so not in strings or
+# comments), excluding only the `?Sized` relaxed-bound, which is not a branch.
+DECISION = re.compile(r"\b(if|match|for|while|loop)\b|&&|\|\||\?(?!\s*Sized\b)|=>|\.await")
 
 
 def _severity(dp: int) -> str:
