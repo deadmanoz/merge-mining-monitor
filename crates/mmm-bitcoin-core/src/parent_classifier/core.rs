@@ -143,20 +143,10 @@ impl BitcoinCoreParentClassifier {
         let verbose = match self.source.get_header_verbose(candidate_hash).await {
             Ok(v) => v,
             Err(err) if bitcoin_rpc::is_not_found(&err) => {
-                // The candidate header is provably absent from Core's main chain
-                // and stale set. Any `unknown` returned from this path (whatever
-                // internal exit produced it: predecessor not-found/transient,
-                // missing competitor, bits-mismatch, height overflow) is a
-                // genuine BTC-orphan candidate, so stamp `core_absence_attested`.
-                // A `stale` result from the inferred-stale path is left untouched.
                 let preflight = preflight.await?;
-                let mut classification = self
+                return self
                     .classify_core_unknown(header, preflight, fail_on_rpc_error)
-                    .await?;
-                if classification.kind == ParentKind::Unknown {
-                    classification.core_absence_attested = true;
-                }
-                return Ok(classification);
+                    .await;
             }
             Err(err) => {
                 if fail_on_rpc_error {
@@ -256,9 +246,9 @@ impl BitcoinCoreParentClassifier {
 
         let prev_verbose = match self.source.get_header_verbose(header.prev_blockhash).await {
             Ok(v) if v.confirmations >= 0 => v,
-            Ok(_) => return Ok(ParentClassification::unknown(header)),
+            Ok(_) => return Ok(core_absence_unknown(header)),
             Err(err) if bitcoin_rpc::is_not_found(&err) => {
-                return Ok(ParentClassification::unknown(header));
+                return Ok(core_absence_unknown(header));
             }
             Err(err) => {
                 if fail_on_rpc_error {
@@ -270,12 +260,12 @@ impl BitcoinCoreParentClassifier {
                     });
                 }
                 warn!(error = %err, prev_hash = %header.prev_blockhash, "Bitcoin Core predecessor lookup failed");
-                return Ok(ParentClassification::unknown(header));
+                return Ok(core_absence_unknown(header));
             }
         };
         let prev_height: i32 = match core_height_to_i32(prev_verbose.height) {
             Ok(height) => height,
-            Err(_) => return Ok(ParentClassification::unknown(header)),
+            Err(_) => return Ok(core_absence_unknown(header)),
         };
         let predecessor = match self
             .source
@@ -293,7 +283,7 @@ impl BitcoinCoreParentClassifier {
                     });
                 }
                 warn!(error = %err, prev_hash = %header.prev_blockhash, "Bitcoin Core predecessor header fetch failed");
-                return Ok(ParentClassification::unknown(header));
+                return Ok(core_absence_unknown(header));
             }
         };
         self.classify_inferred_stale(
@@ -316,15 +306,96 @@ impl BitcoinCoreParentClassifier {
     ) -> Result<ParentClassification> {
         let height = match prev_height.checked_add(1) {
             Some(height) => height,
-            None => return Ok(ParentClassification::unknown(header)),
+            None => return Ok(core_absence_unknown(header)),
         };
-        Ok(classify_inferred_stale_with_competitor(
-            header,
-            height,
-            predecessor,
-            prev_kind,
-            self.fetch_competitor(height, fail_on_rpc_error).await?,
-        ))
+        let Some(competitor) = self.fetch_competitor(height, fail_on_rpc_error).await? else {
+            return Ok(core_absence_unknown(header));
+        };
+        if !bits_match_expected(header, competitor.header.bits) {
+            return Ok(ParentClassification {
+                difficulty_epoch_ok: Some(false),
+                ..core_absence_unknown(header)
+            });
+        }
+
+        match self
+            .check_median_time_past(header, fail_on_rpc_error)
+            .await?
+        {
+            MedianTimePast::Valid => Ok(classify_inferred_stale_with_competitor(
+                header,
+                height,
+                predecessor,
+                prev_kind,
+                Some(competitor),
+            )),
+            MedianTimePast::Below => Ok(ParentClassification::error_block(
+                header,
+                height,
+                inferred_height_source(prev_kind),
+                Some(true),
+                TIME_BELOW_MTP,
+            )),
+            // Without all eleven linked headers we do not know whether the
+            // candidate is stale or consensus-invalid, and must not promote it
+            // to an orphan merely because Core lacks the candidate itself.
+            MedianTimePast::Incomplete | MedianTimePast::Unavailable => {
+                Ok(ParentClassification::unknown(header))
+            }
+        }
+    }
+
+    /// Validate the candidate against the exact eleven-header MTP window.
+    /// Starting at its declared predecessor and re-hashing each response
+    /// proves the fetched sequence is one linked ancestor chain rather than a
+    /// collection of headers chosen by height.
+    async fn check_median_time_past(
+        &self,
+        candidate: &Header,
+        fail_on_rpc_error: bool,
+    ) -> Result<MedianTimePast> {
+        let mut expected_hash = candidate.prev_blockhash;
+        let mut times = [0_u32; MTP_WINDOW];
+        for (depth, time) in times.iter_mut().enumerate() {
+            let ancestor = match self.source.get_block_header(expected_hash).await {
+                Ok(header) if header.block_hash() == expected_hash => header,
+                Ok(header) => {
+                    bail!(
+                        "Bitcoin Core returned MTP ancestor {} for requested {} at depth {depth}",
+                        header.block_hash(),
+                        expected_hash
+                    );
+                }
+                Err(err) if bitcoin_rpc::is_not_found(&err) => {
+                    return Ok(MedianTimePast::Incomplete);
+                }
+                Err(err) => {
+                    if fail_on_rpc_error {
+                        return Err(err).with_context(|| {
+                            format!(
+                                "Bitcoin Core MTP ancestor fetch failed at depth {depth} for {expected_hash}"
+                            )
+                        });
+                    }
+                    warn!(
+                        error = %err,
+                        depth,
+                        hash = %expected_hash,
+                        "Bitcoin Core MTP ancestor fetch failed"
+                    );
+                    return Ok(MedianTimePast::Unavailable);
+                }
+            };
+            *time = ancestor.time;
+            expected_hash = ancestor.prev_blockhash;
+        }
+
+        times.sort_unstable();
+        Ok(if candidate.time <= times[MTP_WINDOW / 2] {
+            MedianTimePast::Below
+        } else {
+            MedianTimePast::Valid
+        })
     }
 
     async fn fetch_competitor(
@@ -467,6 +538,7 @@ pub(crate) fn classify_core_canonical_header(
         canonical_competitor_hash: None,
         coinbase,
         difficulty_epoch_ok: Some(true),
+        rejection_reason: None,
         live_observed: true,
         core_attested: true,
         core_absence_attested: false,
@@ -498,6 +570,7 @@ pub(crate) fn classify_core_stale_header(
         canonical_competitor_header: Some(competitor),
         coinbase,
         difficulty_epoch_ok: Some(true),
+        rejection_reason: None,
         live_observed: true,
         core_attested: true,
         core_absence_attested: false,
@@ -524,24 +597,44 @@ pub(crate) fn classify_inferred_stale_with_competitor(
     ParentClassification {
         kind: ParentKind::Stale,
         height: Some(height),
-        height_source: Some(match prev_kind {
-            BlockKind::Canonical => HeightSource::PrevCanonical,
-            BlockKind::Stale => HeightSource::PrevStale,
-            BlockKind::ErrorBlock => {
-                unreachable!("error-block predecessor is not eligible for stale inference")
-            }
-            BlockKind::Unknown => unreachable!("unknown predecessor kind is not classified"),
-        }),
+        height_source: Some(inferred_height_source(prev_kind)),
         prev_hash: header.prev_blockhash.to_byte_array().to_vec(),
         canonical_predecessor_header: predecessor,
         canonical_competitor_hash: Some(competitor.hash.clone()),
         canonical_competitor_header: Some(competitor),
         coinbase: None,
         difficulty_epoch_ok: Some(true),
+        rejection_reason: None,
         live_observed: false,
         core_attested: false,
         core_absence_attested: false,
     }
+}
+
+fn inferred_height_source(prev_kind: BlockKind) -> HeightSource {
+    match prev_kind {
+        BlockKind::Canonical => HeightSource::PrevCanonical,
+        BlockKind::Stale => HeightSource::PrevStale,
+        BlockKind::ErrorBlock => {
+            unreachable!("error-block predecessor is not eligible for stale inference")
+        }
+        BlockKind::Unknown => unreachable!("unknown predecessor kind is not classified"),
+    }
+}
+
+fn core_absence_unknown(header: &Header) -> ParentClassification {
+    ParentClassification {
+        core_absence_attested: true,
+        ..ParentClassification::unknown(header)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MedianTimePast {
+    Valid,
+    Below,
+    Incomplete,
+    Unavailable,
 }
 
 fn bits_match_expected(header: &Header, expected: CompactTarget) -> bool {

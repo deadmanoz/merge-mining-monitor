@@ -6,6 +6,13 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Derive `time_below_mtp` error blocks from a required Bitcoin Core node by
+  checking the exact eleven linked predecessor headers of an otherwise
+  Core-absent, proof-of-work-valid parent. Preserve the Core-derived predecessor
+  height source and rejection token in the read model, retain the pinned
+  catalogue as a fallback and consistency check, and add
+  `reclassify-parent` for a narrow, cascade-safe repair of existing evidence.
+
 - Repair bounded near-tip Bitcoin reorgs in follow mode by capturing one
   tip-pinned Core view, atomically replacing the divergent canonical suffix,
   and retaining displaced blocks as stale evidence. Persist dependent

@@ -499,8 +499,9 @@ pub fn build_event_payload_from_evidence(
 /// updating `btc_parent_kind`, `btc_parent_height`, and `difficulty_epoch_ok`
 /// in place. Used by the read-model on reclassification/repair. Same invariant
 /// as the builder: height is taken from the proof only (and only kept for
-/// Canonical/Stale), never inferred; a Near proof against valid BTC PoW or a
-/// Canonical/Stale proof without height errors via `classify_parent`.
+/// Canonical/Stale/ErrorBlock), never inferred; a Near proof against valid BTC
+/// PoW or a heightless Canonical/Stale/ErrorBlock proof errors via
+/// `classify_parent`.
 pub fn apply_classification_proof(
     payload: &mut MergeMiningEventPayload,
     proof: ClassificationProof,
@@ -675,9 +676,8 @@ fn classify_parent(
 
 /// Apply the pinned error-block catalogue after local PoW validation and before
 /// any optional Core result. A matching header is known consensus-invalid, so
-/// it must never be persisted as a stale or unknown candidate. The catalogue's
-/// height, not a coinbase-derived guess, is the only height source for this
-/// classification.
+/// it must never be persisted as a stale or unknown candidate. Non-catalogued
+/// live consensus verdicts retain the height supplied by their classifier proof.
 fn error_block_proof(
     parent_hash: &[u8],
     pow_validates_btc_target: bool,

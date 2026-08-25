@@ -245,6 +245,20 @@ reports changed rows. A transient `unknown` never demotes an already-proven
 `canonical` or `stale` row, so a Bitcoin Core gap costs nothing but a backlog of
 unknowns to sweep later.
 
+`just reclassify-parent BITCOIN_HEADER_HASH` is the narrow repair path for one
+known parent. It requires the same synced Core node as capture and runs the
+normal parent reconciler and dependent cascade, so source-health counters and
+child relationships remain consistent. Use the ordinary Bitcoin display hash,
+for example:
+
+```bash
+just reclassify-parent 0000000000000000000198e12592edbe83c84a78f75b3f8d67a3fe2075ef2ffb
+```
+
+It is appropriate after deploying a newly supported live consensus rule such
+as `time_below_mtp`; it does not run a database migration or contact production
+unless the command is explicitly run against that environment.
+
 After applying migration 0008, run the following unbounded full scan without
 child-height bounds:
 

@@ -28,6 +28,9 @@ pub(crate) async fn event_revoked_state<C: GenericClient>(
 #[derive(Debug)]
 pub(crate) enum ReconcileWork {
     Event(i64, Option<Box<PreclassifiedParent>>),
+    /// Explicit operator repair: require fresh Core evidence instead of
+    /// preserving a prior state after a transient classifier failure.
+    StrictEvent(i64),
     Block(Vec<u8>),
 }
 
@@ -91,6 +94,22 @@ pub(crate) async fn drain_reconcile_queue(
                 let changed_hashes =
                     reconcile_one_event(client, event_id, classifier, preclassified, nbits_table)
                         .await?;
+                stats.parents_reconciled += 1;
+                changed_hashes
+            }
+            ReconcileWork::StrictEvent(event_id) => {
+                if !visited_events.insert(event_id) {
+                    continue;
+                }
+                let changed_hashes = reconcile_one_event_with_policy(
+                    client,
+                    event_id,
+                    classifier,
+                    None,
+                    nbits_table,
+                    true,
+                )
+                .await?;
                 stats.parents_reconciled += 1;
                 changed_hashes
             }
@@ -535,26 +554,22 @@ async fn classify_event_parent_with_policy<C: GenericClient>(
 ) -> Result<(Header, ParentClassification)> {
     let header: Header = deserialize(&event.btc_parent_header_bytes)
         .with_context(|| format!("deserialize parent header for event {}", event.id))?;
-    let classification = if let Some(error_block) =
-        mmm_capture::error_blocks::lookup(&event.btc_parent_header_hash)
-    {
-        ParentClassification::error_block(&header, error_block.height)
-    } else {
-        match preclassified {
-            Some(preclassified) => preclassified.classification,
-            None => {
-                let preflight =
-                    load_parent_preflight(client, &event.btc_parent_prev_header_hash).await?;
-                if strict_core_errors {
-                    classifier
-                        .classify_parent_strict(&header, preflight)
-                        .await?
-                } else {
-                    classifier.classify_parent(&header, preflight).await?
-                }
-            }
+    let live = match preclassified {
+        Some(preclassified) => Some(preclassified.classification),
+        None if classifier.is_enabled() => {
+            let preflight =
+                load_parent_preflight(client, &event.btc_parent_prev_header_hash).await?;
+            Some(if strict_core_errors {
+                classifier
+                    .classify_parent_strict(&header, preflight)
+                    .await?
+            } else {
+                classifier.classify_parent(&header, preflight).await?
+            })
         }
+        None => None,
     };
+    let classification = resolve_parent_classification(&header, live)?;
     Ok((header, classification))
 }
 

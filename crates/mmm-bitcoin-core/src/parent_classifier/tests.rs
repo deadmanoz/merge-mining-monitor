@@ -1,10 +1,11 @@
-//! Classifier tests (moved verbatim; bodies byte-identical).
+//! Classifier tests.
 
 use super::core::{
     CoreHeaderSource, CoreRpcFuture, classify_core_canonical_header, classify_core_stale_header,
     classify_inferred_stale_with_competitor, core_height_to_i32, tip_is_fresh,
 };
 use super::*;
+use bitcoin::consensus::deserialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -174,6 +175,84 @@ fn classified_header(header: Header, height: i32) -> ClassifiedHeader {
         height,
         coinbase: None,
     }
+}
+
+/// Build and register the exact linked predecessor chain the MTP check reads.
+/// The final vector item is the candidate's direct predecessor; returning it
+/// also lets tests use the same header for the verbose predecessor path.
+fn attach_mtp_ancestors(
+    source: &MockCoreHeaderSource,
+    candidate: &mut Header,
+    times: [u32; MTP_WINDOW],
+) -> Vec<Header> {
+    let mut previous = BlockHash::all_zeros();
+    let mut ancestors = Vec::with_capacity(MTP_WINDOW);
+    for (index, time) in times.into_iter().enumerate() {
+        let mut ancestor = test_header(10_000 + index as u32, candidate.bits.to_consensus());
+        ancestor.prev_blockhash = previous;
+        ancestor.time = time;
+        previous = ancestor.block_hash();
+        ancestors.push(ancestor);
+    }
+    candidate.prev_blockhash = previous;
+    for ancestor in &ancestors {
+        source.set_block_header(ancestor.block_hash(), MockResult::Ok(*ancestor));
+    }
+    ancestors
+}
+
+fn decode_header(encoded: &str) -> Header {
+    assert_eq!(
+        encoded.len(),
+        160,
+        "Bitcoin header must be exactly 80 bytes"
+    );
+    let bytes = (0..encoded.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&encoded[index..index + 2], 16).unwrap())
+        .collect::<Vec<_>>();
+    deserialize(&bytes).unwrap()
+}
+
+const ERROR_957780_HEADER_HEX: &str = "00000020818872136c490609d2eeb2faeaf4f0f05f07838e9bb301000000000000000000fcff7aa8f453695c8295551e7aad10faf56fc5f5e7eda4f47933db2d80adb252e7bd416a9d360217f479b1bf";
+const CANONICAL_957780_HEADER_HEX: &str = "00000036818872136c490609d2eeb2faeaf4f0f05f07838e9bb3010000000000000000003e0c99c7ef3bf428660a360741624aec511964438d646e1f5c00df09e82f5a531c33546a9d360217572ee25d";
+
+fn error_957780_ancestors() -> Vec<Header> {
+    include_str!("error_957780_ancestor_headers.hex")
+        .lines()
+        .map(decode_header)
+        .collect()
+}
+
+fn known_canonical_prev(height: i32) -> ParentPreflight {
+    ParentPreflight {
+        known_prev: Some(KnownBlockContext {
+            kind: BlockKind::Canonical,
+            btc_height: Some(height),
+            btc_height_source: Some(HeightSource::BitcoinCore),
+            canonical_competitor_hash: None,
+            core_attested: true,
+        }),
+    }
+}
+
+fn source_with_competitor(height: u64, competitor: ClassifiedHeader) -> Arc<MockCoreHeaderSource> {
+    let source = Arc::new(MockCoreHeaderSource::default());
+    let hash = BlockHash::from_slice(&competitor.hash).unwrap();
+    source.set_block_hash(height, MockResult::Ok(hash));
+    source.set_header(hash, MockResult::Ok(competitor));
+    source
+}
+
+async fn classify_after_known_canonical(
+    source: Arc<MockCoreHeaderSource>,
+    header: &Header,
+    predecessor_height: i32,
+) -> ParentClassification {
+    BitcoinCoreParentClassifier::from_source(source)
+        .classify_parent(header, known_canonical_prev(predecessor_height))
+        .await
+        .unwrap()
 }
 
 #[test]
@@ -501,26 +580,16 @@ async fn bitcoin_core_classifier_loads_preflight_only_after_candidate_absence() 
 
 #[tokio::test]
 async fn bitcoin_core_classifier_infers_stale_after_not_found() {
-    let header = test_header(30, 0x207f_ffff);
+    let mut header = test_header(30, 0x207f_ffff);
     let competitor = classified_header(test_header(31, 0x207f_ffff), 720_010);
     let competitor_hash = BlockHash::from_slice(&competitor.hash).unwrap();
     let source = Arc::new(MockCoreHeaderSource::default());
+    let ancestors = attach_mtp_ancestors(&source, &mut header, [0; MTP_WINDOW]);
     source.set_block_hash(720_010, MockResult::Ok(competitor_hash));
     source.set_header(competitor_hash, MockResult::Ok(competitor.clone()));
 
     let from_preflight = BitcoinCoreParentClassifier::from_source(source.clone())
-        .classify_parent(
-            &header,
-            ParentPreflight {
-                known_prev: Some(KnownBlockContext {
-                    kind: BlockKind::Canonical,
-                    btc_height: Some(720_009),
-                    btc_height_source: Some(HeightSource::BitcoinCore),
-                    canonical_competitor_hash: None,
-                    core_attested: true,
-                }),
-            },
-        )
+        .classify_parent(&header, known_canonical_prev(720_009))
         .await
         .unwrap();
     assert_eq!(from_preflight.kind, ParentKind::Stale);
@@ -542,7 +611,7 @@ async fn bitcoin_core_classifier_infers_stale_after_not_found() {
     );
     source.set_header(
         header.prev_blockhash,
-        MockResult::Ok(classified_header(header, 720_009)),
+        MockResult::Ok(classified_header(*ancestors.last().unwrap(), 720_009)),
     );
     let from_prev_lookup = BitcoinCoreParentClassifier::from_source(source)
         .classify_parent(&header, ParentPreflight { known_prev: None })
@@ -554,6 +623,70 @@ async fn bitcoin_core_classifier_infers_stale_after_not_found() {
         Some(HeightSource::PrevCanonical)
     );
     assert!(from_prev_lookup.canonical_predecessor_header.is_some());
+}
+
+#[tokio::test]
+async fn bitcoin_core_classifier_marks_time_below_mtp_as_live_error_block() {
+    let mut header = test_header(50, 0x207f_ffff);
+    header.time = 105;
+    let competitor = classified_header(test_header(51, 0x207f_ffff), 720_010);
+    let source = source_with_competitor(720_010, competitor);
+    attach_mtp_ancestors(
+        &source,
+        &mut header,
+        [100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110],
+    );
+    let result = classify_after_known_canonical(source, &header, 720_009).await;
+
+    assert_eq!(result.kind, ParentKind::ErrorBlock);
+    assert_eq!(result.height, Some(720_010));
+    assert_eq!(result.height_source, Some(HeightSource::PrevCanonical));
+    assert_eq!(result.difficulty_epoch_ok, Some(true));
+    assert_eq!(result.rejection_reason.as_deref(), Some(TIME_BELOW_MTP));
+    assert!(!result.core_absence_attested);
+}
+
+#[tokio::test]
+async fn real_957780_fixture_is_rejected_by_live_mtp_validation() {
+    let candidate = decode_header(ERROR_957780_HEADER_HEX);
+    let competitor = classified_header(decode_header(CANONICAL_957780_HEADER_HEX), 957_780);
+    let ancestors = error_957780_ancestors();
+    assert_eq!(ancestors.len(), MTP_WINDOW);
+    assert_eq!(candidate.prev_blockhash, ancestors[0].block_hash());
+    for pair in ancestors.windows(2) {
+        assert_eq!(pair[0].prev_blockhash, pair[1].block_hash());
+    }
+
+    let source = source_with_competitor(957_780, competitor);
+    for ancestor in &ancestors {
+        source.set_block_header(ancestor.block_hash(), MockResult::Ok(*ancestor));
+    }
+
+    let classification = classify_after_known_canonical(source, &candidate, 957_779).await;
+
+    assert_eq!(classification.kind, ParentKind::ErrorBlock);
+    assert_eq!(classification.height, Some(957_780));
+    assert_eq!(
+        classification.height_source,
+        Some(HeightSource::PrevCanonical)
+    );
+    assert_eq!(
+        classification.rejection_reason.as_deref(),
+        Some(TIME_BELOW_MTP)
+    );
+    assert_eq!(classification.difficulty_epoch_ok, Some(true));
+    assert!(!classification.core_absence_attested);
+}
+
+#[tokio::test]
+async fn incomplete_mtp_window_stays_unknown_without_absence_attestation() {
+    let header = test_header(52, 0x207f_ffff);
+    let competitor = classified_header(test_header(53, 0x207f_ffff), 720_010);
+    let source = source_with_competitor(720_010, competitor);
+    let result = classify_after_known_canonical(source, &header, 720_009).await;
+
+    assert_eq!(result.kind, ParentKind::Unknown);
+    assert!(!result.core_absence_attested);
 }
 
 #[tokio::test]

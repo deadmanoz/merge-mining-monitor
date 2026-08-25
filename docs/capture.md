@@ -14,14 +14,18 @@ unavailable values remain `NULL`.
 
 For a live child block, the poller advances from cursor selection to source
 fetching, AuxPoW parsing, event insertion, sidecar insertion, and pool
-attribution. Parent classification then splits on three checks: Bitcoin target
-validation first, a pinned consensus-invalid error-block catalogue second, then
-Bitcoin Core placement. Target failures become `near`; a target-valid catalogue
-match becomes `error_block` with its mechanically derived rejection reason;
-Core-known parents become `canonical` or `stale`; Core-absent, non-catalogued
-target-valid parents remain `unknown` until a later
-`reclassify-unknown-parents` pass can upgrade them. BTC orphan status is a
-later refinement of Core-absent `unknown`
+attribution. Parent classification starts with Bitcoin target validation and
+Bitcoin Core placement. Target failures become `near`; Core-known parents become
+`canonical` or `stale`. For a Core-absent target-valid parent with a known
+predecessor, the classifier verifies its expected `nBits` and reads the exact
+eleven linked predecessor headers to apply Bitcoin's median-time-past rule. A
+timestamp at or below that median becomes `error_block` with the
+`time_below_mtp` reason. The pinned consensus-invalid catalogue remains the
+fallback for rules not yet derived live, and cross-checks a live MTP verdict
+when both are available. An incomplete MTP window stays `unknown`, never an
+orphan. Other Core-absent target-valid parents remain `unknown` until a later
+`reclassify-unknown-parents` pass can upgrade them. BTC orphan status is a later
+refinement of Core-absent `unknown`
 parents, not a separate parent kind, and it is gated by the operator-imported
 `known_stale_block` membership: a header catalogued as a known stale is
 `excluded` from strict/weak orphan classification rather than overclaimed.

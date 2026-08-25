@@ -30,7 +30,7 @@ pub(crate) async fn tree(State(state): State<AppState>, RawQuery(query): RawQuer
 }
 
 /// `/api/v1/navigator/{target}` is the unified navigator index for stale
-/// blocks, stale branches, catalogued error blocks, BTC orphans, and orphan
+/// blocks, stale branches, consensus-invalid error blocks, BTC orphans, and orphan
 /// branches. It supports latest, cursor page, and anchor-hash locate modes
 /// through one parser.
 pub(crate) async fn navigator(

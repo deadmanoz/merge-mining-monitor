@@ -26,6 +26,11 @@ use crate::bitcoin_rpc::{
     BitcoinCoreHeaderStatus as CoreHeaderStatus, BitcoinCoreRpcClient,
 };
 use mmm_capture::capture::{ClassificationProof, ParentKind};
+pub use mmm_capture::error_blocks::TIME_BELOW_MTP;
+
+/// Number of predecessor headers considered by Bitcoin's median-time-past
+/// rule.
+pub const MTP_WINDOW: usize = 11;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeightSource {
@@ -132,14 +137,18 @@ pub struct ParentClassification {
     pub canonical_competitor_hash: Option<Vec<u8>>,
     pub coinbase: Option<BitcoinCoreBlockCoinbase>,
     pub difficulty_epoch_ok: Option<bool>,
+    /// Primary Bitcoin consensus rejection token for a live or catalogued
+    /// `error_block` classification.
+    pub rejection_reason: Option<String>,
     pub live_observed: bool,
     pub core_attested: bool,
     /// True only when Bitcoin Core was consulted and returned the candidate
     /// header as not-found (provably absent from Core's main chain and stale
     /// set), so the resulting `unknown` is a genuine BTC-orphan candidate rather
-    /// than a never-checked (Disabled) or transient-RPC-error unknown. Set by
-    /// the candidate-not-found post-process in [`BitcoinCoreParentClassifier::classify_parent`];
-    /// the read-model reconciler gates strict/weak orphan classification on it.
+    /// than a never-checked (Disabled) or transient-RPC-error unknown. It is set
+    /// only on candidate-absent paths that did not stop at an incomplete or
+    /// unavailable live consensus check; the read-model reconciler gates
+    /// strict/weak orphan classification on it.
     pub core_absence_attested: bool,
 }
 
@@ -155,25 +164,34 @@ impl ParentClassification {
             canonical_competitor_hash: None,
             coinbase: None,
             difficulty_epoch_ok: None,
+            rejection_reason: None,
             live_observed: false,
             core_attested: false,
             core_absence_attested: false,
         }
     }
 
-    /// Classification supplied by the pinned offline-validated error-block
-    /// registry. It never claims Core attestation or a canonical competitor.
-    pub fn error_block(header: &Header, height: i32) -> Self {
+    /// Classification supplied by either the pinned error-block registry or
+    /// a live Core-backed consensus check. It never claims Core attestation or
+    /// a canonical competitor because the invalid candidate is not in Core.
+    pub fn error_block(
+        header: &Header,
+        height: i32,
+        height_source: HeightSource,
+        difficulty_epoch_ok: Option<bool>,
+        rejection_reason: impl Into<String>,
+    ) -> Self {
         Self {
             kind: ParentKind::ErrorBlock,
             height: Some(height),
-            height_source: Some(HeightSource::ErrorBlockCatalog),
+            height_source: Some(height_source),
             prev_hash: header.prev_blockhash.to_byte_array().to_vec(),
             canonical_predecessor_header: None,
             canonical_competitor_header: None,
             canonical_competitor_hash: None,
             coinbase: None,
-            difficulty_epoch_ok: None,
+            difficulty_epoch_ok,
+            rejection_reason: Some(rejection_reason.into()),
             live_observed: false,
             core_attested: false,
             core_absence_attested: false,

@@ -71,6 +71,54 @@ impl From<KnownBlockContextCompat> for mmm_bitcoin_core::KnownBlockContext {
     }
 }
 
+/// Combine a live Core verdict with the pinned catalogue. The catalogue remains
+/// the fallback for rules the monitor cannot derive live yet. For the MTP rule,
+/// a live canonical/stale verdict contradicts the catalogue and is a hard
+/// integrity error rather than a silent preference for either source.
+pub(crate) fn resolve_parent_classification(
+    header: &Header,
+    live: Option<ParentClassification>,
+) -> Result<ParentClassification> {
+    let catalogue = mmm_capture::error_blocks::lookup(&header.block_hash().to_byte_array());
+    let Some(catalogue) = catalogue else {
+        return Ok(live.unwrap_or_else(|| ParentClassification::unknown(header)));
+    };
+
+    let catalogue_classification = ParentClassification::error_block(
+        header,
+        catalogue.height,
+        HeightSource::ErrorBlockCatalog,
+        None,
+        catalogue.rejection_reason,
+    );
+    let Some(live) = live else {
+        return Ok(catalogue_classification);
+    };
+
+    if live.kind == ParentKind::ErrorBlock {
+        if live.height != Some(catalogue.height)
+            || live.rejection_reason.as_deref() != Some(catalogue.rejection_reason)
+        {
+            bail!(
+                "live error-block verdict for {} disagrees with pinned catalogue",
+                header.block_hash()
+            );
+        }
+        return Ok(live);
+    }
+
+    if catalogue.rejection_reason == mmm_bitcoin_core::TIME_BELOW_MTP
+        && matches!(live.kind, ParentKind::Canonical | ParentKind::Stale)
+    {
+        bail!(
+            "live Core verdict for {} contradicts its pinned time_below_mtp error-block entry",
+            header.block_hash()
+        );
+    }
+
+    Ok(catalogue_classification)
+}
+
 /// First mutation of a reconcile pass: roll the freshly resolved
 /// `ParentClassification` into every active `merge_mining_event` row sharing
 /// this parent header. Three guards in the WHERE clause are required for correctness:
@@ -169,41 +217,42 @@ pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
             .unwrap_or_else(|| ParentClassification::unknown(&header)),
     };
 
-    let (kind, height, height_source, competitor_hash, error_block_reason) =
-        match classification.kind {
-            ParentKind::Canonical => (
-                BlockKind::Canonical,
-                classification.height,
-                classification
-                    .height_source
-                    .or(Some(HeightSource::BitcoinCore)),
-                None,
-                None,
-            ),
-            ParentKind::Stale => (
-                BlockKind::Stale,
+    let (kind, height, height_source, competitor_hash, error_block_reason) = match classification
+        .kind
+    {
+        ParentKind::Canonical => (
+            BlockKind::Canonical,
+            classification.height,
+            classification
+                .height_source
+                .or(Some(HeightSource::BitcoinCore)),
+            None,
+            None,
+        ),
+        ParentKind::Stale => (
+            BlockKind::Stale,
+            classification.height,
+            classification.height_source,
+            classification.canonical_competitor_hash.clone(),
+            None,
+        ),
+        ParentKind::ErrorBlock => {
+            if classification.height.is_none()
+                || classification.height_source.is_none()
+                || classification.rejection_reason.is_none()
+            {
+                bail!("error-block classification is missing height, source, or rejection reason");
+            }
+            (
+                BlockKind::ErrorBlock,
                 classification.height,
                 classification.height_source,
-                classification.canonical_competitor_hash.clone(),
                 None,
-            ),
-            ParentKind::ErrorBlock => {
-                let error_block = mmm_capture::error_blocks::lookup(hash).ok_or_else(|| {
-                    anyhow::anyhow!("error-block classification has no pinned catalogue entry")
-                })?;
-                if classification.height != Some(error_block.height) {
-                    bail!("error-block classification height disagrees with pinned catalogue");
-                }
-                (
-                    BlockKind::ErrorBlock,
-                    classification.height,
-                    Some(HeightSource::ErrorBlockCatalog),
-                    None,
-                    Some(error_block.rejection_reason.to_owned()),
-                )
-            }
-            ParentKind::Unknown | ParentKind::Near => (BlockKind::Unknown, None, None, None, None),
-        };
+                classification.rejection_reason.clone(),
+            )
+        }
+        ParentKind::Unknown | ParentKind::Near => (BlockKind::Unknown, None, None, None, None),
+    };
 
     let core_source_count = if classification.core_attested { 1 } else { 0 };
     // The effective wrong-epoch evidence: the current classifier result merged with
@@ -363,6 +412,7 @@ pub(crate) fn classification_from_event(
         canonical_competitor_hash: None,
         coinbase: None,
         difficulty_epoch_ok: event.difficulty_epoch_ok,
+        rejection_reason: None,
         live_observed: false,
         core_attested: false,
         core_absence_attested: false,
@@ -395,6 +445,7 @@ pub(crate) async fn persisted_classification_from_block<C: GenericClient>(
         return Ok(None);
     }
     if persisted.kind == BlockKind::ErrorBlock
+        && persisted.btc_height_source == Some(HeightSource::ErrorBlockCatalog)
         && mmm_capture::error_blocks::lookup(&event.btc_parent_header_hash).is_none()
     {
         return Ok(None);
@@ -431,8 +482,67 @@ pub(crate) async fn persisted_classification_from_block<C: GenericClient>(
         canonical_competitor_hash,
         coinbase: None,
         difficulty_epoch_ok: persisted.difficulty_epoch_ok,
+        rejection_reason: persisted.error_block_reason,
         live_observed: persisted.core_attested,
         core_attested: persisted.core_attested,
         core_absence_attested: false,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bitcoin::consensus::deserialize;
+
+    fn catalogued_mtp_header() -> Header {
+        deserialize(
+            &hex::decode(
+                "00a0032bb223f1aad55892df75d0ff4712f0543959c5065ab89d000000000000000000005eba715327fc82c765fa651bd6226c4b4a6a846cd60197bcd76d47ada0611cfce335df696913021725806e70",
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn matching_live_mtp_verdict_keeps_live_height_provenance() {
+        let header = catalogued_mtp_header();
+        let live = ParentClassification::error_block(
+            &header,
+            946_213,
+            HeightSource::PrevCanonical,
+            Some(true),
+            mmm_bitcoin_core::TIME_BELOW_MTP,
+        );
+
+        let resolved = resolve_parent_classification(&header, Some(live)).unwrap();
+        assert_eq!(resolved.kind, ParentKind::ErrorBlock);
+        assert_eq!(resolved.height_source, Some(HeightSource::PrevCanonical));
+        assert_eq!(
+            resolved.rejection_reason.as_deref(),
+            Some(mmm_bitcoin_core::TIME_BELOW_MTP)
+        );
+    }
+
+    #[test]
+    fn catalogued_mtp_cannot_silently_become_stale() {
+        let header = catalogued_mtp_header();
+        let live = ParentClassification {
+            kind: ParentKind::Stale,
+            height: Some(946_213),
+            height_source: Some(HeightSource::PrevCanonical),
+            prev_hash: header.prev_blockhash.to_byte_array().to_vec(),
+            canonical_predecessor_header: None,
+            canonical_competitor_header: None,
+            canonical_competitor_hash: Some(vec![1; 32]),
+            coinbase: None,
+            difficulty_epoch_ok: Some(true),
+            rejection_reason: None,
+            live_observed: false,
+            core_attested: false,
+            core_absence_attested: false,
+        };
+
+        assert!(resolve_parent_classification(&header, Some(live)).is_err());
+    }
 }

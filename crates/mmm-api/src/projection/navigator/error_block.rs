@@ -23,13 +23,13 @@ struct ErrorBlockRow {
     hash: String,
 }
 
-/// Navigate catalogued consensus-invalid, full-proof-of-work parents.
+/// Navigate consensus-invalid, full-proof-of-work parents.
 ///
 /// Structurally the stale navigator without its branch machinery: an error
 /// block never raced, so it has no canonical competitor to join and never forms
 /// a branch. It does need the same `(height, hash)` ordering, because the
-/// catalogue is not one block per height — several Bitcoin heights carry more
-/// than one catalogued error block, so height alone is not a unique cursor key
+/// error-block set is not one block per height — several Bitcoin heights carry
+/// more than one error block, so height alone is not a unique cursor key
 /// and stepping on height alone would skip or repeat group members.
 ///
 /// Eligibility requires at least one distinct source, matching what `/tree`

@@ -675,8 +675,9 @@ Response fields:
 - `block` with `hash`, nullable `height`, `kind`, nullable `btc_orphan_class`
   (the derived refinement of `kind='unknown'`: `strict_btc_orphan` /
   `weak_btc_orphan` / `excluded`, else `null`), nullable
-  `error_block_reason` (the pinned catalogue's primary consensus-rejection
-  token for `kind = 'error_block'`, otherwise `null`), nullable `coinbase_tag`
+  `error_block_reason` (the live classifier or pinned fallback catalogue's
+  primary consensus-rejection token for `kind = 'error_block'`, otherwise
+  `null`), nullable `coinbase_tag`
   (for Core-attested canonical rows with stored Core coinbase
   evidence, extracted from `block.btc_coinbase_script`; otherwise extracted
   from the representative Bitcoin coinbase script in
@@ -785,13 +786,13 @@ targets are:
 |---|---|---|---|
 | `stale` | `height` | proven stale blocks | `tree_window` |
 | `stale-branch` | `height` | current multi-block stale branches | `tree_window` |
-| `error-block` | `height` | catalogued consensus-invalid full-PoW blocks | `tree_window` |
+| `error-block` | `height` | consensus-invalid full-PoW blocks | `tree_window` |
 | `orphan` | `time` | BTC-orphan blocks | `unheighted_anchor` |
 | `orphan-branch` | `time` | multi-block BTC-orphan branches | `unheighted_anchor` |
 
 `error-block` items are single blocks with `kind = "error-block"`, ordered
 newest-first by height and then by stored hash bytes. The hash tie-break is
-load-bearing rather than cosmetic: the catalogue is not one block per height, so
+load-bearing rather than cosmetic: error blocks are not one block per height, so
 paging on height alone would skip or repeat members of a same-height group. Items
 never carry `branch` or `orphan`, because an error block never raced and so is
 neither a branch member nor an orphan.

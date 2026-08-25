@@ -85,7 +85,8 @@ pub struct ApiBlock {
     /// for canonical/stale/error-block blocks and for pending/never-Core-checked
     /// unknowns.
     pub btc_orphan_class: Option<String>,
-    /// Primary consensus violation from the pinned error-block catalogue.
+    /// Primary consensus violation from the live classifier or pinned fallback
+    /// catalogue.
     /// Present only when `kind='error_block'`.
     pub error_block_reason: Option<String>,
     /// Printable raw tag runs from the commitment representative's Bitcoin
