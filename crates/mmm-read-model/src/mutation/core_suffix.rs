@@ -97,9 +97,10 @@ impl LockedCanonicalRow {
 /// transaction re-checks the producer's canonical view and sync cursor, locks every
 /// old/new/predecessor/competitor hash in global order,
 /// promotes the new suffix, demotes displaced rows to Core-attested stale rows,
-/// reconciles any active events, advances the cursor only when the common
-/// ancestor connects to the proven prefix, and durably enqueues all affected
-/// hashes. Call [`drain_core_reconcile_queue`] after commit.
+/// rebinds stale rows whose canonical competitor was displaced, reconciles any
+/// active events, advances the cursor only when the common ancestor connects to
+/// the proven prefix, and durably enqueues every replacement and displaced
+/// hash. Drain with [`drain_core_reconcile_queue`] after commit.
 pub async fn replace_core_canonical_suffix(
     client: &mut Client,
     source_id: i64,
@@ -274,10 +275,33 @@ async fn apply_suffix_mutation<C: GenericClient>(
             .get(&old.height)
             .context("replacement competitor missing for displaced canonical block")?;
         demote_displaced_parent(client, old, competitor).await?;
+        rebind_stale_competitors(client, old, competitor).await?;
     }
     for replacement in replacements {
         reconcile_replacement_parent(client, replacement).await?;
     }
+    Ok(())
+}
+
+async fn rebind_stale_competitors<C: GenericClient>(
+    client: &C,
+    displaced: &LockedCanonicalRow,
+    replacement_hash: &[u8],
+) -> Result<()> {
+    // The caller holds the exclusive canonical-view barrier, which serializes
+    // every production kind/competitor writer. One set-based update per
+    // displaced height keeps arbitrary stale fanout out of the Rust lock set;
+    // the replacement seed discovers these rows during durable expansion.
+    client
+        .execute(
+            "UPDATE block SET canonical_competitor_hash = $2, \
+                 updated_at = extract(epoch from now())::bigint \
+             WHERE kind = 'stale' AND btc_height = $3 \
+               AND canonical_competitor_hash = $1",
+            &[&displaced.hash, &replacement_hash, &displaced.height],
+        )
+        .await
+        .context("rebind stale competitors after Bitcoin Core suffix replacement")?;
     Ok(())
 }
 

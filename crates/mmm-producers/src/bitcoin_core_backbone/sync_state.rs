@@ -10,7 +10,8 @@ use mmm_read_model::run_exclusive_core_canonical_view_transaction;
 
 use super::{
     BackboneIntegrityError, BackboneIntegrityFailure, BitcoinCoreBackboneSource,
-    BitcoinCoreBackboneTip, SYNC_MODE_CONTIGUOUS, target_stability_failure,
+    BitcoinCoreBackboneTip, RETRYABLE_REPAIR_ERROR_CODE, SYNC_MODE_CONTIGUOUS,
+    TARGET_TIP_CHANGED_ERROR_CODE, target_stability_failure,
 };
 
 /// In-memory mirror of the `bitcoin_core_sync_state` cursor row for one batch.
@@ -95,7 +96,7 @@ pub(super) async fn verify_or_set_target_tip<C: GenericClient>(
         .to_string();
         let failure = BackboneIntegrityFailure::new(
             BackboneIntegrityError::TargetTipChanged,
-            "target_tip_changed",
+            TARGET_TIP_CHANGED_ERROR_CODE,
             tip.height,
             message,
             json!({
@@ -121,7 +122,8 @@ pub(super) async fn verify_or_set_target_tip<C: GenericClient>(
 }
 
 /// Accept a repaired live target only while it still matches Core and no
-/// suffix reconciliation remains pending.
+/// suffix reconciliation remains pending. Clear repair-owned telemetry while
+/// preserving an unrelated producer failure.
 pub(super) async fn accept_live_repaired_target<S>(
     client: &mut Client,
     source: &S,
@@ -156,8 +158,18 @@ where
             txn.execute(
                 "UPDATE bitcoin_core_sync_state \
                  SET target_tip_height = $3, target_tip_hash = $4, \
-                     last_error_code = NULL, last_error_height = NULL, \
-                     last_error = NULL, last_error_details = '{}'::jsonb, \
+                     last_error_code = CASE \
+                         WHEN last_error_code IN ($5, $6) THEN NULL \
+                         ELSE last_error_code END, \
+                     last_error_height = CASE \
+                         WHEN last_error_code IN ($5, $6) THEN NULL \
+                         ELSE last_error_height END, \
+                     last_error = CASE \
+                         WHEN last_error_code IN ($5, $6) THEN NULL \
+                         ELSE last_error END, \
+                     last_error_details = CASE \
+                         WHEN last_error_code IN ($5, $6) THEN '{}'::jsonb \
+                         ELSE last_error_details END, \
                      updated_at = extract(epoch from now())::bigint \
                  WHERE source_id = $1 AND sync_mode = $2",
                 &[
@@ -165,6 +177,8 @@ where
                     &SYNC_MODE_CONTIGUOUS,
                     &target.height,
                     &target_hash,
+                    &RETRYABLE_REPAIR_ERROR_CODE,
+                    &TARGET_TIP_CHANGED_ERROR_CODE,
                 ],
             )
             .await
@@ -327,6 +341,11 @@ pub(super) async fn update_sync_progress<C: GenericClient>(
 }
 
 /// Record a stable error code, height, message, and structured details.
+///
+/// A committed suffix replacement owns the visible status until its durable
+/// reconcile queue drains. The predicate is deliberately on the target row:
+/// PostgreSQL rechecks it after a concurrent row-lock wait, so a stale error
+/// writer cannot replace a newly committed reconcile-pending status.
 pub(super) async fn update_sync_error<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -345,7 +364,8 @@ pub(super) async fn update_sync_error<C: GenericClient>(
                  last_error = $5, \
                  last_error_details = $6, \
                  updated_at = extract(epoch from now())::bigint \
-             WHERE source_id = $1 AND sync_mode = $2",
+             WHERE source_id = $1 AND sync_mode = $2 \
+               AND last_error_code IS DISTINCT FROM 'backbone_reorg_reconcile_pending'",
             &[
                 &source_id,
                 &SYNC_MODE_CONTIGUOUS,

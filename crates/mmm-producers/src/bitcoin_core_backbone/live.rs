@@ -17,9 +17,10 @@ use crate::live_loop::{LiveProducer, TickOutcome, run_live_loop};
 
 use super::{
     BitcoinCoreBackboneSource, BitcoinCoreBackboneTip, BitcoinCoreSyncConfig, BitcoinCoreSyncStats,
-    SYNC_MODE_CONTIGUOUS, accept_live_repaired_target, is_backbone_integrity_error,
-    load_or_init_sync_state, repair_near_tip_backbone_to_target, run_sync_bitcoin_core,
-    update_sync_error, verify_live_backbone_window,
+    RETRYABLE_REPAIR_ERROR_CODE, SYNC_MODE_CONTIGUOUS, TARGET_TIP_CHANGED_ERROR_CODE,
+    accept_live_repaired_target, is_backbone_integrity_error, load_or_init_sync_state,
+    repair_near_tip_backbone_to_target, run_sync_bitcoin_core, update_sync_error,
+    verify_live_backbone_window,
 };
 use mmm_capture::source_registry::BITCOIN_SOURCE_CODE;
 use mmm_read_model::drain_core_reconcile_queue;
@@ -29,7 +30,6 @@ use mmm_store::get_source_id;
 /// fail-stops, so a stuck cursor surfaces as a stopped service rather than a
 /// healthy-looking one. At the default 60s interval this is ~5 minutes.
 const FOLLOW_STALL_EXIT_THRESHOLD: usize = 5;
-const RETRYABLE_REPAIR_ERROR_CODE: &str = "near_tip_reorg_repair_retry";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FollowProgress {
@@ -226,24 +226,33 @@ async fn try_record_retryable_repair_message(
         .transaction()
         .await
         .context("begin retryable Bitcoin Core repair status update")?;
-    // The upsert locks the sync-state row. Check the queue in a separate
-    // READ COMMITTED statement so a suffix writer that held the row first is
-    // visible after this transaction waits for it.
+    // The upsert locks the sync-state row. Check the queue and status ownership in
+    // a separate READ COMMITTED statement so a writer that held the row first
+    // is visible after this transaction waits for it. Retry bookkeeping may
+    // replace a repair-owned status, but never masks another producer failure.
     let state = load_or_init_sync_state(&txn, source_id).await?;
-    let reconcile_pending: bool = txn
+    let may_record_retry: bool = txn
         .query_one(
-            "SELECT EXISTS ( \
+            "SELECT NOT EXISTS ( \
                  SELECT 1 FROM bitcoin_core_reconcile_queue WHERE source_id = $1 \
-             )",
-            &[&source_id],
+             ) AND (s.last_error_code IS NULL \
+                 OR s.last_error_code IN ($3, $4)) \
+             FROM bitcoin_core_sync_state s \
+             WHERE s.source_id = $1 AND s.sync_mode = $2",
+            &[
+                &source_id,
+                &SYNC_MODE_CONTIGUOUS,
+                &RETRYABLE_REPAIR_ERROR_CODE,
+                &TARGET_TIP_CHANGED_ERROR_CODE,
+            ],
         )
         .await
-        .context("check pending Bitcoin Core reconciliation before recording retry")?
+        .context("check Bitcoin Core status ownership before recording repair retry")?
         .get(0);
-    if reconcile_pending {
+    if !may_record_retry {
         txn.commit()
             .await
-            .context("commit preserved Bitcoin Core reconcile-pending status")?;
+            .context("commit preserved Bitcoin Core sync status")?;
         return Ok(());
     }
 

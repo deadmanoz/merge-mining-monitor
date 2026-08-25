@@ -161,10 +161,13 @@ and raw scriptPubKey forms that cannot be represented as a value-complete
 - A bounded Bitcoin Core reorg replaces the complete canonical suffix in one
   read-model transaction. New active headers become canonical, displaced
   headers become Core-attested stale competitors without losing coinbase,
-  pool, AuxPoW, or proof evidence, and all affected hashes enter
-  `bitcoin_core_reconcile_queue` before commit. Each seed durably separates its
-  primary reconcile from dependent expansion; queue generations prevent older
-  work from deleting or expanding over a newer change to the same hash.
+  pool, AuxPoW, or proof evidence. Existing stale rows that pointed at a
+  displaced header are rebound to the same-height replacement competitor in
+  the transaction. Every displaced and replacement hash enters
+  `bitcoin_core_reconcile_queue` before commit; expansion from the replacement
+  then discovers the rebound rows. Each seed durably separates its primary
+  reconcile from dependent expansion; queue generations prevent older work
+  from deleting or expanding over a newer change to the same hash.
 - A transient classifier `unknown` never demotes a previously proven canonical
   or stale row.
 - Bad evidence is removed with explicit event revocation, then the read model

@@ -1,5 +1,154 @@
 use super::*;
 
+#[derive(Clone)]
+struct GatedBlockHashBackboneSource {
+    inner: FakeBitcoinCoreBackboneSource,
+    hash_started: Arc<Notify>,
+    release_hash: Arc<Notify>,
+    hash_gate_claimed: Arc<AtomicBool>,
+}
+
+impl GatedBlockHashBackboneSource {
+    fn new(inner: FakeBitcoinCoreBackboneSource) -> Self {
+        Self {
+            inner,
+            hash_started: Arc::new(Notify::new()),
+            release_hash: Arc::new(Notify::new()),
+            hash_gate_claimed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    async fn wait_for_hash(&self) {
+        self.hash_started.notified().await;
+    }
+
+    fn release_hash(&self) {
+        self.release_hash.notify_one();
+    }
+}
+
+impl BitcoinCoreBackboneSource for GatedBlockHashBackboneSource {
+    async fn tip(&self) -> Result<BitcoinCoreBackboneTip> {
+        self.inner.tip().await
+    }
+
+    async fn block_hash(&self, height: i32) -> Result<BlockHash> {
+        if self
+            .hash_gate_claimed
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            self.hash_started.notify_one();
+            self.release_hash.notified().await;
+        }
+        self.inner.block_hash(height).await
+    }
+
+    async fn block_header(&self, hash: BlockHash) -> Result<Header> {
+        self.inner.block_header(hash).await
+    }
+
+    async fn block_coinbase(&self, hash: BlockHash) -> Result<BitcoinCoreBlockCoinbase> {
+        self.inner.block_coinbase(hash).await
+    }
+}
+
+struct StaleDependentFixture {
+    event_id: i64,
+    event_hash: Vec<u8>,
+    core_only_hash: Vec<u8>,
+}
+
+async fn seed_stale_dependents(
+    client: &mut Client,
+    namecoin: i64,
+    original: &BTreeMap<i32, Header>,
+    old_h3: &[u8],
+) -> Result<StaleDependentFixture> {
+    let event_stale_chain = fork_header_chain(original, 3, 3, 1_800_027_150);
+    let event_stale_header = event_stale_chain[&3];
+    let event_hash = header_hash_bytes(&event_stale_header);
+    let event_id = insert_event_with_real_parent_header(
+        client,
+        namecoin,
+        81,
+        &hash_bytes(0x8110),
+        &event_stale_header,
+        "stale",
+        Some(3),
+    )
+    .await?;
+    let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+        crate::support::scenario::stale_verdict(&event_stale_header, 3, old_h3.to_vec()),
+    ));
+    reconcile_from_merge_mining_event(client, event_id, &classifier, None).await?;
+
+    let mut core_only_header = event_stale_header;
+    core_only_header.nonce = core_only_header.nonce.wrapping_add(1);
+    let core_only_hash = header_hash_bytes(&core_only_header);
+    insert_block(
+        client,
+        &core_only_hash,
+        &core_only_header.prev_blockhash.to_byte_array(),
+        Some(3),
+        "stale",
+        i64::from(core_only_header.time),
+        Some(old_h3),
+    )
+    .await?;
+    client
+        .execute(
+            "UPDATE block SET core_attested = TRUE, live_observed = TRUE, \
+                 distinct_sources = 99, difficulty_epoch_ok = TRUE \
+             WHERE btc_header_hash = $1",
+            &[&core_only_hash],
+        )
+        .await?;
+
+    Ok(StaleDependentFixture {
+        event_id,
+        event_hash,
+        core_only_hash,
+    })
+}
+
+async fn assert_rebound_stale_dependents(
+    client: &Client,
+    fixture: &StaleDependentFixture,
+    competitor: &[u8],
+) -> Result<()> {
+    let event_kind: String = client
+        .query_one(
+            "SELECT btc_parent_kind FROM merge_mining_event WHERE id = $1",
+            &[&fixture.event_id],
+        )
+        .await?
+        .get(0);
+    assert_eq!(event_kind, "stale");
+    for (hash, expected_attestations, expected_sources) in [
+        (&fixture.event_hash, 1_i64, 2_i64),
+        (&fixture.core_only_hash, 0_i64, 1_i64),
+    ] {
+        let row = client
+            .query_one(
+                "SELECT kind, canonical_competitor_hash, core_attested, \
+                        total_attestations::bigint, distinct_sources::bigint \
+                 FROM block WHERE btc_header_hash = $1",
+                &[hash],
+            )
+            .await?;
+        assert_eq!(row.get::<_, String>(0), "stale");
+        assert_eq!(
+            row.get::<_, Option<Vec<u8>>>(1).as_deref(),
+            Some(competitor)
+        );
+        assert!(row.get::<_, bool>(2));
+        assert_eq!(row.get::<_, i64>(3), expected_attestations);
+        assert_eq!(row.get::<_, i64>(4), expected_sources);
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn follow_repair_converges_core_promoted_duplicate_canonical_height() -> Result<()> {
     crate::run_mut_db_test!(client, {
@@ -73,6 +222,92 @@ async fn follow_repair_converges_core_promoted_duplicate_canonical_height() -> R
             let expected_kind = if hash == new_h3 { "canonical" } else { "stale" };
             assert_eq!(row.get::<_, String>(1), expected_kind);
         }
+        assert_completed_repair_state(&client, 4, active[&4].block_hash()).await?;
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn suffix_rebinds_stale_dependents_before_queue_drain() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let bitcoin = get_source_id(&client, BITCOIN_SOURCE_CODE).await?;
+        let namecoin = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let original = test_header_chain(4, 1_800_027_050);
+        let original_source = FakeBitcoinCoreBackboneSource::new(3, original.clone());
+        run_sync_bitcoin_core(
+            &mut client,
+            &original_source,
+            BitcoinCoreSyncConfig {
+                from_height: Some(0),
+                to_height: Some(3),
+                tip: true,
+                missing_only: true,
+                ..BitcoinCoreSyncConfig::default()
+            },
+        )
+        .await?;
+
+        let old_h3 = header_hash_bytes(&original[&3]);
+        let stale = seed_stale_dependents(&mut client, namecoin, &original, &old_h3).await?;
+
+        let active = fork_header_chain(&original, 3, 4, 1_800_027_250);
+        let new_h3 = header_hash_bytes(&active[&3]);
+        insert_block(
+            &client,
+            &new_h3,
+            &active[&3].prev_blockhash.to_byte_array(),
+            Some(3),
+            "stale",
+            i64::from(active[&3].time),
+            Some(&old_h3),
+        )
+        .await?;
+        let active_source = FakeBitcoinCoreBackboneSource::new(4, active.clone());
+        let expected = canonical_view(&client, 2, 4).await?;
+        let replacements = vec![
+            CoreCanonicalReplacement {
+                height: 3,
+                header: active[&3],
+                coinbase: active_source
+                    .block_coinbase(active[&3].block_hash())
+                    .await?,
+            },
+            CoreCanonicalReplacement {
+                height: 4,
+                header: active[&4],
+                coinbase: active_source
+                    .block_coinbase(active[&4].block_hash())
+                    .await?,
+            },
+        ];
+        replace_core_canonical_suffix(&mut client, bitcoin, 3, 2, &expected, &replacements).await?;
+        assert_pending_core_queue(&client, bitcoin, 3).await?;
+        let promoted_kind: String = client
+            .query_one(
+                "SELECT kind FROM block WHERE btc_header_hash = $1",
+                &[&new_h3],
+            )
+            .await?
+            .get(0);
+        assert_eq!(promoted_kind, "canonical");
+        for (hash, expected_sources) in
+            [(&stale.event_hash, 2_i64), (&stale.core_only_hash, 99_i64)]
+        {
+            let row = client
+                .query_one(
+                    "SELECT canonical_competitor_hash, distinct_sources::bigint \
+                     FROM block WHERE btc_header_hash = $1",
+                    &[hash],
+                )
+                .await?;
+            assert_eq!(row.get::<_, Option<Vec<u8>>>(0), Some(new_h3.clone()));
+            assert_eq!(row.get::<_, i64>(1), expected_sources);
+        }
+
+        drain_core_reconcile_queue(&mut client, bitcoin).await?;
+        assert_rebound_stale_dependents(&client, &stale, &new_h3).await?;
+        assert_source_health_kind_counts(&client, namecoin, 0, 1).await?;
         assert_completed_repair_state(&client, 4, active[&4].block_hash()).await?;
 
         Ok::<_, anyhow::Error>(())
@@ -246,6 +481,117 @@ async fn delayed_ordinary_writer_preserves_pending_suffix_reconcile_state() -> R
 }
 
 #[tokio::test]
+async fn blocked_integrity_error_preserves_new_reconcile_pending_status() -> Result<()> {
+    crate::run_mut_db_test!(client, schema, {
+        let bitcoin = get_source_id(&client, BITCOIN_SOURCE_CODE).await?;
+        let original = test_header_chain(4, 1_800_027_550);
+        let original_source = FakeBitcoinCoreBackboneSource::new(3, original.clone());
+        run_sync_bitcoin_core(
+            &mut client,
+            &original_source,
+            BitcoinCoreSyncConfig {
+                from_height: Some(0),
+                to_height: Some(3),
+                tip: true,
+                missing_only: true,
+                ..BitcoinCoreSyncConfig::default()
+            },
+        )
+        .await?;
+
+        let active = fork_header_chain(&original, 3, 3, 1_800_027_650);
+        let gated_source =
+            GatedBlockHashBackboneSource::new(FakeBitcoinCoreBackboneSource::new(3, active));
+        let writer_source = gated_source.clone();
+        let mut writer_client = crate::support::db::connect_to_schema(&schema).await?;
+        let writer_pid: i32 = writer_client
+            .query_one("SELECT pg_backend_pid()", &[])
+            .await?
+            .get(0);
+        let writer = tokio::spawn(async move {
+            run_sync_bitcoin_core(
+                &mut writer_client,
+                &writer_source,
+                one_height_overwrite_config(3),
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(5), gated_source.wait_for_hash())
+            .await
+            .expect("ordinary writer did not pause before its topology preflight");
+
+        let mut blocker_client = crate::support::db::connect_to_schema(&schema).await?;
+        let blocker_pid: i32 = blocker_client
+            .query_one("SELECT pg_backend_pid()", &[])
+            .await?
+            .get(0);
+        let blocker = blocker_client.transaction().await?;
+        blocker
+            .query_one(
+                "SELECT 1 FROM bitcoin_core_sync_state \
+                 WHERE source_id = $1 AND sync_mode = 'contiguous' FOR UPDATE",
+                &[&bitcoin],
+            )
+            .await?;
+
+        gated_source.release_hash();
+        wait_for_backend_blocked_by(&client, writer_pid, blocker_pid).await?;
+
+        let pending_hash = header_hash_bytes(&original[&3]);
+        let pending_details = Json(json!({ "sentinel": "suffix-pending" }));
+        blocker
+            .execute(
+                "INSERT INTO bitcoin_core_reconcile_queue (source_id, btc_parent_header_hash) \
+                 VALUES ($1, $2)",
+                &[&bitcoin, &pending_hash],
+            )
+            .await?;
+        blocker
+            .execute(
+                "UPDATE bitcoin_core_sync_state \
+                 SET last_error_code = 'backbone_reorg_reconcile_pending', \
+                     last_error_height = 3, last_error = 'suffix pending', \
+                     last_error_details = $2 \
+                 WHERE source_id = $1 AND sync_mode = 'contiguous'",
+                &[&bitcoin, &pending_details],
+            )
+            .await?;
+        blocker.commit().await?;
+
+        let err = writer
+            .await
+            .expect("join blocked ordinary writer")
+            .expect_err("the forked Core hash must still fail the topology guard");
+        assert!(err.to_string().contains("same-height canonical conflict"));
+        let state = client
+            .query_one(
+                "SELECT last_error_code, last_error_height, last_error, last_error_details \
+                 FROM bitcoin_core_sync_state WHERE source_id = $1",
+                &[&bitcoin],
+            )
+            .await?;
+        assert_eq!(
+            state.get::<_, Option<String>>(0).as_deref(),
+            Some("backbone_reorg_reconcile_pending")
+        );
+        assert_eq!(state.get::<_, Option<i32>>(1), Some(3));
+        assert_eq!(
+            state.get::<_, Option<String>>(2).as_deref(),
+            Some("suffix pending")
+        );
+        assert_eq!(
+            state.get::<_, Json<serde_json::Value>>(3).0,
+            pending_details.0
+        );
+
+        drain_core_reconcile_queue(&mut client, bitcoin).await?;
+        assert_drained_core_queue(&client, bitcoin).await?;
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn sync_progress_does_not_clear_a_concurrent_unrelated_error() -> Result<()> {
     crate::run_mut_db_test!(client, schema, {
         let bitcoin = get_source_id(&client, BITCOIN_SOURCE_CODE).await?;
@@ -401,6 +747,95 @@ async fn accepting_live_target_does_not_clear_a_concurrent_error() -> Result<()>
             Some("concurrent_error")
         );
         assert_eq!(error.get::<_, Option<i32>>(1), Some(99));
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn repair_status_preserves_unrelated_error_and_clears_repair_owned_errors() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let bitcoin = get_source_id(&client, BITCOIN_SOURCE_CODE).await?;
+        let headers = test_header_chain(3, 1_800_027_800);
+        let source = FakeBitcoinCoreBackboneSource::new(2, headers);
+        run_sync_bitcoin_core(
+            &mut client,
+            &source,
+            BitcoinCoreSyncConfig {
+                from_height: Some(0),
+                to_height: Some(2),
+                tip: true,
+                missing_only: true,
+                ..BitcoinCoreSyncConfig::default()
+            },
+        )
+        .await?;
+        let target = source.tip().await?;
+        let target_height = target.height;
+        let target_hash = target.hash.to_byte_array().to_vec();
+
+        let coinbase_details = Json(json!({ "sentinel": "unrelated-coinbase-error" }));
+        client
+            .execute(
+                "UPDATE bitcoin_core_sync_state \
+                 SET target_tip_height = NULL, target_tip_hash = NULL, \
+                     last_error_code = 'coinbase_fetch_failed', last_error_height = 0, \
+                     last_error = 'persisted coinbase failure', last_error_details = $2 \
+                 WHERE source_id = $1 AND sync_mode = 'contiguous'",
+                &[&bitcoin, &coinbase_details],
+            )
+            .await?;
+
+        record_retryable_repair_failure_for_test(&mut client, bitcoin).await?;
+        accept_live_repaired_target_for_test(&mut client, &source, bitcoin, target).await?;
+        let preserved = client
+            .query_one(
+                "SELECT last_error_code, last_error_height, last_error, last_error_details, \
+                        target_tip_height, target_tip_hash \
+                 FROM bitcoin_core_sync_state WHERE source_id = $1",
+                &[&bitcoin],
+            )
+            .await?;
+        assert_eq!(
+            preserved.get::<_, Option<String>>(0).as_deref(),
+            Some("coinbase_fetch_failed")
+        );
+        assert_eq!(preserved.get::<_, Option<i32>>(1), Some(0));
+        assert_eq!(
+            preserved.get::<_, Option<String>>(2).as_deref(),
+            Some("persisted coinbase failure")
+        );
+        assert_eq!(
+            preserved.get::<_, Json<serde_json::Value>>(3).0,
+            coinbase_details.0
+        );
+        assert_eq!(preserved.get::<_, Option<i32>>(4), Some(target_height));
+        assert_eq!(preserved.get::<_, Option<Vec<u8>>>(5), Some(target_hash));
+
+        for owned_code in ["near_tip_reorg_repair_retry", "target_tip_changed"] {
+            client
+                .execute(
+                    "UPDATE bitcoin_core_sync_state \
+                     SET last_error_code = $2, last_error_height = 2, \
+                         last_error = 'repair-owned failure', \
+                         last_error_details = '{\"retryable\":true}'::jsonb \
+                     WHERE source_id = $1 AND sync_mode = 'contiguous'",
+                    &[&bitcoin, &owned_code],
+                )
+                .await?;
+            accept_live_repaired_target_for_test(&mut client, &source, bitcoin, target).await?;
+            let cleared = client
+                .query_one(
+                    "SELECT last_error_code, last_error_height, last_error, last_error_details \
+                     FROM bitcoin_core_sync_state WHERE source_id = $1",
+                    &[&bitcoin],
+                )
+                .await?;
+            assert_eq!(cleared.get::<_, Option<String>>(0), None);
+            assert_eq!(cleared.get::<_, Option<i32>>(1), None);
+            assert_eq!(cleared.get::<_, Option<String>>(2), None);
+            assert_eq!(cleared.get::<_, Json<serde_json::Value>>(3).0, json!({}));
+        }
 
         Ok::<_, anyhow::Error>(())
     })

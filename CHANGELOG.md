@@ -13,8 +13,11 @@ This changelog starts with the initial release.
   process exit cannot lose a deeper cascade frontier. Serialize Core-backed
   classification and ordinary backbone writes against the suffix switch, drain
   pending suffix work before a Core-header-cache refresh reclassifies rows, and
-  continue to fail closed when the common ancestor lies outside the configured
-  live window.
+  rebind existing same-height stale blocks to the replacement canonical
+  competitor.
+  Preserve unrelated producer failures and reconcile-pending status during
+  concurrent repairs, and continue to fail closed when the common ancestor lies
+  outside the configured live window.
 
 - Replace the compiled Bitcoin nBits epoch table with a sparse Postgres cache
   populated from a required Bitcoin mainnet Core node. Capture, import, and
