@@ -1,5 +1,17 @@
 # Release Notes
 
+## [0.7.0] - 2026-08-25
+
+- Require a synced Bitcoin Core node and persist a sparse canonical-header
+  cache, so the monitor can evaluate difficulty and timestamp rules from
+  Core-derived evidence instead of a compiled epoch table.
+- Repair bounded near-tip Bitcoin reorgs as one durable suffix replacement,
+  retaining displaced blocks as stale evidence and completing dependent
+  reconciliation after a restart.
+- Import 73 recovered child-chain witnesses for all 33 catalogued Bitcoin
+  consensus-invalid error blocks, preserving their archive provenance and
+  making them available in the error-block navigator.
+
 ## [0.6.0] - 2026-08-15
 
 - Read each finding through a visual form matched to its evidence. The Foundry
