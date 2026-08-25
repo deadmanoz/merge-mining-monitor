@@ -162,7 +162,7 @@ async fn error_block_state(
 ) -> Result<(String, i32, String, Option<String>)> {
     client
         .query_one(
-            "SELECT kind, btc_height, btc_height_source, error_block_reason \\
+            "SELECT kind, btc_height, btc_height_source, error_block_reason \
              FROM block WHERE btc_header_hash = $1",
             &[&parent_hash],
         )
