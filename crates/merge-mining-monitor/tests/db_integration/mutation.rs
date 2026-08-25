@@ -369,10 +369,21 @@ async fn full_reconcile_reclassifies_legacy_catalogue_rows() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let (_, event_id, parent_hash) = capture_catalogued_error_block(&mut client).await?;
         let classifier = ConfiguredParentClassifier::Disabled;
+        let competitor_hash = vec![0x51; 32];
+        insert_block(
+            &client,
+            &competitor_hash,
+            &[0; 32],
+            Some(946_213),
+            "canonical",
+            1_776_876_200,
+            None,
+        )
+        .await?;
         client
             .execute(
                 "UPDATE merge_mining_event \
-                 SET btc_parent_kind = 'unknown', btc_parent_height = NULL \
+                 SET btc_parent_kind = 'stale', btc_parent_height = 946213 \
                  WHERE id = $1",
                 &[&event_id],
             )
@@ -380,13 +391,24 @@ async fn full_reconcile_reclassifies_legacy_catalogue_rows() -> Result<()> {
         client
             .execute(
                 "UPDATE block \
-                 SET kind = 'unknown', btc_height = NULL, btc_height_source = NULL, \
-                     canonical_competitor_hash = NULL, error_block_reason = NULL, \
+                 SET kind = 'stale', btc_height = 946213, btc_height_source = 'bitcoin-core', \
+                     canonical_competitor_hash = $2, error_block_reason = NULL, \
                      btc_orphan_class = NULL \
                  WHERE btc_header_hash = $1",
-                &[&parent_hash],
+                &[&parent_hash, &competitor_hash],
             )
             .await?;
+        let stale: (String, String) = client
+            .query_one(
+                "SELECT e.btc_parent_kind, b.kind \
+                 FROM merge_mining_event e \
+                 JOIN block b ON b.btc_header_hash = e.btc_parent_header_hash \
+                 WHERE e.id = $1",
+                &[&event_id],
+            )
+            .await
+            .map(|row| (row.get(0), row.get(1)))?;
+        assert_eq!(stale, ("stale".to_owned(), "stale".to_owned()));
         rebuild_source_health(&mut client).await?;
 
         let repaired = run_reconcile_read_model(
@@ -413,6 +435,14 @@ async fn full_reconcile_reclassifies_legacy_catalogue_rows() -> Result<()> {
             reclassified,
             ("error_block".to_owned(), Some("time_below_mtp".to_owned()))
         );
+        let event_kind: String = client
+            .query_one(
+                "SELECT btc_parent_kind FROM merge_mining_event WHERE id = $1",
+                &[&event_id],
+            )
+            .await?
+            .get(0);
+        assert_eq!(event_kind, "error_block");
         assert_source_health_matches_recompute(
             &client,
             "after full-scan catalogued error-block reclassification",

@@ -2,8 +2,8 @@
 
 Historical ingest consumes the normalized monitor publication from
 `merge-mining-research` and sends every observation through the same store and
-read-model rules as live capture. The pinned publication is commit
-`a30283101f33c8583855669fdffba5fb20730373`.
+read-model rules as live capture. Its pinned commit is the generated
+`source_repo_commit` in `data/historical/historical-source-manifest.json`.
 
 ## Publication Contract
 
@@ -18,6 +18,21 @@ separate 21-row `stale-descendants` file is an aggregate view, not an event
 source, because its contributing chain observations already exist in the
 per-chain files.
 
+A complete publication also carries
+`error-block-observations_monitor_evidence.csv`: documented child witnesses for
+proof-of-work-valid but Bitcoin-consensus-invalid parent headers. It is a
+separate aggregate rather than a per-chain valid-evidence artifact. Every row
+is `classification=error_block`, has `VALID_ERROR_BLOCK`, the catalogue's
+Bitcoin height and rejection reason, and blank stale-relevance fields. The file
+uses the normal 27-column header plus the seven RSK sidecar columns; non-RSK
+sidecar cells are blank and RSK witnesses carry complete sidecars. Its manifest
+requires exactly one 73-row entry with the generated source-chain inventory, so
+a missing, truncated, or cross-chain-substituted aggregate fails before database
+mutation. Its `error-block-observations` scope is reserved to that aggregate;
+ordinary historical artifacts using it are rejected. Preflight also requires
+coverage of all 33 pinned error parents across its witnesses, and checks
+retarget observations against the Core-derived target for their stated height.
+
 `data/historical/historical-source-manifest.json` pins each event payload by
 path, byte size, SHA-256, row count, and classification counts. It also pins the
 research publication manifest and source commit. Before any database mutation,
@@ -30,6 +45,19 @@ the importer verifies:
   counts;
 - every row's schema, hashes, compact targets, parent header, proof of work,
   taxonomy, and available child-header corroboration.
+
+Error-observation rows are admitted through a separate parser rather than
+widening the normal valid-evidence taxonomy. Bitcoin Core is mandatory: the
+importer requires both an exact local catalogue match and the shared
+Core-plus-catalogue parent resolver to produce the same `error_block` height
+and rejection reason. A row that would be skipped aborts the complete
+publication before it writes any normal chain artifact.
+
+Their `expected_nbits` is still required to be a valid compact target, but it
+records the network target expected at the catalogued height. It can therefore
+differ from the invalid header's own `btc_bits` for
+`nbits_retarget_not_applied`; the header target itself is always checked against
+its proof of work.
 
 Direct stale rows require a complete `VALID` validation token. Stale-descendant
 rows require the exact `VALID_STALE_DESCENDANT` status. These statuses describe
@@ -148,6 +176,14 @@ aggregate ready. The importer rebuilds once after all chains and targeted stale
 branches have reconciled. A partial multi-chain import therefore never exposes
 counters from the previous complete snapshot.
 
+Error-observation provenance is retained outside normal authoritative cleanup.
+That does not preserve a prior parent verdict: each imported witness is
+reconciled to `error_block`, promoting any existing `stale` or `unknown` row
+for the same Bitcoin header. Error witnesses use the pinned research publication
+reference and their original archive source coordinates. Replaying an existing
+coordinate is idempotent; changed evidence conflicts at the store boundary and
+stops the import, while new coordinates add witnesses.
+
 The schema migration retains existing child values and makes the child evidence
 columns nullable. Before changing the schema, it fails closed if the legacy
 database contains more than one row for the new exact identity
@@ -217,6 +253,11 @@ promoted, exact-satisfied, removed, classification, relevance, and skip counts.
 A pinned publication import fails on an unexplained skip. Write-disposition
 counters come from the store's exact/partial identity decision rather than a
 second importer-side identity query.
+
+The `import-all` report includes an `error-block-observations` line after the
+normal chains, with its witness and distinct-parent counts. Those parents are
+then available to the existing error-block navigator and compact tree view as
+ordinary sourced `error_block` rows.
 
 Two stronger-evidence projections are accepted without weakening that gate.
 The publication can promote a chain-local weak BTC-orphan verdict to strict

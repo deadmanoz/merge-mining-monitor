@@ -403,6 +403,11 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
              FROM merge_mining_event e \
              WHERE e.source_id = $1 \
                AND NOT EXISTS ( \
+                    SELECT 1 FROM historical_event_provenance error_provenance \
+                    WHERE error_provenance.event_id = e.id \
+                      AND error_provenance.artifact_scope = 'error-block-observations' \
+               ) \
+               AND NOT EXISTS ( \
                     SELECT 1 FROM historical_event_provenance p \
                     WHERE p.event_id = e.id \
                       AND p.publication_ref = $2 \
@@ -425,6 +430,11 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
         .execute(
             "DELETE FROM merge_mining_event e \
              WHERE e.source_id = $1 \
+               AND NOT EXISTS ( \
+                    SELECT 1 FROM historical_event_provenance error_provenance \
+                    WHERE error_provenance.event_id = e.id \
+                      AND error_provenance.artifact_scope = 'error-block-observations' \
+               ) \
                AND NOT EXISTS ( \
                     SELECT 1 FROM historical_event_provenance p \
                     WHERE p.event_id = e.id \
@@ -454,7 +464,9 @@ pub async fn clear_authoritative_historical_provenance_in_transaction(
 ) -> Result<()> {
     txn.execute(
         "DELETE FROM historical_event_provenance \
-         WHERE chain = $1 AND publication_ref <> 'operator-csv'",
+         WHERE chain = $1 \
+           AND publication_ref <> 'operator-csv' \
+           AND artifact_scope <> 'error-block-observations'",
         &[&chain],
     )
     .await

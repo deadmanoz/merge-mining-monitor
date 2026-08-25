@@ -443,6 +443,7 @@ async fn upsert_historical_event_provenance<C: GenericClient>(
     if provenance.source_row_number <= 0 {
         bail!("historical source_row_number must be positive");
     }
+    ensure_error_observation_coordinate_identity(client, event_id, provenance).await?;
     let row = client
         .query_opt(
             "INSERT INTO historical_event_provenance ( \
@@ -486,6 +487,45 @@ async fn upsert_historical_event_provenance<C: GenericClient>(
         bail!(
             "historical publication row contradicts stored provenance for {}:{}:{} row {}",
             provenance.publication_ref,
+            provenance.chain,
+            provenance.source_path,
+            provenance.source_row_number
+        );
+    }
+    Ok(())
+}
+
+/// A catalogue witness may be republished at a new pinned ref, but its archive
+/// coordinate must continue to identify the same stored event. Normal
+/// historical snapshots remain keyed by their publication ref and are allowed
+/// to replace rows independently.
+async fn ensure_error_observation_coordinate_identity<C: GenericClient>(
+    client: &C,
+    event_id: i64,
+    provenance: &HistoricalEventProvenance,
+) -> Result<()> {
+    if provenance.artifact_scope != "error-block-observations" {
+        return Ok(());
+    }
+    let rows = client
+        .query(
+            "SELECT event_id FROM historical_event_provenance \
+             WHERE chain = $1 \
+               AND source_path = $2 \
+               AND source_row_number = $3 \
+               AND artifact_scope = 'error-block-observations' \
+             FOR UPDATE",
+            &[
+                &provenance.chain,
+                &provenance.source_path,
+                &provenance.source_row_number,
+            ],
+        )
+        .await
+        .context("load existing error-observation provenance coordinate")?;
+    if rows.iter().any(|row| row.get::<_, i64>(0) != event_id) {
+        bail!(
+            "error-observation coordinate contradicts stored child identity for {}:{} row {}",
             provenance.chain,
             provenance.source_path,
             provenance.source_row_number

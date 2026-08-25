@@ -263,7 +263,7 @@ async fn authoritative_removal_locks_event_before_queue() -> Result<()> {
             let removed = mmm_read_model::reconcile_authoritative_historical_source_in_transaction(
                 &txn,
                 source_id,
-                "a30283101f33c8583855669fdffba5fb20730373",
+                pinned_publication_ref(),
                 "devcoin",
             )
             .await?;

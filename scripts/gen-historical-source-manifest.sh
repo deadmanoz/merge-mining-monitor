@@ -152,6 +152,19 @@ while IFS= read -r chain; do
     role="event"
     if [ "${chain}" = "stale-descendants" ]; then
         role="aggregate"
+    elif [ "${chain}" = "error-block-observations" ]; then
+        role="error_observation"
+    fi
+    source_chain_counts='{}'
+    if [ "${role}" = "error_observation" ]; then
+        source_chain_counts="$(jq -cer --arg chain "${chain}" '
+            [.counts[] | select(.chain == $chain)] as $rows
+            | if ($rows | length) != 1 or ($rows[0].source_chain_counts | type) != "object" then
+                error("missing error-observation source-chain counts")
+              else
+                $rows[0].source_chain_counts
+              end
+        ' "${research_manifest}")" || die "invalid error-observation source-chain counts"
     fi
     jq -cn \
         --arg chain "${chain}" \
@@ -159,7 +172,8 @@ while IFS= read -r chain; do
         --arg role "${role}" \
         --arg sha256 "${oid}" \
         --argjson size_bytes "${size}" \
-        --argjson count "${count}" '
+        --argjson count "${count}" \
+        --argjson source_chain_counts "${source_chain_counts}" '
         {
           chain: $chain,
           csv_path: $csv_path,
@@ -175,6 +189,14 @@ while IFS= read -r chain; do
             weak_btc_orphan: $count.weak_btc_orphan
           }
         }
+        | if $role == "error_observation" then
+            . + {
+              source_chain_counts: $source_chain_counts,
+              counts: (.counts + { error_block: $count.error_block })
+            }
+          else
+            .
+          end
     ' >>"${artifacts_ndjson}"
 done < <(jq -r '.artifacts | keys[]' "${research_manifest}")
 
@@ -185,6 +207,12 @@ jq -S \
     --arg publication_manifest_sha256 "$(sha256_file "${research_manifest}")" \
     --slurpfile artifacts "${artifacts_ndjson}" '
     ($artifacts) as $items
+    | ([ $items[] | select(.role == "error_observation") ]) as $error_artifacts
+    | if ($error_artifacts | length) > 1 then
+        error("multiple error-observation artifacts")
+      else
+        .
+      end
     | {
         schema_version: 2,
         scope: "uniform_monitor_evidence_v1",
@@ -230,6 +258,11 @@ jq -S \
         ],
         artifacts: $items
       }
+    | if ($error_artifacts | length) == 1 then
+        . + { error_observation_rows: $error_artifacts[0].row_count }
+      else
+        .
+      end
 ' "${research_manifest}" >"${generated}"
 
 checksum_output="$(manifest_checksum_path "${output}")"

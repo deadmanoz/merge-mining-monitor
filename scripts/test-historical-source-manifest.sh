@@ -33,17 +33,24 @@ jq -e '
     and .aggregate_rows == 21
     and ([.artifacts[] | select(.role == "event")] | length) == 27
     and ([.artifacts[] | select(.role == "aggregate" and .chain == "stale-descendants")] | length) == 1
-    and ([.artifacts[].chain] | unique | length) == 28
+    and ([.artifacts[] | select(.role == "error_observation" and .chain == "error-block-observations")] | length) == 1
+    and .error_observation_rows == ([.artifacts[] | select(.role == "error_observation") | .row_count] | add)
+    and ([.artifacts[].chain] | unique | length) == 29
     and all(.artifacts[];
         (.sha256 | test("^[0-9a-f]{64}$"))
         and (.size_bytes >= 0)
-        and (.row_count == (
-            .counts.canonical
-            + .counts.stale
-            + .counts.stale_descendant
-            + .counts.strict_btc_orphan
-            + .counts.weak_btc_orphan
-        ))
+        and (if .role == "error_observation" then
+            (.row_count == .counts.error_block)
+            and ([.source_chain_counts[]] | add) == .row_count
+          else
+            .row_count == (
+                .counts.canonical
+                + .counts.stale
+                + .counts.stale_descendant
+                + .counts.strict_btc_orphan
+                + .counts.weak_btc_orphan
+            )
+          end)
     )
 ' "${manifest}" >/dev/null || die "committed publication manifest is invalid"
 

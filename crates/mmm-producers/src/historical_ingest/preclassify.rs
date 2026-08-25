@@ -258,6 +258,73 @@ pub(super) async fn import_decision<C: GenericClient>(
     ))
 }
 
+/// Decide one witness from the dedicated error-observation aggregate. The
+/// aggregate is not a valid-evidence override: it must name a catalogue entry,
+/// retain the catalogue's exact rejection reason, and reconcile to that entry
+/// through the shared Core-plus-catalogue resolver.
+pub(super) async fn import_error_observation_decision<C: GenericClient>(
+    client: &C,
+    classifier: &ConfiguredParentClassifier,
+    candidate: &ImportCandidate,
+    classifications: &mut HashMap<Vec<u8>, ParentClassification>,
+) -> Result<ImportDecision> {
+    if candidate.source_classification != SourceClassification::ErrorBlock {
+        return Ok(ImportDecision::Skip(SkipReason::TaxonomyMismatch));
+    }
+    if !classifier.is_enabled() {
+        return Ok(ImportDecision::Skip(SkipReason::Unclassified));
+    }
+    let parent_hash = candidate
+        .evidence
+        .btc_parent_header
+        .block_hash()
+        .to_byte_array()
+        .to_vec();
+    let Some(catalogue) = mmm_capture::error_blocks::lookup(&parent_hash) else {
+        return Ok(ImportDecision::Skip(SkipReason::UnsupportedClassification));
+    };
+    if candidate.historical_provenance.btc_height != Some(catalogue.height)
+        || candidate.error_rejection_reason.as_deref() != Some(catalogue.rejection_reason)
+    {
+        return Ok(ImportDecision::Skip(SkipReason::EvidenceMismatch));
+    }
+    let prev_hash = candidate
+        .evidence
+        .btc_parent_header
+        .prev_blockhash
+        .to_byte_array()
+        .to_vec();
+    let classification = if let Some(classification) = classifications.get(&parent_hash) {
+        classification.clone()
+    } else {
+        let preflight = mmm_read_model::load_parent_preflight(client, &prev_hash).await?;
+        let live = classifier
+            .classify_parent_strict(&candidate.evidence.btc_parent_header, preflight)
+            .await
+            .with_context(|| {
+                format!(
+                    "preclassify historical error parent {}",
+                    candidate.btc_parent_display_hash
+                )
+            })?;
+        let classification = mmm_read_model::resolve_parent_classification(
+            &candidate.evidence.btc_parent_header,
+            Some(live),
+        )?;
+        classifications.insert(parent_hash, classification.clone());
+        classification
+    };
+    if classification.kind != ParentKind::ErrorBlock
+        || classification.height != Some(catalogue.height)
+        || classification.rejection_reason.as_deref() != Some(catalogue.rejection_reason)
+    {
+        return Ok(ImportDecision::Skip(SkipReason::ClassificationMismatch));
+    }
+    Ok(ImportDecision::CapturePreclassified(Box::new(
+        classification,
+    )))
+}
+
 /// Keep catalogued consensus-invalid parents out of the historical valid-evidence
 /// import path before a Core classifier decides how to handle the row. Live
 /// capture still records these as `error_block`.

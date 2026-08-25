@@ -16,6 +16,13 @@ use super::config::{
 };
 use super::csv_source::{CsvLayout, PublicationCategory, publication_category};
 
+mod aggregate_preflight;
+mod error_observations;
+mod validation;
+pub(super) use aggregate_preflight::preflight_required_aggregate_artifacts;
+pub(super) use error_observations::{ErrorObservationPreflight, inspect_error_observation_csv};
+use validation::{ArtifactSetValidation, validate_artifact_set};
+
 pub(super) const NORMALIZED_COLUMNS: &[&str] = &[
     "chain",
     "source_kind",
@@ -46,7 +53,7 @@ pub(super) const NORMALIZED_COLUMNS: &[&str] = &[
     "relevance_reason",
 ];
 
-const RSK_SIDECAR_COLUMNS: &[&str] = &[
+pub(super) const RSK_SIDECAR_COLUMNS: &[&str] = &[
     "rsk_miner",
     "merge_mining_hash",
     "is_uncle",
@@ -55,6 +62,8 @@ const RSK_SIDECAR_COLUMNS: &[&str] = &[
     "rsk_merkle_proof",
     "rsk_coinbase_tail",
 ];
+
+const ERROR_OBSERVATION_ROW_COUNT: u64 = 73;
 
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(serde::Serialize))]
@@ -66,6 +75,8 @@ pub(super) struct PublicationManifest {
     publication_manifest_sha256: String,
     total_event_rows: u64,
     aggregate_rows: u64,
+    #[serde(default)]
+    error_observation_rows: u64,
     required_columns: Vec<String>,
     artifacts: Vec<PublicationArtifact>,
 }
@@ -80,6 +91,8 @@ pub(super) struct PublicationArtifact {
     pub(super) size_bytes: u64,
     pub(super) sha256: String,
     pub(super) counts: PublicationCounts,
+    #[serde(default)]
+    pub(super) source_chain_counts: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -88,6 +101,7 @@ pub(super) struct PublicationArtifact {
 pub(super) enum ArtifactRole {
     Event,
     Aggregate,
+    ErrorObservation,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -98,15 +112,21 @@ pub(super) struct PublicationCounts {
     pub(super) stale_descendant: u64,
     pub(super) strict_btc_orphan: u64,
     pub(super) weak_btc_orphan: u64,
+    #[serde(default)]
+    pub(super) error_block: u64,
 }
 
 impl PublicationCounts {
-    fn total(self) -> u64 {
+    pub(super) fn total(self) -> u64 {
         self.canonical
             + self.stale
             + self.stale_descendant
             + self.strict_btc_orphan
             + self.weak_btc_orphan
+    }
+
+    pub(super) fn error_total(self) -> u64 {
+        self.error_block
     }
 }
 
@@ -128,6 +148,12 @@ impl PublicationManifest {
             .iter()
             .filter(|artifact| artifact.role == ArtifactRole::Aggregate)
     }
+
+    pub(super) fn error_observation_artifact(&self) -> Option<&PublicationArtifact> {
+        self.artifacts
+            .iter()
+            .find(|artifact| artifact.role == ArtifactRole::ErrorObservation)
+    }
 }
 
 pub(super) fn load_publication_manifest(path: &Path) -> Result<PublicationManifest> {
@@ -146,8 +172,9 @@ fn validate_manifest(manifest: &PublicationManifest) -> Result<()> {
         "unexpected source_repo"
     );
     ensure!(
-        manifest.source_repo_commit == PINNED_RESEARCH_COMMIT,
-        "source_repo_commit must be pinned to {PINNED_RESEARCH_COMMIT}"
+        manifest.source_repo_commit == PINNED_RESEARCH_COMMIT.as_str(),
+        "source_repo_commit must be pinned to {}",
+        PINNED_RESEARCH_COMMIT.as_str()
     );
     ensure!(
         valid_sha256(&manifest.publication_manifest_sha256),
@@ -166,8 +193,13 @@ fn validate_manifest(manifest: &PublicationManifest) -> Result<()> {
         .iter()
         .map(|spec| spec.chain.to_owned())
         .collect::<BTreeSet<_>>();
-    let (event_chains, aggregate_chains, event_rows, aggregate_rows) =
-        validate_artifact_set(manifest, &registry_chains)?;
+    let ArtifactSetValidation {
+        event_chains,
+        aggregate_chains,
+        error_observation,
+        event_rows,
+        aggregate_rows,
+    } = validate_artifact_set(manifest, &registry_chains)?;
     ensure!(
         event_chains == registry_chains,
         "event artifact set does not match the source registry"
@@ -183,6 +215,14 @@ fn validate_manifest(manifest: &PublicationManifest) -> Result<()> {
     ensure!(
         aggregate_rows == manifest.aggregate_rows,
         "aggregate_rows does not equal aggregate artifact rows"
+    );
+    ensure!(
+        error_observation == Some(ERROR_OBSERVATION_ROW_COUNT),
+        "error-observation aggregate artifact is required with its pinned row total"
+    );
+    ensure!(
+        manifest.error_observation_rows == ERROR_OBSERVATION_ROW_COUNT,
+        "unexpected pinned error-observation row total"
     );
     ensure!(
         manifest.total_event_rows == 576_662,
@@ -205,57 +245,6 @@ fn validate_manifest(manifest: &PublicationManifest) -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn validate_artifact_set(
-    manifest: &PublicationManifest,
-    registry_chains: &BTreeSet<String>,
-) -> Result<(BTreeSet<String>, BTreeSet<String>, u64, u64)> {
-    let mut event_chains = BTreeSet::new();
-    let mut aggregate_chains = BTreeSet::new();
-    let mut event_rows = 0_u64;
-    let mut aggregate_rows = 0_u64;
-    for artifact in &manifest.artifacts {
-        ensure!(
-            valid_sha256(&artifact.sha256),
-            "artifact {} has invalid sha256",
-            artifact.chain
-        );
-        ensure!(
-            artifact.counts.total() == artifact.row_count,
-            "artifact {} row_count does not equal classification counts",
-            artifact.chain
-        );
-        match artifact.role {
-            ArtifactRole::Event => {
-                ensure!(
-                    registry_chains.contains(&artifact.chain),
-                    "event artifact for unknown or non-importable chain {:?}",
-                    artifact.chain
-                );
-                ensure!(
-                    event_chains.insert(artifact.chain.clone()),
-                    "duplicate event artifact for {:?}",
-                    artifact.chain
-                );
-                event_rows += artifact.row_count;
-            }
-            ArtifactRole::Aggregate => {
-                ensure!(
-                    artifact.chain == "stale-descendants",
-                    "unknown aggregate artifact {:?}",
-                    artifact.chain
-                );
-                ensure!(
-                    aggregate_chains.insert(artifact.chain.clone()),
-                    "duplicate aggregate artifact for {:?}",
-                    artifact.chain
-                );
-                aggregate_rows += artifact.row_count;
-            }
-        }
-    }
-    Ok((event_chains, aggregate_chains, event_rows, aggregate_rows))
 }
 
 fn valid_sha256(value: &str) -> bool {
@@ -336,39 +325,11 @@ pub(super) fn preflight_artifact(
     inspect_csv(&config.csv_path, spec, expected.as_ref())
 }
 
-pub(super) fn preflight_required_aggregate_artifacts(
-    config: &super::config::HistoricalImportAllConfig,
-) -> Result<()> {
-    let manifest = load_publication_manifest(&config.manifest_path)?;
-    if config.require_pinned_checkout {
-        verify_checkout_pin(&config.artifact_root)?;
-    }
-    verify_research_manifest(&config.artifact_root, &manifest)?;
-    for artifact in manifest.aggregate_artifacts() {
-        inspect_aggregate_csv(&config.artifact_root.join(&artifact.csv_path), artifact)?;
-    }
-    Ok(())
-}
-
-fn inspect_aggregate_csv(path: &Path, expected: &PublicationArtifact) -> Result<()> {
-    let mut file = open_artifact_file(path, Some(expected))?;
-    let mut reader = csv::Reader::from_reader(&mut file);
-    let (row_count, counts) = inspect_rows(&mut reader, path, &expected.chain, true)?;
-    ensure!(
-        row_count == expected.row_count,
-        "artifact row-count mismatch for {}: expected {}, got {}",
-        path.display(),
-        expected.row_count,
-        row_count
-    );
-    ensure!(
-        counts == expected.counts,
-        "artifact classification-count mismatch for {}: expected {:?}, got {:?}",
-        path.display(),
-        expected.counts,
-        counts
-    );
-    Ok(())
+fn required_column(headers: &csv::StringRecord, name: &str) -> Result<usize> {
+    headers
+        .iter()
+        .position(|header| header.trim() == name)
+        .with_context(|| format!("CSV missing required column {name}"))
 }
 
 fn verify_checkout_pin(root: &Path) -> Result<()> {
@@ -385,11 +346,11 @@ fn verify_checkout_pin(root: &Path) -> Result<()> {
     );
     let head = String::from_utf8(output.stdout).context("research checkout HEAD is not UTF-8")?;
     ensure!(
-        head.trim() == PINNED_RESEARCH_COMMIT,
+        head.trim() == PINNED_RESEARCH_COMMIT.as_str(),
         "research checkout {} is at {}, expected {}; use a checkout at the pinned merge or pass --artifact-root for a content-verified artifact directory",
         root.display(),
         head.trim(),
-        PINNED_RESEARCH_COMMIT
+        PINNED_RESEARCH_COMMIT.as_str()
     );
     Ok(())
 }
@@ -629,76 +590,13 @@ fn count_row(
 }
 
 #[cfg(test)]
+mod test_support;
+
+#[cfg(test)]
 mod tests {
+    use super::test_support::{temp_path, valid_manifest};
     use super::*;
     use crate::historical_ingest::config::{HistoricalImportAllConfig, historical_chain_spec};
-
-    fn temp_path(label: &str) -> std::path::PathBuf {
-        let suffix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock after epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "mmm-publication-{label}-{}-{suffix}",
-            std::process::id()
-        ))
-    }
-
-    fn valid_manifest() -> PublicationManifest {
-        let mut assigned_total = false;
-        let mut artifacts = importable_chains()
-            .iter()
-            .map(|spec| {
-                let row_count = if !assigned_total && spec.lifecycle != SourceLifecycle::Surveyed {
-                    assigned_total = true;
-                    576_662
-                } else {
-                    0
-                };
-                PublicationArtifact {
-                    chain: spec.chain.to_owned(),
-                    csv_path: format!(
-                        "results/monitor-evidence/{}_monitor_evidence.csv",
-                        spec.chain
-                    ),
-                    role: ArtifactRole::Event,
-                    row_count,
-                    size_bytes: 1,
-                    sha256: "0".repeat(64),
-                    counts: PublicationCounts {
-                        canonical: row_count,
-                        ..PublicationCounts::default()
-                    },
-                }
-            })
-            .collect::<Vec<_>>();
-        artifacts.push(PublicationArtifact {
-            chain: "stale-descendants".to_owned(),
-            csv_path: "results/stale-descendants.csv".to_owned(),
-            role: ArtifactRole::Aggregate,
-            row_count: 21,
-            size_bytes: 1,
-            sha256: "0".repeat(64),
-            counts: PublicationCounts {
-                stale_descendant: 21,
-                ..PublicationCounts::default()
-            },
-        });
-        PublicationManifest {
-            schema_version: 2,
-            source_repo: "merge-mining-research".to_owned(),
-            source_repo_commit: PINNED_RESEARCH_COMMIT.to_owned(),
-            publication_manifest_path: "results/monitor-evidence/manifest.json".to_owned(),
-            publication_manifest_sha256: "0".repeat(64),
-            total_event_rows: 576_662,
-            aggregate_rows: 21,
-            required_columns: NORMALIZED_COLUMNS
-                .iter()
-                .map(|column| (*column).to_owned())
-                .collect(),
-            artifacts,
-        }
-    }
 
     #[test]
     fn normalized_schema_is_one_uniform_common_header() {
@@ -719,7 +617,7 @@ mod tests {
             ),
             (
                 "classification_sum",
-                "row_count does not equal classification counts",
+                "row_count does not equal normal classification counts",
             ),
             ("invalid_sha", "has invalid sha256"),
             (
@@ -730,6 +628,10 @@ mod tests {
             (
                 "missing_aggregate",
                 "stale-descendants aggregate artifact is required",
+            ),
+            (
+                "missing_error_observation",
+                "error-observation aggregate artifact is required",
             ),
             (
                 "aggregate_total",
@@ -778,6 +680,12 @@ mod tests {
                         .artifacts
                         .retain(|artifact| artifact.role != ArtifactRole::Aggregate);
                 }
+                "missing_error_observation" => {
+                    manifest
+                        .artifacts
+                        .retain(|artifact| artifact.role != ArtifactRole::ErrorObservation);
+                    manifest.error_observation_rows = 0;
+                }
                 "aggregate_total" => manifest.aggregate_rows = 22,
                 _ => unreachable!("table defines every case"),
             }
@@ -787,6 +695,38 @@ mod tests {
                 "{case}: expected {expected:?}, got {error:#}"
             );
         }
+    }
+
+    #[test]
+    fn error_observation_manifest_requires_consistent_source_counts() {
+        let mut manifest = valid_manifest();
+        validate_manifest(&manifest).expect("complete error-observation artifact is accepted");
+
+        let error = manifest
+            .artifacts
+            .iter_mut()
+            .find(|artifact| artifact.role == ArtifactRole::ErrorObservation)
+            .expect("error-observation artifact");
+        error.source_chain_counts.insert("devcoin".to_owned(), 15);
+        assert!(
+            validate_manifest(&manifest)
+                .unwrap_err()
+                .to_string()
+                .contains("source-chain counts")
+        );
+
+        let error = manifest
+            .artifacts
+            .iter_mut()
+            .find(|artifact| artifact.role == ArtifactRole::ErrorObservation)
+            .expect("error-observation artifact");
+        error.source_chain_counts = BTreeMap::from([("doichain".to_owned(), 73)]);
+        assert!(
+            validate_manifest(&manifest)
+                .unwrap_err()
+                .to_string()
+                .contains("unknown or surveyed")
+        );
     }
 
     #[test]
@@ -804,6 +744,7 @@ mod tests {
             size_bytes,
             sha256: "0".repeat(64),
             counts: PublicationCounts::default(),
+            source_chain_counts: BTreeMap::new(),
         };
 
         let checksum_error =
@@ -869,6 +810,37 @@ mod tests {
         aggregate_artifact.size_bytes = aggregate.len() as u64;
         aggregate_artifact.sha256 = sha256::Hash::hash(aggregate.as_bytes()).to_string();
 
+        let error_path = publication_dir.join("error-block-observations_monitor_evidence.csv");
+        let mut error_columns = NORMALIZED_COLUMNS.to_vec();
+        error_columns.extend_from_slice(RSK_SIDECAR_COLUMNS);
+        let classification_index = error_columns
+            .iter()
+            .position(|column| *column == "classification")
+            .expect("classification column");
+        let source_chain_counts = manifest
+            .error_observation_artifact()
+            .expect("error-observation artifact")
+            .source_chain_counts
+            .clone();
+        let mut error_observations = format!("{}\n", error_columns.join(","));
+        for (chain, row_count) in source_chain_counts {
+            for _ in 0..row_count {
+                let mut row = vec![""; error_columns.len()];
+                row[0] = &chain;
+                row[classification_index] = "error_block";
+                error_observations.push_str(&format!("{}\n", row.join(",")));
+            }
+        }
+        std::fs::write(&error_path, &error_observations)
+            .expect("write error-observation aggregate fixture");
+        let error_artifact = manifest
+            .artifacts
+            .iter_mut()
+            .find(|artifact| artifact.role == ArtifactRole::ErrorObservation)
+            .expect("error-observation artifact");
+        error_artifact.size_bytes = error_observations.len() as u64;
+        error_artifact.sha256 = sha256::Hash::hash(error_observations.as_bytes()).to_string();
+
         let manifest_path = root.join("monitor-manifest.json");
         std::fs::write(
             &manifest_path,
@@ -924,6 +896,7 @@ mod tests {
                 stale_descendant: 1,
                 strict_btc_orphan: 1,
                 weak_btc_orphan: 1,
+                error_block: 0,
             }
         );
 

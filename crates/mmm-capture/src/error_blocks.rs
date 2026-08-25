@@ -20,6 +20,10 @@ const ERROR_BLOCKS_CSV: &str = include_str!("../../../data/consensus/error_block
 /// greater than its predecessor median time past.
 pub const TIME_BELOW_MTP: &str = "time_below_mtp";
 
+/// Canonical rejection token for a header that carried the previous difficulty
+/// epoch's target across a retarget boundary.
+pub const NBITS_RETARGET_NOT_APPLIED: &str = "nbits_retarget_not_applied";
+
 /// A pinned, mechanically re-derived Bitcoin consensus failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ErrorBlock {
@@ -41,6 +45,11 @@ pub fn lookup(hash: &[u8]) -> Option<ErrorBlock> {
 /// operator-facing diagnostics.
 pub fn len() -> usize {
     ERROR_BLOCKS.len()
+}
+
+/// Iterate every stored-order parent hash in the pinned catalogue.
+pub fn hashes() -> impl Iterator<Item = [u8; 32]> {
+    ERROR_BLOCKS.keys().copied()
 }
 
 fn parse_registry() -> HashMap<[u8; 32], ErrorBlock> {
@@ -97,6 +106,7 @@ mod tests {
             BlockHash::from_str("00000000000000000000c3d95a4bdc068dfe0c6d1e7ad13045c6f570e58d9ed7")
                 .unwrap();
         assert_eq!(len(), 33);
+        assert_eq!(hashes().count(), len());
         assert_eq!(
             lookup(&hash.to_byte_array()),
             Some(ErrorBlock {
