@@ -254,22 +254,41 @@ pub(crate) async fn reconcile_one_event(
     preclassified: Option<PreclassifiedParent>,
     nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
 ) -> Result<Vec<Vec<u8>>> {
-    let trusted_preclassified = preclassified;
-    let strict_core_errors = trusted_preclassified
+    let strict_core_errors = preclassified
         .as_ref()
         .is_some_and(|preclassified| preclassified.strict_core_errors);
+    reconcile_one_event_with_policy(
+        client,
+        event_id,
+        classifier,
+        preclassified,
+        nbits_table,
+        strict_core_errors,
+    )
+    .await
+}
+
+async fn reconcile_one_event_with_policy(
+    client: &mut Client,
+    event_id: i64,
+    classifier: &ConfiguredParentClassifier,
+    preclassified: Option<PreclassifiedParent>,
+    nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
+    strict_core_errors: bool,
+) -> Result<Vec<Vec<u8>>> {
+    let trusted_preclassified = preclassified;
     for attempt in 0..RECONCILE_LOCK_SET_RETRY_LIMIT {
         let txn = client
             .transaction()
             .await
             .context("begin reconcile transaction")?;
         crate::mutation::lock_core_classification_view_shared(&txn, nbits_table).await?;
-        let attempt_preclassified = match &trusted_preclassified {
-            Some(preclassified) if !classifier.is_enabled() => Some(preclassified.clone()),
-            Some(_) if strict_core_errors => {
-                preclassify_event_parent_strict(&txn, event_id, classifier).await?
-            }
-            Some(_) | None => preclassify_event_parent(&txn, event_id, classifier).await?,
+        let attempt_preclassified = if !classifier.is_enabled() {
+            trusted_preclassified.clone()
+        } else if strict_core_errors {
+            preclassify_event_parent_strict(&txn, event_id, classifier).await?
+        } else {
+            preclassify_event_parent(&txn, event_id, classifier).await?
         };
         match reconcile_one_event_in_txn(
             &txn,
@@ -692,8 +711,38 @@ pub(crate) async fn reconcile_one_block(
     classifier: &ConfiguredParentClassifier,
     nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
 ) -> Result<Vec<Vec<u8>>> {
+    reconcile_one_block_with_policy(client, hash, classifier, nbits_table, false).await
+}
+
+/// Reconcile one durable suffix-queue primary while propagating Core transport
+/// failures. A transient classifier error must leave the primary queued for a
+/// later drain rather than committing another unresolved `unknown` verdict.
+pub(crate) async fn reconcile_one_block_strict(
+    client: &mut Client,
+    hash: &[u8],
+    classifier: &ConfiguredParentClassifier,
+    nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
+) -> Result<Vec<Vec<u8>>> {
+    reconcile_one_block_with_policy(client, hash, classifier, nbits_table, true).await
+}
+
+async fn reconcile_one_block_with_policy(
+    client: &mut Client,
+    hash: &[u8],
+    classifier: &ConfiguredParentClassifier,
+    nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
+    strict_core_errors: bool,
+) -> Result<Vec<Vec<u8>>> {
     if let Some(event_id) = find_anchor_event_for_block(client, hash).await? {
-        return reconcile_one_event(client, event_id, classifier, None, nbits_table).await;
+        return reconcile_one_event_with_policy(
+            client,
+            event_id,
+            classifier,
+            None,
+            nbits_table,
+            strict_core_errors,
+        )
+        .await;
     }
 
     let txn = client

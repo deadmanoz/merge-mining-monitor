@@ -3,11 +3,8 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, bail};
-use bitcoin::BlockHash;
 use bitcoin::block::Header;
 use bitcoin::hashes::Hash as _;
-use serde_json::json;
-use tokio_postgres::types::Json;
 use tokio_postgres::{Client, GenericClient, Transaction};
 
 use mmm_bitcoin_core::{
@@ -15,16 +12,19 @@ use mmm_bitcoin_core::{
 };
 use mmm_capture::capture::ParentKind;
 
+use super::core_suffix_status::{
+    ReplacementPending, clear_pending_error_if_queue_empty, clear_pending_error_in_transaction,
+    lock_sync_state, mark_replacement_pending,
+};
 use super::{PrimaryDiff, lock_core_canonical_view_exclusive};
 use crate::source_health_sql::MultiParentSourceHealthBracket;
 use crate::{
     DEFAULT_CASCADE_BUDGET, PreclassifiedParent, ReconcileCascadeBudgetExhausted,
-    find_anchor_event_for_block, lock_block_hashes, reconcile_one_block,
+    find_anchor_event_for_block, lock_block_hashes, reconcile_one_block_strict,
     reconcile_one_event_in_txn, upsert_core_canonical_header_with_coinbase,
 };
 
 const SYNC_MODE_CONTIGUOUS: &str = "contiguous";
-const RECONCILE_PENDING: &str = "backbone_reorg_reconcile_pending";
 
 /// One fully-fetched active-chain block in the replacement suffix.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -532,67 +532,25 @@ async fn enqueue_core_reconcile_hashes<C: GenericClient>(
     Ok(())
 }
 
-struct ReplacementPending {
-    contiguous_complete_height: i32,
-    common_ancestor_height: i32,
-    first_height: i32,
-    target_tip_height: i32,
-    target_tip_hash: BlockHash,
-    displaced_blocks: usize,
-    queued_hashes: usize,
-}
-
-async fn mark_replacement_pending<C: GenericClient>(
-    client: &C,
-    source_id: i64,
-    pending: &ReplacementPending,
-) -> Result<()> {
-    let target_hash_bytes = pending.target_tip_hash.to_byte_array().to_vec();
-    let details = Json(json!({
-        "common_ancestor_height": pending.common_ancestor_height,
-        "replacement_start_height": pending.first_height,
-        "replacement_target_height": pending.target_tip_height,
-        "replacement_target_hash": pending.target_tip_hash.to_string(),
-        "displaced_blocks": pending.displaced_blocks,
-        "queued_hashes": pending.queued_hashes,
-    }));
-    client
-        .execute(
-            "UPDATE bitcoin_core_sync_state SET target_tip_height = $3, target_tip_hash = $4, \
-                 contiguous_complete_height = $5, last_scanned_height = $3, \
-                 last_attempted_height = $3, last_error_code = $6, \
-                 last_error_height = $7, last_error = $8, last_error_details = $9, \
-                 updated_at = extract(epoch from now())::bigint \
-             WHERE source_id = $1 AND sync_mode = $2",
-            &[
-                &source_id,
-                &SYNC_MODE_CONTIGUOUS,
-                &pending.target_tip_height,
-                &target_hash_bytes,
-                &pending.contiguous_complete_height,
-                &RECONCILE_PENDING,
-                &pending.first_height,
-                &"Bitcoin Core canonical suffix replaced; dependent reconciliation pending",
-                &details,
-            ],
-        )
-        .await
-        .context("mark Bitcoin Core suffix cascade pending")?;
-    Ok(())
-}
-
 /// Drain durable dependent-cascade seeds for one Bitcoin source.
 ///
 /// Each row alternates through a durable two-phase worklist. A
-/// `primary_pending` row reconciles that parent, then becomes an expansion row;
+/// `primary_pending` row strictly reclassifies and reconciles that parent, then
+/// becomes an expansion row;
 /// expansion enqueues every dependent parent and deletes its seed in one
 /// transaction. Replaying an idempotent primary still expands it, so neither a
 /// crash nor a cascade-budget exit can lose an in-memory frontier. Generation
 /// predicates prevent older work from consuming a newer change to the same
 /// hash. The pending source error clears only when the queue is empty while
-/// holding the source's sync-state row lock.
-pub async fn drain_core_reconcile_queue(client: &mut Client, source_id: i64) -> Result<()> {
-    drain_core_reconcile_queue_with_budget(client, source_id, DEFAULT_CASCADE_BUDGET).await
+/// holding the source's sync-state row lock. Strict configured classification
+/// makes a transient Core failure retain the durable primary for a later drain.
+pub async fn drain_core_reconcile_queue(
+    client: &mut Client,
+    source_id: i64,
+    classifier: &ConfiguredParentClassifier,
+) -> Result<()> {
+    drain_core_reconcile_queue_with_budget(client, source_id, classifier, DEFAULT_CASCADE_BUDGET)
+        .await
 }
 
 #[cfg(feature = "db-integration")]
@@ -600,14 +558,16 @@ pub async fn drain_core_reconcile_queue(client: &mut Client, source_id: i64) -> 
 pub async fn drain_core_reconcile_queue_with_budget_for_test(
     client: &mut Client,
     source_id: i64,
+    classifier: &ConfiguredParentClassifier,
     cascade_budget: usize,
 ) -> Result<()> {
-    drain_core_reconcile_queue_with_budget(client, source_id, cascade_budget).await
+    drain_core_reconcile_queue_with_budget(client, source_id, classifier, cascade_budget).await
 }
 
 async fn drain_core_reconcile_queue_with_budget(
     client: &mut Client,
     source_id: i64,
+    classifier: &ConfiguredParentClassifier,
     cascade_budget: usize,
 ) -> Result<()> {
     let mut parents_reconciled = 0_usize;
@@ -624,19 +584,14 @@ async fn drain_core_reconcile_queue_with_budget(
                 }
                 .into());
             }
-            reconcile_one_block(
-                client,
-                &work.hash,
-                &ConfiguredParentClassifier::Disabled,
-                None,
-            )
-            .await
-            .with_context(|| {
-                format!(
-                    "reconcile durable Bitcoin Core dependent {}",
-                    hex::encode(&work.hash)
-                )
-            })?;
+            reconcile_one_block_strict(client, &work.hash, classifier, None)
+                .await
+                .with_context(|| {
+                    format!(
+                        "reconcile durable Bitcoin Core dependent {}",
+                        hex::encode(&work.hash)
+                    )
+                })?;
             parents_reconciled += 1;
             mark_core_primary_reconciled(client, source_id, &work).await?;
         } else {
@@ -781,72 +736,12 @@ async fn expand_core_reconcile_work(
         .context("commit Bitcoin Core durable dependent expansion")
 }
 
-async fn lock_sync_state<C: GenericClient>(client: &C, source_id: i64) -> Result<()> {
-    if !try_lock_sync_state(client, source_id).await? {
-        bail!("Bitcoin Core contiguous sync state is missing");
-    }
-    Ok(())
-}
-
-async fn try_lock_sync_state<C: GenericClient>(client: &C, source_id: i64) -> Result<bool> {
-    Ok(client
-        .query_opt(
-            "SELECT 1 FROM bitcoin_core_sync_state \
-             WHERE source_id = $1 AND sync_mode = $2 FOR UPDATE",
-            &[&source_id, &SYNC_MODE_CONTIGUOUS],
-        )
-        .await
-        .context("lock Bitcoin Core sync state while completing reconcile queue")?
-        .is_some())
-}
-
-async fn clear_pending_error_in_transaction<C: GenericClient>(
-    client: &C,
-    source_id: i64,
-) -> Result<()> {
-    let pending: bool = client
-        .query_one(
-            "SELECT EXISTS (SELECT 1 FROM bitcoin_core_reconcile_queue WHERE source_id = $1)",
-            &[&source_id],
-        )
-        .await
-        .context("check remaining Bitcoin Core suffix reconcile seeds")?
-        .get(0);
-    if !pending {
-        client
-            .execute(
-                "UPDATE bitcoin_core_sync_state SET last_error_code = NULL, \
-                     last_error_height = NULL, last_error = NULL, \
-                     last_error_details = '{}'::jsonb, \
-                     updated_at = extract(epoch from now())::bigint \
-                 WHERE source_id = $1 AND sync_mode = $2 AND last_error_code = $3",
-                &[&source_id, &SYNC_MODE_CONTIGUOUS, &RECONCILE_PENDING],
-            )
-            .await
-            .context("clear completed Bitcoin Core suffix reconcile status")?;
-    }
-    Ok(())
-}
-
-async fn clear_pending_error_if_queue_empty(client: &mut Client, source_id: i64) -> Result<()> {
-    let txn = client
-        .transaction()
-        .await
-        .context("begin Bitcoin Core pending-status check")?;
-    if try_lock_sync_state(&txn, source_id).await? {
-        clear_pending_error_in_transaction(&txn, source_id).await?;
-    }
-    txn.commit()
-        .await
-        .context("commit Bitcoin Core pending-status check")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use bitcoin::block::Version;
     use bitcoin::hash_types::TxMerkleNode;
-    use bitcoin::{CompactTarget, hashes::Hash};
+    use bitcoin::{BlockHash, CompactTarget, hashes::Hash};
 
     fn header(prev: BlockHash, nonce: u32) -> Header {
         Header {

@@ -125,6 +125,7 @@ async fn repair_near_tip_backbone_if_due<S>(
     client: &mut Client,
     source: &S,
     source_id: i64,
+    classifier: &ConfiguredParentClassifier,
     schedule: NearTipRepairSchedule,
     delay: Duration,
     window_heights: i32,
@@ -157,6 +158,7 @@ where
             target,
             delay,
             window_heights,
+            classifier,
         )
         .await?;
         if stats.coinbase_failed == 0 {
@@ -402,6 +404,7 @@ where
             self.client,
             self.source,
             self.source_id,
+            self.header_cache_classifier,
             schedule,
             self.config.delay,
             self.config.near_tip_repair_window_heights,
@@ -462,7 +465,10 @@ where
     }
 
     async fn tick(&mut self) -> Result<TickOutcome> {
-        if let Err(err) = drain_core_reconcile_queue(self.client, self.source_id).await {
+        if let Err(err) =
+            drain_core_reconcile_queue(self.client, self.source_id, self.header_cache_classifier)
+                .await
+        {
             tracing::warn!(
                 error = format!("{err:#}"),
                 "Bitcoin Core pending reorg cascade failed; retrying before further sync work"

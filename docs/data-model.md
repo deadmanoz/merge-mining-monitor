@@ -167,7 +167,10 @@ and raw scriptPubKey forms that cannot be represented as a value-complete
   `bitcoin_core_reconcile_queue` before commit; expansion from the replacement
   then discovers the rebound rows. Each seed durably separates its primary
   reconcile from dependent expansion; queue generations prevent older work
-  from deleting or expanding over a newer change to the same hash.
+  from deleting or expanding over a newer change to the same hash. Durable
+  primary replay uses strict Core classification, allowing a replacement to
+  reclassify children that became inferably stale while retaining previously
+  persisted Core coinbase and pool evidence.
 - A transient classifier `unknown` never demotes a previously proven canonical
   or stale row.
 - Bad evidence is removed with explicit event revocation, then the read model
@@ -216,7 +219,9 @@ durable two-phase work for atomic near-tip Core suffix replacement. A
 seed that discovers and enqueues dependents atomically with its own deletion.
 The sync state remains in `backbone_reorg_reconcile_pending` until the queue
 drains, so a crash or budget exit is visible and restart-safe rather than a
-silent partial reconciliation.
+silent partial reconciliation. The pending status durably suspends any prior
+producer error tuple in its details and restores that tuple when the final queue
+row is removed.
 
 After a migration has reached a persistent database, do not edit it. Add a new
 forward migration. Real database migration runs go through `just db-migrate-dev`

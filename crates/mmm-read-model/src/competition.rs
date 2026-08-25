@@ -178,7 +178,7 @@ pub(crate) async fn load_persisted_orphan_class<C: GenericClient>(
 /// its stored coinbase script is absent. Used to re-attribute a block whose live
 /// classification carries no fresh coinbase: by `demote_zero_active_block` to keep
 /// a core-preserved block's miner, and by `resolve_effective_bitcoin_miner_pool_id`
-/// for a canonical block missing a fresh Core coinbase.
+/// for a canonical or Core-attested stale block missing a fresh Core coinbase.
 pub(crate) async fn resolve_persisted_core_coinbase_bitcoin_miner_pool_id<C: GenericClient>(
     client: &C,
     hash: &[u8],

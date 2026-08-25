@@ -559,58 +559,6 @@ async fn hold_shared_core_view_barrier(
     Ok(())
 }
 
-async fn assert_displaced_auxpow_evidence(
-    client: &Client,
-    event_id: i64,
-    source_id: i64,
-    old_hash: &[u8],
-    new_hash: &[u8],
-    coinbase_before: &[u8],
-    proof_id_before: i64,
-) -> Result<()> {
-    let event = client
-        .query_one(
-            "SELECT btc_parent_kind, btc_parent_height FROM merge_mining_event WHERE id = $1",
-            &[&event_id],
-        )
-        .await?;
-    assert_eq!(event.get::<_, String>(0), "stale");
-    assert_eq!(event.get::<_, Option<i32>>(1), Some(3));
-
-    let old = client
-        .query_one(
-            "SELECT kind, canonical_competitor_hash, btc_coinbase_script, \
-                    total_attestations, distinct_sources, core_attested \
-             FROM block WHERE btc_header_hash = $1",
-            &[&old_hash],
-        )
-        .await?;
-    assert_eq!(old.get::<_, String>(0), "stale");
-    assert_eq!(old.get::<_, Option<Vec<u8>>>(1).as_deref(), Some(new_hash));
-    assert_eq!(
-        old.get::<_, Option<Vec<u8>>>(2).as_deref(),
-        Some(coinbase_before)
-    );
-    assert_eq!(old.get::<_, i32>(3), 1);
-    assert_eq!(old.get::<_, i32>(4), 2, "Core plus one AuxPoW source");
-    assert!(old.get::<_, bool>(5));
-
-    let proof = client
-        .query_one(
-            "SELECT id, evidence FROM attestation_proof \
-             WHERE btc_header_hash = $1 AND source_id = $2 AND proof_kind = 'auxpow'",
-            &[&old_hash, &source_id],
-        )
-        .await?;
-    assert_eq!(proof.get::<_, i64>(0), proof_id_before);
-    let proof_evidence: Json<serde_json::Value> = proof.get(1);
-    assert_eq!(
-        proof_evidence.0["contributing_event_ids"],
-        json!([event_id])
-    );
-    assert_source_health_kind_counts(client, source_id, 0, 1).await
-}
-
 async fn assert_target_move_left_suffix_unmodified(
     client: &Client,
     original: &BTreeMap<i32, Header>,
@@ -708,9 +656,14 @@ async fn drain_until_partial_core_frontier(
 ) -> Result<()> {
     let mut reached_partial_frontier = false;
     for _ in 0..8 {
-        drain_core_reconcile_queue_with_budget_for_test(client, source_id, 1)
-            .await
-            .expect_err("one-parent budget must stop before the full two-hop cascade");
+        drain_core_reconcile_queue_with_budget_for_test(
+            client,
+            source_id,
+            &ConfiguredParentClassifier::Disabled,
+            1,
+        )
+        .await
+        .expect_err("one-parent budget must stop before the full two-hop cascade");
         let materialized = client
             .query_one(
                 "SELECT \
@@ -1428,183 +1381,6 @@ async fn failed_same_height_follow_repair_is_non_idle_and_visible() -> Result<()
             .await?
             .get(0);
         assert_eq!(new_rows, 0);
-
-        Ok::<_, anyhow::Error>(())
-    })
-}
-
-#[tokio::test]
-async fn follow_repair_preserves_displaced_auxpow_evidence_and_source_health() -> Result<()> {
-    crate::run_mut_db_test!(client, {
-        let namecoin = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
-        let original = test_header_chain(4, 1_800_010_000);
-        let event_id = insert_event_with_real_parent_header(
-            &client,
-            namecoin,
-            77,
-            &hash_bytes(0x7700),
-            &original[&3],
-            "canonical",
-            Some(3),
-        )
-        .await?;
-        let original_source = FakeBitcoinCoreBackboneSource::new(3, original.clone());
-        run_sync_bitcoin_core(
-            &mut client,
-            &original_source,
-            BitcoinCoreSyncConfig {
-                from_height: Some(0),
-                to_height: Some(3),
-                tip: true,
-                missing_only: true,
-                ..BitcoinCoreSyncConfig::default()
-            },
-        )
-        .await?;
-        let old_h3 = header_hash_bytes(&original[&3]);
-        let proof_id_before: i64 = client
-            .query_one(
-                "SELECT id FROM attestation_proof \
-                 WHERE btc_header_hash = $1 AND source_id = $2 AND proof_kind = 'auxpow'",
-                &[&old_h3, &namecoin],
-            )
-            .await?
-            .get(0);
-        rebuild_source_health(&mut client).await?;
-
-        let active = fork_header_chain(&original, 3, 4, 1_800_011_000);
-        insert_matching_upper_canonical(&client, &active[&4], 4).await?;
-        let new_h3 = header_hash_bytes(&active[&3]);
-        let coinbase_before: Vec<u8> = client
-            .query_one(
-                "SELECT btc_coinbase_script FROM block WHERE btc_header_hash = $1",
-                &[&old_h3],
-            )
-            .await?
-            .get(0);
-
-        let active_source = FakeBitcoinCoreBackboneSource::new(4, active.clone());
-        repair_near_tip_backbone_for_test(
-            &mut client,
-            &active_source,
-            active_source.tip().await?,
-            Duration::ZERO,
-            4,
-        )
-        .await?;
-
-        assert_displaced_auxpow_evidence(
-            &client,
-            event_id,
-            namecoin,
-            &old_h3,
-            &new_h3,
-            &coinbase_before,
-            proof_id_before,
-        )
-        .await?;
-
-        Ok::<_, anyhow::Error>(())
-    })
-}
-
-#[tokio::test]
-async fn suffix_waits_for_inflight_capture_then_reclassifies_it() -> Result<()> {
-    crate::run_mut_db_test!(client, schema, {
-        let original = test_header_chain(4, 1_800_015_000);
-        let original_source = FakeBitcoinCoreBackboneSource::new(3, original.clone());
-        run_sync_bitcoin_core(
-            &mut client,
-            &original_source,
-            BitcoinCoreSyncConfig {
-                from_height: Some(0),
-                to_height: Some(3),
-                tip: true,
-                missing_only: true,
-                ..BitcoinCoreSyncConfig::default()
-            },
-        )
-        .await?;
-
-        let fixture = NamecoinEventFixture::new(&client).await?;
-        let old_header = original[&3];
-        let old_h3 = header_hash_bytes(&old_header);
-        let mut payload = fixture.payload(78, ClassificationProof::default(), 1_800_015_100)?;
-        payload.child_block_hash = Some(hash_bytes(0x7810));
-        payload.btc_parent_header_hash = old_h3.clone();
-        payload.btc_parent_prev_header_hash = old_header.prev_blockhash.to_byte_array().to_vec();
-        payload.btc_parent_header_bytes = serialize(&old_header);
-        payload.btc_parent_header_time = old_header.time as i64;
-
-        let gate = FakeParentClassifierGate::new();
-        let classifier = ConfiguredParentClassifier::Fake(
-            FakeParentClassifier::new(canonical_verdict(&old_header, 3))
-                .with_first_call_gate(gate.clone()),
-        );
-        let mut capture_client = crate::support::db::connect_to_schema(&schema).await?;
-        let capture_classifier = classifier.clone();
-        let source_id = fixture.source_id;
-        let capture_task = tokio::spawn(async move {
-            capture_test_payload(
-                &mut capture_client,
-                source_id,
-                &capture_classifier,
-                &mut payload,
-            )
-            .await
-        });
-        tokio::time::timeout(Duration::from_secs(5), gate.wait_started())
-            .await
-            .expect("capture classifier did not reach its gate");
-
-        let active = fork_header_chain(&original, 3, 4, 1_800_016_000);
-        let new_h3 = header_hash_bytes(&active[&3]);
-        let active_source = FakeBitcoinCoreBackboneSource::new(4, active.clone());
-        let repair_source = active_source.clone();
-        let target = active_source.tip().await?;
-        let mut repair_client = crate::support::db::connect_to_schema(&schema).await?;
-        let repair_pid: i32 = repair_client
-            .query_one("SELECT pg_backend_pid()", &[])
-            .await?
-            .get(0);
-        let repair_task = tokio::spawn(async move {
-            repair_near_tip_backbone_for_test(
-                &mut repair_client,
-                &repair_source,
-                target,
-                Duration::ZERO,
-                4,
-            )
-            .await
-        });
-        wait_for_exclusive_core_view_barrier(&client, repair_pid).await?;
-        assert!(
-            !repair_task.is_finished(),
-            "exclusive suffix switch waits while capture holds the shared Core-view barrier"
-        );
-
-        gate.proceed();
-        let event_id = capture_task.await.expect("join capture task")?;
-        repair_task.await.expect("join suffix repair task")?;
-
-        let event_kind: String = client
-            .query_one(
-                "SELECT btc_parent_kind FROM merge_mining_event WHERE id = $1",
-                &[&event_id],
-            )
-            .await?
-            .get(0);
-        assert_eq!(event_kind, "stale");
-        let old = client
-            .query_one(
-                "SELECT kind, canonical_competitor_hash FROM block \
-                 WHERE btc_header_hash = $1",
-                &[&old_h3],
-            )
-            .await?;
-        assert_eq!(old.get::<_, String>(0), "stale");
-        assert_eq!(old.get::<_, Option<Vec<u8>>>(1), Some(new_h3));
-        assert_source_health_kind_counts(&client, fixture.source_id, 0, 1).await?;
 
         Ok::<_, anyhow::Error>(())
     })

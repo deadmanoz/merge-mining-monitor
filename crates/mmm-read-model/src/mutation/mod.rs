@@ -36,6 +36,7 @@ pub use historical_queue::{
 };
 
 mod core_suffix;
+mod core_suffix_status;
 #[cfg(feature = "db-integration")]
 pub use core_suffix::drain_core_reconcile_queue_with_budget_for_test;
 pub use core_suffix::{

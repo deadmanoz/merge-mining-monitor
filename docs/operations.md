@@ -162,7 +162,10 @@ common-ancestor anchor, and rechecks that target after taking the exclusive
 canonical-view barrier and again immediately before commit. Missing or
 incomplete matching rows use the ordinary `missing_only` fill. A conflicting
 suffix inside the window is replaced in one transaction after every
-replacement coinbase has been fetched.
+replacement coinbase has been fetched. If an in-flight classifier commits a
+same-height conflict after the initial scan but before the ordinary fill takes
+the canonical-view barrier, the repair reloads the pinned view and plan once so
+that conflict follows the suffix-replacement path.
 
 The suffix transaction promotes the active Core headers, retains each displaced
 header as a Core-attested `stale` block pointing at its same-height canonical
@@ -176,9 +179,13 @@ the exclusive canonical-view barrier, so a concurrent cache refresh either
 drains its committed queue or finishes before the suffix can commit.
 Each row persists both the parent reconcile and the later expansion that
 discovers deeper dependents, so a process exit or bounded-drain stop cannot lose
-the cascade frontier. While durable work remains, `/api/v1/sources` reports
-`backbone_reorg_reconcile_pending` instead of treating the Bitcoin source as
-healthy.
+the cascade frontier. Parent replay uses strict live Core classification, so a
+new child made inferably stale by the replacement is not completed as unknown
+after a transient classification failure. While durable work remains,
+`/api/v1/sources` reports `backbone_reorg_reconcile_pending` instead of treating
+the Bitcoin source as healthy. If that pending marker temporarily covers an
+existing producer failure, the exact prior error tuple is restored after the
+queue drains.
 
 Repair-only statuses are cleared after the producer accepts a verified live
 target, but they never replace an unrelated persisted producer failure. This

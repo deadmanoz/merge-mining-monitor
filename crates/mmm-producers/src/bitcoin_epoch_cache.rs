@@ -24,7 +24,7 @@ pub async fn refresh_bitcoin_core_header_cache(
 ) -> Result<NbitsTable> {
     mmm_store::lock_bitcoin_core_header_cache(client).await?;
     let result = async {
-        drain_pending_core_reconcile_before_cache_refresh(client).await?;
+        drain_pending_core_reconcile_before_cache_refresh(client, classifier).await?;
         let (table, update) = refresh_bitcoin_core_header_cache_locked(client, classifier).await?;
         if update.reclassification_needed {
             mmm_read_model::run_reclassify_unknown_parents_strict(
@@ -48,9 +48,12 @@ pub async fn refresh_bitcoin_core_header_cache(
 /// Finish any committed canonical-suffix cascade before cache replacement can
 /// reclassify rows against that local Core view. An empty queue is a no-op even
 /// before the first contiguous sync-state row exists.
-async fn drain_pending_core_reconcile_before_cache_refresh(client: &mut Client) -> Result<()> {
+async fn drain_pending_core_reconcile_before_cache_refresh(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+) -> Result<()> {
     let source_id = mmm_store::get_source_id(client, BITCOIN_SOURCE_CODE).await?;
-    mmm_read_model::drain_core_reconcile_queue(client, source_id)
+    mmm_read_model::drain_core_reconcile_queue(client, source_id, classifier)
         .await
         .context("drain pending Bitcoin Core suffix reconciliation before cache refresh")
 }

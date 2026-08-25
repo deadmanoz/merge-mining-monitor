@@ -1,4 +1,61 @@
 use super::*;
+use crate::support::default_pool_snapshot;
+use mmm_capture::capture::MergeMiningEventPayload;
+use tokio::task::JoinHandle;
+
+type CaptureTask = JoinHandle<Result<i64>>;
+type RepairTask = JoinHandle<Result<()>>;
+
+async fn drain_core_reconcile_disabled(client: &mut Client, source_id: i64) -> Result<()> {
+    drain_core_reconcile_queue(client, source_id, &ConfiguredParentClassifier::Disabled).await
+}
+
+async fn spawn_gated_canonical_capture(
+    schema: &str,
+    source_id: i64,
+    mut payload: MergeMiningEventPayload,
+    header: Header,
+    height: i32,
+) -> Result<(Arc<FakeParentClassifierGate>, CaptureTask)> {
+    let gate = FakeParentClassifierGate::new();
+    let classifier = ConfiguredParentClassifier::Fake(
+        FakeParentClassifier::new(canonical_verdict(&header, height))
+            .with_first_call_gate(gate.clone()),
+    );
+    let mut capture_client = crate::support::db::connect_to_schema(schema).await?;
+    let task = tokio::spawn(async move {
+        capture_test_payload(&mut capture_client, source_id, &classifier, &mut payload).await
+    });
+    tokio::time::timeout(Duration::from_secs(5), gate.wait_started())
+        .await
+        .context("capture classifier did not reach its gate")?;
+    Ok((gate, task))
+}
+
+async fn spawn_near_tip_repair(
+    schema: &str,
+    source: FakeBitcoinCoreBackboneSource,
+    window_heights: i32,
+) -> Result<(BitcoinCoreBackboneTip, i32, RepairTask)> {
+    let target = source.tip().await?;
+    let mut client = crate::support::db::connect_to_schema(schema).await?;
+    let backend_pid: i32 = client
+        .query_one("SELECT pg_backend_pid()", &[])
+        .await?
+        .get(0);
+    let task = tokio::spawn(async move {
+        repair_near_tip_backbone_for_test(
+            &mut client,
+            &source,
+            target,
+            Duration::ZERO,
+            window_heights,
+        )
+        .await
+        .map(|_| ())
+    });
+    Ok((target, backend_pid, task))
+}
 
 #[derive(Clone)]
 struct GatedBlockHashBackboneSource {
@@ -51,6 +108,71 @@ impl BitcoinCoreBackboneSource for GatedBlockHashBackboneSource {
     async fn block_coinbase(&self, hash: BlockHash) -> Result<BitcoinCoreBlockCoinbase> {
         self.inner.block_coinbase(hash).await
     }
+}
+
+struct DisplacedAuxpowEvidence<'a> {
+    event_id: i64,
+    source_id: i64,
+    old_hash: &'a [u8],
+    new_hash: &'a [u8],
+    coinbase_before: &'a [u8],
+    bitcoin_miner_pool_id: i64,
+    proof_id_before: i64,
+}
+
+async fn assert_displaced_auxpow_evidence(
+    client: &Client,
+    expected: &DisplacedAuxpowEvidence<'_>,
+) -> Result<()> {
+    let event = client
+        .query_one(
+            "SELECT btc_parent_kind, btc_parent_height FROM merge_mining_event WHERE id = $1",
+            &[&expected.event_id],
+        )
+        .await?;
+    assert_eq!(event.get::<_, String>(0), "stale");
+    assert_eq!(event.get::<_, Option<i32>>(1), Some(3));
+
+    let old = client
+        .query_one(
+            "SELECT kind, canonical_competitor_hash, btc_coinbase_script, \
+                    total_attestations, distinct_sources, core_attested, \
+                    bitcoin_miner_pool_id \
+             FROM block WHERE btc_header_hash = $1",
+            &[&expected.old_hash],
+        )
+        .await?;
+    assert_eq!(old.get::<_, String>(0), "stale");
+    assert_eq!(
+        old.get::<_, Option<Vec<u8>>>(1).as_deref(),
+        Some(expected.new_hash)
+    );
+    assert_eq!(
+        old.get::<_, Option<Vec<u8>>>(2).as_deref(),
+        Some(expected.coinbase_before)
+    );
+    assert_eq!(old.get::<_, i32>(3), 1);
+    assert_eq!(old.get::<_, i32>(4), 2, "Core plus one AuxPoW source");
+    assert!(old.get::<_, bool>(5));
+    assert_eq!(
+        old.get::<_, Option<i64>>(6),
+        Some(expected.bitcoin_miner_pool_id)
+    );
+
+    let proof = client
+        .query_one(
+            "SELECT id, evidence FROM attestation_proof \
+             WHERE btc_header_hash = $1 AND source_id = $2 AND proof_kind = 'auxpow'",
+            &[&expected.old_hash, &expected.source_id],
+        )
+        .await?;
+    assert_eq!(proof.get::<_, i64>(0), expected.proof_id_before);
+    let proof_evidence: Json<serde_json::Value> = proof.get(1);
+    assert_eq!(
+        proof_evidence.0["contributing_event_ids"],
+        json!([expected.event_id])
+    );
+    assert_source_health_kind_counts(client, expected.source_id, 0, 1).await
 }
 
 struct StaleDependentFixture {
@@ -147,6 +269,378 @@ async fn assert_rebound_stale_dependents(
         assert_eq!(row.get::<_, i64>(4), expected_sources);
     }
     Ok(())
+}
+
+async fn assert_inferred_stale_child(
+    client: &Client,
+    event_id: i64,
+    hash: &[u8],
+    competitor: &[u8],
+    source_id: i64,
+) -> Result<()> {
+    let event = client
+        .query_one(
+            "SELECT btc_parent_kind, btc_parent_height \
+             FROM merge_mining_event WHERE id = $1",
+            &[&event_id],
+        )
+        .await?;
+    assert_eq!(event.get::<_, String>(0), "stale");
+    assert_eq!(event.get::<_, Option<i32>>(1), Some(4));
+    let block = client
+        .query_one(
+            "SELECT kind, btc_height, btc_height_source, canonical_competitor_hash, \
+                    core_attested \
+             FROM block WHERE btc_header_hash = $1",
+            &[&hash],
+        )
+        .await?;
+    assert_eq!(block.get::<_, String>(0), "stale");
+    assert_eq!(block.get::<_, Option<i32>>(1), Some(4));
+    assert_eq!(
+        block.get::<_, Option<String>>(2).as_deref(),
+        Some("prev-stale")
+    );
+    assert_eq!(
+        block.get::<_, Option<Vec<u8>>>(3).as_deref(),
+        Some(competitor)
+    );
+    assert!(!block.get::<_, bool>(4));
+    assert_source_health_kind_counts(client, source_id, 0, 1).await
+}
+
+async fn assert_retained_core_primary(client: &Client, source_id: i64, hash: &[u8]) -> Result<()> {
+    let retained = client
+        .query_one(
+            "SELECT primary_pending FROM bitcoin_core_reconcile_queue \
+             WHERE source_id = $1 AND btc_parent_header_hash = $2",
+            &[&source_id, &hash],
+        )
+        .await?;
+    assert!(retained.get::<_, bool>(0));
+    let pending_code: Option<String> = client
+        .query_one(
+            "SELECT last_error_code FROM bitcoin_core_sync_state WHERE source_id = $1",
+            &[&source_id],
+        )
+        .await?
+        .get(0);
+    assert_eq!(
+        pending_code.as_deref(),
+        Some("backbone_reorg_reconcile_pending")
+    );
+    Ok(())
+}
+
+struct SyncErrorExpectation<'a> {
+    code: &'a str,
+    height: i32,
+    message: &'a str,
+    details: &'a serde_json::Value,
+}
+
+impl SyncErrorExpectation<'_> {
+    fn suspended_json(&self) -> serde_json::Value {
+        json!({
+            "code": self.code,
+            "height": self.height,
+            "message": self.message,
+            "details": self.details,
+        })
+    }
+}
+
+async fn seed_sync_error(
+    client: &Client,
+    source_id: i64,
+    expected: &SyncErrorExpectation<'_>,
+) -> Result<()> {
+    client
+        .execute(
+            "UPDATE bitcoin_core_sync_state SET last_error_code = $2, \
+                 last_error_height = $3, last_error = $4, last_error_details = $5 \
+             WHERE source_id = $1 AND sync_mode = 'contiguous'",
+            &[
+                &source_id,
+                &expected.code,
+                &expected.height,
+                &expected.message,
+                &Json(expected.details),
+            ],
+        )
+        .await?;
+    Ok(())
+}
+
+async fn assert_sync_error(
+    client: &Client,
+    source_id: i64,
+    expected: &SyncErrorExpectation<'_>,
+) -> Result<()> {
+    let row = client
+        .query_one(
+            "SELECT last_error_code, last_error_height, last_error, last_error_details \
+             FROM bitcoin_core_sync_state WHERE source_id = $1",
+            &[&source_id],
+        )
+        .await?;
+    assert_eq!(
+        row.get::<_, Option<String>>(0).as_deref(),
+        Some(expected.code)
+    );
+    assert_eq!(row.get::<_, Option<i32>>(1), Some(expected.height));
+    assert_eq!(
+        row.get::<_, Option<String>>(2).as_deref(),
+        Some(expected.message)
+    );
+    assert_eq!(
+        row.get::<_, Json<serde_json::Value>>(3).0,
+        *expected.details
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn follow_repair_preserves_displaced_auxpow_evidence_and_source_health() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let namecoin = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let (_, pool_ids_by_slug) = default_pool_snapshot(&client).await?;
+        let kncminer = *pool_ids_by_slug
+            .get("kncminer")
+            .context("default snapshot missing kncminer")?;
+        let original = test_header_chain(4, 1_800_010_000);
+        let event_id = insert_event_with_real_parent_header(
+            &client,
+            namecoin,
+            77,
+            &hash_bytes(0x7700),
+            &original[&3],
+            "canonical",
+            Some(3),
+        )
+        .await?;
+        // The child event claims F2Pool, while the persisted Core coinbase
+        // resolves to KnCMiner. A displaced stale replay must keep Core's
+        // higher-precedence attribution.
+        let event_coinbase_script = b"/F2Pool/".to_vec();
+        client
+            .execute(
+                "UPDATE merge_mining_event SET btc_parent_coinbase_script = $2 WHERE id = $1",
+                &[&event_id, &event_coinbase_script],
+            )
+            .await?;
+        let original_source = FakeBitcoinCoreBackboneSource::new(3, original.clone());
+        run_sync_bitcoin_core(
+            &mut client,
+            &original_source,
+            BitcoinCoreSyncConfig {
+                from_height: Some(0),
+                to_height: Some(3),
+                tip: true,
+                missing_only: true,
+                ..BitcoinCoreSyncConfig::default()
+            },
+        )
+        .await?;
+        let old_h3 = header_hash_bytes(&original[&3]);
+        let core_coinbase_script = b"/KnCMiner/".to_vec();
+        client
+            .execute(
+                "UPDATE block SET btc_coinbase_script = $2, bitcoin_miner_pool_id = $3 \
+                 WHERE btc_header_hash = $1",
+                &[&old_h3, &core_coinbase_script, &kncminer],
+            )
+            .await?;
+        let proof_id_before: i64 = client
+            .query_one(
+                "SELECT id FROM attestation_proof \
+                 WHERE btc_header_hash = $1 AND source_id = $2 AND proof_kind = 'auxpow'",
+                &[&old_h3, &namecoin],
+            )
+            .await?
+            .get(0);
+        rebuild_source_health(&mut client).await?;
+
+        let active = fork_header_chain(&original, 3, 4, 1_800_011_000);
+        insert_matching_upper_canonical(&client, &active[&4], 4).await?;
+        let new_h3 = header_hash_bytes(&active[&3]);
+        let coinbase_before: Vec<u8> = client
+            .query_one(
+                "SELECT btc_coinbase_script FROM block WHERE btc_header_hash = $1",
+                &[&old_h3],
+            )
+            .await?
+            .get(0);
+
+        let active_source = FakeBitcoinCoreBackboneSource::new(4, active.clone());
+        repair_near_tip_backbone_for_test(
+            &mut client,
+            &active_source,
+            active_source.tip().await?,
+            Duration::ZERO,
+            4,
+        )
+        .await?;
+
+        assert_displaced_auxpow_evidence(
+            &client,
+            &DisplacedAuxpowEvidence {
+                event_id,
+                source_id: namecoin,
+                old_hash: &old_h3,
+                new_hash: &new_h3,
+                coinbase_before: &coinbase_before,
+                bitcoin_miner_pool_id: kncminer,
+                proof_id_before,
+            },
+        )
+        .await?;
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn gap_plan_retries_suffix_after_inflight_capture_commits_conflict() -> Result<()> {
+    crate::run_mut_db_test!(client, schema, {
+        let original = test_header_chain(5, 1_800_014_000);
+        let original_source = FakeBitcoinCoreBackboneSource::new(2, original.clone());
+        run_sync_bitcoin_core(
+            &mut client,
+            &original_source,
+            BitcoinCoreSyncConfig {
+                from_height: Some(0),
+                to_height: Some(2),
+                tip: true,
+                missing_only: true,
+                ..BitcoinCoreSyncConfig::default()
+            },
+        )
+        .await?;
+
+        let fixture = NamecoinEventFixture::new(&client).await?;
+        let old_header = original[&3];
+        let old_h3 = header_hash_bytes(&old_header);
+        let mut payload = fixture.payload(77, ClassificationProof::default(), 1_800_014_100)?;
+        payload.child_block_hash = Some(hash_bytes(0x7710));
+        payload.btc_parent_header_hash = old_h3.clone();
+        payload.btc_parent_prev_header_hash = old_header.prev_blockhash.to_byte_array().to_vec();
+        payload.btc_parent_header_bytes = serialize(&old_header);
+        payload.btc_parent_header_time = old_header.time as i64;
+        let (gate, capture_task) =
+            spawn_gated_canonical_capture(&schema, fixture.source_id, payload, old_header, 3)
+                .await?;
+
+        let active = fork_header_chain(&original, 3, 4, 1_800_014_500);
+        let new_h3 = header_hash_bytes(&active[&3]);
+        let active_source = FakeBitcoinCoreBackboneSource::new(4, active);
+        let (target, repair_pid, repair_task) =
+            spawn_near_tip_repair(&schema, active_source, 4).await?;
+
+        // Height 3 is absent from the committed local view, so reaching this
+        // exclusive wait proves the initial scan selected the gap path. The
+        // classifier still owns the shared barrier and has not committed its
+        // old-branch canonical row yet.
+        wait_for_exclusive_core_view_barrier(&client, repair_pid).await?;
+        assert!(
+            !repair_task.is_finished(),
+            "gap repair waits while capture holds the shared Core-view barrier"
+        );
+
+        gate.proceed();
+        let event_id = capture_task.await.expect("join capture task")?;
+        repair_task.await.expect("join repair task")?;
+
+        let event_kind: String = client
+            .query_one(
+                "SELECT btc_parent_kind FROM merge_mining_event WHERE id = $1",
+                &[&event_id],
+            )
+            .await?
+            .get(0);
+        assert_eq!(event_kind, "stale");
+        let old = client
+            .query_one(
+                "SELECT kind, canonical_competitor_hash FROM block \
+                 WHERE btc_header_hash = $1",
+                &[&old_h3],
+            )
+            .await?;
+        assert_eq!(old.get::<_, String>(0), "stale");
+        assert_eq!(old.get::<_, Option<Vec<u8>>>(1), Some(new_h3));
+        assert_completed_repair_state(&client, target.height, target.hash).await?;
+        assert_source_health_kind_counts(&client, fixture.source_id, 0, 1).await?;
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn suffix_waits_for_inflight_capture_then_reclassifies_it() -> Result<()> {
+    crate::run_mut_db_test!(client, schema, {
+        let original = test_header_chain(4, 1_800_015_000);
+        let original_source = FakeBitcoinCoreBackboneSource::new(3, original.clone());
+        run_sync_bitcoin_core(
+            &mut client,
+            &original_source,
+            BitcoinCoreSyncConfig {
+                from_height: Some(0),
+                to_height: Some(3),
+                tip: true,
+                missing_only: true,
+                ..BitcoinCoreSyncConfig::default()
+            },
+        )
+        .await?;
+
+        let fixture = NamecoinEventFixture::new(&client).await?;
+        let old_header = original[&3];
+        let old_h3 = header_hash_bytes(&old_header);
+        let mut payload = fixture.payload(78, ClassificationProof::default(), 1_800_015_100)?;
+        payload.child_block_hash = Some(hash_bytes(0x7810));
+        payload.btc_parent_header_hash = old_h3.clone();
+        payload.btc_parent_prev_header_hash = old_header.prev_blockhash.to_byte_array().to_vec();
+        payload.btc_parent_header_bytes = serialize(&old_header);
+        payload.btc_parent_header_time = old_header.time as i64;
+        let (gate, capture_task) =
+            spawn_gated_canonical_capture(&schema, fixture.source_id, payload, old_header, 3)
+                .await?;
+
+        let active = fork_header_chain(&original, 3, 4, 1_800_016_000);
+        let new_h3 = header_hash_bytes(&active[&3]);
+        let active_source = FakeBitcoinCoreBackboneSource::new(4, active);
+        let (_, repair_pid, repair_task) = spawn_near_tip_repair(&schema, active_source, 4).await?;
+        wait_for_exclusive_core_view_barrier(&client, repair_pid).await?;
+        assert!(
+            !repair_task.is_finished(),
+            "exclusive suffix switch waits while capture holds the shared Core-view barrier"
+        );
+
+        gate.proceed();
+        let event_id = capture_task.await.expect("join capture task")?;
+        repair_task.await.expect("join suffix repair task")?;
+
+        let event_kind: String = client
+            .query_one(
+                "SELECT btc_parent_kind FROM merge_mining_event WHERE id = $1",
+                &[&event_id],
+            )
+            .await?
+            .get(0);
+        assert_eq!(event_kind, "stale");
+        let old = client
+            .query_one(
+                "SELECT kind, canonical_competitor_hash FROM block \
+                 WHERE btc_header_hash = $1",
+                &[&old_h3],
+            )
+            .await?;
+        assert_eq!(old.get::<_, String>(0), "stale");
+        assert_eq!(old.get::<_, Option<Vec<u8>>>(1), Some(new_h3));
+        assert_source_health_kind_counts(&client, fixture.source_id, 0, 1).await?;
+
+        Ok::<_, anyhow::Error>(())
+    })
 }
 
 #[tokio::test]
@@ -305,10 +799,105 @@ async fn suffix_rebinds_stale_dependents_before_queue_drain() -> Result<()> {
             assert_eq!(row.get::<_, i64>(1), expected_sources);
         }
 
-        drain_core_reconcile_queue(&mut client, bitcoin).await?;
+        drain_core_reconcile_disabled(&mut client, bitcoin).await?;
         assert_rebound_stale_dependents(&client, &stale, &new_h3).await?;
         assert_source_health_kind_counts(&client, namecoin, 0, 1).await?;
         assert_completed_repair_state(&client, 4, active[&4].block_hash()).await?;
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn suffix_queue_retries_then_reclassifies_newly_inferable_unknown_child() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let bitcoin = get_source_id(&client, BITCOIN_SOURCE_CODE).await?;
+        let namecoin = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let original = test_header_chain(3, 1_800_027_300);
+        let original_source = FakeBitcoinCoreBackboneSource::new(3, original.clone());
+        run_sync_bitcoin_core(
+            &mut client,
+            &original_source,
+            BitcoinCoreSyncConfig {
+                from_height: Some(0),
+                to_height: Some(3),
+                tip: true,
+                missing_only: true,
+                ..BitcoinCoreSyncConfig::default()
+            },
+        )
+        .await?;
+
+        // This parent extended the old tip while no same-height canonical
+        // competitor existed, so its persisted verdict remained unknown.
+        let unknown_parent = Header {
+            version: Version::ONE,
+            prev_blockhash: original[&3].block_hash(),
+            merkle_root: TxMerkleNode::all_zeros(),
+            time: 1_800_027_404,
+            bits: original[&3].bits,
+            nonce: 44_404,
+        };
+        let unknown_hash = header_hash_bytes(&unknown_parent);
+        let event_id = insert_event_with_real_parent_header(
+            &client,
+            namecoin,
+            82,
+            &hash_bytes(0x8210),
+            &unknown_parent,
+            "unknown",
+            None,
+        )
+        .await?;
+
+        let active = fork_header_chain(&original, 3, 4, 1_800_027_500);
+        let new_h4 = header_hash_bytes(&active[&4]);
+        let active_source = FakeBitcoinCoreBackboneSource::new(4, active.clone());
+        let expected = canonical_view(&client, 2, 4).await?;
+        let replacements = vec![
+            CoreCanonicalReplacement {
+                height: 3,
+                header: active[&3],
+                coinbase: active_source
+                    .block_coinbase(active[&3].block_hash())
+                    .await?,
+            },
+            CoreCanonicalReplacement {
+                height: 4,
+                header: active[&4],
+                coinbase: active_source
+                    .block_coinbase(active[&4].block_hash())
+                    .await?,
+            },
+        ];
+        replace_core_canonical_suffix(&mut client, bitcoin, 3, 2, &expected, &replacements).await?;
+        let before_kind: String = client
+            .query_one(
+                "SELECT btc_parent_kind FROM merge_mining_event WHERE id = $1",
+                &[&event_id],
+            )
+            .await?
+            .get(0);
+        assert_eq!(before_kind, "unknown");
+
+        let mut inferred =
+            crate::support::scenario::stale_verdict(&unknown_parent, 4, new_h4.clone());
+        inferred.height_source = Some(mmm_bitcoin_core::HeightSource::PrevStale);
+        inferred.live_observed = false;
+        inferred.core_attested = false;
+        let fake = FakeParentClassifier::new(inferred).with_classification_error_on_call(1);
+        let classifier = ConfiguredParentClassifier::Fake(fake.clone());
+
+        let err = drain_core_reconcile_queue(&mut client, bitcoin, &classifier)
+            .await
+            .expect_err("a transient strict classifier failure must retain queue work");
+        assert!(format!("{err:#}").contains("injected classification error"));
+        assert_retained_core_primary(&client, bitcoin, &unknown_hash).await?;
+
+        drain_core_reconcile_queue(&mut client, bitcoin, &classifier).await?;
+        assert_inferred_stale_child(&client, event_id, &unknown_hash, &new_h4, namecoin).await?;
+        assert_eq!(fake.call_count().await, 2);
+        assert_drained_core_queue(&client, bitcoin).await?;
 
         Ok::<_, anyhow::Error>(())
     })
@@ -584,7 +1173,7 @@ async fn blocked_integrity_error_preserves_new_reconcile_pending_status() -> Res
             pending_details.0
         );
 
-        drain_core_reconcile_queue(&mut client, bitcoin).await?;
+        drain_core_reconcile_disabled(&mut client, bitcoin).await?;
         assert_drained_core_queue(&client, bitcoin).await?;
 
         Ok::<_, anyhow::Error>(())
@@ -1076,7 +1665,7 @@ async fn core_suffix_queue_preserves_pending_status_and_survives_restart_drain()
             .await?;
 
         let mut restart_client = crate::support::db::connect_to_schema(&schema).await?;
-        drain_core_reconcile_queue(&mut restart_client, bitcoin).await?;
+        drain_core_reconcile_disabled(&mut restart_client, bitcoin).await?;
         assert_drained_core_queue(&restart_client, bitcoin).await?;
         let grandchild_rows: i64 = restart_client
             .query_one(
@@ -1086,6 +1675,104 @@ async fn core_suffix_queue_preserves_pending_status_and_survives_restart_drain()
             .await?
             .get(0);
         assert_eq!(grandchild_rows, 1, "restart drain reaches the grandchild");
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn core_suffix_queue_restores_suspended_error_without_nesting() -> Result<()> {
+    crate::run_mut_db_test!(client, schema, {
+        let bitcoin = get_source_id(&client, BITCOIN_SOURCE_CODE).await?;
+        let original = test_header_chain(3, 1_800_045_000);
+        let original_source = FakeBitcoinCoreBackboneSource::new(3, original.clone());
+        run_sync_bitcoin_core(
+            &mut client,
+            &original_source,
+            BitcoinCoreSyncConfig {
+                from_height: Some(0),
+                to_height: Some(3),
+                tip: true,
+                missing_only: true,
+                ..BitcoinCoreSyncConfig::default()
+            },
+        )
+        .await?;
+
+        let prior_details = json!({
+            "hash": hex::encode(header_hash_bytes(&original[&1])),
+            "attempt": 7,
+        });
+        let prior = SyncErrorExpectation {
+            code: "coinbase_fetch_failed",
+            height: 1,
+            message: "lower cursor coinbase is still incomplete",
+            details: &prior_details,
+        };
+        seed_sync_error(&client, bitcoin, &prior).await?;
+
+        let active = fork_header_chain(&original, 3, 4, 1_800_046_000);
+        let active_source = FakeBitcoinCoreBackboneSource::new(4, active.clone());
+        let replacements = vec![
+            CoreCanonicalReplacement {
+                height: 3,
+                header: active[&3],
+                coinbase: active_source
+                    .block_coinbase(active[&3].block_hash())
+                    .await?,
+            },
+            CoreCanonicalReplacement {
+                height: 4,
+                header: active[&4],
+                coinbase: active_source
+                    .block_coinbase(active[&4].block_hash())
+                    .await?,
+            },
+        ];
+        let expected = canonical_view(&client, 2, 4).await?;
+        replace_core_canonical_suffix(&mut client, bitcoin, 3, 2, &expected, &replacements).await?;
+
+        let first_pending: Json<serde_json::Value> = client
+            .query_one(
+                "SELECT last_error_details FROM bitcoin_core_sync_state WHERE source_id = $1",
+                &[&bitcoin],
+            )
+            .await?
+            .get(0);
+        assert_eq!(first_pending.0["suspended_error"], prior.suspended_json());
+
+        // A newer generation while the first queue is pending must carry the
+        // original tuple, not wrap another pending status around it.
+        let expected = canonical_view(&client, 2, 4).await?;
+        replace_core_canonical_suffix(&mut client, bitcoin, 4, 2, &expected, &replacements).await?;
+        let second_pending: Json<serde_json::Value> = client
+            .query_one(
+                "SELECT last_error_details FROM bitcoin_core_sync_state WHERE source_id = $1",
+                &[&bitcoin],
+            )
+            .await?
+            .get(0);
+        assert_eq!(
+            second_pending.0["suspended_error"],
+            first_pending.0["suspended_error"]
+        );
+        assert!(
+            second_pending.0["suspended_error"]
+                .get("suspended_error")
+                .is_none()
+        );
+
+        let mut restart_client = crate::support::db::connect_to_schema(&schema).await?;
+        drain_core_reconcile_disabled(&mut restart_client, bitcoin).await?;
+        let queue_count: i64 = restart_client
+            .query_one(
+                "SELECT count(*)::bigint FROM bitcoin_core_reconcile_queue WHERE source_id = $1",
+                &[&bitcoin],
+            )
+            .await?
+            .get(0);
+        assert_eq!(queue_count, 0);
+        assert_sync_error(&restart_client, bitcoin, &prior).await?;
 
         Ok::<_, anyhow::Error>(())
     })

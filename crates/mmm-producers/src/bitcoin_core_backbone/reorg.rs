@@ -13,6 +13,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use bitcoin::block::Header;
 use bitcoin::hashes::Hash as _;
+use mmm_bitcoin_core::ConfiguredParentClassifier;
 use serde_json::{Value, json};
 use tokio_postgres::Client;
 
@@ -46,8 +47,16 @@ where
     S: BitcoinCoreBackboneSource,
 {
     let source_id = get_source_id(client, BITCOIN_SOURCE_CODE).await?;
-    repair_near_tip_backbone_to_target(client, source, source_id, target, delay, window_heights)
-        .await
+    repair_near_tip_backbone_to_target(
+        client,
+        source,
+        source_id,
+        target,
+        delay,
+        window_heights,
+        &ConfiguredParentClassifier::Disabled,
+    )
+    .await
 }
 
 #[derive(Debug, Clone)]
@@ -93,113 +102,140 @@ pub(crate) async fn repair_near_tip_backbone_to_target<S>(
     target: BitcoinCoreBackboneTip,
     delay: Duration,
     window_heights: i32,
+    classifier: &ConfiguredParentClassifier,
 ) -> Result<BitcoinCoreSyncStats>
 where
     S: BitcoinCoreBackboneSource,
 {
-    let state = load_or_init_sync_state(client, source_id).await?;
-    validate_target_bounds(
-        client,
-        source_id,
-        target,
-        state.contiguous_complete_height,
-        state.target_tip_height,
-    )
-    .await?;
+    let mut may_replan_after_gap_conflict = true;
+    loop {
+        let state = load_or_init_sync_state(client, source_id).await?;
+        validate_target_bounds(
+            client,
+            source_id,
+            target,
+            state.contiguous_complete_height,
+            state.target_tip_height,
+        )
+        .await?;
 
-    let core_view = capture_core_view(source, target, window_heights).await?;
-    verify_target_stable(client, source, source_id, target).await?;
-    let view_start = core_view
-        .first()
-        .expect("captured Core view always contains its target")
-        .height;
-    verify_cursor_before_view(
-        client,
-        source,
-        source_id,
-        target,
-        state.contiguous_complete_height,
-        view_start,
-    )
-    .await?;
-    let local_rows = load_local_canonical_rows(client, view_start, target.height).await?;
+        let core_view = capture_core_view(source, target, window_heights).await?;
+        verify_target_stable(client, source, source_id, target).await?;
+        let view_start = core_view
+            .first()
+            .expect("captured Core view always contains its target")
+            .height;
+        verify_cursor_before_view(
+            client,
+            source,
+            source_id,
+            target,
+            state.contiguous_complete_height,
+            view_start,
+        )
+        .await?;
+        let local_rows = load_local_canonical_rows(client, view_start, target.height).await?;
 
-    let plan = match plan_repair(&core_view, &local_rows) {
-        Ok(plan) => plan,
-        Err(err) => {
-            return record_plan_error(client, source_id, target, err).await;
+        let plan = match plan_repair(&core_view, &local_rows) {
+            Ok(plan) => plan,
+            Err(err) => {
+                return record_plan_error(client, source_id, target, err).await;
+            }
+        };
+        let RepairPlan::ReplaceFrom {
+            first_replacement_index,
+        } = plan
+        else {
+            let gap_result =
+                repair_near_tip_gaps_to_target(client, source, target, delay, window_heights).await;
+            if may_replan_after_gap_conflict && is_height_conflict(&gap_result) {
+                // The gap writer takes the exclusive canonical-view barrier. A
+                // classifier that was still committing during the unlocked scan
+                // can therefore become visible only after this plan was made.
+                // Reload every planning input once so the committed conflict is
+                // routed through the bounded suffix replacement path.
+                may_replan_after_gap_conflict = false;
+                continue;
+            }
+            return gap_result;
+        };
+
+        let common_ancestor_height = core_view[first_replacement_index - 1].height;
+        let replacement_view = &core_view[first_replacement_index..];
+        let replacements = fetch_replacements(source, replacement_view, delay).await?;
+
+        // Coinbase acquisition can take long enough for another fork to occur.
+        // Confirm the captured target is still active immediately before the first
+        // database mutation.
+        verify_target_stable(client, source, source_id, target).await?;
+        let expected_local = expected_local_rows(&local_rows);
+        let replace_result = replace_core_canonical_suffix_validated(
+            client,
+            source_id,
+            state.contiguous_complete_height,
+            common_ancestor_height,
+            &expected_local,
+            &replacements,
+            (
+                async |_txn| {
+                    if let Some(failure) = target_stability_failure(source, target).await? {
+                        return Err(failure.into_error());
+                    }
+                    Ok(())
+                },
+                async |_txn| {
+                    if let Some(failure) = target_stability_failure(source, target).await? {
+                        return Err(failure.into_error());
+                    }
+                    Ok(())
+                },
+            ),
+        )
+        .await;
+        if let Err(err) = &replace_result
+            && let Some(failure) = err.downcast_ref::<BackboneIntegrityFailure>()
+        {
+            failure.persist(client, source_id).await?;
         }
-    };
-    let RepairPlan::ReplaceFrom {
-        first_replacement_index,
-    } = plan
-    else {
-        return repair_near_tip_gaps_to_target(client, source, target, delay, window_heights).await;
-    };
+        replace_result.context("atomically replace Bitcoin Core canonical near-tip suffix")?;
 
-    let common_ancestor_height = core_view[first_replacement_index - 1].height;
-    let replacement_view = &core_view[first_replacement_index..];
-    let replacements = fetch_replacements(source, replacement_view, delay).await?;
+        // The suffix switch persists its changed-parent seeds before committing.
+        // Drain immediately for the normal path; follow startup and every later
+        // tick also replay this queue after a crash or transient cascade failure.
+        drain_core_reconcile_queue(client, source_id, classifier)
+            .await
+            .context("reconcile dependents after Bitcoin Core canonical suffix replacement")?;
 
-    // Coinbase acquisition can take long enough for another fork to occur.
-    // Confirm the captured target is still active immediately before the first
-    // database mutation.
-    verify_target_stable(client, source, source_id, target).await?;
-    let expected_local = local_rows
-        .iter()
+        let replacement_stats = BitcoinCoreSyncStats {
+            attempted: replacements.len(),
+            completed: replacements.len(),
+            skipped_complete: 0,
+            coinbase_failed: 0,
+        };
+        let gap_stats =
+            repair_near_tip_gaps_to_target(client, source, target, delay, window_heights)
+                .await
+                .context("fill gaps outside the replaced Bitcoin Core suffix")?;
+        return Ok(add_stats(replacement_stats, gap_stats));
+    }
+}
+
+fn is_height_conflict(result: &Result<BitcoinCoreSyncStats>) -> bool {
+    result
+        .as_ref()
+        .err()
+        .and_then(|err| err.downcast_ref::<BackboneIntegrityError>())
+        == Some(&BackboneIntegrityError::HeightConflict)
+}
+
+fn expected_local_rows(rows: &[LocalCanonicalRow]) -> Vec<ExpectedCoreCanonicalRow> {
+    rows.iter()
         .map(|row| ExpectedCoreCanonicalRow {
             height: row.height,
             hash: row.hash.clone(),
             prev_hash: row.prev_hash.clone(),
         })
-        .collect::<Vec<_>>();
-    let replace_result = replace_core_canonical_suffix_validated(
-        client,
-        source_id,
-        state.contiguous_complete_height,
-        common_ancestor_height,
-        &expected_local,
-        &replacements,
-        (
-            async |_txn| {
-                if let Some(failure) = target_stability_failure(source, target).await? {
-                    return Err(failure.into_error());
-                }
-                Ok(())
-            },
-            async |_txn| {
-                if let Some(failure) = target_stability_failure(source, target).await? {
-                    return Err(failure.into_error());
-                }
-                Ok(())
-            },
-        ),
-    )
-    .await;
-    if let Err(err) = &replace_result
-        && let Some(failure) = err.downcast_ref::<BackboneIntegrityFailure>()
-    {
-        failure.persist(client, source_id).await?;
-    }
-    replace_result.context("atomically replace Bitcoin Core canonical near-tip suffix")?;
-
-    // The suffix switch persists its changed-parent seeds before committing.
-    // Drain immediately for the normal path; follow startup and every later
-    // tick also replay this queue after a crash or transient cascade failure.
-    drain_core_reconcile_queue(client, source_id)
-        .await
-        .context("reconcile dependents after Bitcoin Core canonical suffix replacement")?;
-
-    let replacement_stats = BitcoinCoreSyncStats {
-        attempted: replacements.len(),
-        completed: replacements.len(),
-        skipped_complete: 0,
-        coinbase_failed: 0,
-    };
-    let gap_stats = repair_near_tip_gaps_to_target(client, source, target, delay, window_heights)
-        .await
-        .context("fill gaps outside the replaced Bitcoin Core suffix")?;
-    Ok(add_stats(replacement_stats, gap_stats))
+        .collect()
 }
 
 fn add_stats(left: BitcoinCoreSyncStats, right: BitcoinCoreSyncStats) -> BitcoinCoreSyncStats {
