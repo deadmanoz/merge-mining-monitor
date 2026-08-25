@@ -36,10 +36,13 @@ def kgrams(tokens: list[str], k: int) -> frozenset[int]:
     return frozenset(zlib.crc32(" ".join(tokens[i : i + k]).encode()) for i in range(len(tokens) - k + 1))
 
 
-def _severity(jac: float, cross_file: bool) -> str:
-    if jac >= 0.9:
+def _severity(score: float, cross_file: bool) -> str:
+    # Grade on the *selected* score (Jaccard, or max(Jaccard, containment) when
+    # --containment is on), so a strong containment match - a small function fully
+    # inside a bigger one - is not buried at low severity by a modest Jaccard.
+    if score >= 0.9:
         return "high" if cross_file else "medium"
-    if jac >= 0.75:
+    if score >= 0.75:
         return "medium" if cross_file else "low"
     return "low"
 
@@ -50,11 +53,13 @@ def collect(root: str, min_tokens: int = 45, k: int = 8, df_max: int = 40,
     funcs = _scan.load_functions(root, skip_tests=not include_tests)
     fps: list[frozenset[int]] = []
     kept: list[_scan.Function] = []
+    tok_lens: list[int] = []  # real structural-token counts (NOT k-gram set sizes)
     for fn in funcs:
         toks = _scan.tokenize_structural(fn.body)
         if len(toks) >= min_tokens:
             kept.append(fn)
             fps.append(kgrams(toks, k))
+            tok_lens.append(len(toks))
 
     postings: dict[int, list[int]] = defaultdict(list)
     for idx, fp in enumerate(fps):
@@ -88,10 +93,10 @@ def collect(root: str, min_tokens: int = 45, k: int = 8, df_max: int = 40,
         findings.append(_report.Finding(
             tool="clones", kind="structural-clone",
             summary=f"{fi.name} <=> {fj.name} (jaccard {jac:.2f}{', cross-file' if cross else ''})",
-            score=round(score, 4), severity=_severity(jac, cross),
+            score=round(score, 4), severity=_severity(score, cross),
             locations=[_report.Loc(fi.path, fi.line, fi.name), _report.Loc(fj.path, fj.line, fj.name)],
             metrics={"jaccard": round(jac, 4), "containment": round(contain, 4), "cross_file": cross,
-                     "min_tokens": min(len(fps[i]), len(fps[j]))},
+                     "min_tokens": min(tok_lens[i], tok_lens[j])},
         ))
     findings.sort(key=lambda f: (f.metrics["cross_file"], f.score, f.metrics["min_tokens"]), reverse=True)
     return findings

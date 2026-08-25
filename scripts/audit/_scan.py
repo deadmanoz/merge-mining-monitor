@@ -313,19 +313,28 @@ def find_functions(src: str, path: str) -> list[Function]:
     out: list[Function] = []
     n = len(src)
     for m in re.finditer(r"\bfn\s+([A-Za-z0-9_]+)", src):
-        # Walk to the body's opening brace at paren-depth 0 (skipping the
-        # signature's own parens/generics). A `;` at depth 0 means no body.
+        # Walk to the body's opening brace at paren/bracket-depth 0 (skipping the
+        # signature's own parens and generics). Bracket depth matters because a
+        # fixed-size array type in the return position, e.g. `-> Result<[u8; N]>`,
+        # carries a `;` inside `[ ]`; without tracking it that `;` would look like a
+        # bodyless-declaration terminator and the function would be dropped from
+        # every downstream scan. Only a genuinely top-level `;` means "no body".
         j = m.end()
         paren = 0
+        bracket = 0
         while j < n:
             c = src[j]
             if c == "(":
                 paren += 1
             elif c == ")":
                 paren -= 1
-            elif c == "{" and paren <= 0:
+            elif c == "[":
+                bracket += 1
+            elif c == "]":
+                bracket -= 1
+            elif c == "{" and paren <= 0 and bracket <= 0:
                 break
-            elif c == ";" and paren <= 0:
+            elif c == ";" and paren <= 0 and bracket <= 0:
                 j = -1
                 break
             j += 1

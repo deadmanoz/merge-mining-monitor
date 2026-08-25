@@ -35,8 +35,45 @@ def extract_sql(src: str):
 
 
 def norm(s: str) -> str:
-    s = re.sub(r"\$\d+", "$N", s)
-    return re.sub(r"\s+", " ", s).strip().lower()
+    """Normalize SQL for comparison, but ONLY outside quoted content.
+
+    Keyword case and structural whitespace are noise (`SELECT` == `select`), so
+    they are folded - but a single-quoted string literal (`'ABC'`) or a
+    double-quoted identifier (`"Col"`) is case- and whitespace-significant in
+    PostgreSQL (`code = 'ABC'` and `code = 'abc'` can return different rows), so its
+    bytes are preserved verbatim. SQL escapes a quote by doubling it (`''`), which
+    is handled here. (A quote written as a Rust `\\"` escape inside a non-raw string
+    literal is a rare edge this heuristic does not unescape.)
+    """
+    out: list[str] = []
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c in "'\"":
+            q = c
+            j = i + 1
+            buf = [c]
+            while j < n:
+                if s[j] == q:
+                    if j + 1 < n and s[j + 1] == q:  # doubled-quote escape stays quoted
+                        buf.append(q + q)
+                        j += 2
+                        continue
+                    buf.append(q)
+                    j += 1
+                    break
+                buf.append(s[j])
+                j += 1
+            out.append("".join(buf))  # quoted span: preserved verbatim
+            i = j
+            continue
+        j = i
+        while j < n and s[j] not in "'\"":
+            j += 1
+        seg = re.sub(r"\$\d+", "$N", s[i:j])
+        out.append(re.sub(r"\s+", " ", seg).lower())
+        i = j
+    return "".join(out).strip()
 
 
 def is_test(path: str) -> bool:
