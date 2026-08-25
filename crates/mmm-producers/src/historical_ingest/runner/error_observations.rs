@@ -14,6 +14,7 @@ use tokio_postgres::Client;
 
 use super::super::config::{
     HistoricalChainSpec, PINNED_RESEARCH_COMMIT, historical_chain_spec, importable_chains,
+    is_historical_import_chain,
 };
 use super::super::csv_source::{
     CsvLayout, ImportCandidate, error_observation_candidate_from_record,
@@ -95,6 +96,7 @@ pub(super) async fn import_error_observations(
         ..HistoricalImportSummary::default()
     };
     let mut parent_counts = HashMap::new();
+    let mut source_chain_counts = BTreeMap::new();
     let mut reader = artifact.open_reader()?;
     let headers = reader
         .headers()
@@ -105,6 +107,9 @@ pub(super) async fn import_error_observations(
         let record =
             record.with_context(|| format!("parse error-observation row {}", offset + 2))?;
         let (spec, candidate) = parse_error_observation_candidate(&headers, &record, offset + 2)?;
+        *source_chain_counts
+            .entry(spec.chain.to_owned())
+            .or_insert(0) += 1;
         let decision =
             import_error_observation_decision(&txn, classifier, &candidate, classifications)
                 .await?;
@@ -144,6 +149,10 @@ pub(super) async fn import_error_observations(
         artifact.row_count,
         summary.rows_seen
     );
+    ensure!(
+        source_chain_counts == artifact.source_chain_counts,
+        "error-observation source-chain counts changed during import"
+    );
     invalidate_source_health_in_transaction(&txn).await?;
     txn.commit()
         .await
@@ -176,6 +185,10 @@ fn parse_error_observation_candidate(
                 "error-observation row {row_number} has unsupported source chain {chain:?}",
             )
         })?;
+    ensure!(
+        is_historical_import_chain(chain),
+        "error-observation row {row_number} has unknown or surveyed source chain {chain:?}"
+    );
     let layout = CsvLayout::new(headers, spec)?;
     let candidate = error_observation_candidate_from_record(
         spec,

@@ -20,6 +20,10 @@ const ERROR_BLOCKS_CSV: &str = include_str!("../../../data/consensus/error_block
 /// greater than its predecessor median time past.
 pub const TIME_BELOW_MTP: &str = "time_below_mtp";
 
+/// Canonical rejection token for a header that carried the previous difficulty
+/// epoch's target across a retarget boundary.
+pub const NBITS_RETARGET_NOT_APPLIED: &str = "nbits_retarget_not_applied";
+
 /// A pinned, mechanically re-derived Bitcoin consensus failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ErrorBlock {

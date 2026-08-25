@@ -54,7 +54,6 @@ pub(crate) fn candidate_from_record(
         publication_ref,
         nbits_table,
         parse_taxonomy_fields,
-        true,
     )
 }
 
@@ -73,7 +72,6 @@ pub(crate) fn error_observation_candidate_from_record(
         publication_ref,
         None,
         parse_error_observation_taxonomy_fields,
-        false,
     )
 }
 
@@ -84,7 +82,6 @@ fn candidate_from_record_with_taxonomy(
     publication_ref: &str,
     nbits_table: Option<&NbitsTable>,
     parse_taxonomy: TaxonomyParser,
-    expected_nbits_must_match_header: bool,
 ) -> Result<ImportCandidate, SkipReason> {
     if record.get(layout.chain).map(str::trim) != Some(spec.chain) {
         return Err(SkipReason::Malformed);
@@ -98,7 +95,8 @@ fn candidate_from_record_with_taxonomy(
         record,
         &header,
         &display_hash,
-        expected_nbits_must_match_header,
+        taxonomy.error_rejection_reason.as_deref()
+            != Some(mmm_capture::error_blocks::NBITS_RETARGET_NOT_APPLIED),
     )?;
     let pow_validates_child_target = child
         .nbits

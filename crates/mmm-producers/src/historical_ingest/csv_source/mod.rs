@@ -721,6 +721,12 @@ mod tests {
         );
 
         assert!(error_observation_candidate("devcoin", &error_row).is_ok());
+
+        let non_retarget = error_row.replacen("nbits_retarget_not_applied", "time_below_mtp", 1);
+        assert_eq!(
+            error_observation_candidate("devcoin", &non_retarget).unwrap_err(),
+            SkipReason::EvidenceMismatch
+        );
     }
 
     #[test]
