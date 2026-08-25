@@ -44,7 +44,20 @@ def norm(s: str) -> str:
     bytes are preserved verbatim. SQL escapes a quote by doubling it (`''`), which
     is handled here. (A quote written as a Rust `\\"` escape inside a non-raw string
     literal is a rare edge this heuristic does not unescape.)
+
+    Placeholders are canonicalized by first-occurrence order ($3 -> $1) rather than
+    all collapsed to one token, so their *equivalence pattern* survives: reusing one
+    bind value (`a = $1 OR b = $1`) stays distinct from two independent ones
+    (`a = $1 OR b = $2`), which are semantically different queries.
     """
+    ph: dict[str, str] = {}
+
+    def canon(m: "re.Match[str]") -> str:
+        tok = m.group(0)
+        if tok not in ph:
+            ph[tok] = f"${len(ph) + 1}"
+        return ph[tok]
+
     out: list[str] = []
     i, n = 0, len(s)
     while i < n:
@@ -70,7 +83,7 @@ def norm(s: str) -> str:
         j = i
         while j < n and s[j] not in "'\"":
             j += 1
-        seg = re.sub(r"\$\d+", "$N", s[i:j])
+        seg = re.sub(r"\$\d+", canon, s[i:j])
         out.append(re.sub(r"\s+", " ", seg).lower())
         i = j
     return "".join(out).strip()
@@ -131,6 +144,11 @@ def collect(root: str, near: float = 0.85) -> list[_report.Finding]:
     for path, line, n in items:
         groups[n].append((path, line))
     norms = sorted(groups, key=len)
+    # Longest admissible length ratio for a pair that can still reach `near`: with
+    # the shorter string fully matched, ratio = 2*La/(La+Lb), so Lb/La <=
+    # (2-near)/near. Deriving it from the threshold (not a fixed 1.3) stops the
+    # length prune from discarding pairs that would clear a lower `near`.
+    max_len_ratio = (2.0 - near) / near
     sm = SequenceMatcher(None, autojunk=False)
     for i in range(len(norms)):
         ni = norms[i]
@@ -138,7 +156,7 @@ def collect(root: str, near: float = 0.85) -> list[_report.Finding]:
         sm.set_seq2(ni)
         for j in range(i + 1, len(norms)):
             nj = norms[j]
-            if len(nj) > len(ni) * 1.3:
+            if len(nj) > len(ni) * max_len_ratio:
                 break
             files_j = {p for p, _ in groups[nj]}
             if len(files_i | files_j) == 1:

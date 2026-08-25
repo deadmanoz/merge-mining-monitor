@@ -313,17 +313,26 @@ def find_functions(src: str, path: str) -> list[Function]:
     out: list[Function] = []
     n = len(src)
     for m in re.finditer(r"\bfn\s+([A-Za-z0-9_]+)", src):
-        # Walk to the body's opening brace at paren/bracket-depth 0 (skipping the
-        # signature's own parens and generics). Bracket depth matters because a
-        # fixed-size array type in the return position, e.g. `-> Result<[u8; N]>`,
-        # carries a `;` inside `[ ]`; without tracking it that `;` would look like a
-        # bodyless-declaration terminator and the function would be dropped from
-        # every downstream scan. Only a genuinely top-level `;` means "no body".
+        # Walk to the body's opening brace, skipping everything nested in the
+        # signature. Depth is tracked for four bracket kinds because each can carry
+        # a character that would otherwise be misread:
+        #   * `( )` params;
+        #   * `[ ]` a fixed-size array type (`-> Result<[u8; N]>`) whose `;` is not
+        #     a bodyless-declaration terminator;
+        #   * `< >` generics, so a const-generic brace argument is seen as nested;
+        #   * `{ }` a const-generic / const expression (`-> Foo<{ N + 1 }>`) whose
+        #     brace is NOT the body brace.
+        # `->` is consumed as a unit so its `>` never closes a generic. Angle
+        # tracking is suspended inside a const-expression brace, where `<`/`>` are
+        # shift/compare operators, not generics. Only a genuinely top-level `{`
+        # opens the body and only a top-level `;` means "no body".
         j = m.end()
-        paren = 0
-        bracket = 0
+        paren = bracket = angle = brace = 0
         while j < n:
             c = src[j]
+            if c == "-" and src[j : j + 2] == "->":
+                j += 2
+                continue
             if c == "(":
                 paren += 1
             elif c == ")":
@@ -332,9 +341,19 @@ def find_functions(src: str, path: str) -> list[Function]:
                 bracket += 1
             elif c == "]":
                 bracket -= 1
-            elif c == "{" and paren <= 0 and bracket <= 0:
-                break
-            elif c == ";" and paren <= 0 and bracket <= 0:
+            elif c == "<" and brace == 0:
+                angle += 1
+            elif c == ">" and brace == 0:
+                if angle > 0:
+                    angle -= 1
+            elif c == "{":
+                if paren <= 0 and bracket <= 0 and angle <= 0 and brace == 0:
+                    break  # the body brace
+                brace += 1  # a const-generic / const-expression brace
+            elif c == "}":
+                if brace > 0:
+                    brace -= 1
+            elif c == ";" and paren <= 0 and bracket <= 0 and angle <= 0 and brace == 0:
                 j = -1
                 break
             j += 1

@@ -48,8 +48,12 @@ def _scope_prefix(root: str | None) -> str | None:
         except Exception:
             return None
     r = os.path.normpath(r)  # ./crates -> crates, crates/ -> crates, a/./b -> a/b
-    if r == "." or r == os.curdir or r.startswith(".."):
-        return None
+    if r == "." or r == os.curdir:
+        return None  # explicit whole-repo
+    # A root outside the checkout normalizes to a `..`-escaping path. Git never emits
+    # `..`-prefixed paths, so returning it as the (non-matching) prefix scopes the
+    # report to an honest empty result, rather than silently widening to whole-repo
+    # and mislabelling unrelated findings as belonging to the requested directory.
     return r or None
 
 

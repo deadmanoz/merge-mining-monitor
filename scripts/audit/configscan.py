@@ -41,10 +41,12 @@ SUFFIX = re.compile(r"^_[A-Z0-9]+(?:_[A-Z0-9]+)*$")
 # A per-chain key built as format!("{prefix}_RPC_USER"): the literal is
 # `{...}_SUFFIX`, so the suffix follows the placeholder, not the string start.
 FORMAT_SUFFIX = re.compile(r"\{[^}]*\}(_[A-Z0-9]+(?:_[A-Z0-9]+)*)")
-# Only actual read calls, not the `std::env` namespace itself (which also prefixes
-# `std::env::args()`, `std::env::Args`, ...). `env::var(_os)` also matches the tail
-# of `std::env::var(_os)`.
-ENV_READ = re.compile(r"\benv::var(?:_os)?\b|\benv_lookup\b")
+# Only actual read *calls*: the name must be followed by `(`. This excludes the
+# `std::env` namespace itself (`std::env::Args`), the `fn env_lookup` definition,
+# and places that pass `env_lookup` as a callback value - all of which inflate the
+# surface count without reading the environment. `env::var(_os)` also matches the
+# tail of `std::env::var(_os)`.
+ENV_READ = re.compile(r"\benv::var(?:_os)?\s*\(|(?<!fn )\benv_lookup\s*\(")
 # The env key passed directly to a read call. Keying off the call site (not any
 # ALL_CAPS literal) avoids matching opcode/status constants like OP_RETURN.
 KEYCALL = re.compile(
@@ -54,6 +56,14 @@ KEYCALL = re.compile(
 # constant). Paired with CONST_KEY, this recovers keys KEYCALL's literal form misses.
 KEYCALL_IDENT = re.compile(
     r'(?:env::var(?:_os)?|std::env::var(?:_os)?|env_lookup|\blookup|getenv)\s*\(\s*&?\s*([A-Z][A-Z0-9_]{2,})\s*\)'
+)
+# A key handed to a helper that performs the read on the caller's behalf, made
+# recognizable because the read fn is passed alongside it, e.g.
+# `exact_one_from_lookup("HATHOR_BACKFILL_SKIP_HOLDS", env_lookup)`. Without this the
+# key is invisible - the literal is not a direct argument to a recognized read call -
+# so it looks undocumented-in-reverse (present in docs, "unused" in code).
+KEYCALL_HELPER = re.compile(
+    r'"([A-Z][A-Z0-9_]{2,})"\s*,\s*(?:&\s*)?(?:env_lookup|env::var(?:_os)?)\b'
 )
 CONST_KEY = re.compile(
     r'\b(?:const|static)\s+([A-Z][A-Z0-9_]*)\s*:\s*&\s*(?:\'static\s+)?str\s*=\s*"([A-Z][A-Z0-9_]{2,})"'
@@ -83,21 +93,28 @@ def env_keys(text: str) -> set[str]:
     return set(re.findall(r"^\s*#?\s*([A-Z][A-Z0-9_]+)=", text, flags=re.M))
 
 
-def doc_tokens(docs: str, prefixes: list[str]) -> tuple[set[str], set[str]]:
-    """Full keys and per-chain suffixes documented in configuration.md.
+def doc_tokens(docs: str, prefixes: list[str]) -> tuple[set[str], set[str], set[str]]:
+    """Full keys, all per-chain suffixes, and template-only suffixes documented in
+    configuration.md.
 
-    A `<PREFIX>_RPC_URL` template contributes the suffix `_RPC_URL`; a bare
-    backticked `PGHOST` contributes a full key. `` `X` / `Y` `` splits are
-    handled by scanning each backticked token independently.
+    A `<PREFIX>_RPC_URL` template contributes the suffix `_RPC_URL` (to both suffix
+    sets); a bare backticked `PGHOST` contributes a full key; a concrete per-chain
+    key like `RSK_BACKFILL_...` contributes a full key *and* its suffix to the
+    combined set only. The template-only set is returned separately so the reverse
+    (example) drift check can flag a documented `<PREFIX>_X` family with no example
+    instance without double-reporting a concrete full key that the full-key check
+    already covers. `` `X` / `Y` `` splits are handled per backticked token.
     """
     full: set[str] = set()
     suffixes: set[str] = set()
+    template_suffixes: set[str] = set()
     for tok in re.findall(r"`([^`]+)`", docs):
         tok = tok.strip()
         if tok.startswith("<PREFIX>_") or tok.startswith("<PREFIX>"):
             suf = tok[len("<PREFIX>"):]
             if SUFFIX.match(suf):
                 suffixes.add(suf)
+                template_suffixes.add(suf)
         elif tok in prefixes:
             # A bare chain prefix (`ELASTOS`) is a prefix, not a full key; the
             # broadened FULLKEY would otherwise mis-file it into `doc_full`.
@@ -109,7 +126,7 @@ def doc_tokens(docs: str, prefixes: list[str]) -> tuple[set[str], set[str]]:
             for p in prefixes:
                 if tok.startswith(p + "_"):
                     suffixes.add(tok[len(p):])
-    return full, suffixes
+    return full, suffixes, template_suffixes
 
 
 def is_chain_scoped(key: str, prefixes: list[str]) -> bool:
@@ -151,6 +168,10 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
             key = m.group(1)
             if not _is_build_env(key):
                 key_locs.setdefault(key, []).append(_report.Loc(rel, decommented.count("\n", 0, m.start()) + 1))
+        for m in KEYCALL_HELPER.finditer(decommented):
+            key = m.group(1)
+            if not _is_build_env(key):
+                key_locs.setdefault(key, []).append(_report.Loc(rel, decommented.count("\n", 0, m.start()) + 1))
         for m in CONST_KEY.finditer(decommented):
             const_map[m.group(1)] = m.group(2)
         for m in KEYCALL_IDENT.finditer(decommented):
@@ -170,7 +191,7 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
 
     code_full = set(key_locs)
     example = env_keys(read_text(env_example))
-    doc_full, doc_suffixes = doc_tokens(docs, prefixes)
+    doc_full, doc_suffixes, doc_template_suffixes = doc_tokens(docs, prefixes)
     # Per-chain suffixes present in .env.example (e.g. NAMECOIN_RPC_URL -> _RPC_URL);
     # tracked separately (NOT merged into doc_suffixes) so the three-way drift stays
     # honest: a suffix present in code + .env.example but absent from the docs must
@@ -251,16 +272,23 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
         ))
 
     # Reverse direction: a full key documented in configuration.md but absent from
-    # .env.example (a per-chain key covered by an example suffix is not drift).
+    # .env.example (a per-chain key covered by an example suffix is not drift). A
+    # documented per-chain *template family* (`<PREFIX>_X`) with no example instance
+    # is the same drift one level up, so template suffixes are checked too - using
+    # the template-only set so a concrete full key already in `doc_not_ex` is not
+    # reported a second time as a family.
     doc_not_ex = sorted(
         k for k in doc_full
         if k not in example and (suffix_of(k) is None or suffix_of(k) not in example_suffixes)
     )
-    if doc_not_ex:
+    doc_suf_not_ex = sorted(s for s in doc_template_suffixes if s not in example_suffixes)
+    drift = doc_not_ex + [f"<PREFIX>{s}" for s in doc_suf_not_ex]
+    if drift:
         findings.append(_report.Finding(
             tool="configscan", kind="config-example-drift",
-            summary=f"{len(doc_not_ex)} key(s) in docs/configuration.md but not in .env.example: {', '.join(doc_not_ex)}",
-            score=float(len(doc_not_ex)), severity="medium", metrics={"keys": doc_not_ex},
+            summary=f"{len(drift)} documented key(s)/family(ies) absent from .env.example: {', '.join(drift)}",
+            score=float(len(drift)), severity="medium",
+            metrics={"keys": doc_not_ex, "suffix_families": doc_suf_not_ex},
         ))
 
     return findings
