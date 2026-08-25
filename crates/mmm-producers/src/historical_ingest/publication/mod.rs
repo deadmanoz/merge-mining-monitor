@@ -20,8 +20,7 @@ mod aggregate_preflight;
 mod error_observations;
 mod validation;
 pub(super) use aggregate_preflight::preflight_required_aggregate_artifacts;
-pub(super) use error_observations::ErrorObservationPreflight;
-use error_observations::inspect_error_observation_csv;
+pub(super) use error_observations::{ErrorObservationPreflight, inspect_error_observation_csv};
 use validation::{ArtifactSetValidation, validate_artifact_set};
 
 pub(super) const NORMALIZED_COLUMNS: &[&str] = &[
@@ -802,6 +801,19 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("source-chain counts")
+        );
+
+        let error = manifest
+            .artifacts
+            .iter_mut()
+            .find(|artifact| artifact.role == ArtifactRole::ErrorObservation)
+            .expect("error-observation artifact");
+        error.source_chain_counts = BTreeMap::from([("doichain".to_owned(), 73)]);
+        assert!(
+            validate_manifest(&manifest)
+                .unwrap_err()
+                .to_string()
+                .contains("unknown or surveyed")
         );
     }
 

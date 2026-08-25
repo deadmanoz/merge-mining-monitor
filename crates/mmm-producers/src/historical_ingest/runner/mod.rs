@@ -36,6 +36,8 @@ use tracing::info;
 use super::config::{HistoricalImportConfig, historical_chain_spec};
 use super::csv_source::{ImportCandidate, RelevanceSelection, SkipReason, candidate_from_record};
 use super::preclassify::{ImportDecision, import_decision, preflight_and_classify_candidates};
+#[cfg(feature = "db-integration")]
+use super::publication::inspect_error_observation_csv;
 use super::publication::{
     ArtifactPreflight, ErrorObservationPreflight, preflight_artifact,
     preflight_required_aggregate_artifacts,
@@ -591,6 +593,41 @@ pub async fn run_historical_import_configs_for_test(
     configs: Vec<HistoricalImportConfig>,
 ) -> Result<HistoricalImportAllSummary> {
     run_historical_import_configs(client, classifier, configs, None).await
+}
+
+/// Exercise the production error-observation preflight and write path with a
+/// small union-schema fixture. Only exposed to the database integration test
+/// feature.
+#[cfg(feature = "db-integration")]
+#[doc(hidden)]
+pub async fn run_error_observation_import_for_test(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    path: &std::path::Path,
+) -> Result<HistoricalImportSummary> {
+    if !classifier.is_enabled() {
+        bail!("BITCOIN_RPC_URL is required for historical import");
+    }
+    let mut artifact = inspect_error_observation_csv(path, None)?;
+    mmm_store::lock_bitcoin_core_header_cache(client).await?;
+    let result = async {
+        let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
+        let mut classifications = HashMap::new();
+        preflight_error_observations(client, classifier, &mut artifact, &mut classifications)
+            .await?;
+        let summary = import_error_observations(
+            client,
+            classifier,
+            artifact,
+            &mut classifications,
+            &nbits_table,
+        )
+        .await?;
+        rebuild_historical_source_health(client).await?;
+        Ok(summary)
+    }
+    .await;
+    mmm_store::finish_bitcoin_core_header_cache_operation(client, result).await
 }
 
 /// Exercise manifest-to-chain config resolution plus the production

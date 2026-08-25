@@ -86,7 +86,7 @@ for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
 - Live capture is additive. Historical and partial publication sources reconcile
   as authoritative snapshots through the shared source lifecycle, while live
   publication imports never remove live events.
-- Historical error-block witnesses use a separate retained publication scope.
+- Historical error-block witnesses use a separate publication scope.
   The importer accepts them only when Bitcoin Core and the pinned catalogue
   agree on the consensus-invalid parent, then writes the same event and RSK
   sidecar shapes used by live capture. Normal snapshot replacement never

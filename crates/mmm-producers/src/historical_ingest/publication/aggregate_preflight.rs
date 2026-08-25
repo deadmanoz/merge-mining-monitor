@@ -22,7 +22,10 @@ pub(crate) fn preflight_required_aggregate_artifacts(
     manifest
         .error_observation_artifact()
         .map(|artifact| {
-            inspect_error_observation_csv(&config.artifact_root.join(&artifact.csv_path), artifact)
+            inspect_error_observation_csv(
+                &config.artifact_root.join(&artifact.csv_path),
+                Some(artifact),
+            )
         })
         .transpose()
 }

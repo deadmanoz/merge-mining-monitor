@@ -11,7 +11,7 @@ use super::{
     NORMALIZED_COLUMNS, PublicationArtifact, RSK_SIDECAR_COLUMNS, open_artifact_file,
     required_column,
 };
-use crate::historical_ingest::config::importable_chains;
+use crate::historical_ingest::config::is_historical_import_chain;
 
 /// Verified error-observation aggregate retained for the write phase after all
 /// normal artifacts have preflighted. Its rows carry their real source chain,
@@ -32,11 +32,11 @@ impl ErrorObservationPreflight {
     }
 }
 
-pub(super) fn inspect_error_observation_csv(
+pub(crate) fn inspect_error_observation_csv(
     path: &Path,
-    expected: &PublicationArtifact,
+    expected: Option<&PublicationArtifact>,
 ) -> Result<ErrorObservationPreflight> {
-    let mut file = open_artifact_file(path, Some(expected))?;
+    let mut file = open_artifact_file(path, expected)?;
     file.seek(SeekFrom::Start(0))
         .with_context(|| format!("rewind {}", path.display()))?;
     let mut reader = csv::Reader::from_reader(&mut file);
@@ -63,8 +63,8 @@ pub(super) fn inspect_error_observation_csv(
             .filter(|chain| !chain.is_empty())
             .context("error-observation row has no source chain")?;
         ensure!(
-            importable_chains().iter().any(|spec| spec.chain == chain),
-            "{} row {} has an unknown or non-importable source chain {chain:?}",
+            is_historical_import_chain(chain),
+            "{} row {} has an unknown or surveyed source chain {chain:?}",
             path.display(),
             offset + 2
         );
@@ -77,18 +77,20 @@ pub(super) fn inspect_error_observation_csv(
         *source_chain_counts.entry(chain.to_owned()).or_insert(0) += 1;
         row_count += 1;
     }
-    ensure!(
-        row_count == expected.row_count,
-        "artifact row-count mismatch for {}: expected {}, got {}",
-        path.display(),
-        expected.row_count,
-        row_count
-    );
-    ensure!(
-        source_chain_counts == expected.source_chain_counts,
-        "error-observation source-chain count mismatch for {}",
-        path.display()
-    );
+    if let Some(expected) = expected {
+        ensure!(
+            row_count == expected.row_count,
+            "artifact row-count mismatch for {}: expected {}, got {}",
+            path.display(),
+            expected.row_count,
+            row_count
+        );
+        ensure!(
+            source_chain_counts == expected.source_chain_counts,
+            "error-observation source-chain count mismatch for {}",
+            path.display()
+        );
+    }
     drop(reader);
     file.seek(SeekFrom::Start(0))
         .with_context(|| format!("rewind {}", path.display()))?;

@@ -19,6 +19,6 @@ pub use runner::{
 };
 #[cfg(feature = "db-integration")]
 pub use runner::{
-    enqueue_published_stale_branches_for_test, run_historical_import_configs_for_test,
-    run_manifest_historical_import_for_test,
+    enqueue_published_stale_branches_for_test, run_error_observation_import_for_test,
+    run_historical_import_configs_for_test, run_manifest_historical_import_for_test,
 };

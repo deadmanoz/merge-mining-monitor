@@ -72,6 +72,10 @@ pub(super) fn historical_chain_spec(chain: &str) -> Option<&'static HistoricalCh
     IMPORTABLE_CHAINS.iter().find(|spec| spec.chain == chain)
 }
 
+pub(super) fn is_historical_import_chain(chain: &str) -> bool {
+    historical_chain_spec(chain).is_some_and(|spec| spec.lifecycle != SourceLifecycle::Surveyed)
+}
+
 /// Resolved parameters for one normalized per-chain import.
 #[derive(Debug, Clone)]
 pub struct HistoricalImportConfig {

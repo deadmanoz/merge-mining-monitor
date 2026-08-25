@@ -38,8 +38,8 @@ pub use historical_ingest::{
 };
 #[cfg(feature = "db-integration")]
 pub use historical_ingest::{
-    enqueue_published_stale_branches_for_test, run_historical_import_configs_for_test,
-    run_manifest_historical_import_for_test,
+    enqueue_published_stale_branches_for_test, run_error_observation_import_for_test,
+    run_historical_import_configs_for_test, run_manifest_historical_import_for_test,
 };
 pub use known_stale_import::{
     KnownStaleImportConfig, KnownStaleImportSummary, run_import_known_stales,

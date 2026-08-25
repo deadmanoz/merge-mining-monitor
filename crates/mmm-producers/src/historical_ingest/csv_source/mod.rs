@@ -203,6 +203,7 @@ fn validate_parent_fields(
     record: &csv::StringRecord,
     header: &Header,
     display_hash: &str,
+    expected_nbits_must_match_header: bool,
 ) -> Result<(), SkipReason> {
     check_display_hash(record.get(layout.btc_hash), display_hash)?;
     check_display_hash(
@@ -212,10 +213,12 @@ fn validate_parent_fields(
     check_optional_i64(record.get(layout.btc_time), i64::from(header.time))?;
     check_optional_u32_decimal(record.get(layout.btc_nonce), header.nonce)?;
     check_optional_compact_target(record.get(layout.btc_bits), header.bits.to_consensus())?;
-    check_optional_compact_target(
-        record.get(layout.expected_nbits),
-        header.bits.to_consensus(),
-    )?;
+    if expected_nbits_must_match_header {
+        check_optional_compact_target(
+            record.get(layout.expected_nbits),
+            header.bits.to_consensus(),
+        )?;
+    }
     if !validates_target(header.block_hash(), header.bits) {
         return Err(SkipReason::TargetInvalid);
     }
@@ -700,6 +703,24 @@ mod tests {
             "error-block-observations"
         );
         assert_eq!(parsed.historical_provenance.btc_stale_relevance, None);
+    }
+
+    #[test]
+    fn error_observation_allows_catalogued_expected_nbits_mismatch() {
+        let error_row = row(TestRow {
+            chain: "devcoin",
+            child_height: "42",
+            classification: "error_block",
+            ..TestRow::default()
+        })
+        .replacen("full_classifier_inventory", "error-block-observations", 1)
+        .replacen(
+            ",VALID,1d00ffff,,",
+            ",VALID_ERROR_BLOCK,1d00fffe,nbits_retarget_not_applied,",
+            1,
+        );
+
+        assert!(error_observation_candidate("devcoin", &error_row).is_ok());
     }
 
     #[test]

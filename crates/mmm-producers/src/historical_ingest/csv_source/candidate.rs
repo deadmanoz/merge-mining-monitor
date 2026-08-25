@@ -54,6 +54,7 @@ pub(crate) fn candidate_from_record(
         publication_ref,
         nbits_table,
         parse_taxonomy_fields,
+        true,
     )
 }
 
@@ -72,6 +73,7 @@ pub(crate) fn error_observation_candidate_from_record(
         publication_ref,
         None,
         parse_error_observation_taxonomy_fields,
+        false,
     )
 }
 
@@ -82,6 +84,7 @@ fn candidate_from_record_with_taxonomy(
     publication_ref: &str,
     nbits_table: Option<&NbitsTable>,
     parse_taxonomy: TaxonomyParser,
+    expected_nbits_must_match_header: bool,
 ) -> Result<ImportCandidate, SkipReason> {
     if record.get(layout.chain).map(str::trim) != Some(spec.chain) {
         return Err(SkipReason::Malformed);
@@ -90,7 +93,13 @@ fn candidate_from_record_with_taxonomy(
     let taxonomy = parse_taxonomy(spec, layout, record, publication_ref)?;
     let header = parse_parent_header(record.get(layout.btc_header))?;
     let display_hash = header.block_hash().to_string();
-    validate_parent_fields(layout, record, &header, &display_hash)?;
+    validate_parent_fields(
+        layout,
+        record,
+        &header,
+        &display_hash,
+        expected_nbits_must_match_header,
+    )?;
     let pow_validates_child_target = child
         .nbits
         .map(|nbits| validates_target(header.block_hash(), CompactTarget::from_consensus(nbits)));
@@ -253,7 +262,8 @@ fn parse_error_observation_taxonomy_fields(
     let rejection_reason = non_empty(record.get(layout.rejection_reason))?.to_owned();
     let btc_height = parse_optional_nonnegative_i32(record.get(layout.btc_height))?
         .ok_or(SkipReason::EmptyField)?;
-    non_empty(record.get(layout.expected_nbits))?;
+    parse_optional_compact_target(record.get(layout.expected_nbits))?
+        .ok_or(SkipReason::EmptyField)?;
     Ok(TaxonomyFields {
         source_classification: SourceClassification::ErrorBlock,
         relevance_selection: None,

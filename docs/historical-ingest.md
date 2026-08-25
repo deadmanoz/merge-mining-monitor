@@ -42,12 +42,18 @@ the importer verifies:
 - every row's schema, hashes, compact targets, parent header, proof of work,
   taxonomy, and available child-header corroboration.
 
-Error-observation rows are admitted through a separate parser, not by widening
-the valid-evidence taxonomy. Bitcoin Core is mandatory: the importer requires
-both an exact local catalogue match and the shared Core-plus-catalogue parent
-resolver to produce the same `error_block` height and rejection reason. A row
-that would be skipped aborts the complete publication before it writes any
-normal chain artifact.
+Error-observation rows are admitted through a separate parser rather than
+widening the normal valid-evidence taxonomy. Bitcoin Core is mandatory: the
+importer requires both an exact local catalogue match and the shared
+Core-plus-catalogue parent resolver to produce the same `error_block` height
+and rejection reason. A row that would be skipped aborts the complete
+publication before it writes any normal chain artifact.
+
+Their `expected_nbits` is still required to be a valid compact target, but it
+records the network target expected at the catalogued height. It can therefore
+differ from the invalid header's own `btc_bits` for
+`nbits_retarget_not_applied`; the header target itself is always checked against
+its proof of work.
 
 Direct stale rows require a complete `VALID` validation token. Stale-descendant
 rows require the exact `VALID_STALE_DESCENDANT` status. These statuses describe

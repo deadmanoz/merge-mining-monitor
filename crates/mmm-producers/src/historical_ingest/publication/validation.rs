@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use anyhow::{Result, ensure};
 
 use super::{ArtifactRole, PublicationManifest, valid_sha256};
+use crate::historical_ingest::config::is_historical_import_chain;
 
 pub(super) struct ArtifactSetValidation {
     pub(super) event_chains: BTreeSet<String>,
@@ -85,8 +86,8 @@ pub(super) fn validate_artifact_set(
                 );
                 for chain in artifact.source_chain_counts.keys() {
                     ensure!(
-                        registry_chains.contains(chain),
-                        "error-observation artifact includes unknown or non-importable chain {chain:?}"
+                        is_historical_import_chain(chain),
+                        "error-observation artifact includes unknown or surveyed chain {chain:?}"
                     );
                 }
                 ensure!(
