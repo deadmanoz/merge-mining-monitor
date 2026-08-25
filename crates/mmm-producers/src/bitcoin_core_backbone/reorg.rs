@@ -27,12 +27,10 @@ use mmm_store::get_source_id;
 
 use super::{
     BackboneIntegrityError, BackboneIntegrityFailure, BitcoinCoreBackboneSource,
-    BitcoinCoreBackboneTip, BitcoinCoreSyncStats, integrity_error,
+    BitcoinCoreBackboneTip, BitcoinCoreSyncStats, REORG_REPAIR_ERROR_CODE, integrity_error,
     live_backbone_window_start_height, load_or_init_sync_state, repair_near_tip_gaps_to_target,
     update_sync_error,
 };
-
-const REORG_REPAIR_ERROR_CODE: &str = "near_tip_reorg_repair_failed";
 
 /// Finite test seam for exercising follow-mode near-tip repair without
 /// starting the process-lifetime live loop.

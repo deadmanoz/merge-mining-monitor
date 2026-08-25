@@ -81,8 +81,12 @@ const DEFAULT_LIMIT: i64 = 100;
 /// `bitcoin_core_sync_state` row per source under this key; all cursor reads and
 /// writes are scoped by `(source_id, sync_mode)`.
 const SYNC_MODE_CONTIGUOUS: &str = "contiguous";
+// A verified live target resolves these four statuses. Keep their writers and
+// the acceptance clear policy keyed to the same constants.
 const RETRYABLE_REPAIR_ERROR_CODE: &str = "near_tip_reorg_repair_retry";
 const TARGET_TIP_CHANGED_ERROR_CODE: &str = "target_tip_changed";
+const REORG_REPAIR_ERROR_CODE: &str = "near_tip_reorg_repair_failed";
+const LIVE_WINDOW_INVARIANT_ERROR_CODE: &str = "live_window_invariant_failed";
 
 /// A Bitcoin Core tip observation: the active-chain height and its block hash.
 /// Carried as a unit so `verify_or_set_target_tip` can detect a same-height tip

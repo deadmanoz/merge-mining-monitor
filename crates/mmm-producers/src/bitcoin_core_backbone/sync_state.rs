@@ -10,8 +10,9 @@ use mmm_read_model::run_exclusive_core_canonical_view_transaction;
 
 use super::{
     BackboneIntegrityError, BackboneIntegrityFailure, BitcoinCoreBackboneSource,
-    BitcoinCoreBackboneTip, RETRYABLE_REPAIR_ERROR_CODE, SYNC_MODE_CONTIGUOUS,
-    TARGET_TIP_CHANGED_ERROR_CODE, target_stability_failure,
+    BitcoinCoreBackboneTip, LIVE_WINDOW_INVARIANT_ERROR_CODE, REORG_REPAIR_ERROR_CODE,
+    RETRYABLE_REPAIR_ERROR_CODE, SYNC_MODE_CONTIGUOUS, TARGET_TIP_CHANGED_ERROR_CODE,
+    target_stability_failure,
 };
 
 /// In-memory mirror of the `bitcoin_core_sync_state` cursor row for one batch.
@@ -159,16 +160,16 @@ where
                 "UPDATE bitcoin_core_sync_state \
                  SET target_tip_height = $3, target_tip_hash = $4, \
                      last_error_code = CASE \
-                         WHEN last_error_code IN ($5, $6) THEN NULL \
+                         WHEN last_error_code IN ($5, $6, $7, $8) THEN NULL \
                          ELSE last_error_code END, \
                      last_error_height = CASE \
-                         WHEN last_error_code IN ($5, $6) THEN NULL \
+                         WHEN last_error_code IN ($5, $6, $7, $8) THEN NULL \
                          ELSE last_error_height END, \
                      last_error = CASE \
-                         WHEN last_error_code IN ($5, $6) THEN NULL \
+                         WHEN last_error_code IN ($5, $6, $7, $8) THEN NULL \
                          ELSE last_error END, \
                      last_error_details = CASE \
-                         WHEN last_error_code IN ($5, $6) THEN '{}'::jsonb \
+                         WHEN last_error_code IN ($5, $6, $7, $8) THEN '{}'::jsonb \
                          ELSE last_error_details END, \
                      updated_at = extract(epoch from now())::bigint \
                  WHERE source_id = $1 AND sync_mode = $2",
@@ -179,6 +180,8 @@ where
                     &target_hash,
                     &RETRYABLE_REPAIR_ERROR_CODE,
                     &TARGET_TIP_CHANGED_ERROR_CODE,
+                    &REORG_REPAIR_ERROR_CODE,
+                    &LIVE_WINDOW_INVARIANT_ERROR_CODE,
                 ],
             )
             .await

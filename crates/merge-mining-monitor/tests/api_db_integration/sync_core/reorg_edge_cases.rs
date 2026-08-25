@@ -812,7 +812,12 @@ async fn repair_status_preserves_unrelated_error_and_clears_repair_owned_errors(
         assert_eq!(preserved.get::<_, Option<i32>>(4), Some(target_height));
         assert_eq!(preserved.get::<_, Option<Vec<u8>>>(5), Some(target_hash));
 
-        for owned_code in ["near_tip_reorg_repair_retry", "target_tip_changed"] {
+        for owned_code in [
+            "near_tip_reorg_repair_retry",
+            "target_tip_changed",
+            "near_tip_reorg_repair_failed",
+            "live_window_invariant_failed",
+        ] {
             client
                 .execute(
                     "UPDATE bitcoin_core_sync_state \

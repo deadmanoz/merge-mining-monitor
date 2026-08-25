@@ -229,7 +229,7 @@ async fn try_record_retryable_repair_message(
     // The upsert locks the sync-state row. Check the queue and status ownership in
     // a separate READ COMMITTED statement so a writer that held the row first
     // is visible after this transaction waits for it. Retry bookkeeping may
-    // replace a repair-owned status, but never masks another producer failure.
+    // replace a retry-owned status, but never masks another producer failure.
     let state = load_or_init_sync_state(&txn, source_id).await?;
     let may_record_retry: bool = txn
         .query_one(
