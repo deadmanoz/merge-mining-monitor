@@ -12,7 +12,7 @@ tree view from that evidence.
 | `pool` | Stable pool identities loaded from `data/pools/current.json`. |
 | `pool_identity` | Native child-chain identities that map to a pool, such as RSK miner addresses or child reward addresses. |
 | `merge_mining_event` | Source evidence keyed by exact or partial authenticated child identity and its Bitcoin parent header. |
-| `historical_event_provenance` | Publication-side chain, source row, classification, validation, and relevance provenance attached to imported events; multiple source rows can map to one event. The `error-block-observations` scope keeps catalogue-backed error witnesses separate from replaceable normal snapshots. |
+| `historical_event_provenance` | Publication-side chain, source row, classification, validation, and relevance provenance attached to imported events; multiple source rows can map to one event. The `error-block-observations` scope keeps catalogue-backed error witnesses separate from replaceable normal snapshots, while requiring the same archive coordinate to identify the same event across pinned publications. |
 | `historical_reconcile_queue` | Durable parent rebuild state and dependent-cascade seeds for resumable historical imports. |
 | chain sidecars | One-to-one evidence details for chains with extra structured data, such as RSK and Hathor. |
 | `event_pool_attribution` | Attribution rows connecting an event to a pool with source/provenance details. |

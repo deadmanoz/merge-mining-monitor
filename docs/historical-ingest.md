@@ -26,8 +26,9 @@ is `classification=error_block`, has `VALID_ERROR_BLOCK`, the catalogue's
 Bitcoin height and rejection reason, and blank stale-relevance fields. The file
 uses the normal 27-column header plus the seven RSK sidecar columns; non-RSK
 sidecar cells are blank and RSK witnesses carry complete sidecars. Its manifest
-entry pins the generated rows and source-chain inventory, so a truncated or
-cross-chain-substituted aggregate fails before database mutation.
+requires exactly one 73-row entry with the generated source-chain inventory, so
+a missing, truncated, or cross-chain-substituted aggregate fails before database
+mutation.
 
 `data/historical/historical-source-manifest.json` pins each event payload by
 path, byte size, SHA-256, row count, and classification counts. It also pins the

@@ -63,6 +63,8 @@ pub(super) const RSK_SIDECAR_COLUMNS: &[&str] = &[
     "rsk_coinbase_tail",
 ];
 
+const ERROR_OBSERVATION_ROW_COUNT: u64 = 73;
+
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(serde::Serialize))]
 pub(super) struct PublicationManifest {
@@ -214,18 +216,14 @@ fn validate_manifest(manifest: &PublicationManifest) -> Result<()> {
         aggregate_rows == manifest.aggregate_rows,
         "aggregate_rows does not equal aggregate artifact rows"
     );
-    match error_observation {
-        Some(row_count) => {
-            ensure!(
-                row_count == manifest.error_observation_rows,
-                "error_observation_rows does not equal the error-observation artifact rows"
-            );
-        }
-        None => ensure!(
-            manifest.error_observation_rows == 0,
-            "error_observation_rows requires an error-observation artifact"
-        ),
-    }
+    ensure!(
+        error_observation == Some(ERROR_OBSERVATION_ROW_COUNT),
+        "error-observation aggregate artifact is required with its pinned row total"
+    );
+    ensure!(
+        manifest.error_observation_rows == ERROR_OBSERVATION_ROW_COUNT,
+        "unexpected pinned error-observation row total"
+    );
     ensure!(
         manifest.total_event_rows == 576_662,
         "unexpected pinned publication event total"
@@ -592,108 +590,13 @@ fn count_row(
 }
 
 #[cfg(test)]
+mod test_support;
+
+#[cfg(test)]
 mod tests {
+    use super::test_support::{temp_path, valid_manifest};
     use super::*;
     use crate::historical_ingest::config::{HistoricalImportAllConfig, historical_chain_spec};
-
-    fn temp_path(label: &str) -> std::path::PathBuf {
-        let suffix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock after epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "mmm-publication-{label}-{}-{suffix}",
-            std::process::id()
-        ))
-    }
-
-    fn valid_manifest() -> PublicationManifest {
-        let mut assigned_total = false;
-        let mut artifacts = importable_chains()
-            .iter()
-            .map(|spec| {
-                let row_count = if !assigned_total && spec.lifecycle != SourceLifecycle::Surveyed {
-                    assigned_total = true;
-                    576_662
-                } else {
-                    0
-                };
-                PublicationArtifact {
-                    chain: spec.chain.to_owned(),
-                    csv_path: format!(
-                        "results/monitor-evidence/{}_monitor_evidence.csv",
-                        spec.chain
-                    ),
-                    role: ArtifactRole::Event,
-                    row_count,
-                    size_bytes: 1,
-                    sha256: "0".repeat(64),
-                    counts: PublicationCounts {
-                        canonical: row_count,
-                        ..PublicationCounts::default()
-                    },
-                    source_chain_counts: BTreeMap::new(),
-                }
-            })
-            .collect::<Vec<_>>();
-        artifacts.push(PublicationArtifact {
-            chain: "stale-descendants".to_owned(),
-            csv_path: "results/stale-descendants.csv".to_owned(),
-            role: ArtifactRole::Aggregate,
-            row_count: 21,
-            size_bytes: 1,
-            sha256: "0".repeat(64),
-            counts: PublicationCounts {
-                stale_descendant: 21,
-                ..PublicationCounts::default()
-            },
-            source_chain_counts: BTreeMap::new(),
-        });
-        PublicationManifest {
-            schema_version: 2,
-            source_repo: "merge-mining-research".to_owned(),
-            source_repo_commit: PINNED_RESEARCH_COMMIT.as_str().to_owned(),
-            publication_manifest_path: "results/monitor-evidence/manifest.json".to_owned(),
-            publication_manifest_sha256: "0".repeat(64),
-            total_event_rows: 576_662,
-            aggregate_rows: 21,
-            error_observation_rows: 0,
-            required_columns: NORMALIZED_COLUMNS
-                .iter()
-                .map(|column| (*column).to_owned())
-                .collect(),
-            artifacts,
-        }
-    }
-
-    fn add_error_observation_artifact(manifest: &mut PublicationManifest) {
-        manifest.error_observation_rows = 73;
-        manifest.artifacts.push(PublicationArtifact {
-            chain: "error-block-observations".to_owned(),
-            csv_path: "results/monitor-evidence/error-block-observations_monitor_evidence.csv"
-                .to_owned(),
-            role: ArtifactRole::ErrorObservation,
-            row_count: 73,
-            size_bytes: 1,
-            sha256: "0".repeat(64),
-            counts: PublicationCounts {
-                error_block: 73,
-                ..PublicationCounts::default()
-            },
-            source_chain_counts: BTreeMap::from([
-                ("devcoin".to_owned(), 16),
-                ("elastos".to_owned(), 1),
-                ("emercoin".to_owned(), 1),
-                ("groupcoin".to_owned(), 1),
-                ("i0coin".to_owned(), 1),
-                ("ixcoin".to_owned(), 13),
-                ("namecoin".to_owned(), 32),
-                ("rsk".to_owned(), 5),
-                ("syscoin".to_owned(), 2),
-                ("unobtanium".to_owned(), 1),
-            ]),
-        });
-    }
 
     #[test]
     fn normalized_schema_is_one_uniform_common_header() {
@@ -725,6 +628,10 @@ mod tests {
             (
                 "missing_aggregate",
                 "stale-descendants aggregate artifact is required",
+            ),
+            (
+                "missing_error_observation",
+                "error-observation aggregate artifact is required",
             ),
             (
                 "aggregate_total",
@@ -773,6 +680,12 @@ mod tests {
                         .artifacts
                         .retain(|artifact| artifact.role != ArtifactRole::Aggregate);
                 }
+                "missing_error_observation" => {
+                    manifest
+                        .artifacts
+                        .retain(|artifact| artifact.role != ArtifactRole::ErrorObservation);
+                    manifest.error_observation_rows = 0;
+                }
                 "aggregate_total" => manifest.aggregate_rows = 22,
                 _ => unreachable!("table defines every case"),
             }
@@ -787,7 +700,6 @@ mod tests {
     #[test]
     fn error_observation_manifest_requires_consistent_source_counts() {
         let mut manifest = valid_manifest();
-        add_error_observation_artifact(&mut manifest);
         validate_manifest(&manifest).expect("complete error-observation artifact is accepted");
 
         let error = manifest
@@ -897,6 +809,37 @@ mod tests {
             .expect("aggregate artifact");
         aggregate_artifact.size_bytes = aggregate.len() as u64;
         aggregate_artifact.sha256 = sha256::Hash::hash(aggregate.as_bytes()).to_string();
+
+        let error_path = publication_dir.join("error-block-observations_monitor_evidence.csv");
+        let mut error_columns = NORMALIZED_COLUMNS.to_vec();
+        error_columns.extend_from_slice(RSK_SIDECAR_COLUMNS);
+        let classification_index = error_columns
+            .iter()
+            .position(|column| *column == "classification")
+            .expect("classification column");
+        let source_chain_counts = manifest
+            .error_observation_artifact()
+            .expect("error-observation artifact")
+            .source_chain_counts
+            .clone();
+        let mut error_observations = format!("{}\n", error_columns.join(","));
+        for (chain, row_count) in source_chain_counts {
+            for _ in 0..row_count {
+                let mut row = vec![""; error_columns.len()];
+                row[0] = &chain;
+                row[classification_index] = "error_block";
+                error_observations.push_str(&format!("{}\n", row.join(",")));
+            }
+        }
+        std::fs::write(&error_path, &error_observations)
+            .expect("write error-observation aggregate fixture");
+        let error_artifact = manifest
+            .artifacts
+            .iter_mut()
+            .find(|artifact| artifact.role == ArtifactRole::ErrorObservation)
+            .expect("error-observation artifact");
+        error_artifact.size_bytes = error_observations.len() as u64;
+        error_artifact.sha256 = sha256::Hash::hash(error_observations.as_bytes()).to_string();
 
         let manifest_path = root.join("monitor-manifest.json");
         std::fs::write(

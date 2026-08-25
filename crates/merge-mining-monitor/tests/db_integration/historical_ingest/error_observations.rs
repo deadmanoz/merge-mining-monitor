@@ -86,6 +86,51 @@ async fn import_requires_catalogue_match_before_writing() -> Result<()> {
     })
 }
 
+#[tokio::test]
+async fn error_observation_coordinate_cannot_change_across_publications() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let accepted = catalogued_header()?;
+        let original_path = write_csv(&accepted, "devcoin", 46, 946_213, TIME_BELOW_MTP)?;
+        let changed_path = write_csv(&accepted, "devcoin", 47, 946_213, TIME_BELOW_MTP)?;
+        let result = async {
+            let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+                ParentClassification::error_block(
+                    &accepted,
+                    946_213,
+                    HeightSource::ErrorBlockCatalog,
+                    None,
+                    TIME_BELOW_MTP,
+                ),
+            ));
+            run_error_observation_import_for_test(&mut client, &classifier, &original_path).await?;
+            client
+                .execute(
+                    "UPDATE historical_event_provenance \
+                     SET publication_ref = $1 \
+                     WHERE artifact_scope = 'error-block-observations'",
+                    &[&"08da16532a55240e54c4051d5d324a0484b80b1c"],
+                )
+                .await?;
+
+            let error =
+                run_error_observation_import_for_test(&mut client, &classifier, &changed_path)
+                    .await
+                    .expect_err("a changed error-observation coordinate must fail");
+            assert!(
+                format!("{error:#}").contains("error-observation coordinate"),
+                "unexpected error: {error:#}"
+            );
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:devcoin").await?,
+                1
+            );
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        finish_import_with_cleanup(result, &[&original_path, &changed_path])
+    })
+}
+
 fn catalogued_header() -> Result<Header> {
     deserialize(&hex::decode(
         "00a0032bb223f1aad55892df75d0ff4712f0543959c5065ab89d000000000000000000005eba715327fc82c765fa651bd6226c4b4a6a846cd60197bcd76d47ada0611cfce335df696913021725806e70",
