@@ -31,13 +31,60 @@ SQL_STMT = re.compile(r"^\s*(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|WITH)\b",
 # A PostgreSQL dollar-quote opener: `$$` or `$tag$` where the tag is a valid
 # identifier (never starting with a digit, so `$1` positional binds don't match).
 DOLLAR_OPEN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
-# A Rust string-continuation escape: a backslash immediately before a newline is
-# removed together with the newline and the next line's leading indentation, so
-# `"SELECT 1 \\\n    FROM t"` denotes `SELECT 1 FROM t`. Applied only to non-raw
-# literals (a raw string's backslash is literal); without it the same query wrapped
-# differently in source keeps a stray `\` token and normalizes apart, splitting a
-# real exact-duplicate group.
-LINE_CONT = re.compile(r"\\\r?\n[ \t]*")
+# Rust string escapes that map to a single character. `iter_string_literals_ex`
+# returns a non-raw literal's *source* bytes, so a SQL backslash is spelled `\\` and
+# a quote may be written `\'`/`\"`; decoding them here (before SQL quote scanning)
+# means a source-level `\\` collapses to one backslash and cannot later be misread as
+# escaping an adjacent quote, and `E'ABC\\' DEF'` is compared as the string it truly
+# denotes rather than being split at the `\\'`.
+_SIMPLE_ESC = {"n": "\n", "r": "\r", "t": "\t", "0": "\0", "\\": "\\", "'": "'", '"': '"'}
+
+
+def _decode_rust_escapes(s: str) -> str:
+    """Decode the escapes in a non-raw Rust string literal's source text to the bytes
+    the string actually denotes. Handles the simple/control escapes, `\\xHH`,
+    `\\u{...}`, and a `\\`-newline line continuation (the break and the next line's
+    leading indentation are dropped). An unknown escape is left verbatim (invalid
+    Rust would not compile, so being lenient is harmless)."""
+    out: list[str] = []
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c != "\\" or i + 1 >= n:
+            out.append(c)
+            i += 1
+            continue
+        e = s[i + 1]
+        if e in _SIMPLE_ESC:
+            out.append(_SIMPLE_ESC[e])
+            i += 2
+        elif e in "\r\n":  # line continuation: drop the break and following indent
+            j = i + 1
+            if s[j] == "\r":
+                j += 1
+            if j < n and s[j] == "\n":
+                j += 1
+            while j < n and s[j] in " \t":
+                j += 1
+            i = j
+        elif e == "x" and i + 3 < n:
+            try:
+                out.append(chr(int(s[i + 2 : i + 4], 16)))
+                i += 4
+            except ValueError:
+                out.append(c)
+                i += 1
+        elif e == "u" and i + 2 < n and s[i + 2] == "{" and (k := s.find("}", i + 3)) != -1:
+            try:
+                out.append(chr(int(s[i + 3 : k], 16)))
+                i = k + 1
+            except ValueError:
+                out.append(c)
+                i += 1
+        else:
+            out.append(c)  # unknown escape: keep the backslash verbatim
+            i += 1
+    return "".join(out)
 # Whitespace that sits between a word character and an adjacent operator/punctuation
 # character (a non-word, non-space char such as `( ) , = < > + - * / | :`) is
 # insignificant in SQL and removed, canonicalizing spacing variants like
@@ -59,10 +106,12 @@ def extract_sql(src: str):
     # honors matched raw delimiters, and skips comments/char literals - the whole
     # class of quote-desync bugs a hand-rolled regex hits.
     for content, off, is_raw in _scan.iter_string_literals_ex(src):
-        # Decode Rust line continuations first (non-raw only) so a wrapped literal is
-        # compared as the string it actually denotes, not with an embedded `\`.
+        # Decode Rust escapes (non-raw only) so the literal is compared as the string
+        # it actually denotes - crucially collapsing a source `\\` to one backslash so
+        # a following quote is not misread as escaped. A raw string's bytes are already
+        # literal, so it is passed through.
         if not is_raw:
-            content = LINE_CONT.sub("", content)
+            content = _decode_rust_escapes(content)
         # Admit a literal that either starts with a command keyword (an anchored
         # single-clause statement) or carries >= 2 recognized clauses (a fragment
         # like a `JOIN ... WHERE ...` builder piece that does not start a statement).
@@ -230,8 +279,10 @@ def collect(root: str, near: float = 0.85) -> list[_report.Finding]:
     # Longest admissible length ratio for a pair that can still reach `near`: with
     # the shorter string fully matched, ratio = 2*La/(La+Lb), so Lb/La <=
     # (2-near)/near. Deriving it from the threshold (not a fixed 1.3) stops the
-    # length prune from discarding pairs that would clear a lower `near`.
-    max_len_ratio = (2.0 - near) / near
+    # length prune from discarding pairs that would clear a lower `near`. `near == 0`
+    # (every similarity level) has no length bound, so skip the prune rather than
+    # dividing by zero.
+    max_len_ratio = (2.0 - near) / near if near > 0 else float("inf")
     sm = SequenceMatcher(None, autojunk=False)
     for i in range(len(norms)):
         ni = norms[i]
@@ -262,10 +313,22 @@ def collect(root: str, near: float = 0.85) -> list[_report.Finding]:
     return findings
 
 
+def _near_arg(v: str) -> float:
+    """A similarity floor in [0, 1]. `0` requests every level (no length pruning); a
+    value outside the range is a usage error caught here, not a later traceback."""
+    try:
+        f = float(v)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {v!r}")
+    if not (0.0 <= f <= 1.0):
+        raise argparse.ArgumentTypeError(f"must be within [0, 1], got {f}")
+    return f
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("root", nargs="?", default="crates")
-    ap.add_argument("--near", type=float, default=0.85, help="near-duplicate similarity floor (default: 0.85)")
+    ap.add_argument("--near", type=_near_arg, default=0.85, help="near-duplicate similarity floor in [0,1] (default: 0.85)")
     ap.add_argument("--limit", type=int, default=25, help="max near-duplicate pairs (default: 25)")
     ap.add_argument("--json", action="store_true", help="emit the shared finding schema as JSON")
     args = ap.parse_args()

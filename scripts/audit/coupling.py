@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
+import sys
 from collections import Counter
 from itertools import combinations
 
@@ -82,6 +83,20 @@ def _tracked_paths() -> set[str]:
         capture_output=True, text=True, check=True,
     ).stdout
     return set(out.splitlines())
+
+
+def _is_shallow() -> bool:
+    """True in a shallow checkout, where `git log` only sees a truncated slice of
+    history. Coupling and churn would then depend on the clone's fetch depth rather
+    than the code, so the caller reports incompleteness instead of partial numbers."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--is-shallow-repository"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except Exception:
+        return False
+    return out == "true"
 
 
 def _resolve_rename(rename_to: dict[str, str], path: str) -> str:
@@ -153,6 +168,19 @@ def commits(all_refs: bool = False):
 def collect(min_co: int = 5, min_ratio: float = 0.6, max_commit_files: int = 30,
             root: str | None = None, all_refs: bool = False) -> tuple[list[_report.Finding], Counter]:
     prefix = _scope_prefix(root)
+    if _is_shallow():
+        # A shallow clone carries only a truncated slice of history, so `git log`
+        # would silently under-count churn and coupling (a depth-1 clone reports zero
+        # pairs where a full clone reports many). Emit one explicit incompleteness
+        # marker and no pairs rather than a valid-looking but fetch-depth-dependent
+        # data contract.
+        marker = _report.Finding(
+            tool="coupling", kind="coupling-incomplete",
+            summary="shallow repository - git history is truncated; churn/coupling omitted "
+                    "(run in a full clone or `git fetch --unshallow`)",
+            severity="info", locations=[], metrics={"shallow": True},
+        )
+        return [marker], Counter()
     tracked = _tracked_paths()
     churn: Counter[str] = Counter()      # scoped files across all commits (churn report)
     co_churn: Counter[str] = Counter()   # scoped files in non-sweep commits (ratio denominator)
@@ -206,15 +234,21 @@ def main() -> int:
         _report.print_json(findings)
         return 0
 
+    incomplete = [f for f in findings if f.kind == "coupling-incomplete"]
+    if incomplete:
+        print(f"# coupling skipped: {incomplete[0].summary}", file=sys.stderr)
+        return 0
+
+    pairs = [f for f in findings if f.kind == "temporal-coupling"]
     print("=== CHURN (most-changed tracked files) ===")
     for path, n in churn.most_common(args.limit):
         print(f"{n:4d}  {path}")
     print(f"\n=== TEMPORAL COUPLING (co-changes >= {args.min_co}, ratio >= {args.min_ratio}) ===")
-    for f in findings[: args.limit]:
+    for f in pairs[: args.limit]:
         a, b = f.locations
         cross = "XDIR " if f.metrics["cross_dir"] else "     "
         print(f"{f.score:.2f}  n={f.metrics['co_changes']:<3d} {cross} {a.file}  <=>  {b.file}")
-    print(f"# {len(findings)} coupled pairs (XDIR = different directories, the more interesting ones)")
+    print(f"# {len(pairs)} coupled pairs (XDIR = different directories, the more interesting ones)")
     return 0
 
 

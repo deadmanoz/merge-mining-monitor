@@ -100,6 +100,11 @@ READ_PRIMITIVES = {"var", "var_os", "env_lookup", "lookup", "getenv"}
 CONST_KEY = re.compile(
     r'\b(?:const|static)\s+([A-Z][A-Z0-9_]*)\s*:\s*&\s*(?:\'static\s+)?str\s*=\s*(?:r#*)?"([A-Z][A-Z0-9_]{2,})"'
 )
+# A `use` that imports a std::env read primitive under some local name:
+# `use std::env::var;`, `use std::env::var_os as getenv;`, or a group
+# `use std::env::{var, var_os as v};`. The captured body (a single item or a `{...}`
+# group) is parsed by env_read_aliases into the bound local names.
+ENV_USE = re.compile(r"\buse\s+std::env::(\{[^}]*\}|[A-Za-z0-9_]+(?:\s+as\s+[A-Za-z0-9_]+)?)\s*;")
 CONFIG_STRUCT = re.compile(r"\bstruct\s+([A-Za-z0-9_]*Config)\b")
 DEFAULT_PREFIXES = ["NAMECOIN", "RSK", "SYSCOIN", "FRACTAL", "HATHOR", "ELASTOS"]
 
@@ -123,6 +128,25 @@ def read_text(path: str) -> str:
 def env_keys(text: str) -> set[str]:
     """Env keys declared in a .env-style file (including commented `# KEY=...`)."""
     return set(re.findall(r"^\s*#?\s*([A-Z][A-Z0-9_]+)=", text, flags=re.M))
+
+
+def env_read_aliases(text: str) -> set[str]:
+    """Local identifiers bound to `std::env::var`/`var_os` through a `use` import.
+
+    `use std::env::var;` binds `var`; `use std::env::var_os as getenv;` binds
+    `getenv`; `use std::env::{var, var_os as v};` binds `var` and `v`. A bare call to
+    such a name (`var("KEY")`) is a direct environment read the qualified
+    `env::var(...)` patterns cannot see, so recognizing it (scoped to the importing
+    file) keeps a documented key from looking unread."""
+    names: set[str] = set()
+    for m in ENV_USE.finditer(text):
+        body = m.group(1)
+        items = body[1:-1].split(",") if body.startswith("{") else [body]
+        for it in items:
+            parts = it.split()  # ["var"] or ["var", "as", "alias"]
+            if parts and parts[0] in ("var", "var_os"):
+                names.add(parts[2] if len(parts) >= 3 and parts[1] == "as" else parts[0])
+    return names
 
 
 # A `$VAR` / `${VAR}` shell reference to an UPPER_SNAKE variable.
@@ -193,10 +217,14 @@ def is_chain_scoped(key: str, prefixes: list[str]) -> bool:
     return any(key.startswith(p + "_") for p in prefixes)
 
 
-def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example", include_tests: bool = False) -> list[_report.Finding]:
-    docs = read_text(f"{docs_dir}/configuration.md")
-    prefixes = parse_prefixes(docs)
+def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_report.Loc], dict[str, list[_report.Loc]], set[str]]:
+    """Scan a tree into the raw config inventory: per-file env-read counts, *Config
+    struct locations, per-key read locations, and per-chain suffixes built in code.
 
+    Factored out of `collect` so the reverse-drift (config-unread) check can run it a
+    second time over the whole workspace, independent of a partial detector root -
+    otherwise a key read in a sibling crate looks unread when a single crate is
+    scanned."""
     read_files: dict[str, int] = {}
     struct_locs: list[_report.Loc] = []
     key_locs: dict[str, list[_report.Loc]] = {}
@@ -233,9 +261,11 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
         # collapses), but must still ignore a commented-out `// env::var("PHANTOM")`,
         # so it runs on comment-stripped-but-string-preserving source.
         decommented = _scan.strip_comments(src)
+        # Local names this file binds to std::env::var/var_os via `use`; a bare
+        # `var("KEY")` is then a direct read the qualified patterns cannot see.
+        file_env_aliases = env_read_aliases(stripped)
         reads = len(ENV_READ.findall(stripped))
-        if reads:
-            read_files[rel] = reads
+        alias_reads = 0  # bare imported-primitive reads (found in the HELPER_CALL pass)
         for m in CONFIG_STRUCT.finditer(stripped):
             struct_locs.append(_report.Loc(rel, stripped.count("\n", 0, m.start()) + 1, m.group(1)))
         for m in KEYCALL.finditer(decommented):
@@ -267,9 +297,20 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
                 helper_nonenv_names.add(fn.name)
         for m in HELPER_CALL.finditer(decommented):
             fn_name, key = m.group(1), m.group(2)
-            if fn_name in READ_PRIMITIVES or _is_build_env(key):
-                continue  # direct reads handled elsewhere; build-time vars ignored
-            helper_calls.append((fn_name, key, _report.Loc(rel, decommented.count("\n", 0, m.start()) + 1)))
+            if _is_build_env(key):
+                continue  # build-time vars are not application config
+            loc = _report.Loc(rel, decommented.count("\n", 0, m.start()) + 1)
+            # An imported `std::env::var`/`var_os` (or its alias) reads directly, so
+            # credit the key here - before the READ_PRIMITIVES skip, which would drop a
+            # bare `var(...)`. The identity comes from this file's `use`, so the
+            # recognition stays scoped and never fires on an unrelated `var(...)`.
+            if fn_name in file_env_aliases:
+                key_locs.setdefault(key, []).append(loc)
+                alias_reads += 1
+                continue
+            if fn_name in READ_PRIMITIVES:
+                continue  # qualified direct reads handled by KEYCALL
+            helper_calls.append((fn_name, key, loc))
         # Suffix evidence is taken only from a key-construction site - a
         # `format!("{prefix}_SUFFIX")` whose *whole* literal is the key - never from a
         # literal that merely embeds a rendered name (a bare `#[cfg(test)]`
@@ -280,6 +321,12 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
             cm = CONSTRUCT_SUFFIX.match(lit.strip())
             if cm:
                 code_suffixes.add(cm.group(1))
+        # Env-alias reads count toward this file's read tally (the qualified ENV_READ
+        # regex cannot see a bare imported `var(...)`), so a file reading env only
+        # through an imported primitive still registers as a reader.
+        total_reads = reads + alias_reads
+        if total_reads:
+            read_files[rel] = total_reads
 
     # Resolve constant-passed keys once every declaration has been seen. A same-file
     # declaration wins (precise even when another module reuses the name); otherwise
@@ -321,6 +368,15 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
                 deduped.append(loc)
         key_locs[key] = deduped
 
+    return read_files, struct_locs, key_locs, code_suffixes
+
+
+def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example", include_tests: bool = False) -> list[_report.Finding]:
+    docs = read_text(f"{docs_dir}/configuration.md")
+    prefixes = parse_prefixes(docs)
+
+    read_files, struct_locs, key_locs, code_suffixes = _inventory(root, include_tests)
+
     code_full = set(key_locs)
     example = env_keys(read_text(env_example))
     doc_full, doc_suffixes, doc_template_suffixes = doc_tokens(docs, prefixes)
@@ -347,6 +403,25 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
         s = suffix_of(k)
         if s:
             code_suffixes.add(s)
+
+    # The reverse-drift (config-unread) check asks whether a documented+example key is
+    # read *anywhere* in the project, so its code side must span the whole workspace.
+    # A partial detector root (e.g. one crate) would otherwise flag keys read in
+    # sibling crates as unread - a valid-looking but false data contract. Reuse the
+    # root inventory when the root already is the workspace; else scan the git root
+    # once more for the full read-key set. The per-file findings above stay scoped to
+    # the requested root; only this reverse check widens.
+    ws_root = _scan._git_root()
+    if ws_root and os.path.abspath(root) != os.path.abspath(ws_root):
+        _rf, _sl, ws_key_locs, ws_suffixes = _inventory(ws_root, include_tests)
+        full_code_full = set(ws_key_locs)
+        full_code_suffixes = set(ws_suffixes)
+        for k in full_code_full:
+            s = suffix_of(k)
+            if s:
+                full_code_suffixes.add(s)
+    else:
+        full_code_full, full_code_suffixes = code_full, code_suffixes
 
     def in_docs(key: str) -> bool:
         return re.search(rf"\b{re.escape(key)}\b", docs) is not None
@@ -435,9 +510,9 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
     tooling = tooling_referenced_keys()
     unread_full = sorted(
         k for k in (doc_full & example)
-        if not is_chain_scoped(k, prefixes) and k not in code_full and k not in tooling
+        if not is_chain_scoped(k, prefixes) and k not in full_code_full and k not in tooling
     )
-    unread_suf = sorted((doc_suffixes & example_suffixes) - code_suffixes)
+    unread_suf = sorted((doc_suffixes & example_suffixes) - full_code_suffixes)
     stale = unread_full + [f"<PREFIX>{s}" for s in unread_suf]
     if stale:
         findings.append(_report.Finding(
