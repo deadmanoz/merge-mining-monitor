@@ -20,12 +20,72 @@ import re
 import _report
 import _scan
 
-CRATE_REF = re.compile(r"\bcrate::([a-z_][a-z0-9_]*)")
+CRATE_PREFIX = re.compile(r"\bcrate::")
+_IDENT = re.compile(r"[a-z_][a-z0-9_]*")
 # A relative path through one or more `super::` hops, e.g. `super::reconcile` or
 # `super::super::sync`. The captured hop-run's length says how many parents to
 # ascend; the trailing identifier is the referenced module.
 SUPER_REF = re.compile(r"\b((?:super::)+)([a-z_][a-z0-9_]*)")
 ENTRY = {"lib", "main", "mod"}
+# Cargo compiles each file under `src/bin/` as an independent binary crate root,
+# so the directory is not a library module and its files must not be pooled into
+# one synthetic `bin` node (which would invent cross-binary edges/cycles).
+BIN_DIR = "bin"
+
+
+def _brace_group(text: str, open_idx: int) -> tuple[str, int]:
+    """Content between the `{` at `open_idx` and its matching `}`, plus the index
+    just past the close (or end of string if unbalanced)."""
+    depth = 0
+    for k in range(open_idx, len(text)):
+        if text[k] == "{":
+            depth += 1
+        elif text[k] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_idx + 1 : k], k + 1
+    return text[open_idx + 1 :], len(text)
+
+
+def _split_top_commas(s: str) -> list[str]:
+    """Split on commas at brace depth 0 (so a nested group `a::{b, c}` stays one
+    item)."""
+    items: list[str] = []
+    depth = start = 0
+    for i, c in enumerate(s):
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        elif c == "," and depth == 0:
+            items.append(s[start:i])
+            start = i + 1
+    items.append(s[start:])
+    return items
+
+
+def crate_refs(text: str) -> set[str]:
+    """Top-level modules referenced via `crate::`, covering both the single-path
+    form (`crate::foo::bar` -> `foo`) and grouped imports
+    (`use crate::{cli_args, lock_block_hash};` -> `cli_args`, `lock_block_hash`;
+    nested `crate::{a::{b}, c}` -> `a`, `c`). Missing the grouped form silently
+    dropped real edges and could hide a whole cycle."""
+    out: set[str] = set()
+    for m in CRATE_PREFIX.finditer(text):
+        i = m.end()
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if i < len(text) and text[i] == "{":
+            group, _ = _brace_group(text, i)
+            for item in _split_top_commas(group):
+                im = _IDENT.match(item.strip())
+                if im:
+                    out.add(im.group(0))
+        else:
+            im = _IDENT.match(text, i)
+            if im:
+                out.add(im.group(0))
+    return out
 
 
 def crate_src_dirs(root: str) -> list[tuple[str, str]]:
@@ -62,6 +122,8 @@ def top_modules(src: str) -> dict[str, str]:
     for entry in sorted(os.listdir(src)):
         p = os.path.join(src, entry)
         if os.path.isdir(p):
+            if entry == BIN_DIR:
+                continue  # `src/bin/` holds independent binary roots, not a module
             rep = os.path.join(p, "mod.rs")
             mods[entry] = _scan.rel(rep if os.path.exists(rep) else p)
         elif entry.endswith(".rs") and entry[:-3] not in ENTRY:
@@ -144,7 +206,7 @@ def collect(root: str = "crates", include_tests: bool = False) -> list[_report.F
                 text = _scan.strip_noise(open(path, encoding="utf-8", errors="ignore").read())
             except OSError:
                 continue
-            for ref in CRATE_REF.findall(text):
+            for ref in crate_refs(text):
                 if ref in mods and ref != owner:
                     adj[owner].add(ref)
             # Relative `super::` hops. From a module at depth d, k `super`s ascend to

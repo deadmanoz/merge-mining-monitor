@@ -111,7 +111,10 @@ def norm(s: str) -> str:
 
 
 def is_test(path: str) -> bool:
-    return "/tests/" in path or path.endswith(("tests.rs", "_tests.rs", "test_fixtures.rs"))
+    # Delegate the filename check to the shared predicate so the two stay in sync;
+    # notably it also recognizes the singular `_test.rs`, which a local suffix list
+    # missed - misclassifying such SQL as production and over-grading duplicates.
+    return "/tests/" in path or _scan._is_test_file(path.rsplit("/", 1)[-1])
 
 
 def _pick_cross(locs_i, locs_j):

@@ -11,8 +11,12 @@ ratio is co_changes / min(co_churn_a, co_churn_b), where co_churn counts only th
 commits that actually contribute co-changes (oversized "sweep" commits above
 --max-commit-files are excluded from both the numerator and this denominator so a
 bulk reformat cannot deflate the ratio). CHURN stays the true total change count.
-An optional root scopes every metric to a subtree. Reads `git log`; run inside the
-repo. Advisory; stdlib-only. --json supported.
+
+History is the checked-out revision only (`git log HEAD`) and candidates are
+restricted to paths that still exist at HEAD, so the report is deterministic across
+clones and never names a deleted file; pass --all-refs for a cross-branch view. An
+optional root scopes every metric to a subtree. Run inside the repo. Advisory;
+stdlib-only. --json supported.
 """
 
 from __future__ import annotations
@@ -61,7 +65,22 @@ def _under(path: str, prefix: str | None) -> bool:
     return prefix is None or path == prefix or path.startswith(prefix + "/")
 
 
-def commits():
+def _tracked_paths() -> set[str]:
+    """Paths present in the analyzed revision (HEAD).
+
+    A renamed or deleted file's old path lingers in history forever; restricting
+    churn and coupling candidates to paths that still exist keeps the report about
+    code a reader can actually open and consolidate. Their historical commits still
+    feed the co-change counts of the files that survive alongside them.
+    """
+    out = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    return set(out.splitlines())
+
+
+def commits(all_refs: bool = False):
     """Yield `(total_changed, code_files)` per commit.
 
     `total_changed` counts *every* path the commit touched (Rust, SQL, migrations,
@@ -69,11 +88,16 @@ def commits():
     is the `.rs`/`.js` subset (minus generated/vendored paths) used for churn and
     co-change pairs. Filtering to code before counting would let a bulk commit of
     two Rust files plus a hundred migrations masquerade as a focused change.
+
+    History is the checked-out revision only (`git log HEAD`) so two clones at the
+    same commit yield identical counts; `all_refs=True` restores `--all` (every
+    branch/tag/remote) for an explicit cross-branch view. Traversing `--all` by
+    default let abandoned branch work perturb the "deterministic" data contract.
     """
-    out = subprocess.run(
-        ["git", "log", "--all", "--pretty=format:%H", "--name-only"],
-        capture_output=True, text=True, check=True,
-    ).stdout
+    log_args = ["git", "log"]
+    log_args.append("--all" if all_refs else "HEAD")
+    log_args += ["--pretty=format:%H", "--name-only"]
+    out = subprocess.run(log_args, capture_output=True, text=True, check=True).stdout
     total = 0
     files: list[str] = []
     for line in out.splitlines():
@@ -91,16 +115,20 @@ def commits():
         yield total, files
 
 
-def collect(min_co: int = 5, min_ratio: float = 0.6, max_commit_files: int = 30, root: str | None = None) -> tuple[list[_report.Finding], Counter]:
+def collect(min_co: int = 5, min_ratio: float = 0.6, max_commit_files: int = 30,
+            root: str | None = None, all_refs: bool = False) -> tuple[list[_report.Finding], Counter]:
     prefix = _scope_prefix(root)
+    tracked = _tracked_paths()
     churn: Counter[str] = Counter()      # scoped files across all commits (churn report)
     co_churn: Counter[str] = Counter()   # scoped files in non-sweep commits (ratio denominator)
     co: Counter[tuple[str, str]] = Counter()
-    for total_changed, files in commits():
+    for total_changed, files in commits(all_refs):
         # Sweep detection uses the commit's *total* changed-file count (all types),
         # so a mass commit is recognized as a sweep even when only a few of its
         # files are code; the subtree/suffix filter applies to churn and pairs only.
-        scoped = sorted(f for f in set(files) if _under(f, prefix))
+        # Candidates are also restricted to paths that still exist at HEAD, so a
+        # deleted/renamed-away file cannot surface as a phantom churn or coupling row.
+        scoped = sorted(f for f in set(files) if f in tracked and _under(f, prefix))
         churn.update(scoped)
         if total_changed > max_commit_files:
             continue
@@ -133,11 +161,12 @@ def main() -> int:
     ap.add_argument("--min-co", type=int, default=5, help="minimum co-changes for a coupled pair (default: 5)")
     ap.add_argument("--min-ratio", type=float, default=0.6, help="minimum coupling ratio (default: 0.6)")
     ap.add_argument("--max-commit-files", type=int, default=30, help="ignore commits touching more than N changed files of any type (default: 30)")
+    ap.add_argument("--all-refs", action="store_true", help="traverse every branch/tag/remote (git log --all) instead of just HEAD (non-deterministic across clones)")
     ap.add_argument("--limit", type=int, default=25)
     ap.add_argument("--json", action="store_true", help="emit the shared finding schema as JSON")
     args = ap.parse_args()
 
-    findings, churn = collect(args.min_co, args.min_ratio, args.max_commit_files, root=args.root)
+    findings, churn = collect(args.min_co, args.min_ratio, args.max_commit_files, root=args.root, all_refs=args.all_refs)
     if args.json:
         _report.print_json(findings)
         return 0
