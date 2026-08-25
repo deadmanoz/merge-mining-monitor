@@ -46,6 +46,11 @@ def collect(root: str, min_family: int = 3, include_tests: bool = False) -> list
     for key, members in skeletons.items():
         if len(members) < min_family:
             continue
+        if all(p == "*" for p in key):
+            # Every component is a domain token, so the skeleton carries no shared
+            # stable vocabulary (`* -> block, core, tree, ...`); it groups unrelated
+            # functions by domain words alone, not a real parallel family.
+            continue
         locs = [loc for n in sorted(members) for loc in names_at[n][:1]]
         findings.append(_report.Finding(
             tool="naming", kind="naming-family",

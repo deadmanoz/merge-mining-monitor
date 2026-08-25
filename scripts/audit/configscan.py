@@ -250,9 +250,13 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
             if fn_name in READ_PRIMITIVES or _is_build_env(key):
                 continue  # direct reads handled elsewhere; build-time vars ignored
             helper_calls.append((fn_name, key, _report.Loc(rel, decommented.count("\n", 0, m.start()) + 1)))
+        # Suffix evidence is taken only from a key-construction site - a
+        # `format!("{prefix}_SUFFIX")` interpolation - not from every bare `"_SUFFIX"`
+        # literal. A bare literal is commonly a non-construction mention (notably an
+        # inline `#[cfg(test)]` list asserting the docs cover each family); counting it
+        # would keep a family looking "built in code" and mask a genuine
+        # config-unread/undocumented-suffix result after its production lookup is gone.
         for lit, _off in _scan.iter_string_literals(src):
-            if SUFFIX.match(lit):
-                code_suffixes.add(lit)
             for fm in FORMAT_SUFFIX.finditer(lit):
                 code_suffixes.add(fm.group(1))
 

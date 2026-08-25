@@ -75,6 +75,40 @@ def iter_rust_files(root: str, skip_tests: bool = True):
 _CHAR_LIT = re.compile(r"'(?:\\u\{[0-9a-fA-F]+\}|\\.|[^'\\\n])'")
 
 
+def _raw_string_span(src: str, i: int):
+    """Recognize a raw string literal opening at `src[i]` on a token boundary.
+
+    Handles every raw prefix - plain `r`, byte-raw `br`, and raw C-string `cr` - each
+    with any number of `#` hashes: `(b|c)?r #* " ... " #*`. Returns
+    `(content_start, content_end, literal_end)`, where content is the inner text and
+    `literal_end` is just past the closing delimiter (or `len(src)` if unterminated),
+    or `None` when no raw string opens here.
+
+    Centralized so the three scanners (`strip_noise`, `strip_comments`,
+    `iter_string_literals_ex`) admit exactly the same openers. Missing `cr"..."`
+    previously left a raw C string's inner `"` to terminate a phantom normal string,
+    leaking its braces into brace matching and truncating the enclosing function.
+    """
+    n = len(src)
+    if src[i] not in "rbc" or (i and (src[i - 1].isalnum() or src[i - 1] == "_")):
+        return None
+    k = i
+    if src[k] in "bc" and k + 1 < n and src[k + 1] == "r":
+        k += 1  # br (byte-raw) or cr (raw C string)
+    if src[k] != "r":
+        return None
+    h = k + 1
+    while h < n and src[h] == "#":
+        h += 1
+    if h >= n or src[h] != '"':
+        return None
+    closer = '"' + "#" * (h - (k + 1))
+    j = src.find(closer, h + 1)
+    content_end = n if j < 0 else j
+    literal_end = n if j < 0 else j + len(closer)
+    return h + 1, content_end, literal_end
+
+
 def strip_noise(src: str) -> str:
     """Remove comments and neutralize string/char literals in one pass.
 
@@ -121,22 +155,14 @@ def strip_noise(src: str) -> str:
             out.append("\n" * src.count("\n", i, end))
             i = end
             continue
-        # Raw / byte-raw string: (b?r) #* " ... " #*  at a token boundary.
-        if c in "rb" and (i == 0 or not (src[i - 1].isalnum() or src[i - 1] == "_")):
-            k = i
-            if src[k] == "b" and k + 1 < n and src[k + 1] == "r":
-                k += 1
-            if src[k] == "r":
-                h = k + 1
-                while h < n and src[h] == "#":
-                    h += 1
-                if h < n and src[h] == '"':
-                    closer = '"' + "#" * (h - (k + 1))
-                    j = src.find(closer, h + 1)
-                    end = n if j < 0 else j + len(closer)
-                    out.append('"s"' + "\n" * src.count("\n", i, end))
-                    i = end
-                    continue
+        # Raw / byte-raw / raw-C string: (b|c)?r #* " ... " #*  at a token boundary.
+        if c in "rbc":
+            span = _raw_string_span(src, i)
+            if span is not None:
+                end = span[2]
+                out.append('"s"' + "\n" * src.count("\n", i, end))
+                i = end
+                continue
         if c == '"':
             j = i + 1
             while j < n:
@@ -198,21 +224,13 @@ def strip_comments(src: str) -> str:
             out.append("\n" * src.count("\n", i, end))
             i = end
             continue
-        if c in "rb" and (i == 0 or not (src[i - 1].isalnum() or src[i - 1] == "_")):
-            k = i
-            if src[k] == "b" and k + 1 < n and src[k + 1] == "r":
-                k += 1
-            if src[k] == "r":
-                h = k + 1
-                while h < n and src[h] == "#":
-                    h += 1
-                if h < n and src[h] == '"':
-                    closer = '"' + "#" * (h - (k + 1))
-                    j = src.find(closer, h + 1)
-                    end = n if j < 0 else j + len(closer)
-                    out.append(src[i:end])  # raw string kept verbatim
-                    i = end
-                    continue
+        if c in "rbc":
+            span = _raw_string_span(src, i)
+            if span is not None:
+                end = span[2]
+                out.append(src[i:end])  # raw string kept verbatim
+                i = end
+                continue
         if c == '"':
             j = i + 1
             while j < n:
@@ -274,21 +292,13 @@ def iter_string_literals_ex(src: str):
                     j += 1
             i = j if depth == 0 else n
             continue
-        if c in "rb" and (i == 0 or not (src[i - 1].isalnum() or src[i - 1] == "_")):
-            k = i
-            if src[k] == "b" and k + 1 < n and src[k + 1] == "r":
-                k += 1
-            if src[k] == "r":
-                h = k + 1
-                while h < n and src[h] == "#":
-                    h += 1
-                if h < n and src[h] == '"':
-                    closer = '"' + "#" * (h - (k + 1))
-                    j = src.find(closer, h + 1)
-                    end = n if j < 0 else j
-                    yield src[h + 1 : end], i, True
-                    i = n if j < 0 else end + len(closer)
-                    continue
+        if c in "rbc":
+            span = _raw_string_span(src, i)
+            if span is not None:
+                content_start, content_end, literal_end = span
+                yield src[content_start:content_end], i, True
+                i = literal_end
+                continue
         if c == '"':
             j = i + 1
             while j < n:

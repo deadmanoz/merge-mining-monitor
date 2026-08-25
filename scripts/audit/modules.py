@@ -22,10 +22,10 @@ import _scan
 
 CRATE_PREFIX = re.compile(r"\bcrate::")
 _IDENT = re.compile(r"[a-z_][a-z0-9_]*")
-# A relative path through one or more `super::` hops, e.g. `super::reconcile` or
-# `super::super::sync`. The captured hop-run's length says how many parents to
-# ascend; the trailing identifier is the referenced module.
-SUPER_REF = re.compile(r"\b((?:super::)+)([a-z_][a-z0-9_]*)")
+# A run of one or more `super::` hops, e.g. `super::` or `super::super::`. The
+# captured run's length says how many parents to ascend; what follows (a single
+# identifier or a `{...}` group) names the referenced module(s).
+SUPER_PREFIX = re.compile(r"\b((?:super::)+)")
 ENTRY = {"lib", "main", "mod"}
 # Cargo compiles each file under `src/bin/` as an independent binary crate root,
 # so the directory is not a library module and its files must not be pooled into
@@ -72,6 +72,34 @@ def crate_refs(text: str) -> set[str]:
     dropped real edges and could hide a whole cycle."""
     out: set[str] = set()
     for m in CRATE_PREFIX.finditer(text):
+        i = m.end()
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if i < len(text) and text[i] == "{":
+            group, _ = _brace_group(text, i)
+            for item in _split_top_commas(group):
+                im = _IDENT.match(item.strip())
+                if im:
+                    out.add(im.group(0))
+        else:
+            im = _IDENT.match(text, i)
+            if im:
+                out.add(im.group(0))
+    return out
+
+
+def super_refs(text: str, depth: int) -> set[str]:
+    """Top-level modules referenced through a run of `super::` hops that ascends
+    exactly to the crate root (hop count == the referrer's module depth).
+
+    Covers the single-path form (`super::other`) and grouped imports
+    (`use super::{a, b};`, `super::super::{x}`, nested `super::{a::{b}, c}`),
+    mirroring `crate_refs`. Without the grouped form a sibling cycle written
+    `use super::{other};` is invisible and the crate looks acyclic."""
+    out: set[str] = set()
+    for m in SUPER_PREFIX.finditer(text):
+        if m.group(1).count("super") != depth:
+            continue  # ascends to a sub-module, not a crate-level module
         i = m.end()
         while i < len(text) and text[i].isspace():
             i += 1
@@ -209,18 +237,16 @@ def collect(root: str = "crates", include_tests: bool = False) -> list[_report.F
             for ref in crate_refs(text):
                 if ref in mods and ref != owner:
                     adj[owner].add(ref)
-            # Relative `super::` hops. From a module at depth d, k `super`s ascend to
-            # mp[:d-k]; the referenced identifier is a crate-level (top-level) module
-            # only when the hops reach exactly the crate root (k == d) - otherwise it
-            # still resolves inside `owner` (a self-edge). Without this, a sibling
-            # cycle expressed as `super::other` (paired with the other side's
-            # `crate::owner`) is invisible and the whole crate looks acyclic.
+            # Relative `super::` hops (single or grouped). From a module at depth d, k
+            # `super`s ascend to mp[:d-k]; the reference is a crate-level (top-level)
+            # module only when the hops reach exactly the crate root (k == d) -
+            # otherwise it still resolves inside `owner`. Without this, a sibling cycle
+            # expressed as `super::other` (paired with the other side's `crate::owner`)
+            # is invisible and the whole crate looks acyclic.
             depth = len(_module_path_parts(rel_parts))
-            for sm in SUPER_REF.finditer(text):
-                if sm.group(1).count("super") == depth:
-                    target = sm.group(2)
-                    if target in mods and target != owner:
-                        adj[owner].add(target)
+            for target in super_refs(text, depth):
+                if target in mods and target != owner:
+                    adj[owner].add(target)
         for comp in _sccs(list(mods), adj):
             if len(comp) < 2:
                 continue
