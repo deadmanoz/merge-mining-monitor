@@ -32,7 +32,11 @@ def _is_build_env(key: str) -> bool:
     return key in BUILD_ENV or key.startswith(("CARGO_", "RUST", "LD_", "DYLD_"))
 
 
-FULLKEY = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
+# A full env key: either the usual UNDERSCORE_SEPARATED shape, or a single
+# all-caps run of >= 4 chars (e.g. `PGHOST`, `PGPASSWORD`) so underscore-free
+# keys are recognized. The >= 4 floor and prefix filter in `doc_tokens` keep short
+# words (RPC/SQL/URL) and bare chain prefixes out.
+FULLKEY = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$|^[A-Z][A-Z0-9]{3,}$")
 SUFFIX = re.compile(r"^_[A-Z0-9]+(?:_[A-Z0-9]+)*$")
 # A per-chain key built as format!("{prefix}_RPC_USER"): the literal is
 # `{...}_SUFFIX`, so the suffix follows the placeholder, not the string start.
@@ -94,6 +98,10 @@ def doc_tokens(docs: str, prefixes: list[str]) -> tuple[set[str], set[str]]:
             suf = tok[len("<PREFIX>"):]
             if SUFFIX.match(suf):
                 suffixes.add(suf)
+        elif tok in prefixes:
+            # A bare chain prefix (`ELASTOS`) is a prefix, not a full key; the
+            # broadened FULLKEY would otherwise mis-file it into `doc_full`.
+            continue
         elif FULLKEY.match(tok):
             # A documented full key that starts with a chain prefix is really a
             # per-chain example; record its suffix too.
@@ -130,19 +138,23 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
         # doc line or a struct name inside a string is not miscounted. Newline count
         # is preserved, so match offsets still map to the correct original line.
         stripped = _scan.strip_noise(src)
+        # Key-call discovery needs the literal key *contents* (which strip_noise
+        # collapses), but must still ignore a commented-out `// env::var("PHANTOM")`,
+        # so it runs on comment-stripped-but-string-preserving source.
+        decommented = _scan.strip_comments(src)
         reads = len(ENV_READ.findall(stripped))
         if reads:
             read_files[rel] = reads
         for m in CONFIG_STRUCT.finditer(stripped):
             struct_locs.append(_report.Loc(rel, stripped.count("\n", 0, m.start()) + 1, m.group(1)))
-        for m in KEYCALL.finditer(src):
+        for m in KEYCALL.finditer(decommented):
             key = m.group(1)
             if not _is_build_env(key):
-                key_locs.setdefault(key, []).append(_report.Loc(rel, src.count("\n", 0, m.start()) + 1))
-        for m in CONST_KEY.finditer(src):
+                key_locs.setdefault(key, []).append(_report.Loc(rel, decommented.count("\n", 0, m.start()) + 1))
+        for m in CONST_KEY.finditer(decommented):
             const_map[m.group(1)] = m.group(2)
-        for m in KEYCALL_IDENT.finditer(src):
-            ident_calls.append((m.group(1), _report.Loc(rel, src.count("\n", 0, m.start()) + 1)))
+        for m in KEYCALL_IDENT.finditer(decommented):
+            ident_calls.append((m.group(1), _report.Loc(rel, decommented.count("\n", 0, m.start()) + 1)))
         for lit, _off in _scan.iter_string_literals(src):
             if SUFFIX.match(lit):
                 code_suffixes.add(lit)
@@ -160,20 +172,28 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
     example = env_keys(read_text(env_example))
     doc_full, doc_suffixes = doc_tokens(docs, prefixes)
     # Per-chain suffixes present in .env.example (e.g. NAMECOIN_RPC_URL -> _RPC_URL);
-    # tracked separately so a documented per-chain key covered by the example via its
-    # suffix is not flagged as missing.
+    # tracked separately (NOT merged into doc_suffixes) so the three-way drift stays
+    # honest: a suffix present in code + .env.example but absent from the docs must
+    # still surface as documentation drift, not be masked by the example.
     example_suffixes: set[str] = set()
     for k in example:
         for p in prefixes:
             if k.startswith(p + "_"):
                 example_suffixes.add(k[len(p):])
-    doc_suffixes |= example_suffixes
 
     def suffix_of(key: str) -> str | None:
         for p in prefixes:
             if key.startswith(p + "_"):
                 return key[len(p):]
         return None
+
+    # A chain-scoped key read as a full literal (e.g. lookup("RSK_BACKFILL_...")) is
+    # excluded from the shared-key drift check below; fold its suffix into the code
+    # suffix set so it is still checked against the docs rather than dropped entirely.
+    for k in code_full:
+        s = suffix_of(k)
+        if s:
+            code_suffixes.add(s)
 
     def in_docs(key: str) -> bool:
         return re.search(rf"\b{re.escape(key)}\b", docs) is not None

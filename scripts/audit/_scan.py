@@ -163,6 +163,82 @@ def strip_noise(src: str) -> str:
     return "".join(out)
 
 
+def strip_comments(src: str) -> str:
+    """Remove line/block comments while preserving string and char literals
+    verbatim.
+
+    Unlike `strip_noise` (which also collapses string *contents* to `"s"`), this
+    keeps literal text intact, so a caller can still read an embedded key such as
+    `env::var("PGHOST")` while a commented-out `// env::var("PHANTOM")` is dropped.
+    Newline counts are preserved (block comments collapse to their `\\n`s), so a
+    match offset on the result still maps to the original line. Raw/byte-string
+    prefixes are recognized only at a token boundary, mirroring `strip_noise`.
+    """
+    out: list[str] = []
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        two = src[i : i + 2]
+        if two == "//":
+            j = src.find("\n", i)
+            i = n if j < 0 else j  # keep the newline itself
+            continue
+        if two == "/*":
+            depth, j = 1, i + 2
+            while j < n and depth > 0:
+                pair = src[j : j + 2]
+                if pair == "/*":
+                    depth, j = depth + 1, j + 2
+                elif pair == "*/":
+                    depth, j = depth - 1, j + 2
+                else:
+                    j += 1
+            end = j if depth == 0 else n
+            out.append("\n" * src.count("\n", i, end))
+            i = end
+            continue
+        if c in "rb" and (i == 0 or not (src[i - 1].isalnum() or src[i - 1] == "_")):
+            k = i
+            if src[k] == "b" and k + 1 < n and src[k + 1] == "r":
+                k += 1
+            if src[k] == "r":
+                h = k + 1
+                while h < n and src[h] == "#":
+                    h += 1
+                if h < n and src[h] == '"':
+                    closer = '"' + "#" * (h - (k + 1))
+                    j = src.find(closer, h + 1)
+                    end = n if j < 0 else j + len(closer)
+                    out.append(src[i:end])  # raw string kept verbatim
+                    i = end
+                    continue
+        if c == '"':
+            j = i + 1
+            while j < n:
+                if src[j] == "\\":
+                    j += 2
+                    continue
+                if src[j] == '"':
+                    break
+                j += 1
+            end = min(j + 1, n)
+            out.append(src[i:end])  # string kept verbatim (contents preserved)
+            i = end
+            continue
+        if c == "'":
+            m = _CHAR_LIT.match(src, i)
+            if m:
+                out.append(src[i : m.end()])
+                i = m.end()
+            else:
+                out.append("'")  # lifetime / label
+                i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def iter_string_literals(src: str):
     """Yield `(content, start_index)` for each Rust string literal (normal and
     raw), skipping line/block comments and char literals.

@@ -113,7 +113,7 @@ def markdown(findings: list[_report.Finding], root: str, top: int) -> str:
             where = f" {locs}" if locs else ""
             out.append(f"- [{f.severity}] {f.summary}{where}")
         if len(items) > top:
-            out.append(f"- _...and {len(items) - top} more (run `{tool}.py` directly)._")
+            out.append(f"- _...and {len(items) - top} more (run `python3 scripts/audit/{tool}.py {root}`)._")
         out.append("")
     return "\n".join(out)
 

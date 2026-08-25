@@ -29,7 +29,9 @@ DOMAIN = {
 def collect(root: str, min_family: int = 3, include_tests: bool = False) -> list[_report.Finding]:
     names_at: dict[str, list[_report.Loc]] = defaultdict(list)
     for path in _scan.iter_rust_files(root, skip_tests=not include_tests):
-        src = open(path, encoding="utf-8", errors="ignore").read()
+        # De-noise first: prose like `// this fn only maps` or a `"fn foo"` string
+        # would otherwise be inventoried as a real function and invent a family.
+        src = _scan.strip_noise(open(path, encoding="utf-8", errors="ignore").read())
         for m in re.finditer(r"\bfn\s+([a-z][a-z0-9_]+)", src):
             names_at[m.group(1)].append(_report.Loc(_scan.rel(path), src.count("\n", 0, m.start()) + 1, m.group(1)))
 
