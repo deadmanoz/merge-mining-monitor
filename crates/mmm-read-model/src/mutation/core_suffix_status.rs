@@ -10,6 +10,8 @@ use tokio_postgres::{Client, GenericClient};
 const SYNC_MODE_CONTIGUOUS: &str = "contiguous";
 const RECONCILE_PENDING: &str = "backbone_reorg_reconcile_pending";
 const SUSPENDED_ERROR_KEY: &str = "suspended_error";
+const SUFFIX_RESOLVED_STRUCTURAL_ERRORS: [&str; 2] =
+    ["backbone_height_conflict", "backbone_link_mismatch"];
 
 pub(super) struct ReplacementPending {
     pub(super) contiguous_complete_height: i32,
@@ -30,6 +32,13 @@ struct SuspendedSyncError {
 }
 
 impl SuspendedSyncError {
+    fn is_resolved_by(&self, pending: &ReplacementPending) -> bool {
+        SUFFIX_RESOLVED_STRUCTURAL_ERRORS.contains(&self.code.as_str())
+            && self.height.is_some_and(|height| {
+                (pending.first_height..=pending.target_tip_height).contains(&height)
+            })
+    }
+
     fn to_json(&self) -> Value {
         json!({
             "code": self.code,
@@ -112,11 +121,14 @@ pub(super) async fn mark_replacement_pending<C: GenericClient>(
     pending: &ReplacementPending,
 ) -> Result<()> {
     let target_hash_bytes = pending.target_tip_hash.to_byte_array().to_vec();
-    // The suffix writer already holds this row FOR UPDATE. Suspend the visible
+    // The suffix writer already holds this row FOR UPDATE. Suspend an unresolved
     // producer error inside the pending details so the final queue transaction
-    // can restore it exactly. A re-enqueued suffix carries the existing tuple
-    // instead of nesting pending states.
-    let suspended_error = load_suspended_sync_error(client, source_id).await?;
+    // can restore it exactly. A structural conflict covered by the committed
+    // suffix is consumed instead. A re-enqueued suffix carries the existing
+    // tuple instead of nesting pending states.
+    let suspended_error = load_suspended_sync_error(client, source_id)
+        .await?
+        .filter(|error| !error.is_resolved_by(pending));
     let mut details = json!({
         "common_ancestor_height": pending.common_ancestor_height,
         "replacement_start_height": pending.first_height,
@@ -242,4 +254,50 @@ pub(super) async fn clear_pending_error_if_queue_empty(
     txn.commit()
         .await
         .context("commit Bitcoin Core pending-status check")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pending() -> ReplacementPending {
+        ReplacementPending {
+            contiguous_complete_height: 4,
+            common_ancestor_height: 2,
+            first_height: 3,
+            target_tip_height: 4,
+            target_tip_hash: BlockHash::all_zeros(),
+            displaced_blocks: 1,
+            queued_hashes: 2,
+        }
+    }
+
+    #[test]
+    fn only_covered_structural_errors_are_resolved_by_a_suffix() {
+        let pending = pending();
+        for (code, height, resolved) in [
+            ("backbone_link_mismatch", Some(3), true),
+            ("backbone_link_mismatch", Some(4), true),
+            ("backbone_height_conflict", Some(3), true),
+            ("backbone_height_conflict", Some(4), true),
+            ("backbone_link_mismatch", Some(2), false),
+            ("backbone_link_mismatch", Some(5), false),
+            ("backbone_height_conflict", Some(2), false),
+            ("backbone_height_conflict", Some(5), false),
+            ("backbone_height_conflict", None, false),
+            ("coinbase_fetch_failed", Some(3), false),
+        ] {
+            let error = SuspendedSyncError {
+                code: code.to_owned(),
+                height,
+                message: None,
+                details: json!({}),
+            };
+            assert_eq!(
+                error.is_resolved_by(&pending),
+                resolved,
+                "unexpected suffix ownership for {code} at {height:?}"
+            );
+        }
+    }
 }

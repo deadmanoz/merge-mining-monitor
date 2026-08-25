@@ -17,9 +17,10 @@ This changelog starts with the initial release.
   competitor.
   Preserve unrelated producer failures and reconcile-pending status when
   recording or clearing repair telemetry, including during concurrent repairs,
-  temporarily suspend and later restore existing producer error details while
-  durable reconciliation is pending, and continue to fail closed when the
-  common ancestor lies outside the configured live window. Re-plan once when an
+  temporarily suspend and later restore unrelated producer error details while
+  durable reconciliation is pending, consume structural conflicts covered by
+  the committed replacement suffix, and continue to fail closed when the common
+  ancestor lies outside the configured live window. Re-plan once when an
   in-flight classifier commits a same-height conflict after the initial repair
   scan. Replay durable parents with strict live Core classification so newly
   inferable stale children are not stranded, and retain Core-derived pool

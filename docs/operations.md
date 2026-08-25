@@ -184,8 +184,9 @@ new child made inferably stale by the replacement is not completed as unknown
 after a transient classification failure. While durable work remains,
 `/api/v1/sources` reports `backbone_reorg_reconcile_pending` instead of treating
 the Bitcoin source as healthy. If that pending marker temporarily covers an
-existing producer failure, the exact prior error tuple is restored after the
-queue drains.
+unrelated or out-of-range producer failure, the exact prior error tuple is
+restored after the queue drains. A same-height or link conflict inside the
+committed replacement suffix is consumed because that transaction resolved it.
 
 Repair-only statuses are cleared after the producer accepts a verified live
 target, but they never replace an unrelated persisted producer failure. This

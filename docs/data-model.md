@@ -219,9 +219,11 @@ durable two-phase work for atomic near-tip Core suffix replacement. A
 seed that discovers and enqueues dependents atomically with its own deletion.
 The sync state remains in `backbone_reorg_reconcile_pending` until the queue
 drains, so a crash or budget exit is visible and restart-safe rather than a
-silent partial reconciliation. The pending status durably suspends any prior
-producer error tuple in its details and restores that tuple when the final queue
-row is removed.
+silent partial reconciliation. The pending status durably suspends an unrelated
+or out-of-range prior producer error tuple in its details and restores that tuple
+when the final queue row is removed. A same-height or link conflict whose error
+height lies inside the committed replacement suffix is resolved by that suffix
+and is consumed instead of suspended.
 
 After a migration has reached a persistent database, do not edit it. Add a new
 forward migration. Real database migration runs go through `just db-migrate-dev`

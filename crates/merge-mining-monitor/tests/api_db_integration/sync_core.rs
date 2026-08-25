@@ -475,14 +475,20 @@ async fn assert_drained_core_queue(client: &Client, source_id: i64) -> Result<()
         .await?
         .get(0);
     assert_eq!(queue_after, 0);
-    let error_after: Option<String> = client
+    let error_after = client
         .query_one(
-            "SELECT last_error_code FROM bitcoin_core_sync_state WHERE source_id = $1",
+            "SELECT last_error_code, last_error_height, last_error, last_error_details \
+             FROM bitcoin_core_sync_state WHERE source_id = $1",
             &[&source_id],
         )
-        .await?
-        .get(0);
-    assert_eq!(error_after, None);
+        .await?;
+    assert_eq!(error_after.get::<_, Option<String>>(0), None);
+    assert_eq!(error_after.get::<_, Option<i32>>(1), None);
+    assert_eq!(error_after.get::<_, Option<String>>(2), None);
+    assert_eq!(
+        error_after.get::<_, Json<serde_json::Value>>(3).0,
+        json!({})
+    );
     Ok(())
 }
 
@@ -1761,3 +1767,6 @@ async fn follow_repair_target_move_leaves_chain_rows_unmodified() -> Result<()> 
 
 #[path = "sync_core/reorg_edge_cases.rs"]
 mod reorg_edge_cases;
+
+#[path = "sync_core/suffix_status.rs"]
+mod suffix_status;
