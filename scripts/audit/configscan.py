@@ -35,7 +35,10 @@ def _is_build_env(key: str) -> bool:
 FULLKEY = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
 SUFFIX = re.compile(r"^_[A-Z0-9]+(?:_[A-Z0-9]+)*$")
 STRLIT = re.compile(r'"((?:\\.|[^"\\])*)"')
-ENV_READ = re.compile(r"\b(?:env::var(?:_os)?|std::env|var_os|getenv|env_lookup)\b")
+# Only actual read calls, not the `std::env` namespace itself (which also prefixes
+# `std::env::args()`, `std::env::Args`, ...). `env::var(_os)` also matches the tail
+# of `std::env::var(_os)`.
+ENV_READ = re.compile(r"\benv::var(?:_os)?\b|\benv_lookup\b")
 # The env key passed directly to a read call. Keying off the call site (not any
 # ALL_CAPS literal) avoids matching opcode/status constants like OP_RETURN.
 KEYCALL = re.compile(

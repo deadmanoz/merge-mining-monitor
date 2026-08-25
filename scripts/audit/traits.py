@@ -89,9 +89,22 @@ def _strip_leading_generics(s: str) -> str:
     return s
 
 
+def _crate_key(rel: str) -> str:
+    """Crate root for a `_scan.rel` path, so same-named traits in different crates
+    do not collide (impls of an unrelated trait sharing a bare name stay separate)."""
+    parts = rel.split("/")
+    if "src" in parts:
+        return "/".join(parts[: parts.index("src")])
+    return parts[0] if parts else ""
+
+
 def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests: bool = False) -> list[_report.Finding]:
-    traits: dict[str, dict] = {}
-    impls: dict[str, list[_report.Loc]] = {}
+    # Key traits and impls by (crate, bare name). Bare names are not globally
+    # unique; without the crate qualifier a later trait would overwrite an earlier
+    # one and impls of unrelated same-named traits would pool together.
+    traits: dict[tuple[str, str], dict] = {}
+    ambiguous: set[tuple[str, str]] = set()  # same (crate, name) defined more than once
+    impls: dict[tuple[str, str], list[_report.Loc]] = {}
 
     for path in _scan.iter_rust_files(root, skip_tests=not include_tests):
         try:
@@ -99,12 +112,16 @@ def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests:
         except OSError:
             continue
         rel = _scan.rel(path)
+        crate = _crate_key(rel)
         for m in re.finditer(r"\btrait\s+([A-Za-z0-9_]+)", src):
             bo = src.find("{", m.end())
             if bo < 0:
                 continue
             req, prov = _count_methods(src[bo : _match_brace(src, bo) + 1])
-            traits[m.group(1)] = {
+            key = (crate, m.group(1))
+            if key in traits:
+                ambiguous.add(key)
+            traits[key] = {
                 "required": req, "provided": prov,
                 "loc": _report.Loc(rel, src[: m.start()].count("\n") + 1, m.group(1)),
             }
@@ -119,11 +136,14 @@ def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests:
             head = _strip_leading_generics(header[: fm.start()]).split("<")[0]
             idents = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", head)
             if idents:
-                impls.setdefault(idents[-1], []).append(_report.Loc(rel, src[: m.start()].count("\n") + 1))
+                impls.setdefault((crate, idents[-1]), []).append(_report.Loc(rel, src[: m.start()].count("\n") + 1))
 
     findings: list[_report.Finding] = []
-    for name, t in traits.items():
-        impl_locs = impls.get(name, [])
+    for key, t in traits.items():
+        if key in ambiguous:
+            continue  # cannot attribute impls unambiguously; skip rather than guess
+        name = key[1]
+        impl_locs = impls.get(key, [])
         if t["required"] < min_required or len(impl_locs) < min_impls:
             continue
         req, prov, nimpl = t["required"], t["provided"], len(impl_locs)

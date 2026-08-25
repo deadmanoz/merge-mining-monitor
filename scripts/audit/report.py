@@ -44,7 +44,7 @@ def gather(root: str) -> list[_report.Finding]:
     findings += configscan.collect(root)
     findings += traits.collect(root)
     findings += modules.collect(root)
-    findings += coupling.collect(min_co=6, min_ratio=0.6)[0]
+    findings += coupling.collect(min_co=6, min_ratio=0.6, root=root)[0]
     findings += complexity.collect(root, min_dp=30)
     findings += naming.collect(root, min_family=3)
     return findings

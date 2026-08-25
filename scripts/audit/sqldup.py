@@ -27,8 +27,11 @@ SQL_KW = re.compile(r"\b(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|JOIN|WHERE|VA
 def extract_sql(src: str):
     out = []
     chars = list(src)
-    for m in re.finditer(r'r#*"(.*?)"#*', src, flags=re.S):
-        out.append((m.group(1), src[: m.start()].count("\n") + 1))
+    # Raw strings: the closing delimiter is `"` followed by the SAME number of `#`
+    # as the opener, so `r#"SELECT "id" FROM t"#` must not terminate at the inner
+    # quote. Capture the hash run and backreference it (`\1`) for the closer.
+    for m in re.finditer(r'r(#*)"(.*?)"\1', src, flags=re.S):
+        out.append((m.group(2), src[: m.start()].count("\n") + 1))
         for k in range(m.start(), m.end()):
             if chars[k] != "\n":
                 chars[k] = " "
@@ -78,29 +81,40 @@ def collect(root: str, near: float = 0.85) -> list[_report.Finding]:
             metrics={"count": len(locs), "prod_files": sorted(prod_files), "sql": n[:400]},
         ))
 
-    uniq = list({n: (p, line, n) for p, line, n in items}.values())
-    uniq.sort(key=lambda x: len(x[2]))
+    # Keep every location per normalized query (an exact query in N files keeps
+    # all N), so exact duplication can never hide a valid cross-file near-dup and
+    # the prod/test classification sees all sites, not an arbitrary last one.
+    groups: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    for path, line, n in items:
+        groups[n].append((path, line))
+    norms = sorted(groups, key=len)
     sm = SequenceMatcher(None, autojunk=False)
-    for i in range(len(uniq)):
-        pi, li, ni = uniq[i]
+    for i in range(len(norms)):
+        ni = norms[i]
+        files_i = {p for p, _ in groups[ni]}
         sm.set_seq2(ni)
-        for j in range(i + 1, len(uniq)):
-            pj, lj, nj = uniq[j]
+        for j in range(i + 1, len(norms)):
+            nj = norms[j]
             if len(nj) > len(ni) * 1.3:
                 break
-            if pi == pj:
-                continue
+            files_j = {p for p, _ in groups[nj]}
+            if len(files_i | files_j) == 1:
+                continue  # both queries confined to the same single file
             sm.set_seq1(nj)
             if sm.real_quick_ratio() < near or sm.quick_ratio() < near:
                 continue
             r = sm.ratio()
             if near <= r < 0.999:
-                both_prod = not is_test(pi) and not is_test(pj)
+                li = sorted(groups[ni])[0]
+                lj = next((l for l in sorted(groups[nj]) if l[0] != li[0]), sorted(groups[nj])[0])
+                prod_i = {p for p in files_i if not is_test(p)}
+                prod_j = {p for p in files_j if not is_test(p)}
+                both_prod = any(pi != pj for pi in prod_i for pj in prod_j)
                 findings.append(_report.Finding(
                     tool="sqldup", kind="sql-near-dup",
                     summary=f"{r:.2f} similar SQL across files ({'prod' if both_prod else 'test'})",
                     score=round(r, 4), severity="medium" if both_prod else "low",
-                    locations=[_report.Loc(pi, li), _report.Loc(pj, lj)],
+                    locations=[_report.Loc(li[0], li[1]), _report.Loc(lj[0], lj[1])],
                     metrics={"ratio": round(r, 4), "both_prod": both_prod},
                 ))
     findings.sort(key=lambda f: f.sort_key(), reverse=True)
