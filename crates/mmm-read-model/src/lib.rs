@@ -16,6 +16,7 @@ mod mutation;
 mod source_health_sql;
 mod unknown_reclassify;
 
+pub use classify::resolve_parent_classification;
 pub use cli_args::{ArgCursor, drive_args, require_positive};
 pub use known_stale_reclassify::{
     KnownStaleReclassifySummary, ReclassifyKnownStalesConfig,

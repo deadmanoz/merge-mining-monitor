@@ -12,7 +12,7 @@ tree view from that evidence.
 | `pool` | Stable pool identities loaded from `data/pools/current.json`. |
 | `pool_identity` | Native child-chain identities that map to a pool, such as RSK miner addresses or child reward addresses. |
 | `merge_mining_event` | Source evidence keyed by exact or partial authenticated child identity and its Bitcoin parent header. |
-| `historical_event_provenance` | Publication-side chain, source row, classification, validation, and relevance provenance attached to imported events; multiple source rows can map to one event. |
+| `historical_event_provenance` | Publication-side chain, source row, classification, validation, and relevance provenance attached to imported events; multiple source rows can map to one event. The retained `error-block-observations` scope preserves catalogue-backed historical error witnesses separately from replaceable normal snapshots. |
 | `historical_reconcile_queue` | Durable parent rebuild state and dependent-cascade seeds for resumable historical imports. |
 | chain sidecars | One-to-one evidence details for chains with extra structured data, such as RSK and Hathor. |
 | `event_pool_attribution` | Attribution rows connecting an event to a pool with source/provenance details. |
@@ -50,6 +50,15 @@ demotes rows classified before the membership was imported.
 Published direct-stale and stale-descendant provenance is also an exclusion
 from strict/weak orphan classification while a branch remains derived
 `unknown`.
+
+Historical error witnesses retain `classification=error_block` in
+`historical_event_provenance`, while `block.error_block_reason` is derived by
+the shared Core-plus-catalogue classifier. They replace a prior `stale` or
+`unknown` classification for the same parent, rather than acting as a separate
+display-only override. Their pinned research publication reference and original
+source coordinates make an exact replay idempotent; evidence that changes at an
+existing coordinate conflicts. Ordinary authoritative-snapshot cleanup
+intentionally excludes this scope.
 
 ## Child Observation Identity
 

@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
@@ -14,8 +15,9 @@ use mmm_producers::{
     run_manifest_historical_import_for_test,
 };
 use mmm_read_model::{
-    drain_historical_reconcile_queue, drain_historical_reconcile_queue_with_budget_for_test,
-    enqueue_historical_parent_reconcile, rebuild_source_health,
+    clear_authoritative_historical_provenance_in_transaction, drain_historical_reconcile_queue,
+    drain_historical_reconcile_queue_with_budget_for_test, enqueue_historical_parent_reconcile,
+    rebuild_source_health, reconcile_authoritative_historical_source_in_transaction,
 };
 use mmm_store::get_source_id;
 
@@ -30,6 +32,21 @@ use crate::support::{
 
 const NORMALIZED_HEADER: &str = "chain,source_kind,source_path,source_row_number,artifact_scope,provenance,child_height,child_block_hash,child_header_hex,child_block_time,child_nbits,btc_height,btc_header_hash,btc_prev_hash,btc_time,btc_bits,btc_nonce,btc_header_hex,coinbase_scriptsig_hex,coinbase_outputs,full_coinbase_hex,classification,validation_status,expected_nbits,rejection_reason,btc_stale_relevance,relevance_reason\n";
 const GENESIS_COINBASE_SCRIPT: &str = "04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73";
+
+fn pinned_publication_ref() -> &'static str {
+    static PIN: LazyLock<String> = LazyLock::new(|| {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../data/historical/historical-source-manifest.json");
+        serde_json::from_slice::<serde_json::Value>(
+            &std::fs::read(path).expect("read committed historical source manifest"),
+        )
+        .expect("parse committed historical source manifest")["source_repo_commit"]
+            .as_str()
+            .expect("committed historical source manifest has source_repo_commit")
+            .to_owned()
+    });
+    PIN.as_str()
+}
 const GENESIS_COINBASE: &str = "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000";
 
 #[tokio::test]
@@ -1041,7 +1058,7 @@ async fn authoritative_reimport_replaces_superseded_publication_provenance() -> 
                 )
                 .await?
                 .get(0);
-            assert_eq!(publication_ref, "a30283101f33c8583855669fdffba5fb20730373");
+            assert_eq!(publication_ref, pinned_publication_ref());
             Ok::<_, anyhow::Error>(())
         }
         .await;
@@ -1050,6 +1067,66 @@ async fn authoritative_reimport_replaces_superseded_publication_provenance() -> 
                 .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
         }
         result
+    })
+}
+
+#[tokio::test]
+async fn authoritative_snapshot_reconciliation_preserves_error_observation_provenance() -> Result<()>
+{
+    crate::run_mut_db_test!(client, {
+        let header = header_meeting_bits(0x207f_ffff, 1_700_000_044, 44);
+        let csv_path =
+            write_normalized_csv(&header, "canonical", "", "canonical_parent", &[], 700_044)?;
+        let result = async {
+            let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+                canonical_verdict(&header, 700_044),
+            ));
+            run_historical_import(&mut client, &classifier, &devcoin_import_config(&csv_path))
+                .await?;
+            client
+                .execute(
+                    "UPDATE historical_event_provenance \
+                     SET publication_ref = $1, \
+                         artifact_scope = 'error-block-observations', \
+                         classification = 'error_block' \
+                     WHERE chain = 'devcoin'",
+                    &[&pinned_publication_ref()],
+                )
+                .await?;
+
+            let transaction = client.transaction().await?;
+            clear_authoritative_historical_provenance_in_transaction(&transaction, "devcoin")
+                .await?;
+            transaction.commit().await?;
+            let remaining: i64 = client
+                .query_one(
+                    "SELECT count(*) FROM historical_event_provenance \
+                     WHERE artifact_scope = 'error-block-observations'",
+                    &[],
+                )
+                .await?
+                .get(0);
+            assert_eq!(remaining, 1);
+
+            let source_id = get_source_id(&client, "auxpow:devcoin").await?;
+            let transaction = client.transaction().await?;
+            let removed = reconcile_authoritative_historical_source_in_transaction(
+                &transaction,
+                source_id,
+                pinned_publication_ref(),
+                "devcoin",
+            )
+            .await?;
+            transaction.commit().await?;
+            assert_eq!(removed, 0);
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:devcoin").await?,
+                1
+            );
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        finish_import_with_cleanup(result, &[&csv_path])
     })
 }
 
@@ -1102,7 +1179,7 @@ async fn operator_csv_is_additive_for_historical_sources() -> Result<()> {
             assert_eq!(
                 publication_refs,
                 vec![
-                    "a30283101f33c8583855669fdffba5fb20730373".to_owned(),
+                    pinned_publication_ref().to_owned(),
                     "operator-csv".to_owned(),
                 ]
             );

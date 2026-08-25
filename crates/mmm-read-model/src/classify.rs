@@ -75,7 +75,7 @@ impl From<KnownBlockContextCompat> for mmm_bitcoin_core::KnownBlockContext {
 /// the fallback for rules the monitor cannot derive live yet. For the MTP rule,
 /// a live canonical/stale verdict contradicts the catalogue and is a hard
 /// integrity error rather than a silent preference for either source.
-pub(crate) fn resolve_parent_classification(
+pub fn resolve_parent_classification(
     header: &Header,
     live: Option<ParentClassification>,
 ) -> Result<ParentClassification> {

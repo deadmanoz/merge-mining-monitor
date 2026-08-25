@@ -10,7 +10,21 @@ use std::sync::LazyLock;
 use anyhow::{Context, Result, bail};
 use mmm_capture::source_registry::{SOURCE_REGISTRY, SourceKind, SourceLifecycle};
 
-pub(super) const PINNED_RESEARCH_COMMIT: &str = "a30283101f33c8583855669fdffba5fb20730373";
+const PINNED_RESEARCH_MANIFEST: &str =
+    include_str!("../../../../data/historical/historical-source-manifest.json");
+pub(super) static PINNED_RESEARCH_COMMIT: LazyLock<String> = LazyLock::new(|| {
+    serde_json::from_str::<serde_json::Value>(PINNED_RESEARCH_MANIFEST)
+        .expect("pinned historical source manifest must be valid JSON")["source_repo_commit"]
+        .as_str()
+        .filter(|commit| {
+            commit.len() == 40
+                && commit
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+        .expect("pinned historical source manifest must contain a 40-character commit")
+        .to_owned()
+});
 pub(super) const OPERATOR_CSV_PROVENANCE: &str = "operator-csv";
 pub(super) const DEFAULT_MANIFEST_PATH: &str = "data/historical/historical-source-manifest.json";
 const RESEARCH_ROOT_ENV: &str = "MERGE_MINING_RESEARCH_DIR";
@@ -99,9 +113,9 @@ impl HistoricalImportConfig {
         }
     }
 
-    pub(super) fn publication_ref(&self) -> &'static str {
+    pub(super) fn publication_ref(&self) -> &str {
         if self.manifest_path.is_some() {
-            PINNED_RESEARCH_COMMIT
+            PINNED_RESEARCH_COMMIT.as_str()
         } else {
             OPERATOR_CSV_PROVENANCE
         }

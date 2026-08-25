@@ -6,6 +6,13 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Import complete historical error-block child witnesses through a separate,
+  Core-required publication aggregate. Preserve their source-row provenance
+  and RSK sidecars outside ordinary authoritative snapshot deletion. Reclassify
+  any previously stored stale or unknown parent to `error_block`, replay known
+  archive coordinates idempotently, and reject changed evidence at the store
+  boundary.
+
 - Derive `time_below_mtp` error blocks from a required Bitcoin Core node by
   checking the exact eleven linked predecessor headers of an otherwise
   Core-absent, proof-of-work-valid parent. Preserve the Core-derived predecessor
