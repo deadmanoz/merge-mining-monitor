@@ -6,6 +6,26 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Repair bounded near-tip Bitcoin reorgs in follow mode by capturing one
+  tip-pinned Core view, atomically replacing the divergent canonical suffix,
+  and retaining displaced blocks as stale evidence. Persist dependent
+  reconciliation and dependent expansion as restart-safe queue phases so a
+  process exit cannot lose a deeper cascade frontier. Serialize Core-backed
+  classification and ordinary backbone writes against the suffix switch, drain
+  pending suffix work before a Core-header-cache refresh reclassifies rows, and
+  rebind existing same-height stale blocks to the replacement canonical
+  competitor.
+  Preserve unrelated producer failures and reconcile-pending status when
+  recording or clearing repair telemetry, including during concurrent repairs,
+  temporarily suspend and later restore unrelated producer error details while
+  durable reconciliation is pending, consume structural conflicts covered by
+  the committed replacement suffix, and continue to fail closed when the common
+  ancestor lies outside the configured live window. Re-plan once when an
+  in-flight classifier commits a same-height conflict after the initial repair
+  scan. Replay durable parents with strict live Core classification so newly
+  inferable stale children are not stranded, and retain Core-derived pool
+  attribution when displaced AuxPoW-backed rows are replayed.
+
 - Replace the compiled Bitcoin nBits epoch table with a sparse Postgres cache
   populated from a required Bitcoin mainnet Core node. Capture, import, and
   reconciliation refresh Core headers through the synced tip before classifying

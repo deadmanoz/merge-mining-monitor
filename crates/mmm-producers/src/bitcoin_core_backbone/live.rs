@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use mmm_bitcoin_core::ConfiguredParentClassifier;
+use serde_json::json;
 use tokio_postgres::Client;
 
 use crate::bitcoin_epoch_cache::refresh_bitcoin_core_header_cache;
@@ -16,10 +17,13 @@ use crate::live_loop::{LiveProducer, TickOutcome, run_live_loop};
 
 use super::{
     BitcoinCoreBackboneSource, BitcoinCoreBackboneTip, BitcoinCoreSyncConfig, BitcoinCoreSyncStats,
-    SYNC_MODE_CONTIGUOUS, is_backbone_integrity_error, load_or_init_sync_state,
-    repair_near_tip_gaps_to_target, run_sync_bitcoin_core, verify_live_backbone_window,
+    RETRYABLE_REPAIR_ERROR_CODE, SYNC_MODE_CONTIGUOUS, TARGET_TIP_CHANGED_ERROR_CODE,
+    accept_live_repaired_target, is_backbone_integrity_error, load_or_init_sync_state,
+    repair_near_tip_backbone_to_target, run_sync_bitcoin_core, update_sync_error,
+    verify_live_backbone_window,
 };
 use mmm_capture::source_registry::BITCOIN_SOURCE_CODE;
+use mmm_read_model::drain_core_reconcile_queue;
 use mmm_store::get_source_id;
 
 /// Consecutive no-forward-progress batches below tip before the live producer
@@ -78,6 +82,26 @@ fn near_tip_repair_due(last_repair: Option<Instant>, interval: Duration) -> bool
     last_repair.is_none_or(|last_repair| last_repair.elapsed() >= interval)
 }
 
+enum NearTipRepairSchedule {
+    IfDue {
+        last_repair: Option<Instant>,
+        interval: Duration,
+    },
+    Force,
+}
+
+impl NearTipRepairSchedule {
+    fn skipped_timestamp(&self) -> Option<Instant> {
+        match self {
+            Self::IfDue {
+                last_repair,
+                interval,
+            } if !near_tip_repair_due(*last_repair, *interval) => *last_repair,
+            Self::IfDue { .. } | Self::Force => None,
+        }
+    }
+}
+
 /// Snapshot the current Core tip to use as the live-window repair target. Held
 /// as a unit (height + hash) so the repair and its post-verify can detect the
 /// tip moving mid-sweep and treat it as an invariant failure.
@@ -92,24 +116,25 @@ where
 }
 
 /// Run the live-window repair sweep at most once per `interval`, returning the
-/// (possibly updated) last-repair instant for the loop to thread through.
-/// Returns the prior instant unchanged when not yet due. On a target-capture
-/// failure it logs and stamps "now" so the next attempt still respects the
-/// interval. A successful repair (no coinbase failures) is followed by a window
-/// invariant verification; an integrity error there propagates to fail-stop.
-async fn repair_near_tip_gaps_if_due<S>(
+/// updated timestamp and whether it is safe to proceed with the ordinary batch.
+/// On a transient capture or repair failure it stamps "now" and returns false,
+/// preventing the strict ordinary guard from racing ahead of a repair retry. A
+/// successful repair is followed by invariant verification and acceptance of
+/// the pinned target; a structural breach propagates to fail-stop.
+async fn repair_near_tip_backbone_if_due<S>(
     client: &mut Client,
     source: &S,
-    last_repair: Option<Instant>,
-    interval: Duration,
+    source_id: i64,
+    classifier: &ConfiguredParentClassifier,
+    schedule: NearTipRepairSchedule,
     delay: Duration,
     window_heights: i32,
-) -> Result<Option<Instant>>
+) -> Result<(Option<Instant>, bool)>
 where
     S: BitcoinCoreBackboneSource,
 {
-    if !near_tip_repair_due(last_repair, interval) {
-        return Ok(last_repair);
+    if let Some(last_repair) = schedule.skipped_timestamp() {
+        return Ok((Some(last_repair), true));
     }
 
     let target = match capture_live_window_target(source).await {
@@ -119,18 +144,158 @@ where
                 error = format!("{err:#}"),
                 "Bitcoin Core near-tip repair target capture failed; retrying after interval"
             );
-            return Ok(Some(Instant::now()));
+            record_retryable_repair_error(client, source_id, None, "target_capture_failed", &err)
+                .await;
+            return Ok((Some(Instant::now()), false));
         }
     };
     let tip_height = target.height;
-    let repair_succeeded = handle_near_tip_repair_result(
-        tip_height,
-        repair_near_tip_gaps_to_target(client, source, target, delay, window_heights).await,
-    )?;
-    if repair_succeeded {
-        verify_live_backbone_window(client, source, target, window_heights).await?;
+    let result = async {
+        let stats = repair_near_tip_backbone_to_target(
+            client,
+            source,
+            source_id,
+            target,
+            delay,
+            window_heights,
+            classifier,
+        )
+        .await?;
+        if stats.coinbase_failed == 0 {
+            verify_live_backbone_window(client, source, target, window_heights).await?;
+            accept_live_repaired_target(client, source, source_id, target).await?;
+        }
+        Ok(stats)
     }
-    Ok(Some(Instant::now()))
+    .await;
+    let retry_failure = match &result {
+        Ok(stats) if stats.coinbase_failed > 0 => Some((
+            "coinbase_incomplete",
+            format!(
+                "Bitcoin Core near-tip repair left {} coinbase fetch failures",
+                stats.coinbase_failed
+            ),
+        )),
+        Err(err) if !is_backbone_integrity_error(err) => {
+            Some(("transient_repair_failure", format!("{err:#}")))
+        }
+        _ => None,
+    };
+    let repair_succeeded = handle_near_tip_repair_result(tip_height, result)?;
+    if !repair_succeeded {
+        let (reason, message) =
+            retry_failure.expect("a retryable repair result always carries failure details");
+        record_retryable_repair_message(client, source_id, Some(target), reason, &message).await;
+    }
+    Ok((Some(Instant::now()), repair_succeeded))
+}
+
+async fn record_retryable_repair_error(
+    client: &mut Client,
+    source_id: i64,
+    target: Option<BitcoinCoreBackboneTip>,
+    reason: &str,
+    err: &anyhow::Error,
+) {
+    record_retryable_repair_message(client, source_id, target, reason, &format!("{err:#}")).await;
+}
+
+async fn record_retryable_repair_message(
+    client: &mut Client,
+    source_id: i64,
+    target: Option<BitcoinCoreBackboneTip>,
+    reason: &str,
+    message: &str,
+) {
+    if let Err(record_err) =
+        try_record_retryable_repair_message(client, source_id, target, reason, message).await
+    {
+        tracing::warn!(
+            error = format!("{record_err:#}"),
+            "could not persist retryable Bitcoin Core near-tip repair failure"
+        );
+    }
+}
+
+async fn try_record_retryable_repair_message(
+    client: &mut Client,
+    source_id: i64,
+    target: Option<BitcoinCoreBackboneTip>,
+    reason: &str,
+    message: &str,
+) -> Result<()> {
+    let txn = client
+        .transaction()
+        .await
+        .context("begin retryable Bitcoin Core repair status update")?;
+    // The upsert locks the sync-state row. Check the queue and status ownership in
+    // a separate READ COMMITTED statement so a writer that held the row first
+    // is visible after this transaction waits for it. Retry bookkeeping may
+    // replace a retry-owned status, but never masks another producer failure.
+    let state = load_or_init_sync_state(&txn, source_id).await?;
+    let may_record_retry: bool = txn
+        .query_one(
+            "SELECT NOT EXISTS ( \
+                 SELECT 1 FROM bitcoin_core_reconcile_queue WHERE source_id = $1 \
+             ) AND (s.last_error_code IS NULL \
+                 OR s.last_error_code IN ($3, $4)) \
+             FROM bitcoin_core_sync_state s \
+             WHERE s.source_id = $1 AND s.sync_mode = $2",
+            &[
+                &source_id,
+                &SYNC_MODE_CONTIGUOUS,
+                &RETRYABLE_REPAIR_ERROR_CODE,
+                &TARGET_TIP_CHANGED_ERROR_CODE,
+            ],
+        )
+        .await
+        .context("check Bitcoin Core status ownership before recording repair retry")?
+        .get(0);
+    if !may_record_retry {
+        txn.commit()
+            .await
+            .context("commit preserved Bitcoin Core sync status")?;
+        return Ok(());
+    }
+
+    let height = target
+        .map(|target| target.height)
+        .or(state.target_tip_height)
+        .unwrap_or(state.contiguous_complete_height);
+    let details = json!({
+        "reason": reason,
+        "retryable": true,
+        "target_tip_height": target.map(|target| target.height),
+        "target_tip_hash": target.map(|target| target.hash.to_string()),
+    });
+    update_sync_error(
+        &txn,
+        source_id,
+        height,
+        RETRYABLE_REPAIR_ERROR_CODE,
+        message,
+        details,
+    )
+    .await?;
+    txn.commit()
+        .await
+        .context("commit retryable Bitcoin Core repair status")
+}
+
+#[cfg(any(test, feature = "db-integration"))]
+#[doc(hidden)]
+pub async fn record_retryable_repair_failure_for_test(
+    client: &mut Client,
+    source_id: i64,
+) -> Result<()> {
+    try_record_retryable_repair_message(
+        client,
+        source_id,
+        None,
+        "test_retryable_failure",
+        "test retryable Bitcoin Core near-tip repair failure",
+    )
+    .await
 }
 
 /// Classify a repair sweep's outcome into "verify the window now" (`Ok(true)`)
@@ -233,6 +398,21 @@ where
         let progress_after = load_follow_progress(self.client, self.source_id).await.ok();
         bookkeeping_failure_outcome_from(progress_before, progress_after)
     }
+
+    async fn repair_near_tip(&mut self, schedule: NearTipRepairSchedule) -> Result<bool> {
+        let (last_repair, repair_succeeded) = repair_near_tip_backbone_if_due(
+            self.client,
+            self.source,
+            self.source_id,
+            self.header_cache_classifier,
+            schedule,
+            self.config.delay,
+            self.config.near_tip_repair_window_heights,
+        )
+        .await?;
+        self.last_near_tip_repair_at = last_repair;
+        Ok(repair_succeeded)
+    }
 }
 
 fn bookkeeping_failure_outcome_from(
@@ -285,6 +465,17 @@ where
     }
 
     async fn tick(&mut self) -> Result<TickOutcome> {
+        if let Err(err) =
+            drain_core_reconcile_queue(self.client, self.source_id, self.header_cache_classifier)
+                .await
+        {
+            tracing::warn!(
+                error = format!("{err:#}"),
+                "Bitcoin Core pending reorg cascade failed; retrying before further sync work"
+            );
+            return Ok(self.bookkeeping_failure_outcome(None).await);
+        }
+
         let progress_before = match load_follow_progress(self.client, self.source_id).await {
             Ok(progress) => progress,
             Err(err) => {
@@ -296,9 +487,49 @@ where
             }
         };
 
+        let repair_succeeded = self
+            .repair_near_tip(NearTipRepairSchedule::IfDue {
+                last_repair: self.last_near_tip_repair_at,
+                interval: self.config.follow_interval,
+            })
+            .await?;
+        if !repair_succeeded {
+            return Ok(TickOutcome {
+                // A partial gap/suffix commit is not safe progress until the
+                // complete repair, queue drain, verification, and target
+                // acceptance sequence succeeds. Waiting one interval also
+                // makes the scheduled repair due again on the next tick.
+                progressed: false,
+                // Height equality is insufficient on a same-height fork. A
+                // target is idle only after its hash has been accepted by a
+                // successful repair/verification pass.
+                idle_at_target: false,
+            });
+        }
+
         match run_sync_bitcoin_core(self.client, self.source, self.config.clone()).await {
             Ok(_stats) => {}
-            Err(err) if is_backbone_integrity_error(&err) => return Err(err),
+            Err(err) if is_backbone_integrity_error(&err) => {
+                tracing::warn!(
+                    error = format!("{err:#}"),
+                    "Bitcoin Core ordinary live batch found a backbone conflict; forcing bounded repair"
+                );
+                let repair_succeeded = self.repair_near_tip(NearTipRepairSchedule::Force).await?;
+                if !repair_succeeded {
+                    return Ok(TickOutcome {
+                        progressed: false,
+                        idle_at_target: false,
+                    });
+                }
+                match run_sync_bitcoin_core(self.client, self.source, self.config.clone()).await {
+                    Ok(_stats) => {}
+                    Err(err) if is_backbone_integrity_error(&err) => return Err(err),
+                    Err(err) => tracing::warn!(
+                        error = format!("{err:#}"),
+                        "Bitcoin Core post-repair batch failed; retrying after interval"
+                    ),
+                }
+            }
             Err(err) => tracing::warn!(
                 error = format!("{err:#}"),
                 "Bitcoin Core backbone live batch failed; retrying after interval"
@@ -316,17 +547,6 @@ where
                 .bookkeeping_failure_outcome(Some(progress_before))
                 .await);
         }
-
-        self.last_near_tip_repair_at = repair_near_tip_gaps_if_due(
-            self.client,
-            self.source,
-            self.last_near_tip_repair_at,
-            self.config.follow_interval,
-            self.config.delay,
-            self.config.near_tip_repair_window_heights,
-        )
-        .await?;
-
         let progress_after = match load_follow_progress(self.client, self.source_id).await {
             Ok(progress) => progress,
             Err(err) => {
@@ -383,9 +603,9 @@ where
 /// PERSISTENT transient failure below tip fail-stops after
 /// `FOLLOW_STALL_EXIT_THRESHOLD` consecutive batches rather than retrying
 /// forever behind a healthy-looking status. A backbone integrity error
-/// (`BackboneIntegrityError`: height conflict, link mismatch, or a same-height
-/// tip reorg) is propagated immediately so the producer exits and the operator is
-/// alerted rather than the service appearing healthy while permanently stuck.
+/// outside the bounded repair window is propagated immediately so the producer
+/// exits and alerts the operator. A recent fork with a matching anchor inside
+/// the window is switched atomically before the strict ordinary batch runs.
 pub async fn run_sync_bitcoin_core_follow<S>(
     client: &mut Client,
     source: &S,
@@ -410,6 +630,41 @@ where
         last_near_tip_repair_at: None,
     })
     .await
+}
+
+/// Execute one finite follow tick with a deliberately fresh repair timestamp.
+///
+/// This db-integration seam exercises the control-flow race in which the
+/// scheduled sweep is throttled but the ordinary batch discovers a fork and
+/// must force an immediate bounded repair. The returned pair is
+/// `(progressed, idle_at_target)`.
+#[cfg(any(test, feature = "db-integration"))]
+#[doc(hidden)]
+pub async fn run_bitcoin_core_follow_tick_for_test<S>(
+    client: &mut Client,
+    source: &S,
+    header_cache_classifier: &ConfiguredParentClassifier,
+    mut config: BitcoinCoreSyncConfig,
+) -> Result<(bool, bool)>
+where
+    S: BitcoinCoreBackboneSource,
+{
+    normalize_follow_config(&mut config);
+    let source_id = get_source_id(client, BITCOIN_SOURCE_CODE).await?;
+    let initial_cch = initialize_follow_state(client, source_id).await?;
+    let outcome = BitcoinCoreLiveProducer {
+        client,
+        source,
+        source_id,
+        initial_cch,
+        header_cache_classifier,
+        config,
+        stall: 0,
+        last_near_tip_repair_at: Some(Instant::now()),
+    }
+    .tick()
+    .await?;
+    Ok((outcome.progressed, outcome.idle_at_target))
 }
 
 /// Ensure the `bitcoin_core_sync_state` row exists and return the initial

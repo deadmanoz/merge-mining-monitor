@@ -263,9 +263,10 @@ pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
 /// Resolve `block.bitcoin_miner_pool_id` with a precedence ladder: (1) Core's
 /// own coinbase for a freshly Core-attested canonical/stale parent, (2) the
 /// pool already persisted from a prior Core attestation when the block is
-/// canonical (so a Core-off reconcile does not lose it), (3) the AuxPoW event's
-/// reported parent coinbase. Core evidence wins over event-reported coinbase
-/// because the event coinbase can be spoofed by the child-chain submitter.
+/// canonical or Core-attested stale (so a Core-off replay does not lose it),
+/// (3) the AuxPoW event's reported parent coinbase. Core evidence wins over
+/// event-reported coinbase because the event coinbase can be spoofed by the
+/// child-chain submitter.
 async fn resolve_effective_bitcoin_miner_pool_id<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -286,7 +287,7 @@ async fn resolve_effective_bitcoin_miner_pool_id<C: GenericClient>(
         }
     }
 
-    if kind == BlockKind::Canonical
+    if (kind == BlockKind::Canonical || (kind == BlockKind::Stale && classification.core_attested))
         && let Some(core_pool_id) =
             resolve_persisted_core_coinbase_bitcoin_miner_pool_id(client, hash).await?
     {

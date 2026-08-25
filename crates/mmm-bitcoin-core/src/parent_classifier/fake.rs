@@ -8,6 +8,7 @@ use super::*;
 pub struct FakeParentClassifier {
     state: Arc<tokio::sync::Mutex<FakeParentClassifierState>>,
     first_call_gate: Option<Arc<FakeParentClassifierGate>>,
+    classification_error_on_call: Option<u64>,
     synced_tip_is_mainnet: bool,
     synced_tip_height: Option<i32>,
     synced_tip_fresh: bool,
@@ -51,6 +52,7 @@ impl FakeParentClassifier {
                 calls: 0,
             })),
             first_call_gate: None,
+            classification_error_on_call: None,
             synced_tip_is_mainnet: true,
             synced_tip_height: None,
             synced_tip_fresh: true,
@@ -62,6 +64,15 @@ impl FakeParentClassifier {
 
     pub fn with_first_call_gate(mut self, gate: Arc<FakeParentClassifierGate>) -> Self {
         self.first_call_gate = Some(gate);
+        self
+    }
+
+    /// Fail one exact parent-classification call after recording it. This lets
+    /// integration tests distinguish an initial strict preclassification from
+    /// its barrier-time revalidation.
+    pub fn with_classification_error_on_call(mut self, call: u64) -> Self {
+        assert!(call > 0, "fake classification call numbers are one-based");
+        self.classification_error_on_call = Some(call);
         self
     }
 
@@ -181,6 +192,12 @@ impl FakeParentClassifier {
 
         let mut state = self.state.lock().await;
         state.calls += 1;
+        if self.classification_error_on_call == Some(state.calls) {
+            bail!(
+                "fake classifier: injected classification error on call {}",
+                state.calls
+            );
+        }
         if state.results.len() > 1 {
             Ok(state
                 .results

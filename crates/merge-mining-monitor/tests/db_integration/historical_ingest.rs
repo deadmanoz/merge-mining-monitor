@@ -15,7 +15,7 @@ use mmm_producers::{
 };
 use mmm_read_model::{
     drain_historical_reconcile_queue, drain_historical_reconcile_queue_with_budget_for_test,
-    rebuild_source_health,
+    enqueue_historical_parent_reconcile, rebuild_source_health,
 };
 use mmm_store::get_source_id;
 
@@ -594,51 +594,8 @@ async fn targeted_stale_reconcile_retains_committed_cascade_seeds() -> Result<()
     })
 }
 
-#[tokio::test]
-async fn multi_chain_import_reuses_the_parent_classification_cache() -> Result<()> {
-    crate::run_mut_db_test!(client, {
-        let header = header_meeting_bits(0x207f_ffff, 1_700_000_036, 36);
-        let ixcoin_path = write_normalized_csv_for_chain(
-            "ixcoin",
-            &header,
-            "canonical",
-            "",
-            "canonical_parent",
-            &[],
-            700_036,
-        )?;
-        let devcoin_path = write_normalized_csv_for_chain(
-            "devcoin",
-            &header,
-            "canonical",
-            "",
-            "canonical_parent",
-            &[],
-            700_036,
-        )?;
-        let result = async {
-            let fake = FakeParentClassifier::new(canonical_verdict(&header, 700_036));
-            let classifier = ConfiguredParentClassifier::Fake(fake.clone());
-            let summary = run_historical_import_configs_for_test(
-                &mut client,
-                &classifier,
-                two_chain_import_configs(&ixcoin_path, &devcoin_path),
-            )
-            .await?;
-
-            assert_eq!(summary.chains.len(), 2);
-            assert_eq!(summary.stale_branches_reconciled, 0);
-            assert_eq!(
-                fake.call_count().await,
-                1,
-                "the repeated parent must be classified once across both chains"
-            );
-            Ok::<_, anyhow::Error>(())
-        }
-        .await;
-        finish_import_with_cleanup(result, &[&ixcoin_path, &devcoin_path])
-    })
-}
+#[path = "historical_ingest/queue_concurrency.rs"]
+mod queue_concurrency;
 
 #[tokio::test]
 async fn historical_preflight_refills_classifier_concurrency() -> Result<()> {
@@ -687,7 +644,12 @@ async fn historical_preflight_refills_classifier_concurrency() -> Result<()> {
             gate.proceed();
             let summary = import.await?;
             assert_eq!(summary.ingested, 4);
-            assert_eq!(fake.call_count().await, 3);
+            assert_eq!(
+                fake.call_count().await,
+                5,
+                "three preflight classifications plus two barrier-protected rechecks of the \
+                 fake's incompatible same-height canonical verdicts"
+            );
             Ok::<_, anyhow::Error>(())
         }
         .await;

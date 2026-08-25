@@ -22,13 +22,9 @@ use mmm_store::get_source_id;
 
 use super::{
     BackboneIntegrityError, BitcoinCoreBackboneSource, BitcoinCoreBackboneTip,
-    BitcoinCoreSyncConfig, BitcoinCoreSyncStats, integrity_error, load_or_init_sync_state,
-    run_sync_bitcoin_core, update_sync_error,
+    BitcoinCoreSyncConfig, BitcoinCoreSyncStats, LIVE_WINDOW_INVARIANT_ERROR_CODE, integrity_error,
+    load_or_init_sync_state, run_sync_bitcoin_core, update_sync_error,
 };
-
-/// Stable `last_error_code` written for every live-window invariant breach, so
-/// operators can filter on a single code regardless of which check tripped.
-const LIVE_WINDOW_INVARIANT_ERROR_CODE: &str = "live_window_invariant_failed";
 
 /// A canonical `block` row inside the live window, carrying its height alongside
 /// the hash/prev-hash/coinbase columns the verification walk compares. Hashes

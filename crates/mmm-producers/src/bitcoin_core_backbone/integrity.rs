@@ -10,8 +10,9 @@
 use anyhow::{Result, anyhow};
 use bitcoin::BlockHash;
 use bitcoin::hashes::Hash as _;
+use serde_json::Value;
 use serde_json::json;
-use tokio_postgres::Client;
+use tokio_postgres::GenericClient;
 
 use super::{CanonicalHeightRow, load_canonical_rows_at_height, update_sync_error};
 
@@ -42,6 +43,59 @@ impl std::fmt::Display for BackboneIntegrityError {
 
 impl std::error::Error for BackboneIntegrityError {}
 
+/// Structured structural failure that can be persisted again after an
+/// in-transaction validation rolls back. The wrapped `BackboneIntegrityError`
+/// remains in the anyhow chain so live mode still distinguishes fail-stop
+/// invariants from transient transport errors.
+#[derive(Debug, Clone)]
+pub(super) struct BackboneIntegrityFailure {
+    kind: BackboneIntegrityError,
+    code: &'static str,
+    height: i32,
+    message: String,
+    details: Value,
+}
+
+impl std::fmt::Display for BackboneIntegrityFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl BackboneIntegrityFailure {
+    pub(super) fn new(
+        kind: BackboneIntegrityError,
+        code: &'static str,
+        height: i32,
+        message: String,
+        details: Value,
+    ) -> Self {
+        Self {
+            kind,
+            code,
+            height,
+            message,
+            details,
+        }
+    }
+
+    pub(super) async fn persist<C: GenericClient>(&self, client: &C, source_id: i64) -> Result<()> {
+        update_sync_error(
+            client,
+            source_id,
+            self.height,
+            self.code,
+            &self.message,
+            self.details.clone(),
+        )
+        .await
+    }
+
+    pub(super) fn into_error(self) -> anyhow::Error {
+        anyhow::Error::new(self.kind).context(self)
+    }
+}
+
 /// True when `err` carries a `BackboneIntegrityError` marker anywhere in its
 /// chain (a structural fail-stop, not a transient fetch error).
 pub(crate) fn is_backbone_integrity_error(err: &anyhow::Error) -> bool {
@@ -56,8 +110,8 @@ pub(crate) fn integrity_error(kind: BackboneIntegrityError, message: String) -> 
     anyhow::Error::new(kind).context(message)
 }
 
-pub(super) async fn guard_same_height_conflicts(
-    client: &Client,
+pub(super) async fn guard_same_height_conflicts<C: GenericClient>(
+    client: &C,
     source_id: i64,
     height: i32,
     core_hash: BlockHash,
@@ -75,31 +129,28 @@ pub(super) async fn guard_same_height_conflicts(
         .iter()
         .map(|row| hex::encode(&row.hash))
         .collect::<Vec<_>>();
-    let err = anyhow!(
+    let message = anyhow!(
         "same-height canonical conflict at height {height}: Core={}, existing={}",
         core_hash,
         hashes.join(",")
-    );
-    update_sync_error(
-        client,
-        source_id,
-        height,
+    )
+    .to_string();
+    let failure = BackboneIntegrityFailure::new(
+        BackboneIntegrityError::HeightConflict,
         "backbone_height_conflict",
-        &err.to_string(),
+        height,
+        message,
         json!({
             "core_hash": core_hash.to_string(),
             "existing_hashes": hashes,
         }),
-    )
-    .await?;
-    Err(integrity_error(
-        BackboneIntegrityError::HeightConflict,
-        err.to_string(),
-    ))
+    );
+    failure.persist(client, source_id).await?;
+    Err(failure.into_error())
 }
 
-pub(super) async fn guard_existing_link(
-    client: &Client,
+pub(super) async fn guard_existing_link<C: GenericClient>(
+    client: &C,
     source_id: i64,
     height: i32,
     row: &CanonicalHeightRow,
@@ -115,8 +166,8 @@ pub(super) async fn guard_existing_link(
     .await
 }
 
-pub(super) async fn guard_header_link(
-    client: &Client,
+pub(super) async fn guard_header_link<C: GenericClient>(
+    client: &C,
     source_id: i64,
     height: i32,
     prev_hash: &[u8],
@@ -128,25 +179,22 @@ pub(super) async fn guard_header_link(
     let prev_rows = load_canonical_rows_at_height(client, height - 1).await?;
     let Some(prev_row) = prev_rows.first() else {
         if default_contiguous_pass {
-            let err = anyhow!("previous canonical height {} is missing", height - 1);
-            update_sync_error(
-                client,
-                source_id,
-                height,
-                "backbone_link_mismatch",
-                &err.to_string(),
-                json!({ "previous_height": height - 1 }),
-            )
-            .await?;
-            return Err(integrity_error(
+            let message =
+                anyhow!("previous canonical height {} is missing", height - 1).to_string();
+            let failure = BackboneIntegrityFailure::new(
                 BackboneIntegrityError::LinkMismatch,
-                err.to_string(),
-            ));
+                "backbone_link_mismatch",
+                height,
+                message,
+                json!({ "previous_height": height - 1 }),
+            );
+            failure.persist(client, source_id).await?;
+            return Err(failure.into_error());
         }
         return Ok(());
     };
     if prev_rows.len() > 1 || prev_row.hash.as_slice() != prev_hash {
-        let err = anyhow!(
+        let message = anyhow!(
             "canonical link mismatch at height {height}: prev={} previous_height_hashes={}",
             hex::encode(prev_hash),
             prev_rows
@@ -154,24 +202,21 @@ pub(super) async fn guard_header_link(
                 .map(|row| hex::encode(&row.hash))
                 .collect::<Vec<_>>()
                 .join(",")
-        );
-        update_sync_error(
-            client,
-            source_id,
-            height,
+        )
+        .to_string();
+        let failure = BackboneIntegrityFailure::new(
+            BackboneIntegrityError::LinkMismatch,
             "backbone_link_mismatch",
-            &err.to_string(),
+            height,
+            message,
             json!({
                 "previous_height": height - 1,
                 "expected_prev_hash": hex::encode(prev_hash),
                 "previous_hashes": prev_rows.iter().map(|row| hex::encode(&row.hash)).collect::<Vec<_>>(),
             }),
-        )
-        .await?;
-        return Err(integrity_error(
-            BackboneIntegrityError::LinkMismatch,
-            err.to_string(),
-        ));
+        );
+        failure.persist(client, source_id).await?;
+        return Err(failure.into_error());
     }
     Ok(())
 }

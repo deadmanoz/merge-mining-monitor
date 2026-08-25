@@ -9,17 +9,17 @@ use anyhow::{Context, Result, anyhow, bail};
 use bitcoin::BlockHash;
 use bitcoin::block::Header;
 use bitcoin::hashes::Hash as _;
-use serde_json::{Value, json};
-use tokio_postgres::Client;
-use tokio_postgres::types::Json;
+use serde_json::json;
+use tokio_postgres::{Client, GenericClient, Transaction};
 
 use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_bitcoin_core::{BitcoinCoreBlockCoinbase, BitcoinCoreRpcClient};
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_capture::source_registry::BITCOIN_SOURCE_CODE;
 use mmm_read_model::{
-    CoreCanonicalWrite, drive_args, reconcile_dependents_after_change, record_coinbase_failure,
-    write_core_canonical,
+    CommittedParentMutation, CoreCanonicalWrite, drive_args, reconcile_dependents_after_change,
+    record_coinbase_failure, run_exclusive_core_canonical_view_transaction,
+    write_core_canonical_validated,
 };
 use mmm_store::{get_source_id, upsert_pool_snapshot};
 
@@ -27,17 +27,47 @@ mod integrity;
 mod live;
 mod live_config;
 mod live_window;
+mod reorg;
+mod sync_state;
 
 // Live-mode API, re-exported from the crate root for normal callers while
 // this module reopens under db-integration for tests.
-#[cfg(any(test, feature = "db-integration"))]
-pub use live::initialize_follow_state;
 pub use live::run_sync_bitcoin_core_follow;
+#[cfg(any(test, feature = "db-integration"))]
+pub use live::{
+    initialize_follow_state, record_retryable_repair_failure_for_test,
+    run_bitcoin_core_follow_tick_for_test,
+};
+use live_window::live_backbone_window_start_height;
 pub(crate) use live_window::{repair_near_tip_gaps_to_target, verify_live_backbone_window};
+#[cfg(any(test, feature = "db-integration"))]
+pub use reorg::repair_near_tip_backbone_for_test;
+pub(crate) use reorg::repair_near_tip_backbone_to_target;
+use reorg::target_stability_failure;
 // Integrity guards live in `integrity.rs`; re-exported at crate visibility so
 // `follow` and `live_window` keep importing them from `super`, unchanged.
+use integrity::BackboneIntegrityFailure;
 pub(crate) use integrity::{BackboneIntegrityError, integrity_error, is_backbone_integrity_error};
 use integrity::{guard_existing_link, guard_header_link, guard_same_height_conflicts};
+use sync_state::{
+    CanonicalHeightRow, SyncState, accept_live_repaired_target, advance_contiguous_complete_prefix,
+    guard_no_pending_core_reconcile, load_canonical_rows_at_height, load_or_init_sync_state,
+    skipped_complete_has_missing_dependents, update_sync_error, update_sync_progress,
+    verify_or_set_target_tip,
+};
+
+#[cfg(any(test, feature = "db-integration"))]
+pub async fn accept_live_repaired_target_for_test<S>(
+    client: &mut Client,
+    source: &S,
+    source_id: i64,
+    target: BitcoinCoreBackboneTip,
+) -> Result<()>
+where
+    S: BitcoinCoreBackboneSource,
+{
+    accept_live_repaired_target(client, source, source_id, target).await
+}
 // Live-mode config knobs consumed by `BitcoinCoreSyncConfig::{default, from_args_with_lookup}`.
 use live_config::{
     DEFAULT_FOLLOW_INTERVAL_SECS, DEFAULT_NEAR_TIP_REPAIR_WINDOW_HEIGHTS, FOLLOW_DEFAULT_LIMIT,
@@ -51,6 +81,18 @@ const DEFAULT_LIMIT: i64 = 100;
 /// `bitcoin_core_sync_state` row per source under this key; all cursor reads and
 /// writes are scoped by `(source_id, sync_mode)`.
 const SYNC_MODE_CONTIGUOUS: &str = "contiguous";
+// A verified live target resolves these four statuses. Keep their writers and
+// the acceptance clear policy keyed to the same constants.
+const RETRYABLE_REPAIR_ERROR_CODE: &str = "near_tip_reorg_repair_retry";
+const TARGET_TIP_CHANGED_ERROR_CODE: &str = "target_tip_changed";
+const REORG_REPAIR_ERROR_CODE: &str = "near_tip_reorg_repair_failed";
+const LIVE_WINDOW_INVARIANT_ERROR_CODE: &str = "live_window_invariant_failed";
+const REPAIR_OWNED_ERROR_CODES: [&str; 4] = [
+    RETRYABLE_REPAIR_ERROR_CODE,
+    TARGET_TIP_CHANGED_ERROR_CODE,
+    REORG_REPAIR_ERROR_CODE,
+    LIVE_WINDOW_INVARIANT_ERROR_CODE,
+];
 
 /// A Bitcoin Core tip observation: the active-chain height and its block hash.
 /// Carried as a unit so `verify_or_set_target_tip` can detect a same-height tip
@@ -266,36 +308,6 @@ pub struct BitcoinCoreSyncStats {
     pub coinbase_failed: usize,
 }
 
-/// In-memory mirror of the `bitcoin_core_sync_state` cursor row for one batch.
-/// Loaded once per `run_sync_bitcoin_core` call, mutated as heights advance, and
-/// flushed back via monotonic `GREATEST` upserts.
-#[derive(Debug, Clone)]
-struct SyncState {
-    /// Last recorded sync target tip height (set under `--tip`).
-    target_tip_height: Option<i32>,
-    /// Hash of `target_tip_height`, BYTEA wire-order bytes; a mismatch at the
-    /// same height is a tip reorg.
-    target_tip_hash: Option<Vec<u8>>,
-    /// Highest height whose canonical chain is complete and unbroken from
-    /// genesis; the resume point and live-progress signal (never MAX(height)).
-    contiguous_complete_height: i32,
-    /// Height of the last recorded error, used to decide when to clear it.
-    last_error_height: Option<i32>,
-    /// When set, this batch hit a coinbase failure, so `update_sync_progress`
-    /// must NOT clear the persisted error column even on a later success.
-    preserve_error: bool,
-}
-
-/// A canonical `block` row at one height, projected to just the columns the
-/// backbone walk compares: header hash, prev-header hash, and coinbase status.
-/// Hashes are BYTEA wire-order bytes, compared without reversal.
-#[derive(Debug, Clone)]
-struct CanonicalHeightRow {
-    hash: Vec<u8>,
-    prev_hash: Vec<u8>,
-    coinbase_status: String,
-}
-
 /// Run one backbone sync batch: seed the pool snapshot, resolve the source,
 /// advance the contiguous cursor, then fill `from_height..=to_height` (resolved
 /// from config + cursor + tip, capped by `limit`). Each height writes only
@@ -315,11 +327,7 @@ where
         .context("seed pool snapshot for Bitcoin Core backbone sync")?;
 
     let source_id = get_source_id(client, BITCOIN_SOURCE_CODE).await?;
-    let mut state = load_or_init_sync_state(client, source_id).await?;
-    let tip = source.tip().await.context("fetch Bitcoin Core tip")?;
-    if config.tip {
-        verify_or_set_target_tip(client, source_id, &mut state, tip).await?;
-    }
+    let (mut state, tip) = prepare_sync_batch(client, source, source_id, config.tip).await?;
     if let Some(to_height) = config.to_height
         && to_height > tip.height
     {
@@ -338,8 +346,6 @@ where
         .await?;
         return Err(err);
     }
-    advance_contiguous_complete_prefix(client, source_id, &mut state).await?;
-
     let from_height = config
         .from_height
         .unwrap_or_else(|| (state.contiguous_complete_height + 1).max(0));
@@ -392,6 +398,38 @@ where
     Ok(stats)
 }
 
+async fn prepare_sync_batch<S>(
+    client: &mut Client,
+    source: &S,
+    source_id: i64,
+    pin_target: bool,
+) -> Result<(SyncState, BitcoinCoreBackboneTip)>
+where
+    S: BitcoinCoreBackboneSource,
+{
+    let result = run_exclusive_core_canonical_view_transaction(
+        client,
+        "prepare Bitcoin Core sync batch",
+        async |txn| {
+            guard_no_pending_core_reconcile(txn, source_id).await?;
+            let mut state = load_or_init_sync_state(txn, source_id).await?;
+            let tip = source.tip().await.context("fetch Bitcoin Core tip")?;
+            if pin_target {
+                verify_or_set_target_tip(txn, source_id, &mut state, tip).await?;
+            }
+            advance_contiguous_complete_prefix(txn, source_id, &mut state).await?;
+            Ok((state, tip))
+        },
+    )
+    .await;
+    if let Err(err) = &result
+        && let Some(failure) = err.downcast_ref::<BackboneIntegrityFailure>()
+    {
+        failure.persist(client, source_id).await?;
+    }
+    result
+}
+
 /// Result of syncing a single height, mapped 1:1 onto a `BitcoinCoreSyncStats`
 /// counter by the caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -433,14 +471,21 @@ where
         && let Some(row) = rows.first()
         && row.hash.as_slice() == core_hash.to_byte_array().as_slice()
         && row.coinbase_status == "complete"
+        && let Some(skipped_hash) = try_skip_complete(
+            client,
+            source,
+            source_id,
+            height,
+            core_hash,
+            default_contiguous_pass,
+            state,
+        )
+        .await?
     {
-        guard_existing_link(client, source_id, height, row, default_contiguous_pass).await?;
-        advance_contiguous_complete_prefix(client, source_id, state).await?;
-        update_sync_progress(client, source_id, height, state).await?;
-        if skipped_complete_has_missing_dependents(client, &row.hash).await? {
+        if skipped_complete_has_missing_dependents(client, &skipped_hash).await? {
             reconcile_dependents_after_change(
                 client,
-                &row.hash,
+                &skipped_hash,
                 &ConfiguredParentClassifier::Disabled,
             )
             .await?;
@@ -460,6 +505,14 @@ where
         default_contiguous_pass,
     )
     .await?;
+    let observation = CoreHeightObservation {
+        source,
+        source_id,
+        height,
+        hash: core_hash,
+        header: &header,
+        default_contiguous_pass,
+    };
 
     let coinbase = match source.block_coinbase(core_hash).await {
         Ok(coinbase) => coinbase,
@@ -470,24 +523,23 @@ where
             // in the same transaction as the injected extra. The returned token
             // defers the dependent cascade until after the sync-state
             // bookkeeping below, preserving failure-path observability.
-            let committed = write_core_canonical(
+            let committed = write_observed_core_canonical(
                 client,
-                CoreCanonicalWrite {
-                    header: &header,
-                    height,
-                    coinbase: None,
+                &observation,
+                None,
+                async |txn| {
+                    record_coinbase_failure(txn, height, core_hash).await?;
+                    update_sync_error(
+                        txn,
+                        source_id,
+                        height,
+                        "coinbase_fetch_failed",
+                        &err_msg,
+                        json!({ "hash": core_hash.to_string() }),
+                    )
+                    .await
                 },
-                async |txn| record_coinbase_failure(txn, height, core_hash).await,
                 "sync-bitcoin-core coinbase failure",
-            )
-            .await?;
-            update_sync_error(
-                client,
-                source_id,
-                height,
-                "coinbase_fetch_failed",
-                &err_msg,
-                json!({ "hash": core_hash.to_string() }),
             )
             .await?;
             state.preserve_error = true;
@@ -498,298 +550,155 @@ where
         }
     };
 
-    let committed = write_core_canonical(
+    let committed = write_observed_core_canonical(
         client,
-        CoreCanonicalWrite {
-            header: &header,
-            height,
-            coinbase: Some(coinbase),
+        &observation,
+        Some(coinbase),
+        async |txn| {
+            advance_contiguous_complete_prefix(txn, source_id, state).await?;
+            update_sync_progress(txn, source_id, height, state).await
         },
-        async |_txn| Ok(()),
         "sync-bitcoin-core",
     )
     .await?;
-    advance_contiguous_complete_prefix(client, source_id, state).await?;
-    update_sync_progress(client, source_id, height, state).await?;
     committed
         .cascade(client, &ConfiguredParentClassifier::Disabled)
         .await?;
     Ok(HeightSyncOutcome::Completed)
 }
 
-/// Idempotently create (or read) the `bitcoin_core_sync_state` row for this
-/// source under the contiguous `sync_mode`, returning its current cursor as a
-/// `SyncState`. The `ON CONFLICT ... DO UPDATE SET updated_at = <itself>` is a
-/// no-op upsert: it guarantees a row exists and is returnable in one round trip
-/// without disturbing any persisted cursor or error columns.
-async fn load_or_init_sync_state(client: &Client, source_id: i64) -> Result<SyncState> {
-    let row = client
-        .query_one(
-            "INSERT INTO bitcoin_core_sync_state (source_id, sync_mode, created_at, updated_at) \
-             VALUES ($1, $2, extract(epoch from now())::bigint, extract(epoch from now())::bigint) \
-             ON CONFLICT (source_id, sync_mode) DO UPDATE SET updated_at = bitcoin_core_sync_state.updated_at \
-             RETURNING target_tip_height, target_tip_hash, contiguous_complete_height, last_error_height",
-            &[&source_id, &SYNC_MODE_CONTIGUOUS],
-        )
-        .await
-        .context("load Bitcoin Core sync state")?;
-    Ok(SyncState {
-        target_tip_height: row.get(0),
-        target_tip_hash: row.get(1),
-        contiguous_complete_height: row.get(2),
-        last_error_height: row.get(3),
-        preserve_error: false,
-    })
-}
-
-/// Pin (or re-confirm) the sync target tip for a `--tip` batch. If the
-/// persisted target sits at the same height but a different hash, the active
-/// chain reorged out from under us: record a `target_tip_changed` error and
-/// return a `TargetTipChanged` integrity error so the live producer fail-stops
-/// rather than silently writing across a reorg. Otherwise overwrite the
-/// persisted target with the current tip.
-async fn verify_or_set_target_tip(
-    client: &Client,
+async fn try_skip_complete<S>(
+    client: &mut Client,
+    source: &S,
     source_id: i64,
+    height: i32,
+    expected_hash: BlockHash,
+    default_contiguous_pass: bool,
     state: &mut SyncState,
-    tip: BitcoinCoreBackboneTip,
-) -> Result<()> {
-    let tip_hash = tip.hash.to_byte_array().to_vec();
-    if state.target_tip_height == Some(tip.height)
-        && let Some(existing_hash) = &state.target_tip_hash
-        && existing_hash != &tip_hash
+) -> Result<Option<Vec<u8>>>
+where
+    S: BitcoinCoreBackboneSource,
+{
+    let result = run_exclusive_core_canonical_view_transaction(
+        client,
+        "skip complete Bitcoin Core height",
+        async |txn| {
+            guard_no_pending_core_reconcile(txn, source_id).await?;
+            let current_hash = source.block_hash(height).await.with_context(|| {
+                format!("revalidate skipped Bitcoin Core hash at height {height}")
+            })?;
+            if current_hash != expected_hash {
+                let failure = active_hash_changed_failure(height, expected_hash, current_hash);
+                return Err(failure.into_error());
+            }
+            let rows = load_canonical_rows_at_height(txn, height).await?;
+            guard_same_height_conflicts(txn, source_id, height, expected_hash, &rows).await?;
+            let [row] = rows.as_slice() else {
+                return Ok(None);
+            };
+            if row.hash.as_slice() != expected_hash.to_byte_array().as_slice()
+                || row.coinbase_status != "complete"
+            {
+                return Ok(None);
+            }
+            guard_existing_link(txn, source_id, height, row, default_contiguous_pass).await?;
+            advance_contiguous_complete_prefix(txn, source_id, state).await?;
+            update_sync_progress(txn, source_id, height, state).await?;
+            Ok(Some(row.hash.clone()))
+        },
+    )
+    .await;
+    if let Err(err) = &result
+        && let Some(failure) = err.downcast_ref::<BackboneIntegrityFailure>()
     {
-        let err = anyhow!(
-            "Bitcoin Core target tip changed at height {}: existing={}, current={}",
-            tip.height,
-            hex::encode(existing_hash),
-            tip.hash
-        );
-        update_sync_error(
+        failure.persist(client, source_id).await?;
+    }
+    result
+}
+
+struct CoreHeightObservation<'a, S> {
+    source: &'a S,
+    source_id: i64,
+    height: i32,
+    hash: BlockHash,
+    header: &'a Header,
+    default_contiguous_pass: bool,
+}
+
+impl<S: BitcoinCoreBackboneSource> CoreHeightObservation<'_, S> {
+    /// Recheck both Core and the local topology under the mutation layer's
+    /// exclusive canonical-view barrier.
+    async fn validate<C: GenericClient>(&self, client: &C) -> Result<()> {
+        guard_no_pending_core_reconcile(client, self.source_id).await?;
+        let current =
+            self.source.block_hash(self.height).await.with_context(|| {
+                format!("revalidate Bitcoin Core hash at height {}", self.height)
+            })?;
+        if current != self.hash {
+            return Err(active_hash_changed_failure(self.height, self.hash, current).into_error());
+        }
+        let rows = load_canonical_rows_at_height(client, self.height).await?;
+        guard_same_height_conflicts(client, self.source_id, self.height, self.hash, &rows).await?;
+        guard_header_link(
             client,
-            source_id,
-            tip.height,
-            "target_tip_changed",
-            &err.to_string(),
-            json!({
-                "existing_hash": hex::encode(existing_hash),
-                "current_hash": tip.hash.to_string(),
-            }),
+            self.source_id,
+            self.height,
+            &self.header.prev_blockhash.to_byte_array(),
+            self.default_contiguous_pass,
         )
-        .await?;
-        return Err(integrity_error(
-            BackboneIntegrityError::TargetTipChanged,
-            err.to_string(),
-        ));
+        .await
     }
-    client
-        .execute(
-            "UPDATE bitcoin_core_sync_state \
-             SET target_tip_height = $3, target_tip_hash = $4, updated_at = extract(epoch from now())::bigint \
-             WHERE source_id = $1 AND sync_mode = $2",
-            &[&source_id, &SYNC_MODE_CONTIGUOUS, &tip.height, &tip_hash],
-        )
-        .await
-        .context("store Bitcoin Core sync target tip")?;
-    state.target_tip_height = Some(tip.height);
-    state.target_tip_hash = Some(tip_hash);
-    Ok(())
 }
 
-/// Point lookup of every canonical `block` row at `height`, ordered by header
-/// hash. The backbone expects exactly one (a competing pair signals a same-
-/// height conflict the guards catch); this is the single hot-path query the
-/// sync loop and cursor advance both reuse.
-async fn load_canonical_rows_at_height(
-    client: &Client,
-    height: i32,
-) -> Result<Vec<CanonicalHeightRow>> {
-    let rows = client
-        .query(
-            "SELECT btc_header_hash, btc_prev_header_hash, btc_coinbase_status \
-             FROM block \
-             WHERE kind = 'canonical' AND btc_height = $1 \
-             ORDER BY btc_header_hash",
-            &[&height],
-        )
-        .await
-        .with_context(|| format!("load canonical rows at height {height}"))?;
-    Ok(rows
-        .into_iter()
-        .map(|row| CanonicalHeightRow {
-            hash: row.get(0),
-            prev_hash: row.get(1),
-            coinbase_status: row.get(2),
-        })
-        .collect())
-}
-
-/// Decide whether a skipped-but-complete backbone row still needs a dependent
-/// reconcile: true iff a non-revoked, target-validating merge_mining_event names
-/// this row's hash as its parent prev-hash but has no derived `block` parent yet.
-/// Guards the `missing_only` fast path so a height we skip does not leave an
-/// AuxPoW attestation permanently unlinked. `btc_parent_kind <> 'near'` excludes
-/// rows already attributed to a near-tip parent.
-async fn skipped_complete_has_missing_dependents(client: &Client, hash: &[u8]) -> Result<bool> {
-    let row = client
-        .query_one(
-            "SELECT EXISTS ( \
-                 SELECT 1 \
-                 FROM merge_mining_event e \
-                 LEFT JOIN block b ON b.btc_header_hash = e.btc_parent_header_hash \
-                 WHERE e.btc_parent_prev_header_hash = $1 \
-                   AND e.btc_parent_kind <> 'near' \
-                   AND e.pow_validates_btc_target \
-                   AND e.revoked_at IS NULL \
-                   AND b.btc_header_hash IS NULL \
-             )",
-            &[&hash],
-        )
-        .await
-        .context("check skipped complete backbone dependents")?;
-    Ok(row.get(0))
-}
-
-/// Walk the contiguous-complete cursor forward from its current value over
-/// single-row complete heights that link back-to-front, then persist the new
-/// high-water mark with a monotonic `GREATEST` upsert. This is live poll
-/// progress, never `MAX(child_height)`: only an unbroken complete prefix counts.
-async fn advance_contiguous_complete_prefix(
-    client: &Client,
-    source_id: i64,
-    state: &mut SyncState,
-) -> Result<()> {
-    // This runs once per synced height, so it must not scan the canonical
-    // population above the cursor: the ~500k child-chain parents all sit at
-    // high BTC heights, which made the previous full re-derivation O(n) per
-    // call and O(n^2) per batch. Instead, walk forward from the cursor with
-    // the same point lookup the sync hot path already uses; cost is
-    // O(heights actually advanced), normally one in steady state.
-    let mut anchor_hash = if state.contiguous_complete_height >= 0 {
-        let rows = load_canonical_rows_at_height(client, state.contiguous_complete_height).await?;
-        if rows.len() != 1 || rows[0].coinbase_status != "complete" {
-            return Ok(());
-        }
-        Some(rows[0].hash.clone())
-    } else {
-        None
-    };
-
-    let mut new_height = state.contiguous_complete_height;
-    while let Some(next_height) = new_height.checked_add(1) {
-        let rows = load_canonical_rows_at_height(client, next_height).await?;
-        let [row] = rows.as_slice() else {
-            break;
-        };
-        if row.coinbase_status != "complete" {
-            break;
-        }
-        // Genesis has no parent to link; every later height must link to the
-        // single complete row directly below it (BYTEA wire-order bytes,
-        // compared without reversal).
-        if next_height != 0 && anchor_hash.as_deref() != Some(row.prev_hash.as_slice()) {
-            break;
-        }
-        anchor_hash = Some(row.hash.clone());
-        new_height = next_height;
+async fn write_observed_core_canonical<S, F>(
+    client: &mut Client,
+    observation: &CoreHeightObservation<'_, S>,
+    coinbase: Option<BitcoinCoreBlockCoinbase>,
+    in_txn_extra: F,
+    label: &str,
+) -> Result<CommittedParentMutation>
+where
+    S: BitcoinCoreBackboneSource,
+    F: AsyncFnOnce(&Transaction<'_>) -> Result<()>,
+{
+    let result = write_core_canonical_validated(
+        client,
+        CoreCanonicalWrite {
+            header: observation.header,
+            height: observation.height,
+            coinbase,
+        },
+        async |txn| observation.validate(txn).await,
+        in_txn_extra,
+        label,
+    )
+    .await;
+    if let Err(err) = &result
+        && let Some(failure) = err.downcast_ref::<BackboneIntegrityFailure>()
+    {
+        failure.persist(client, observation.source_id).await?;
     }
-
-    if new_height > state.contiguous_complete_height {
-        state.contiguous_complete_height = new_height;
-        client
-            .execute(
-                "UPDATE bitcoin_core_sync_state \
-                 SET contiguous_complete_height = GREATEST(contiguous_complete_height, $3), \
-                     updated_at = extract(epoch from now())::bigint \
-                 WHERE source_id = $1 AND sync_mode = $2",
-                &[
-                    &source_id,
-                    &SYNC_MODE_CONTIGUOUS,
-                    &state.contiguous_complete_height,
-                ],
-            )
-            .await
-            .context("advance Bitcoin Core contiguous sync cursor")?;
-    }
-    Ok(())
+    result
 }
 
-/// Persist post-height progress: the (monotonic) cursor, last scanned/attempted
-/// height, and a conditional clear of the error columns. The error is cleared
-/// only when no coinbase failure was seen this batch (`!preserve_error`) AND
-/// this height is the one that previously errored (or none did), so a fresh
-/// failure elsewhere is never masked by an unrelated success.
-async fn update_sync_progress(
-    client: &Client,
-    source_id: i64,
+fn active_hash_changed_failure(
     height: i32,
-    state: &SyncState,
-) -> Result<()> {
-    let clear_error = !state.preserve_error
-        && state
-            .last_error_height
-            .is_none_or(|error_height| height == error_height);
-    client
-        .execute(
-            "UPDATE bitcoin_core_sync_state \
-                 SET contiguous_complete_height = GREATEST(contiguous_complete_height, $3), \
-                     last_scanned_height = $4, \
-                     last_attempted_height = $4, \
-                     last_error_code = CASE WHEN $5 THEN NULL ELSE last_error_code END, \
-                     last_error_height = CASE WHEN $5 THEN NULL ELSE last_error_height END, \
-                     last_error = CASE WHEN $5 THEN NULL ELSE last_error END, \
-                     last_error_details = CASE WHEN $5 THEN '{}'::jsonb ELSE last_error_details END, \
-                     updated_at = extract(epoch from now())::bigint \
-                 WHERE source_id = $1 AND sync_mode = $2",
-            &[
-                &source_id,
-                &SYNC_MODE_CONTIGUOUS,
-                &state.contiguous_complete_height,
-                &height,
-                &clear_error,
-            ],
-        )
-        .await
-        .context("update Bitcoin Core sync progress")?;
-    Ok(())
-}
-
-/// Record a backbone error against the sync-state row: stable `code`, human
-/// `message`, and structured `details` JSON, plus the offending height as last
-/// scanned/attempted/errored. Used by both transient failures and the integrity
-/// guards (which then return a `BackboneIntegrityError`). Visible at crate scope
-/// so `live_window` reports its invariant failures through the same column set.
-async fn update_sync_error(
-    client: &Client,
-    source_id: i64,
-    height: i32,
-    code: &str,
-    message: &str,
-    details: Value,
-) -> Result<()> {
-    client
-        .execute(
-            "UPDATE bitcoin_core_sync_state \
-             SET last_scanned_height = $3, \
-                 last_attempted_height = $3, \
-                 last_error_code = $4, \
-                 last_error_height = $3, \
-                 last_error = $5, \
-                 last_error_details = $6, \
-                 updated_at = extract(epoch from now())::bigint \
-             WHERE source_id = $1 AND sync_mode = $2",
-            &[
-                &source_id,
-                &SYNC_MODE_CONTIGUOUS,
-                &height,
-                &code,
-                &message,
-                &Json(&details),
-            ],
-        )
-        .await
-        .context("record Bitcoin Core sync error")?;
-    Ok(())
+    expected: BlockHash,
+    current: BlockHash,
+) -> BackboneIntegrityFailure {
+    BackboneIntegrityFailure::new(
+        BackboneIntegrityError::HeightConflict,
+        "backbone_height_conflict",
+        height,
+        format!(
+            "Bitcoin Core active hash changed before canonical write at height {height}: \
+             fetched={expected}, current={current}"
+        ),
+        json!({
+            "core_hash": current.to_string(),
+            "fetched_hash": expected.to_string(),
+        }),
+    )
 }
 
 /// Per-height RPC throttle from `BITCOIN_CORE_SYNC_DELAY_MS` (milliseconds).
