@@ -101,7 +101,11 @@ def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests:
             continue
         rel = _scan.rel(path)
         crate = _crate_key(rel)
-        for m in re.finditer(r"\btrait\s+([A-Za-z0-9_]+)", src):
+        # `(?:r#)?` consumes a raw-identifier prefix so a keyword-named `trait r#type`
+        # is keyed as `type` - the same logical name the impl scan derives from
+        # `impl r#type for ...` (its `idents[-1]` is `type`). Without it the trait was
+        # keyed `r`, the definition and impls never joined, and a real facade was hidden.
+        for m in re.finditer(r"\btrait\s+(?:r#)?([A-Za-z0-9_]+)", src):
             bo = src.find("{", m.end())
             if bo < 0:
                 continue

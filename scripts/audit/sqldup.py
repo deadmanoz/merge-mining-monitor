@@ -78,8 +78,12 @@ def norm(s: str) -> str:
     double-quoted identifier (`"Col"`) is case- and whitespace-significant in
     PostgreSQL (`code = 'ABC'` and `code = 'abc'` can return different rows), so its
     bytes are preserved verbatim. SQL escapes a quote by doubling it (`''`), which
-    is handled here. (A quote written as a Rust `\\"` escape inside a non-raw string
-    literal is a rare edge this heuristic does not unescape.)
+    is handled here. A PostgreSQL escape string (`E'...'`) additionally escapes with
+    a backslash, so `E'ABC\\' DEF'` is one literal whose `\\'` is an embedded quote;
+    that prefix is detected so the span is not split at the escaped quote (which
+    would leak ` DEF` as unquoted SQL and reopen a phantom string on the trailing
+    quote). (A quote written as a Rust `\\"` escape inside a non-raw string literal is
+    a rare edge this heuristic does not unescape.)
 
     A PostgreSQL dollar-quoted span (`$$...$$` or `$tag$...$tag$`) is likewise
     case- and whitespace-significant (it commonly carries a function body or a
@@ -100,9 +104,25 @@ def norm(s: str) -> str:
         c = s[i]
         if c in "'\"":
             q = c
+            # A PostgreSQL escape-string literal `E'...'` (single-quoted only) uses C
+            # backslash escapes, so `\'` is an embedded quote, not a terminator. The
+            # `E`/`e` prefix was already emitted (lowercased) into the previous
+            # segment, so detect it by looking back one char at a standalone word
+            # boundary. Standard-conforming strings (no `E`) treat backslash
+            # literally, so escapes are only honored for a detected E-string.
+            estr = (
+                q == "'"
+                and i > 0
+                and s[i - 1] in "Ee"
+                and (i == 1 or not (s[i - 2].isalnum() or s[i - 2] == "_"))
+            )
             j = i + 1
             buf = [c]
             while j < n:
+                if estr and s[j] == "\\" and j + 1 < n:  # escape: keep both chars quoted
+                    buf.append(s[j : j + 2])
+                    j += 2
+                    continue
                 if s[j] == q:
                     if j + 1 < n and s[j + 1] == q:  # doubled-quote escape stays quoted
                         buf.append(q + q)

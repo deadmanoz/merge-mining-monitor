@@ -118,19 +118,24 @@ def commits(all_refs: bool = False):
     """
     log_args = ["git", "log"]
     log_args.append("--all" if all_refs else "HEAD")
-    log_args += ["--pretty=format:%H", "--name-status", "-M"]
+    # `%x00` prefixes each commit header with a NUL, an explicit delimiter that marks
+    # a new commit regardless of object-ID width. Detecting the header by a 40-hex
+    # SHA-1 shape instead silently discarded every line in a SHA-256 repo (64-char
+    # IDs), emptying both reports. NUL cannot occur in a path or a name-status line
+    # and is not a `str.splitlines()` boundary, so the hash value itself is unused.
+    log_args += ["--pretty=format:%x00%H", "--name-status", "-M"]
     out = subprocess.run(log_args, capture_output=True, text=True, check=True).stdout
     rename_to: dict[str, str] = {}
     total = 0
     files: list[str] = []
     started = False
     for line in out.splitlines():
-        if not line.strip():
-            continue
-        if len(line) == 40 and all(c in "0123456789abcdef" for c in line):
+        if line.startswith("\x00"):  # commit-header delimiter (hash width irrelevant)
             if started:
                 yield total, files
             total, files, started = 0, [], True
+            continue
+        if not line.strip():
             continue
         parts = line.split("\t")
         total += 1  # one changed path (a rename counts once) toward the sweep size

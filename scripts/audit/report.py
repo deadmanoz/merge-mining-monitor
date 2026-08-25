@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import os
+import sys
 
 import _report
 import clones
@@ -36,6 +38,12 @@ TOOL_PRIORITY = {"clones": 5, "sqldup": 5, "configscan": 4, "traits": 4, "coupli
 
 
 def gather(root: str) -> list[_report.Finding]:
+    # Fail closed on a missing/misspelled root. Otherwise the code-side detectors
+    # scan an empty tree while `configscan` still diffs the real docs/.env.example
+    # against that empty inventory, emitting a valid-looking data contract that
+    # reports every documented key as "unread" - a false refactoring signal.
+    if not os.path.isdir(root):
+        raise NotADirectoryError(root)
     findings: list[_report.Finding] = []
     # Report-tuned thresholds: stronger than each tool's standalone default so the
     # aggregate stays focused on the highest-value consolidation targets.
@@ -125,7 +133,11 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="emit all findings as one JSON array (the data contract)")
     args = ap.parse_args()
 
-    findings = gather(args.root)
+    try:
+        findings = gather(args.root)
+    except NotADirectoryError as e:
+        print(f"error: scan root {str(e)!r} is not a directory", file=sys.stderr)
+        return 2
     if args.json:
         _report.print_json(_rank(findings))
         return 0

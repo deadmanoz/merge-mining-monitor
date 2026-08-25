@@ -26,11 +26,20 @@ import _scan
 
 # Cargo/build-time env vars are not application configuration; exclude them so
 # they do not masquerade as scattered runtime config (they cluster in fixtures).
-BUILD_ENV = {"OUT_DIR", "TARGET", "HOST", "PROFILE", "NUM_JOBS", "RUSTC", "RUSTDOC"}
+# The toolchain names are enumerated (plus the `RUSTC_`/`RUSTUP_` prefixes) rather
+# than filtering every `RUST*` name: a blanket `RUST` prefix also swallowed runtime
+# variables an application legitimately reads - `RUST_LOG`, `RUST_BACKTRACE` - and
+# project keys like `RUSTY_SERVICE_TOKEN`, dropping their read sites from the whole
+# inventory so they evaded undocumented/multi-read/unread findings.
+BUILD_ENV = {
+    "OUT_DIR", "TARGET", "HOST", "PROFILE", "NUM_JOBS",
+    "RUSTC", "RUSTDOC", "RUSTFLAGS", "RUSTDOCFLAGS",
+}
+BUILD_ENV_PREFIXES = ("CARGO_", "RUSTC_", "RUSTUP_", "LD_", "DYLD_")
 
 
 def _is_build_env(key: str) -> bool:
-    return key in BUILD_ENV or key.startswith(("CARGO_", "RUST", "LD_", "DYLD_"))
+    return key in BUILD_ENV or key.startswith(BUILD_ENV_PREFIXES)
 
 
 # A full env key: either the usual UNDERSCORE_SEPARATED shape, or a single

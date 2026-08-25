@@ -27,12 +27,21 @@ RUST_KEYWORDS_KEPT = {
     "where", "dyn", "use", "pub", "const",
 }
 
-# Multi-character punctuation kept as single structural tokens (order matters:
-# longest first so "::" is not split into ":" ":").
+# Multi-character punctuation kept as single structural tokens. Order matters: the
+# tokenizer takes the first `startswith` hit, so every operator must precede any
+# shorter operator that is its prefix (`<<=` before `<<` before `<`). The full Rust
+# operator set is retained - notably `^`/`^=` and the shift/compound-assign forms -
+# so two functions differing only in an operator (`x ^= y` vs `x = y`) do not collapse
+# to the same structural token stream and get promoted to a false clone.
 _PUNCT = [
-    "::", "=>", "->", "==", "!=", "<=", ">=", "&&", "||", "..=", "..", "+=",
-    "-=", "?", ";", ",", ".", "(", ")", "{", "}", "[", "]", "<", ">", "&", "|",
-    "=", "+", "-", "*", "/", "%", "!", ":",
+    # 3-char
+    "<<=", ">>=", "..=",
+    # 2-char
+    "::", "=>", "->", "==", "!=", "<=", ">=", "&&", "||", "..",
+    "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<", ">>",
+    # 1-char
+    "?", ";", ",", ".", "(", ")", "{", "}", "[", "]", "<", ">",
+    "&", "|", "^", "=", "+", "-", "*", "/", "%", "!", ":", "@",
 ]
 
 

@@ -40,7 +40,11 @@ def _severity(dp: int) -> str:
 def collect(root: str, min_dp: int = 25, include_tests: bool = False) -> list[_report.Finding]:
     findings: list[_report.Finding] = []
     for fn in _scan.load_functions(root, skip_tests=not include_tests):
-        if fn.name.startswith("test") or TEST_ATTR.search(fn.attrs):
+        # Skip tests only when they are not the subject: with --include-tests the
+        # caller opted into test complexity, so the name/attribute guard (which
+        # otherwise drops `#[test]`/`#[tokio::test]` fns and `test*`-named ones) must
+        # not fire, or the option would scan test files yet report only their helpers.
+        if not include_tests and (fn.name.startswith("test") or TEST_ATTR.search(fn.attrs)):
             continue
         dp = len(DECISION.findall(fn.body))
         if dp < min_dp:
