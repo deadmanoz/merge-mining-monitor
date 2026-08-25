@@ -95,6 +95,14 @@ arch-lint:
     ./scripts/arch-lint.sh
     cargo clippy --workspace --all-targets --all-features -- -W clippy::cognitive_complexity
 
+# Advisory consolidation audit (scripts/audit/, Python 3 stdlib only). Goes
+# beyond the jscpd token-literal gate: identifier-normalized structural clones,
+# SQL-literal duplication, naming-family clustering, complexity hotspots, and
+# git churn / temporal coupling. Exploratory only - NEVER a CI gate; every hit
+# is a lead to verify by reading the code. See scripts/audit/README.md.
+audit root="crates":
+    ./scripts/audit/run.sh {{root}}
+
 format:
     cargo fmt --all
 
