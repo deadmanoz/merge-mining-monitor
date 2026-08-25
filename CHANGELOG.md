@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-25
+
 - Import complete historical error-block child witnesses through a separate,
   Core-required publication aggregate. Preserve their source-row provenance
   and RSK sidecars outside ordinary authoritative snapshot deletion. Reclassify

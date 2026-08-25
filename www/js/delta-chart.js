@@ -21,8 +21,8 @@ import {
   linearTicks,
   symexp,
   symlog,
-} from "./delta-scales.js?v=0.6.0";
-import { esc } from "./frontend-state.js?v=0.6.0";
+} from "./delta-scales.js?v=0.7.0";
+import { esc } from "./frontend-state.js?v=0.7.0";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const GUTTER_W = 42;

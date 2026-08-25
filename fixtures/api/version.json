@@ -1,12 +1,23 @@
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.6.0",
+  "version": "0.7.0",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 9,
+    "release_count": 10,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.7.0",
+        "date": "2026-08-25",
+        "items": [
+          "Require a synced Bitcoin Core node and persist a sparse canonical-header cache, so the monitor can evaluate difficulty and timestamp rules from Core-derived evidence instead of a compiled epoch table.",
+          "Repair bounded near-tip Bitcoin reorgs as one durable suffix replacement, retaining displaced blocks as stale evidence and completing dependent reconciliation after a restart.",
+          "Import 73 recovered child-chain witnesses for all 33 catalogued Bitcoin consensus-invalid error blocks, preserving their archive provenance and making them available in the error-block navigator."
+        ],
+        "item_count": 3,
+        "truncated": false
+      },
       {
         "version": "0.6.0",
         "date": "2026-08-15",
