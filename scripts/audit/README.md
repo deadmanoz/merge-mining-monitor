@@ -9,6 +9,7 @@ jscpd only matches tokens *verbatim*, so it is blind to:
 - renamed ("Type-3") clones - `fetch_error_blocks` vs `fetch_stale_blocks`;
 - SQL duplicated *inside* string literals (one opaque token to jscpd);
 - configuration reconstructed across crates, and code/doc drift;
+- facade traits and cyclic modules (structure, not tokens);
 - structure that only shows up in **git history** (co-changing modules).
 
 These scripts cover those blind spots. They are **heuristic** (regex scanning,
@@ -35,6 +36,8 @@ python3 scripts/audit/clones.py crates --json    # every tool also emits --json
 | `clones.py` | Structural clones: normalizes identifiers/literals to placeholders, fingerprints each function with k-grams, and reports high-**Jaccard** pairs. Catches parallel-but-renamed functions jscpd cannot. `XFILE` (cross-file) pairs are usually the higher-value targets. | `--min-jaccard`, `--min-tokens`, `-k`, `--df-max`, `--containment`, `--include-tests` |
 | `sqldup.py` | Duplicated SQL in string literals: EXACT normalized groups (a probe query inlined everywhere) and NEAR cross-file pairs. `PROD` vs `test` tagged - production cross-crate hits matter most. | `--near`, `--limit` |
 | `configscan.py` | Scattered configuration: `env::var`/lookup read sites, per-area `*Config` structs, keys read in >1 file, and three-way drift between code, `docs/configuration.md`, and `.env.example`. | `--docs-dir`, `--env-example`, `--include-tests` |
+| `traits.py` | Facade-abstraction candidates: locally-defined traits with a large *required* surface, several impls, and little *provided* (default-method) shared body - an interface that documents a contract but prevents no duplication. | `--min-required`, `--min-impls` |
+| `modules.py` | Intra-crate **module cycles**: top-level module graph per crate from `crate::<module>` references, reporting strongly-connected components. A lightweight `cargo-modules --acyclic`. | `--include-tests` |
 | `naming.py` | Parallel function families by name skeleton (`run_*_backfill -> {rsk, hathor, elastos}`). A hint to cross-check with `clones.py`. | `--min` |
 | `complexity.py` | Highest control-flow-density functions (decision-point proxy). Simplification, not dedup. | `--min`, `--limit` |
 | `coupling.py` | Git **churn** + **temporal coupling**: file pairs that keep changing together (a concept smeared across modules). `XDIR` = different directories. | `--min-co`, `--min-ratio`, `--max-commit-files` |
@@ -79,7 +82,8 @@ AST-accurate or build-aware results, reach for the real tools:
 - [`cargo-machete`](https://github.com/bnjbvr/cargo-machete) /
   [`cargo-udeps`](https://github.com/est31/cargo-udeps) - unused dependencies.
 - [`cargo-modules`](https://github.com/regexident/cargo-modules) - module graph,
-  cycles, and orphans (`dependencies --acyclic`, `orphans`).
+  cycles, and orphans (`dependencies --acyclic`, `orphans`); the all-levels,
+  compiler-accurate counterpart to `modules.py`.
 
 ## Further reading
 

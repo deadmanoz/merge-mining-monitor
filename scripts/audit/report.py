@@ -21,16 +21,18 @@ import clones
 import complexity
 import configscan
 import coupling
+import modules
 import naming
 import sqldup
+import traits
 
-SECTIONS = ["clones", "sqldup", "configscan", "coupling", "complexity", "naming"]
+SECTIONS = ["clones", "sqldup", "configscan", "traits", "modules", "coupling", "complexity", "naming"]
 
 # Cross-tool ranking priority: raw scores are not comparable across tools (a
 # complexity of 45 is not "more" than a Jaccard of 1.0), so within a severity we
 # surface the consolidation-oriented detectors ahead of the simplification and
 # behavioral ones. Consolidation is what this report is for.
-TOOL_PRIORITY = {"clones": 5, "sqldup": 5, "configscan": 4, "coupling": 3, "naming": 2, "complexity": 1}
+TOOL_PRIORITY = {"clones": 5, "sqldup": 5, "configscan": 4, "traits": 4, "coupling": 3, "modules": 3, "naming": 2, "complexity": 1}
 
 
 def gather(root: str) -> list[_report.Finding]:
@@ -40,6 +42,8 @@ def gather(root: str) -> list[_report.Finding]:
     findings += clones.collect(root, min_jaccard=0.8)
     findings += sqldup.collect(root, near=0.9)
     findings += configscan.collect(root)
+    findings += traits.collect(root)
+    findings += modules.collect(root)
     findings += coupling.collect(min_co=6, min_ratio=0.6)[0]
     findings += complexity.collect(root, min_dp=30)
     findings += naming.collect(root, min_family=3)

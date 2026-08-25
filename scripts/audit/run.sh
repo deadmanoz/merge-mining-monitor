@@ -22,6 +22,12 @@ python3 "$here/sqldup.py" "$root" || true
 section "SCATTERED CONFIG + DOC DRIFT"
 python3 "$here/configscan.py" "$root" || true
 
+section "FACADE-ABSTRACTION CANDIDATES (trait surface)"
+python3 "$here/traits.py" "$root" || true
+
+section "INTRA-CRATE MODULE CYCLES"
+python3 "$here/modules.py" "$root" || true
+
 section "NAMING-PATTERN CLUSTERS"
 python3 "$here/naming.py" "$root" || true
 
