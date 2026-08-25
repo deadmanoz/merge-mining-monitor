@@ -215,6 +215,10 @@ fn parse_taxonomy_fields(
     if !validation_status_matches(category, validation_status.as_deref()) {
         return Err(SkipReason::TaxonomyMismatch);
     }
+    let artifact_scope = non_empty(record.get(layout.artifact_scope))?;
+    if artifact_scope == "error-block-observations" {
+        return Err(SkipReason::TaxonomyMismatch);
+    }
     let relevance_selection = match category {
         PublicationCategory::Canonical => None,
         PublicationCategory::Stale => Some(RelevanceSelection::KnownDirectStale),
@@ -231,7 +235,7 @@ fn parse_taxonomy_fields(
             source_kind: non_empty(record.get(layout.source_kind))?.to_owned(),
             source_path: non_empty(record.get(layout.source_path))?.to_owned(),
             source_row_number: parse_positive_i64(record.get(layout.source_row_number))?,
-            artifact_scope: non_empty(record.get(layout.artifact_scope))?.to_owned(),
+            artifact_scope: artifact_scope.to_owned(),
             provenance: non_empty(record.get(layout.provenance))?.to_owned(),
             classification: non_empty(record.get(layout.classification))?.to_owned(),
             btc_height: parse_optional_nonnegative_i32(record.get(layout.btc_height))?,

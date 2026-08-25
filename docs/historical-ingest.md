@@ -28,7 +28,8 @@ uses the normal 27-column header plus the seven RSK sidecar columns; non-RSK
 sidecar cells are blank and RSK witnesses carry complete sidecars. Its manifest
 requires exactly one 73-row entry with the generated source-chain inventory, so
 a missing, truncated, or cross-chain-substituted aggregate fails before database
-mutation.
+mutation. Its `error-block-observations` scope is reserved to that aggregate;
+ordinary historical artifacts using it are rejected.
 
 `data/historical/historical-source-manifest.json` pins each event payload by
 path, byte size, SHA-256, row count, and classification counts. It also pins the

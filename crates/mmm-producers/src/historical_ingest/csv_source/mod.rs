@@ -706,6 +706,23 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_parser_rejects_the_reserved_error_observation_scope() {
+        let ordinary_row = row(TestRow {
+            chain: "devcoin",
+            child_height: "42",
+            classification: "canonical",
+            relevance_reason: "canonical_parent",
+            ..TestRow::default()
+        })
+        .replacen("full_classifier_inventory", "error-block-observations", 1);
+
+        assert_eq!(
+            candidate("devcoin", &ordinary_row).unwrap_err(),
+            SkipReason::TaxonomyMismatch
+        );
+    }
+
+    #[test]
     fn error_observation_allows_catalogued_expected_nbits_mismatch() {
         let error_row = row(TestRow {
             chain: "devcoin",
