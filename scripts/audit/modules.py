@@ -21,7 +21,11 @@ import _report
 import _scan
 
 CRATE_PREFIX = re.compile(r"\bcrate::")
-_IDENT = re.compile(r"[a-z_][a-z0-9_]*")
+# A module identifier, accepting an optional `r#` raw-identifier prefix so a
+# keyword-named module referenced as `crate::r#type` resolves to the logical name
+# `type` (the on-disk node is `type.rs`, not `r#type.rs`). group(1) is that name;
+# without the prefix the bare regex captured only `r` and the edge/cycle was lost.
+_IDENT = re.compile(r"(?:r#)?([a-z_][a-z0-9_]*)")
 # A run of one or more `super::` hops, e.g. `super::` or `super::super::`. The
 # captured run's length says how many parents to ascend; what follows (a single
 # identifier or a `{...}` group) names the referenced module(s).
@@ -80,11 +84,11 @@ def crate_refs(text: str) -> set[str]:
             for item in _split_top_commas(group):
                 im = _IDENT.match(item.strip())
                 if im:
-                    out.add(im.group(0))
+                    out.add(im.group(1))
         else:
             im = _IDENT.match(text, i)
             if im:
-                out.add(im.group(0))
+                out.add(im.group(1))
     return out
 
 
@@ -108,11 +112,11 @@ def super_refs(text: str, depth: int) -> set[str]:
             for item in _split_top_commas(group):
                 im = _IDENT.match(item.strip())
                 if im:
-                    out.add(im.group(0))
+                    out.add(im.group(1))
         else:
             im = _IDENT.match(text, i)
             if im:
-                out.add(im.group(0))
+                out.add(im.group(1))
     return out
 
 

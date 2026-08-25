@@ -38,13 +38,19 @@ DOLLAR_OPEN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
 # differently in source keeps a stray `\` token and normalizes apart, splitting a
 # real exact-duplicate group.
 LINE_CONT = re.compile(r"\\\r?\n[ \t]*")
-# Whitespace adjacent to any operator/punctuation char (a non-word, non-space
-# character such as `( ) , = < > + - * / | :`) is insignificant in SQL, so it is
-# removed to canonicalize spacing variants: `exists (`/`exists(`, `a = $1`/`a=$1`,
-# `x , y`/`x,y`. Whitespace between two word characters (a keyword/identifier/number
-# boundary, e.g. `SELECT a`) is significant and preserved. Applied only to unquoted
-# segments, so string/identifier contents keep their exact spacing.
-PUNCT_WS = re.compile(r"\s*([^\w\s])\s*")
+# Whitespace that sits between a word character and an adjacent operator/punctuation
+# character (a non-word, non-space char such as `( ) , = < > + - * / | :`) is
+# insignificant in SQL and removed, canonicalizing spacing variants like
+# `exists (`/`exists(`, `x ,`/`x,`, `id =`/`id=`. Two boundaries are deliberately
+# kept: whitespace between two WORD chars is a token separator (`SELECT a` is not
+# `SELECTa`), and whitespace between two OPERATOR chars can be semantic - `x - -1`
+# (subtract a negative) must not fold into `x --1` (which begins a `--` line
+# comment), and `< >` must not fold into `<>` - so operator/operator spacing is
+# preserved too. Two directions cover both orders; applied in a cascade because
+# closing one gap can expose the next (`( a )` -> `(a)`). Unquoted segments only, so
+# string/identifier contents keep their exact spacing.
+WORD_THEN_PUNCT_WS = re.compile(r"(\w) +([^\w\s])")
+PUNCT_THEN_WORD_WS = re.compile(r"([^\w\s]) +(\w)")
 
 
 def extract_sql(src: str):
@@ -126,13 +132,19 @@ def norm(s: str) -> str:
             if s[j] == "$" and DOLLAR_OPEN.match(s, j):
                 break
             j += 1
-        # Placeholders (`$1`, `$2`) are left as-is; keyword case is folded, whitespace
-        # runs collapse, and whitespace adjacent to operators/punctuation is dropped so
-        # insignificant SQL spacing does not split an otherwise identical query. `$`
-        # here is a positional bind (dollar-quote openers were peeled off above), so no
-        # dollar-quote can leak into this branch.
+        # Placeholders (`$1`, `$2`) are left as-is; keyword case is folded and any
+        # whitespace run collapses to a single space. Whitespace separating a word
+        # char from an adjacent operator/punctuation char is then dropped (spacing
+        # there is insignificant), while word/word and operator/operator spacing is
+        # preserved so distinct SQL never collapses together. `$` here is a positional
+        # bind (dollar-quote openers were peeled off above), so none can leak in.
         seg = re.sub(r"\s+", " ", s[i:j]).lower()
-        out.append(PUNCT_WS.sub(r"\1", seg))
+        prev = ""
+        while prev != seg:  # cascade: removing one gap can expose an adjacent one
+            prev = seg
+            seg = WORD_THEN_PUNCT_WS.sub(r"\1\2", seg)
+            seg = PUNCT_THEN_WORD_WS.sub(r"\1\2", seg)
+        out.append(seg)
         i = j
     return "".join(out).strip()
 

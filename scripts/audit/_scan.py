@@ -42,6 +42,7 @@ class Function:
     path: str  # repo-relative
     line: int  # 1-based line of the `fn` keyword
     body: str  # from the opening brace to the matching close brace, inclusive
+    attrs: str = ""  # outer attributes/qualifiers preceding `fn` (e.g. `#[tokio::test]`)
 
 
 def _is_test_file(name: str) -> bool:
@@ -382,6 +383,38 @@ def find_signature_end(src: str, start: int) -> tuple[str, int]:
     return "eof", n - 1
 
 
+def _leading_attrs(src: str, fn_start: int) -> str:
+    """Outer attributes (and same-line qualifiers) that precede the `fn` at
+    `fn_start`, joined by newlines.
+
+    A `Function.body` starts at the opening `{`, so an attribute written above the
+    signature - `#[test]`, `#[tokio::test]` - is never in the body. Any classifier
+    that must react to such an attribute (e.g. excluding attributed tests from a
+    complexity report) needs this region instead. `src` is expected `strip_noise`d,
+    where doc comments have collapsed to blank lines and attribute tokens survive,
+    so the backward walk collects only real outer attributes.
+
+    Walk: take the fn's own line prefix (covers a rare inline `#[test] fn foo`),
+    then ascend over contiguous lines that are blank or start with `#[`, stopping at
+    the first line of ordinary code. Multi-line attributes are only partially
+    captured, which the single-line test attributes this serves do not need.
+    """
+    line_start = src.rfind("\n", 0, fn_start) + 1
+    collected = [src[line_start:fn_start]]
+    p = line_start
+    while p > 0:
+        prev_end = p - 1  # the '\n' ending the previous physical line
+        prev_start = src.rfind("\n", 0, prev_end) + 1
+        line = src[prev_start:prev_end].strip()
+        if line == "" or line.startswith("#["):
+            if line:
+                collected.append(line)
+            p = prev_start
+        else:
+            break
+    return "\n".join(collected)
+
+
 def find_functions(src: str, path: str) -> list[Function]:
     """Extract `fn` bodies via brace matching.
 
@@ -390,7 +423,8 @@ def find_functions(src: str, path: str) -> list[Function]:
     signature ending in `;`) is skipped.
 
     The optional `r#` raw-identifier prefix is consumed but not captured, so
-    `fn r#match` yields the logical name `match` rather than a truncated `r`.
+    `fn r#match` yields the logical name `match` rather than a truncated `r`. Each
+    function also carries its leading attribute region (see `_leading_attrs`).
     """
     out: list[Function] = []
     n = len(src)
@@ -410,7 +444,10 @@ def find_functions(src: str, path: str) -> list[Function]:
                 if depth == 0:
                     break
             k += 1
-        out.append(Function(m.group(1), path, src[: m.start()].count("\n") + 1, src[j : k + 1]))
+        out.append(Function(
+            m.group(1), path, src[: m.start()].count("\n") + 1, src[j : k + 1],
+            _leading_attrs(src, m.start()),
+        ))
     return out
 
 

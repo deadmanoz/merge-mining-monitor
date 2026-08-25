@@ -21,6 +21,12 @@ import _scan
 # Count every `?` try operator (on strip_noise'd source, so not in strings or
 # comments), excluding only the `?Sized` relaxed-bound, which is not a branch.
 DECISION = re.compile(r"\b(if|match|for|while|loop)\b|&&|\|\||\?(?!\s*Sized\b)|=>|\.await")
+# A test attribute in a function's leading-attribute region: `#[test]` or a
+# framework variant whose final path segment is `test` (`#[tokio::test]`). Matched
+# against `Function.attrs`, not the body, because the attribute sits *above* the
+# signature and the body starts at `{` - a `#[tokio::test]` fn whose name does not
+# start with `test` would otherwise be miscounted as a production hotspot.
+TEST_ATTR = re.compile(r"#\[\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*::\s*)*test\b")
 
 
 def _severity(dp: int) -> str:
@@ -34,7 +40,7 @@ def _severity(dp: int) -> str:
 def collect(root: str, min_dp: int = 25, include_tests: bool = False) -> list[_report.Finding]:
     findings: list[_report.Finding] = []
     for fn in _scan.load_functions(root, skip_tests=not include_tests):
-        if fn.name.startswith("test") or "#[test]" in fn.body:
+        if fn.name.startswith("test") or TEST_ATTR.search(fn.attrs):
             continue
         dp = len(DECISION.findall(fn.body))
         if dp < min_dp:

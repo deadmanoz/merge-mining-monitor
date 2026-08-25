@@ -39,9 +39,15 @@ def _is_build_env(key: str) -> bool:
 # words (RPC/SQL/URL) and bare chain prefixes out.
 FULLKEY = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$|^[A-Z][A-Z0-9]{3,}$")
 SUFFIX = re.compile(r"^_[A-Z0-9]+(?:_[A-Z0-9]+)*$")
-# A per-chain key built as format!("{prefix}_RPC_USER"): the literal is
-# `{...}_SUFFIX`, so the suffix follows the placeholder, not the string start.
-FORMAT_SUFFIX = re.compile(r"\{[^}]*\}(_[A-Z0-9]+(?:_[A-Z0-9]+)*)")
+# A per-chain key *constructed* as `format!("{prefix}_RPC_USER")`: the ENTIRE
+# literal is one placeholder immediately followed by the `_SUFFIX` run, so the
+# `^`/`$` anchors require the whole (stripped) literal to be exactly `{...}` +
+# `_SUFFIX` and nothing else. Anchoring is what separates a real key construction
+# from a message that merely embeds a rendered name - e.g. the error literal
+# `"... exceeds {}_MAX_BACKFILL_RANGE {max}; set {}_ALLOW_LARGE_BACKFILL=1 ..."`,
+# whose interior placeholders an unanchored search would harvest as false suffix
+# evidence, keeping a family "built in code" and masking a `config-unread` result.
+CONSTRUCT_SUFFIX = re.compile(r"^\{[^}]*\}((?:_[A-Z0-9]+)+)$")
 # Only actual read *calls*: the name must be followed by `(`. This excludes the
 # `std::env` namespace itself (`std::env::Args`), the `fn env_lookup` definition,
 # and places that pass `env_lookup` as a callback value - all of which inflate the
@@ -49,9 +55,14 @@ FORMAT_SUFFIX = re.compile(r"\{[^}]*\}(_[A-Z0-9]+(?:_[A-Z0-9]+)*)")
 # tail of `std::env::var(_os)`.
 ENV_READ = re.compile(r"\benv::var(?:_os)?\s*\(|(?<!fn )\benv_lookup\s*\(")
 # The env key passed directly to a read call. Keying off the call site (not any
-# ALL_CAPS literal) avoids matching opcode/status constants like OP_RETURN.
+# ALL_CAPS literal) avoids matching opcode/status constants like OP_RETURN. The
+# `(?:r#*)?` accepts a raw-string key (`env::var(r"SERVICE_TOKEN")`,
+# `env::var(r#"..."#)`): without it a valid raw-string read recorded no key, so it
+# looked undocumented (or made a documented key look unread). The trailing `#`s of a
+# hash-delimited raw literal are left unconsumed - harmless, since the ALL_CAPS key
+# is already captured.
 KEYCALL = re.compile(
-    r'(?:env::var(?:_os)?|std::env::var(?:_os)?|env_lookup|\blookup|getenv)\s*\(\s*&?\s*"([A-Z][A-Z0-9_]{2,})"'
+    r'(?:env::var(?:_os)?|std::env::var(?:_os)?|env_lookup|\blookup|getenv)\s*\(\s*&?\s*(?:r#*)?"([A-Z][A-Z0-9_]{2,})"'
 )
 # The same read calls, but with a bare identifier argument (a key passed through a
 # constant). Paired with CONST_KEY, this recovers keys KEYCALL's literal form misses.
@@ -64,7 +75,7 @@ KEYCALL_IDENT = re.compile(
 # key is invisible - the literal is not a direct argument to a recognized read call -
 # so it looks undocumented-in-reverse (present in docs, "unused" in code).
 KEYCALL_HELPER = re.compile(
-    r'"([A-Z][A-Z0-9_]{2,})"\s*,\s*(?:&\s*)?(?:env_lookup|env::var(?:_os)?)\b'
+    r'(?:r#*)?"([A-Z][A-Z0-9_]{2,})"\s*,\s*(?:&\s*)?(?:env_lookup|env::var(?:_os)?)\b'
 )
 # A key handed as the *first* argument to any local function, e.g.
 # `parse_env_or("BITCOIN_RPC_TIMEOUT_SECS", 30)`. On its own this shape is too broad
@@ -72,13 +83,13 @@ KEYCALL_HELPER = re.compile(
 # is a discovered env-reading helper (a fn whose body reads the environment). That
 # turns "named wrapper around env::var" into a recognized read without hardcoding
 # each wrapper's name.
-HELPER_CALL = re.compile(r'\b([a-z_][a-z0-9_]*)\s*\(\s*&?\s*"([A-Z][A-Z0-9_]{2,})"')
+HELPER_CALL = re.compile(r'\b([a-z_][a-z0-9_]*)\s*\(\s*&?\s*(?:r#*)?"([A-Z][A-Z0-9_]{2,})"')
 # Direct read primitives already inventoried by KEYCALL/KEYCALL_IDENT; skip them in
 # the HELPER_CALL pass so a `env::var("KEY")` site is not counted twice (its callee
 # name captures as `var`).
 READ_PRIMITIVES = {"var", "var_os", "env_lookup", "lookup", "getenv"}
 CONST_KEY = re.compile(
-    r'\b(?:const|static)\s+([A-Z][A-Z0-9_]*)\s*:\s*&\s*(?:\'static\s+)?str\s*=\s*"([A-Z][A-Z0-9_]{2,})"'
+    r'\b(?:const|static)\s+([A-Z][A-Z0-9_]*)\s*:\s*&\s*(?:\'static\s+)?str\s*=\s*(?:r#*)?"([A-Z][A-Z0-9_]{2,})"'
 )
 CONFIG_STRUCT = re.compile(r"\bstruct\s+([A-Za-z0-9_]*Config)\b")
 DEFAULT_PREFIXES = ["NAMECOIN", "RSK", "SYSCOIN", "FRACTAL", "HATHOR", "ELASTOS"]
@@ -251,14 +262,15 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
                 continue  # direct reads handled elsewhere; build-time vars ignored
             helper_calls.append((fn_name, key, _report.Loc(rel, decommented.count("\n", 0, m.start()) + 1)))
         # Suffix evidence is taken only from a key-construction site - a
-        # `format!("{prefix}_SUFFIX")` interpolation - not from every bare `"_SUFFIX"`
-        # literal. A bare literal is commonly a non-construction mention (notably an
-        # inline `#[cfg(test)]` list asserting the docs cover each family); counting it
-        # would keep a family looking "built in code" and mask a genuine
-        # config-unread/undocumented-suffix result after its production lookup is gone.
+        # `format!("{prefix}_SUFFIX")` whose *whole* literal is the key - never from a
+        # literal that merely embeds a rendered name (a bare `#[cfg(test)]`
+        # enumeration, or an error/log message such as `"... {}_MAX_BACKFILL_RANGE
+        # ..."`). Counting those kept a family looking "built in code" and masked a
+        # genuine config-unread/undocumented-suffix result once its real lookup went.
         for lit, _off in _scan.iter_string_literals(src):
-            for fm in FORMAT_SUFFIX.finditer(lit):
-                code_suffixes.add(fm.group(1))
+            cm = CONSTRUCT_SUFFIX.match(lit.strip())
+            if cm:
+                code_suffixes.add(cm.group(1))
 
     # Resolve constant-passed keys once every declaration has been seen. A same-file
     # declaration wins (precise even when another module reuses the name); otherwise
