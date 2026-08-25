@@ -5,7 +5,7 @@ use bitcoin::CompactTarget;
 use bitcoin::hashes::{Hash as _, sha256d};
 use mmm_capture::auxpow::validates_target;
 use mmm_capture::capture::{HistoricalEventProvenance, NormalizedEventEvidence};
-use mmm_capture::nbits_table::NbitsTable;
+use mmm_capture::nbits_table::{NbitsLookup, NbitsTable};
 
 use super::super::config::HistoricalChainSpec;
 use super::super::rsk_sidecar::parse_rsk_sidecar;
@@ -38,6 +38,7 @@ type TaxonomyParser = fn(
     &CsvLayout,
     &csv::StringRecord,
     &str,
+    Option<&NbitsTable>,
 ) -> Result<TaxonomyFields, SkipReason>;
 
 pub(crate) fn candidate_from_record(
@@ -64,13 +65,14 @@ pub(crate) fn error_observation_candidate_from_record(
     layout: &CsvLayout,
     record: &csv::StringRecord,
     publication_ref: &str,
+    nbits_table: &NbitsTable,
 ) -> Result<ImportCandidate, SkipReason> {
     candidate_from_record_with_taxonomy(
         spec,
         layout,
         record,
         publication_ref,
-        None,
+        Some(nbits_table),
         parse_error_observation_taxonomy_fields,
     )
 }
@@ -87,7 +89,7 @@ fn candidate_from_record_with_taxonomy(
         return Err(SkipReason::Malformed);
     }
     let child = parse_child_fields(spec, layout, record)?;
-    let taxonomy = parse_taxonomy(spec, layout, record, publication_ref)?;
+    let taxonomy = parse_taxonomy(spec, layout, record, publication_ref, nbits_table)?;
     let header = parse_parent_header(record.get(layout.btc_header))?;
     let display_hash = header.block_hash().to_string();
     validate_parent_fields(
@@ -198,6 +200,7 @@ fn parse_taxonomy_fields(
     layout: &CsvLayout,
     record: &csv::StringRecord,
     publication_ref: &str,
+    _nbits_table: Option<&NbitsTable>,
 ) -> Result<TaxonomyFields, SkipReason> {
     let source_classification =
         super::parse_source_classification(record.get(layout.classification))?;
@@ -252,6 +255,7 @@ fn parse_error_observation_taxonomy_fields(
     layout: &CsvLayout,
     record: &csv::StringRecord,
     publication_ref: &str,
+    nbits_table: Option<&NbitsTable>,
 ) -> Result<TaxonomyFields, SkipReason> {
     if record.get(layout.classification).map(str::trim) != Some("error_block")
         || record.get(layout.artifact_scope).map(str::trim) != Some("error-block-observations")
@@ -264,8 +268,16 @@ fn parse_error_observation_taxonomy_fields(
     let rejection_reason = non_empty(record.get(layout.rejection_reason))?.to_owned();
     let btc_height = parse_optional_nonnegative_i32(record.get(layout.btc_height))?
         .ok_or(SkipReason::EmptyField)?;
-    parse_optional_compact_target(record.get(layout.expected_nbits))?
+    let expected_nbits = parse_optional_compact_target(record.get(layout.expected_nbits))?
         .ok_or(SkipReason::EmptyField)?;
+    if rejection_reason == mmm_capture::error_blocks::NBITS_RETARGET_NOT_APPLIED
+        && nbits_table
+            .ok_or(SkipReason::Unclassified)?
+            .expected_nbits(btc_height)
+            != NbitsLookup::Found(expected_nbits)
+    {
+        return Err(SkipReason::EvidenceMismatch);
+    }
     Ok(TaxonomyFields {
         source_classification: SourceClassification::ErrorBlock,
         relevance_selection: None,

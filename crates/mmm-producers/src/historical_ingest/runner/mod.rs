@@ -525,6 +525,7 @@ async fn run_historical_import_configs_locked(
         .collect::<Vec<_>>();
     ensure_import_environment(client, classifier, &import_configs).await?;
     let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
+    let expected_error_parents = error_observations::pinned_error_parent_hashes();
     for (chain_config, artifact) in configs.iter().zip(&mut preflighted_artifacts) {
         let spec = historical_chain_spec(&chain_config.chain)
             .expect("chain configs are built from the source registry");
@@ -540,7 +541,15 @@ async fn run_historical_import_configs_locked(
         .await?;
     }
     if let Some(artifact) = &mut error_observations {
-        preflight_error_observations(client, classifier, artifact, &mut classifications).await?;
+        preflight_error_observations(
+            client,
+            classifier,
+            artifact,
+            &mut classifications,
+            &nbits_table,
+            &expected_error_parents,
+        )
+        .await?;
     }
 
     let mut summary = HistoricalImportAllSummary::default();
@@ -573,6 +582,7 @@ async fn run_historical_import_configs_locked(
                 artifact,
                 &mut classifications,
                 &nbits_table,
+                &expected_error_parents,
             )
             .await?,
         );
@@ -604,6 +614,7 @@ pub async fn run_error_observation_import_for_test(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
     path: &std::path::Path,
+    expected_parent_hashes: &[[u8; 32]],
 ) -> Result<HistoricalImportSummary> {
     if !classifier.is_enabled() {
         bail!("BITCOIN_RPC_URL is required for historical import");
@@ -612,15 +623,24 @@ pub async fn run_error_observation_import_for_test(
     mmm_store::lock_bitcoin_core_header_cache(client).await?;
     let result = async {
         let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
+        let expected_error_parents = expected_parent_hashes.iter().copied().collect();
         let mut classifications = HashMap::new();
-        preflight_error_observations(client, classifier, &mut artifact, &mut classifications)
-            .await?;
+        preflight_error_observations(
+            client,
+            classifier,
+            &mut artifact,
+            &mut classifications,
+            &nbits_table,
+            &expected_error_parents,
+        )
+        .await?;
         let summary = import_error_observations(
             client,
             classifier,
             artifact,
             &mut classifications,
             &nbits_table,
+            &expected_error_parents,
         )
         .await?;
         rebuild_historical_source_health(client).await?;

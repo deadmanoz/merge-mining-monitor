@@ -456,6 +456,8 @@ pub(super) fn non_empty(value: Option<&str>) -> Result<&str, SkipReason> {
 
 #[cfg(test)]
 mod tests {
+    use mmm_capture::nbits_table::{BitcoinEpochHeader, NbitsTable};
+
     use super::super::config::{PINNED_RESEARCH_COMMIT, historical_chain_spec};
     use super::*;
 
@@ -541,6 +543,14 @@ mod tests {
     }
 
     fn error_observation_candidate(chain: &str, row: &str) -> Result<ImportCandidate, SkipReason> {
+        error_observation_candidate_with_expected_nbits(chain, row, 0x1d00_ffff)
+    }
+
+    fn error_observation_candidate_with_expected_nbits(
+        chain: &str,
+        row: &str,
+        expected_nbits: u32,
+    ) -> Result<ImportCandidate, SkipReason> {
         let spec = historical_chain_spec(chain).unwrap();
         let mut input = NORMALIZED_COLUMNS.join(",");
         input.push_str(",rsk_miner,merge_mining_hash,is_uncle,uncle_index,");
@@ -550,11 +560,18 @@ mod tests {
         let mut reader = csv::Reader::from_reader(input.as_bytes());
         let layout = CsvLayout::new(reader.headers().unwrap(), spec).unwrap();
         let record = reader.records().next().unwrap().unwrap();
+        let nbits_table = NbitsTable::from_bitcoin_core_headers(&[BitcoinEpochHeader {
+            height: 0,
+            block_time: 0,
+            bits: expected_nbits,
+        }])
+        .unwrap();
         error_observation_candidate_from_record(
             spec,
             &layout,
             &record,
             PINNED_RESEARCH_COMMIT.as_str(),
+            &nbits_table,
         )
     }
 
@@ -737,7 +754,21 @@ mod tests {
             1,
         );
 
-        assert!(error_observation_candidate("devcoin", &error_row).is_ok());
+        assert!(
+            error_observation_candidate_with_expected_nbits("devcoin", &error_row, 0x1d00_fffe)
+                .is_ok()
+        );
+
+        let wrong_expected_nbits = error_row.replacen("1d00fffe", "1d00ffff", 1);
+        assert_eq!(
+            error_observation_candidate_with_expected_nbits(
+                "devcoin",
+                &wrong_expected_nbits,
+                0x1d00_fffe,
+            )
+            .unwrap_err(),
+            SkipReason::EvidenceMismatch
+        );
 
         let non_retarget = error_row.replacen("nbits_retarget_not_applied", "time_below_mtp", 1);
         assert_eq!(

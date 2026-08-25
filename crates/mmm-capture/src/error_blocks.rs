@@ -47,6 +47,11 @@ pub fn len() -> usize {
     ERROR_BLOCKS.len()
 }
 
+/// Iterate every stored-order parent hash in the pinned catalogue.
+pub fn hashes() -> impl Iterator<Item = [u8; 32]> {
+    ERROR_BLOCKS.keys().copied()
+}
+
 fn parse_registry() -> HashMap<[u8; 32], ErrorBlock> {
     let mut entries = HashMap::new();
     for (line_number, line) in ERROR_BLOCKS_CSV.lines().enumerate() {
@@ -101,6 +106,7 @@ mod tests {
             BlockHash::from_str("00000000000000000000c3d95a4bdc068dfe0c6d1e7ad13045c6f570e58d9ed7")
                 .unwrap();
         assert_eq!(len(), 33);
+        assert_eq!(hashes().count(), len());
         assert_eq!(
             lookup(&hash.to_byte_array()),
             Some(ErrorBlock {

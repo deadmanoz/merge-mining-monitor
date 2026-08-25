@@ -1,8 +1,9 @@
 //! Import and preserve catalogue-backed historical error witnesses.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use anyhow::{Context, Result, bail, ensure};
+use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
 use mmm_capture::nbits_table::NbitsTable;
 use mmm_capture::pool_resolver::PoolResolver;
@@ -33,6 +34,8 @@ pub(super) async fn preflight_error_observations(
     classifier: &ConfiguredParentClassifier,
     artifact: &mut ErrorObservationPreflight,
     classifications: &mut HashMap<Vec<u8>, ParentClassification>,
+    nbits_table: &NbitsTable,
+    expected_parent_hashes: &BTreeSet<[u8; 32]>,
 ) -> Result<()> {
     let mut reader = artifact.open_reader()?;
     let headers = reader
@@ -41,10 +44,12 @@ pub(super) async fn preflight_error_observations(
         .clone();
     let mut rows = 0_u64;
     let mut source_chain_counts = BTreeMap::new();
+    let mut parent_hashes = BTreeSet::new();
     for (offset, record) in reader.records().enumerate() {
         let record =
             record.with_context(|| format!("parse error-observation row {}", offset + 2))?;
-        let (spec, candidate) = parse_error_observation_candidate(&headers, &record, offset + 2)?;
+        let (spec, candidate) =
+            parse_error_observation_candidate(&headers, &record, offset + 2, nbits_table)?;
         match import_error_observation_decision(client, classifier, &candidate, classifications)
             .await?
         {
@@ -60,6 +65,13 @@ pub(super) async fn preflight_error_observations(
         *source_chain_counts
             .entry(spec.chain.to_owned())
             .or_insert(0) += 1;
+        parent_hashes.insert(
+            candidate
+                .evidence
+                .btc_parent_header
+                .block_hash()
+                .to_byte_array(),
+        );
         rows += 1;
     }
     ensure!(
@@ -71,6 +83,7 @@ pub(super) async fn preflight_error_observations(
         source_chain_counts == artifact.source_chain_counts,
         "error-observation source-chain counts changed during preflight"
     );
+    ensure_catalogue_coverage(&parent_hashes, expected_parent_hashes)?;
     Ok(())
 }
 
@@ -83,6 +96,7 @@ pub(super) async fn import_error_observations(
     mut artifact: ErrorObservationPreflight,
     classifications: &mut HashMap<Vec<u8>, ParentClassification>,
     nbits_table: &NbitsTable,
+    expected_parent_hashes: &BTreeSet<[u8; 32]>,
 ) -> Result<HistoricalImportSummary> {
     let resolver = PoolResolver::from_default_snapshot().context("load embedded pool snapshot")?;
     let source_ids = load_historical_source_ids(client).await?;
@@ -97,6 +111,7 @@ pub(super) async fn import_error_observations(
     };
     let mut parent_counts = HashMap::new();
     let mut source_chain_counts = BTreeMap::new();
+    let mut parent_hashes = BTreeSet::new();
     let mut reader = artifact.open_reader()?;
     let headers = reader
         .headers()
@@ -106,7 +121,8 @@ pub(super) async fn import_error_observations(
         summary.rows_seen += 1;
         let record =
             record.with_context(|| format!("parse error-observation row {}", offset + 2))?;
-        let (spec, candidate) = parse_error_observation_candidate(&headers, &record, offset + 2)?;
+        let (spec, candidate) =
+            parse_error_observation_candidate(&headers, &record, offset + 2, nbits_table)?;
         *source_chain_counts
             .entry(spec.chain.to_owned())
             .or_insert(0) += 1;
@@ -124,6 +140,13 @@ pub(super) async fn import_error_observations(
             );
         };
         summary.candidates += 1;
+        parent_hashes.insert(
+            candidate
+                .evidence
+                .btc_parent_header
+                .block_hash()
+                .to_byte_array(),
+        );
         let source_id = *source_ids
             .get(spec.chain)
             .expect("source id loaded for every importable chain");
@@ -153,6 +176,7 @@ pub(super) async fn import_error_observations(
         source_chain_counts == artifact.source_chain_counts,
         "error-observation source-chain counts changed during import"
     );
+    ensure_catalogue_coverage(&parent_hashes, expected_parent_hashes)?;
     invalidate_source_health_in_transaction(&txn).await?;
     txn.commit()
         .await
@@ -174,6 +198,7 @@ fn parse_error_observation_candidate(
     headers: &csv::StringRecord,
     record: &csv::StringRecord,
     row_number: usize,
+    nbits_table: &NbitsTable,
 ) -> Result<(&'static HistoricalChainSpec, ImportCandidate)> {
     let chain = record
         .get(0)
@@ -195,6 +220,7 @@ fn parse_error_observation_candidate(
         &layout,
         record,
         PINNED_RESEARCH_COMMIT.as_str(),
+        nbits_table,
     )
     .map_err(|reason| {
         anyhow::anyhow!(
@@ -203,6 +229,21 @@ fn parse_error_observation_candidate(
         )
     })?;
     Ok((spec, candidate))
+}
+
+pub(super) fn pinned_error_parent_hashes() -> BTreeSet<[u8; 32]> {
+    mmm_capture::error_blocks::hashes().collect()
+}
+
+fn ensure_catalogue_coverage(
+    parent_hashes: &BTreeSet<[u8; 32]>,
+    expected_parent_hashes: &BTreeSet<[u8; 32]>,
+) -> Result<()> {
+    ensure!(
+        parent_hashes == expected_parent_hashes,
+        "error-observation artifact does not cover the pinned error-block catalogue"
+    );
+    Ok(())
 }
 
 async fn load_historical_source_ids(client: &Client) -> Result<HashMap<&'static str, i64>> {
@@ -214,4 +255,20 @@ async fn load_historical_source_ids(client: &Client) -> Result<HashMap<&'static 
         );
     }
     Ok(source_ids)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalogue_coverage_rejects_a_missing_parent() {
+        let expected_parent_hashes = pinned_error_parent_hashes();
+        let mut parent_hashes = expected_parent_hashes.clone();
+        let removed = *parent_hashes.iter().next().expect("non-empty catalogue");
+        assert!(parent_hashes.remove(&removed));
+        let error = ensure_catalogue_coverage(&parent_hashes, &expected_parent_hashes)
+            .expect_err("a missing catalogue parent must fail preflight");
+        assert!(error.to_string().contains("does not cover"));
+    }
 }
