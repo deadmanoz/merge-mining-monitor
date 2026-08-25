@@ -62,19 +62,14 @@ def norm(s: str) -> str:
     literal), so it is copied verbatim too. Its tag cannot start with a digit, so a
     positional placeholder like `$1` is never mistaken for a dollar-quote opener.
 
-    Placeholders are canonicalized by first-occurrence order ($3 -> $1) rather than
-    all collapsed to one token, so their *equivalence pattern* survives: reusing one
-    bind value (`a = $1 OR b = $1`) stays distinct from two independent ones
-    (`a = $1 OR b = $2`), which are semantically different queries.
+    Positional placeholders (`$1`, `$2`, ...) are kept verbatim - neither collapsed
+    to one token nor renumbered - so both the reuse pattern and the bind order carry
+    semantics. Renumbering by first occurrence would fold `a = $1 AND b = $2` and
+    `a = $2 AND b = $1` (different results from one argument list) into one query;
+    leaving the original numbers keeps those permutations distinct, and still keeps
+    a reused bind (`a = $1 OR b = $1`) distinct from two independent ones
+    (`a = $1 OR b = $2`).
     """
-    ph: dict[str, str] = {}
-
-    def canon(m: "re.Match[str]") -> str:
-        tok = m.group(0)
-        if tok not in ph:
-            ph[tok] = f"${len(ph) + 1}"
-        return ph[tok]
-
     out: list[str] = []
     i, n = 0, len(s)
     while i < n:
@@ -113,8 +108,10 @@ def norm(s: str) -> str:
             if s[j] == "$" and DOLLAR_OPEN.match(s, j):
                 break
             j += 1
-        seg = re.sub(r"\$\d+", canon, s[i:j])
-        out.append(re.sub(r"\s+", " ", seg).lower())
+        # Placeholders (`$1`, `$2`) are left as-is; only whitespace and keyword case
+        # are folded. `$` here is a positional bind (dollar-quote openers were peeled
+        # off above), so no dollar-quote can leak into this branch.
+        out.append(re.sub(r"\s+", " ", s[i:j]).lower())
         i = j
     return "".join(out).strip()
 

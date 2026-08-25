@@ -65,6 +65,17 @@ KEYCALL_IDENT = re.compile(
 KEYCALL_HELPER = re.compile(
     r'"([A-Z][A-Z0-9_]{2,})"\s*,\s*(?:&\s*)?(?:env_lookup|env::var(?:_os)?)\b'
 )
+# A key handed as the *first* argument to any local function, e.g.
+# `parse_env_or("BITCOIN_RPC_TIMEOUT_SECS", 30)`. On its own this shape is too broad
+# (it also matches `insert("SOME_CONST", ..)`), so a hit is kept only when the callee
+# is a discovered env-reading helper (a fn whose body reads the environment). That
+# turns "named wrapper around env::var" into a recognized read without hardcoding
+# each wrapper's name.
+HELPER_CALL = re.compile(r'\b([a-z_][a-z0-9_]*)\s*\(\s*&?\s*"([A-Z][A-Z0-9_]{2,})"')
+# Direct read primitives already inventoried by KEYCALL/KEYCALL_IDENT; skip them in
+# the HELPER_CALL pass so a `env::var("KEY")` site is not counted twice (its callee
+# name captures as `var`).
+READ_PRIMITIVES = {"var", "var_os", "env_lookup", "lookup", "getenv"}
 CONST_KEY = re.compile(
     r'\b(?:const|static)\s+([A-Z][A-Z0-9_]*)\s*:\s*&\s*(?:\'static\s+)?str\s*=\s*"([A-Z][A-Z0-9_]{2,})"'
 )
@@ -150,6 +161,11 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
     const_global: dict[str, str] = {}
     const_ambig: set[str] = set()
     ident_calls: list[tuple[str, str, _report.Loc]] = []  # (ident, file, loc)
+    # Names of local fns whose body reads the environment, plus every
+    # `fn_name("KEY", ..)` candidate, both resolved after the whole tree is scanned
+    # (a helper is commonly defined in a different file from its callers).
+    env_helpers: set[str] = set()
+    helper_calls: list[tuple[str, str, _report.Loc]] = []  # (fn_name, key, loc)
 
     for path in _scan.iter_rust_files(root, skip_tests=not include_tests):
         src = read_text(path)
@@ -185,6 +201,18 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
             const_global[ident] = key
         for m in KEYCALL_IDENT.finditer(decommented):
             ident_calls.append((m.group(1), rel, _report.Loc(rel, decommented.count("\n", 0, m.start()) + 1)))
+        # A fn whose (de-noised) body performs an env read is an env helper; its name
+        # qualifies the literal keys its callers pass. Bodies use `stripped` so a read
+        # in a comment/string does not count; call sites use `decommented` to keep the
+        # literal key text.
+        for fn in _scan.find_functions(stripped, path):
+            if ENV_READ.search(fn.body):
+                env_helpers.add(fn.name)
+        for m in HELPER_CALL.finditer(decommented):
+            fn_name, key = m.group(1), m.group(2)
+            if fn_name in READ_PRIMITIVES or _is_build_env(key):
+                continue  # direct reads handled elsewhere; build-time vars ignored
+            helper_calls.append((fn_name, key, _report.Loc(rel, decommented.count("\n", 0, m.start()) + 1)))
         for lit, _off in _scan.iter_string_literals(src):
             if SUFFIX.match(lit):
                 code_suffixes.add(lit)
@@ -202,6 +230,25 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
             key = const_global.get(ident)
         if key and not _is_build_env(key):
             key_locs.setdefault(key, []).append(loc)
+
+    # Attribute keys passed to discovered env-reading helpers (`_is_build_env` was
+    # already applied when collecting the candidates).
+    for fn_name, key, loc in helper_calls:
+        if fn_name in env_helpers:
+            key_locs.setdefault(key, []).append(loc)
+
+    # Collapse duplicate locations per key: the same call site can match more than one
+    # pass (e.g. KEYCALL_HELPER and HELPER_CALL both see `exact_one_from_lookup("K", env_lookup)`),
+    # which would otherwise inflate a key's read count and its multi-read severity.
+    for key, locs in key_locs.items():
+        seen: set[tuple[str, int]] = set()
+        deduped: list[_report.Loc] = []
+        for loc in locs:
+            sig = (loc.file, loc.line)
+            if sig not in seen:
+                seen.add(sig)
+                deduped.append(loc)
+        key_locs[key] = deduped
 
     code_full = set(key_locs)
     example = env_keys(read_text(env_example))

@@ -364,10 +364,13 @@ def find_functions(src: str, path: str) -> list[Function]:
     `src` should already be `strip_noise`d so that braces inside strings or
     comments cannot unbalance the counter. A `fn` with no body (trait method
     signature ending in `;`) is skipped.
+
+    The optional `r#` raw-identifier prefix is consumed but not captured, so
+    `fn r#match` yields the logical name `match` rather than a truncated `r`.
     """
     out: list[Function] = []
     n = len(src)
-    for m in re.finditer(r"\bfn\s+([A-Za-z0-9_]+)", src):
+    for m in re.finditer(r"\bfn\s+(?:r#)?([A-Za-z0-9_]+)", src):
         kind, j = find_signature_end(src, m.end())
         if kind != "body" or j >= n:
             continue

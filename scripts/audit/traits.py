@@ -20,7 +20,7 @@ import re
 import _report
 import _scan
 
-FN = re.compile(r"\bfn\s+([A-Za-z0-9_]+)")
+FN = re.compile(r"\bfn\s+(?:r#)?([A-Za-z0-9_]+)")  # `(?:r#)?` -> `fn r#match` reads as `match`
 
 
 def _match_brace(src: str, open_idx: int) -> int:
