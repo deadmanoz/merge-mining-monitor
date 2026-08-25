@@ -22,6 +22,12 @@ import _report
 import _scan
 
 SQL_KW = re.compile(r"\b(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|JOIN|WHERE|VALUES|ON\s+CONFLICT|RETURNING|WITH)\b", re.I)
+# A literal that *begins* with a command keyword is a SQL statement even with only
+# one recognized clause (`SELECT fn($1, $2)`, `UPDATE t SET ...`), which the
+# two-keyword floor below would otherwise discard - dropping real duplicates like
+# `SELECT pg_advisory_xact_lock_shared($1, $2)`. Leading whitespace/newlines from a
+# raw string are skipped; `^` (no re.M) anchors to the literal's start.
+SQL_STMT = re.compile(r"^\s*(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|WITH)\b", re.I)
 # A PostgreSQL dollar-quote opener: `$$` or `$tag$` where the tag is a valid
 # identifier (never starting with a digit, so `$1` positional binds don't match).
 DOLLAR_OPEN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
@@ -33,7 +39,10 @@ def extract_sql(src: str):
     # honors matched raw delimiters, and skips comments/char literals - the whole
     # class of quote-desync bugs a hand-rolled regex hits.
     for content, off in _scan.iter_string_literals(src):
-        if len(content) >= 40 and len(SQL_KW.findall(content)) >= 2:
+        # Admit a literal that either starts with a command keyword (an anchored
+        # single-clause statement) or carries >= 2 recognized clauses (a fragment
+        # like a `JOIN ... WHERE ...` builder piece that does not start a statement).
+        if len(content) >= 40 and (SQL_STMT.match(content) or len(SQL_KW.findall(content)) >= 2):
             yield src[:off].count("\n") + 1, content
 
 

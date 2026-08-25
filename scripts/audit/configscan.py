@@ -143,8 +143,13 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
     code_suffixes: set[str] = set()
     # `const KEY_ENV: &str = "SOME_KEY"` declarations, resolved after the scan so a
     # `var_os(KEY_ENV)` call site counts against the real key, not a phantom.
-    const_map: dict[str, str] = {}
-    ident_calls: list[tuple[str, _report.Loc]] = []
+    # Declarations are tracked per file (a same-file declaration is authoritative)
+    # plus a repo-wide map with an ambiguity set, so a conventional constant name
+    # reused for different keys across modules is not collapsed to one global key.
+    const_by_file: dict[str, dict[str, str]] = {}
+    const_global: dict[str, str] = {}
+    const_ambig: set[str] = set()
+    ident_calls: list[tuple[str, str, _report.Loc]] = []  # (ident, file, loc)
 
     for path in _scan.iter_rust_files(root, skip_tests=not include_tests):
         src = read_text(path)
@@ -173,19 +178,28 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
             if not _is_build_env(key):
                 key_locs.setdefault(key, []).append(_report.Loc(rel, decommented.count("\n", 0, m.start()) + 1))
         for m in CONST_KEY.finditer(decommented):
-            const_map[m.group(1)] = m.group(2)
+            ident, key = m.group(1), m.group(2)
+            const_by_file.setdefault(rel, {})[ident] = key
+            if ident in const_global and const_global[ident] != key:
+                const_ambig.add(ident)  # same name, different key in another module
+            const_global[ident] = key
         for m in KEYCALL_IDENT.finditer(decommented):
-            ident_calls.append((m.group(1), _report.Loc(rel, decommented.count("\n", 0, m.start()) + 1)))
+            ident_calls.append((m.group(1), rel, _report.Loc(rel, decommented.count("\n", 0, m.start()) + 1)))
         for lit, _off in _scan.iter_string_literals(src):
             if SUFFIX.match(lit):
                 code_suffixes.add(lit)
             for fm in FORMAT_SUFFIX.finditer(lit):
                 code_suffixes.add(fm.group(1))
 
-    # Resolve constant-passed keys once every declaration has been seen (a const may
-    # be defined in a different file from its use).
-    for ident, loc in ident_calls:
-        key = const_map.get(ident)
+    # Resolve constant-passed keys once every declaration has been seen. A same-file
+    # declaration wins (precise even when another module reuses the name); otherwise
+    # fall back to the repo-wide map only when the name is unambiguous, so a reused
+    # `RPC_URL_ENV` is skipped rather than misattributed to whichever file was
+    # scanned last.
+    for ident, file, loc in ident_calls:
+        key = const_by_file.get(file, {}).get(ident)
+        if key is None and ident not in const_ambig:
+            key = const_global.get(ident)
         if key and not _is_build_env(key):
             key_locs.setdefault(key, []).append(loc)
 

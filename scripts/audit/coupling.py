@@ -73,21 +73,43 @@ def _tracked_paths() -> set[str]:
     code a reader can actually open and consolidate. Their historical commits still
     feed the co-change counts of the files that survive alongside them.
     """
+    # `--full-tree` lists the whole tree with repo-root-relative paths regardless of
+    # the process's working directory; without it `git ls-tree` scopes to the CWD and
+    # (run from a subdir) the returned set would not match `git log`'s repo-relative
+    # paths, silently filtering every file out.
     out = subprocess.run(
-        ["git", "ls-tree", "-r", "--name-only", "HEAD"],
+        ["git", "ls-tree", "-r", "--full-tree", "--name-only", "HEAD"],
         capture_output=True, text=True, check=True,
     ).stdout
     return set(out.splitlines())
 
 
+def _resolve_rename(rename_to: dict[str, str], path: str) -> str:
+    """Follow a chain of `old -> new` rename links to the current (HEAD-era) name.
+    A `seen` guard tolerates a pathological rename-swap cycle in history."""
+    seen: set[str] = set()
+    while path in rename_to and path not in seen:
+        seen.add(path)
+        path = rename_to[path]
+    return path
+
+
 def commits(all_refs: bool = False):
-    """Yield `(total_changed, code_files)` per commit.
+    """Yield `(total_changed, code_files)` per commit, with historical paths mapped
+    onto their current name.
 
     `total_changed` counts *every* path the commit touched (Rust, SQL, migrations,
     docs, config, ...), so sweep detection sees the true commit size; `code_files`
     is the `.rs`/`.js` subset (minus generated/vendored paths) used for churn and
     co-change pairs. Filtering to code before counting would let a bulk commit of
     two Rust files plus a hundred migrations masquerade as a focused change.
+
+    `--name-status -M` surfaces renames; walking newest-first we record each
+    `old -> new` link as it appears (newer links already seen), so every changed
+    path resolves to the name it carries at HEAD. A file that survives a rename thus
+    keeps its full pre-rename history under one path (`csv_source.rs` folds into
+    `csv_source/mod.rs`), while a genuinely deleted path resolves to a name absent
+    from HEAD and is dropped downstream - no undercount, no resurrected ghost.
 
     History is the checked-out revision only (`git log HEAD`) so two clones at the
     same commit yield identical counts; `all_refs=True` restores `--all` (every
@@ -96,22 +118,30 @@ def commits(all_refs: bool = False):
     """
     log_args = ["git", "log"]
     log_args.append("--all" if all_refs else "HEAD")
-    log_args += ["--pretty=format:%H", "--name-only"]
+    log_args += ["--pretty=format:%H", "--name-status", "-M"]
     out = subprocess.run(log_args, capture_output=True, text=True, check=True).stdout
+    rename_to: dict[str, str] = {}
     total = 0
     files: list[str] = []
+    started = False
     for line in out.splitlines():
         if not line.strip():
             continue
         if len(line) == 40 and all(c in "0123456789abcdef" for c in line):
-            if total or files:
+            if started:
                 yield total, files
-            total, files = 0, []
-        else:
-            total += 1  # every changed path counts toward the sweep size
-            if line.endswith(TRACKED_SUFFIXES) and not any(e in line for e in EXCLUDE):
-                files.append(line)
-    if total or files:
+            total, files, started = 0, [], True
+            continue
+        parts = line.split("\t")
+        total += 1  # one changed path (a rename counts once) toward the sweep size
+        if parts[0].startswith("R") and len(parts) >= 3:
+            rename_to[parts[1]] = parts[2]  # old -> new (record before resolving)
+            cur = _resolve_rename(rename_to, parts[2])
+        else:  # A/M/D (or C copy: attribute the destination path)
+            cur = _resolve_rename(rename_to, parts[-1])
+        if cur.endswith(TRACKED_SUFFIXES) and not any(e in cur for e in EXCLUDE):
+            files.append(cur)
+    if started:
         yield total, files
 
 
