@@ -179,8 +179,15 @@ def commits(all_refs: bool = False, repo: str | None = None):
                 # file; seal `old` so its own older history drops too.
                 sealed.add(old)
                 continue
-            rename_to[old] = new  # old -> new (record before resolving)
-            cur = _resolve_rename(rename_to, new)
+            # Bind `old` to `new`'s CURRENT terminal name, not to `new` literally: a
+            # rename-back (`a -> b` ... later `b -> a`, no deletion) would otherwise
+            # make rename_to[a]=b and rename_to[b]=a, a cycle whose `_resolve_rename`
+            # seen-guard strands part of `a`'s history on `b` and drops it. Resolving
+            # first collapses the chain so every old name points straight at the HEAD
+            # name (a rename-back yields a harmless self-map the guard absorbs).
+            target = _resolve_rename(rename_to, new)
+            rename_to[old] = target
+            cur = target
         else:  # A/M/D (or C copy: attribute the destination path)
             dest = parts[-1]
             if dest in sealed:

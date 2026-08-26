@@ -143,8 +143,10 @@ def norm(s: str) -> str:
 
     A PostgreSQL dollar-quoted span (`$$...$$` or `$tag$...$tag$`) is likewise
     case- and whitespace-significant (it commonly carries a function body or a
-    literal), so it is copied verbatim too. Its tag cannot start with a digit, so a
-    positional placeholder like `$1` is never mistaken for a dollar-quote opener.
+    literal), so its body is copied verbatim; only the delimiter tag - a
+    non-semantic marker chosen to avoid the body's contents - is canonicalized to a
+    bare `$$`, so `$a$b$a$` and `$b$b$b$` compare equal. A tag cannot start with a
+    digit, so a positional placeholder like `$1` is never mistaken for an opener.
 
     Positional placeholders (`$1`, `$2`, ...) are kept verbatim - neither collapsed
     to one token nor renumbered - so both the reuse pattern and the bind order carry
@@ -198,8 +200,16 @@ def norm(s: str) -> str:
             if mo:
                 closer = mo.group(0)  # "$$" or "$tag$"
                 end = s.find(closer, mo.end())
-                stop = n if end < 0 else end + len(closer)  # unterminated -> rest verbatim
-                out.append(s[i:stop])  # dollar-quoted span: preserved verbatim
+                if end < 0:  # unterminated -> body runs to the end
+                    body, stop = s[mo.end():], n
+                else:
+                    body, stop = s[mo.end():end], end + len(closer)
+                # Preserve the body verbatim (a function body / literal is case- and
+                # whitespace-significant) but canonicalize the delimiter: the tag only
+                # exists to pick a marker the body does not contain, so `$a$x$a$` and
+                # `$b$x$b$` are the SAME value. Emitting a fixed `$$...$$` lets those
+                # group as an exact duplicate instead of splitting on the tag name.
+                out.append("$$" + body + "$$")
                 i = stop
                 continue
         # SQL comments carry no query meaning, but WHERE a comment ends does: `--`

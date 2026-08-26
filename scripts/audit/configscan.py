@@ -197,12 +197,14 @@ SHELL_VAR = re.compile(r"\$\{?([A-Z][A-Z0-9_]{2,})\}?")
 def _shell_runtime_refs(text: str) -> set[str]:
     """`$VAR`/`${VAR}` references a shell would actually *expand*.
 
-    Two constructs carry a `$KEY` that never runs, so counting them as tooling
+    Three constructs carry a `$KEY` that never runs, so counting them as tooling
     evidence would wrongly suppress a `config-unread` finding for an obsolete key: a
-    `#` comment (only when it starts a word - not the `#` inside `${VAR#pat}`) and a
-    single-quoted span (POSIX single quotes suppress expansion entirely). Double-quoted
-    text still expands, so it is kept. A byte-level scanner, since a regex cannot tell
-    a live `$KEY` from one buried in a comment or single quotes."""
+    `#` comment (only when it starts a word - not the `#` inside `${VAR#pat}`), a
+    single-quoted span (POSIX single quotes suppress expansion entirely), and a
+    backslash-escaped `\\$KEY` (the `$` is literal, e.g. `echo "\\$OBSOLETE"` prints
+    the text, never expanding). Double-quoted text still expands, so it is kept
+    (minus its own backslash escapes). A byte-level scanner, since a regex cannot
+    tell a live `$KEY` from one buried in a comment, quotes, or an escape."""
     kept: list[str] = []
     i, n = 0, len(text)
     quote: str | None = None  # None | "'" (no expansion) | '"' (expansion)
@@ -214,10 +216,23 @@ def _shell_runtime_refs(text: str) -> set[str]:
             i += 1
             continue
         if quote == '"':
+            if c == "\\" and i + 1 < n:
+                # In double quotes a backslash escapes `$ \` " ` `` \\ ``; neutralize
+                # both chars so an escaped `\\$VAR` never opens a reference (and a
+                # `\\"` does not prematurely close the quoted span).
+                kept.append(" ")
+                i += 2
+                continue
             kept.append(c)
             if c == '"':
                 quote = None
             i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            # Unquoted: a backslash escapes the next char, so `\\$VAR` is a literal
+            # `$VAR`; neutralize both so the `$` cannot start an expansion.
+            kept.append(" ")
+            i += 2
             continue
         if c == "'":
             quote = "'"
@@ -306,6 +321,50 @@ def is_chain_scoped(key: str, prefixes: list[str]) -> bool:
     return any(key.startswith(p + "_") for p in prefixes)
 
 
+def _fn_scopes(src: str) -> list[tuple[int, int, set[str]]]:
+    """`(body_start, body_end, local_binds)` for each fn body in strip_noise'd `src`.
+
+    `local_binds` are the all-caps names the fn binds in its SIGNATURE (params) or
+    BODY (`let`). Such a binding shadows a same-named global const, but only for a
+    read call *inside that fn*. Returning per-fn spans (not one file-wide bind set)
+    lets the resolver decide shadowing from the call's own lexical scope: a file that
+    declares `const KEY_ENV: &str = "..."` and reads `env::var(KEY_ENV)` in one fn,
+    while an unrelated fn merely takes a `KEY_ENV` parameter, must still credit the
+    real read - the file-wide test discarded it and mis-reported the key as unread.
+    """
+    scopes: list[tuple[int, int, set[str]]] = []
+    n = len(src)
+    for m in re.finditer(r"\bfn\s+(?:r#)?[A-Za-z0-9_]+", src):
+        kind, j = _scan.find_signature_end(src, m.end())
+        if kind != "body" or j >= n:
+            continue
+        sig = src[m.end():j]  # params (and return type) precede the body brace
+        depth, k = 0, j
+        while k < n:
+            ch = src[k]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            k += 1
+        binds = set(PARAM_BIND.findall(sig)) | set(LET_BIND.findall(src[j:k + 1]))
+        scopes.append((j, k, binds))
+    return scopes
+
+
+def _binds_at(scopes: list[tuple[int, int, set[str]]], off: int) -> set[str]:
+    """Local binds of the innermost fn whose body contains `off` (empty outside any
+    fn). The tightest enclosing scope wins so a nested fn's params/lets - not an
+    outer fn's - govern a call inside it (Rust nested fns do not capture outers)."""
+    best: tuple[int, set[str]] | None = None
+    for start, end, binds in scopes:
+        if start <= off <= end and (best is None or start > best[0]):
+            best = (start, binds)
+    return best[1] if best else set()
+
+
 def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_report.Loc], dict[str, list[_report.Loc]], set[str]]:
     """Scan a tree into the raw config inventory: per-file env-read counts, *Config
     struct locations, per-key read locations, and per-chain suffixes built in code.
@@ -336,9 +395,6 @@ def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_re
     helper_env_names: set[str] = set()
     helper_nonenv_names: set[str] = set()
     helper_calls: list[tuple[str, str, _report.Loc]] = []  # (fn_name, key, loc); loc.file scopes it
-    # All-caps names bound locally per file (`let`/param). A `var(THIS)` whose argument
-    # is such a binding must not be resolved to a same-named GLOBAL const.
-    binds_by_file: dict[str, set[str]] = {}
 
     for path in _scan.iter_rust_files(root, skip_tests=not include_tests):
         src = read_text(path)
@@ -359,9 +415,9 @@ def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_re
         # Does this file import the stdlib `env` module, so a bare `env::var(...)` is a
         # process-env read rather than a call into a local `mod env`?
         has_std_env = bool(USE_STD_ENV.search(stripped))
-        # All-caps `let`/param bindings; an `env::var(THIS)` with such an argument is a
-        # runtime value, not the same-named global const.
-        binds_by_file[rel] = set(LET_BIND.findall(stripped)) | set(PARAM_BIND.findall(stripped))
+        # Per-fn local-bind spans; an `env::var(THIS)` whose argument is bound in the
+        # ENCLOSING fn is a runtime value, not the same-named global const.
+        scopes = _fn_scopes(stripped)
         reads = len(ENV_READ_STD.findall(stripped)) + len(ENV_READ_LOOKUP.findall(stripped))
         if has_std_env:
             reads += len(ENV_READ_BARE.findall(stripped))
@@ -386,12 +442,21 @@ def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_re
             if ident in const_global and const_global[ident] != key:
                 const_ambig.add(ident)  # same name, different key in another module
             const_global[ident] = key
-        ident_iters = [KEYCALL_IDENT.finditer(decommented)]
+        # Scan the identifier-argument reads on `stripped` (not `decommented`): the
+        # argument is a bare ident with no string content, so strip_noise is lossless
+        # here, its offsets align with `_fn_scopes`, and a phantom `env::var(FOO)`
+        # sitting inside a string literal is neutralized rather than harvested. A hit
+        # whose ident is bound in the enclosing fn is a runtime value shadowing any
+        # same-named const, so it is skipped at its own lexical scope.
+        ident_iters = [KEYCALL_IDENT.finditer(stripped)]
         if has_std_env:
-            ident_iters.append(KEYCALL_IDENT_BARE_ENV.finditer(decommented))
+            ident_iters.append(KEYCALL_IDENT_BARE_ENV.finditer(stripped))
         for it in ident_iters:
             for m in it:
-                ident_calls.append((m.group(1), rel, _report.Loc(rel, decommented.count("\n", 0, m.start()) + 1)))
+                ident = m.group(1)
+                if ident in _binds_at(scopes, m.start()):
+                    continue  # a local let/param in the enclosing fn shadows the const
+                ident_calls.append((ident, rel, _report.Loc(rel, stripped.count("\n", 0, m.start()) + 1)))
         # A fn whose (de-noised) body performs an env read is an env helper; its name
         # qualifies the literal keys its callers pass. Bodies use `stripped` so a read
         # in a comment/string does not count; call sites use `decommented` to keep the
@@ -479,8 +544,8 @@ def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_re
     # `RPC_URL_ENV` is skipped rather than misattributed to whichever file was
     # scanned last.
     for ident, file, loc in ident_calls:
-        if ident in binds_by_file.get(file, ()):
-            continue  # a local `let`/param binding shadows any same-named const
+        # Shadowing by a local `let`/param was already resolved per lexical scope when
+        # the call was collected, so only genuine const references reach here.
         key = const_by_file.get(file, {}).get(ident)
         if key is None and ident not in const_ambig:
             key = const_global.get(ident)

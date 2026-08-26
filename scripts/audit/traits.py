@@ -44,6 +44,47 @@ USE_ROOT = re.compile(r"\s*(?:r#)?([A-Za-z_][A-Za-z0-9_]*)")
 INTRA_CRATE_ROOTS = ("crate", "self", "super")
 
 
+def _split_commas(s: str) -> list[str]:
+    """Split on commas at brace depth 0 (so a nested `use` group stays one item)."""
+    items: list[str] = []
+    depth = start = 0
+    for i, c in enumerate(s):
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        elif c == "," and depth == 0:
+            items.append(s[start:i])
+            start = i + 1
+    items.append(s[start:])
+    return items
+
+
+def _use_bound_names(body: str) -> set[str]:
+    """Simple names a `use` body binds into scope: the alias of an `item as alias`,
+    else the last path segment of each leaf, covering the plain (`std::fmt::Display`)
+    and one-level grouped (`std::fmt::{Display, Debug}`) forms. Used only for
+    EXTERNAL-rooted `use`s, to know which bare trait names in the file name an
+    external trait rather than a same-named local one."""
+    names: set[str] = set()
+    if "{" in body:
+        inner = body[body.index("{") + 1 :]
+        rb = inner.rfind("}")
+        inner = inner[:rb] if rb >= 0 else inner
+        items = _split_commas(inner)
+    else:
+        items = [body]
+    for item in items:
+        item = item.strip()
+        if not item or item in ("self", "*"):
+            continue
+        # Trailing simple name: the alias in `x as y`, otherwise the final segment.
+        m = re.search(r"(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*$", item)
+        if m:
+            names.add(m.group(1))
+    return names
+
+
 def _match_brace(src: str, open_idx: int) -> int:
     """Index of the `}` matching the `{` at `open_idx`."""
     depth = 0
@@ -124,7 +165,11 @@ def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests:
     # folded into `local_mods`, so an impl rooted at the alias (`use crate::api as
     # contract; impl contract::Service for X`) resolves as local, not external.
     pending_aliases: list[tuple[str, str, str]] = []
-    pending_impls: list[tuple[str, str, str | None, _report.Loc]] = []
+    # Per-file simple names imported from an EXTERNAL crate/std path. A bare
+    # `impl Display for X` in a file that did `use std::fmt::Display;` targets the
+    # external trait, so it must NOT be attributed to a same-named local trait.
+    ext_imports_by_file: dict[str, set[str]] = {}
+    pending_impls: list[tuple[str, str, str | None, bool, _report.Loc]] = []
 
     for path in _scan.iter_rust_files(root, skip_tests=not include_tests):
         try:
@@ -141,10 +186,14 @@ def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests:
             # module, so an external `use other::api as contract` never fabricates a
             # local-module alias even when `api` collides with a real `mod api`.
             rm = USE_ROOT.match(body)
-            if not rm or rm.group(1) not in INTRA_CRATE_ROOTS:
-                continue
-            for am in USE_AS_PAIR.finditer(body):
-                pending_aliases.append((crate, am.group(1), am.group(2)))
+            if rm and rm.group(1) in INTRA_CRATE_ROOTS:
+                for am in USE_AS_PAIR.finditer(body):
+                    pending_aliases.append((crate, am.group(1), am.group(2)))
+            else:
+                # External root (another crate, std/core, or a leading `::`): the trait
+                # names it brings into scope shadow any same-named local trait for a
+                # bare impl in THIS file, so record them to exclude those impls below.
+                ext_imports_by_file.setdefault(rel, set()).update(_use_bound_names(body))
         # `(?:r#)?` consumes a raw-identifier prefix so a keyword-named `trait r#type`
         # is keyed as `type` - the same logical name the impl scan derives from
         # `impl r#type for ...` (its `idents[-1]` is `type`). Without it the trait was
@@ -183,7 +232,8 @@ def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests:
                 if root_seg not in ("crate", "self", "super"):
                     ext_root = root_seg  # local vs external decided once mods are known
             pending_impls.append(
-                (crate, idents[-1], ext_root, _report.Loc(rel, src[: m.start()].count("\n") + 1))
+                (crate, idents[-1], ext_root, "::" not in head,
+                 _report.Loc(rel, src[: m.start()].count("\n") + 1))
             )
 
     # Fold module aliases into the crate's local-module set: `use crate::api as
@@ -198,9 +248,13 @@ def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests:
     # api::Service` / `impl contract::Service`, with `mod api`) is a local impl and
     # counts; only a root naming no local module (std/core/another crate) is external
     # and dropped, so an external `std::fmt::Display` no longer inflates a same-named
-    # local trait while a local `api::Service` still does.
-    for crate, name, ext_root, loc in pending_impls:
+    # local trait while a local `api::Service` still does. A BARE impl name is also
+    # dropped when the file imported that name externally (`use std::fmt::Display;
+    # impl Display for X`), so it is not misattributed to a same-named local trait.
+    for crate, name, ext_root, is_bare, loc in pending_impls:
         if ext_root is not None and ext_root not in local_mods.get(crate, ()):
+            continue
+        if is_bare and name in ext_imports_by_file.get(loc.file, ()):
             continue
         impls.setdefault((crate, name), []).append(loc)
 

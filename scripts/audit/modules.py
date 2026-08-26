@@ -202,10 +202,20 @@ def _declared_top_mods(src: str) -> set[str] | None:
             text = _scan.strip_noise(open(os.path.join(src, rf), encoding="utf-8", errors="ignore").read())
         except OSError:
             continue
-        # Only FILE modules (`mod foo;`, group 2 == ";") authorize a `foo.rs`/`foo/`
-        # graph node. An inline `mod foo { ... }` has no own file, so admitting its
-        # name would bind a same-named but uncompiled stray `foo.rs` as that module.
-        declared.update(m.group(1) for m in MOD_DECL.finditer(text) if m.group(2) == ";")
+        # Only a FILE module (`mod foo;`, group 2 == ";") declared at the CRATE ROOT
+        # authorizes a `foo.rs`/`foo/` node. Two things are required:
+        #  * `;` form - an inline `mod foo { ... }` has its own body, so a same-named
+        #    stray `foo.rs` on disk is uncompiled and must not become that node;
+        #  * brace depth 0 - a `mod ghost;` nested inside an inline `mod outer { ... }`
+        #    declares `outer::ghost`, not a top-level module, so an obsolete root-level
+        #    `ghost.rs` must not be bound to it (that invented a false cycle).
+        # `text` is strip_noise'd, so every `{`/`}` counted here is a real code brace.
+        for m in MOD_DECL.finditer(text):
+            if m.group(2) != ";":
+                continue
+            if text.count("{", 0, m.start()) != text.count("}", 0, m.start()):
+                continue  # inside an inline module block, not the crate root
+            declared.add(m.group(1))
     return declared
 
 

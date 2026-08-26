@@ -405,27 +405,46 @@ def _leading_attrs(src: str, fn_start: int) -> str:
     signature - `#[test]`, `#[tokio::test]` - is never in the body. Any classifier
     that must react to such an attribute (e.g. excluding attributed tests from a
     complexity report) needs this region instead. `src` is expected `strip_noise`d,
-    where doc comments have collapsed to blank lines and attribute tokens survive,
-    so the backward walk collects only real outer attributes.
+    where doc comments have collapsed to blank lines and string/char brackets are
+    neutralized, so bracket matching below sees only real attribute delimiters.
 
-    Walk: take the fn's own line prefix (covers a rare inline `#[test] fn foo`),
-    then ascend over contiguous lines that are blank or start with `#[`, stopping at
-    the first line of ordinary code. Multi-line attributes are only partially
-    captured, which the single-line test attributes this serves do not need.
+    Walk: keep the fn's own line prefix (covers a rare inline `#[test] fn foo`),
+    then ascend over the preceding attributes by matching each `#[ ... ]` (or inner
+    `#![ ... ]`) as a *balanced bracket span* rather than a single line. A one-line
+    `#[test]` and a wrapped `#[tokio::test(\n flavor = "multi_thread"\n)]` are then
+    both captured whole - the latter's closing `)]` line does not start with `#[`,
+    so the old line-prefix heuristic dropped the attribute and reported the test as
+    a complexity hotspot. Blank/collapsed-doc lines between attributes are skipped;
+    the walk stops at the first non-attribute token.
     """
     line_start = src.rfind("\n", 0, fn_start) + 1
-    collected = [src[line_start:fn_start]]
-    p = line_start
-    while p > 0:
-        prev_end = p - 1  # the '\n' ending the previous physical line
-        prev_start = src.rfind("\n", 0, prev_end) + 1
-        line = src[prev_start:prev_end].strip()
-        if line == "" or line.startswith("#["):
-            if line:
-                collected.append(line)
-            p = prev_start
-        else:
+    collected = [src[line_start:fn_start]]  # same-line prefix (inline `#[test] fn`)
+    i = line_start
+    while i > 0:
+        j = i
+        while j > 0 and src[j - 1] in " \t\r\n":  # skip blank/collapsed-doc gap
+            j -= 1
+        if j == 0 or src[j - 1] != "]":
+            break  # preceding token is ordinary code, not an attribute close
+        depth, k, open_idx = 0, j, None
+        while k > 0:  # bracket-match backward from the ']' to its matching '['
+            ch = src[k - 1]
+            if ch == "]":
+                depth += 1
+            elif ch == "[":
+                depth -= 1
+                if depth == 0:
+                    open_idx = k - 1
+                    break
+            k -= 1
+        if open_idx is None:
             break
+        pre = open_idx - 1 if open_idx > 0 and src[open_idx - 1] == "!" else open_idx
+        if pre == 0 or src[pre - 1] != "#":
+            break  # a ']' that is not part of a `#[...]` / `#![...]` attribute
+        attr_start = pre - 1
+        collected.append(src[attr_start:j].strip())
+        i = attr_start
     return "\n".join(collected)
 
 
@@ -465,6 +484,46 @@ def find_functions(src: str, path: str) -> list[Function]:
     return out
 
 
+def _consume_number(body: str, i: int, n: int) -> int:
+    """Consume one whole Rust numeric literal starting at `body[i]` (a digit);
+    return the index just past it.
+
+    Emitting a single token for the *entire* literal matters for structural
+    comparison: a k-gram window that saw `1.0` as `NUM . NUM` but `1e0` as one
+    `NUM` would shift out of alignment and hide a real clone. So the full grammar
+    is consumed as a unit - base-prefixed integers (`0xFF`, `0o17`, `0b1010`),
+    digit-separated and suffixed forms (`1_000`, `255u8`), and floats with a
+    fractional part and/or exponent and/or suffix (`1.0`, `1e0`, `3.14e-2f64`).
+
+    A `.` is taken as a decimal point only when a digit follows it, so `1..10`
+    (range) stays `NUM .. NUM` and `tuple.0` field access is unaffected; a hex/
+    octal/binary literal never grows a fractional part (Rust has no hex floats).
+    """
+    j = i
+    if body[j] == "0" and j + 1 < n and body[j + 1] in "xXoObB":
+        j += 2  # base prefix: the digits/letters/`_` run carries no float part
+        while j < n and (body[j].isalnum() or body[j] == "_"):
+            j += 1
+        return j
+    while j < n and (body[j].isdigit() or body[j] == "_"):
+        j += 1
+    if j + 1 < n and body[j] == "." and body[j + 1].isdigit():
+        j += 1
+        while j < n and (body[j].isdigit() or body[j] == "_"):
+            j += 1
+    if j < n and body[j] in "eE":
+        k = j + 1
+        if k < n and body[k] in "+-":
+            k += 1
+        if k < n and body[k].isdigit():
+            j = k
+            while j < n and (body[j].isdigit() or body[j] == "_"):
+                j += 1
+    while j < n and (body[j].isalnum() or body[j] == "_"):
+        j += 1  # type suffix directly abutting the literal (`f64`, `i32`, `u8`)
+    return j
+
+
 def tokenize_structural(body: str) -> list[str]:
     """Normalize a function body to a structural token stream.
 
@@ -479,7 +538,14 @@ def tokenize_structural(body: str) -> list[str]:
         if c.isspace():
             i += 1
             continue
-        if c.isalnum() or c == "_":
+        # A Rust identifier can never start with a digit, so a digit here opens a
+        # numeric literal; consume the whole literal grammar (see `_consume_number`)
+        # as one `NUM` rather than letting a `.` or signed exponent split it.
+        if c.isdigit():
+            toks.append("NUM")
+            i = _consume_number(body, i, n)
+            continue
+        if c.isalpha() or c == "_":
             j = i
             while j < n and (body[j].isalnum() or body[j] == "_"):
                 j += 1
@@ -502,15 +568,6 @@ def tokenize_structural(body: str) -> list[str]:
                 toks.append(w)
             elif w in ("s", "c"):
                 toks.append("LIT")
-            elif w[0].isdigit():
-                # A Rust identifier can never start with a digit, so ANY alnum/`_`
-                # run beginning `0-9` is a numeric literal - `0xff`, `0o17`, `0b1010`,
-                # `1_000`, `255u8`, `1e9f64`. Testing the whole span (`w.isdigit()`)
-                # instead classified every based/separated/suffixed literal as `ID`,
-                # so a `0xff` vs `0x00` difference (or a suffix-only edit) hid a real
-                # structural change. A float `1.5` still lexes as NUM `.` NUM (the run
-                # stops at `.`), which is consistent across all floats.
-                toks.append("NUM")
             else:
                 toks.append("ID")
             i = j
