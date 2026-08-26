@@ -187,6 +187,12 @@ def commits(all_refs: bool = False, repo: str | None = None):
             # name (a rename-back yields a harmless self-map the guard absorbs).
             target = _resolve_rename(rename_to, new)
             rename_to[old] = target
+            # Unseal `old`: if a NEWER `A old` sealed it (a fresh, unrelated file reusing
+            # the old path while `new` stays live), this rename proves the older `old`
+            # history is a DIFFERENT, earlier generation that continues as `new`. Older
+            # `old` edits must now follow the rename to `new`, not be dropped as the new
+            # generation's prehistory. `old`'s own creation re-seals it when reached.
+            sealed.discard(old)
             cur = target
         else:  # A/M/D (or C copy: attribute the destination path)
             dest = parts[-1]

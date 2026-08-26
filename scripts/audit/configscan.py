@@ -146,6 +146,14 @@ CONST_KEY = re.compile(
 # `use std::env::{var, var_os as v};`. The captured body (a single item or a `{...}`
 # group) is parsed by env_read_aliases into the bound local names.
 ENV_USE = re.compile(r"\buse\s+std::env::(\{[^}]*\}|[A-Za-z0-9_]+(?:\s+as\s+[A-Za-z0-9_]+)?)\s*;")
+# A `use ...;` statement and its root, used to tell an intra-crate import
+# (`crate`/`self`/`super`) from an external one (another crate, std/core, or a
+# leading `::`). A file that imports an env-reading helper's bare NAME from an
+# external path is calling a different function, so the repo-wide helper fallback
+# must not credit that file's literals as keys.
+USE_STMT = re.compile(r"\buse\s+([^;]+);")
+USE_ROOT = re.compile(r"\s*(?:r#)?([A-Za-z_][A-Za-z0-9_]*)")
+INTRA_CRATE_ROOTS = ("crate", "self", "super")
 CONFIG_STRUCT = re.compile(r"\bstruct\s+([A-Za-z0-9_]*Config)\b")
 DEFAULT_PREFIXES = ["NAMECOIN", "RSK", "SYSCOIN", "FRACTAL", "HATHOR", "ELASTOS"]
 
@@ -395,6 +403,10 @@ def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_re
     helper_env_names: set[str] = set()
     helper_nonenv_names: set[str] = set()
     helper_calls: list[tuple[str, str, _report.Loc]] = []  # (fn_name, key, loc); loc.file scopes it
+    # Simple names each file imports from an EXTERNAL path (`use other::from_env;`).
+    # Such a call resolves to that import, not to a same-named env helper elsewhere in
+    # the repo, so the unambiguous-repo-wide fallback below must not credit it.
+    ext_import_names_by_file: dict[str, set[str]] = {}
 
     for path in _scan.iter_rust_files(root, skip_tests=not include_tests):
         src = read_text(path)
@@ -415,6 +427,13 @@ def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_re
         # Does this file import the stdlib `env` module, so a bare `env::var(...)` is a
         # process-env read rather than a call into a local `mod env`?
         has_std_env = bool(USE_STD_ENV.search(stripped))
+        # Names this file pulls in from an external path; a call to one of these is that
+        # import, so it must not be credited via the repo-wide env-helper fallback.
+        for um in USE_STMT.finditer(stripped):
+            ub = um.group(1)
+            rm = USE_ROOT.match(ub)
+            if not rm or rm.group(1) not in INTRA_CRATE_ROOTS:
+                ext_import_names_by_file.setdefault(rel, set()).update(_scan.use_bound_names(ub))
         # Per-fn local-bind spans; an `env::var(THIS)` whose argument is bound in the
         # ENCLOSING fn is a runtime value, not the same-named global const.
         scopes = _fn_scopes(stripped)
@@ -559,7 +578,9 @@ def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_re
     # name collision is skipped rather than inventing keys.
     for fn_name, key, loc in helper_calls:
         if fn_name in helper_env_by_file.get(loc.file, ()):
-            is_env = True
+            is_env = True  # a same-file env-reading definition is authoritative
+        elif fn_name in ext_import_names_by_file.get(loc.file, ()):
+            is_env = False  # resolves to an external import, not the repo-wide helper
         elif fn_name in helper_env_names and fn_name not in helper_nonenv_names:
             is_env = True
         else:

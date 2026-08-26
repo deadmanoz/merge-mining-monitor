@@ -342,6 +342,67 @@ def iter_string_literals(src: str):
         yield content, start
 
 
+_USE_LEAF_NAME = re.compile(r"(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*$")
+_USE_ALIAS = re.compile(r"\bas\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*$")
+
+
+def use_bound_names(body: str) -> set[str]:
+    """Simple names a `use <body>;` brings into scope, descending nested brace groups.
+
+    `body` is the text between `use ` and the terminating `;` (the root path
+    included). For each leaf the bound name is its alias (`x as y` -> `y`) or its
+    final path segment (`a::b::C` -> `C`); a `{...}` group fans out into its
+    comma-separated items, recursively, so `std::{fmt::{Display}, io::Write}` yields
+    `Display` and `Write`. Glob (`*`) and `self` leaves bind no new simple name and
+    are skipped. Root-agnostic: a caller that only cares about external imports gates
+    on the path root separately.
+
+    Recursion (not just an outer-group split) is required: a single-level split of
+    `std::{fmt::{Display}}` leaves the item `fmt::{Display}`, whose trailing `}` hides
+    the bound `Display` - so a bare `impl Display` would be misread as naming a local
+    trait rather than the imported `std::fmt::Display`.
+    """
+    names: set[str] = set()
+
+    def walk(seg: str) -> None:
+        seg = seg.strip()
+        if not seg or seg == "self" or seg.endswith("*"):
+            return
+        b = seg.find("{")
+        if b != -1:
+            depth, close = 0, len(seg)
+            for k in range(b, len(seg)):
+                if seg[k] == "{":
+                    depth += 1
+                elif seg[k] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        close = k
+                        break
+            inner = seg[b + 1 : close]
+            depth = start = 0
+            for k, ch in enumerate(inner):
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                elif ch == "," and depth == 0:
+                    walk(inner[start:k])
+                    start = k + 1
+            walk(inner[start:])
+            return
+        am = _USE_ALIAS.search(seg)  # `path::x as y` -> y
+        if am:
+            names.add(am.group(1))
+            return
+        lm = _USE_LEAF_NAME.search(seg)  # `path::C` -> C
+        if lm:
+            names.add(lm.group(1))
+
+    walk(body)
+    return names
+
+
 def find_signature_end(src: str, start: int) -> tuple[str, int]:
     """Classify a `fn` signature starting at `start` (just past `fn <name>`).
 
@@ -530,6 +591,13 @@ def tokenize_structural(body: str) -> list[str]:
     Identifiers become `ID`, numbers `NUM`, neutralized literals `LIT`; kept
     keywords and punctuation pass through. Two functions that differ only in
     identifiers therefore produce identical streams.
+
+    `body` is expected `strip_noise`d, so every literal already reads as its
+    delimited sentinel - a string/raw string as `"s"` and a char as `'c'`. The
+    literal token is recognized by those *quote delimiters*, never by the inner
+    letter, so a real variable named `s` or `c` still tokenizes as `ID` (matching
+    its renamed twin) instead of collapsing to `LIT` and corrupting the surrounding
+    k-grams. A lone `'` is a lifetime/label tick and is skipped.
     """
     toks: list[str] = []
     i, n = 0, len(body)
@@ -537,6 +605,21 @@ def tokenize_structural(body: str) -> list[str]:
         c = body[i]
         if c.isspace():
             i += 1
+            continue
+        # Neutralized string sentinel (`"s"`): the only `"` in strip_noise'd source
+        # opens one. Emit a single `LIT` and skip to the closing quote.
+        if c == '"':
+            end = body.find('"', i + 1)
+            toks.append("LIT")
+            i = end + 1 if end != -1 else n
+            continue
+        # Neutralized char sentinel is exactly `'c'`; a bare `'` is a lifetime tick.
+        if c == "'":
+            if body[i : i + 3] == "'c'":
+                toks.append("LIT")
+                i += 3
+            else:
+                i += 1
             continue
         # A Rust identifier can never start with a digit, so a digit here opens a
         # numeric literal; consume the whole literal grammar (see `_consume_number`)
@@ -564,12 +647,7 @@ def tokenize_structural(body: str) -> list[str]:
                 toks.append("ID")
                 i = j
                 continue
-            if w in RUST_KEYWORDS_KEPT:
-                toks.append(w)
-            elif w in ("s", "c"):
-                toks.append("LIT")
-            else:
-                toks.append("ID")
+            toks.append(w if w in RUST_KEYWORDS_KEPT else "ID")
             i = j
             continue
         for p in _PUNCT:

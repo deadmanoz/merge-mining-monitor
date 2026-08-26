@@ -3,14 +3,19 @@
 
 Cyclic module dependencies are a "modular mirage" tell: file-level modularity
 with no real layering, where concepts reach back and forth across a crate. This
-builds a top-level module graph per crate from `crate::<module>` references and
-reports strongly-connected components (cycles).
+builds a top-level module graph per crate from `crate::<module>`/`super::`
+references and reports strongly-connected components (cycles).
 
-Top-level granularity: nodes are the immediate children of each `src/` (a
-`foo.rs` or a `foo/` directory). With `--include-tests`, each crate's companion
-integration-test module trees (`<crate>/tests/<sub>/`) are analyzed as their own
-roots too. For AST-accurate, all-levels analysis use `cargo-modules dependencies
---acyclic`. Advisory; stdlib-only. --json supported.
+Top-level granularity: nodes are the modules the crate root declares - each
+`mod foo;` (backed by `foo.rs`/`foo/`) AND each top-level inline `mod foo { .. }`
+(defined in the root file). The graph is built by walking the `mod` declaration
+tree from `lib.rs`/`main.rs`, reading only declaration-reachable files, so an
+undeclared/obsolete `.rs` on disk contributes no phantom node or edge. With
+`--include-tests`, each crate's companion integration-test module trees
+(`<crate>/tests/<sub>/`) are analyzed as their own roots (a permissive
+filesystem walk, since those have no `lib.rs`/`main.rs`). For AST-accurate,
+all-levels analysis use `cargo-modules dependencies --acyclic`. Advisory;
+stdlib-only. --json supported.
 """
 
 from __future__ import annotations
@@ -266,6 +271,125 @@ def _module_path_parts(rel_parts: list[str]) -> list[str]:
     return parts
 
 
+def _resolve_mod_file(submod_dir: str, name: str) -> str | None:
+    """On-disk file backing `mod name;` for a module whose submodules live in
+    `submod_dir`: Rust looks for `<submod_dir>/<name>.rs`, then
+    `<submod_dir>/<name>/mod.rs`. (`#[path=...]` overrides are not resolved.)"""
+    cand = os.path.join(submod_dir, name + ".rs")
+    if os.path.isfile(cand):
+        return cand
+    cand = os.path.join(submod_dir, name, "mod.rs")
+    if os.path.isfile(cand):
+        return cand
+    return None
+
+
+def _top_mod_decls(text: str) -> list[tuple[str, str, int, int]]:
+    """`(name, kind, decl_start, brace_idx)` for each `mod name;`/`mod name {` at
+    brace depth 0 of `text` (this unit's OWN body, not a nested block). `kind` is
+    ';' or '{'; `brace_idx` indexes the opening `{` (meaningful for '{'). `text`
+    must be strip_noise'd so every counted brace is real code."""
+    out: list[tuple[str, str, int, int]] = []
+    for m in MOD_DECL.finditer(text):
+        if text.count("{", 0, m.start()) != text.count("}", 0, m.start()):
+            continue  # nested inside some block, not a declaration of this unit
+        out.append((m.group(1), m.group(2), m.start(), m.end() - 1))
+    return out
+
+
+# A `#[cfg(test)]` attribute (or `cfg(all(test, ..))`) directly preceding a decl.
+# `test` must be a bare cfg option, so `feature = "test-utils"` does not match.
+_CFG_TEST_ATTR = re.compile(
+    r"#\[\s*cfg\s*\([^\]]*(?<![\w-])test(?![\w-])[^\]]*\)\s*\]\s*$")
+
+
+def _cfg_test_before(text: str, pos: int) -> bool:
+    return bool(_CFG_TEST_ATTR.search(text[max(0, pos - 240):pos]))
+
+
+def _walk_module(text: str, submod_dir: str, depth: int, owner: str,
+                 fragments: dict[str, list[tuple[str, int]]], seen: set[str]) -> None:
+    """Attribute `text` (a file's contents or an inline module body) to top-level
+    `owner`, then descend its declaration-reachable children. Each fragment carries
+    its module `depth` (crate-root-relative) so `super::` hops resolve correctly.
+    Only files named by a `mod name;` are read, so an undeclared sibling on disk is
+    never scanned; inline `mod name { .. }` bodies are walked in place."""
+    fragments.setdefault(owner, []).append((text, depth))
+    for name, kind, _start, brace in _top_mod_decls(text):
+        child_dir = os.path.join(submod_dir, name)
+        if kind == "{":
+            body, _ = _brace_group(text, brace)
+            _walk_module(body, child_dir, depth + 1, owner, fragments, seen)
+        else:
+            f = _resolve_mod_file(submod_dir, name)
+            if not f or f in seen:
+                continue
+            seen.add(f)
+            try:
+                ft = _scan.strip_noise(open(f, encoding="utf-8", errors="ignore").read())
+            except OSError:
+                continue
+            _walk_module(ft, child_dir, depth + 1, owner, fragments, seen)
+
+
+def _declared_graph(src: str, roots: list[str], include_tests: bool
+                    ) -> tuple[dict[str, str], dict[str, list[tuple[str, int]]]]:
+    """Build `(nodes, fragments)` for a crate by walking its `mod` declaration tree.
+
+    `nodes` maps each top-level module name to a representative file (the backing
+    file for `mod foo;`, or the crate root for a top-level inline `mod foo {..}`).
+    `fragments` maps each name to the `(text, depth)` chunks of its whole subtree.
+    Test modules are skipped unless `include_tests` (a `#[cfg(test)]` inline module,
+    or a `mod foo;` resolving to a `_test.rs`/`tests.rs` file)."""
+    nodes: dict[str, str] = {}
+    fragments: dict[str, list[tuple[str, int]]] = {}
+    seen: set[str] = {os.path.join(src, r) for r in roots}
+    for rf in roots:
+        root_path = os.path.join(src, rf)
+        try:
+            root_text = _scan.strip_noise(open(root_path, encoding="utf-8", errors="ignore").read())
+        except OSError:
+            continue
+        for name, kind, start, brace in _top_mod_decls(root_text):
+            if not include_tests and _cfg_test_before(root_text, start):
+                continue
+            child_dir = os.path.join(src, name)
+            if kind == "{":
+                nodes.setdefault(name, _scan.rel(root_path))
+                body, _ = _brace_group(root_text, brace)
+                _walk_module(body, child_dir, 1, name, fragments, seen)
+            else:
+                f = _resolve_mod_file(src, name)
+                if not f or (not include_tests and _scan._is_test_file(f)):
+                    continue
+                nodes.setdefault(name, _scan.rel(f))
+                if f in seen:
+                    continue
+                seen.add(f)
+                try:
+                    ft = _scan.strip_noise(open(f, encoding="utf-8", errors="ignore").read())
+                except OSError:
+                    continue
+                _walk_module(ft, child_dir, 1, name, fragments, seen)
+    return nodes, fragments
+
+
+def _edges_from_fragments(nodes: dict[str, str],
+                          fragments: dict[str, list[tuple[str, int]]]) -> dict[str, set[str]]:
+    adj: dict[str, set[str]] = {m: set() for m in nodes}
+    for owner, frags in fragments.items():
+        for text, depth in frags:
+            for ref in crate_refs(text):
+                if ref in nodes and ref != owner:
+                    adj[owner].add(ref)
+            # `super::` hops reaching exactly the crate root (== fragment depth) name
+            # a top-level module; shallower hops resolve inside `owner`.
+            for target in super_refs(text, depth):
+                if target in nodes and target != owner:
+                    adj[owner].add(target)
+    return adj
+
+
 def _sccs(nodes: list[str], adj: dict[str, set[str]]) -> list[list[str]]:
     """Tarjan strongly-connected components."""
     index: dict[str, int] = {}
@@ -302,36 +426,48 @@ def _sccs(nodes: list[str], adj: dict[str, set[str]]) -> list[list[str]]:
     return out
 
 
+def _fs_graph(src: str, include_tests: bool
+              ) -> tuple[dict[str, str], dict[str, set[str]]]:
+    """Permissive filesystem-based graph for a root WITHOUT a `lib.rs`/`main.rs`
+    (a `tests/<sub>/` integration tree): every top-level file/dir is a node and
+    every `.rs` beneath it is scanned, since the assembling binary root is external
+    and often wires modules via `#[path]` we cannot follow."""
+    mods = top_modules(src)
+    adj: dict[str, set[str]] = {m: set() for m in mods}
+    for path in _scan.iter_rust_files(src, skip_tests=not include_tests):
+        rel_parts = os.path.relpath(path, src).split(os.sep)
+        owner = _module_of(rel_parts)
+        if owner is None or owner not in mods:
+            continue
+        try:
+            # Strip comments/strings first: a `crate::other` in a doc link or
+            # string literal is prose, not a compiled dependency edge.
+            text = _scan.strip_noise(open(path, encoding="utf-8", errors="ignore").read())
+        except OSError:
+            continue
+        for ref in crate_refs(text):
+            if ref in mods and ref != owner:
+                adj[owner].add(ref)
+        depth = len(_module_path_parts(rel_parts))
+        for target in super_refs(text, depth):
+            if target in mods and target != owner:
+                adj[owner].add(target)
+    return mods, adj
+
+
 def collect(root: str = "crates", include_tests: bool = False) -> list[_report.Finding]:
     findings: list[_report.Finding] = []
     for crate, src in crate_src_dirs(root, include_tests):
-        mods = top_modules(src)
-        adj: dict[str, set[str]] = {m: set() for m in mods}
-        for path in _scan.iter_rust_files(src, skip_tests=not include_tests):
-            rel_parts = os.path.relpath(path, src).split(os.sep)
-            owner = _module_of(rel_parts)
-            if owner is None or owner not in mods:
-                continue
-            try:
-                # Strip comments/strings first: a `crate::other` in a doc link or
-                # string literal is prose, not a compiled dependency edge.
-                text = _scan.strip_noise(open(path, encoding="utf-8", errors="ignore").read())
-            except OSError:
-                continue
-            for ref in crate_refs(text):
-                if ref in mods and ref != owner:
-                    adj[owner].add(ref)
-            # Relative `super::` hops (single or grouped). From a module at depth d, k
-            # `super`s ascend to mp[:d-k]; the reference is a crate-level (top-level)
-            # module only when the hops reach exactly the crate root (k == d) -
-            # otherwise it still resolves inside `owner`. Without this, a sibling cycle
-            # expressed as `super::other` (paired with the other side's `crate::owner`)
-            # is invisible and the whole crate looks acyclic.
-            depth = len(_module_path_parts(rel_parts))
-            for target in super_refs(text, depth):
-                if target in mods and target != owner:
-                    adj[owner].add(target)
-        for comp in _sccs(list(mods), adj):
+        roots = [f for f in ("lib.rs", "main.rs") if os.path.isfile(os.path.join(src, f))]
+        if roots:
+            # Declaration-tree walk from the crate root: nodes are the declared
+            # top-level modules (file AND inline), edges come only from
+            # declaration-reachable source, so obsolete undeclared files add nothing.
+            nodes, fragments = _declared_graph(src, roots, include_tests)
+            adj = _edges_from_fragments(nodes, fragments)
+        else:
+            nodes, adj = _fs_graph(src, include_tests)
+        for comp in _sccs(list(nodes), adj):
             if len(comp) < 2:
                 continue
             order = sorted(comp)
@@ -340,7 +476,7 @@ def collect(root: str = "crates", include_tests: bool = False) -> list[_report.F
                 summary=f"{crate}: {len(order)}-module cycle [{' <-> '.join(order)}]",
                 score=float(len(order)),
                 severity="high" if len(order) >= 4 else "medium",
-                locations=[_report.Loc(mods[m], 0, m) for m in order],
+                locations=[_report.Loc(nodes[m], 0, m) for m in order],
                 metrics={"crate": crate, "modules": order},
             ))
     # Deterministic order: larger cycles first, then by summary (the sorted module

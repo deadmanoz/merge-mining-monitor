@@ -44,47 +44,6 @@ USE_ROOT = re.compile(r"\s*(?:r#)?([A-Za-z_][A-Za-z0-9_]*)")
 INTRA_CRATE_ROOTS = ("crate", "self", "super")
 
 
-def _split_commas(s: str) -> list[str]:
-    """Split on commas at brace depth 0 (so a nested `use` group stays one item)."""
-    items: list[str] = []
-    depth = start = 0
-    for i, c in enumerate(s):
-        if c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-        elif c == "," and depth == 0:
-            items.append(s[start:i])
-            start = i + 1
-    items.append(s[start:])
-    return items
-
-
-def _use_bound_names(body: str) -> set[str]:
-    """Simple names a `use` body binds into scope: the alias of an `item as alias`,
-    else the last path segment of each leaf, covering the plain (`std::fmt::Display`)
-    and one-level grouped (`std::fmt::{Display, Debug}`) forms. Used only for
-    EXTERNAL-rooted `use`s, to know which bare trait names in the file name an
-    external trait rather than a same-named local one."""
-    names: set[str] = set()
-    if "{" in body:
-        inner = body[body.index("{") + 1 :]
-        rb = inner.rfind("}")
-        inner = inner[:rb] if rb >= 0 else inner
-        items = _split_commas(inner)
-    else:
-        items = [body]
-    for item in items:
-        item = item.strip()
-        if not item or item in ("self", "*"):
-            continue
-        # Trailing simple name: the alias in `x as y`, otherwise the final segment.
-        m = re.search(r"(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*$", item)
-        if m:
-            names.add(m.group(1))
-    return names
-
-
 def _match_brace(src: str, open_idx: int) -> int:
     """Index of the `}` matching the `{` at `open_idx`."""
     depth = 0
@@ -125,17 +84,29 @@ def _count_methods(body: str) -> tuple[int, int]:
 
 
 def _strip_leading_generics(s: str) -> str:
+    """Drop a `<...>` generic-parameter list leading an impl header, returning the
+    remaining type/trait path. `->` is consumed as a unit so a return type in a
+    generic bound (`impl<F: Fn() -> bool> api::Service for X<F>`) does not let the
+    `>` of the arrow close the list early - which stranded `bool> api::Service` and
+    mis-rooted a qualified local-trait impl as external (dropping the facade
+    candidate), the same reason `_scan.find_signature_end` skips `->`."""
     s = s.lstrip()
     if not s.startswith("<"):
         return s
     depth = 0
-    for i, c in enumerate(s):
+    i, n = 0, len(s)
+    while i < n:
+        if s[i : i + 2] == "->":
+            i += 2
+            continue
+        c = s[i]
         if c == "<":
             depth += 1
         elif c == ">":
             depth -= 1
             if depth == 0:
                 return s[i + 1:]
+        i += 1
     return s
 
 
@@ -193,7 +164,7 @@ def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests:
                 # External root (another crate, std/core, or a leading `::`): the trait
                 # names it brings into scope shadow any same-named local trait for a
                 # bare impl in THIS file, so record them to exclude those impls below.
-                ext_imports_by_file.setdefault(rel, set()).update(_use_bound_names(body))
+                ext_imports_by_file.setdefault(rel, set()).update(_scan.use_bound_names(body))
         # `(?:r#)?` consumes a raw-identifier prefix so a keyword-named `trait r#type`
         # is keyed as `type` - the same logical name the impl scan derives from
         # `impl r#type for ...` (its `idents[-1]` is `type`). Without it the trait was

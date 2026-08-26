@@ -31,6 +31,18 @@ SQL_STMT = re.compile(r"^\s*(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|WITH)\b",
 # A PostgreSQL dollar-quote opener: `$$` or `$tag$` where the tag is a valid
 # identifier (never starting with a digit, so `$1` positional binds don't match).
 DOLLAR_OPEN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
+
+
+def _dollar_open_match(s: str, i: int):
+    """`DOLLAR_OPEN` at `s[i]`, but only when `i` begins a token - the preceding char
+    is not an identifier char. PostgreSQL allows `$` inside an identifier after the
+    first character, so a `$tag$`-shaped substring of an identifier (`Foo$tag$Bar`)
+    is part of that identifier, not a dollar-quote opener; treating it as one would
+    freeze the rest of the query verbatim and let `Foo$tag$Bar`/`foo$tag$bar` (the
+    same identifier, different case) normalize differently and evade dup detection."""
+    if i > 0 and (s[i - 1].isalnum() or s[i - 1] in "_$"):
+        return None
+    return DOLLAR_OPEN.match(s, i)
 # Rust string escapes that map to a single character. `iter_string_literals_ex`
 # returns a non-raw literal's *source* bytes, so a SQL backslash is spelled `\\` and
 # a quote may be written `\'`/`\"`; decoding them here (before SQL quote scanning)
@@ -196,7 +208,7 @@ def norm(s: str) -> str:
             i = j
             continue
         if c == "$":
-            mo = DOLLAR_OPEN.match(s, i)
+            mo = _dollar_open_match(s, i)
             if mo:
                 closer = mo.group(0)  # "$$" or "$tag$"
                 end = s.find(closer, mo.end())
@@ -247,7 +259,7 @@ def norm(s: str) -> str:
         while j < n:
             if s[j] in "'\"":
                 break
-            if s[j] == "$" and DOLLAR_OPEN.match(s, j):
+            if s[j] == "$" and _dollar_open_match(s, j):
                 break
             if s[j] == "-" and j + 1 < n and s[j + 1] == "-":
                 break  # start of a line comment (handled at top of loop)
