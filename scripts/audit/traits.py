@@ -25,6 +25,15 @@ FN = re.compile(r"\bfn\s+(?:r#)?([A-Za-z0-9_]+)")  # `(?:r#)?` -> `fn r#match` r
 # set of these names per crate tells the impl scan which qualified roots
 # (`impl api::Trait for X`) resolve to a LOCAL module rather than an external crate.
 MOD_DECL = re.compile(r"\bmod\s+(?:r#)?([a-z_][a-z0-9_]*)")
+# A `use ...;` statement, whose body is searched for module aliases below.
+USE_STMT = re.compile(r"\buse\s+([^;]+);")
+# An `item as alias` pair inside a `use` body, covering both the plain form
+# (`use crate::api as contract`) and the grouped form (`use crate::{api as contract}`).
+# `item` is the last path segment renamed; when it names a local module the alias is a
+# local-module root too, so `impl contract::Service for X` must not be dropped as
+# external. Scoped to `use` bodies so a value/type cast (`x as u64`) is never read as
+# a module alias.
+USE_AS_PAIR = re.compile(r"(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s+as\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)")
 
 
 def _match_brace(src: str, open_idx: int) -> int:
@@ -102,6 +111,11 @@ def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests:
     # than dropped as external. Impl attribution is deferred until every file's `mod`
     # declarations across the crate have been gathered.
     local_mods: dict[str, set[str]] = {}
+    # `(crate, item, alias)` for every `use <path>::item as alias` in the crate. After
+    # all `mod` declarations are known, an alias whose `item` is a local module is
+    # folded into `local_mods`, so an impl rooted at the alias (`use crate::api as
+    # contract; impl contract::Service for X`) resolves as local, not external.
+    pending_aliases: list[tuple[str, str, str]] = []
     pending_impls: list[tuple[str, str, str | None, _report.Loc]] = []
 
     for path in _scan.iter_rust_files(root, skip_tests=not include_tests):
@@ -113,6 +127,9 @@ def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests:
         crate = _crate_key(rel)
         for mm in MOD_DECL.finditer(src):
             local_mods.setdefault(crate, set()).add(mm.group(1))
+        for um in USE_STMT.finditer(src):
+            for am in USE_AS_PAIR.finditer(um.group(1)):
+                pending_aliases.append((crate, am.group(1), am.group(2)))
         # `(?:r#)?` consumes a raw-identifier prefix so a keyword-named `trait r#type`
         # is keyed as `type` - the same logical name the impl scan derives from
         # `impl r#type for ...` (its `idents[-1]` is `type`). Without it the trait was
@@ -154,11 +171,19 @@ def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests:
                 (crate, idents[-1], ext_root, _report.Loc(rel, src[: m.start()].count("\n") + 1))
             )
 
-    # Resolve deferred impls now that every crate's local modules are known. A
-    # qualified path rooted at a local module (`impl api::Service`, with `mod api`) is
-    # a local impl and counts; only a root naming no local module (std/core/another
-    # crate) is external and dropped, so an external `std::fmt::Display` no longer
-    # inflates a same-named local trait while a local `api::Service` still does.
+    # Fold module aliases into the crate's local-module set: `use crate::api as
+    # contract` makes `contract` a local root whenever `api` is a local `mod`. Done
+    # after the file scan so an alias resolves regardless of `mod`/`use` ordering.
+    for crate, item, alias in pending_aliases:
+        if item in local_mods.get(crate, ()):
+            local_mods.setdefault(crate, set()).add(alias)
+
+    # Resolve deferred impls now that every crate's local modules (and their aliases)
+    # are known. A qualified path rooted at a local module or its alias (`impl
+    # api::Service` / `impl contract::Service`, with `mod api`) is a local impl and
+    # counts; only a root naming no local module (std/core/another crate) is external
+    # and dropped, so an external `std::fmt::Display` no longer inflates a same-named
+    # local trait while a local `api::Service` still does.
     for crate, name, ext_root, loc in pending_impls:
         if ext_root is not None and ext_root not in local_mods.get(crate, ()):
             continue

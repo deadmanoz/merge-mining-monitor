@@ -37,6 +37,10 @@ ENTRY = {"lib", "main", "mod"}
 # so the directory is not a library module and its files must not be pooled into
 # one synthetic `bin` node (which would invent cross-binary edges/cycles).
 BIN_DIR = "bin"
+# A top-level `mod NAME;` / `mod NAME { ... }` declaration in a crate-root file. Rust
+# compiles a `src/foo.rs` only when it is declared this way, so the crate-root
+# declarations - not every filesystem entry - define which top-level modules exist.
+MOD_DECL = re.compile(r"\bmod\s+(?:r#)?([a-z_][a-z0-9_]*)\s*[;{]")
 
 
 def _brace_group(text: str, open_idx: int) -> tuple[str, int]:
@@ -175,17 +179,52 @@ def crate_src_dirs(root: str, include_tests: bool = False) -> list[tuple[str, st
     return out
 
 
+def _declared_top_mods(src: str) -> set[str] | None:
+    """Top-level module names declared by the crate root file(s) in `src`, or None.
+
+    Rust does not compile a `src/foo.rs` merely because it exists - it must be
+    declared `mod foo;` from the crate root. So an obsolete/undeclared `unused.rs`
+    (or a pair of them referencing each other) is not part of the module graph and
+    must not become a node/cycle. Reads `lib.rs`/`main.rs` (a crate can carry both)
+    and returns the union of their `mod` declarations. Returns None when neither root
+    is present (e.g. a `tests/<sub>/` root whose parent binary assembles modules
+    unconventionally, often via `#[path]`): the caller then stays permissive rather
+    than dropping every node."""
+    roots = [f for f in ("lib.rs", "main.rs") if os.path.isfile(os.path.join(src, f))]
+    if not roots:
+        return None
+    declared: set[str] = set()
+    for rf in roots:
+        try:
+            # De-noise first: a `mod other` inside a string/comment is not a real
+            # declaration and must not admit a phantom node.
+            text = _scan.strip_noise(open(os.path.join(src, rf), encoding="utf-8", errors="ignore").read())
+        except OSError:
+            continue
+        declared.update(m.group(1) for m in MOD_DECL.finditer(text))
+    return declared
+
+
 def top_modules(src: str) -> dict[str, str]:
-    """Map top-level module name -> representative file (repo-relative)."""
+    """Map top-level module name -> representative file (repo-relative).
+
+    Restricted to modules the crate root actually declares (`_declared_top_mods`), so
+    an undeclared `.rs` file under `src/` is not turned into a graph node. When the
+    root file is absent (a `tests/<sub>/` root), every entry is kept as before."""
+    declared = _declared_top_mods(src)
     mods: dict[str, str] = {}
     for entry in sorted(os.listdir(src)):
         p = os.path.join(src, entry)
         if os.path.isdir(p):
             if entry == BIN_DIR:
                 continue  # `src/bin/` holds independent binary roots, not a module
+            if declared is not None and entry not in declared:
+                continue  # a directory not declared `mod <entry>;` is not compiled in
             rep = os.path.join(p, "mod.rs")
             mods[entry] = _scan.rel(rep if os.path.exists(rep) else p)
         elif entry.endswith(".rs") and entry[:-3] not in ENTRY:
+            if declared is not None and entry[:-3] not in declared:
+                continue  # an undeclared source file is not part of the module graph
             mods[entry[:-3]] = _scan.rel(p)
     return mods
 

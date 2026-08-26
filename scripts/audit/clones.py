@@ -36,6 +36,22 @@ def kgrams(tokens: list[str], k: int) -> frozenset[int]:
     return frozenset(zlib.crc32(" ".join(tokens[i : i + k]).encode()) for i in range(len(tokens) - k + 1))
 
 
+def _positive_int(v: str) -> int:
+    """argparse type: a strictly positive integer.
+
+    `k <= 0` is degenerate: every window `tokens[i:i+k]` is empty, so every function
+    collapses to one identical fingerprint and the detector silently reports nothing
+    (or, with a lowered `--min-shared`, promotes unrelated functions to 1.0). Reject it
+    at parse time rather than emitting a misleading empty/uniform result."""
+    try:
+        n = int(v)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not an integer: {v!r}")
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"must be a positive integer, got {n}")
+    return n
+
+
 def _severity(score: float, cross_file: bool) -> str:
     # Grade on the *selected* score (Jaccard, or max(Jaccard, containment) when
     # --containment is on), so a strong containment match - a small function fully
@@ -110,7 +126,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("root", nargs="?", default="crates", help="directory to scan (default: crates)")
     ap.add_argument("--min-tokens", type=int, default=45, help="ignore functions shorter than this (default: 45)")
-    ap.add_argument("-k", "--kgram", type=int, default=8, help="k-gram length (default: 8)")
+    ap.add_argument("-k", "--kgram", type=_positive_int, default=8, help="k-gram length, a positive integer (default: 8)")
     ap.add_argument("--df-max", type=int, default=40, help="drop k-grams shared by more than N functions (default: 40)")
     ap.add_argument("--min-shared", type=int, default=4, help="minimum shared rare k-grams to consider a pair (default: 4)")
     ap.add_argument("--min-jaccard", type=float, default=0.6, help="report threshold on the score (default: 0.6)")

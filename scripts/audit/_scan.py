@@ -567,6 +567,13 @@ def git_root_of(path: str) -> str | None:
         return None
 
 
+# Work-tree roots already resolved by `rel`, newest first. One scan almost always
+# lives under a single root, so this stays a 1-element list and the per-call cost is
+# one `relpath`; a second root is only resolved (and cached) on the first path that
+# escapes the known ones.
+_REL_ROOTS: list[str] = []
+
+
 def rel(path: str) -> str:
     """Repository-relative path for compact, portable reporting.
 
@@ -576,15 +583,36 @@ def rel(path: str) -> str:
     yields one deterministic form (`crates/mmm-api/src/...`) - the same
     repository-relative shape `coupling.py` already emits from `git` - so the
     aggregate JSON is a single consistent format across clones and invocation styles.
-    Outside a git tree (or for a path above the root) it falls back to a plain
-    `normpath`, and the historical bare `crates/`-stripped form is no longer emitted.
+
+    The work-tree root is resolved from the scanned *path* (`git_root_of`), not the
+    process CWD (`_git_root`): a detector launched outside the checkout with an
+    absolute scan root must still emit repository-relative locations, or the promised
+    CWD-independent JSON contract leaks checkout-specific absolute paths. Outside a
+    git tree (or for a path above the root) it falls back to a plain `normpath`, and
+    the historical bare `crates/`-stripped form is no longer emitted.
     """
-    root = _git_root()
-    if root:
+    # realpath (not abspath): `git rev-parse --show-toplevel` reports a symlink-
+    # resolved root (e.g. macOS `/private/var/...` for `/var/...`), so an abspath under
+    # the unresolved alias would test as "outside" the work tree and leak an absolute
+    # path. Resolving here matches git's own form; the plain-normpath fallback below
+    # still preserves the caller's path shape when the file is outside any repo.
+    ap = os.path.realpath(path)
+    # Reuse a root already resolved for an earlier path in this run.
+    for root in _REL_ROOTS:
         try:
-            r = os.path.relpath(os.path.abspath(path), root)
-            if not r.startswith(".."):  # inside the work tree
-                return r
+            r = os.path.relpath(ap, root)
         except ValueError:  # e.g. different drive on Windows
+            continue
+        if not r.startswith(".."):  # inside this work tree
+            return r
+    root = git_root_of(ap)
+    if root:
+        if root not in _REL_ROOTS:
+            _REL_ROOTS.append(root)
+        try:
+            r = os.path.relpath(ap, root)
+            if not r.startswith(".."):
+                return r
+        except ValueError:
             pass
     return os.path.normpath(path)

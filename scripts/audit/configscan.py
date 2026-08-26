@@ -85,17 +85,22 @@ KEYCALL_IDENT = re.compile(
 # recognizable because the read fn is passed alongside it, e.g.
 # `exact_one_from_lookup("HATHOR_BACKFILL_SKIP_HOLDS", env_lookup)`. Without this the
 # key is invisible - the literal is not a direct argument to a recognized read call -
-# so it looks undocumented-in-reverse (present in docs, "unused" in code).
+# so it looks undocumented-in-reverse (present in docs, "unused" in code). No length
+# floor on the key (`[A-Z][A-Z0-9_]*`): the trailing read fn already discriminates, so
+# a short key (`("CI", env_lookup)`) is recorded like a direct read, not dropped.
 KEYCALL_HELPER = re.compile(
-    r'(?:r#*)?"([A-Z][A-Z0-9_]{2,})"\s*,\s*(?:&\s*)?(?:env_lookup|env::var(?:_os)?)\b'
+    r'(?:r#*)?"([A-Z][A-Z0-9_]*)"\s*,\s*(?:&\s*)?(?:env_lookup|env::var(?:_os)?)\b'
 )
 # A key handed as the *first* argument to any local function, e.g.
 # `parse_env_or("BITCOIN_RPC_TIMEOUT_SECS", 30)`. On its own this shape is too broad
 # (it also matches `insert("SOME_CONST", ..)`), so a hit is kept only when the callee
-# is a discovered env-reading helper (a fn whose body reads the environment). That
-# turns "named wrapper around env::var" into a recognized read without hardcoding
-# each wrapper's name.
-HELPER_CALL = re.compile(r'\b([a-z_][a-z0-9_]*)\s*\(\s*&?\s*(?:r#*)?"([A-Z][A-Z0-9_]{2,})"')
+# is an imported read primitive/alias or a discovered env-reading helper (a fn whose
+# body reads the environment). That callee identity - not a key-length floor - is the
+# discriminator, so no floor is imposed here (`[A-Z][A-Z0-9_]*`, >= 1 char): an
+# imported `use std::env::var; var("CI")` or a confirmed helper `read_env("TZ")` with
+# a one/two-char key is recorded like a qualified direct read, while a non-helper
+# `insert("ID", ..)` still collects a candidate that resolution then discards.
+HELPER_CALL = re.compile(r'\b([a-z_][a-z0-9_]*)\s*\(\s*&?\s*(?:r#*)?"([A-Z][A-Z0-9_]*)"')
 # Direct read primitives already inventoried by KEYCALL/KEYCALL_IDENT; skip them in
 # the HELPER_CALL pass so a `env::var("KEY")` site is not counted twice (its callee
 # name captures as `var`).
@@ -199,14 +204,19 @@ def _shell_runtime_refs(text: str) -> set[str]:
     return set(SHELL_VAR.findall("".join(kept)))
 
 
-def tooling_referenced_keys() -> set[str]:
+def tooling_referenced_keys(root: str | None = None) -> set[str]:
     """UPPER_SNAKE env names referenced by non-Rust operational files - the `justfile`
     and `scripts/**` shell scripts - as `$VAR`/`${VAR}`.
 
     A key consumed only by tooling (e.g. `${MMM_POOLS_DIR:-}` in a `just` recipe) is
     genuinely *read*, just not by the Rust binary, so the stale-config check must not
-    report it. Located via the git root so it works regardless of the scan root."""
-    root = _scan._git_root()
+    report it. `root` is the scanned repository's work-tree root; the caller resolves
+    it from the scan path (`git_root_of`), not the process CWD, so a scan launched
+    outside the checkout still finds the `justfile`/`scripts/**` sitting next to the
+    code instead of discarding every reference and mis-flagging a tooling-only key as
+    `config-unread`. Falls back to the CWD repo only when no root is supplied."""
+    if root is None:
+        root = _scan._git_root()
     if not root:
         return set()
     files = [os.path.join(root, "justfile")]
@@ -574,7 +584,7 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
     # compared as suffix families, not full keys, since code builds them via format!.
     # A key referenced only by tooling (justfile/shell) is still read, not stale, so
     # it is excluded rather than reported.
-    tooling = tooling_referenced_keys()
+    tooling = tooling_referenced_keys(repo)
     unread_full = sorted(
         k for k in (doc_full & example)
         if not is_chain_scoped(k, prefixes) and k not in full_code_full and k not in tooling
