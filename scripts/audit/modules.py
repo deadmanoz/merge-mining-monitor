@@ -7,8 +7,10 @@ builds a top-level module graph per crate from `crate::<module>` references and
 reports strongly-connected components (cycles).
 
 Top-level granularity: nodes are the immediate children of each `src/` (a
-`foo.rs` or a `foo/` directory). For AST-accurate, all-levels analysis use
-`cargo-modules dependencies --acyclic`. Advisory; stdlib-only. --json supported.
+`foo.rs` or a `foo/` directory). With `--include-tests`, each crate's companion
+integration-test module trees (`<crate>/tests/<sub>/`) are analyzed as their own
+roots too. For AST-accurate, all-levels analysis use `cargo-modules dependencies
+--acyclic`. Advisory; stdlib-only. --json supported.
 """
 
 from __future__ import annotations
@@ -120,8 +122,24 @@ def super_refs(text: str, depth: int) -> set[str]:
     return out
 
 
-def crate_src_dirs(root: str) -> list[tuple[str, str]]:
-    """Crate `(name, src_dir)` pairs under `root`.
+def _has_rust(dirpath: str) -> bool:
+    for _dp, _dn, fns in os.walk(dirpath):
+        if any(f.endswith(".rs") for f in fns):
+            return True
+    return False
+
+
+def crate_src_dirs(root: str, include_tests: bool = False) -> list[tuple[str, str]]:
+    """Analysis `(name, dir)` roots under `root`.
+
+    Each crate contributes its `src/`. With `include_tests`, each crate also
+    contributes every companion module tree under `<crate>/tests/<sub>/`: a
+    conventional integration-test binary rooted at `tests/<sub>.rs` assembles its
+    submodules from `tests/<sub>/` (often via `#[path]`), and cross-references there
+    resolve through the binary root, so a cycle among those modules is real. Without
+    this the flag only stopped pruning a `src/tests` dir and never reached the 48+
+    files under crate-level `tests/`. Flat single-file test binaries (`tests/foo.rs`
+    with no `tests/foo/`) have no internal module graph and contribute nothing.
 
     Handles both a crates container passed directly (`crates/<crate>/src`) and a
     repository root (`.`) whose crates live under a nested `crates/` dir - a whole
@@ -135,10 +153,19 @@ def crate_src_dirs(root: str) -> list[tuple[str, str]]:
         if not os.path.isdir(container):
             return
         for name in sorted(os.listdir(container)):
-            src = os.path.join(container, name, "src")
+            crate_dir = os.path.join(container, name)
+            src = os.path.join(crate_dir, "src")
             if os.path.isdir(src) and src not in seen:
                 seen.add(src)
                 out.append((name, src))
+                if include_tests:
+                    tests = os.path.join(crate_dir, "tests")
+                    if os.path.isdir(tests):
+                        for sub in sorted(os.listdir(tests)):
+                            d = os.path.join(tests, sub)
+                            if os.path.isdir(d) and d not in seen and _has_rust(d):
+                                seen.add(d)
+                                out.append((f"{name}/tests/{sub}", d))
 
     if os.path.isdir(root):
         add_members(root)                          # <root>/<crate>/src
@@ -224,7 +251,7 @@ def _sccs(nodes: list[str], adj: dict[str, set[str]]) -> list[list[str]]:
 
 def collect(root: str = "crates", include_tests: bool = False) -> list[_report.Finding]:
     findings: list[_report.Finding] = []
-    for crate, src in crate_src_dirs(root):
+    for crate, src in crate_src_dirs(root, include_tests):
         mods = top_modules(src)
         adj: dict[str, set[str]] = {m: set() for m in mods}
         for path in _scan.iter_rust_files(src, skip_tests=not include_tests):

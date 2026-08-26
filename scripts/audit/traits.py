@@ -127,8 +127,20 @@ def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests:
                 continue  # inherent impl, not a trait impl
             head = _strip_leading_generics(header[: fm.start()]).split("<")[0]
             idents = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", head)
-            if idents:
-                impls.setdefault((crate, idents[-1]), []).append(_report.Loc(rel, src[: m.start()].count("\n") + 1))
+            if not idents:
+                continue
+            # A qualified trait path (`impl std::fmt::Display for X`) whose root is not
+            # `crate`/`self`/`super` names a trait from std or another crate, so it is
+            # NOT an impl of this crate's same-named local trait; attributing it by the
+            # bare last segment would inflate (or invent) a local facade candidate.
+            # Bare names (`impl Display for X`) and crate/self/super-rooted paths stay
+            # local. `r` as the leading segment is the raw-identifier prefix of a raw
+            # module (`r#foo::Bar`), so the real root is the next segment.
+            if "::" in head:
+                root = idents[1] if idents[0] == "r" and len(idents) > 1 else idents[0]
+                if root not in ("crate", "self", "super"):
+                    continue
+            impls.setdefault((crate, idents[-1]), []).append(_report.Loc(rel, src[: m.start()].count("\n") + 1))
 
     findings: list[_report.Finding] = []
     for key, t in traits.items():

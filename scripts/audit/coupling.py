@@ -12,6 +12,10 @@ commits that actually contribute co-changes (oversized "sweep" commits above
 --max-commit-files are excluded from both the numerator and this denominator so a
 bulk reformat cannot deflate the ratio). CHURN stays the true total change count.
 
+Both halves reach the machine-readable contract: coupling pairs plus each churn
+hotspot (change count >= --min-churn) are emitted as findings under --json, so the
+ranked aggregate is not missing the churn half the human CLI prints.
+
 History is the checked-out revision only (`git log HEAD`) and candidates are
 restricted to paths that still exist at HEAD, so the report is deterministic across
 clones and never names a deleted file; pass --all-refs for a cross-branch view. An
@@ -166,7 +170,8 @@ def commits(all_refs: bool = False):
 
 
 def collect(min_co: int = 5, min_ratio: float = 0.6, max_commit_files: int = 30,
-            root: str | None = None, all_refs: bool = False) -> tuple[list[_report.Finding], Counter]:
+            root: str | None = None, all_refs: bool = False,
+            min_churn: int = 10) -> tuple[list[_report.Finding], Counter]:
     prefix = _scope_prefix(root)
     if _is_shallow():
         # A shallow clone carries only a truncated slice of history, so `git log`
@@ -200,6 +205,22 @@ def collect(min_co: int = 5, min_ratio: float = 0.6, max_commit_files: int = 30,
             co[(a, b)] += 1
 
     findings: list[_report.Finding] = []
+    # Churn hotspots belong in the machine-readable contract too: the detector
+    # advertises "churn + temporal coupling", but only the coupling half was ever
+    # serialized (the Counter was returned for the human table and then discarded by
+    # `--json`/`report.py`). Emit each high-churn file as an `info` finding (a lead,
+    # not a defect) so the JSON array and the ranked aggregate carry both halves. The
+    # Counter is still returned unchanged for the CLI's full CHURN table.
+    for path, n in churn.items():
+        if n < min_churn:
+            continue
+        findings.append(_report.Finding(
+            tool="coupling", kind="git-churn",
+            summary=f"{path} changed {n}x (churn hotspot)",
+            score=float(n), severity="info",
+            locations=[_report.Loc(path)],
+            metrics={"changes": n},
+        ))
     for (a, b), n in co.items():
         if n < min_co:
             continue
@@ -214,7 +235,12 @@ def collect(min_co: int = 5, min_ratio: float = 0.6, max_commit_files: int = 30,
             locations=[_report.Loc(a), _report.Loc(b)],
             metrics={"co_changes": n, "ratio": round(ratio, 4), "cross_dir": cross_dir},
         ))
-    findings.sort(key=lambda f: (f.metrics["co_changes"], f.score), reverse=True)
+    # Coupling pairs first (by co-change strength), then churn hotspots (by count), so
+    # a `--json` consumer sees the behavioral smells ahead of the raw hotspots.
+    findings.sort(
+        key=lambda f: (f.kind == "temporal-coupling", f.metrics.get("co_changes", 0), f.score),
+        reverse=True,
+    )
     return findings, churn
 
 
@@ -224,12 +250,13 @@ def main() -> int:
     ap.add_argument("--min-co", type=int, default=5, help="minimum co-changes for a coupled pair (default: 5)")
     ap.add_argument("--min-ratio", type=float, default=0.6, help="minimum coupling ratio (default: 0.6)")
     ap.add_argument("--max-commit-files", type=int, default=30, help="ignore commits touching more than N changed files of any type (default: 30)")
+    ap.add_argument("--min-churn", type=int, default=10, help="minimum change count for a file to appear as a churn finding in --json (default: 10)")
     ap.add_argument("--all-refs", action="store_true", help="traverse every branch/tag/remote (git log --all) instead of just HEAD (non-deterministic across clones)")
     ap.add_argument("--limit", type=int, default=25)
     ap.add_argument("--json", action="store_true", help="emit the shared finding schema as JSON")
     args = ap.parse_args()
 
-    findings, churn = collect(args.min_co, args.min_ratio, args.max_commit_files, root=args.root, all_refs=args.all_refs)
+    findings, churn = collect(args.min_co, args.min_ratio, args.max_commit_files, root=args.root, all_refs=args.all_refs, min_churn=args.min_churn)
     if args.json:
         _report.print_json(findings)
         return 0

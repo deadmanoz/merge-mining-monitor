@@ -69,9 +69,12 @@ ENV_READ = re.compile(r"\benv::var(?:_os)?\s*\(|(?<!fn )\benv_lookup\s*\(")
 # `env::var(r#"..."#)`): without it a valid raw-string read recorded no key, so it
 # looked undocumented (or made a documented key look unread). The trailing `#`s of a
 # hash-delimited raw literal are left unconsumed - harmless, since the ALL_CAPS key
-# is already captured.
+# is already captured. No length floor on the key (`[A-Z][A-Z0-9_]*`, >= 1 char): the
+# read-call anchor is already discriminating, so a legitimately short key
+# (`env::var("CI")`, `var("TZ")`) is recorded rather than silently dropped and later
+# mis-reported as unread. The broader helper/first-arg shapes below keep their floor.
 KEYCALL = re.compile(
-    r'(?:env::var(?:_os)?|std::env::var(?:_os)?|env_lookup|\blookup|getenv)\s*\(\s*&?\s*(?:r#*)?"([A-Z][A-Z0-9_]{2,})"'
+    r'(?:env::var(?:_os)?|std::env::var(?:_os)?|env_lookup|\blookup|getenv)\s*\(\s*&?\s*(?:r#*)?"([A-Z][A-Z0-9_]*)"'
 )
 # The same read calls, but with a bare identifier argument (a key passed through a
 # constant). Paired with CONST_KEY, this recovers keys KEYCALL's literal form misses.
@@ -289,8 +292,18 @@ def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_re
         # in a comment/string does not count; call sites use `decommented` to keep the
         # literal key text. Track env vs non-env defs per file and repo-wide so a
         # reused name can be disambiguated at resolution time.
+        # A wrapper that reads through an *imported* primitive
+        # (`use std::env::var; fn read(n) { var(n) }`) is still an env-reading helper,
+        # but ENV_READ only recognizes the qualified `env::var(...)` form. Match a call
+        # to one of this file's env aliases in the body too; otherwise a `read("KEY")`
+        # caller is misclassified as non-reading and its key is dropped (a false
+        # config-unread). Scoped to the file's own `use`, so it never fires elsewhere.
+        alias_call = (
+            re.compile(r"\b(?:" + "|".join(re.escape(a) for a in file_env_aliases) + r")\s*\(")
+            if file_env_aliases else None
+        )
         for fn in _scan.find_functions(stripped, path):
-            if ENV_READ.search(fn.body):
+            if ENV_READ.search(fn.body) or (alias_call and alias_call.search(fn.body)):
                 helper_env_by_file.setdefault(rel, set()).add(fn.name)
                 helper_env_names.add(fn.name)
             else:

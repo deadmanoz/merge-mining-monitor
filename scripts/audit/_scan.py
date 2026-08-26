@@ -479,6 +479,20 @@ def tokenize_structural(body: str) -> list[str]:
             while j < n and (body[j].isalnum() or body[j] == "_"):
                 j += 1
             w = body[i:j]
+            # Raw identifier `r#name`: the `r`, the `#`, and `name` are ONE identifier,
+            # not `r` + a dropped `#` + `name`. Consume the `#name` tail and emit a
+            # single `ID`, so a raw-identifier call (`r#type()`) yields the same token
+            # stream its renamed twin (`value()`) does and a structural clone is not
+            # hidden by the extra `ID`. An escaped keyword (`r#match`) is used as a
+            # name, so `ID` (not the kept `match` keyword) is the correct token.
+            if (w == "r" and j < n and body[j] == "#"
+                    and j + 1 < n and (body[j + 1].isalpha() or body[j + 1] == "_")):
+                j += 1
+                while j < n and (body[j].isalnum() or body[j] == "_"):
+                    j += 1
+                toks.append("ID")
+                i = j
+                continue
             if w in RUST_KEYWORDS_KEPT:
                 toks.append(w)
             elif w in ("s", "c"):
