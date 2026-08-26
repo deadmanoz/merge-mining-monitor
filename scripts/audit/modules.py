@@ -37,10 +37,11 @@ ENTRY = {"lib", "main", "mod"}
 # so the directory is not a library module and its files must not be pooled into
 # one synthetic `bin` node (which would invent cross-binary edges/cycles).
 BIN_DIR = "bin"
-# A top-level `mod NAME;` / `mod NAME { ... }` declaration in a crate-root file. Rust
-# compiles a `src/foo.rs` only when it is declared this way, so the crate-root
-# declarations - not every filesystem entry - define which top-level modules exist.
-MOD_DECL = re.compile(r"\bmod\s+(?:r#)?([a-z_][a-z0-9_]*)\s*[;{]")
+# A top-level module declaration in a crate-root file, capturing the terminator so a
+# FILE module (`mod foo;`) is told apart from an INLINE one (`mod foo { ... }`). Rust
+# compiles `src/foo.rs`/`src/foo/` only for the `;` form; the `{` form defines the
+# module in-place, so a same-named stray `foo.rs` is dead and must not become a node.
+MOD_DECL = re.compile(r"\bmod\s+(?:r#)?([a-z_][a-z0-9_]*)\s*([;{])")
 
 
 def _brace_group(text: str, open_idx: int) -> tuple[str, int]:
@@ -201,7 +202,10 @@ def _declared_top_mods(src: str) -> set[str] | None:
             text = _scan.strip_noise(open(os.path.join(src, rf), encoding="utf-8", errors="ignore").read())
         except OSError:
             continue
-        declared.update(m.group(1) for m in MOD_DECL.finditer(text))
+        # Only FILE modules (`mod foo;`, group 2 == ";") authorize a `foo.rs`/`foo/`
+        # graph node. An inline `mod foo { ... }` has no own file, so admitting its
+        # name would bind a same-named but uncompiled stray `foo.rs` as that module.
+        declared.update(m.group(1) for m in MOD_DECL.finditer(text) if m.group(2) == ";")
     return declared
 
 

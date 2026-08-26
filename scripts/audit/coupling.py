@@ -33,29 +33,28 @@ from collections import Counter
 from itertools import combinations
 
 import _report
+import _scan
 
 TRACKED_SUFFIXES = (".rs", ".js")
 EXCLUDE = ("generated", "Cargo.lock", "/vendor/", "node_modules/")
 
 
-def _scope_prefix(root: str | None) -> str | None:
+def _scope_prefix(root: str | None, repo: str | None) -> str | None:
     """Normalize a requested root to a repo-relative path prefix (or None = whole repo).
 
-    Git emits paths as `crates/...`, so a `./crates` or `crates/` form must be
-    collapsed or the prefix match silently excludes everything.
+    Git emits paths as `crates/...`, so an absolute or `./crates` / `crates/` form must
+    be collapsed to that shape or the prefix match silently excludes everything. The
+    root is relativized against the *scanned* work tree (`repo`, resolved from the root
+    itself), so a subtree passed as an absolute path or from a different CWD still maps
+    to git's repo-relative form.
     """
     if not root or root in (".", "./"):
         return None
-    r = root
-    if os.path.isabs(r):
-        try:
-            top = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                capture_output=True, text=True, check=True,
-            ).stdout.strip()
-            r = os.path.relpath(r, top)
-        except Exception:
-            return None
+    base = repo or "."
+    try:
+        r = os.path.relpath(os.path.realpath(root), os.path.realpath(base))
+    except (ValueError, OSError):
+        r = os.path.normpath(root)
     r = os.path.normpath(r)  # ./crates -> crates, crates/ -> crates, a/./b -> a/b
     if r == "." or r == os.curdir:
         return None  # explicit whole-repo
@@ -70,8 +69,8 @@ def _under(path: str, prefix: str | None) -> bool:
     return prefix is None or path == prefix or path.startswith(prefix + "/")
 
 
-def _tracked_paths() -> set[str]:
-    """Paths present in the analyzed revision (HEAD).
+def _tracked_paths(repo: str | None) -> set[str]:
+    """Paths present in the analyzed revision (HEAD) of `repo`.
 
     A renamed or deleted file's old path lingers in history forever; restricting
     churn and coupling candidates to paths that still exist keeps the report about
@@ -81,22 +80,23 @@ def _tracked_paths() -> set[str]:
     # `--full-tree` lists the whole tree with repo-root-relative paths regardless of
     # the process's working directory; without it `git ls-tree` scopes to the CWD and
     # (run from a subdir) the returned set would not match `git log`'s repo-relative
-    # paths, silently filtering every file out.
+    # paths, silently filtering every file out. `cwd=repo` runs against the scanned
+    # checkout, not the process CWD, so an out-of-tree scan root still resolves.
     out = subprocess.run(
         ["git", "ls-tree", "-r", "--full-tree", "--name-only", "HEAD"],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, check=True, cwd=repo,
     ).stdout
     return set(out.splitlines())
 
 
-def _is_shallow() -> bool:
+def _is_shallow(repo: str | None) -> bool:
     """True in a shallow checkout, where `git log` only sees a truncated slice of
     history. Coupling and churn would then depend on the clone's fetch depth rather
     than the code, so the caller reports incompleteness instead of partial numbers."""
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--is-shallow-repository"],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, check=True, cwd=repo,
         ).stdout.strip()
     except Exception:
         return False
@@ -113,7 +113,7 @@ def _resolve_rename(rename_to: dict[str, str], path: str) -> str:
     return path
 
 
-def commits(all_refs: bool = False):
+def commits(all_refs: bool = False, repo: str | None = None):
     """Yield `(total_changed, code_files)` per commit, with historical paths mapped
     onto their current name.
 
@@ -130,10 +130,19 @@ def commits(all_refs: bool = False):
     `csv_source/mod.rs`), while a genuinely deleted path resolves to a name absent
     from HEAD and is dropped downstream - no undercount, no resurrected ghost.
 
+    Rename ancestry is severed at a delete+recreate boundary. Walking newest-first, a
+    creation (`A <name>`) marks where the LIVE generation of that name began: any OLDER
+    reference to the exact name (a pre-deletion edit, the delete itself, or a rename
+    INTO it) belongs to a prior, unrelated generation and is dropped. Otherwise
+    `a.rs -> b.rs`, `b.rs` deleted, then a fresh unrelated `b.rs` created would fold the
+    old `a.rs`'s churn into today's `b.rs`. A file that is only renamed (never deleted
+    and reborn) has no such `A`, so its full pre-rename history still chains through.
+
     History is the checked-out revision only (`git log HEAD`) so two clones at the
     same commit yield identical counts; `all_refs=True` restores `--all` (every
     branch/tag/remote) for an explicit cross-branch view. Traversing `--all` by
     default let abandoned branch work perturb the "deterministic" data contract.
+    `cwd=repo` runs git against the scanned checkout rather than the process CWD.
     """
     log_args = ["git", "log"]
     log_args.append("--all" if all_refs else "HEAD")
@@ -143,8 +152,11 @@ def commits(all_refs: bool = False):
     # IDs), emptying both reports. NUL cannot occur in a path or a name-status line
     # and is not a `str.splitlines()` boundary, so the hash value itself is unused.
     log_args += ["--pretty=format:%x00%H", "--name-status", "-M"]
-    out = subprocess.run(log_args, capture_output=True, text=True, check=True).stdout
+    out = subprocess.run(log_args, capture_output=True, text=True, check=True, cwd=repo).stdout
     rename_to: dict[str, str] = {}
+    # Names whose live-generation start (an `A`, newest-first) has been passed; an older
+    # reference to the exact name is a prior, unrelated generation and is dropped.
+    sealed: set[str] = set()
     total = 0
     files: list[str] = []
     started = False
@@ -158,11 +170,24 @@ def commits(all_refs: bool = False):
             continue
         parts = line.split("\t")
         total += 1  # one changed path (a rename counts once) toward the sweep size
-        if parts[0].startswith("R") and len(parts) >= 3:
-            rename_to[parts[1]] = parts[2]  # old -> new (record before resolving)
-            cur = _resolve_rename(rename_to, parts[2])
+        status = parts[0]
+        if status.startswith("R") and len(parts) >= 3:
+            old, new = parts[1], parts[2]
+            if new in sealed:
+                # This rename produced a generation later deleted and reborn under the
+                # same name (an `A <new>` seen newer). Don't chain `old` into the live
+                # file; seal `old` so its own older history drops too.
+                sealed.add(old)
+                continue
+            rename_to[old] = new  # old -> new (record before resolving)
+            cur = _resolve_rename(rename_to, new)
         else:  # A/M/D (or C copy: attribute the destination path)
-            cur = _resolve_rename(rename_to, parts[-1])
+            dest = parts[-1]
+            if dest in sealed:
+                continue  # older activity on a name whose live generation began newer
+            cur = _resolve_rename(rename_to, dest)
+            if status == "A":
+                sealed.add(dest)  # creation: older refs to this name are a prior gen
         if cur.endswith(TRACKED_SUFFIXES) and not any(e in cur for e in EXCLUDE):
             files.append(cur)
     if started:
@@ -172,8 +197,13 @@ def commits(all_refs: bool = False):
 def collect(min_co: int = 5, min_ratio: float = 0.6, max_commit_files: int = 30,
             root: str | None = None, all_refs: bool = False,
             min_churn: int = 10) -> tuple[list[_report.Finding], Counter]:
-    prefix = _scope_prefix(root)
-    if _is_shallow():
+    # Resolve the repo from the scanned root, not the process CWD, so every git command
+    # runs against the checkout that owns `root` (an absolute or out-of-tree scan root
+    # otherwise queried the wrong repo, or none). Falls back to the CWD repo when no
+    # root is given.
+    repo = (_scan.git_root_of(root) if root else None) or _scan._git_root()
+    prefix = _scope_prefix(root, repo)
+    if _is_shallow(repo):
         # A shallow clone carries only a truncated slice of history, so `git log`
         # would silently under-count churn and coupling (a depth-1 clone reports zero
         # pairs where a full clone reports many). Emit one explicit incompleteness
@@ -186,11 +216,11 @@ def collect(min_co: int = 5, min_ratio: float = 0.6, max_commit_files: int = 30,
             severity="info", locations=[], metrics={"shallow": True},
         )
         return [marker], Counter()
-    tracked = _tracked_paths()
+    tracked = _tracked_paths(repo)
     churn: Counter[str] = Counter()      # scoped files across all commits (churn report)
     co_churn: Counter[str] = Counter()   # scoped files in non-sweep commits (ratio denominator)
     co: Counter[tuple[str, str]] = Counter()
-    for total_changed, files in commits(all_refs):
+    for total_changed, files in commits(all_refs, repo):
         # Sweep detection uses the commit's *total* changed-file count (all types),
         # so a mass commit is recognized as a sweep even when only a few of its
         # files are code; the subtree/suffix filter applies to churn and pairs only.

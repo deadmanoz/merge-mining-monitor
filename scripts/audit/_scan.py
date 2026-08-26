@@ -502,7 +502,14 @@ def tokenize_structural(body: str) -> list[str]:
                 toks.append(w)
             elif w in ("s", "c"):
                 toks.append("LIT")
-            elif w.isdigit():
+            elif w[0].isdigit():
+                # A Rust identifier can never start with a digit, so ANY alnum/`_`
+                # run beginning `0-9` is a numeric literal - `0xff`, `0o17`, `0b1010`,
+                # `1_000`, `255u8`, `1e9f64`. Testing the whole span (`w.isdigit()`)
+                # instead classified every based/separated/suffixed literal as `ID`,
+                # so a `0xff` vs `0x00` difference (or a suffix-only edit) hid a real
+                # structural change. A float `1.5` still lexes as NUM `.` NUM (the run
+                # stops at `.`), which is consistent across all floats.
                 toks.append("NUM")
             else:
                 toks.append("ID")

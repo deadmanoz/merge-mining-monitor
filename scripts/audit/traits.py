@@ -34,6 +34,14 @@ USE_STMT = re.compile(r"\buse\s+([^;]+);")
 # external. Scoped to `use` bodies so a value/type cast (`x as u64`) is never read as
 # a module alias.
 USE_AS_PAIR = re.compile(r"(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s+as\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)")
+# The FIRST path segment of a `use` tree - its root. Only an intra-crate root
+# (`crate`/`self`/`super`) can rename a LOCAL module; an external-crate path
+# (`use other::api as contract`) whose last segment merely collides with a local
+# `mod` name must not fold its alias into local_mods (that would count an external
+# `impl contract::Trait` as local). A leading `::` (external crate) or any other
+# identifier root fails this and is skipped.
+USE_ROOT = re.compile(r"\s*(?:r#)?([A-Za-z_][A-Za-z0-9_]*)")
+INTRA_CRATE_ROOTS = ("crate", "self", "super")
 
 
 def _match_brace(src: str, open_idx: int) -> int:
@@ -128,7 +136,14 @@ def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests:
         for mm in MOD_DECL.finditer(src):
             local_mods.setdefault(crate, set()).add(mm.group(1))
         for um in USE_STMT.finditer(src):
-            for am in USE_AS_PAIR.finditer(um.group(1)):
+            body = um.group(1)
+            # Gate on the use-tree root: only crate/self/super paths rename a local
+            # module, so an external `use other::api as contract` never fabricates a
+            # local-module alias even when `api` collides with a real `mod api`.
+            rm = USE_ROOT.match(body)
+            if not rm or rm.group(1) not in INTRA_CRATE_ROOTS:
+                continue
+            for am in USE_AS_PAIR.finditer(body):
                 pending_aliases.append((crate, am.group(1), am.group(2)))
         # `(?:r#)?` consumes a raw-identifier prefix so a keyword-named `trait r#type`
         # is keyed as `type` - the same logical name the impl scan derives from

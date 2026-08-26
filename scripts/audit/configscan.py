@@ -60,9 +60,32 @@ CONSTRUCT_SUFFIX = re.compile(r"^\{[^}]*\}((?:_[A-Z0-9]+)+)$")
 # Only actual read *calls*: the name must be followed by `(`. This excludes the
 # `std::env` namespace itself (`std::env::Args`), the `fn env_lookup` definition,
 # and places that pass `env_lookup` as a callback value - all of which inflate the
-# surface count without reading the environment. `env::var(_os)` also matches the
-# tail of `std::env::var(_os)`.
-ENV_READ = re.compile(r"\benv::var(?:_os)?\s*\(|(?<!fn )\benv_lookup\s*\(")
+# surface count without reading the environment.
+#
+# A BARE `env::var(...)` is only a process-env read when the file imports the stdlib
+# module (`use std::env;`); a `crate::env::var(...)` is a call into a LOCAL module
+# named `env` and must NOT count. So the read is split three ways: the fully-qualified
+# `std::env::var` (always), the repo's own `env_lookup` primitive (always), and the
+# bare `env::var` form (only when `has_std_env`, and never the `std::env::var` tail -
+# `(?<![:\w])` rejects any `X::env::var`). The caller gates the bare form per file.
+ENV_READ_STD = re.compile(r"\bstd::env::var(?:_os)?\s*\(")
+ENV_READ_BARE = re.compile(r"(?<![:\w])env::var(?:_os)?\s*\(")
+ENV_READ_LOOKUP = re.compile(r"(?<!fn )\benv_lookup\s*\(")
+# Does the file bring the stdlib `env` MODULE into scope (so a bare `env::var(...)` is
+# a std read, not a local-module call)? Matches `use std::env;` and a grouped
+# `use std::{env, fs};`. `use std::env::var;` imports the function `var`, not the
+# module, and is handled by env_read_aliases instead.
+USE_STD_ENV = re.compile(r"\buse\s+std::env\s*;|\buse\s+std::\{[^}]*\benv\b[^}]*\}")
+# A local function call `name(` in a fn body - used to propagate env-reading status
+# transitively (a() -> b() -> env::var). `(?<![.\w:])` excludes method calls (`.foo()`),
+# associated/qualified calls (`Type::foo()`, `mod::foo()`), and mid-identifier hits, so
+# only free-function calls (a local helper) are followed.
+CALLEE = re.compile(r"(?<![.\w:])([a-z_][a-z0-9_]*)\s*\(")
+# All-caps names bound locally - by `let`/`let mut` or as a fn/closure parameter. An
+# `env::var(THIS)` whose argument is such a binding reads a runtime value, so it must
+# NOT be resolved against a same-named GLOBAL const (a different module's key).
+LET_BIND = re.compile(r"\blet\s+(?:mut\s+)?([A-Z][A-Z0-9_]{2,})\b")
+PARAM_BIND = re.compile(r"[(,|]\s*(?:mut\s+)?([A-Z][A-Z0-9_]{2,})\s*:")
 # The env key passed directly to a read call. Keying off the call site (not any
 # ALL_CAPS literal) avoids matching opcode/status constants like OP_RETURN. The
 # `(?:r#*)?` accepts a raw-string key (`env::var(r"SERVICE_TOKEN")`,
@@ -74,12 +97,22 @@ ENV_READ = re.compile(r"\benv::var(?:_os)?\s*\(|(?<!fn )\benv_lookup\s*\(")
 # (`env::var("CI")`, `var("TZ")`) is recorded rather than silently dropped and later
 # mis-reported as unread. The broader helper/first-arg shapes below keep their floor.
 KEYCALL = re.compile(
-    r'(?:env::var(?:_os)?|std::env::var(?:_os)?|env_lookup|\blookup|getenv)\s*\(\s*&?\s*(?:r#*)?"([A-Z][A-Z0-9_]*)"'
+    r'(?:std::env::var(?:_os)?|env_lookup|\blookup|getenv)\s*\(\s*&?\s*(?:r#*)?"([A-Z][A-Z0-9_]*)"'
+)
+# The bare `env::var("KEY")` form, kept separate so the caller can gate it on
+# `has_std_env` (a `crate::env::var("KEY")` is a local-module call, not a std read).
+# `(?<![:\w])` rejects any qualified `X::env::var` and the `std::env::var` tail (already
+# covered above).
+KEYCALL_BARE_ENV = re.compile(
+    r'(?<![:\w])env::var(?:_os)?\s*\(\s*&?\s*(?:r#*)?"([A-Z][A-Z0-9_]*)"'
 )
 # The same read calls, but with a bare identifier argument (a key passed through a
 # constant). Paired with CONST_KEY, this recovers keys KEYCALL's literal form misses.
 KEYCALL_IDENT = re.compile(
-    r'(?:env::var(?:_os)?|std::env::var(?:_os)?|env_lookup|\blookup|getenv)\s*\(\s*&?\s*([A-Z][A-Z0-9_]{2,})\s*\)'
+    r'(?:std::env::var(?:_os)?|env_lookup|\blookup|getenv)\s*\(\s*&?\s*([A-Z][A-Z0-9_]{2,})\s*\)'
+)
+KEYCALL_IDENT_BARE_ENV = re.compile(
+    r'(?<![:\w])env::var(?:_os)?\s*\(\s*&?\s*([A-Z][A-Z0-9_]{2,})\s*\)'
 )
 # A key handed to a helper that performs the read on the caller's behalf, made
 # recognizable because the read fn is passed alongside it, e.g.
@@ -303,6 +336,9 @@ def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_re
     helper_env_names: set[str] = set()
     helper_nonenv_names: set[str] = set()
     helper_calls: list[tuple[str, str, _report.Loc]] = []  # (fn_name, key, loc); loc.file scopes it
+    # All-caps names bound locally per file (`let`/param). A `var(THIS)` whose argument
+    # is such a binding must not be resolved to a same-named GLOBAL const.
+    binds_by_file: dict[str, set[str]] = {}
 
     for path in _scan.iter_rust_files(root, skip_tests=not include_tests):
         src = read_text(path)
@@ -320,14 +356,26 @@ def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_re
         # Local names this file binds to std::env::var/var_os via `use`; a bare
         # `var("KEY")` is then a direct read the qualified patterns cannot see.
         file_env_aliases = env_read_aliases(stripped)
-        reads = len(ENV_READ.findall(stripped))
+        # Does this file import the stdlib `env` module, so a bare `env::var(...)` is a
+        # process-env read rather than a call into a local `mod env`?
+        has_std_env = bool(USE_STD_ENV.search(stripped))
+        # All-caps `let`/param bindings; an `env::var(THIS)` with such an argument is a
+        # runtime value, not the same-named global const.
+        binds_by_file[rel] = set(LET_BIND.findall(stripped)) | set(PARAM_BIND.findall(stripped))
+        reads = len(ENV_READ_STD.findall(stripped)) + len(ENV_READ_LOOKUP.findall(stripped))
+        if has_std_env:
+            reads += len(ENV_READ_BARE.findall(stripped))
         alias_reads = 0  # bare imported-primitive reads (found in the HELPER_CALL pass)
         for m in CONFIG_STRUCT.finditer(stripped):
             struct_locs.append(_report.Loc(rel, stripped.count("\n", 0, m.start()) + 1, m.group(1)))
-        for m in KEYCALL.finditer(decommented):
-            key = m.group(1)
-            if not _is_build_env(key):
-                key_locs.setdefault(key, []).append(_report.Loc(rel, decommented.count("\n", 0, m.start()) + 1))
+        keycall_iters = [KEYCALL.finditer(decommented)]
+        if has_std_env:  # bare `env::var("KEY")` is a std read only with `use std::env;`
+            keycall_iters.append(KEYCALL_BARE_ENV.finditer(decommented))
+        for it in keycall_iters:
+            for m in it:
+                key = m.group(1)
+                if not _is_build_env(key):
+                    key_locs.setdefault(key, []).append(_report.Loc(rel, decommented.count("\n", 0, m.start()) + 1))
         for m in KEYCALL_HELPER.finditer(decommented):
             key = m.group(1)
             if not _is_build_env(key):
@@ -338,8 +386,12 @@ def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_re
             if ident in const_global and const_global[ident] != key:
                 const_ambig.add(ident)  # same name, different key in another module
             const_global[ident] = key
-        for m in KEYCALL_IDENT.finditer(decommented):
-            ident_calls.append((m.group(1), rel, _report.Loc(rel, decommented.count("\n", 0, m.start()) + 1)))
+        ident_iters = [KEYCALL_IDENT.finditer(decommented)]
+        if has_std_env:
+            ident_iters.append(KEYCALL_IDENT_BARE_ENV.finditer(decommented))
+        for it in ident_iters:
+            for m in it:
+                ident_calls.append((m.group(1), rel, _report.Loc(rel, decommented.count("\n", 0, m.start()) + 1)))
         # A fn whose (de-noised) body performs an env read is an env helper; its name
         # qualifies the literal keys its callers pass. Bodies use `stripped` so a read
         # in a comment/string does not count; call sites use `decommented` to keep the
@@ -347,20 +399,47 @@ def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_re
         # reused name can be disambiguated at resolution time.
         # A wrapper that reads through an *imported* primitive
         # (`use std::env::var; fn read(n) { var(n) }`) is still an env-reading helper,
-        # but ENV_READ only recognizes the qualified `env::var(...)` form. Match a call
-        # to one of this file's env aliases in the body too; otherwise a `read("KEY")`
-        # caller is misclassified as non-reading and its key is dropped (a false
-        # config-unread). Scoped to the file's own `use`, so it never fires elsewhere.
+        # but the qualified regex cannot see it. Match a call to one of this file's env
+        # aliases in the body too; otherwise a `read("KEY")` caller is misclassified as
+        # non-reading and its key is dropped (a false config-unread). Scoped to the
+        # file's own `use`, so it never fires elsewhere.
         alias_call = (
             re.compile(r"\b(?:" + "|".join(re.escape(a) for a in file_env_aliases) + r")\s*\(")
             if file_env_aliases else None
         )
+
+        def _reads_env(body: str) -> bool:
+            if ENV_READ_STD.search(body) or ENV_READ_LOOKUP.search(body):
+                return True
+            if has_std_env and ENV_READ_BARE.search(body):
+                return True
+            return bool(alias_call and alias_call.search(body))
+
+        # A helper need not read env *directly*: `a() { b() }` with `b() { env::var(..) }`
+        # is an env reader too. Record each fn's direct-read flag and the local functions
+        # it calls, then propagate env-reading status to a fixpoint WITHIN the file. The
+        # closure is deliberately file-scoped (not a repo-wide name graph): bare fn names
+        # collide across crates, and the resolution below already prefers a same-file def.
+        file_fns: dict[str, list] = {}  # name -> [direct_env: bool, callees: set[str]]
         for fn in _scan.find_functions(stripped, path):
-            if ENV_READ.search(fn.body) or (alias_call and alias_call.search(fn.body)):
-                helper_env_by_file.setdefault(rel, set()).add(fn.name)
-                helper_env_names.add(fn.name)
+            callees = {cm.group(1) for cm in CALLEE.finditer(fn.body)}
+            rec = file_fns.setdefault(fn.name, [False, set()])
+            rec[0] = rec[0] or _reads_env(fn.body)
+            rec[1] |= callees
+        env_in_file = {name for name, (direct, _c) in file_fns.items() if direct}
+        changed = True
+        while changed:
+            changed = False
+            for name, (_direct, callees) in file_fns.items():
+                if name not in env_in_file and (callees & env_in_file):
+                    env_in_file.add(name)
+                    changed = True
+        for name in file_fns:
+            if name in env_in_file:
+                helper_env_by_file.setdefault(rel, set()).add(name)
+                helper_env_names.add(name)
             else:
-                helper_nonenv_names.add(fn.name)
+                helper_nonenv_names.add(name)
         for m in HELPER_CALL.finditer(decommented):
             fn_name, key = m.group(1), m.group(2)
             if _is_build_env(key):
@@ -387,8 +466,8 @@ def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_re
             cm = CONSTRUCT_SUFFIX.match(lit.strip())
             if cm:
                 code_suffixes.add(cm.group(1))
-        # Env-alias reads count toward this file's read tally (the qualified ENV_READ
-        # regex cannot see a bare imported `var(...)`), so a file reading env only
+        # Env-alias reads count toward this file's read tally (the qualified env-read
+        # regexes cannot see a bare imported `var(...)`), so a file reading env only
         # through an imported primitive still registers as a reader.
         total_reads = reads + alias_reads
         if total_reads:
@@ -400,6 +479,8 @@ def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_re
     # `RPC_URL_ENV` is skipped rather than misattributed to whichever file was
     # scanned last.
     for ident, file, loc in ident_calls:
+        if ident in binds_by_file.get(file, ()):
+            continue  # a local `let`/param binding shadows any same-named const
         key = const_by_file.get(file, {}).get(ident)
         if key is None and ident not in const_ambig:
             key = const_global.get(ident)

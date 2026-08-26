@@ -98,6 +98,13 @@ def _decode_rust_escapes(s: str) -> str:
 # string/identifier contents keep their exact spacing.
 WORD_THEN_PUNCT_WS = re.compile(r"(\w) +([^\w\s])")
 PUNCT_THEN_WORD_WS = re.compile(r"([^\w\s]) +(\w)")
+# A positional placeholder (`$1`, `$2`) is an OPERAND, not an operator, so a space
+# between an operator/punctuation char and a following `$<digit>` is insignificant -
+# `col = $1` and `col=$1` denote the same query and must fold together. `$` is a
+# non-word char, so operator/operator spacing (kept above to protect `x - -1`) would
+# otherwise preserve the `= $1` gap; this rule closes it. The trailing side (`$1 =`)
+# already collapses via WORD_THEN_PUNCT_WS since the digit is a word char.
+PUNCT_THEN_PLACEHOLDER_WS = re.compile(r"([^\w\s]) +(\$\d)")
 
 
 def extract_sql(src: str):
@@ -145,7 +152,8 @@ def norm(s: str) -> str:
     `a = $2 AND b = $1` (different results from one argument list) into one query;
     leaving the original numbers keeps those permutations distinct, and still keeps
     a reused bind (`a = $1 OR b = $1`) distinct from two independent ones
-    (`a = $1 OR b = $2`).
+    (`a = $1 OR b = $2`). Only the whitespace *around* a placeholder is normalized
+    (`col = $1` == `col=$1`), since a placeholder is an operand, not an operator.
     """
     out: list[str] = []
     i, n = 0, len(s)
@@ -207,8 +215,22 @@ def norm(s: str) -> str:
             out.append(" ")
             continue
         if c == "/" and i + 1 < n and s[i + 1] == "*":
-            end = s.find("*/", i + 2)
-            i = n if end < 0 else end + 2
+            # PostgreSQL block comments NEST: `/* a /* b */ c */` is one comment, so
+            # stopping at the first `*/` would leak ` c */` back as unquoted SQL (and
+            # reopen a phantom on the stray `*`). Track depth to consume the whole,
+            # possibly nested, comment.
+            depth = 1
+            j = i + 2
+            while j < n and depth:
+                if s[j] == "/" and j + 1 < n and s[j + 1] == "*":
+                    depth += 1
+                    j += 2
+                elif s[j] == "*" and j + 1 < n and s[j + 1] == "/":
+                    depth -= 1
+                    j += 2
+                else:
+                    j += 1
+            i = j  # unterminated -> consumed to end
             out.append(" ")
             continue
         j = i
@@ -234,6 +256,7 @@ def norm(s: str) -> str:
             prev = seg
             seg = WORD_THEN_PUNCT_WS.sub(r"\1\2", seg)
             seg = PUNCT_THEN_WORD_WS.sub(r"\1\2", seg)
+            seg = PUNCT_THEN_PLACEHOLDER_WS.sub(r"\1\2", seg)
         out.append(seg)
         i = j
     return "".join(out).strip()
