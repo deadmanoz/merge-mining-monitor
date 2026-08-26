@@ -21,6 +21,10 @@ import _report
 import _scan
 
 FN = re.compile(r"\bfn\s+(?:r#)?([A-Za-z0-9_]+)")  # `(?:r#)?` -> `fn r#match` reads as `match`
+# A module declaration (`mod api;`, `pub mod api { ... }`, `pub(crate) mod api;`). The
+# set of these names per crate tells the impl scan which qualified roots
+# (`impl api::Trait for X`) resolve to a LOCAL module rather than an external crate.
+MOD_DECL = re.compile(r"\bmod\s+(?:r#)?([a-z_][a-z0-9_]*)")
 
 
 def _match_brace(src: str, open_idx: int) -> int:
@@ -93,6 +97,12 @@ def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests:
     traits: dict[tuple[str, str], dict] = {}
     ambiguous: set[tuple[str, str]] = set()  # same (crate, name) defined more than once
     impls: dict[tuple[str, str], list[_report.Loc]] = {}
+    # Local module names per crate, so a trait impl qualified through a local module
+    # path (`impl api::Service for X` with `mod api`) is recognized as local rather
+    # than dropped as external. Impl attribution is deferred until every file's `mod`
+    # declarations across the crate have been gathered.
+    local_mods: dict[str, set[str]] = {}
+    pending_impls: list[tuple[str, str, str | None, _report.Loc]] = []
 
     for path in _scan.iter_rust_files(root, skip_tests=not include_tests):
         try:
@@ -101,6 +111,8 @@ def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests:
             continue
         rel = _scan.rel(path)
         crate = _crate_key(rel)
+        for mm in MOD_DECL.finditer(src):
+            local_mods.setdefault(crate, set()).add(mm.group(1))
         # `(?:r#)?` consumes a raw-identifier prefix so a keyword-named `trait r#type`
         # is keyed as `type` - the same logical name the impl scan derives from
         # `impl r#type for ...` (its `idents[-1]` is `type`). Without it the trait was
@@ -129,18 +141,28 @@ def collect(root: str, min_required: int = 3, min_impls: int = 2, include_tests:
             idents = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", head)
             if not idents:
                 continue
-            # A qualified trait path (`impl std::fmt::Display for X`) whose root is not
-            # `crate`/`self`/`super` names a trait from std or another crate, so it is
-            # NOT an impl of this crate's same-named local trait; attributing it by the
-            # bare last segment would inflate (or invent) a local facade candidate.
-            # Bare names (`impl Display for X`) and crate/self/super-rooted paths stay
-            # local. `r` as the leading segment is the raw-identifier prefix of a raw
-            # module (`r#foo::Bar`), so the real root is the next segment.
+            # Record the qualified-path root (if any) for later locality resolution.
+            # Bare names (`impl Display for X`) and crate/self/super-rooted paths are
+            # always local (root None). A leading `r` is the raw-identifier prefix of a
+            # raw module (`r#foo::Bar`), so the real root is the next segment.
+            ext_root: str | None = None
             if "::" in head:
-                root = idents[1] if idents[0] == "r" and len(idents) > 1 else idents[0]
-                if root not in ("crate", "self", "super"):
-                    continue
-            impls.setdefault((crate, idents[-1]), []).append(_report.Loc(rel, src[: m.start()].count("\n") + 1))
+                root_seg = idents[1] if idents[0] == "r" and len(idents) > 1 else idents[0]
+                if root_seg not in ("crate", "self", "super"):
+                    ext_root = root_seg  # local vs external decided once mods are known
+            pending_impls.append(
+                (crate, idents[-1], ext_root, _report.Loc(rel, src[: m.start()].count("\n") + 1))
+            )
+
+    # Resolve deferred impls now that every crate's local modules are known. A
+    # qualified path rooted at a local module (`impl api::Service`, with `mod api`) is
+    # a local impl and counts; only a root naming no local module (std/core/another
+    # crate) is external and dropped, so an external `std::fmt::Display` no longer
+    # inflates a same-named local trait while a local `api::Service` still does.
+    for crate, name, ext_root, loc in pending_impls:
+        if ext_root is not None and ext_root not in local_mods.get(crate, ()):
+            continue
+        impls.setdefault((crate, name), []).append(loc)
 
     findings: list[_report.Finding] = []
     for key, t in traits.items():

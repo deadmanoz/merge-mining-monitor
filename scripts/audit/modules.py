@@ -227,7 +227,7 @@ def _sccs(nodes: list[str], adj: dict[str, set[str]]) -> list[list[str]]:
         counter[0] += 1
         stack.append(v)
         on_stack.add(v)
-        for w in adj.get(v, ()):  # noqa: iterate neighbors
+        for w in sorted(adj.get(v, ())):  # sorted: component emission independent of set/hash order
             if w not in index:
                 strong(w)
                 low[v] = min(low[v], low[w])
@@ -290,7 +290,10 @@ def collect(root: str = "crates", include_tests: bool = False) -> list[_report.F
                 locations=[_report.Loc(mods[m], 0, m) for m in order],
                 metrics={"crate": crate, "modules": order},
             ))
-    findings.sort(key=lambda f: f.score, reverse=True)
+    # Deterministic order: larger cycles first, then by summary (the sorted module
+    # list) so tied findings never reorder across runs/hash seeds - the JSON contract
+    # is byte-stable.
+    findings.sort(key=lambda f: (-f.score, f.summary))
     return findings
 
 

@@ -194,12 +194,33 @@ def norm(s: str) -> str:
                 out.append(s[i:stop])  # dollar-quoted span: preserved verbatim
                 i = stop
                 continue
+        # SQL comments carry no query meaning, but WHERE a comment ends does: `--`
+        # runs to the newline, `/* */` to its closer, so two queries whose comment
+        # ends at different points denote different SQL (`SELECT 1 -- x\n + 2` vs
+        # `SELECT 1 -- x + 2\n`). Strip the comment to its terminator and emit one
+        # space, so neighboring tokens neither fuse nor lose the boundary. `--`/`/*`
+        # start a comment only here (outside the quoted and dollar-quoted spans peeled
+        # off above), and a lone `-` operator (`x - 1`) is untouched.
+        if c == "-" and i + 1 < n and s[i + 1] == "-":
+            nl = s.find("\n", i)
+            i = n if nl < 0 else nl  # keep the newline; it collapses to a separator
+            out.append(" ")
+            continue
+        if c == "/" and i + 1 < n and s[i + 1] == "*":
+            end = s.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            out.append(" ")
+            continue
         j = i
         while j < n:
             if s[j] in "'\"":
                 break
             if s[j] == "$" and DOLLAR_OPEN.match(s, j):
                 break
+            if s[j] == "-" and j + 1 < n and s[j + 1] == "-":
+                break  # start of a line comment (handled at top of loop)
+            if s[j] == "/" and j + 1 < n and s[j + 1] == "*":
+                break  # start of a block comment (handled at top of loop)
             j += 1
         # Placeholders (`$1`, `$2`) are left as-is; keyword case is folded and any
         # whitespace run collapses to a single space. Whitespace separating a word
@@ -299,7 +320,12 @@ def collect(root: str, near: float = 0.85) -> list[_report.Finding]:
             if sm.real_quick_ratio() < near or sm.quick_ratio() < near:
                 continue
             r = sm.ratio()
-            if near <= r < 0.999:
+            # Report every distinct pair at or above `near`; exclude only exact
+            # equality (r == 1.0), which the exact-group pass already owns. A fixed
+            # 0.999 upper cutoff wrongly dropped the strongest near-dups - two ~2000
+            # char queries differing by one character score ~0.9995 yet are not an
+            # exact group (distinct normalized keys can never reach 1.0 here).
+            if near <= r < 1.0:
                 li, lj = _pick_cross(groups[ni], groups[nj])
                 both_prod = not is_test(li[0]) and not is_test(lj[0])
                 findings.append(_report.Finding(

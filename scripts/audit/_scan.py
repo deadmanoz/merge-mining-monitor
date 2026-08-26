@@ -82,7 +82,12 @@ def iter_rust_files(root: str, skip_tests: bool = True):
             yield os.path.join(dirpath, name)
 
 
-_CHAR_LIT = re.compile(r"'(?:\\u\{[0-9a-fA-F]+\}|\\.|[^'\\\n])'")
+# A single char literal: a `\xNN` byte escape, a `\u{...}` unicode escape, any other
+# `\<c>` escape, or one ordinary char. The `\xNN` form must precede the generic `\.`
+# alternative, which would otherwise match only `\x` and leave `NN'` as stray source -
+# so `'\x41'` would neutralize to identifiers/numbers instead of one `LIT`, giving a
+# function using `'\x41'` a different structural fingerprint from an equivalent `'A'`.
+_CHAR_LIT = re.compile(r"'(?:\\x[0-9a-fA-F]{2}|\\u\{[0-9a-fA-F]+\}|\\.|[^'\\\n])'")
 
 
 def _raw_string_span(src: str, i: int):
@@ -540,6 +545,26 @@ def _git_root() -> str | None:
         except (OSError, subprocess.CalledProcessError):
             _GIT_ROOT_CACHE.append(None)
     return _GIT_ROOT_CACHE[0]
+
+
+def git_root_of(path: str) -> str | None:
+    """Absolute work-tree root of the repository that *contains* `path`, or None.
+
+    Unlike `_git_root` (which asks about the process's CWD), this resolves the repo
+    from the scanned path via `git -C`, so a detector launched outside the checkout
+    with an absolute scan root still finds the repo's `docs/`/`.env.example` sitting
+    next to the code instead of reading nothing and reporting every key undocumented.
+    Not cached: the answer depends on the argument.
+    """
+    d = path if os.path.isdir(path) else (os.path.dirname(os.path.abspath(path)) or ".")
+    try:
+        out = subprocess.run(
+            ["git", "-C", d, "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        return out or None
+    except (OSError, subprocess.CalledProcessError):
+        return None
 
 
 def rel(path: str) -> str:

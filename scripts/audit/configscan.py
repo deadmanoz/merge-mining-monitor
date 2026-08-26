@@ -156,6 +156,49 @@ def env_read_aliases(text: str) -> set[str]:
 SHELL_VAR = re.compile(r"\$\{?([A-Z][A-Z0-9_]{2,})\}?")
 
 
+def _shell_runtime_refs(text: str) -> set[str]:
+    """`$VAR`/`${VAR}` references a shell would actually *expand*.
+
+    Two constructs carry a `$KEY` that never runs, so counting them as tooling
+    evidence would wrongly suppress a `config-unread` finding for an obsolete key: a
+    `#` comment (only when it starts a word - not the `#` inside `${VAR#pat}`) and a
+    single-quoted span (POSIX single quotes suppress expansion entirely). Double-quoted
+    text still expands, so it is kept. A byte-level scanner, since a regex cannot tell
+    a live `$KEY` from one buried in a comment or single quotes."""
+    kept: list[str] = []
+    i, n = 0, len(text)
+    quote: str | None = None  # None | "'" (no expansion) | '"' (expansion)
+    while i < n:
+        c = text[i]
+        if quote == "'":
+            if c == "'":
+                quote = None  # drop the single-quoted contents entirely
+            i += 1
+            continue
+        if quote == '"':
+            kept.append(c)
+            if c == '"':
+                quote = None
+            i += 1
+            continue
+        if c == "'":
+            quote = "'"
+            i += 1
+            continue
+        if c == '"':
+            quote = '"'
+            kept.append(c)
+            i += 1
+            continue
+        if c == "#" and (i == 0 or text[i - 1] in " \t\n"):
+            nl = text.find("\n", i)  # comment to end of line
+            i = n if nl < 0 else nl
+            continue
+        kept.append(c)
+        i += 1
+    return set(SHELL_VAR.findall("".join(kept)))
+
+
 def tooling_referenced_keys() -> set[str]:
     """UPPER_SNAKE env names referenced by non-Rust operational files - the `justfile`
     and `scripts/**` shell scripts - as `$VAR`/`${VAR}`.
@@ -174,7 +217,7 @@ def tooling_referenced_keys() -> set[str]:
     refs: set[str] = set()
     for p in files:
         try:
-            refs.update(SHELL_VAR.findall(open(p, encoding="utf-8", errors="ignore").read()))
+            refs.update(_shell_runtime_refs(open(p, encoding="utf-8", errors="ignore").read()))
         except OSError:
             continue
     return refs
@@ -385,13 +428,23 @@ def _inventory(root: str, include_tests: bool) -> tuple[dict[str, int], list[_re
 
 
 def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example", include_tests: bool = False) -> list[_report.Finding]:
-    docs = read_text(f"{docs_dir}/configuration.md")
+    # Resolve the relative docs/.env inputs against the *scanned* repo, not the
+    # caller's CWD. Launched from outside the checkout with an absolute scan root, a
+    # bare `docs/configuration.md`/`.env.example` reads nothing, and the whole
+    # documented surface then looks undocumented and unread - a valid-looking but
+    # false data contract. An absolute input, or a root outside any repo, is left as-is.
+    repo = _scan.git_root_of(root)
+
+    def _rooted(p: str) -> str:
+        return p if (os.path.isabs(p) or not repo) else os.path.join(repo, p)
+
+    docs = read_text(f"{_rooted(docs_dir)}/configuration.md")
     prefixes = parse_prefixes(docs)
 
     read_files, struct_locs, key_locs, code_suffixes = _inventory(root, include_tests)
 
     code_full = set(key_locs)
-    example = env_keys(read_text(env_example))
+    example = env_keys(read_text(_rooted(env_example)))
     doc_full, doc_suffixes, doc_template_suffixes = doc_tokens(docs, prefixes)
     # Per-chain suffixes present in .env.example (e.g. NAMECOIN_RPC_URL -> _RPC_URL);
     # tracked separately (NOT merged into doc_suffixes) so the three-way drift stays
@@ -423,8 +476,9 @@ def collect(root: str, docs_dir: str = "docs", env_example: str = ".env.example"
     # sibling crates as unread - a valid-looking but false data contract. Reuse the
     # root inventory when the root already is the workspace; else scan the git root
     # once more for the full read-key set. The per-file findings above stay scoped to
-    # the requested root; only this reverse check widens.
-    ws_root = _scan._git_root()
+    # the requested root; only this reverse check widens. Uses the scanned repo (from
+    # the root), so widening also works when launched from outside the checkout.
+    ws_root = repo
     if ws_root and os.path.abspath(root) != os.path.abspath(ws_root):
         _rf, _sl, ws_key_locs, ws_suffixes = _inventory(ws_root, include_tests)
         full_code_full = set(ws_key_locs)

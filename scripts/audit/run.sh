@@ -11,6 +11,15 @@ set -euo pipefail
 root="${1:-crates}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Validate the root once, here at the entry point. Each standalone detector given a
+# nonexistent root scans an empty tree and exits 0 (configscan even prints doc drift),
+# so without this guard a misspelled root sweeps green and misleads. `report.py` has
+# its own check; this covers the run.sh path.
+if [ ! -d "$root" ]; then
+  echo "error: scan root '$root' is not a directory" >&2
+  exit 2
+fi
+
 status=0
 section() { printf '\n==================== %s ====================\n' "$1"; }
 
