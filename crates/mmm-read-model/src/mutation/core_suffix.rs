@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, bail};
-use bitcoin::block::Header;
 use bitcoin::hashes::Hash as _;
+use bitcoin::{BlockHash, block::Header};
 use tokio_postgres::{Client, GenericClient, Transaction};
 
 use mmm_bitcoin_core::{
@@ -114,11 +114,20 @@ pub async fn replace_core_canonical_suffix(
         source_id,
         expected_contiguous_complete_height,
         common_ancestor_height,
-        expected_local,
-        replacements,
+        CoreSuffixReplacementInput {
+            expected_local,
+            replacements,
+            pending_sync_target: None,
+        },
         (async |_txn| Ok(()), async |_txn| Ok(())),
     )
     .await
+}
+
+pub struct CoreSuffixReplacementInput<'a> {
+    pub expected_local: &'a [ExpectedCoreCanonicalRow],
+    pub replacements: &'a [CoreCanonicalReplacement],
+    pub pending_sync_target: Option<(i32, BlockHash)>,
 }
 
 /// Validated form of [`replace_core_canonical_suffix`]. The caller's source
@@ -130,14 +139,18 @@ pub async fn replace_core_canonical_suffix_validated<VBefore, VAfter>(
     source_id: i64,
     expected_contiguous_complete_height: i32,
     common_ancestor_height: i32,
-    expected_local: &[ExpectedCoreCanonicalRow],
-    replacements: &[CoreCanonicalReplacement],
+    input: CoreSuffixReplacementInput<'_>,
     validators: (VBefore, VAfter),
 ) -> Result<CoreSuffixReplacementSummary>
 where
     VBefore: AsyncFnOnce(&Transaction<'_>) -> Result<()>,
     VAfter: AsyncFnOnce(&Transaction<'_>) -> Result<()>,
 {
+    let CoreSuffixReplacementInput {
+        expected_local,
+        replacements,
+        pending_sync_target,
+    } = input;
     let (validate_before, validate_after) = validators;
     validate_replacement(common_ancestor_height, expected_local, replacements)?;
     let first_height = replacements[0].height;
@@ -146,6 +159,15 @@ where
         .expect("replacement validated as non-empty");
     let target_tip_height = target.height;
     let target_tip_hash = target.header.block_hash();
+    let (sync_target_tip_height, sync_target_tip_hash) =
+        pending_sync_target.unwrap_or((target_tip_height, target_tip_hash));
+    if sync_target_tip_height < target_tip_height
+        || (sync_target_tip_height == target_tip_height && sync_target_tip_hash != target_tip_hash)
+    {
+        bail!(
+            "Bitcoin Core pending sync target {sync_target_tip_height}:{sync_target_tip_hash} does not cover replacement target {target_tip_height}:{target_tip_hash}"
+        );
+    }
     let expected_suffix =
         normalized_expected_suffix(expected_local, common_ancestor_height, target_tip_height);
     let mut lock_hashes = expected_suffix
@@ -201,6 +223,8 @@ where
         first_height,
         target_tip_height,
         target_tip_hash,
+        sync_target_tip_height,
+        sync_target_tip_hash,
         displaced_blocks: plan.displaced.len(),
         queued_hashes: plan.affected_hashes.len(),
     };

@@ -1,11 +1,7 @@
 //! Bounded near-tip Bitcoin Core reorg detection and repair.
 //!
-//! Follow mode captures one active-chain view by walking backwards from a
-//! pinned Core tip. If the local canonical rows contain a competing hash, this
-//! module finds the last complete matching anchor before the first divergence,
-//! fetches the whole replacement suffix before writing anything, and hands the
-//! suffix to the read model for one atomic chain switch. Ordinary gaps without
-//! a competing hash keep using the existing missing-only repair path.
+//! Follow mode atomically repairs a divergent suffix from a pinned Core view;
+//! ordinary gaps keep using the existing missing-only path.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -20,8 +16,8 @@ use tokio_postgres::Client;
 #[cfg(any(test, feature = "db-integration"))]
 use mmm_capture::source_registry::BITCOIN_SOURCE_CODE;
 use mmm_read_model::{
-    CoreCanonicalReplacement, ExpectedCoreCanonicalRow, drain_core_reconcile_queue,
-    replace_core_canonical_suffix_validated,
+    CoreCanonicalReplacement, CoreSuffixReplacementInput, ExpectedCoreCanonicalRow,
+    drain_core_reconcile_queue, replace_core_canonical_suffix_validated,
 };
 #[cfg(any(test, feature = "db-integration"))]
 use mmm_store::get_source_id;
@@ -90,6 +86,21 @@ enum RepairPlanError {
     },
 }
 
+#[derive(Clone, Copy)]
+struct RepairContext<'a> {
+    source_id: i64,
+    target: BitcoinCoreBackboneTip,
+    delay: Duration,
+    window_heights: i32,
+    classifier: &'a ConfiguredParentClassifier,
+}
+
+enum CursorRepairOutcome {
+    NotNeeded,
+    Replan,
+    Replaced(BitcoinCoreSyncStats),
+}
+
 /// Repair the captured near-tip target without allowing the ordinary
 /// contiguous guard to encounter a known fork first. A conflicting suffix is
 /// switched atomically; a window containing only gaps or incomplete matching
@@ -107,7 +118,16 @@ pub(crate) async fn repair_near_tip_backbone_to_target<S>(
 where
     S: BitcoinCoreBackboneSource,
 {
+    let context = RepairContext {
+        source_id,
+        target,
+        delay,
+        window_heights,
+        classifier,
+    };
     let mut may_replan_after_gap_conflict = true;
+    let mut may_replan_after_cursor_race = true;
+    let mut accumulated_stats = BitcoinCoreSyncStats::default();
     loop {
         let state = load_or_init_sync_state(client, source_id).await?;
         validate_target_bounds(
@@ -119,27 +139,46 @@ where
         )
         .await?;
 
-        let core_view = capture_core_view(source, target, window_heights).await?;
-        verify_target_stable(client, source, source_id, target).await?;
-        let view_start = core_view
-            .first()
-            .expect("captured Core view always contains its target")
-            .height;
-        verify_cursor_before_view(
+        // The normal view start is purely height-derived. Check and repair a
+        // stale lower cursor before fetching that view, otherwise recovery
+        // would pay for the same bounded live-window RPC walk twice.
+        let view_start = core_view_start_height(target.height, window_heights);
+        match repair_cursor_before_view(
             client,
             source,
-            source_id,
-            target,
             state.contiguous_complete_height,
             view_start,
+            context,
         )
-        .await?;
+        .await?
+        {
+            CursorRepairOutcome::NotNeeded => {}
+            CursorRepairOutcome::Replan => {
+                if may_replan_after_cursor_race {
+                    // Another writer may have repaired the cursor between the
+                    // direct divergence check and this bounded planning read.
+                    // Reload all state once rather than acting on mixed views.
+                    may_replan_after_cursor_race = false;
+                    continue;
+                }
+                anyhow::bail!(
+                    "Bitcoin Core cursor recovery view changed repeatedly while planning"
+                );
+            }
+            CursorRepairOutcome::Replaced(stats) => {
+                accumulated_stats = add_stats(accumulated_stats, stats);
+                continue;
+            }
+        }
+
+        let core_view = capture_core_view(source, target, window_heights).await?;
+        verify_target_stable(client, source, source_id, target).await?;
         let local_rows = load_local_canonical_rows(client, view_start, target.height).await?;
 
         let plan = match plan_repair(&core_view, &local_rows) {
             Ok(plan) => plan,
             Err(err) => {
-                return record_plan_error(client, source_id, target, err).await;
+                return record_plan_error(client, source_id, target, "live_tip", err).await;
             }
         };
         let RepairPlan::ReplaceFrom {
@@ -157,67 +196,161 @@ where
                 may_replan_after_gap_conflict = false;
                 continue;
             }
-            return gap_result;
+            return gap_result.map(|stats| add_stats(accumulated_stats, stats));
         };
 
-        let common_ancestor_height = core_view[first_replacement_index - 1].height;
-        let replacement_view = &core_view[first_replacement_index..];
-        let replacements = fetch_replacements(source, replacement_view, delay).await?;
-
-        // Coinbase acquisition can take long enough for another fork to occur.
-        // Confirm the captured target is still active immediately before the first
-        // database mutation.
-        verify_target_stable(client, source, source_id, target).await?;
-        let expected_local = expected_local_rows(&local_rows);
-        let replace_result = replace_core_canonical_suffix_validated(
+        let replacement_stats = replace_planned_suffix(
             client,
-            source_id,
+            source,
             state.contiguous_complete_height,
-            common_ancestor_height,
-            &expected_local,
-            &replacements,
-            (
-                async |_txn| {
-                    if let Some(failure) = target_stability_failure(source, target).await? {
-                        return Err(failure.into_error());
-                    }
-                    Ok(())
-                },
-                async |_txn| {
-                    if let Some(failure) = target_stability_failure(source, target).await? {
-                        return Err(failure.into_error());
-                    }
-                    Ok(())
-                },
-            ),
+            &core_view,
+            &local_rows,
+            first_replacement_index,
+            context,
         )
-        .await;
-        if let Err(err) = &replace_result
-            && let Some(failure) = err.downcast_ref::<BackboneIntegrityFailure>()
-        {
-            failure.persist(client, source_id).await?;
-        }
-        replace_result.context("atomically replace Bitcoin Core canonical near-tip suffix")?;
-
-        // The suffix switch persists its changed-parent seeds before committing.
-        // Drain immediately for the normal path; follow startup and every later
-        // tick also replay this queue after a crash or transient cascade failure.
-        drain_core_reconcile_queue(client, source_id, classifier)
-            .await
-            .context("reconcile dependents after Bitcoin Core canonical suffix replacement")?;
-
-        let replacement_stats = BitcoinCoreSyncStats {
-            attempted: replacements.len(),
-            completed: replacements.len(),
-            skipped_complete: 0,
-            coinbase_failed: 0,
-        };
+        .await?;
         let gap_stats =
             repair_near_tip_gaps_to_target(client, source, target, delay, window_heights)
                 .await
                 .context("fill gaps outside the replaced Bitcoin Core suffix")?;
-        return Ok(add_stats(replacement_stats, gap_stats));
+        return Ok(add_stats(
+            accumulated_stats,
+            add_stats(replacement_stats, gap_stats),
+        ));
     }
+}
+
+async fn repair_cursor_before_view<S>(
+    client: &mut Client,
+    source: &S,
+    contiguous_complete_height: i32,
+    view_start: i32,
+    context: RepairContext<'_>,
+) -> Result<CursorRepairOutcome>
+where
+    S: BitcoinCoreBackboneSource,
+{
+    let Some(cursor_target) = cursor_recovery_target_before_view(
+        client,
+        source,
+        context.source_id,
+        context.target,
+        contiguous_complete_height,
+        view_start,
+    )
+    .await?
+    else {
+        return Ok(CursorRepairOutcome::NotNeeded);
+    };
+
+    let cursor_view_start = core_view_start_height(cursor_target.height, context.window_heights);
+    let local_rows =
+        load_local_canonical_rows(client, cursor_view_start, cursor_target.height).await?;
+    let cursor_view =
+        capture_cursor_recovery_view(source, cursor_target, cursor_view_start, &local_rows).await?;
+    verify_target_stable(client, source, context.source_id, context.target).await?;
+    verify_target_stable(client, source, context.source_id, cursor_target).await?;
+    let plan = match plan_repair(&cursor_view, &local_rows) {
+        Ok(plan) => plan,
+        Err(err) => {
+            return record_plan_error(client, context.source_id, context.target, "cursor", err)
+                .await;
+        }
+    };
+    let RepairPlan::ReplaceFrom {
+        first_replacement_index,
+    } = plan
+    else {
+        return Ok(CursorRepairOutcome::Replan);
+    };
+
+    let stats = replace_planned_suffix(
+        client,
+        source,
+        contiguous_complete_height,
+        &cursor_view,
+        &local_rows,
+        first_replacement_index,
+        context,
+    )
+    .await?;
+    Ok(CursorRepairOutcome::Replaced(stats))
+}
+
+async fn replace_planned_suffix<S>(
+    client: &mut Client,
+    source: &S,
+    expected_contiguous_complete_height: i32,
+    core_view: &[CoreViewRow],
+    local_rows: &[LocalCanonicalRow],
+    first_replacement_index: usize,
+    context: RepairContext<'_>,
+) -> Result<BitcoinCoreSyncStats>
+where
+    S: BitcoinCoreBackboneSource,
+{
+    let common_ancestor_height = core_view[first_replacement_index - 1].height;
+    let replacement = core_view.last().expect("non-empty Core view");
+    let replacement_target = BitcoinCoreBackboneTip {
+        height: replacement.height,
+        hash: replacement.header.block_hash(),
+    };
+    let replacements =
+        fetch_replacements(source, &core_view[first_replacement_index..], context.delay).await?;
+
+    // Coinbase acquisition can take long enough for another fork to occur.
+    // Confirm the original live target is still active immediately before the
+    // first database mutation, even when replacing only through an older cursor.
+    verify_target_stable(client, source, context.source_id, context.target).await?;
+    verify_target_stable(client, source, context.source_id, replacement_target).await?;
+    let validate_targets = || async {
+        if let Some(failure) = target_stability_failure(source, context.target).await? {
+            return Err(failure.into_error());
+        }
+        if replacement_target != context.target
+            && let Some(failure) = target_stability_failure(source, replacement_target).await?
+        {
+            return Err(failure.into_error());
+        }
+        Ok(())
+    };
+    let expected_local = expected_local_rows(local_rows);
+    let replace_result = replace_core_canonical_suffix_validated(
+        client,
+        context.source_id,
+        expected_contiguous_complete_height,
+        common_ancestor_height,
+        CoreSuffixReplacementInput {
+            expected_local: &expected_local,
+            replacements: &replacements,
+            pending_sync_target: Some((context.target.height, context.target.hash)),
+        },
+        (
+            async |_txn| validate_targets().await,
+            async |_txn| validate_targets().await,
+        ),
+    )
+    .await;
+    if let Err(err) = &replace_result
+        && let Some(failure) = err.downcast_ref::<BackboneIntegrityFailure>()
+    {
+        failure.persist(client, context.source_id).await?;
+    }
+    replace_result.context("atomically replace Bitcoin Core canonical near-tip suffix")?;
+
+    // The suffix switch persists its changed-parent seeds before committing.
+    // Drain immediately for the normal path; follow startup and every later
+    // tick also replay this queue after a crash or transient cascade failure.
+    drain_core_reconcile_queue(client, context.source_id, context.classifier)
+        .await
+        .context("reconcile dependents after Bitcoin Core canonical suffix replacement")?;
+
+    Ok(BitcoinCoreSyncStats {
+        attempted: replacements.len(),
+        completed: replacements.len(),
+        skipped_complete: 0,
+        coinbase_failed: 0,
+    })
 }
 
 fn is_height_conflict(result: &Result<BitcoinCoreSyncStats>) -> bool {
@@ -247,24 +380,21 @@ fn add_stats(left: BitcoinCoreSyncStats, right: BitcoinCoreSyncStats) -> Bitcoin
     }
 }
 
-/// A fork whose stale contiguous cursor has already fallen below the captured
-/// repair view must not be mistaken for an ordinary empty near-tip window.
-/// Compare that proven local cursor directly with Core before any gap fill can
-/// mutate newer rows, and report an explicit out-of-window repair failure when
-/// the hashes differ.
-async fn verify_cursor_before_view<S>(
+/// Compare an out-of-view cursor with Core, repair a bounded divergence, then
+/// leave the remaining gap to ordinary follow batches.
+async fn cursor_recovery_target_before_view<S>(
     client: &Client,
     source: &S,
     source_id: i64,
     target: BitcoinCoreBackboneTip,
     contiguous_complete_height: i32,
     view_start: i32,
-) -> Result<()>
+) -> Result<Option<BitcoinCoreBackboneTip>>
 where
     S: BitcoinCoreBackboneSource,
 {
     if contiguous_complete_height < 0 || contiguous_complete_height >= view_start {
-        return Ok(());
+        return Ok(None);
     }
 
     let rows = load_local_canonical_rows(
@@ -273,7 +403,7 @@ where
         contiguous_complete_height,
     )
     .await?;
-    let [local] = rows.as_slice() else {
+    if rows.is_empty() {
         return reorg_integrity_failure(
             client,
             source_id,
@@ -293,20 +423,20 @@ where
             }),
         )
         .await;
-    };
-    if local.coinbase_status != "complete" {
+    }
+    if !rows.iter().any(|row| row.coinbase_status == "complete") {
         return reorg_integrity_failure(
             client,
             source_id,
             contiguous_complete_height,
             format!(
-                "Bitcoin Core contiguous cursor {} is not coinbase-complete",
+                "Bitcoin Core contiguous cursor {} has no coinbase-complete canonical row",
                 contiguous_complete_height
             ),
             json!({
                 "reason": "contiguous_cursor_row_incomplete",
                 "contiguous_complete_height": contiguous_complete_height,
-                "coinbase_status": local.coinbase_status,
+                "coinbase_statuses": rows.iter().map(|row| &row.coinbase_status).collect::<Vec<_>>(),
                 "captured_view_start": view_start,
                 "target_tip_height": target.height,
                 "target_tip_hash": target.hash.to_string(),
@@ -324,30 +454,14 @@ where
                 contiguous_complete_height
             )
         })?;
-    if local.hash == active_hash.to_byte_array() {
-        return Ok(());
+    if rows.len() == 1 && rows[0].hash == active_hash.to_byte_array() {
+        return Ok(None);
     }
 
-    reorg_integrity_failure(
-        client,
-        source_id,
-        contiguous_complete_height,
-        format!(
-            "Bitcoin Core contiguous cursor divergence at height {} lies below bounded view start {}",
-            contiguous_complete_height, view_start
-        ),
-        json!({
-            "reason": "common_ancestor_outside_window",
-            "first_conflict_height": contiguous_complete_height,
-            "local_cursor_hash": hex::encode(&local.hash),
-            "current_core_hash": active_hash.to_string(),
-            "captured_view_start": view_start,
-            "target_tip_height": target.height,
-            "target_tip_hash": target.hash.to_string(),
-            "operator_action": "stop serving, back up PostgreSQL, and run the documented deep-reorg recovery workflow",
-        }),
-    )
-    .await
+    Ok(Some(BitcoinCoreBackboneTip {
+        height: contiguous_complete_height,
+        hash: active_hash,
+    }))
 }
 
 async fn validate_target_bounds(
@@ -441,6 +555,43 @@ where
     S: BitcoinCoreBackboneSource,
 {
     let view_start = core_view_start_height(target.height, window_heights);
+    capture_core_view_until(source, target, view_start, |_| false).await
+}
+
+/// Capture a cursor-centred view only as far as the nearest usable local
+/// anchor. The safety bound remains the configured window, while a shallow
+/// delayed-startup fork avoids an unnecessary full-window RPC walk.
+async fn capture_cursor_recovery_view<S>(
+    source: &S,
+    target: BitcoinCoreBackboneTip,
+    view_start: i32,
+    local_rows: &[LocalCanonicalRow],
+) -> Result<Vec<CoreViewRow>>
+where
+    S: BitcoinCoreBackboneSource,
+{
+    capture_core_view_until(source, target, view_start, |core| {
+        let mut matching = local_rows
+            .iter()
+            .filter(|local| local.height == core.height);
+        let Some(local) = matching.next() else {
+            return false;
+        };
+        matching.next().is_none() && local.hash == core.hash && local.coinbase_status == "complete"
+    })
+    .await
+}
+
+async fn capture_core_view_until<S, F>(
+    source: &S,
+    target: BitcoinCoreBackboneTip,
+    view_start: i32,
+    mut stop: F,
+) -> Result<Vec<CoreViewRow>>
+where
+    S: BitcoinCoreBackboneSource,
+    F: FnMut(&CoreViewRow) -> bool,
+{
     let mut descending = Vec::with_capacity((target.height - view_start + 1) as usize);
     let mut requested_hash = target.hash;
     for height in (view_start..=target.height).rev() {
@@ -456,11 +607,16 @@ where
                 height
             );
         }
-        descending.push(CoreViewRow {
+        let row = CoreViewRow {
             height,
             hash: actual_hash.to_byte_array().to_vec(),
             header,
-        });
+        };
+        let reached_anchor = stop(&row);
+        descending.push(row);
+        if reached_anchor {
+            break;
+        }
         requested_hash = header.prev_blockhash;
     }
     descending.reverse();
@@ -652,6 +808,7 @@ async fn record_plan_error<T>(
     client: &Client,
     source_id: i64,
     target: BitcoinCoreBackboneTip,
+    view: &'static str,
     err: RepairPlanError,
 ) -> Result<T> {
     match err {
@@ -670,10 +827,12 @@ async fn record_plan_error<T>(
                 ),
                 json!({
                     "reason": "common_ancestor_outside_window",
+                    "view": view,
                     "first_divergence_height": first_divergence_height,
                     "first_conflict_height": first_conflict_height,
                     "view_start": view_start,
                     "view_end": view_end,
+                    "target_tip_height": target.height,
                     "target_tip_hash": target.hash.to_string(),
                     "operator_action": "stop serving, back up PostgreSQL, and run the documented deep-reorg recovery workflow",
                 }),

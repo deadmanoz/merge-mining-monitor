@@ -183,6 +183,8 @@ and raw scriptPubKey forms that cannot be represented as a value-complete
   primary replay uses strict Core classification, allowing a replacement to
   reclassify children that became inferably stale while retaining previously
   persisted Core coinbase and pool evidence.
+  When the contiguous cursor is below the live-tip repair view, this transaction
+  ends at the cursor; normal bounded follow batches fill the remaining gap.
 - A transient classifier `unknown` never demotes a previously proven canonical
   or stale row.
 - Bad evidence is removed with explicit event revocation, then the read model

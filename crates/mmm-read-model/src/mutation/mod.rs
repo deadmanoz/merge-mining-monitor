@@ -40,8 +40,8 @@ mod core_suffix_status;
 #[cfg(feature = "db-integration")]
 pub use core_suffix::drain_core_reconcile_queue_with_budget_for_test;
 pub use core_suffix::{
-    CoreCanonicalReplacement, CoreSuffixReplacementSummary, ExpectedCoreCanonicalRow,
-    drain_core_reconcile_queue, replace_core_canonical_suffix,
+    CoreCanonicalReplacement, CoreSuffixReplacementInput, CoreSuffixReplacementSummary,
+    ExpectedCoreCanonicalRow, drain_core_reconcile_queue, replace_core_canonical_suffix,
     replace_core_canonical_suffix_validated,
 };
 

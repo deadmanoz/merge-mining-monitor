@@ -20,12 +20,15 @@ use mmm_producers::{
     BitcoinCoreBackboneSource, BitcoinCoreBackboneTip, BitcoinCoreSyncConfig,
     accept_live_repaired_target_for_test, initialize_follow_state,
     record_retryable_repair_failure_for_test, repair_near_tip_backbone_for_test,
-    run_bitcoin_core_follow_tick_for_test, run_sync_bitcoin_core,
+    run_bitcoin_core_follow_tick_for_test, run_bitcoin_core_initial_follow_tick_for_test,
+    run_sync_bitcoin_core,
 };
 use mmm_read_model::{
-    CoreCanonicalReplacement, ExpectedCoreCanonicalRow, compute_source_health_from_base,
-    drain_core_reconcile_queue, drain_core_reconcile_queue_with_budget_for_test,
-    rebuild_source_health, reconcile_from_merge_mining_event, replace_core_canonical_suffix,
+    CoreCanonicalReplacement, CoreSuffixReplacementInput, ExpectedCoreCanonicalRow,
+    compute_source_health_from_base, drain_core_reconcile_queue,
+    drain_core_reconcile_queue_with_budget_for_test, rebuild_source_health,
+    reconcile_from_merge_mining_event, replace_core_canonical_suffix,
+    replace_core_canonical_suffix_validated,
 };
 use mmm_store::get_source_id;
 use serde_json::json;
@@ -1266,14 +1269,14 @@ async fn follow_tick_forces_repair_when_scheduled_sweep_is_recent() -> Result<()
 #[tokio::test]
 async fn forced_repair_propagates_structural_conflict_below_bounded_view() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        let active = test_header_chain(8, 1_800_006_200);
-        let active_source = FakeBitcoinCoreBackboneSource::new(8, active.clone());
+        let original = test_header_chain(15, 1_800_006_200);
+        let original_source = FakeBitcoinCoreBackboneSource::new(8, original.clone());
         run_sync_bitcoin_core(
             &mut client,
-            &active_source,
+            &original_source,
             BitcoinCoreSyncConfig {
                 from_height: Some(0),
-                to_height: Some(0),
+                to_height: Some(8),
                 tip: true,
                 missing_only: true,
                 ..BitcoinCoreSyncConfig::default()
@@ -1281,10 +1284,11 @@ async fn forced_repair_propagates_structural_conflict_below_bounded_view() -> Re
         )
         .await?;
 
-        insert_matching_upper_canonical(&client, &active[&1], 1).await?;
-        let stale_island = fork_header_chain(&active, 2, 2, 1_800_006_400);
-        insert_matching_upper_canonical(&client, &stale_island[&2], 2).await?;
-        let cache_classifier = core_cache_classifier(&active, 8);
+        let active = fork_header_chain(&original, 3, 14, 1_800_006_400);
+        let old_h3 = header_hash_bytes(&original[&3]);
+        let new_h3 = header_hash_bytes(&active[&3]);
+        let active_source = FakeBitcoinCoreBackboneSource::new(14, active.clone());
+        let cache_classifier = core_cache_classifier(&active, 14);
         let err = run_bitcoin_core_follow_tick_for_test(
             &mut client,
             &active_source,
@@ -1296,15 +1300,32 @@ async fn forced_repair_propagates_structural_conflict_below_bounded_view() -> Re
             },
         )
         .await
-        .expect_err("a forced sweep cannot hide a structural conflict below its view");
+        .expect_err("a forced sweep must fail when the cursor fork exceeds its lookback");
 
         assert!(
-            format!("{err:#}").contains("lies below bounded view start"),
+            format!("{err:#}").contains("no complete matching anchor"),
             "unexpected forced-repair error: {err:#}"
         );
+        let old_kind: String = client
+            .query_one(
+                "SELECT kind FROM block WHERE btc_header_hash = $1",
+                &[&old_h3],
+            )
+            .await?
+            .get(0);
+        assert_eq!(old_kind, "canonical");
+        let new_rows: i64 = client
+            .query_one(
+                "SELECT count(*)::bigint FROM block WHERE btc_header_hash = $1",
+                &[&new_h3],
+            )
+            .await?
+            .get(0);
+        assert_eq!(new_rows, 0);
         let state = client
             .query_one(
-                "SELECT last_error_code, last_error_height FROM bitcoin_core_sync_state",
+                "SELECT last_error_code, last_error_height, last_error_details \
+                 FROM bitcoin_core_sync_state",
                 &[],
             )
             .await?;
@@ -1313,7 +1334,17 @@ async fn forced_repair_propagates_structural_conflict_below_bounded_view() -> Re
             Some("backbone_link_mismatch"),
             "repair-only telemetry must not mask the earlier sync failure"
         );
-        assert_eq!(state.get::<_, Option<i32>>(1), Some(3));
+        assert_eq!(state.get::<_, Option<i32>>(1), Some(9));
+        let details: Json<serde_json::Value> = state.get(2);
+        assert_eq!(details.0["previous_height"], json!(8));
+        let queued: i64 = client
+            .query_one(
+                "SELECT count(*)::bigint FROM bitcoin_core_reconcile_queue",
+                &[],
+            )
+            .await?
+            .get(0);
+        assert_eq!(queued, 0);
 
         Ok::<_, anyhow::Error>(())
     })

@@ -19,6 +19,8 @@ pub(super) struct ReplacementPending {
     pub(super) first_height: i32,
     pub(super) target_tip_height: i32,
     pub(super) target_tip_hash: BlockHash,
+    pub(super) sync_target_tip_height: i32,
+    pub(super) sync_target_tip_hash: BlockHash,
     pub(super) displaced_blocks: usize,
     pub(super) queued_hashes: usize,
 }
@@ -120,7 +122,7 @@ pub(super) async fn mark_replacement_pending<C: GenericClient>(
     source_id: i64,
     pending: &ReplacementPending,
 ) -> Result<()> {
-    let target_hash_bytes = pending.target_tip_hash.to_byte_array().to_vec();
+    let target_hash_bytes = pending.sync_target_tip_hash.to_byte_array().to_vec();
     // The suffix writer already holds this row FOR UPDATE. Suspend an unresolved
     // producer error inside the pending details so the final queue transaction
     // can restore it exactly. A structural conflict covered by the committed
@@ -152,7 +154,7 @@ pub(super) async fn mark_replacement_pending<C: GenericClient>(
             &[
                 &source_id,
                 &SYNC_MODE_CONTIGUOUS,
-                &pending.target_tip_height,
+                &pending.sync_target_tip_height,
                 &target_hash_bytes,
                 &pending.contiguous_complete_height,
                 &RECONCILE_PENDING,
@@ -267,6 +269,8 @@ mod tests {
             first_height: 3,
             target_tip_height: 4,
             target_tip_hash: BlockHash::all_zeros(),
+            sync_target_tip_height: 4,
+            sync_target_tip_hash: BlockHash::all_zeros(),
             displaced_blocks: 1,
             queued_hashes: 2,
         }

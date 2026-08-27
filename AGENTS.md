@@ -56,10 +56,12 @@ Use `just` targets, not raw commands, when a target exists:
   transaction. Drain `historical_reconcile_queue` in bounded parent
   transactions and retain changed-hash seeds until dependent cascades succeed;
   never hold every parent advisory lock across a chain import.
-- Bitcoin Core follow mode repairs only bounded near-tip reorgs. Capture a
-  tip-pinned backward header view, replace the complete suffix atomically,
-  retain displaced blocks as stale evidence, and enqueue every affected old and
-  new hash in `bitcoin_core_reconcile_queue` before commit. Core-backed
+- Bitcoin Core follow mode repairs bounded near-tip reorgs and divergent
+  lagged cursors. Capture a tip-pinned backward header view and, when needed, a
+  second bounded view ending at the persisted cursor. Replace only the complete
+  divergent suffix atomically, retain displaced blocks as stale evidence, and
+  enqueue every affected old and new hash in `bitcoin_core_reconcile_queue`
+  before commit. Core-backed
   classifiers and reconcilers take the shared header-cache lock before the
   shared canonical-view barrier. Suffix replacement takes the shared cache lock
   before the canonical barrier exclusively; ordinary canonical-row writers and

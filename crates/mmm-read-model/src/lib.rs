@@ -24,13 +24,14 @@ pub use known_stale_reclassify::{
 };
 pub use mutation::{
     CommittedParentMutation, CoreCanonicalReplacement, CoreCanonicalWrite,
-    CoreSuffixReplacementSummary, ExpectedCoreCanonicalRow, capture_in_txn,
-    capture_preclassified_in_txn, clear_authoritative_historical_provenance_in_transaction,
-    drain_core_reconcile_queue, drain_historical_reconcile_queue,
-    drain_historical_reconcile_queue_with_nbits_table, enqueue_historical_parent_reconcile,
-    rebuild_historical_source_health, reconcile_authoritative_historical_source_in_transaction,
-    record_coinbase_failure, replace_core_canonical_suffix,
-    replace_core_canonical_suffix_validated, restore_merge_mining_event, revoke_merge_mining_event,
+    CoreSuffixReplacementInput, CoreSuffixReplacementSummary, ExpectedCoreCanonicalRow,
+    capture_in_txn, capture_preclassified_in_txn,
+    clear_authoritative_historical_provenance_in_transaction, drain_core_reconcile_queue,
+    drain_historical_reconcile_queue, drain_historical_reconcile_queue_with_nbits_table,
+    enqueue_historical_parent_reconcile, rebuild_historical_source_health,
+    reconcile_authoritative_historical_source_in_transaction, record_coinbase_failure,
+    replace_core_canonical_suffix, replace_core_canonical_suffix_validated,
+    restore_merge_mining_event, revoke_merge_mining_event,
     run_exclusive_core_canonical_view_transaction, update_parent_events, write_core_canonical,
     write_core_canonical_validated, write_historical_base_in_transaction,
 };

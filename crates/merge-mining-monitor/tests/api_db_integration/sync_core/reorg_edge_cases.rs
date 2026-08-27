@@ -110,6 +110,57 @@ impl BitcoinCoreBackboneSource for GatedBlockHashBackboneSource {
     }
 }
 
+#[derive(Clone)]
+struct OneShotCursorForkSource {
+    active: FakeBitcoinCoreBackboneSource,
+    cursor_fork: FakeBitcoinCoreBackboneSource,
+    cursor_height: i32,
+    served_cursor_fork: Arc<AtomicBool>,
+}
+
+impl OneShotCursorForkSource {
+    fn new(
+        active: FakeBitcoinCoreBackboneSource,
+        cursor_fork: FakeBitcoinCoreBackboneSource,
+        cursor_height: i32,
+    ) -> Self {
+        Self {
+            active,
+            cursor_fork,
+            cursor_height,
+            served_cursor_fork: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+impl BitcoinCoreBackboneSource for OneShotCursorForkSource {
+    async fn tip(&self) -> Result<BitcoinCoreBackboneTip> {
+        self.active.tip().await
+    }
+
+    async fn block_hash(&self, height: i32) -> Result<BlockHash> {
+        if height == self.cursor_height && !self.served_cursor_fork.swap(true, Ordering::SeqCst) {
+            self.cursor_fork.block_hash(height).await
+        } else {
+            self.active.block_hash(height).await
+        }
+    }
+
+    async fn block_header(&self, hash: BlockHash) -> Result<Header> {
+        match self.active.block_header(hash).await {
+            Ok(header) => Ok(header),
+            Err(_) => self.cursor_fork.block_header(hash).await,
+        }
+    }
+
+    async fn block_coinbase(&self, hash: BlockHash) -> Result<BitcoinCoreBlockCoinbase> {
+        match self.active.block_coinbase(hash).await {
+            Ok(coinbase) => Ok(coinbase),
+            Err(_) => self.cursor_fork.block_coinbase(hash).await,
+        }
+    }
+}
+
 struct DisplacedAuxpowEvidence<'a> {
     event_id: i64,
     source_id: i64,
@@ -1443,6 +1494,8 @@ async fn follow_repair_refuses_reorg_beyond_window_without_chain_mutation() -> R
         );
         let details: Json<serde_json::Value> = error.get(1);
         assert_eq!(details.0["reason"], json!("common_ancestor_outside_window"));
+        assert_eq!(details.0["view"], json!("live_tip"));
+        assert_eq!(details.0["target_tip_height"], json!(4));
         let queued: i64 = client
             .query_one(
                 "SELECT count(*)::bigint FROM bitcoin_core_reconcile_queue",
@@ -1456,10 +1509,18 @@ async fn follow_repair_refuses_reorg_beyond_window_without_chain_mutation() -> R
     })
 }
 
+fn assert_bounded_cursor_recovery_rpc(source: &FakeBitcoinCoreBackboneSource) {
+    let header_calls = source.header_calls.lock().unwrap().len();
+    assert!(
+        header_calls <= 15,
+        "cursor recovery RPC work must stay bounded by the cursor and live windows, not the target gap; fetched {header_calls} headers"
+    );
+}
+
 #[tokio::test]
-async fn follow_repair_diagnoses_stale_cursor_below_current_view() -> Result<()> {
+async fn cursor_repair_revalidates_its_own_target_before_mutation() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        let original = test_header_chain(9, 1_800_035_000);
+        let original = test_header_chain(3, 1_800_033_000);
         let original_source = FakeBitcoinCoreBackboneSource::new(2, original.clone());
         run_sync_bitcoin_core(
             &mut client,
@@ -1474,21 +1535,86 @@ async fn follow_repair_diagnoses_stale_cursor_below_current_view() -> Result<()>
         )
         .await?;
 
-        let active = fork_header_chain(&original, 2, 8, 1_800_036_000);
-        let old_h2 = header_hash_bytes(&original[&2]);
-        let active_h5 = header_hash_bytes(&active[&5]);
-        let active_source = FakeBitcoinCoreBackboneSource::new(8, active);
+        let active = fork_header_chain(&original, 2, 80, 1_800_034_000);
+        let transient = fork_header_chain(&original, 2, 2, 1_800_034_500);
+        let source = OneShotCursorForkSource::new(
+            FakeBitcoinCoreBackboneSource::new(80, active),
+            FakeBitcoinCoreBackboneSource::new(2, transient.clone()),
+            2,
+        );
+
         let err = repair_near_tip_backbone_for_test(
             &mut client,
-            &active_source,
-            active_source.tip().await?,
+            &source,
+            source.tip().await?,
             Duration::ZERO,
             4,
         )
         .await
-        .expect_err("a stale cursor below the repair view must fail before gap fill");
+        .expect_err("a cursor view from a transient branch must not be committed");
+        assert!(format!("{err:#}").contains("target moved during near-tip repair"));
+        assert_eq!(canonical_view(&client, 2, 2).await?.len(), 1);
+        let transient_rows: i64 = client
+            .query_one(
+                "SELECT count(*)::bigint FROM block WHERE btc_header_hash = $1",
+                &[&header_hash_bytes(&transient[&2])],
+            )
+            .await?
+            .get(0);
+        assert_eq!(transient_rows, 0);
 
-        assert!(err.to_string().contains("lies below bounded view start"));
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn scheduled_follow_repairs_stale_cursor_clears_error_and_resumes() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let original = test_header_chain(81, 1_800_035_000);
+        let original_source = FakeBitcoinCoreBackboneSource::new(2, original.clone());
+        run_sync_bitcoin_core(
+            &mut client,
+            &original_source,
+            BitcoinCoreSyncConfig {
+                from_height: Some(0),
+                to_height: Some(2),
+                tip: true,
+                missing_only: true,
+                ..BitcoinCoreSyncConfig::default()
+            },
+        )
+        .await?;
+
+        let active = fork_header_chain(&original, 2, 80, 1_800_036_000);
+        let old_h2 = header_hash_bytes(&original[&2]);
+        insert_matching_upper_canonical(&client, &active[&2], 2).await?;
+        insert_matching_upper_canonical(&client, &active[&3], 3).await?;
+        client
+            .execute(
+                "UPDATE bitcoin_core_sync_state \
+                 SET last_scanned_height = 3, last_attempted_height = 3, \
+                     last_error_code = 'backbone_link_mismatch', last_error_height = 3, \
+                     last_error = 'canonical link mismatch after delayed startup', \
+                     last_error_details = '{\"previous_height\": 2}'::jsonb",
+                &[],
+            )
+            .await?;
+        let active_source = FakeBitcoinCoreBackboneSource::new(80, active.clone());
+        let cache_classifier = core_cache_classifier(&active, 80);
+        let outcome = run_bitcoin_core_initial_follow_tick_for_test(
+            &mut client,
+            &active_source,
+            &cache_classifier,
+            BitcoinCoreSyncConfig {
+                limit: 3,
+                near_tip_repair_window_heights: 4,
+                follow_interval: Duration::from_secs(60),
+                ..BitcoinCoreSyncConfig::default()
+            },
+        )
+        .await?;
+
+        assert_eq!(outcome, (true, false));
         let old_kind: String = client
             .query_one(
                 "SELECT kind FROM block WHERE btc_header_hash = $1",
@@ -1496,27 +1622,53 @@ async fn follow_repair_diagnoses_stale_cursor_below_current_view() -> Result<()>
             )
             .await?
             .get(0);
-        assert_eq!(old_kind, "canonical");
-        let active_rows: i64 = client
+        assert_eq!(old_kind, "stale");
+        for height in [2, 3, 4, 5, 77, 78, 79, 80] {
+            let row = client
+                .query_one(
+                    "SELECT btc_header_hash, btc_coinbase_status \
+                     FROM block WHERE kind = 'canonical' AND btc_height = $1",
+                    &[&height],
+                )
+                .await?;
+            assert_eq!(
+                row.get::<_, Vec<u8>>(0),
+                header_hash_bytes(&active[&height])
+            );
+            assert_eq!(row.get::<_, String>(1), "complete");
+        }
+        let unsynced_h6: i64 = client
             .query_one(
-                "SELECT count(*)::bigint FROM block WHERE btc_header_hash = $1",
-                &[&active_h5],
-            )
-            .await?
-            .get(0);
-        assert_eq!(
-            active_rows, 0,
-            "out-of-window detection mutates no newer rows"
-        );
-        let details: Json<serde_json::Value> = client
-            .query_one(
-                "SELECT last_error_details FROM bitcoin_core_sync_state",
+                "SELECT count(*)::bigint FROM block WHERE kind = 'canonical' AND btc_height = 6",
                 &[],
             )
             .await?
             .get(0);
-        assert_eq!(details.0["reason"], json!("common_ancestor_outside_window"));
-        assert_eq!(details.0["first_conflict_height"], json!(2));
+        assert_eq!(unsynced_h6, 0, "ordinary catch-up remains batch-bounded");
+        let sync = client
+            .query_one(
+                "SELECT target_tip_height, target_tip_hash, contiguous_complete_height, \
+                        last_error_code \
+                 FROM bitcoin_core_sync_state",
+                &[],
+            )
+            .await?;
+        assert_eq!(sync.get::<_, Option<i32>>(0), Some(80));
+        assert_eq!(
+            sync.get::<_, Option<Vec<u8>>>(1).as_deref(),
+            Some(active[&80].block_hash().to_byte_array().as_slice())
+        );
+        assert_eq!(sync.get::<_, i32>(2), 5);
+        assert_eq!(sync.get::<_, Option<String>>(3), None);
+        assert_bounded_cursor_recovery_rpc(&active_source);
+        let queued: i64 = client
+            .query_one(
+                "SELECT count(*)::bigint FROM bitcoin_core_reconcile_queue",
+                &[],
+            )
+            .await?
+            .get(0);
+        assert_eq!(queued, 0);
 
         Ok::<_, anyhow::Error>(())
     })
