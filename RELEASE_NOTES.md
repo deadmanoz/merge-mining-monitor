@@ -1,5 +1,10 @@
 # Release Notes
 
+## [0.7.2] - 2026-08-27
+
+- Clear a recovered Bitcoin Core link error after revalidating the cached block
+  and its predecessor link, including when no new rows need importing.
+
 ## [0.7.1] - 2026-08-27
 
 - Recover a shallow Bitcoin Core fork even when a long outage leaves the
