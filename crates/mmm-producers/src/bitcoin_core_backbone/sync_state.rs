@@ -11,7 +11,7 @@ use mmm_read_model::run_exclusive_core_canonical_view_transaction;
 use super::{
     BackboneIntegrityError, BackboneIntegrityFailure, BitcoinCoreBackboneSource,
     BitcoinCoreBackboneTip, REPAIR_OWNED_ERROR_CODES, SYNC_MODE_CONTIGUOUS,
-    TARGET_TIP_CHANGED_ERROR_CODE, target_stability_failure,
+    TARGET_TIP_CHANGED_ERROR_CODE, guard_existing_link, target_stability_failure,
 };
 
 /// In-memory mirror of the `bitcoin_core_sync_state` cursor row for one batch.
@@ -20,6 +20,8 @@ pub(super) struct SyncState {
     pub(super) target_tip_height: Option<i32>,
     pub(super) target_tip_hash: Option<Vec<u8>>,
     pub(super) contiguous_complete_height: i32,
+    pub(super) last_error_code: Option<String>,
+    pub(super) last_error_height: Option<i32>,
     /// Keep a coinbase error visible when a later height succeeds in the same batch.
     pub(super) preserve_error: bool,
 }
@@ -62,7 +64,8 @@ pub(super) async fn load_or_init_sync_state<C: GenericClient>(
             "INSERT INTO bitcoin_core_sync_state (source_id, sync_mode, created_at, updated_at) \
              VALUES ($1, $2, extract(epoch from now())::bigint, extract(epoch from now())::bigint) \
              ON CONFLICT (source_id, sync_mode) DO UPDATE SET updated_at = bitcoin_core_sync_state.updated_at \
-             RETURNING target_tip_height, target_tip_hash, contiguous_complete_height",
+             RETURNING target_tip_height, target_tip_hash, contiguous_complete_height, \
+                       last_error_code, last_error_height",
             &[&source_id, &SYNC_MODE_CONTIGUOUS],
         )
         .await
@@ -71,6 +74,8 @@ pub(super) async fn load_or_init_sync_state<C: GenericClient>(
         target_tip_height: row.get(0),
         target_tip_hash: row.get(1),
         contiguous_complete_height: row.get(2),
+        last_error_code: row.get(3),
+        last_error_height: row.get(4),
         preserve_error: false,
     })
 }
@@ -292,6 +297,64 @@ pub(super) async fn advance_contiguous_complete_prefix<C: GenericClient>(
             .await
             .context("advance Bitcoin Core contiguous sync cursor")?;
     }
+    Ok(())
+}
+
+/// Clear a stale link error only after Core confirms the cached row at that
+/// height. The sync-state row remains locked by `load_or_init_sync_state`, so a
+/// newer concurrent error is written after this transaction and stays visible.
+pub(super) async fn clear_resolved_backbone_link_error<C, S>(
+    client: &C,
+    source: &S,
+    source_id: i64,
+    state: &SyncState,
+) -> Result<()>
+where
+    C: GenericClient,
+    S: BitcoinCoreBackboneSource,
+{
+    if state.last_error_code.as_deref() != Some("backbone_link_mismatch") {
+        return Ok(());
+    }
+    let Some(error_height) = state.last_error_height else {
+        return Ok(());
+    };
+    if error_height > state.contiguous_complete_height {
+        return Ok(());
+    }
+
+    let core_hash = source
+        .block_hash(error_height)
+        .await
+        .with_context(|| format!("revalidate resolved Core link error at height {error_height}"))?;
+    let rows = load_canonical_rows_at_height(client, error_height).await?;
+    let [row] = rows.as_slice() else {
+        return Ok(());
+    };
+    if row.coinbase_status != "complete"
+        || row.hash.as_slice() != core_hash.to_byte_array().as_slice()
+    {
+        return Ok(());
+    }
+    guard_existing_link(client, source_id, error_height, row, true).await?;
+
+    client
+        .execute(
+            "UPDATE bitcoin_core_sync_state s \
+             SET last_error_code = NULL, last_error_height = NULL, last_error = NULL, \
+                 last_error_details = '{}'::jsonb, \
+                 updated_at = extract(epoch from now())::bigint \
+             WHERE s.source_id = $1 AND s.sync_mode = $2 \
+               AND s.last_error_code = 'backbone_link_mismatch' \
+               AND s.last_error_height = $3 \
+               AND NOT EXISTS ( \
+                   SELECT 1 FROM bitcoin_core_reconcile_queue q \
+                   WHERE q.source_id = s.source_id \
+               )",
+            &[&source_id, &SYNC_MODE_CONTIGUOUS, &error_height],
+        )
+        .await
+        .context("clear resolved Bitcoin Core backbone link error")?;
     Ok(())
 }
 

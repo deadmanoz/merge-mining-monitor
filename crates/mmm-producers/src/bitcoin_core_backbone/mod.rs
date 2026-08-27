@@ -51,7 +51,8 @@ pub(crate) use integrity::{BackboneIntegrityError, integrity_error, is_backbone_
 use integrity::{guard_existing_link, guard_header_link, guard_same_height_conflicts};
 use sync_state::{
     CanonicalHeightRow, SyncState, accept_live_repaired_target, advance_contiguous_complete_prefix,
-    guard_no_pending_core_reconcile, load_canonical_rows_at_height, load_or_init_sync_state,
+    clear_resolved_backbone_link_error, guard_no_pending_core_reconcile,
+    load_canonical_rows_at_height, load_or_init_sync_state,
     skipped_complete_has_missing_dependents, update_sync_error, update_sync_progress,
     verify_or_set_target_tip,
 };
@@ -418,6 +419,7 @@ where
                 verify_or_set_target_tip(txn, source_id, &mut state, tip).await?;
             }
             advance_contiguous_complete_prefix(txn, source_id, &mut state).await?;
+            clear_resolved_backbone_link_error(txn, source, source_id, &state).await?;
             Ok((state, tip))
         },
     )

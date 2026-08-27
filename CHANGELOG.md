@@ -6,6 +6,10 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Clear stale Bitcoin Core link-error telemetry after Core revalidates the
+  already-complete cached row and its predecessor link, including zero-work
+  recovery batches.
+
 ## [0.7.1] - 2026-08-27
 
 - Recover a shallow Bitcoin Core fork after a long follow-mode outage by

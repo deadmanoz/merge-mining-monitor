@@ -952,6 +952,73 @@ async fn sync_bitcoin_core_tip_limits_and_resumes_contiguous_prefix() -> Result<
 }
 
 #[tokio::test]
+async fn sync_bitcoin_core_clears_error_superseded_by_contiguous_progress() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let headers = test_header_chain(2, 1_700_000_000);
+        let initial_source = FakeBitcoinCoreBackboneSource::new(2, headers.clone());
+        run_sync_bitcoin_core(&mut client, &initial_source, tip_missing_config(3)).await?;
+
+        client
+            .execute(
+                "UPDATE bitcoin_core_sync_state \
+                 SET last_error_code = 'backbone_link_mismatch', last_error_height = 1, \
+                     last_error = 'superseded link mismatch', \
+                     last_error_details = '{\"previous_height\":0}'::jsonb",
+                &[],
+            )
+            .await?;
+
+        let recovered_source = FakeBitcoinCoreBackboneSource::new(2, headers);
+        let stats =
+            run_sync_bitcoin_core(&mut client, &recovered_source, tip_missing_config(1)).await?;
+        assert_eq!(stats.attempted, 0);
+
+        let row = client
+            .query_one(
+                "SELECT contiguous_complete_height, last_error_code, last_error_height, \
+                        last_error, last_error_details \
+                 FROM bitcoin_core_sync_state",
+                &[],
+            )
+            .await?;
+        assert_eq!(row.get::<_, i32>(0), 2);
+        assert_eq!(row.get::<_, Option<String>>(1), None);
+        assert_eq!(row.get::<_, Option<i32>>(2), None);
+        assert_eq!(row.get::<_, Option<String>>(3), None);
+        assert_eq!(row.get::<_, Json<serde_json::Value>>(4).0, json!({}));
+
+        client
+            .execute(
+                "UPDATE block SET btc_prev_header_hash = $1 \
+                 WHERE kind = 'canonical' AND btc_height = 1",
+                &[&hash_bytes(0xdead)],
+            )
+            .await?;
+        client
+            .execute(
+                "UPDATE bitcoin_core_sync_state \
+                 SET last_error_code = 'backbone_link_mismatch', last_error_height = 1, \
+                     last_error = 'unresolved link mismatch', \
+                     last_error_details = '{\"previous_height\":0}'::jsonb",
+                &[],
+            )
+            .await?;
+
+        let err = run_sync_bitcoin_core(&mut client, &recovered_source, tip_missing_config(1))
+            .await
+            .expect_err("a still-broken predecessor link must remain visible");
+        assert!(err.to_string().contains("canonical link mismatch"));
+        let error_code: Option<String> = client
+            .query_one("SELECT last_error_code FROM bitcoin_core_sync_state", &[])
+            .await?
+            .get(0);
+        assert_eq!(error_code.as_deref(), Some("backbone_link_mismatch"));
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn sync_bitcoin_core_tip_rejects_changed_target_tip_hash() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let original_headers = test_header_chain(2, 1_700_000_000);
