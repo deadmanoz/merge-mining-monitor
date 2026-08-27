@@ -4,6 +4,9 @@ Historical ingest consumes the normalized monitor publication from
 `merge-mining-research` and sends every observation through the same store and
 read-model rules as live capture. Its pinned commit is the generated
 `source_repo_commit` in `data/historical/historical-source-manifest.json`.
+The compact catalogue header in `data/consensus/error_blocks.csv` must name
+that same commit; `just gen-error-blocks-catalogue` refuses a
+`--source-commit` that disagrees.
 
 ## Publication Contract
 

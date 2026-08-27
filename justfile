@@ -137,8 +137,9 @@ gen-historical-source-manifest *args="":
     ./scripts/gen-historical-source-manifest.sh {{args}}
 
 # Regenerate (or --check) the compact pinned error-block catalogue from a
-# merge-mining-research commit. Pass --source-commit to change the pin;
-# omitting it keeps the commit already recorded in the committed CSV header.
+# merge-mining-research commit. The selected commit must match
+# historical-source-manifest.json source_repo_commit. Pass --source-commit
+# only after the publication pin already names that SHA.
 gen-error-blocks-catalogue *args="":
     ./scripts/gen-error-blocks-catalogue.sh {{args}}
 
