@@ -15,7 +15,9 @@ directories.
 - `consensus/error_blocks.csv` - compact mirror of the pinned
   `merge-mining-research` error-block catalogue. It classifies a captured,
   full-proof-of-work invalid header as `error_block`, never as stale or an
-  orphan. Update it atomically with its pinned research source commit.
+  orphan. Regenerate with `just gen-error-blocks-catalogue --source-commit
+  <research-sha>`; keep that commit identical to the historical publication
+  pin.
 - `sources/chain_profiles.json` - hand-authored source profile data used by
   `just gen-source-artifacts`.
 - `findings/` - hand-authored evidence-backed findings, one JSON file per

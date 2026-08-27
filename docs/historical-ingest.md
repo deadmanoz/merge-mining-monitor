@@ -7,7 +7,7 @@ read-model rules as live capture. Its pinned commit is the generated
 
 ## Publication Contract
 
-The publication contains 576,662 event rows across 27 uniform per-chain files:
+The publication contains 580,320 event rows across 27 uniform per-chain files:
 
 ```text
 results/monitor-evidence/<chain>_monitor_evidence.csv
@@ -26,11 +26,11 @@ is `classification=error_block`, has `VALID_ERROR_BLOCK`, the catalogue's
 Bitcoin height and rejection reason, and blank stale-relevance fields. The file
 uses the normal 27-column header plus the seven RSK sidecar columns; non-RSK
 sidecar cells are blank and RSK witnesses carry complete sidecars. Its manifest
-requires exactly one 73-row entry with the generated source-chain inventory, so
+requires exactly one 78-row entry with the generated source-chain inventory, so
 a missing, truncated, or cross-chain-substituted aggregate fails before database
 mutation. Its `error-block-observations` scope is reserved to that aggregate;
 ordinary historical artifacts using it are rejected. Preflight also requires
-coverage of all 33 pinned error parents across its witnesses, and checks
+coverage of all 35 pinned error parents across its witnesses, and checks
 retarget observations against the Core-derived target for their stated height.
 
 `data/historical/historical-source-manifest.json` pins each event payload by

@@ -69,6 +69,7 @@ test:
     cargo test --workspace
     ./scripts/test-historical-source-manifest.sh
     ./scripts/gen-historical-source-manifest.sh --check --allow-missing-repo
+    ./scripts/gen-error-blocks-catalogue.sh --check --allow-missing-repo
     ./scripts/live-test-deployment.sh self-check
 
 test-integration: db-up
@@ -104,6 +105,7 @@ check-data-artifacts:
     just gen-source-artifacts --check
     ./scripts/test-historical-source-manifest.sh
     ./scripts/gen-historical-source-manifest.sh --check --allow-missing-repo
+    ./scripts/gen-error-blocks-catalogue.sh --check --allow-missing-repo
 
 # Regenerate data/pools/current.json from a clean upstream
 # bitcoin-data/mining-pools clone. Pin --generated-at for byte-for-byte
@@ -133,6 +135,12 @@ gen-source-artifacts *args="":
 # research publication commit and Git LFS object metadata.
 gen-historical-source-manifest *args="":
     ./scripts/gen-historical-source-manifest.sh {{args}}
+
+# Regenerate (or --check) the compact pinned error-block catalogue from a
+# merge-mining-research commit. Pass --source-commit to change the pin;
+# omitting it keeps the commit already recorded in the committed CSV header.
+gen-error-blocks-catalogue *args="":
+    ./scripts/gen-error-blocks-catalogue.sh {{args}}
 
 serve:
     cargo run -- serve

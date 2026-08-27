@@ -26,8 +26,8 @@ async fn fetch_error_block_navigator(
 }
 
 /// Seed a catalogue shaped like the real one: mostly one block per height, but
-/// with genuine same-height groups. The committed research catalogue holds 33
-/// blocks across only 26 heights, with one height carrying six of them, so
+/// with genuine same-height groups. The committed research catalogue holds 35
+/// blocks across only 28 heights, with one height carrying six of them, so
 /// height alone is not a unique key and the navigator must tie-break on hash.
 ///
 /// Hash values are chosen so stored-byte order and display-hex order DISAGREE
