@@ -168,12 +168,12 @@ the canonical-view barrier, the repair reloads the pinned view and plan once so
 that conflict follows the suffix-replacement path.
 
 After a long outage, the contiguous cursor can sit below that live-tip window.
-If the cursor hash no longer matches Core, follow startup captures one additional
-view ending at the cursor and uses the same configured window depth to find a
-complete matching ancestor. It replaces only the short divergent suffix through
-the cursor. The ordinary paged follow loop then catches up the potentially much
-larger distance to the live tip; that lag is not folded into one replacement
-transaction.
+If the cursor hash no longer matches Core, the next scheduled repair sweep
+captures one additional view ending at the cursor and uses the same configured
+window depth to find a complete matching ancestor. It replaces only the short
+divergent suffix through the cursor. The ordinary paged follow loop then catches
+up the potentially much larger distance to the live tip; that lag is not folded
+into one replacement transaction.
 
 The suffix transaction promotes the active Core headers, retains each displaced
 header as a Core-attested `stale` block pointing at its same-height canonical
