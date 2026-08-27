@@ -1,10 +1,10 @@
-import { clearStoredTreeTransform, markTreeSelection, RAILS, renderSourceControls, renderTreePanel, resetTreeToTip, setRailCollapsed } from "./controls.js?v=0.7.0";
-import { renderDrawer } from "./drawer-renderer.js?v=0.7.0";
-import { $, API_BASE, CLASSIFICATION_DEFAULT, CLASSIFICATION_META, classificationParam, CLASSIFICATIONS, readForm, state, writeForm } from "./frontend-state.js?v=0.7.0";
-import { anyNavTargetBusy, applyNavigatorPayload, isNavigatorTarget, navSelectionMatches, navSelectLabelForState, navigatorItemForStep, navigatorItemView, navigatorRoute, navigatorStepperState, orphanAnchorFromBlock, selectionTargetForState, setNavigatorBusy, targetState } from "./nav-targets.js?v=0.7.0";
-import { renderSourceStatus } from "./source-status.js?v=0.7.0";
-import { activateAnchorView, activateGeneratedWindow, activateHeightLookup, paramsFor, syncUrl, treePath, treeWindowError } from "./tree-query-state.js?v=0.7.0";
-import { anchorCameraOnTip, renderTree } from "./tree-renderer.js?v=0.7.0";
+import { clearStoredTreeTransform, markTreeSelection, RAILS, renderSourceControls, renderTreePanel, resetTreeToTip, setRailCollapsed } from "./controls.js?v=0.7.1";
+import { renderDrawer } from "./drawer-renderer.js?v=0.7.1";
+import { $, API_BASE, CLASSIFICATION_DEFAULT, CLASSIFICATION_META, classificationParam, CLASSIFICATIONS, readForm, state, writeForm } from "./frontend-state.js?v=0.7.1";
+import { anyNavTargetBusy, applyNavigatorPayload, isNavigatorTarget, navSelectionMatches, navSelectLabelForState, navigatorItemForStep, navigatorItemView, navigatorRoute, navigatorStepperState, orphanAnchorFromBlock, selectionTargetForState, setNavigatorBusy, targetState } from "./nav-targets.js?v=0.7.1";
+import { renderSourceStatus } from "./source-status.js?v=0.7.1";
+import { activateAnchorView, activateGeneratedWindow, activateHeightLookup, paramsFor, syncUrl, treePath, treeWindowError } from "./tree-query-state.js?v=0.7.1";
+import { anchorCameraOnTip, renderTree } from "./tree-renderer.js?v=0.7.1";
 
 async function fetchJson(key, path) {
   const seq = (state.seq[key] || 0) + 1;

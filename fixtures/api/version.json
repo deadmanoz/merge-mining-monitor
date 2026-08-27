@@ -1,12 +1,21 @@
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.7.0",
+  "version": "0.7.1",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 10,
+    "release_count": 11,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.7.1",
+        "date": "2026-08-27",
+        "items": [
+          "Recover a shallow Bitcoin Core fork even when a long outage leaves the persisted cursor below the normal near-tip repair window, then resume bounded paged catch-up without holding a database lock across the lag."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
       {
         "version": "0.7.0",
         "date": "2026-08-25",

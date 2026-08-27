@@ -1,5 +1,11 @@
 # Release Notes
 
+## [0.7.1] - 2026-08-27
+
+- Recover a shallow Bitcoin Core fork even when a long outage leaves the
+  persisted cursor below the normal near-tip repair window, then resume bounded
+  paged catch-up without holding a database lock across the lag.
+
 ## [0.7.0] - 2026-08-25
 
 - Require a synced Bitcoin Core node and persist a sparse canonical-header
