@@ -1443,6 +1443,7 @@ async fn follow_repair_refuses_reorg_beyond_window_without_chain_mutation() -> R
         );
         let details: Json<serde_json::Value> = error.get(1);
         assert_eq!(details.0["reason"], json!("common_ancestor_outside_window"));
+        assert_eq!(details.0["view"], json!("live_tip"));
         assert_eq!(details.0["target_tip_height"], json!(4));
         let queued: i64 = client
             .query_one(

@@ -182,7 +182,7 @@ where
         let plan = match plan_repair(&core_view, &local_rows) {
             Ok(plan) => plan,
             Err(err) => {
-                return record_plan_error(client, source_id, target, err).await;
+                return record_plan_error(client, source_id, target, "live_tip", err).await;
             }
         };
         let RepairPlan::ReplaceFrom {
@@ -256,7 +256,8 @@ where
     let plan = match plan_repair(&cursor_view, &local_rows) {
         Ok(plan) => plan,
         Err(err) => {
-            return record_plan_error(client, context.source_id, context.target, err).await;
+            return record_plan_error(client, context.source_id, context.target, "cursor", err)
+                .await;
         }
     };
     let RepairPlan::ReplaceFrom {
@@ -804,6 +805,7 @@ async fn record_plan_error<T>(
     client: &Client,
     source_id: i64,
     target: BitcoinCoreBackboneTip,
+    view: &'static str,
     err: RepairPlanError,
 ) -> Result<T> {
     match err {
@@ -822,6 +824,7 @@ async fn record_plan_error<T>(
                 ),
                 json!({
                     "reason": "common_ancestor_outside_window",
+                    "view": view,
                     "first_divergence_height": first_divergence_height,
                     "first_conflict_height": first_conflict_height,
                     "view_start": view_start,
