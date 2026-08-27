@@ -1220,7 +1220,7 @@ async fn sync_progress_does_not_clear_a_concurrent_unrelated_error() -> Result<(
         blocker
             .execute(
                 "UPDATE bitcoin_core_sync_state \
-                 SET last_error_code = 'concurrent_error', last_error_height = 99, \
+                 SET last_error_code = 'concurrent_error', last_error_height = 1, \
                      last_error = 'concurrent error', last_error_details = '{}'::jsonb \
                  WHERE source_id = $1 AND sync_mode = 'contiguous'",
                 &[&bitcoin],
@@ -1240,7 +1240,7 @@ async fn sync_progress_does_not_clear_a_concurrent_unrelated_error() -> Result<(
             error.get::<_, Option<String>>(0).as_deref(),
             Some("concurrent_error")
         );
-        assert_eq!(error.get::<_, Option<i32>>(1), Some(99));
+        assert_eq!(error.get::<_, Option<i32>>(1), Some(1));
 
         Ok::<_, anyhow::Error>(())
     })
