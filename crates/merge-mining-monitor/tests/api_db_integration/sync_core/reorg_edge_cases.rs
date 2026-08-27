@@ -110,6 +110,57 @@ impl BitcoinCoreBackboneSource for GatedBlockHashBackboneSource {
     }
 }
 
+#[derive(Clone)]
+struct OneShotCursorForkSource {
+    active: FakeBitcoinCoreBackboneSource,
+    cursor_fork: FakeBitcoinCoreBackboneSource,
+    cursor_height: i32,
+    served_cursor_fork: Arc<AtomicBool>,
+}
+
+impl OneShotCursorForkSource {
+    fn new(
+        active: FakeBitcoinCoreBackboneSource,
+        cursor_fork: FakeBitcoinCoreBackboneSource,
+        cursor_height: i32,
+    ) -> Self {
+        Self {
+            active,
+            cursor_fork,
+            cursor_height,
+            served_cursor_fork: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+impl BitcoinCoreBackboneSource for OneShotCursorForkSource {
+    async fn tip(&self) -> Result<BitcoinCoreBackboneTip> {
+        self.active.tip().await
+    }
+
+    async fn block_hash(&self, height: i32) -> Result<BlockHash> {
+        if height == self.cursor_height && !self.served_cursor_fork.swap(true, Ordering::SeqCst) {
+            self.cursor_fork.block_hash(height).await
+        } else {
+            self.active.block_hash(height).await
+        }
+    }
+
+    async fn block_header(&self, hash: BlockHash) -> Result<Header> {
+        match self.active.block_header(hash).await {
+            Ok(header) => Ok(header),
+            Err(_) => self.cursor_fork.block_header(hash).await,
+        }
+    }
+
+    async fn block_coinbase(&self, hash: BlockHash) -> Result<BitcoinCoreBlockCoinbase> {
+        match self.active.block_coinbase(hash).await {
+            Ok(coinbase) => Ok(coinbase),
+            Err(_) => self.cursor_fork.block_coinbase(hash).await,
+        }
+    }
+}
+
 struct DisplacedAuxpowEvidence<'a> {
     event_id: i64,
     source_id: i64,
@@ -1467,6 +1518,56 @@ fn assert_bounded_cursor_recovery_rpc(source: &FakeBitcoinCoreBackboneSource) {
 }
 
 #[tokio::test]
+async fn cursor_repair_revalidates_its_own_target_before_mutation() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let original = test_header_chain(3, 1_800_033_000);
+        let original_source = FakeBitcoinCoreBackboneSource::new(2, original.clone());
+        run_sync_bitcoin_core(
+            &mut client,
+            &original_source,
+            BitcoinCoreSyncConfig {
+                from_height: Some(0),
+                to_height: Some(2),
+                tip: true,
+                missing_only: true,
+                ..BitcoinCoreSyncConfig::default()
+            },
+        )
+        .await?;
+
+        let active = fork_header_chain(&original, 2, 80, 1_800_034_000);
+        let transient = fork_header_chain(&original, 2, 2, 1_800_034_500);
+        let source = OneShotCursorForkSource::new(
+            FakeBitcoinCoreBackboneSource::new(80, active),
+            FakeBitcoinCoreBackboneSource::new(2, transient.clone()),
+            2,
+        );
+
+        let err = repair_near_tip_backbone_for_test(
+            &mut client,
+            &source,
+            source.tip().await?,
+            Duration::ZERO,
+            4,
+        )
+        .await
+        .expect_err("a cursor view from a transient branch must not be committed");
+        assert!(format!("{err:#}").contains("target moved during near-tip repair"));
+        assert_eq!(canonical_view(&client, 2, 2).await?.len(), 1);
+        let transient_rows: i64 = client
+            .query_one(
+                "SELECT count(*)::bigint FROM block WHERE btc_header_hash = $1",
+                &[&header_hash_bytes(&transient[&2])],
+            )
+            .await?
+            .get(0);
+        assert_eq!(transient_rows, 0);
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn scheduled_follow_repairs_stale_cursor_clears_error_and_resumes() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let original = test_header_chain(81, 1_800_035_000);
@@ -1486,6 +1587,7 @@ async fn scheduled_follow_repairs_stale_cursor_clears_error_and_resumes() -> Res
 
         let active = fork_header_chain(&original, 2, 80, 1_800_036_000);
         let old_h2 = header_hash_bytes(&original[&2]);
+        insert_matching_upper_canonical(&client, &active[&2], 2).await?;
         insert_matching_upper_canonical(&client, &active[&3], 3).await?;
         client
             .execute(

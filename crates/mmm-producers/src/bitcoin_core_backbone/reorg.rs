@@ -1,11 +1,7 @@
 //! Bounded near-tip Bitcoin Core reorg detection and repair.
 //!
-//! Follow mode captures one active-chain view by walking backwards from a
-//! pinned Core tip. If the local canonical rows contain a competing hash, this
-//! module finds the last complete matching anchor before the first divergence,
-//! fetches the whole replacement suffix before writing anything, and hands the
-//! suffix to the read model for one atomic chain switch. Ordinary gaps without
-//! a competing hash keep using the existing missing-only repair path.
+//! Follow mode atomically repairs a divergent suffix from a pinned Core view;
+//! ordinary gaps keep using the existing missing-only path.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -20,8 +16,8 @@ use tokio_postgres::Client;
 #[cfg(any(test, feature = "db-integration"))]
 use mmm_capture::source_registry::BITCOIN_SOURCE_CODE;
 use mmm_read_model::{
-    CoreCanonicalReplacement, ExpectedCoreCanonicalRow, drain_core_reconcile_queue,
-    replace_core_canonical_suffix_validated,
+    CoreCanonicalReplacement, CoreSuffixReplacementInput, ExpectedCoreCanonicalRow,
+    drain_core_reconcile_queue, replace_core_canonical_suffix_validated,
 };
 #[cfg(any(test, feature = "db-integration"))]
 use mmm_store::get_source_id;
@@ -253,6 +249,7 @@ where
     let cursor_view =
         capture_cursor_recovery_view(source, cursor_target, cursor_view_start, &local_rows).await?;
     verify_target_stable(client, source, context.source_id, context.target).await?;
+    verify_target_stable(client, source, context.source_id, cursor_target).await?;
     let plan = match plan_repair(&cursor_view, &local_rows) {
         Ok(plan) => plan,
         Err(err) => {
@@ -293,6 +290,11 @@ where
     S: BitcoinCoreBackboneSource,
 {
     let common_ancestor_height = core_view[first_replacement_index - 1].height;
+    let replacement = core_view.last().expect("non-empty Core view");
+    let replacement_target = BitcoinCoreBackboneTip {
+        height: replacement.height,
+        hash: replacement.header.block_hash(),
+    };
     let replacements =
         fetch_replacements(source, &core_view[first_replacement_index..], context.delay).await?;
 
@@ -300,27 +302,32 @@ where
     // Confirm the original live target is still active immediately before the
     // first database mutation, even when replacing only through an older cursor.
     verify_target_stable(client, source, context.source_id, context.target).await?;
+    verify_target_stable(client, source, context.source_id, replacement_target).await?;
+    let validate_targets = || async {
+        if let Some(failure) = target_stability_failure(source, context.target).await? {
+            return Err(failure.into_error());
+        }
+        if replacement_target != context.target
+            && let Some(failure) = target_stability_failure(source, replacement_target).await?
+        {
+            return Err(failure.into_error());
+        }
+        Ok(())
+    };
     let expected_local = expected_local_rows(local_rows);
     let replace_result = replace_core_canonical_suffix_validated(
         client,
         context.source_id,
         expected_contiguous_complete_height,
         common_ancestor_height,
-        &expected_local,
-        &replacements,
+        CoreSuffixReplacementInput {
+            expected_local: &expected_local,
+            replacements: &replacements,
+            pending_sync_target: Some((context.target.height, context.target.hash)),
+        },
         (
-            async |_txn| {
-                if let Some(failure) = target_stability_failure(source, context.target).await? {
-                    return Err(failure.into_error());
-                }
-                Ok(())
-            },
-            async |_txn| {
-                if let Some(failure) = target_stability_failure(source, context.target).await? {
-                    return Err(failure.into_error());
-                }
-                Ok(())
-            },
+            async |_txn| validate_targets().await,
+            async |_txn| validate_targets().await,
         ),
     )
     .await;
@@ -373,12 +380,8 @@ fn add_stats(left: BitcoinCoreSyncStats, right: BitcoinCoreSyncStats) -> Bitcoin
     }
 }
 
-/// A fork whose stale contiguous cursor has already fallen below the captured
-/// repair view must not be mistaken for an ordinary empty near-tip window.
-/// Compare that proven local cursor directly with Core before any gap fill can
-/// mutate newer rows. A divergent complete cursor becomes the target of one
-/// additional bounded, cursor-centred repair view; the remaining gap to the
-/// live tip stays on the ordinary follow-batch path.
+/// Compare an out-of-view cursor with Core, repair a bounded divergence, then
+/// leave the remaining gap to ordinary follow batches.
 async fn cursor_recovery_target_before_view<S>(
     client: &Client,
     source: &S,
@@ -400,7 +403,7 @@ where
         contiguous_complete_height,
     )
     .await?;
-    let [local] = rows.as_slice() else {
+    if rows.is_empty() {
         return reorg_integrity_failure(
             client,
             source_id,
@@ -420,20 +423,20 @@ where
             }),
         )
         .await;
-    };
-    if local.coinbase_status != "complete" {
+    }
+    if !rows.iter().any(|row| row.coinbase_status == "complete") {
         return reorg_integrity_failure(
             client,
             source_id,
             contiguous_complete_height,
             format!(
-                "Bitcoin Core contiguous cursor {} is not coinbase-complete",
+                "Bitcoin Core contiguous cursor {} has no coinbase-complete canonical row",
                 contiguous_complete_height
             ),
             json!({
                 "reason": "contiguous_cursor_row_incomplete",
                 "contiguous_complete_height": contiguous_complete_height,
-                "coinbase_status": local.coinbase_status,
+                "coinbase_statuses": rows.iter().map(|row| &row.coinbase_status).collect::<Vec<_>>(),
                 "captured_view_start": view_start,
                 "target_tip_height": target.height,
                 "target_tip_hash": target.hash.to_string(),
@@ -451,7 +454,7 @@ where
                 contiguous_complete_height
             )
         })?;
-    if local.hash == active_hash.to_byte_array() {
+    if rows.len() == 1 && rows[0].hash == active_hash.to_byte_array() {
         return Ok(None);
     }
 

@@ -24,9 +24,11 @@ use mmm_producers::{
     run_sync_bitcoin_core,
 };
 use mmm_read_model::{
-    CoreCanonicalReplacement, ExpectedCoreCanonicalRow, compute_source_health_from_base,
-    drain_core_reconcile_queue, drain_core_reconcile_queue_with_budget_for_test,
-    rebuild_source_health, reconcile_from_merge_mining_event, replace_core_canonical_suffix,
+    CoreCanonicalReplacement, CoreSuffixReplacementInput, ExpectedCoreCanonicalRow,
+    compute_source_health_from_base, drain_core_reconcile_queue,
+    drain_core_reconcile_queue_with_budget_for_test, rebuild_source_health,
+    reconcile_from_merge_mining_event, replace_core_canonical_suffix,
+    replace_core_canonical_suffix_validated,
 };
 use mmm_store::get_source_id;
 use serde_json::json;

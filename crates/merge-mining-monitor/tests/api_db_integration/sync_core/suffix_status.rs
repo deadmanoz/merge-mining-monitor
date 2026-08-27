@@ -108,6 +108,48 @@ async fn drain_core_reconcile_disabled(client: &mut Client, source_id: i64) -> R
 }
 
 #[tokio::test]
+async fn cursor_suffix_pending_state_preserves_the_higher_live_target() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (bitcoin, _, replacements) =
+            seed_two_block_suffix(&mut client, 1_800_043_000, 1_800_044_000).await?;
+        let expected = canonical_view(&client, 2, 4).await?;
+        let live = test_header_chain(81, 1_800_044_500);
+        let live_target = (80, live[&80].block_hash());
+
+        replace_core_canonical_suffix_validated(
+            &mut client,
+            bitcoin,
+            3,
+            2,
+            CoreSuffixReplacementInput {
+                expected_local: &expected,
+                replacements: &replacements,
+                pending_sync_target: Some(live_target),
+            },
+            (async |_txn| Ok(()), async |_txn| Ok(())),
+        )
+        .await?;
+
+        let state = client
+            .query_one(
+                "SELECT target_tip_height, target_tip_hash, last_error_details \
+                 FROM bitcoin_core_sync_state WHERE source_id = $1",
+                &[&bitcoin],
+            )
+            .await?;
+        assert_eq!(state.get::<_, Option<i32>>(0), Some(live_target.0));
+        assert_eq!(
+            state.get::<_, Option<Vec<u8>>>(1),
+            Some(live_target.1.to_byte_array().to_vec())
+        );
+        let details: Json<serde_json::Value> = state.get(2);
+        assert_eq!(details.0["replacement_target_height"], json!(4));
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn core_suffix_queue_restores_suspended_error_without_nesting() -> Result<()> {
     crate::run_mut_db_test!(client, schema, {
         let (bitcoin, original, replacements) =
