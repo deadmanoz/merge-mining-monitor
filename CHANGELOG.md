@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-27
+
 - Recover a shallow Bitcoin Core fork after a long follow-mode outage by
   repairing only the bounded divergent suffix ending at the persisted cursor,
   then resuming ordinary paged catch-up to the live tip. Continue to fail
