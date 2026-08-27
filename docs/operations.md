@@ -167,6 +167,14 @@ same-height conflict after the initial scan but before the ordinary fill takes
 the canonical-view barrier, the repair reloads the pinned view and plan once so
 that conflict follows the suffix-replacement path.
 
+After a long outage, the contiguous cursor can sit below that live-tip window.
+If the cursor hash no longer matches Core, follow startup captures one additional
+view ending at the cursor and uses the same configured window depth to find a
+complete matching ancestor. It replaces only the short divergent suffix through
+the cursor. The ordinary paged follow loop then catches up the potentially much
+larger distance to the live tip; that lag is not folded into one replacement
+transaction.
+
 The suffix transaction promotes the active Core headers, retains each displaced
 header as a Core-attested `stale` block pointing at its same-height canonical
 competitor, updates active AuxPoW event classifications and source health, and
@@ -210,10 +218,11 @@ until `sync-bitcoin-core` has filled the windows you want to browse. Sync the
 newest default window and any historical ranges you need before treating
 `serve` as ready.
 
-If the captured Core branch has no unique, complete matching ancestor inside
-the configured window, the producer records `near_tip_reorg_repair_failed`
-with `common_ancestor_outside_window` details and changes no chain rows. A
-temporary same-height canonical pair in the replacement suffix is repairable,
+If either the live-tip view or the additional cursor-centred view has no unique,
+complete matching ancestor inside its configured window, the producer records
+`near_tip_reorg_repair_failed` with `common_ancestor_outside_window` details and
+changes no chain rows. A temporary same-height canonical pair in the
+replacement suffix is repairable,
 but a duplicate or incomplete row cannot serve as the common ancestor. A
 regressed target or contiguous cursor also fails closed. For these deep or
 structurally ambiguous cases, stop `serve`, take a backup, inspect the recorded

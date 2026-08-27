@@ -56,6 +56,10 @@ different ownership boundary. The read-model atomically replaces the canonical
 suffix and enqueues every old and new parent in
 `bitcoin_core_reconcile_queue`; the producer drains those dependent-cascade
 seeds only after commit and resumes them before later sync work after a restart.
+When maintenance lag leaves a divergent contiguous cursor below the normal
+live-tip view, the producer captures a second bounded view ending at that cursor
+and replaces only its divergent suffix. Ordinary follow batches retain ownership
+of the remaining catch-up distance to the live tip.
 The canonical spine therefore changes atomically. Dependent rows converge from
 a durable two-phase worklist, with the pending state exposed until every parent
 has been reconciled and its newly discovered dependents have been enqueued.

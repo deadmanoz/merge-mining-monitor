@@ -6,6 +6,11 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Recover a shallow Bitcoin Core fork after a long follow-mode outage by
+  repairing only the bounded divergent suffix ending at the persisted cursor,
+  then resuming ordinary paged catch-up to the live tip. Continue to fail
+  closed when that cursor-centred lookback has no complete matching ancestor.
+
 ## [0.7.0] - 2026-08-25
 
 - Import complete historical error-block child witnesses through a separate,

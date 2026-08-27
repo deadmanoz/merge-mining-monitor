@@ -49,7 +49,7 @@ Hathor live capture can promote a matching height-only historical observation
 to exact child-hash identity in place. Such a hashless row is not considered a
 superseded prior when its Bitcoin parent matches the validated live block.
 | Elastos | JSON-RPC `getblockbyheight`. | Reconstructs the 84-byte child header and verifies the AuxPoW commitment. |
-| Bitcoin Core | `sync-bitcoin-core`. | Writes canonical backbone headers and coinbase evidence for tree browsing; follow mode atomically repairs bounded near-tip reorg suffixes and retains the displaced side as stale evidence. |
+| Bitcoin Core | `sync-bitcoin-core`. | Writes canonical backbone headers and coinbase evidence for tree browsing; follow mode atomically repairs bounded near-tip or lagged-cursor reorg suffixes and retains the displaced side as stale evidence. |
 
 ## Polling And Backfill
 

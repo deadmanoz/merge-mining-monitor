@@ -644,7 +644,50 @@ pub async fn run_bitcoin_core_follow_tick_for_test<S>(
     client: &mut Client,
     source: &S,
     header_cache_classifier: &ConfiguredParentClassifier,
+    config: BitcoinCoreSyncConfig,
+) -> Result<(bool, bool)>
+where
+    S: BitcoinCoreBackboneSource,
+{
+    run_bitcoin_core_follow_tick_with_repair_state_for_test(
+        client,
+        source,
+        header_cache_classifier,
+        config,
+        Some(Instant::now()),
+    )
+    .await
+}
+
+/// Execute the first finite follow tick, including its scheduled startup repair.
+#[cfg(any(test, feature = "db-integration"))]
+#[doc(hidden)]
+pub async fn run_bitcoin_core_initial_follow_tick_for_test<S>(
+    client: &mut Client,
+    source: &S,
+    header_cache_classifier: &ConfiguredParentClassifier,
+    config: BitcoinCoreSyncConfig,
+) -> Result<(bool, bool)>
+where
+    S: BitcoinCoreBackboneSource,
+{
+    run_bitcoin_core_follow_tick_with_repair_state_for_test(
+        client,
+        source,
+        header_cache_classifier,
+        config,
+        None,
+    )
+    .await
+}
+
+#[cfg(any(test, feature = "db-integration"))]
+async fn run_bitcoin_core_follow_tick_with_repair_state_for_test<S>(
+    client: &mut Client,
+    source: &S,
+    header_cache_classifier: &ConfiguredParentClassifier,
     mut config: BitcoinCoreSyncConfig,
+    last_near_tip_repair_at: Option<Instant>,
 ) -> Result<(bool, bool)>
 where
     S: BitcoinCoreBackboneSource,
@@ -660,7 +703,7 @@ where
         header_cache_classifier,
         config,
         stall: 0,
-        last_near_tip_repair_at: Some(Instant::now()),
+        last_near_tip_repair_at,
     }
     .tick()
     .await?;
