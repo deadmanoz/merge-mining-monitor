@@ -745,7 +745,7 @@ test("Latest orphan readout includes n of N and class counts", async ({ page }) 
           view: { mode: "unheighted_anchor", anchor_hash: hash, select_hash: hash, center_hash: hash },
           view_error: null,
         }],
-        total: 1204,
+        total: 30,
         facets: { orphan_classes: { strict: 16, weak: 14, excluded: 0, pending: 0 } },
         next_cursor: "opaque-orphan-cursor",
       }),
@@ -756,7 +756,7 @@ test("Latest orphan readout includes n of N and class counts", async ({ page }) 
   await expect.poll(() => navigatorRequests.some((url) => (
     url.pathname.endsWith("/api/v1/navigator/orphan")
   ))).toBe(true);
-  await expect(page.locator("#nav-readout")).toContainText("2015-07-04 · 1 of 1,204 · strict 16 · weak 14");
+  await expect(page.locator("#nav-readout")).toContainText("2015-07-04 · 1 of 30 · strict 16 · weak 14");
 });
 
 test("Latest orphan branch readout includes depth and 1 of N", async ({ page }) => {
