@@ -102,12 +102,22 @@ Example:
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.7.3",
+  "version": "0.7.4",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 13,
+    "release_count": 14,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.7.4",
+        "date": "2026-08-28",
+        "items": [
+          "Pin the historical publication and error-block catalogue to research `c26e86c`: 78 observations across 35 parents in the 34-column monitor union.",
+          "Skip unchanged historical publication artifacts on `import-all`. Seed receipts from the last imported pin only when event provenance already matches; a single-chain `import-dataset` clears that skip."
+        ],
+        "item_count": 2,
+        "truncated": false
+      },
       {
         "version": "0.7.3",
         "date": "2026-08-28",

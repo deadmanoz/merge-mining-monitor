@@ -1,5 +1,5 @@
-import { CHAIN_COLORS, CHAIN_DISPLAY_NAMES, CHAIN_PROFILES, SOURCE_DISPLAY_ORDER, SOURCE_LIFECYCLE } from "./source-registry.generated.js?v=0.7.3";
-import { inputDateTimeToUtc, utcDateTimeToInput } from "./tree-lookup.js?v=0.7.3";
+import { CHAIN_COLORS, CHAIN_DISPLAY_NAMES, CHAIN_PROFILES, SOURCE_DISPLAY_ORDER, SOURCE_LIFECYCLE } from "./source-registry.generated.js?v=0.7.4";
+import { inputDateTimeToUtc, utcDateTimeToInput } from "./tree-lookup.js?v=0.7.4";
 
 
 const API_BASE = "/api/v1";

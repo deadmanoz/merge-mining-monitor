@@ -1,5 +1,13 @@
 # Release Notes
 
+## [0.7.4] - 2026-08-28
+
+- Pin the historical publication and error-block catalogue to research
+  `c26e86c`: 78 observations across 35 parents in the 34-column monitor union.
+- Skip unchanged historical publication artifacts on `import-all`. Seed
+  receipts from the last imported pin only when event provenance already
+  matches; a single-chain `import-dataset` clears that skip.
+
 ## [0.7.3] - 2026-08-28
 
 - Show which Go-to item the stepper is on (`n of N`) while walking stales,
