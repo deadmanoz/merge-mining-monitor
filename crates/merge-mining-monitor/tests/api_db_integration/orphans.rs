@@ -235,6 +235,7 @@ async fn assert_older_cursor_walk(client: &Client, expected: &[String]) -> Resul
         }
         first = false;
         walked.push(page.items[0].primary_hash.clone());
+        assert_eq!(page.items[0].index, walked.len() as u64);
         assert!(walked.len() <= 4, "cursor walk did not terminate");
         match page
             .items
@@ -306,6 +307,9 @@ async fn orphans_paginate_newest_first_by_header_time() -> Result<()> {
         let all = fetch_default_orphans_page(&client, 100).await?;
         assert_eq!(orphan_hashes(&all), expected);
         assert_eq!(all.total, 4);
+        for (offset, item) in all.items.iter().enumerate() {
+            assert_eq!(item.index, offset as u64 + 1);
+        }
         // counts is the full per-class breakdown over the PoW-valid unknown
         // population (the pow_validated=false husk is excluded from counts too).
         assert_eq!(orphan_counts(&all).strict, 4);
@@ -329,6 +333,7 @@ async fn orphans_paginate_newest_first_by_header_time() -> Result<()> {
                     .await?;
             assert_eq!(page.total, 4);
             assert_eq!(page.items.len(), 1);
+            assert_eq!(page.items[0].index, 3 - newer_walked.len() as u64);
             assert!(
                 page.next_cursor.is_some(),
                 "an after page must expose a next_cursor toward older rows"
@@ -343,6 +348,23 @@ async fn orphans_paginate_newest_first_by_header_time() -> Result<()> {
         let mut ascending = expected.clone();
         ascending.reverse();
         assert_eq!(newer_walked, ascending[1..].to_vec());
+
+        let peeked = fetch_orphans_page(
+            &client,
+            &format!("cursor={}&direction=newer&limit=2", oldest.cursor),
+        )
+        .await?;
+        assert_eq!(peeked.items.len(), 2);
+        assert_eq!(peeked.items[0].index, 2);
+        assert_eq!(peeked.items[1].index, 3);
+        assert_eq!(peeked.items[0].primary_hash, all.items[1].primary_hash);
+
+        let missing = display_hash(&hash_bytes(0xffff));
+        let empty_page =
+            fetch_orphans_page(&client, &format!("anchor_hash={missing}&limit=1")).await?;
+        assert!(empty_page.items.is_empty());
+        assert_eq!(empty_page.total, 4);
+        assert_eq!(orphan_counts(&empty_page).strict, 4);
 
         assert_older_then_newer_round_trip(&client).await?;
 
@@ -378,6 +400,8 @@ async fn orphans_filter_by_classification() -> Result<()> {
             vec![display_hash(&strict), display_hash(&weak)]
         );
         assert_eq!(default.total, 2);
+        assert_eq!(default.items[0].index, 1);
+        assert_eq!(default.items[1].index, 2);
         // `counts` is the full per-class breakdown, INDEPENDENT of the filter.
         assert_eq!(orphan_counts(&default).strict, 1);
         assert_eq!(orphan_counts(&default).weak, 1);

@@ -75,6 +75,9 @@ async fn fetch_stale_navigator(
 fn assert_stale_navigation_contract(payload: &projection::NavigatorPayload, s1: &[u8]) {
     assert_eq!(payload.total, 4);
     assert_eq!(payload.items.len(), 4);
+    for (offset, item) in payload.items.iter().enumerate() {
+        assert_eq!(item.index, offset as u64 + 1);
+    }
     assert_eq!(payload.items[0].position.max, 250);
     assert_eq!(payload.items[1].position.max, 200);
     assert_eq!(payload.items[2].position.max, 200);
@@ -143,6 +146,8 @@ async fn assert_stale_navigator_keyset_tiebreak(
     assert_eq!(latest.items.len(), 2);
     assert_eq!(latest.items[0].primary_hash, full.items[0].primary_hash);
     assert_eq!(latest.items[1].primary_hash, full.items[1].primary_hash);
+    assert_eq!(latest.items[0].index, 1);
+    assert_eq!(latest.items[1].index, 2);
     assert!(latest.prev_cursor.is_none());
     let older = latest.next_cursor.expect("latest page has older cursor");
 
@@ -151,6 +156,8 @@ async fn assert_stale_navigator_keyset_tiebreak(
     assert_eq!(next.items.len(), 2);
     assert_eq!(next.items[0].primary_hash, full.items[2].primary_hash);
     assert_eq!(next.items[1].primary_hash, full.items[3].primary_hash);
+    assert_eq!(next.items[0].index, 3);
+    assert_eq!(next.items[1].index, 4);
     assert!(next.next_cursor.is_none());
     assert!(next.prev_cursor.is_some());
 
@@ -160,6 +167,15 @@ async fn assert_stale_navigator_keyset_tiebreak(
     assert_eq!(previous.items.len(), 2);
     assert_eq!(previous.items[0].primary_hash, full.items[0].primary_hash);
     assert_eq!(previous.items[1].primary_hash, full.items[1].primary_hash);
+    assert_eq!(previous.items[0].index, 1);
+    assert_eq!(previous.items[1].index, 2);
+    // limit+1 lookahead on a newer scan: ranking against the discarded peek
+    // would emit index 1 for this retained row.
+    let peeked =
+        fetch_stale_navigator(client, &format!("cursor={newer}&direction=newer&limit=1")).await?;
+    assert_eq!(peeked.items.len(), 1);
+    assert_eq!(peeked.items[0].primary_hash, full.items[1].primary_hash);
+    assert_eq!(peeked.items[0].index, 2);
     assert!(previous.next_cursor.is_some());
     assert!(previous.prev_cursor.is_none());
 

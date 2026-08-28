@@ -6,6 +6,10 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Show which item of the current Go-to index the stepper is on (`n of N`)
+  while walking stales, stale branches, error blocks, orphans, and orphan
+  branches.
+
 ## [0.7.2] - 2026-08-27
 
 - Clear stale Bitcoin Core link-error telemetry after Core revalidates the

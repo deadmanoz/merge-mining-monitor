@@ -880,6 +880,9 @@ Each `items[]` entry has this format:
 - `position`: `{ axis, min, max }`; the stale and error-block targets use
   Bitcoin height, orphan targets use `btc_header_time`. For `error-block`,
   `min` and `max` are always equal, because each item is one block.
+- `index`: 1-based newest-first rank in the active target (and classification
+  filter). `1` is the newest item; `total` is the oldest. Items in one
+  response share one snapshot with `total`, so `index <= total`.
 - `cursor`: opaque item cursor. Clients must send it back as-is.
 - `branch`: `null` for single-block targets, or
   `{ branch_id, root_hash, tip_hashes, depth }` for branch targets.
