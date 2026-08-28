@@ -1,5 +1,7 @@
 //! Last-imported publication artifact receipts for smart `import-all`.
 
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result};
 use tokio_postgres::GenericClient;
 
@@ -11,6 +13,26 @@ pub struct HistoricalImportArtifact {
     pub size_bytes: i64,
     pub row_count: i64,
     pub source_repo_commit: String,
+}
+
+pub async fn count_historical_event_provenance_by_chain<C: GenericClient>(
+    client: &C,
+    publication_ref: &str,
+) -> Result<BTreeMap<String, i64>> {
+    let rows = client
+        .query(
+            "SELECT chain, count(*)::bigint \
+             FROM historical_event_provenance \
+             WHERE publication_ref = $1 \
+             GROUP BY chain",
+            &[&publication_ref],
+        )
+        .await
+        .context("count historical_event_provenance by chain")?;
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect())
 }
 
 pub async fn count_historical_import_artifacts<C: GenericClient>(client: &C) -> Result<i64> {

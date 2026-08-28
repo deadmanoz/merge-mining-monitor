@@ -1,8 +1,11 @@
 //! Skip unchanged publication artifacts and optionally seed empty receipt tables.
 
-use anyhow::{Context, Result, ensure};
+use std::collections::BTreeMap;
+
+use anyhow::{Context, Result, bail, ensure};
 use mmm_store::{
-    HistoricalImportArtifact, count_historical_import_artifacts, load_historical_import_artifacts,
+    HistoricalImportArtifact, count_historical_event_provenance_by_chain,
+    count_historical_import_artifacts, load_historical_import_artifacts,
     seed_historical_import_artifacts, upsert_historical_import_artifact,
 };
 use serde::Deserialize;
@@ -129,24 +132,14 @@ pub(super) fn plan_publication_import(
         skipped_unchanged: 0,
     };
     for artifact in event_identities {
-        let skip = sha_is_unchanged(
-            receipts,
-            artifact.role,
-            &artifact.chain,
-            &artifact.sha256,
-        );
+        let skip = sha_is_unchanged(receipts, artifact.role, &artifact.chain, &artifact.sha256);
         plan.work_chain.push(!skip);
         if skip {
             plan.skipped_unchanged += 1;
         }
     }
     if let Some(artifact) = error_identity
-        && sha_is_unchanged(
-            receipts,
-            artifact.role,
-            &artifact.chain,
-            &artifact.sha256,
-        )
+        && sha_is_unchanged(receipts, artifact.role, &artifact.chain, &artifact.sha256)
     {
         plan.work_error_observations = false;
         plan.skipped_unchanged += 1;
@@ -160,7 +153,21 @@ pub(super) async fn load_or_seed_receipts<C: GenericClient>(
 ) -> Result<Vec<HistoricalImportArtifact>> {
     let existing = count_historical_import_artifacts(client).await?;
     if should_seed_empty_receipts(seed_imported_receipts, existing) {
-        let seeded = seed_historical_import_artifacts(client, &packaged_seed_artifacts()?).await?;
+        let seed = packaged_seed_artifacts()?;
+        let pin = seed
+            .first()
+            .map(|row| row.source_repo_commit.as_str())
+            .context("imported-artifact seed is empty")?;
+        let counts = count_historical_event_provenance_by_chain(client, pin).await?;
+        if let Some(mismatch) = first_seed_provenance_mismatch(&seed, &counts) {
+            bail!(
+                "--seed-imported-receipts requires {pin} provenance for {}: expected {}, found {}",
+                mismatch.0,
+                mismatch.1,
+                mismatch.2
+            );
+        }
+        let seeded = seed_historical_import_artifacts(client, &seed).await?;
         tracing::info!(
             seeded,
             "seeded historical import receipts from last imported pin"
@@ -173,10 +180,20 @@ fn should_seed_empty_receipts(requested: bool, existing: i64) -> bool {
     requested && existing == 0
 }
 
-pub(super) async fn record_receipt(
-    client: &Client,
-    artifact: &PublicationArtifact,
-) -> Result<()> {
+fn first_seed_provenance_mismatch(
+    seed: &[HistoricalImportArtifact],
+    counts: &BTreeMap<String, i64>,
+) -> Option<(String, i64, i64)> {
+    seed.iter()
+        .filter(|artifact| artifact.role == "event" && artifact.row_count > 0)
+        .find_map(|artifact| {
+            let actual = counts.get(&artifact.chain).copied().unwrap_or(0);
+            (actual != artifact.row_count)
+                .then(|| (artifact.chain.clone(), artifact.row_count, actual))
+        })
+}
+
+pub(super) async fn record_receipt(client: &Client, artifact: &PublicationArtifact) -> Result<()> {
     upsert_historical_import_artifact(
         client,
         &receipt_from_artifact(artifact, PINNED_RESEARCH_COMMIT.as_str()),
@@ -204,6 +221,27 @@ mod tests {
         assert!(should_seed_empty_receipts(true, 0));
         assert!(!should_seed_empty_receipts(true, 3));
         assert!(!should_seed_empty_receipts(false, 3));
+    }
+
+    #[test]
+    fn seed_requires_matching_event_provenance_counts() {
+        let seed = packaged_seed_artifacts().expect("packaged seed");
+        let mut counts = BTreeMap::new();
+        for artifact in &seed {
+            if artifact.role == "event" && artifact.row_count > 0 {
+                counts.insert(artifact.chain.clone(), artifact.row_count);
+            }
+        }
+        assert_eq!(first_seed_provenance_mismatch(&seed, &counts), None);
+
+        counts.insert("devcoin".into(), 1);
+        let mismatch = first_seed_provenance_mismatch(&seed, &counts).expect("devcoin mismatch");
+        assert_eq!(mismatch.0, "devcoin");
+        assert_eq!(mismatch.2, 1);
+
+        counts.clear();
+        let mismatch = first_seed_provenance_mismatch(&seed, &counts).expect("empty counts");
+        assert!(mismatch.2 == 0);
     }
 
     #[test]

@@ -46,9 +46,7 @@ use super::publication::{
 mod error_observations;
 use error_observations::{import_error_observations, preflight_error_observations};
 mod receipts;
-use receipts::{
-    ImportPlan, load_or_seed_receipts, plan_publication_import, record_receipt, record_receipts,
-};
+use receipts::{ImportPlan, load_or_seed_receipts, plan_publication_import, record_receipts};
 mod write_plan;
 use write_plan::{PlannedWrite, write_planned_imports};
 
@@ -286,11 +284,8 @@ pub async fn run_historical_import(
         None,
     )
     .await;
-    let (summary, identity) =
+    let (summary, _identity) =
         mmm_store::finish_bitcoin_core_header_cache_operation(client, result).await?;
-    if config.limit.is_none() && let Some(identity) = identity {
-        record_receipt(client, &identity).await?;
-    }
     Ok(summary)
 }
 

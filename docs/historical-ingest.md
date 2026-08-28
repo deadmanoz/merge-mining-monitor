@@ -245,13 +245,13 @@ files. The Bitcoin Core lock is taken only when at least one artifact still
 needs work. An empty receipt table is not treated as "already imported."
 Pass `--seed-imported-receipts` once on a production upgrade to load
 `data/historical/imported-artifact-seed.json` (the last imported production
-pin) so unchanged historical files NOP. Fresh or incomplete databases omit
-the flag and import every artifact. Receipts are written only after
-stale-branch reconciliation and the source-health rebuild succeed.
-`import-dataset` writes the same receipts after a complete publication-backed
-import, not after `--limit`. Receipts store the artifact identity verified
-during preflight, including surveyed zero-row files, so a later `import-all`
-does not reload the manifest or replay an already-checked SHA. The summary
+pin) so unchanged historical files NOP. The flag refuses to seed unless
+each non-empty seed event chain already has matching
+`historical_event_provenance` rows for that pin. Fresh or incomplete
+databases omit the flag and import every artifact. Receipts are written
+only by `import-all`, after stale-branch reconciliation and the
+source-health rebuild succeed, and they store the artifact identity
+verified during preflight, including surveyed zero-row files. The summary
 reports `skipped_unchanged`.
 
 The command preflights all artifacts before importing the first changed chain,
@@ -313,8 +313,9 @@ just reclassify-pools
 ```
 
 `import-all` already rebuilds source health and performs the targeted
-stale-branch pass. A second full import is an idempotence check, not a required
-classification phase.
+stale-branch pass. A later `import-all` whose receipts still match is a
+completeness check of the pin and receipt table, not a replay of
+database-write idempotence.
 
 ## Production Cutover
 

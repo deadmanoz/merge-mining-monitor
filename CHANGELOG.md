@@ -6,11 +6,11 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
-- `import-all` records each artifact's content SHA after a successful write
-  and skips classify, write, and authoritative reconcile when that SHA has
-  not changed. Seeding an empty receipt table from the last imported pin
-  (`091e01a`) is opt-in via `--seed-imported-receipts`. `import-dataset`
-  updates the same receipts only after a complete (not `--limit`) import.
+- `import-all` records each artifact's content SHA after a successful
+  publication finalize and skips classify, write, and authoritative reconcile
+  when that SHA has not changed. `--seed-imported-receipts` loads the last
+  imported pin (`091e01a`) only after matching event provenance counts prove
+  that pin is already present. `import-dataset` does not write receipts.
 
 ## [0.7.3] - 2026-08-28
 
