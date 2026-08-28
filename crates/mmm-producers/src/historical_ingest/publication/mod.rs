@@ -863,6 +863,7 @@ mod tests {
             require_pinned_checkout: false,
             batch_size: 10,
             allow_empty_known_stales: true,
+            seed_imported_receipts: false,
         };
 
         preflight_required_aggregate_artifacts(&config).expect("aggregate preflight");

@@ -285,7 +285,7 @@ pub async fn run_historical_import(
     )
     .await;
     let summary = mmm_store::finish_bitcoin_core_header_cache_operation(client, result).await?;
-    if config.manifest_path.is_some() {
+    if config.manifest_path.is_some() && config.limit.is_none() {
         record_event_receipt(client, config).await?;
     }
     Ok(summary)
@@ -494,6 +494,7 @@ pub async fn run_historical_import_all(
         configs,
         error_observations,
         Some(&manifest),
+        config.seed_imported_receipts,
     )
     .await
 }
@@ -504,6 +505,7 @@ async fn run_historical_import_configs(
     mut configs: Vec<HistoricalImportConfig>,
     error_observations: Option<ErrorObservationPreflight>,
     manifest: Option<&PublicationManifest>,
+    seed_imported_receipts: bool,
 ) -> Result<HistoricalImportAllSummary> {
     configs.sort_by(|left, right| left.chain.cmp(&right.chain));
     let mut preflighted_artifacts = Vec::with_capacity(configs.len());
@@ -514,7 +516,7 @@ async fn run_historical_import_configs(
         preflighted_artifacts.push(artifact);
     }
     let plan = if let Some(manifest) = manifest {
-        let receipts = load_or_seed_receipts(client).await?;
+        let receipts = load_or_seed_receipts(client, seed_imported_receipts).await?;
         Some(plan_publication_import(
             &configs,
             error_observations.is_some(),
@@ -641,7 +643,7 @@ pub async fn run_historical_import_configs_for_test(
     classifier: &ConfiguredParentClassifier,
     configs: Vec<HistoricalImportConfig>,
 ) -> Result<HistoricalImportAllSummary> {
-    run_historical_import_configs(client, classifier, configs, None, None).await
+    run_historical_import_configs(client, classifier, configs, None, None, false).await
 }
 
 /// Exercise the production error-observation preflight and write path with a

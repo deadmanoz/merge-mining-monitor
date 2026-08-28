@@ -56,6 +56,7 @@ pub(super) async fn write_planned_imports(
         .filter(|(index, _)| work_chain(*index))
         .count();
     let mut work_index = 0_usize;
+    let mut pending_event_chains = Vec::new();
     for (index, (chain_config, artifact)) in configs.iter().zip(preflighted_artifacts).enumerate() {
         if !work_chain(index) {
             continue;
@@ -77,13 +78,14 @@ pub(super) async fn write_planned_imports(
             Some(nbits_table),
         )
         .await?;
-        if let Some(manifest) = manifest {
-            record_event_receipt_from_manifest(client, manifest, &chain_config.chain).await?;
+        if manifest.is_some() {
+            pending_event_chains.push(chain_config.chain.clone());
         }
         summary
             .chains
             .push((chain_config.chain.clone(), chain_summary));
     }
+    let mut pending_error_observations = false;
     if work_error_observations && let Some(artifact) = error_observations {
         summary.error_observations = Some(
             import_error_observations(
@@ -96,14 +98,20 @@ pub(super) async fn write_planned_imports(
             )
             .await?,
         );
-        if let Some(manifest) = manifest {
-            record_error_observation_receipt(client, manifest).await?;
-        }
+        pending_error_observations = manifest.is_some();
     }
     if work_total > 0 || work_error_observations {
         summary.stale_branches_reconciled =
             reconcile_published_stale_branches(client, classifier, nbits_table).await?;
         rebuild_historical_source_health(client).await?;
+    }
+    if let Some(manifest) = manifest {
+        for chain in &pending_event_chains {
+            record_event_receipt_from_manifest(client, manifest, chain).await?;
+        }
+        if pending_error_observations {
+            record_error_observation_receipt(client, manifest).await?;
+        }
     }
     Ok(summary)
 }

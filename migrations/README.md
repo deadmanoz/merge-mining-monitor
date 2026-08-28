@@ -58,7 +58,7 @@ seed, and append-only forward migrations.
 | `0012_add_bitcoin_core_reconcile_queue.sql` | Adds generation-protected two-phase work for atomic near-tip Bitcoin Core canonical suffix replacement. Each row persists primary reconciliation separately from dependent expansion, and generation checks keep newer work for the same hash queued across concurrent repair or replay. |
 | `0013_allow_live_error_block_height_sources.sql` | Permits a live Core-derived predecessor height for `error_block` rows while retaining the catalogue height source as the fallback. |
 | `0014_add_error_block_historical_provenance.sql` | Allows the retained `error-block-observations` publication scope to record its actual `error_block` classification in source-row provenance; normal historical taxonomy is unchanged. |
-| `0015_add_historical_import_artifact.sql` | Adds `historical_import_artifact`, the last-imported publication receipt table (`role`, `chain`, content SHA, size, row count, source pin). `import-all` skips unchanged artifacts against this table. |
+| `0015_add_historical_import_artifact.sql` | Adds `historical_import_artifact`, the last-imported publication receipt table (`role`, `chain`, content SHA, size, row count, source pin). `import-all` skips unchanged artifacts against this table. An empty table is not seeded unless the operator passes `--seed-imported-receipts`. |
 
 `0002_seed_sources.sql` is only for fresh/reset databases. It intentionally
 raises if `source` is already populated, so a non-reset database fails cleanly

@@ -310,7 +310,9 @@ just reclassify-pools
 
 `import-all` verifies all 27 per-chain artifacts before the first database
 mutation. Unchanged artifact SHAs are skipped, including authoritative
-reconcile; an empty receipt table is seeded from the last imported pin.
+reconcile. On a production upgrade whose last imported pin matches the
+packaged seed, pass `--seed-imported-receipts` once so the empty receipt
+table does not replay unchanged files. Fresh databases omit the flag.
 Each changed chain then commits atomically. Historical and partial sources
 are authoritative snapshots; live sources are additive; Doichain is a surveyed
 zero-row no-op. Parent read-model work then drains from the durable historical

@@ -1489,6 +1489,7 @@ fn write_manifest_fixture_rows_with_counts(
             require_pinned_checkout: false,
             batch_size: 10,
             allow_empty_known_stales: true,
+            seed_imported_receipts: false,
         },
         root,
     })

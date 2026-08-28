@@ -1,4 +1,4 @@
-//! Skip unchanged publication artifacts and seed empty receipt tables.
+//! Skip unchanged publication artifacts and optionally seed empty receipt tables.
 
 use anyhow::{Context, Result, ensure};
 use mmm_store::{
@@ -168,16 +168,21 @@ pub(super) fn plan_publication_import(
 
 pub(super) async fn load_or_seed_receipts<C: GenericClient>(
     client: &C,
+    seed_imported_receipts: bool,
 ) -> Result<Vec<HistoricalImportArtifact>> {
-    if count_historical_import_artifacts(client).await? > 0 {
-        return load_historical_import_artifacts(client).await;
+    let existing = count_historical_import_artifacts(client).await?;
+    if should_seed_empty_receipts(seed_imported_receipts, existing) {
+        let seeded = seed_historical_import_artifacts(client, &packaged_seed_artifacts()?).await?;
+        tracing::info!(
+            seeded,
+            "seeded historical import receipts from last imported pin"
+        );
     }
-    let seeded = seed_historical_import_artifacts(client, &packaged_seed_artifacts()?).await?;
-    tracing::info!(
-        seeded,
-        "seeded historical import receipts from last imported pin"
-    );
     load_historical_import_artifacts(client).await
+}
+
+fn should_seed_empty_receipts(requested: bool, existing: i64) -> bool {
+    requested && existing == 0
 }
 
 pub(super) async fn record_event_receipt(
@@ -224,6 +229,14 @@ pub(super) async fn record_error_observation_receipt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_receipts_seed_only_when_explicitly_requested() {
+        assert!(!should_seed_empty_receipts(false, 0));
+        assert!(should_seed_empty_receipts(true, 0));
+        assert!(!should_seed_empty_receipts(true, 3));
+        assert!(!should_seed_empty_receipts(false, 3));
+    }
 
     #[test]
     fn packaged_seed_has_the_last_imported_error_obs_and_hathor() {

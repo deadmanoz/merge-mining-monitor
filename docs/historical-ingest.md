@@ -242,11 +242,14 @@ The command still requires a complete pin and manifest. After that completeness
 preflight it compares each artifact SHA to the last successfully imported
 receipt and skips classify, write, and authoritative reconcile for unchanged
 files. The Bitcoin Core lock is taken only when at least one artifact still
-needs work. An empty receipt table is seeded from
+needs work. An empty receipt table is not treated as "already imported."
+Pass `--seed-imported-receipts` once on a production upgrade to load
 `data/historical/imported-artifact-seed.json` (the last imported production
-pin) so the first smart run does not replay unchanged historical files.
-`import-dataset` writes the same receipts after a publication-backed import.
-The summary reports `skipped_unchanged`.
+pin) so unchanged historical files NOP. Fresh or incomplete databases omit
+the flag and import every artifact. Receipts are written only after
+stale-branch reconciliation and the source-health rebuild succeed.
+`import-dataset` writes the same receipts after a complete publication-backed
+import, not after `--limit`. The summary reports `skipped_unchanged`.
 
 The command preflights all artifacts before importing the first changed chain,
 processes
