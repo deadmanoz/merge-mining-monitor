@@ -164,8 +164,8 @@
       "csv_path": "results/monitor-evidence/error-block-observations_monitor_evidence.csv",
       "role": "error_observation",
       "row_count": 78,
-      "sha256": "74c4ce5b847b15e0ac90b1d72aff3624bf579c2d0b29d8cd0ee8f8a74fcfc039",
-      "size_bytes": 74162,
+      "sha256": "57b1bf982048c70605e182da085e0a86aa5619bd710dd9798f0f15faf4116b94",
+      "size_bytes": 80186,
       "source_chain_counts": {
         "devcoin": 16,
         "elastos": 2,
@@ -488,6 +488,6 @@
   "schema_version": 2,
   "scope": "uniform_monitor_evidence_v1",
   "source_repo": "merge-mining-research",
-  "source_repo_commit": "4cc0a476ada508238768543384189cb476209c5c",
+  "source_repo_commit": "c26e86cf048c350dd5dbf40d48205627d1c6da95",
   "total_event_rows": 580320
 }
