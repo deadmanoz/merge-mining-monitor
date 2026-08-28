@@ -1,5 +1,5 @@
 # Mirror of deadmanoz/merge-mining-research data/error-blocks/error_blocks.csv
-# Source commit: 29966fdd5b51460bb47b68492be6f4c81f016476
+# Source commit: 4cc0a476ada508238768543384189cb476209c5c
 # Fields intentionally retained here: canonical BTC height, display-order hash,
 # and the primary mechanically re-derived consensus violation.
 height,hash,rejection_reason
