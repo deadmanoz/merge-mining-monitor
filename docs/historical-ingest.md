@@ -238,7 +238,18 @@ Import the complete publication:
 just import-all
 ```
 
-The command preflights all artifacts before importing the first chain, processes
+The command still requires a complete pin and manifest. After that completeness
+preflight it compares each artifact SHA to the last successfully imported
+receipt and skips classify, write, and authoritative reconcile for unchanged
+files. The Bitcoin Core lock is taken only when at least one artifact still
+needs work. An empty receipt table is seeded from
+`data/historical/imported-artifact-seed.json` (the last imported production
+pin) so the first smart run does not replay unchanged historical files.
+`import-dataset` writes the same receipts after a publication-backed import.
+The summary reports `skipped_unchanged`.
+
+The command preflights all artifacts before importing the first changed chain,
+processes
 chains in deterministic order, shares a Bitcoin-parent classification cache,
 combines candidate parsing, validation, and preclassification into one stream,
 fills the Bitcoin RPC client's configured bounded concurrency, and runs targeted

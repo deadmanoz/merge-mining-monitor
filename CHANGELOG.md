@@ -6,6 +6,12 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- `import-all` records each artifact's content SHA after a successful write
+  and skips classify, write, and authoritative reconcile when that SHA has
+  not changed. An empty receipt table is seeded from the last imported pin
+  (`091e01a`) so the first smart run does not replay unchanged historical
+  files. `import-dataset` updates the same receipts.
+
 ## [0.7.3] - 2026-08-28
 
 - Show which item of the current Go-to index the stepper is on (`n of N`)

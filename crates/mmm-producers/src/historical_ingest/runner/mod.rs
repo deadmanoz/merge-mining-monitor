@@ -39,12 +39,16 @@ use super::preclassify::{ImportDecision, import_decision, preflight_and_classify
 #[cfg(feature = "db-integration")]
 use super::publication::inspect_error_observation_csv;
 use super::publication::{
-    ArtifactPreflight, ErrorObservationPreflight, preflight_artifact,
-    preflight_required_aggregate_artifacts,
+    ArtifactPreflight, ErrorObservationPreflight, PublicationManifest, load_publication_manifest,
+    preflight_artifact, preflight_required_aggregate_artifacts,
 };
 
 mod error_observations;
 use error_observations::{import_error_observations, preflight_error_observations};
+mod receipts;
+use receipts::{ImportPlan, load_or_seed_receipts, plan_publication_import, record_event_receipt};
+mod write_plan;
+use write_plan::{PlannedWrite, write_planned_imports};
 
 /// Running tallies for one import, surfaced to the operator via `print`.
 ///
@@ -94,6 +98,7 @@ pub struct HistoricalImportAllSummary {
     pub chains: Vec<(String, HistoricalImportSummary)>,
     pub error_observations: Option<HistoricalImportSummary>,
     pub stale_branches_reconciled: u64,
+    pub skipped_unchanged: u64,
 }
 
 /// Per-import shared state threaded into `import_candidate`, resolved once before
@@ -212,7 +217,7 @@ impl HistoricalImportAllSummary {
             summary.print();
         }
         println!(
-            "historical import-all: chains={} error_observations={} error_parents={} expected_rows={} ingested={} inserted={} updated={} promoted={} satisfied_by_existing_exact={} removed={} stale_branches_reconciled={}",
+            "historical import-all: chains={} error_observations={} error_parents={} expected_rows={} ingested={} inserted={} updated={} promoted={} satisfied_by_existing_exact={} removed={} stale_branches_reconciled={} skipped_unchanged={}",
             self.chains.len(),
             self.error_observations
                 .as_ref()
@@ -249,6 +254,7 @@ impl HistoricalImportAllSummary {
                 .map(|(_, value)| value.removed)
                 .sum::<u64>(),
             self.stale_branches_reconciled,
+            self.skipped_unchanged,
         );
     }
 }
@@ -278,10 +284,14 @@ pub async fn run_historical_import(
         None,
     )
     .await;
-    mmm_store::finish_bitcoin_core_header_cache_operation(client, result).await
+    let summary = mmm_store::finish_bitcoin_core_header_cache_operation(client, result).await?;
+    if config.manifest_path.is_some() {
+        record_event_receipt(client, config).await?;
+    }
+    Ok(summary)
 }
 
-async fn run_historical_import_with_cache(
+pub(super) async fn run_historical_import_with_cache(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
     config: &HistoricalImportConfig,
@@ -477,7 +487,15 @@ pub async fn run_historical_import_all(
 ) -> Result<HistoricalImportAllSummary> {
     let error_observations = preflight_required_aggregate_artifacts(config)?;
     let configs = config.chain_configs()?;
-    run_historical_import_configs(client, classifier, configs, error_observations).await
+    let manifest = load_publication_manifest(&config.manifest_path)?;
+    run_historical_import_configs(
+        client,
+        classifier,
+        configs,
+        error_observations,
+        Some(&manifest),
+    )
+    .await
 }
 
 async fn run_historical_import_configs(
@@ -485,6 +503,7 @@ async fn run_historical_import_configs(
     classifier: &ConfiguredParentClassifier,
     mut configs: Vec<HistoricalImportConfig>,
     error_observations: Option<ErrorObservationPreflight>,
+    manifest: Option<&PublicationManifest>,
 ) -> Result<HistoricalImportAllSummary> {
     configs.sort_by(|left, right| left.chain.cmp(&right.chain));
     let mut preflighted_artifacts = Vec::with_capacity(configs.len());
@@ -494,6 +513,26 @@ async fn run_historical_import_configs(
         let artifact = preflight_artifact(chain_config, spec)?;
         preflighted_artifacts.push(artifact);
     }
+    let plan = if let Some(manifest) = manifest {
+        let receipts = load_or_seed_receipts(client).await?;
+        Some(plan_publication_import(
+            &configs,
+            error_observations.is_some(),
+            manifest,
+            &receipts,
+        )?)
+    } else {
+        None
+    };
+    if let Some(plan) = &plan
+        && plan.work_chain.iter().all(|work| !work)
+        && !plan.work_error_observations
+    {
+        return Ok(HistoricalImportAllSummary {
+            skipped_unchanged: plan.skipped_unchanged,
+            ..HistoricalImportAllSummary::default()
+        });
+    }
 
     mmm_store::lock_bitcoin_core_header_cache(client).await?;
     let result = run_historical_import_configs_locked(
@@ -502,6 +541,8 @@ async fn run_historical_import_configs(
         configs,
         preflighted_artifacts,
         error_observations,
+        manifest,
+        plan,
     )
     .await;
     mmm_store::finish_bitcoin_core_header_cache_operation(client, result).await
@@ -513,20 +554,41 @@ async fn run_historical_import_configs_locked(
     configs: Vec<HistoricalImportConfig>,
     mut preflighted_artifacts: Vec<ArtifactPreflight>,
     mut error_observations: Option<ErrorObservationPreflight>,
+    manifest: Option<&PublicationManifest>,
+    plan: Option<ImportPlan>,
 ) -> Result<HistoricalImportAllSummary> {
     let mut classifications = HashMap::new();
+    let work_chain = |index: usize| plan.as_ref().is_none_or(|plan| plan.work_chain[index]);
+    let work_error_observations = plan
+        .as_ref()
+        .is_none_or(|plan| plan.work_error_observations);
     let import_configs = configs
         .iter()
-        .filter(|config| {
-            historical_chain_spec(&config.chain).is_some_and(|spec| {
-                spec.lifecycle != mmm_capture::source_registry::SourceLifecycle::Surveyed
-            })
+        .enumerate()
+        .filter(|(index, config)| {
+            work_chain(*index)
+                && historical_chain_spec(&config.chain).is_some_and(|spec| {
+                    spec.lifecycle != mmm_capture::source_registry::SourceLifecycle::Surveyed
+                })
         })
+        .map(|(_, config)| config)
         .collect::<Vec<_>>();
+    if import_configs.is_empty() && !work_error_observations {
+        let mut summary = HistoricalImportAllSummary::default();
+        if let Some(plan) = plan {
+            summary.skipped_unchanged = plan.skipped_unchanged;
+        }
+        return Ok(summary);
+    }
     ensure_import_environment(client, classifier, &import_configs).await?;
     let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
     let expected_error_parents = error_observations::pinned_error_parent_hashes();
-    for (chain_config, artifact) in configs.iter().zip(&mut preflighted_artifacts) {
+    for (index, (chain_config, artifact)) in
+        configs.iter().zip(&mut preflighted_artifacts).enumerate()
+    {
+        if !work_chain(index) {
+            continue;
+        }
         let spec = historical_chain_spec(&chain_config.chain)
             .expect("chain configs are built from the source registry");
         preflight_and_classify_candidates(
@@ -540,7 +602,7 @@ async fn run_historical_import_configs_locked(
         )
         .await?;
     }
-    if let Some(artifact) = &mut error_observations {
+    if work_error_observations && let Some(artifact) = &mut error_observations {
         preflight_error_observations(
             client,
             classifier,
@@ -552,45 +614,22 @@ async fn run_historical_import_configs_locked(
         .await?;
     }
 
-    let mut summary = HistoricalImportAllSummary::default();
-    for (index, (chain_config, artifact)) in configs.iter().zip(preflighted_artifacts).enumerate() {
-        info!(
-            chain = %chain_config.chain,
-            current = index + 1,
-            total = configs.len(),
-            "importing historical publication chain"
-        );
-        let chain_summary = run_historical_import_with_cache(
-            client,
-            classifier,
-            chain_config,
-            &mut classifications,
-            Some(artifact),
-            false,
-            Some(&nbits_table),
-        )
-        .await?;
-        summary
-            .chains
-            .push((chain_config.chain.clone(), chain_summary));
-    }
-    if let Some(artifact) = error_observations {
-        summary.error_observations = Some(
-            import_error_observations(
-                client,
-                classifier,
-                artifact,
-                &mut classifications,
-                &nbits_table,
-                &expected_error_parents,
-            )
-            .await?,
-        );
-    }
-    summary.stale_branches_reconciled =
-        reconcile_published_stale_branches(client, classifier, &nbits_table).await?;
-    rebuild_historical_source_health(client).await?;
-    Ok(summary)
+    write_planned_imports(
+        client,
+        classifier,
+        PlannedWrite {
+            configs: &configs,
+            preflighted_artifacts,
+            error_observations,
+            manifest,
+            plan,
+            work_error_observations,
+        },
+        &mut classifications,
+        &nbits_table,
+        &expected_error_parents,
+    )
+    .await
 }
 
 /// Exercise the production multi-chain orchestration with explicit normalized
@@ -602,7 +641,7 @@ pub async fn run_historical_import_configs_for_test(
     classifier: &ConfiguredParentClassifier,
     configs: Vec<HistoricalImportConfig>,
 ) -> Result<HistoricalImportAllSummary> {
-    run_historical_import_configs(client, classifier, configs, None).await
+    run_historical_import_configs(client, classifier, configs, None, None).await
 }
 
 /// Exercise the production error-observation preflight and write path with a
@@ -668,7 +707,7 @@ pub async fn run_manifest_historical_import_for_test(
     run_historical_import(client, classifier, &chain_config).await
 }
 
-async fn reconcile_published_stale_branches(
+pub(super) async fn reconcile_published_stale_branches(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
     nbits_table: &NbitsTable,

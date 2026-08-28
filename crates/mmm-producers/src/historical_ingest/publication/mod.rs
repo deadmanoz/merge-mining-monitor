@@ -104,6 +104,16 @@ pub(super) enum ArtifactRole {
     ErrorObservation,
 }
 
+impl ArtifactRole {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Event => "event",
+            Self::Aggregate => "aggregate",
+            Self::ErrorObservation => "error_observation",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(serde::Serialize))]
 pub(super) struct PublicationCounts {

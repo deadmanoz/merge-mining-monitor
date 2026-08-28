@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "source_repo": "merge-mining-research",
+  "source_repo_commit": "091e01a53da8497a986caf03bf142d8d65ac0110",
+  "artifacts": [
+    {
+      "role": "error_observation",
+      "chain": "error-block-observations",
+      "sha256": "886cb0a9953fa7a064ba29d4a081e5641edc240223733ffc175ce3bfe7cb0270",
+      "size_bytes": 69541,
+      "row_count": 73
+    },
+    {
+      "role": "event",
+      "chain": "argentum",
+      "sha256": "6293215e776a51ae034ee188b62a8a21225cd4cb5294736316129b7f4077408e",
+      "size_bytes": 89262,
+      "row_count": 29
+    },
+    {
+      "role": "event",
+      "chain": "bitcoin-vault",
+      "sha256": "a95508d2d69fe32be85114892ef429e0928ca1f4e4b4ff3d46aaf60d9cbbae66",
+      "size_bytes": 2470244,
+      "row_count": 2575
+    },
+    {
+      "role": "event",
+      "chain": "bitmark",
+      "sha256": "dde64e3dfd422e23425dd931a0a919facbf1469163c2c98077dc0518ffba2d8d",
+      "size_bytes": 942597,
+      "row_count": 898
+    },
+    {
+      "role": "event",
+      "chain": "coiledcoin",
+      "sha256": "986eca0abdc4fd4d617d43dce993858be3ec2842b4a9576e74265d68a7560ddb",
+      "size_bytes": 1702815,
+      "row_count": 635
+    },
+    {
+      "role": "event",
+      "chain": "crown",
+      "sha256": "db7d20c950dc76ed94da00beb531ec41eeccaaba1d68cedb45da32b6a0932b82",
+      "size_bytes": 5832586,
+      "row_count": 5506
+    },
+    {
+      "role": "event",
+      "chain": "devcoin",
+      "sha256": "7e26b8597a99f97ede0df2cd3c7a07a3cd0e994f64ab59341132ea42f9508095",
+      "size_bytes": 69313039,
+      "row_count": 54572
+    },
+    {
+      "role": "event",
+      "chain": "doichain",
+      "sha256": "783ea31e30711dfe7ca9459f12032289e240afe66ce2872312ddcde8e1e72d06",
+      "size_bytes": 394,
+      "row_count": 0
+    },
+    {
+      "role": "event",
+      "chain": "elastos",
+      "sha256": "900fdd32350f21c0fa721f071a1e79ec7123d3f87922acbb92f8c3302113cc19",
+      "size_bytes": 167173465,
+      "row_count": 175235
+    },
+    {
+      "role": "event",
+      "chain": "elcash",
+      "sha256": "827199fab8bf7a9341f7a18beb221213e3c785e9d1bd9a37bba3067941fd2bbf",
+      "size_bytes": 2590633,
+      "row_count": 2429
+    },
+    {
+      "role": "event",
+      "chain": "emercoin",
+      "sha256": "622df4f0d6d6a5e35cfc4240475763c5373184a12b8cbae1e5b129c0c30371e7",
+      "size_bytes": 52088602,
+      "row_count": 45691
+    },
+    {
+      "role": "event",
+      "chain": "fractal",
+      "sha256": "84d1014e788cbc21ab0464b96df8d92da89d50250987af02223f15afe5480eca",
+      "size_bytes": 61541299,
+      "row_count": 59011
+    },
+    {
+      "role": "event",
+      "chain": "geistgeld",
+      "sha256": "3d541a4e3a0136fbb3f75a26e9b719f55ab4676f2ad934e34843452cb1005f19",
+      "size_bytes": 1228,
+      "row_count": 1
+    },
+    {
+      "role": "event",
+      "chain": "groupcoin",
+      "sha256": "23fa9068c550dceec1e8e2d547ea5594d74b0fac6cbab3bb75ca68a345780d4c",
+      "size_bytes": 2316510,
+      "row_count": 2153
+    },
+    {
+      "role": "event",
+      "chain": "hathor",
+      "sha256": "26bc974727a85c56091db907f33e5b40edcc035796c35b07aed240f70f32009d",
+      "size_bytes": 7525,
+      "row_count": 6
+    },
+    {
+      "role": "event",
+      "chain": "huntercoin",
+      "sha256": "bd881355360ddf61246e70419e48f2e2d04adfcc3684a93cb4df3dd3dec579fa",
+      "size_bytes": 2143061,
+      "row_count": 870
+    },
+    {
+      "role": "event",
+      "chain": "i0coin",
+      "sha256": "c13a2810a9c0d51efc7c1a102dc0686b4fefc106dc8201cd7e02258895d11354",
+      "size_bytes": 18499988,
+      "row_count": 17126
+    },
+    {
+      "role": "event",
+      "chain": "ixcoin",
+      "sha256": "2f07b95531dca7599aee9d26ae84532ad3e893c5a7caa7116bedeee04abddd24",
+      "size_bytes": 69925751,
+      "row_count": 47279
+    },
+    {
+      "role": "event",
+      "chain": "lyncoin",
+      "sha256": "2a1531207081b2816444cbe67fdf34761aa06a131e20114e8ac8b2abe86f64f7",
+      "size_bytes": 9703,
+      "row_count": 11
+    },
+    {
+      "role": "event",
+      "chain": "myriadcoin",
+      "sha256": "284507d52ccfaefd59fb6e695d30d8fd202aad9557a6b10fd9d09ef1f2b01d04",
+      "size_bytes": 15795185,
+      "row_count": 14745
+    },
+    {
+      "role": "event",
+      "chain": "namecoin",
+      "sha256": "b30fa66328f93fbc58be6cad9df9b9780477ecbdb6244717a83899204ea8ebf7",
+      "size_bytes": 1786290,
+      "row_count": 1665
+    },
+    {
+      "role": "event",
+      "chain": "rsk",
+      "sha256": "9810c68ee9735fd10c494c8687a609ca31577bc283d8d6c0c58d23e1c974a0a5",
+      "size_bytes": 513712,
+      "row_count": 303
+    },
+    {
+      "role": "event",
+      "chain": "sixeleven",
+      "sha256": "e7102e9f1a51d5fa43c155a5b91093e10d66894c7d7c38245659448c51ec4b51",
+      "size_bytes": 8262,
+      "row_count": 7
+    },
+    {
+      "role": "event",
+      "chain": "syscoin",
+      "sha256": "2649d2f2e87c26eeb7cb1af5c2a5f92ae882a9d462cd5f93682eb30162df6f65",
+      "size_bytes": 76370409,
+      "row_count": 98713
+    },
+    {
+      "role": "event",
+      "chain": "terracoin",
+      "sha256": "4071f1f2f273f8049017a337be5d69c06e952f839809894190c5f477512a7503",
+      "size_bytes": 11069472,
+      "row_count": 11292
+    },
+    {
+      "role": "event",
+      "chain": "unobtanium",
+      "sha256": "a5f976459e4d6711669cbdef70b15d6d2f4fab33af50dc7cedf36d3becaf6d34",
+      "size_bytes": 16212224,
+      "row_count": 15001
+    },
+    {
+      "role": "event",
+      "chain": "vcash",
+      "sha256": "c32cc2674db4cb38e2d5b108e7c45e37ac6a9f58d0b339cce803de29b2380b73",
+      "size_bytes": 119373,
+      "row_count": 68
+    },
+    {
+      "role": "event",
+      "chain": "xaya",
+      "sha256": "0ba1d2e397bbe2a84880d51e6c15e824cb8ab673e57709d1474acc909932cb73",
+      "size_bytes": 25802500,
+      "row_count": 20841
+    }
+  ]
+}
