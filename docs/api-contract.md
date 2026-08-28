@@ -102,12 +102,23 @@ Example:
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.7.2",
+  "version": "0.7.3",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 12,
+    "release_count": 13,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.7.3",
+        "date": "2026-08-28",
+        "items": [
+          "Show which Go-to item the stepper is on (`n of N`) while walking stales, stale branches, error blocks, orphans, and orphan branches.",
+          "Refresh from the Updated stamp, or Retry when a view has not loaded. Data still reloads every 60s; the Auto interval picker is gone.",
+          "Pin the error-block catalogue and historical publication to 35 parents and 78 observations, including Hathor-witnessed 649674 and the 2026 F2Pool `time_below_mtp` twin at 957780. Historical events are now 580,320."
+        ],
+        "item_count": 3,
+        "truncated": false
+      },
       {
         "version": "0.7.2",
         "date": "2026-08-27",

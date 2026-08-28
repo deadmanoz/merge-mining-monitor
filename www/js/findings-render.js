@@ -4,13 +4,13 @@
 // `[^N]` markers, `code` spans, and the Sources list render identically to the
 // chain profiles (and the jscpd gate stays quiet).
 
-import { esc } from "./frontend-state.js?v=0.7.2";
-import { renderFigure } from "./findings-figures.js?v=0.7.2";
+import { esc } from "./frontend-state.js?v=0.7.3";
+import { renderFigure } from "./findings-figures.js?v=0.7.3";
 import {
   collectCitedReferenceIds,
   formatCitedText,
   renderSourcesSection,
-} from "./source-dialog.js?v=0.7.2";
+} from "./source-dialog.js?v=0.7.3";
 
 // Category/status presentation. Colors are existing semantic tokens, chosen
 // once here so chips and rail dots stay in sync.

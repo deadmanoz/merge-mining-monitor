@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-08-28
+
 - Show which item of the current Go-to index the stepper is on (`n of N`)
   while walking stales, stale branches, error blocks, orphans, and orphan
   branches.

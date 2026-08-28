@@ -1,5 +1,15 @@
 # Release Notes
 
+## [0.7.3] - 2026-08-28
+
+- Show which Go-to item the stepper is on (`n of N`) while walking stales,
+  stale branches, error blocks, orphans, and orphan branches.
+- Refresh from the Updated stamp, or Retry when a view has not loaded. Data
+  still reloads every 60s; the Auto interval picker is gone.
+- Pin the error-block catalogue and historical publication to 35 parents and
+  78 observations, including Hathor-witnessed 649674 and the 2026 F2Pool
+  `time_below_mtp` twin at 957780. Historical events are now 580,320.
+
 ## [0.7.2] - 2026-08-27
 
 - Clear a recovered Bitcoin Core link error after revalidating the cached block
