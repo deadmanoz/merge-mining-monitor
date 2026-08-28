@@ -249,7 +249,10 @@ pin) so unchanged historical files NOP. Fresh or incomplete databases omit
 the flag and import every artifact. Receipts are written only after
 stale-branch reconciliation and the source-health rebuild succeed.
 `import-dataset` writes the same receipts after a complete publication-backed
-import, not after `--limit`. The summary reports `skipped_unchanged`.
+import, not after `--limit`. Receipts store the artifact identity verified
+during preflight, including surveyed zero-row files, so a later `import-all`
+does not reload the manifest or replay an already-checked SHA. The summary
+reports `skipped_unchanged`.
 
 The command preflights all artifacts before importing the first changed chain,
 processes

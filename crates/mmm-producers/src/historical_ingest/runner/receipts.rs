@@ -8,10 +8,8 @@ use mmm_store::{
 use serde::Deserialize;
 use tokio_postgres::{Client, GenericClient};
 
-use super::super::config::{HistoricalImportConfig, PINNED_RESEARCH_COMMIT};
-use super::super::publication::{
-    ArtifactRole, PublicationArtifact, PublicationManifest, load_publication_manifest,
-};
+use super::super::config::PINNED_RESEARCH_COMMIT;
+use super::super::publication::{ArtifactRole, PublicationArtifact};
 
 const IMPORTED_ARTIFACT_SEED: &str =
     include_str!("../../../../../data/historical/imported-artifact-seed.json");
@@ -121,26 +119,19 @@ pub(super) fn sha_is_unchanged(
 }
 
 pub(super) fn plan_publication_import(
-    configs: &[HistoricalImportConfig],
-    has_error_observations: bool,
-    manifest: &PublicationManifest,
+    event_identities: &[PublicationArtifact],
+    error_identity: Option<&PublicationArtifact>,
     receipts: &[HistoricalImportArtifact],
-) -> Result<ImportPlan> {
+) -> ImportPlan {
     let mut plan = ImportPlan {
-        work_chain: Vec::with_capacity(configs.len()),
-        work_error_observations: has_error_observations,
+        work_chain: Vec::with_capacity(event_identities.len()),
+        work_error_observations: error_identity.is_some(),
         skipped_unchanged: 0,
     };
-    for config in configs {
-        let artifact = manifest.event_artifact(&config.chain).with_context(|| {
-            format!(
-                "publication manifest has no event artifact for {:?}",
-                config.chain
-            )
-        })?;
+    for artifact in event_identities {
         let skip = sha_is_unchanged(
             receipts,
-            ArtifactRole::Event,
+            artifact.role,
             &artifact.chain,
             &artifact.sha256,
         );
@@ -149,21 +140,18 @@ pub(super) fn plan_publication_import(
             plan.skipped_unchanged += 1;
         }
     }
-    if has_error_observations {
-        let artifact = manifest
-            .error_observation_artifact()
-            .context("publication manifest has no error-observation artifact")?;
-        if sha_is_unchanged(
+    if let Some(artifact) = error_identity
+        && sha_is_unchanged(
             receipts,
-            ArtifactRole::ErrorObservation,
+            artifact.role,
             &artifact.chain,
             &artifact.sha256,
-        ) {
-            plan.work_error_observations = false;
-            plan.skipped_unchanged += 1;
-        }
+        )
+    {
+        plan.work_error_observations = false;
+        plan.skipped_unchanged += 1;
     }
-    Ok(plan)
+    plan
 }
 
 pub(super) async fn load_or_seed_receipts<C: GenericClient>(
@@ -185,26 +173,10 @@ fn should_seed_empty_receipts(requested: bool, existing: i64) -> bool {
     requested && existing == 0
 }
 
-pub(super) async fn record_event_receipt(
+pub(super) async fn record_receipt(
     client: &Client,
-    config: &HistoricalImportConfig,
+    artifact: &PublicationArtifact,
 ) -> Result<()> {
-    let manifest_path = config
-        .manifest_path
-        .as_deref()
-        .context("publication import requires a manifest")?;
-    let manifest = load_publication_manifest(manifest_path)?;
-    record_event_receipt_from_manifest(client, &manifest, &config.chain).await
-}
-
-pub(super) async fn record_event_receipt_from_manifest(
-    client: &Client,
-    manifest: &PublicationManifest,
-    chain: &str,
-) -> Result<()> {
-    let artifact = manifest
-        .event_artifact(chain)
-        .with_context(|| format!("publication manifest has no event artifact for {chain:?}"))?;
     upsert_historical_import_artifact(
         client,
         &receipt_from_artifact(artifact, PINNED_RESEARCH_COMMIT.as_str()),
@@ -212,18 +184,14 @@ pub(super) async fn record_event_receipt_from_manifest(
     .await
 }
 
-pub(super) async fn record_error_observation_receipt(
+pub(super) async fn record_receipts(
     client: &Client,
-    manifest: &PublicationManifest,
+    artifacts: &[PublicationArtifact],
 ) -> Result<()> {
-    let artifact = manifest
-        .error_observation_artifact()
-        .context("publication manifest has no error-observation artifact")?;
-    upsert_historical_import_artifact(
-        client,
-        &receipt_from_artifact(artifact, PINNED_RESEARCH_COMMIT.as_str()),
-    )
-    .await
+    for artifact in artifacts {
+        record_receipt(client, artifact).await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -258,6 +226,48 @@ mod tests {
             .find(|row| row.chain == "hathor")
             .expect("hathor seed");
         assert_eq!(hathor.row_count, 6);
+    }
+
+    fn test_identity(chain: &str, sha256: &str, role: ArtifactRole) -> PublicationArtifact {
+        PublicationArtifact {
+            chain: chain.to_owned(),
+            csv_path: String::new(),
+            role,
+            row_count: 1,
+            size_bytes: 1,
+            sha256: sha256.to_owned(),
+            counts: Default::default(),
+            source_chain_counts: Default::default(),
+        }
+    }
+
+    #[test]
+    fn plan_uses_preflight_identity_sha() {
+        let receipts = vec![HistoricalImportArtifact {
+            role: "event".into(),
+            chain: "devcoin".into(),
+            sha256: "ab".repeat(32),
+            size_bytes: 1,
+            row_count: 1,
+            source_repo_commit: "0".repeat(40),
+        }];
+        let unchanged = [test_identity(
+            "devcoin",
+            &"ab".repeat(32),
+            ArtifactRole::Event,
+        )];
+        let skipped = plan_publication_import(&unchanged, None, &receipts);
+        assert_eq!(skipped.work_chain, vec![false]);
+        assert_eq!(skipped.skipped_unchanged, 1);
+
+        let changed = [test_identity(
+            "devcoin",
+            &"cd".repeat(32),
+            ArtifactRole::Event,
+        )];
+        let work = plan_publication_import(&changed, None, &receipts);
+        assert_eq!(work.work_chain, vec![true]);
+        assert_eq!(work.skipped_unchanged, 0);
     }
 
     #[test]

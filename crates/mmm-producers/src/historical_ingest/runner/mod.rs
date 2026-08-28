@@ -39,14 +39,16 @@ use super::preclassify::{ImportDecision, import_decision, preflight_and_classify
 #[cfg(feature = "db-integration")]
 use super::publication::inspect_error_observation_csv;
 use super::publication::{
-    ArtifactPreflight, ErrorObservationPreflight, PublicationManifest, load_publication_manifest,
-    preflight_artifact, preflight_required_aggregate_artifacts,
+    ArtifactPreflight, ErrorObservationPreflight, PublicationArtifact, preflight_artifact,
+    preflight_required_aggregate_artifacts,
 };
 
 mod error_observations;
 use error_observations::{import_error_observations, preflight_error_observations};
 mod receipts;
-use receipts::{ImportPlan, load_or_seed_receipts, plan_publication_import, record_event_receipt};
+use receipts::{
+    ImportPlan, load_or_seed_receipts, plan_publication_import, record_receipt, record_receipts,
+};
 mod write_plan;
 use write_plan::{PlannedWrite, write_planned_imports};
 
@@ -284,9 +286,10 @@ pub async fn run_historical_import(
         None,
     )
     .await;
-    let summary = mmm_store::finish_bitcoin_core_header_cache_operation(client, result).await?;
-    if config.manifest_path.is_some() && config.limit.is_none() {
-        record_event_receipt(client, config).await?;
+    let (summary, identity) =
+        mmm_store::finish_bitcoin_core_header_cache_operation(client, result).await?;
+    if config.limit.is_none() && let Some(identity) = identity {
+        record_receipt(client, &identity).await?;
     }
     Ok(summary)
 }
@@ -299,7 +302,7 @@ pub(super) async fn run_historical_import_with_cache(
     preflighted_artifact: Option<ArtifactPreflight>,
     rebuild_source_health_after_import: bool,
     shared_nbits_table: Option<&NbitsTable>,
-) -> Result<HistoricalImportSummary> {
+) -> Result<(HistoricalImportSummary, Option<PublicationArtifact>)> {
     if config.limit == Some(0) {
         bail!("--limit must be greater than zero");
     }
@@ -310,6 +313,7 @@ pub(super) async fn run_historical_import_with_cache(
         Some(artifact) => artifact,
         None => preflight_artifact(config, spec)?,
     };
+    let identity = artifact.identity.clone();
     let loaded_nbits_table = match shared_nbits_table {
         Some(_) => None,
         None => Some(mmm_store::load_bitcoin_core_nbits_table(client).await?),
@@ -336,11 +340,14 @@ pub(super) async fn run_historical_import_with_cache(
         .await?;
     }
     if spec.lifecycle == mmm_capture::source_registry::SourceLifecycle::Surveyed {
-        return Ok(HistoricalImportSummary {
-            expected_rows: artifact.row_count,
-            rows_seen: artifact.row_count,
-            ..HistoricalImportSummary::default()
-        });
+        return Ok((
+            HistoricalImportSummary {
+                expected_rows: artifact.row_count,
+                rows_seen: artifact.row_count,
+                ..HistoricalImportSummary::default()
+            },
+            identity,
+        ));
     }
     let source_id = mmm_store::get_source_id(client, spec.source_code).await?;
     let resolver = PoolResolver::from_default_snapshot().context("load embedded pool snapshot")?;
@@ -393,7 +400,7 @@ pub(super) async fn run_historical_import_with_cache(
     if rebuild_source_health_after_import {
         rebuild_historical_source_health(client).await?;
     }
-    Ok(summary)
+    Ok((summary, identity))
 }
 
 async fn import_rows_in_transaction(
@@ -487,13 +494,11 @@ pub async fn run_historical_import_all(
 ) -> Result<HistoricalImportAllSummary> {
     let error_observations = preflight_required_aggregate_artifacts(config)?;
     let configs = config.chain_configs()?;
-    let manifest = load_publication_manifest(&config.manifest_path)?;
     run_historical_import_configs(
         client,
         classifier,
         configs,
         error_observations,
-        Some(&manifest),
         config.seed_imported_receipts,
     )
     .await
@@ -504,7 +509,6 @@ async fn run_historical_import_configs(
     classifier: &ConfiguredParentClassifier,
     mut configs: Vec<HistoricalImportConfig>,
     error_observations: Option<ErrorObservationPreflight>,
-    manifest: Option<&PublicationManifest>,
     seed_imported_receipts: bool,
 ) -> Result<HistoricalImportAllSummary> {
     configs.sort_by(|left, right| left.chain.cmp(&right.chain));
@@ -515,14 +519,20 @@ async fn run_historical_import_configs(
         let artifact = preflight_artifact(chain_config, spec)?;
         preflighted_artifacts.push(artifact);
     }
-    let plan = if let Some(manifest) = manifest {
+    let event_identities = preflighted_artifacts
+        .iter()
+        .filter_map(|artifact| artifact.identity.clone())
+        .collect::<Vec<_>>();
+    let publication_backed = event_identities.len() == configs.len();
+    let plan = if publication_backed {
         let receipts = load_or_seed_receipts(client, seed_imported_receipts).await?;
         Some(plan_publication_import(
-            &configs,
-            error_observations.is_some(),
-            manifest,
+            &event_identities,
+            error_observations
+                .as_ref()
+                .and_then(|artifact| artifact.identity.as_ref()),
             &receipts,
-        )?)
+        ))
     } else {
         None
     };
@@ -543,7 +553,6 @@ async fn run_historical_import_configs(
         configs,
         preflighted_artifacts,
         error_observations,
-        manifest,
         plan,
     )
     .await;
@@ -556,7 +565,6 @@ async fn run_historical_import_configs_locked(
     configs: Vec<HistoricalImportConfig>,
     mut preflighted_artifacts: Vec<ArtifactPreflight>,
     mut error_observations: Option<ErrorObservationPreflight>,
-    manifest: Option<&PublicationManifest>,
     plan: Option<ImportPlan>,
 ) -> Result<HistoricalImportAllSummary> {
     let mut classifications = HashMap::new();
@@ -577,9 +585,14 @@ async fn run_historical_import_configs_locked(
         .collect::<Vec<_>>();
     if import_configs.is_empty() && !work_error_observations {
         let mut summary = HistoricalImportAllSummary::default();
-        if let Some(plan) = plan {
+        if let Some(plan) = &plan {
             summary.skipped_unchanged = plan.skipped_unchanged;
         }
+        record_receipts(
+            client,
+            &preflight_work_identities(&configs, &preflighted_artifacts, plan.as_ref()),
+        )
+        .await?;
         return Ok(summary);
     }
     ensure_import_environment(client, classifier, &import_configs).await?;
@@ -623,7 +636,6 @@ async fn run_historical_import_configs_locked(
             configs: &configs,
             preflighted_artifacts,
             error_observations,
-            manifest,
             plan,
             work_error_observations,
         },
@@ -632,6 +644,20 @@ async fn run_historical_import_configs_locked(
         &expected_error_parents,
     )
     .await
+}
+
+fn preflight_work_identities(
+    configs: &[HistoricalImportConfig],
+    preflighted: &[ArtifactPreflight],
+    plan: Option<&ImportPlan>,
+) -> Vec<PublicationArtifact> {
+    configs
+        .iter()
+        .zip(preflighted)
+        .enumerate()
+        .filter(|(index, _)| plan.is_none_or(|plan| plan.work_chain[*index]))
+        .filter_map(|(_, (_, artifact))| artifact.identity.clone())
+        .collect()
 }
 
 /// Exercise the production multi-chain orchestration with explicit normalized
@@ -643,7 +669,7 @@ pub async fn run_historical_import_configs_for_test(
     classifier: &ConfiguredParentClassifier,
     configs: Vec<HistoricalImportConfig>,
 ) -> Result<HistoricalImportAllSummary> {
-    run_historical_import_configs(client, classifier, configs, None, None, false).await
+    run_historical_import_configs(client, classifier, configs, None, false).await
 }
 
 /// Exercise the production error-observation preflight and write path with a

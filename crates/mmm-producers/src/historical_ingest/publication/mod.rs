@@ -268,6 +268,7 @@ fn valid_sha256(value: &str) -> bool {
 pub(super) struct ArtifactPreflight {
     pub(super) row_count: u64,
     pub(super) counts: PublicationCounts,
+    pub(super) identity: Option<PublicationArtifact>,
     file: File,
 }
 
@@ -419,6 +420,7 @@ fn inspect_csv(
     Ok(ArtifactPreflight {
         row_count,
         counts,
+        identity: expected.cloned(),
         file,
     })
 }

@@ -8,13 +8,9 @@ use tokio_postgres::Client;
 use tracing::info;
 
 use super::super::config::HistoricalImportConfig;
-use super::super::publication::{
-    ArtifactPreflight, ErrorObservationPreflight, PublicationManifest,
-};
+use super::super::publication::{ArtifactPreflight, ErrorObservationPreflight};
 use super::error_observations::import_error_observations;
-use super::receipts::{
-    ImportPlan, record_error_observation_receipt, record_event_receipt_from_manifest,
-};
+use super::receipts::{ImportPlan, record_receipts};
 use super::{
     HistoricalImportAllSummary, reconcile_published_stale_branches,
     run_historical_import_with_cache,
@@ -24,7 +20,6 @@ pub(super) struct PlannedWrite<'a> {
     pub configs: &'a [HistoricalImportConfig],
     pub preflighted_artifacts: Vec<ArtifactPreflight>,
     pub error_observations: Option<ErrorObservationPreflight>,
-    pub manifest: Option<&'a PublicationManifest>,
     pub plan: Option<ImportPlan>,
     pub work_error_observations: bool,
 }
@@ -41,7 +36,6 @@ pub(super) async fn write_planned_imports(
         configs,
         preflighted_artifacts,
         error_observations,
-        manifest,
         plan,
         work_error_observations,
     } = write;
@@ -56,7 +50,7 @@ pub(super) async fn write_planned_imports(
         .filter(|(index, _)| work_chain(*index))
         .count();
     let mut work_index = 0_usize;
-    let mut pending_event_chains = Vec::new();
+    let mut pending_identities = Vec::new();
     for (index, (chain_config, artifact)) in configs.iter().zip(preflighted_artifacts).enumerate() {
         if !work_chain(index) {
             continue;
@@ -68,7 +62,7 @@ pub(super) async fn write_planned_imports(
             total = work_total,
             "importing historical publication chain"
         );
-        let chain_summary = run_historical_import_with_cache(
+        let (chain_summary, identity) = run_historical_import_with_cache(
             client,
             classifier,
             chain_config,
@@ -78,15 +72,15 @@ pub(super) async fn write_planned_imports(
             Some(nbits_table),
         )
         .await?;
-        if manifest.is_some() {
-            pending_event_chains.push(chain_config.chain.clone());
+        if let Some(identity) = identity {
+            pending_identities.push(identity);
         }
         summary
             .chains
             .push((chain_config.chain.clone(), chain_summary));
     }
-    let mut pending_error_observations = false;
     if work_error_observations && let Some(artifact) = error_observations {
+        let identity = artifact.identity.clone();
         summary.error_observations = Some(
             import_error_observations(
                 client,
@@ -98,20 +92,15 @@ pub(super) async fn write_planned_imports(
             )
             .await?,
         );
-        pending_error_observations = manifest.is_some();
+        if let Some(identity) = identity {
+            pending_identities.push(identity);
+        }
     }
     if work_total > 0 || work_error_observations {
         summary.stale_branches_reconciled =
             reconcile_published_stale_branches(client, classifier, nbits_table).await?;
         rebuild_historical_source_health(client).await?;
     }
-    if let Some(manifest) = manifest {
-        for chain in &pending_event_chains {
-            record_event_receipt_from_manifest(client, manifest, chain).await?;
-        }
-        if pending_error_observations {
-            record_error_observation_receipt(client, manifest).await?;
-        }
-    }
+    record_receipts(client, &pending_identities).await?;
     Ok(summary)
 }

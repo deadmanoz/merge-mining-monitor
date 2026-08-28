@@ -20,6 +20,7 @@ use crate::historical_ingest::config::is_historical_import_chain;
 pub(crate) struct ErrorObservationPreflight {
     pub(crate) row_count: u64,
     pub(crate) source_chain_counts: BTreeMap<String, u64>,
+    pub(crate) identity: Option<PublicationArtifact>,
     file: File,
 }
 
@@ -97,6 +98,7 @@ pub(crate) fn inspect_error_observation_csv(
     Ok(ErrorObservationPreflight {
         row_count,
         source_chain_counts,
+        identity: expected.cloned(),
         file,
     })
 }
