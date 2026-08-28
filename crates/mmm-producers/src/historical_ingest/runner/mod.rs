@@ -44,6 +44,8 @@ use super::publication::{
 };
 
 mod error_observations;
+#[cfg(feature = "db-integration")]
+use error_observations::import_error_observations;
 use error_observations::preflight_error_observations;
 mod receipts;
 use receipts::{ImportPlan, load_or_seed_receipts, plan_publication_import, record_receipts};
