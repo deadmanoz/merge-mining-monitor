@@ -310,6 +310,7 @@ module.exports = {
   makeFinding,
   makeNode,
   moduleUrl,
+  navigatorPayload,
   stubFindings,
   sourcesPayload,
   stubApi,

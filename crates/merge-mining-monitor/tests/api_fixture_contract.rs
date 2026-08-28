@@ -88,6 +88,8 @@ fn assert_navigator_fixture_contract(file: &str, fixture: &Value) {
         }
     }
 
+    assert_navigator_index_contract(file, fixture, items);
+
     if file == "navigator-error-block.json" {
         assert!(
             fixture["query"]["classification"]
@@ -127,6 +129,39 @@ fn assert_navigator_fixture_contract(file: &str, fixture: &Value) {
         assert!(
             first < second,
             "{file}: same-height items must ascend by stored hash bytes"
+        );
+    }
+}
+
+fn assert_navigator_index_contract(file: &str, fixture: &Value, items: &[Value]) {
+    let total = fixture["total"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("{file}: total must be a non-negative integer"));
+    let indexes = items
+        .iter()
+        .enumerate()
+        .map(|(offset, item)| {
+            let index = item["index"].as_u64().unwrap_or_else(|| {
+                panic!("{file}: items[{offset}].index must be a positive integer")
+            });
+            assert!(
+                index >= 1 && index <= total,
+                "{file}: items[{offset}].index={index} must be in 1..=total ({total})"
+            );
+            index
+        })
+        .collect::<Vec<_>>();
+    for window in indexes.windows(2) {
+        assert_eq!(
+            window[0] + 1,
+            window[1],
+            "{file}: indexes must be consecutive newest-first"
+        );
+    }
+    if fixture["query"]["mode"].as_str() == Some("latest") && !indexes.is_empty() {
+        assert_eq!(
+            indexes[0], 1,
+            "{file}: a latest-mode page starts at index 1"
         );
     }
 }

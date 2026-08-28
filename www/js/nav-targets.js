@@ -5,9 +5,14 @@ function formatNavHeight(height) {
   return Number.isFinite(h) ? `#${h.toLocaleString("en-US")}` : null;
 }
 
-function totalLabel(total) {
-  return total != null && Number.isFinite(Number(total))
-    ? `${Number(total).toLocaleString("en-US")} total`
+function indexLabel(index, total) {
+  const n = Number(index);
+  const N = Number(total);
+  if (Number.isFinite(n) && Number.isFinite(N) && n > 0 && N > 0 && n <= N) {
+    return `${n.toLocaleString("en-US")} of ${N.toLocaleString("en-US")}`;
+  }
+  return total != null && Number.isFinite(N)
+    ? `${N.toLocaleString("en-US")} total`
     : null;
 }
 
@@ -16,7 +21,7 @@ function itemStepperState(
   labelForItem,
 ) {
   const currentLabel = item ? labelForItem(item) : null;
-  const readout = [currentLabel, totalLabel(total)].filter(Boolean).join(" · ");
+  const readout = [currentLabel, indexLabel(item?.index, total)].filter(Boolean).join(" · ");
   return { olderEnabled: !!item && !!hasOlder, newerEnabled: !!item && !!hasNewer, readout };
 }
 
@@ -52,31 +57,32 @@ function orphanBranchStepperState(
 }
 
 function orphanStepperState(
-  { anchor = null, total = null, hasOlder = false, hasNewer = false } = {},
+  { anchor = null, item = null, total = null, hasOlder = false, hasNewer = false } = {},
 ) {
   if (!anchor) return { olderEnabled: false, newerEnabled: false, readout: "" };
-  const count = total != null && Number.isFinite(Number(total))
-    ? Number(total).toLocaleString("en-US")
-    : null;
   return {
     olderEnabled: !!hasOlder,
     newerEnabled: !!hasNewer,
-    readout: [formatOrphanDate(anchor.btc_header_time), count].filter(Boolean).join(" · "),
+    readout: [formatOrphanDate(anchor.btc_header_time), indexLabel(item?.index, total)]
+      .filter(Boolean)
+      .join(" · "),
   };
 }
 
-// Height-anchored single-block readout: "#123,456 · 33 total". Shared by every
+// Height-anchored single-block readout: "#123,456 · 1 of 33". Shared by every
 // target whose items are individual blocks on the height axis (stale, error
 // block), as opposed to the branch and orphan readouts which report a span or a
 // date.
 function heightAnchorStepperState(
-  { anchor = null, total = null, hasOlder = false, hasNewer = false } = {},
+  { anchor = null, item = null, total = null, hasOlder = false, hasNewer = false } = {},
 ) {
   if (!anchor) return { olderEnabled: false, newerEnabled: false, readout: "" };
   return {
     olderEnabled: !!hasOlder,
     newerEnabled: !!hasNewer,
-    readout: [formatNavHeight(anchor.btc_height), totalLabel(total)].filter(Boolean).join(" · "),
+    readout: [formatNavHeight(anchor.btc_height), indexLabel(item?.index, total)]
+      .filter(Boolean)
+      .join(" · "),
   };
 }
 
@@ -273,6 +279,7 @@ export function navigatorStepperState(state, targetId) {
   if (targetId === "stale" || targetId === "errorBlock") {
     return heightAnchorStepperState({
       anchor: slot.anchor,
+      item: slot.item,
       total: slot.total,
       hasOlder: slot.hasOlder,
       hasNewer: slot.hasNewer,
@@ -281,6 +288,7 @@ export function navigatorStepperState(state, targetId) {
   if (targetId === "orphan") {
     return orphanStepperState({
       anchor: slot.anchor,
+      item: slot.item,
       total: slot.total,
       hasOlder: slot.hasOlder,
       hasNewer: slot.hasNewer,

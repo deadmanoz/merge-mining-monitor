@@ -15,6 +15,7 @@ use super::shared::stored_hash_from_display;
 use super::stale_navigation::{NavigationError, TreeNavigation};
 
 mod error_block;
+mod keyset;
 mod orphan;
 mod stale;
 
@@ -67,7 +68,7 @@ pub struct NavigatorFacets {
     pub orphan_classes: Option<OrphanClassCounts>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct OrphanClassCounts {
     pub strict: u64,
     pub weak: u64,
@@ -82,6 +83,7 @@ pub struct NavigatorItem {
     pub primary_hash: String,
     pub label: String,
     pub position: NavigatorPosition,
+    pub index: u64,
     pub cursor: String,
     pub branch: Option<NavigatorBranch>,
     pub orphan: Option<NavigatorOrphan>,
@@ -172,56 +174,59 @@ impl From<NavigatorDirection> for PageEdge {
     }
 }
 
-fn cursor_params(query: &NavigatorQuery) -> Option<(PageEdge, &NavigatorCursor)> {
-    match &query.mode {
-        NavigatorMode::Page { direction, cursor } => Some(((*direction).into(), cursor)),
-        _ => None,
-    }
-}
-
-fn anchor_hash(query: &NavigatorQuery) -> Option<&str> {
-    match &query.mode {
-        NavigatorMode::Anchor { hash } => Some(hash),
-        _ => None,
-    }
-}
-
 trait BranchNavigatorSummary: Clone {
     fn member_hashes(&self) -> &[Vec<u8>];
     fn matches_cursor(&self, cursor: &NavigatorCursor, edge: PageEdge) -> bool;
 }
 
+struct BranchPage<S> {
+    rows: Vec<S>,
+    start_offset: usize,
+    has_more_scan: bool,
+}
+
 fn page_branch_summaries<S>(
     summaries: &[S],
     query: &NavigatorQuery,
-) -> Result<Vec<S>, ProjectionError>
+) -> Result<BranchPage<S>, ProjectionError>
 where
     S: BranchNavigatorSummary,
 {
-    let mut rows = match &query.mode {
+    let mut indexed = match &query.mode {
         NavigatorMode::Anchor { hash } => {
             let hash = stored_hash_from_display(hash)?;
             summaries
                 .iter()
-                .filter(|summary| summary.member_hashes().iter().any(|member| member == &hash))
-                .cloned()
-                .collect()
+                .enumerate()
+                .filter(|(_, summary)| summary.member_hashes().iter().any(|member| member == &hash))
+                .map(|(index, summary)| (index, summary.clone()))
+                .collect::<Vec<_>>()
         }
         NavigatorMode::Page { direction, cursor } => {
             let edge = PageEdge::from(*direction);
             summaries
                 .iter()
-                .filter(|summary| summary.matches_cursor(cursor, edge))
-                .cloned()
-                .collect()
+                .enumerate()
+                .filter(|(_, summary)| summary.matches_cursor(cursor, edge))
+                .map(|(index, summary)| (index, summary.clone()))
+                .collect::<Vec<_>>()
         }
-        NavigatorMode::Latest => summaries.to_vec(),
+        NavigatorMode::Latest => summaries.iter().cloned().enumerate().collect::<Vec<_>>(),
     };
     if is_newer_page(query) {
-        rows.reverse();
+        indexed.reverse();
     }
-    rows.truncate(query.limit + 1);
-    Ok(rows)
+    let has_more_scan = indexed.len() > query.limit;
+    indexed.truncate(query.limit);
+    if is_newer_page(query) {
+        indexed.reverse();
+    }
+    let start_offset = indexed.first().map(|(index, _)| *index).unwrap_or(0);
+    Ok(BranchPage {
+        rows: indexed.into_iter().map(|(_, summary)| summary).collect(),
+        start_offset,
+        has_more_scan,
+    })
 }
 
 fn is_newer_page(query: &NavigatorQuery) -> bool {

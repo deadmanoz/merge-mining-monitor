@@ -163,6 +163,9 @@ async fn error_block_navigator_orders_by_height_then_stored_hash() -> Result<()>
 
         // Each item is a single-height span carrying the catalogue kind, and
         // never a branch or orphan: an error block cannot be either.
+        for (offset, item) in full.items.iter().enumerate() {
+            assert_eq!(item.index, offset as u64 + 1);
+        }
         assert_eq!(full.items[0].position.max, 300);
         assert_eq!(full.items[0].position.min, 300);
         assert_eq!(full.items[0].kind, "error-block");
@@ -202,6 +205,29 @@ async fn error_block_navigator_pages_through_a_same_height_group_exactly_once() 
         let mut walked: Vec<String> = Vec::new();
         let mut page = fetch_error_block_navigator(&client, "limit=2").await?;
         assert!(page.prev_cursor.is_none(), "first page has nothing newer");
+        assert_eq!(page.items[0].index, 1);
+        assert_eq!(page.items[1].index, 2);
+        let older = fetch_error_block_navigator(
+            &client,
+            &format!(
+                "cursor={}&direction=older&limit=2",
+                page.next_cursor.as_ref().expect("older cursor")
+            ),
+        )
+        .await?;
+        assert_eq!(older.items[0].index, 3);
+        assert_eq!(older.items[1].index, 4);
+        let peeked = fetch_error_block_navigator(
+            &client,
+            &format!(
+                "cursor={}&direction=newer&limit=1",
+                older.prev_cursor.as_ref().expect("newer cursor")
+            ),
+        )
+        .await?;
+        assert_eq!(peeked.items.len(), 1);
+        assert_eq!(peeked.items[0].index, 2);
+        assert_eq!(peeked.items[0].primary_hash, page.items[1].primary_hash);
         loop {
             walked.extend(page.items.iter().map(|item| item.primary_hash.clone()));
             let Some(cursor) = page.next_cursor.clone() else {
@@ -636,6 +662,7 @@ async fn error_block_navigator_skips_rows_the_tree_would_filter_out() -> Result<
         )
         .await?;
         assert!(anchored.items.is_empty());
+        assert_eq!(anchored.total, 1);
         Ok(())
     })
 }
@@ -651,6 +678,12 @@ async fn error_block_navigator_anchors_on_a_catalogued_hash() -> Result<()> {
         assert_eq!(payload.items.len(), 1);
         assert_eq!(payload.items[0].primary_hash, anchor);
         assert_eq!(payload.items[0].position.max, 200);
+        assert_eq!(payload.items[0].index, 4);
+        assert_ne!(
+            payload.items[0].primary_hash,
+            display_hash(&seeded.expected[1]),
+            "the anchored member must not be the same-height group's newest"
+        );
         Ok(())
     })
 }

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use tokio_postgres::{Client, Row};
+use tokio_postgres::Client;
 
 use crate::normalize::Classification;
 use crate::query::{
@@ -9,10 +9,11 @@ use crate::query::{
 use super::super::ProjectionError;
 use super::super::branch_summary::{BranchRow, branch_components};
 use super::super::shared::{classification_filter_params, display_hash, stored_hash_from_display};
+use super::keyset::{apply_first_index, fetch_time_keyset};
 use super::{
     BranchNavigatorSummary, NavigatorBranch, NavigatorFacets, NavigatorItem, NavigatorOrphan,
-    NavigatorPayload, NavigatorPosition, NavigatorView, OrphanClassCounts, PageEdge, anchor_hash,
-    cursor_params, is_newer_page, page_branch_summaries, page_cursors,
+    NavigatorPayload, NavigatorPosition, NavigatorView, PageEdge, is_newer_page,
+    page_branch_summaries, page_cursors,
 };
 
 #[derive(Debug, Clone)]
@@ -28,23 +29,33 @@ pub async fn orphans(
 ) -> Result<NavigatorPayload, ProjectionError> {
     debug_assert_eq!(query.target, NavigatorTarget::Orphan);
     let (class_values, include_pending) = classification_filter_params(&query.classification);
-    let counts = load_orphan_class_counts(client).await?;
-    let total = total_for_filter(&counts, &query.classification);
-    let fetch_limit = (query.limit + 1) as i64;
-    let mut rows =
-        fetch_orphans(client, query, fetch_limit, &class_values, include_pending).await?;
-    let has_more_scan = rows.len() > query.limit;
-    rows.truncate(query.limit);
+    let mut page = fetch_time_keyset(client, query, &class_values, include_pending).await?;
     if is_newer_page(query) {
-        rows.reverse();
+        page.rows.reverse();
     }
+    let rows = page
+        .rows
+        .iter()
+        .map(|row| {
+            Ok(OrphanRow {
+                header_time: row.header_time,
+                hash: display_hash(&row.hash)?,
+                btc_orphan_class: row.btc_orphan_class.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-    let items = rows.iter().map(orphan_item).collect::<Vec<_>>();
+    let mut items = rows.iter().map(orphan_item).collect::<Vec<_>>();
+    apply_first_index(
+        &mut items,
+        page.first_index(matches!(query.mode, NavigatorMode::Latest)),
+    );
+    let counts = page.facets.unwrap_or_default();
     let (next_cursor, prev_cursor) = page_cursors(
         NavigatorTarget::Orphan,
         query,
         &items,
-        has_more_scan,
+        page.has_more_scan,
         |cursor| {
             exists_orphan_across_edge(
                 client,
@@ -69,7 +80,7 @@ pub async fn orphans(
     Ok(NavigatorPayload::new(
         NavigatorTarget::Orphan,
         items,
-        total,
+        page.total,
         NavigatorFacets {
             orphan_classes: Some(counts),
         },
@@ -97,6 +108,7 @@ fn orphan_item(row: &OrphanRow) -> NavigatorItem {
             row.hash.clone(),
         )
         .encode(),
+        index: 0,
         branch: None,
         orphan: Some(NavigatorOrphan {
             btc_orphan_class: row.btc_orphan_class.clone(),
@@ -108,154 +120,6 @@ fn orphan_item(row: &OrphanRow) -> NavigatorItem {
         }),
         view_error: None,
     }
-}
-
-async fn fetch_orphans(
-    client: &Client,
-    query: &NavigatorQuery,
-    fetch_limit: i64,
-    class_values: &[String],
-    include_pending: bool,
-) -> Result<Vec<OrphanRow>, ProjectionError> {
-    let rows = match (&query.mode, cursor_params(query), anchor_hash(query)) {
-        (NavigatorMode::Anchor { hash }, _, _) => {
-            let hash = stored_hash_from_display(hash)?;
-            client
-                .query(
-                    "SELECT b.btc_header_time, b.btc_header_hash, b.btc_orphan_class \
-                     FROM block b \
-                     WHERE b.kind = 'unknown' AND b.pow_validated \
-                       AND ( \
-                           b.btc_orphan_class = ANY($2::text[]) \
-                           OR ($3::boolean AND b.btc_orphan_class IS NULL) \
-                       ) \
-                       AND b.btc_header_hash = $1",
-                    &[&hash, &class_values, &include_pending],
-                )
-                .await
-                .context("load orphan navigator")?
-        }
-        (_, Some((edge, cursor)), _) => {
-            fetch_orphan_cursor_rows(
-                client,
-                fetch_limit,
-                cursor,
-                class_values,
-                include_pending,
-                edge,
-            )
-            .await?
-        }
-        _ => client
-            .query(
-                "SELECT b.btc_header_time, b.btc_header_hash, b.btc_orphan_class \
-                     FROM block b \
-                     WHERE b.kind = 'unknown' AND b.pow_validated \
-                       AND ( \
-                           b.btc_orphan_class = ANY($2::text[]) \
-                           OR ($3::boolean AND b.btc_orphan_class IS NULL) \
-                       ) \
-                     ORDER BY b.btc_header_time DESC, b.btc_header_hash DESC \
-                     LIMIT $1",
-                &[&fetch_limit, &class_values, &include_pending],
-            )
-            .await
-            .context("load orphan navigator")?,
-    };
-
-    rows.into_iter()
-        .map(|row| {
-            Ok(OrphanRow {
-                header_time: row.get(0),
-                hash: display_hash(&row.get::<_, Vec<u8>>(1))?,
-                btc_orphan_class: row.get(2),
-            })
-        })
-        .collect::<Result<Vec<_>>>()
-        .map_err(ProjectionError::from)
-}
-
-async fn fetch_orphan_cursor_rows(
-    client: &Client,
-    fetch_limit: i64,
-    cursor: &NavigatorCursor,
-    class_values: &[String],
-    include_pending: bool,
-    edge: PageEdge,
-) -> Result<Vec<Row>, ProjectionError> {
-    let hash = stored_hash_from_display(&cursor.hash)?;
-    let (comparison, order) = match edge {
-        PageEdge::Older => ("<", "DESC"),
-        PageEdge::Newer => (">", "ASC"),
-    };
-    let sql = format!(
-        "SELECT b.btc_header_time, b.btc_header_hash, b.btc_orphan_class \
-         FROM block b \
-         WHERE b.kind = 'unknown' AND b.pow_validated \
-           AND ( \
-               b.btc_orphan_class = ANY($4::text[]) \
-               OR ($5::boolean AND b.btc_orphan_class IS NULL) \
-           ) \
-           AND (b.btc_header_time, b.btc_header_hash) {comparison} ($2, $3) \
-         ORDER BY b.btc_header_time {order}, b.btc_header_hash {order} \
-         LIMIT $1"
-    );
-    client
-        .query(
-            &sql,
-            &[
-                &fetch_limit,
-                &cursor.max,
-                &hash,
-                &class_values,
-                &include_pending,
-            ],
-        )
-        .await
-        .context("load orphan navigator")
-        .map_err(ProjectionError::from)
-}
-
-async fn load_orphan_class_counts(client: &Client) -> Result<OrphanClassCounts, ProjectionError> {
-    let rows = client
-        .query(
-            "SELECT btc_orphan_class, count(*)::bigint FROM block \
-             WHERE kind = 'unknown' AND pow_validated \
-             GROUP BY btc_orphan_class",
-            &[],
-        )
-        .await
-        .context("count orphan classes")?;
-    let mut counts = OrphanClassCounts {
-        strict: 0,
-        weak: 0,
-        excluded: 0,
-        pending: 0,
-    };
-    for row in rows {
-        let class: Option<String> = row.get(0);
-        let n = row.get::<_, i64>(1).max(0) as u64;
-        match class.as_deref() {
-            Some("strict_btc_orphan") => counts.strict = n,
-            Some("weak_btc_orphan") => counts.weak = n,
-            Some("excluded") => counts.excluded = n,
-            None => counts.pending = n,
-            Some(_) => {}
-        }
-    }
-    Ok(counts)
-}
-
-fn total_for_filter(counts: &OrphanClassCounts, classification: &[Classification]) -> u64 {
-    classification
-        .iter()
-        .map(|class| match class {
-            Classification::StrictBtcOrphan => counts.strict,
-            Classification::WeakBtcOrphan => counts.weak,
-            Classification::BtcStaleExcluded => counts.excluded,
-            Classification::Pending => counts.pending,
-        })
-        .sum()
 }
 
 async fn exists_orphan_across_edge(
@@ -320,24 +184,23 @@ pub async fn orphan_branches(
     summaries.sort_by(sort_orphan_branch_desc);
     let total = summaries.len() as u64;
 
-    let mut page = page_branch_summaries(&summaries, query)?;
-    let has_more_scan = page.len() > query.limit;
-    page.truncate(query.limit);
-    if is_newer_page(query) {
-        page.reverse();
-    }
-
-    let items = page
+    let page = page_branch_summaries(&summaries, query)?;
+    let mut items = page
+        .rows
         .iter()
         .map(orphan_branch_item)
         .collect::<Result<Vec<_>>>()?;
+    apply_first_index(
+        &mut items,
+        page.rows.first().map(|_| page.start_offset as u64 + 1),
+    );
     let older_summaries = &summaries;
     let newer_summaries = &summaries;
     let (next_cursor, prev_cursor) = page_cursors(
         NavigatorTarget::OrphanBranch,
         query,
         &items,
-        has_more_scan,
+        page.has_more_scan,
         |cursor| async move { orphan_branch_exists(older_summaries, &cursor, PageEdge::Older) },
         |cursor| async move { orphan_branch_exists(newer_summaries, &cursor, PageEdge::Newer) },
     )
@@ -437,6 +300,7 @@ fn orphan_branch_item(summary: &OrphanBranchSummary) -> Result<NavigatorItem> {
             min: summary.header_time_min,
             max: summary.header_time_max,
         },
+        index: 0,
         cursor,
         branch: Some(NavigatorBranch {
             branch_id,

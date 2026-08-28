@@ -156,7 +156,7 @@ the tip. The navigator's Live tip is a full deselect.
 "Latest stale" navigates the proven stale blocks (the `stale` parent kind). It
 jumps to the most recent proven stale and steps older / newer through bounded
 unified navigator pages (`/api/v1/navigator/stale`, newest-first); the readout is
-`#<height> · N total`. Each jump uses the row's server-provided `view`
+`#<height> · n of N`. Each jump uses the row's server-provided `view`
 tree window, selects the stale, and centers the camera. If the row carries
 `view_error` instead, the tree panel surfaces that as a Bitcoin Core
 coverage/sync issue and does not advance into a rendering-density failure.
@@ -168,7 +168,7 @@ up to the coarse stride and land on the boundary row.
 `/api/v1/navigator/stale-branch` (current stales with canonical competitors,
 grouped by stale-to-stale previous-header links, one-block branches excluded).
 The readout uses branch-level context, for example
-`#700,005-700,006 · depth 2 · N total`.
+`#700,005-700,006 · depth 2 · n of N`.
 Branch jumps use the row's server-provided `view` tree window, open the
 drawer, select the branch root, and center on it. Rows that cannot safely
 advertise a generated tree window carry `view_error` instead, and the tree
@@ -177,7 +177,7 @@ matching branch through `anchor_hash`, so interior members resolve too.
 
 "Latest error block" navigates consensus-invalid, full-proof-of-work
 blocks, backed by `/api/v1/navigator/error-block`. The readout is the same
-height-plus-total form as "Latest stale", for example `#957,780 · 35 total`,
+height-plus-place form as "Latest stale", for example `#957,780 · 1 of 35`,
 because each item is a single block on the height axis. Ordering is newest-first
 by height and then by stored hash bytes: more than one error block can share a
 height, so the hash tie-break is what makes stepping return every member exactly
@@ -193,7 +193,7 @@ stepping continues from it.
 `/api/v1/navigator/orphan-branch` (proven prev_hash-linked orphans grouped into
 components of depth >= 2, one-block components excluded). It is the orphan twin
 of "Latest stale branch" and appears last in the Go to menu. The readout is the newest member's UTC date plus the depth,
-for example `2015-07-04 · depth 2 · N total`, because orphans have no height
+for example `2015-07-04 · depth 2 · n of N`, because orphans have no height
 ordinal. Each jump anchors the tree on that branch's root hash via
 `unheighted_anchor`, which renders the whole component: every member is a tree
 node at its own derived `placement_height`, with proven orphan-to-orphan links
@@ -218,9 +218,9 @@ orphan at its timestamp-selected epoch height with a distinct
 dashed `~`-marked edge). The orphan node is coloured by its orphan class and the
 legend shows only the strict and weak orphan signal. When no placement and no canonical context can be
 resolved, it falls back to a flat left-to-right time strip of the orphan and its
-nearest-in-time neighbors. Keyset pagination has no cheap ordinal, so the readout is the
-anchor's date, the filtered total, and the per-class counts for the selected
-classes, not an `n of N`. The inner `‹` `›` step one orphan older / newer; the
+nearest-in-time neighbors. The readout is the anchor's date, the 1-based newest-first place in the
+filtered index (`n of N`), and the per-class counts for the selected
+classes. The inner `‹` `›` step one orphan older / newer; the
 outer `«` `»` page a coarse stride (100) older / newer and land on the page
 boundary. The older / newer directions disable at the extremes of the index.
 Toggling the orphan-class filter re-drives the navigator; if the new filter has

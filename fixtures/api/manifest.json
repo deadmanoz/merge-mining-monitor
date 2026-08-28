@@ -44,27 +44,27 @@
     {
       "file": "navigator-stale.json",
       "endpoint_family": "/api/v1/navigator/stale",
-      "scenario": "Unified navigator stale target: height-keyed stale items with opaque cursors and tree-window view metadata"
+      "scenario": "Unified navigator stale target: height-keyed stale items with per-item newest-first index, opaque cursors, and tree-window view metadata"
     },
     {
       "file": "navigator-stale-branch.json",
       "endpoint_family": "/api/v1/navigator/stale-branch",
-      "scenario": "Unified navigator stale-branch target: multi-block stale branch item with branch metadata, opaque cursor, and tree-window view metadata"
+      "scenario": "Unified navigator stale-branch target: multi-block stale branch item with per-item newest-first index, branch metadata, opaque cursor, and tree-window view metadata"
     },
     {
       "file": "navigator-error-block.json",
       "endpoint_family": "/api/v1/navigator/error-block",
-      "scenario": "Unified navigator error-block target: an older-direction page landing inside a same-height group of catalogued consensus-invalid full-PoW blocks, ordered by stored hash bytes, with opaque cursors and tree-window view metadata"
+      "scenario": "Unified navigator error-block target: an older-direction page landing inside a same-height group of catalogued consensus-invalid full-PoW blocks, ordered by stored hash bytes, with per-item newest-first index, opaque cursors, and tree-window view metadata"
     },
     {
       "file": "navigator-orphan.json",
       "endpoint_family": "/api/v1/navigator/orphan",
-      "scenario": "Unified navigator orphan target: time-keyed BTC-orphan items with orphan class facets, opaque cursors, and unheighted-anchor view metadata"
+      "scenario": "Unified navigator orphan target: time-keyed BTC-orphan items with per-item newest-first index, orphan class facets, opaque cursors, and unheighted-anchor view metadata"
     },
     {
       "file": "navigator-orphan-branch.json",
       "endpoint_family": "/api/v1/navigator/orphan-branch",
-      "scenario": "Unified navigator orphan-branch target: anchor-hash locate mode for a time-bounded orphan branch with unheighted-anchor view metadata"
+      "scenario": "Unified navigator orphan-branch target: anchor-hash locate mode for a time-bounded orphan branch with per-item newest-first index and unheighted-anchor view metadata"
     },
     {
       "file": "sources.json",

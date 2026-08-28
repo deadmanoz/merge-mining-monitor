@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use tokio_postgres::Client;
 
-use crate::query::{NavigatorAxis, NavigatorCursor, NavigatorQuery, NavigatorTarget};
+use crate::query::{
+    NavigatorAxis, NavigatorCursor, NavigatorMode, NavigatorQuery, NavigatorTarget,
+};
 
 use super::super::ProjectionError;
 use super::super::branch_summary::{BranchRow, branch_components};
@@ -11,12 +13,11 @@ use super::super::shared::{
 use super::super::stale_navigation::{
     NavigationReadiness, NavigationSpan, load_navigation_readiness, navigation_for_span,
 };
+use super::keyset::{apply_first_index, fetch_height_keyset};
 use super::{
     BranchNavigatorSummary, NavigatorBranch, NavigatorFacets, NavigatorItem, NavigatorPayload,
-    NavigatorPosition, NavigatorView, PageEdge, anchor_hash, cursor_params, is_newer_page,
-    page_branch_summaries, page_cursors,
+    NavigatorPosition, NavigatorView, PageEdge, is_newer_page, page_branch_summaries, page_cursors,
 };
-use crate::query::NavigatorMode;
 
 #[derive(Debug, Clone)]
 struct StaleBlockRow {
@@ -24,20 +25,31 @@ struct StaleBlockRow {
     hash: String,
 }
 
+const STALE_ELIGIBLE: &str = "SELECT stale.btc_height AS axis, stale.btc_header_hash AS hash \
+     FROM block stale \
+     JOIN block canonical ON canonical.btc_header_hash = stale.canonical_competitor_hash \
+     WHERE stale.kind = 'stale' AND canonical.kind = 'canonical'";
+
 pub async fn stale_blocks(
     client: &Client,
     query: &NavigatorQuery,
 ) -> Result<NavigatorPayload, ProjectionError> {
     debug_assert_eq!(query.target, NavigatorTarget::Stale);
     let max_complete_height = load_max_complete_canonical_height(client).await?;
-    let total = load_stales_total(client).await?;
-    let fetch_limit = (query.limit + 1) as i64;
-    let mut rows = fetch_stale_blocks(client, query, fetch_limit).await?;
-    let has_more_scan = rows.len() > query.limit;
-    rows.truncate(query.limit);
+    let mut page = fetch_height_keyset(client, STALE_ELIGIBLE, query).await?;
     if is_newer_page(query) {
-        rows.reverse();
+        page.rows.reverse();
     }
+    let rows = page
+        .rows
+        .iter()
+        .map(|row| {
+            Ok(StaleBlockRow {
+                height: row.height,
+                hash: display_hash(&row.hash)?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     let spans = rows
         .iter()
@@ -49,17 +61,21 @@ pub async fn stale_blocks(
         })
         .collect::<Vec<_>>();
     let readiness = load_navigation_readiness(client, max_complete_height, &spans).await?;
-    let items = rows
+    let mut items = rows
         .iter()
         .zip(spans.iter().copied())
         .map(|(row, span)| stale_block_item(row, span, max_complete_height, readiness.as_ref()))
         .collect::<Vec<_>>();
+    apply_first_index(
+        &mut items,
+        page.first_index(matches!(query.mode, NavigatorMode::Latest)),
+    );
 
     let (next_cursor, prev_cursor) = page_cursors(
         NavigatorTarget::Stale,
         query,
         &items,
-        has_more_scan,
+        page.has_more_scan,
         |cursor| exists_stale_block_across_edge(client, cursor, PageEdge::Older),
         |cursor| exists_stale_block_across_edge(client, cursor, PageEdge::Newer),
     )
@@ -68,7 +84,7 @@ pub async fn stale_blocks(
     Ok(NavigatorPayload::new(
         NavigatorTarget::Stale,
         items,
-        total,
+        page.total,
         NavigatorFacets::default(),
         next_cursor,
         prev_cursor,
@@ -98,6 +114,7 @@ fn stale_block_item(
             min: i64::from(row.height),
             max: i64::from(row.height),
         },
+        index: 0,
         cursor: NavigatorCursor::new(
             NavigatorTarget::Stale,
             NavigatorAxis::Height,
@@ -111,104 +128,6 @@ fn stale_block_item(
         view: navigation.map(NavigatorView::from),
         view_error,
     }
-}
-
-async fn load_stales_total(client: &Client) -> Result<u64, ProjectionError> {
-    let row = client
-        .query_one(
-            "SELECT count(*)::bigint \
-             FROM block stale \
-             JOIN block canonical ON canonical.btc_header_hash = stale.canonical_competitor_hash \
-             WHERE stale.kind = 'stale' \
-               AND canonical.kind = 'canonical'",
-            &[],
-        )
-        .await
-        .context("count stale navigator")?;
-    Ok(row.get::<_, i64>(0).max(0) as u64)
-}
-
-async fn fetch_stale_blocks(
-    client: &Client,
-    query: &NavigatorQuery,
-    fetch_limit: i64,
-) -> Result<Vec<StaleBlockRow>, ProjectionError> {
-    let rows = match (&query.mode, cursor_params(query), anchor_hash(query)) {
-        (NavigatorMode::Anchor { hash }, _, _) => {
-            let hash = stored_hash_from_display(hash)?;
-            client
-                .query(
-                    "SELECT stale.btc_height, stale.btc_header_hash \
-                     FROM block stale \
-                     JOIN block canonical ON canonical.btc_header_hash = stale.canonical_competitor_hash \
-                     WHERE stale.kind = 'stale' \
-                       AND canonical.kind = 'canonical' \
-                       AND stale.btc_header_hash = $1",
-                    &[&hash],
-                )
-                .await
-        }
-        (_, Some((PageEdge::Older, cursor)), _) => {
-            let hash = stored_hash_from_display(&cursor.hash)?;
-            client
-                .query(
-                    "SELECT stale.btc_height, stale.btc_header_hash \
-                     FROM block stale \
-                     JOIN block canonical ON canonical.btc_header_hash = stale.canonical_competitor_hash \
-                     WHERE stale.kind = 'stale' \
-                       AND canonical.kind = 'canonical' \
-                       AND (stale.btc_height < $2 \
-                            OR (stale.btc_height = $2 AND stale.btc_header_hash > $3)) \
-                     ORDER BY stale.btc_height DESC, stale.btc_header_hash ASC \
-                     LIMIT $1",
-                    &[&fetch_limit, &(cursor.max as i32), &hash],
-                )
-                .await
-        }
-        (_, Some((PageEdge::Newer, cursor)), _) => {
-            let hash = stored_hash_from_display(&cursor.hash)?;
-            client
-                .query(
-                    "SELECT stale.btc_height, stale.btc_header_hash \
-                     FROM block stale \
-                     JOIN block canonical ON canonical.btc_header_hash = stale.canonical_competitor_hash \
-                     WHERE stale.kind = 'stale' \
-                       AND canonical.kind = 'canonical' \
-                       AND (stale.btc_height > $2 \
-                            OR (stale.btc_height = $2 AND stale.btc_header_hash < $3)) \
-                     ORDER BY stale.btc_height ASC, stale.btc_header_hash DESC \
-                     LIMIT $1",
-                    &[&fetch_limit, &(cursor.max as i32), &hash],
-                )
-                .await
-        }
-        _ => {
-            client
-                .query(
-                    "SELECT stale.btc_height, stale.btc_header_hash \
-                     FROM block stale \
-                     JOIN block canonical ON canonical.btc_header_hash = stale.canonical_competitor_hash \
-                     WHERE stale.kind = 'stale' \
-                       AND canonical.kind = 'canonical' \
-                     ORDER BY stale.btc_height DESC, stale.btc_header_hash ASC \
-                     LIMIT $1",
-                    &[&fetch_limit],
-                )
-                .await
-        }
-    }
-    .context("load stale navigator")?;
-
-    rows.into_iter()
-        .map(|row| {
-            let hash_bytes = row.get::<_, Vec<u8>>(1);
-            Ok(StaleBlockRow {
-                height: row.get(0),
-                hash: display_hash(&hash_bytes)?,
-            })
-        })
-        .collect::<Result<Vec<_>>>()
-        .map_err(ProjectionError::from)
 }
 
 async fn exists_stale_block_across_edge(
@@ -277,14 +196,9 @@ pub async fn stale_branches(
     summaries.sort_by(sort_stale_branch_desc);
     let total = summaries.len() as u64;
 
-    let mut page = page_branch_summaries(&summaries, query)?;
-    let has_more_scan = page.len() > query.limit;
-    page.truncate(query.limit);
-    if is_newer_page(query) {
-        page.reverse();
-    }
-
+    let page = page_branch_summaries(&summaries, query)?;
     let spans = page
+        .rows
         .iter()
         .map(|summary| NavigationSpan {
             target_height: summary.btc_height_min,
@@ -294,10 +208,15 @@ pub async fn stale_branches(
         })
         .collect::<Vec<_>>();
     let readiness = load_navigation_readiness(client, max_complete_height, &spans).await?;
-    let items = page
+    let mut items = page
+        .rows
         .iter()
         .map(|summary| stale_branch_item(summary, max_complete_height, readiness.as_ref()))
         .collect::<Result<Vec<_>>>()?;
+    apply_first_index(
+        &mut items,
+        page.rows.first().map(|_| page.start_offset as u64 + 1),
+    );
 
     let older_summaries = &summaries;
     let newer_summaries = &summaries;
@@ -305,7 +224,7 @@ pub async fn stale_branches(
         NavigatorTarget::StaleBranch,
         query,
         &items,
-        has_more_scan,
+        page.has_more_scan,
         |cursor| async move { stale_branch_exists(older_summaries, &cursor, PageEdge::Older) },
         |cursor| async move { stale_branch_exists(newer_summaries, &cursor, PageEdge::Newer) },
     )
@@ -421,6 +340,7 @@ fn stale_branch_item(
             root_hash.clone(),
         )
         .encode(),
+        index: 0,
         branch: Some(NavigatorBranch {
             branch_id,
             root_hash,

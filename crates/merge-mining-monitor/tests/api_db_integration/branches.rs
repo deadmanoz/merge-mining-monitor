@@ -16,6 +16,49 @@ use mmm_capture::test_support::header_meeting_bits_with_prev;
 
 use crate::helpers::{format_api_error, format_projection_error, seed_canonical_chain};
 
+fn assert_branch_tree_window(
+    item: &projection::NavigatorItem,
+    target_height: i32,
+    tree_from: i32,
+    tree_to: i32,
+    root_hash: &str,
+) {
+    let projection::NavigatorView::TreeWindow {
+        target_height: got_target,
+        tree_from: got_from,
+        tree_to: got_to,
+        select_hash,
+        center_hash,
+    } = item.view.as_ref().expect("branch has navigation")
+    else {
+        panic!("expected tree_window view");
+    };
+    assert_eq!(*got_target, target_height);
+    assert_eq!(*got_from, tree_from);
+    assert_eq!(*got_to, tree_to);
+    assert_eq!(select_hash, root_hash);
+    assert_eq!(center_hash, root_hash);
+}
+
+async fn assert_missing_anchor_keeps_total(
+    client: &Client,
+    target: NavigatorTarget,
+    total: u64,
+) -> Result<()> {
+    let missing = fetch_navigator(
+        client,
+        target,
+        Some(&format!(
+            "anchor_hash={}&limit=1",
+            display_hash(&hash_bytes(0xffff))
+        )),
+    )
+    .await?;
+    assert!(missing.items.is_empty());
+    assert_eq!(missing.total, total);
+    Ok(())
+}
+
 async fn fetch_navigator(
     client: &Client,
     target: NavigatorTarget,
@@ -180,8 +223,10 @@ async fn stale_branches_indexes_multi_block_components_with_forked_tips() -> Res
         let payload = fetch_navigator(&client, NavigatorTarget::StaleBranch, None).await?;
         assert_eq!(payload.total, 2);
         assert_eq!(payload.items.len(), 1);
+        assert_missing_anchor_keeps_total(&client, NavigatorTarget::StaleBranch, 2).await?;
 
         let forked = &payload.items[0];
+        assert_eq!(forked.index, 1);
         let forked_branch = forked.branch.as_ref().expect("branch metadata");
         assert_eq!(forked.id, format!("stale-201-{}", display_hash(&s201)));
         assert_eq!(
@@ -196,21 +241,7 @@ async fn stale_branches_indexes_multi_block_components_with_forked_tips() -> Res
         assert_eq!(forked.position.min, 201);
         assert_eq!(forked.position.max, 203);
         assert_eq!(forked_branch.depth, 4);
-        let projection::NavigatorView::TreeWindow {
-            target_height,
-            tree_from,
-            tree_to,
-            select_hash,
-            center_hash,
-        } = forked.view.as_ref().expect("forked branch has navigation")
-        else {
-            panic!("expected tree_window view");
-        };
-        assert_eq!(*target_height, 201);
-        assert_eq!(*tree_from, 200);
-        assert_eq!(*tree_to, 203);
-        assert_eq!(select_hash, &forked_branch.root_hash);
-        assert_eq!(center_hash, &forked_branch.root_hash);
+        assert_branch_tree_window(forked, 201, 200, 203, &forked_branch.root_hash);
         assert!(forked.view_error.is_none());
 
         let anchored_by_inner_member = fetch_navigator(
@@ -222,6 +253,7 @@ async fn stale_branches_indexes_multi_block_components_with_forked_tips() -> Res
         assert_eq!(anchored_by_inner_member.total, 2);
         assert_eq!(anchored_by_inner_member.items.len(), 1);
         let anchored = &anchored_by_inner_member.items[0];
+        assert_eq!(anchored.index, 1);
         let anchored_branch = anchored.branch.as_ref().expect("branch metadata");
         assert_eq!(anchored_branch.root_hash, display_hash(&s201));
         assert_eq!(
@@ -243,6 +275,7 @@ async fn stale_branches_indexes_multi_block_components_with_forked_tips() -> Res
         )
         .await?;
         let linear = &older.items[0];
+        assert_eq!(linear.index, 2);
         let linear_branch = linear.branch.as_ref().expect("branch metadata");
         assert_eq!(
             linear_branch.branch_id,
@@ -253,20 +286,7 @@ async fn stale_branches_indexes_multi_block_components_with_forked_tips() -> Res
         assert_eq!(linear.position.min, 101);
         assert_eq!(linear.position.max, 102);
         assert_eq!(linear_branch.depth, 2);
-        let projection::NavigatorView::TreeWindow {
-            target_height,
-            tree_from,
-            tree_to,
-            select_hash,
-            ..
-        } = linear.view.as_ref().expect("linear branch has navigation")
-        else {
-            panic!("expected tree_window view");
-        };
-        assert_eq!(*target_height, 101);
-        assert_eq!(*tree_from, 100);
-        assert_eq!(*tree_to, 102);
-        assert_eq!(select_hash, &linear_branch.root_hash);
+        assert_branch_tree_window(linear, 101, 100, 102, &linear_branch.root_hash);
 
         Ok::<_, anyhow::Error>(())
     })
@@ -349,6 +369,44 @@ async fn seed_orphan_branch_components(client: &Client, ts: i64) -> Result<[Vec<
     Ok([sg, r_l, t_l, r_f, f_a, f_b, r_w, t_w, r_b])
 }
 
+async fn assert_orphan_branch_exclusions_and_strict_filter(
+    client: &Client,
+    payload: &projection::NavigatorPayload,
+    older: &projection::NavigatorPayload,
+    singleton: &[u8],
+    invalid_root: &[u8],
+    forked_root: &[u8],
+    linear_root: &[u8],
+) -> Result<()> {
+    let roots: Vec<&str> = payload
+        .items
+        .iter()
+        .chain(older.items.iter())
+        .filter_map(|item| item.branch.as_ref())
+        .map(|branch| branch.root_hash.as_str())
+        .collect();
+    assert!(!roots.contains(&display_hash(singleton).as_str()));
+    assert!(!roots.contains(&display_hash(invalid_root).as_str()));
+
+    let strict = fetch_navigator(
+        client,
+        NavigatorTarget::OrphanBranch,
+        Some("classification=strict_btc_orphan&limit=10"),
+    )
+    .await?;
+    assert_eq!(strict.total, 2);
+    assert_eq!(strict.items.len(), 2);
+    assert_eq!(
+        strict.items[0].branch.as_ref().unwrap().root_hash,
+        display_hash(forked_root)
+    );
+    assert_eq!(
+        strict.items[1].branch.as_ref().unwrap().root_hash,
+        display_hash(linear_root)
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn orphan_branches_indexes_multi_block_components_time_bounded() -> Result<()> {
     crate::run_db_test!(client, {
@@ -366,8 +424,10 @@ async fn orphan_branches_indexes_multi_block_components_time_bounded() -> Result
         let payload = fetch_navigator(&client, NavigatorTarget::OrphanBranch, None).await?;
         assert_eq!(payload.total, 3);
         assert_eq!(payload.items.len(), 1);
+        assert_missing_anchor_keeps_total(&client, NavigatorTarget::OrphanBranch, 3).await?;
 
         let weak = &payload.items[0];
+        assert_eq!(weak.index, 1);
         let weak_branch = weak.branch.as_ref().expect("branch metadata");
         assert_eq!(
             weak_branch.branch_id,
@@ -390,6 +450,7 @@ async fn orphan_branches_indexes_multi_block_components_time_bounded() -> Result
         .await?;
         assert_eq!(older.items.len(), 2);
         let forked = &older.items[0];
+        assert_eq!(forked.index, 2);
         let forked_branch = forked.branch.as_ref().expect("branch metadata");
         assert_eq!(
             forked_branch.branch_id,
@@ -413,6 +474,7 @@ async fn orphan_branches_indexes_multi_block_components_time_bounded() -> Result
         assert_eq!(anchored_by_member.total, 3);
         assert_eq!(anchored_by_member.items.len(), 1);
         let anchored = &anchored_by_member.items[0];
+        assert_eq!(anchored.index, 2);
         let anchored_branch = anchored.branch.as_ref().expect("branch metadata");
         assert_eq!(anchored_branch.root_hash, display_hash(&r_f));
         assert_eq!(
@@ -425,6 +487,7 @@ async fn orphan_branches_indexes_multi_block_components_time_bounded() -> Result
         assert!(anchored_by_member.prev_cursor.is_some());
 
         let linear = &older.items[1];
+        assert_eq!(linear.index, 3);
         let linear_branch = linear.branch.as_ref().expect("branch metadata");
         assert_eq!(
             linear_branch.branch_id,
@@ -433,34 +496,10 @@ async fn orphan_branches_indexes_multi_block_components_time_bounded() -> Result
         assert_eq!(linear_branch.tip_hashes, vec![display_hash(&t_l)]);
         assert_eq!(linear_branch.depth, 2);
 
-        // The singleton and the PoW-invalid-collapsed branch never appear.
-        let roots: Vec<&str> = payload
-            .items
-            .iter()
-            .chain(older.items.iter())
-            .filter_map(|item| item.branch.as_ref())
-            .map(|b| b.root_hash.as_str())
-            .collect();
-        assert!(!roots.contains(&display_hash(&sg).as_str()));
-        assert!(!roots.contains(&display_hash(&r_b).as_str()));
-
-        // Strict-only classification drops the weak branch.
-        let strict = fetch_navigator(
-            &client,
-            NavigatorTarget::OrphanBranch,
-            Some("classification=strict_btc_orphan&limit=10"),
+        assert_orphan_branch_exclusions_and_strict_filter(
+            &client, &payload, &older, &sg, &r_b, &r_f, &r_l,
         )
         .await?;
-        assert_eq!(strict.total, 2);
-        assert_eq!(strict.items.len(), 2);
-        assert_eq!(
-            strict.items[0].branch.as_ref().unwrap().root_hash,
-            display_hash(&r_f)
-        );
-        assert_eq!(
-            strict.items[1].branch.as_ref().unwrap().root_hash,
-            display_hash(&r_l)
-        );
 
         Ok::<_, anyhow::Error>(())
     })

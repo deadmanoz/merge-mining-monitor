@@ -1,5 +1,5 @@
 const { expect, test } = require("@playwright/test");
-const { makeNode, stubApi, treeEnvelope } = require("./support/api-stubs");
+const { makeNode, navigatorPayload, stubApi, treeEnvelope } = require("./support/api-stubs");
 
 test("height shared link requests compact tree height automatically", async ({ page }) => {
   const treeRequests = [];
@@ -203,41 +203,47 @@ test("Latest stale uses unified navigator endpoint", async ({ page }) => {
   const treeRequests = [];
   const navigatorRequests = [];
   const staleHash = "c".repeat(64);
+  const olderHash = "b".repeat(64);
   const winningHash = "d".repeat(64);
   const staleHeight = 900000;
-  const staleRow = {
-    id: `stale-${staleHash}`,
+  const olderHeight = 899000;
+  const staleRow = (hash, height, index) => ({
+    id: `stale-${hash}`,
     kind: "stale",
-    primary_hash: staleHash,
-    label: `Stale #${staleHeight}`,
-    position: { axis: "height", min: staleHeight, max: staleHeight },
-    cursor: "opaque-stale-cursor",
+    primary_hash: hash,
+    label: `Stale #${height}`,
+    position: { axis: "height", min: height, max: height },
+    index,
+    cursor: `opaque-stale-cursor-${height}`,
     branch: null,
     orphan: null,
     view: {
       mode: "tree_window",
-      target_height: staleHeight,
-      tree_from: 899984,
-      tree_to: 900016,
-      select_hash: staleHash,
-      center_hash: staleHash,
+      target_height: height,
+      tree_from: height - 16,
+      tree_to: height + 16,
+      select_hash: hash,
+      center_hash: hash,
     },
     view_error: null,
-  };
+  });
+  const staleEnvelope = (row, mode) => navigatorPayload("stale", {
+    query: { target: "stale", mode, cursor: null, direction: null, anchor_hash: null, classification: [], limit: 1 },
+    items: [row],
+    total: 2345,
+    next_cursor: "opaque-stale-cursor-next",
+  });
   await stubApi(page, treeRequests, {
     navigatorRequests,
-    navigator: {
-      stale: {
-        schema_version: "v1",
-        generated_at: 1779792000,
-        query: { target: "stale", mode: "latest", cursor: null, direction: null, anchor_hash: null, classification: [], limit: 1 },
-        target: "stale",
-        items: [staleRow],
-        total: 2345,
-        facets: {},
-        next_cursor: "opaque-stale-cursor",
-        prev_cursor: null,
-      },
+    navigator: (url) => {
+      if (url.searchParams.get("direction") === "older") {
+        return staleEnvelope(staleRow(olderHash, olderHeight, 2), "page");
+      }
+      const anchor = url.searchParams.get("anchor_hash");
+      if (anchor === olderHash) {
+        return staleEnvelope(staleRow(olderHash, olderHeight, 2), "anchor");
+      }
+      return staleEnvelope(staleRow(staleHash, staleHeight, 1), anchor ? "anchor" : "latest");
     },
     blockPayloads: {
       [staleHash]: {
@@ -277,6 +283,43 @@ test("Latest stale uses unified navigator endpoint", async ({ page }) => {
         },
         stale_branch: null,
       },
+      [olderHash]: {
+        schema_version: "v1",
+        generated_at: 1779792000,
+        block: {
+          hash: olderHash,
+          height: olderHeight,
+          kind: "stale",
+          btc_orphan_class: null,
+          header: { time: 1779792000 },
+          bitcoin_miner_pool: { id: null, slug: null, name: "Unknown", known: false },
+          source_summary: {
+            sources: [],
+            distinct_sources: 0,
+            auxpow_chain_count: 0,
+            live_observed: false,
+            pow_validates_btc_target: true,
+          },
+          branch: null,
+          proof_state: {
+            has_live_observation: false,
+            has_tip_ref: false,
+            has_auxpow_evidence: false,
+          },
+          competition: null,
+          child_chain_evidence: [],
+        },
+        competition: {
+          btc_height: olderHeight,
+          stale_hash: olderHash,
+          canonical_hash: winningHash,
+          stale_bitcoin_miner_pool: { id: null, slug: null, name: "Unknown", known: false },
+          canonical_bitcoin_miner_pool: { id: null, slug: null, name: "Unknown", known: false },
+          header_time_delta_s: 0,
+          propagation_delta_s: null,
+        },
+        stale_branch: null,
+      },
     },
   });
 
@@ -295,8 +338,14 @@ test("Latest stale uses unified navigator endpoint", async ({ page }) => {
     url.searchParams.get("from_height") === "899984"
       && url.searchParams.get("to_height") === "900016"
   ))).toBe(true);
-  await expect(page.locator("#nav-readout")).toContainText("#900,000");
-  await expect(page.locator("#nav-readout")).toContainText("2,345 total");
+  await expect(page.locator("#nav-readout")).toContainText("#900,000 · 1 of 2,345");
+
+  await page.locator("#nav-older").click();
+  await expect.poll(() => navigatorRequests.some((url) => (
+    url.pathname.endsWith("/api/v1/navigator/stale")
+      && url.searchParams.get("direction") === "older"
+  ))).toBe(true);
+  await expect(page.locator("#nav-readout")).toContainText("#899,000 · 2 of 2,345");
 });
 
 test("stale node with child-inferred miner labels the pool instead of unknown", async ({ page }) => {
@@ -335,6 +384,7 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
     primary_hash: hash,
     label: `Error block #${height}`,
     position: { axis: "height", min: height, max: height },
+    index: hash === olderHash ? 2 : 1,
     cursor: `opaque-error-cursor-${height}`,
     branch: null,
     orphan: null,
@@ -475,9 +525,8 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
       && url.searchParams.get("anchor_hash") === errorHash
   ))).toBe(true);
 
-  // Height-plus-total readout, not the branch/orphan date-and-depth form.
-  await expect(page.locator("#nav-readout")).toContainText("#946,213");
-  await expect(page.locator("#nav-readout")).toContainText("33 total");
+  // Height-plus-place readout, not the branch/orphan date-and-depth form.
+  await expect(page.locator("#nav-readout")).toContainText("#946,213 · 1 of 33");
 
   // A cursor-backed older step moves to the next catalogued block.
   await page.locator("#nav-older").click();
@@ -496,7 +545,7 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
   await expect(
     page.locator(`g.tree-node[aria-label*="error_block ${olderHeight}"]`),
   ).toHaveCount(1);
-  await expect(page.locator("#nav-readout")).toContainText("#717,696");
+  await expect(page.locator("#nav-readout")).toContainText("#717,696 · 2 of 33");
   await expect(page.locator("#nav-readout")).not.toContainText("#946,213");
 });
 
@@ -518,6 +567,7 @@ test("a shared link to an error block adopts that navigator target", async ({ pa
     primary_hash: hash,
     label: `Error block #${height}`,
     position: { axis: "height", min: height, max: height },
+    index: hash === olderHash ? 2 : 1,
     cursor: `opaque-error-cursor-${height}`,
     branch: null,
     orphan: null,
@@ -623,8 +673,7 @@ test("a shared link to an error block adopts that navigator target", async ({ pa
 
   // The Go-to select names the adopted target, and the readout is populated.
   await expect(page.locator("#nav-goto option[value='']")).toHaveText("Error blocks");
-  await expect(page.locator("#nav-readout")).toContainText("#946,213");
-  await expect(page.locator("#nav-readout")).toContainText("33 total");
+  await expect(page.locator("#nav-readout")).toContainText("#946,213 · 1 of 33");
 
   // Stepping is enabled and works from the deep-linked block.
   await expect(page.locator("#nav-older")).toBeEnabled();
@@ -633,5 +682,112 @@ test("a shared link to an error block adopts that navigator target", async ({ pa
     url.pathname.endsWith("/api/v1/navigator/error-block")
       && url.searchParams.get("direction") === "older"
   ))).toBe(true);
-  await expect(page.locator("#nav-readout")).toContainText("#717,696");
+  await expect(page.locator("#nav-readout")).toContainText("#717,696 · 2 of 33");
+});
+
+test("Latest stale branch readout includes depth and 1 of N", async ({ page }) => {
+  const navigatorRequests = [];
+  const hash = "a".repeat(64);
+  await stubApi(page, [], {
+    navigatorRequests,
+    navigator: {
+      "stale-branch": navigatorPayload("stale-branch", {
+        items: [{
+          id: `stale-700005-${hash}`,
+          kind: "stale-branch",
+          primary_hash: hash,
+          label: "Stale branch #700005-#700006",
+          position: { axis: "height", min: 700005, max: 700006 },
+          index: 1,
+          cursor: "opaque-stale-branch-cursor",
+          branch: { branch_id: `stale-700005-${hash}`, root_hash: hash, tip_hashes: ["1".repeat(64)], depth: 2 },
+          orphan: null,
+          view: {
+            mode: "tree_window",
+            target_height: 700005,
+            tree_from: 699989,
+            tree_to: 700021,
+            select_hash: hash,
+            center_hash: hash,
+          },
+          view_error: null,
+        }],
+        total: 14,
+        next_cursor: "opaque-stale-branch-cursor",
+      }),
+    },
+  });
+  await page.goto("/");
+  await page.locator("#nav-goto").selectOption("branch");
+  await expect.poll(() => navigatorRequests.some((url) => (
+    url.pathname.endsWith("/api/v1/navigator/stale-branch")
+  ))).toBe(true);
+  await expect(page.locator("#nav-readout")).toContainText("#700,005-700,006 · depth 2 · 1 of 14");
+});
+
+test("Latest orphan readout includes n of N and class counts", async ({ page }) => {
+  const navigatorRequests = [];
+  const hash = "2".repeat(64);
+  await stubApi(page, [], {
+    navigatorRequests,
+    navigator: {
+      orphan: navigatorPayload("orphan", {
+        items: [{
+          id: `orphan-${hash}`,
+          kind: "orphan",
+          primary_hash: hash,
+          label: "Orphan 1435968000",
+          position: { axis: "time", min: 1435968000, max: 1435968000 },
+          index: 1,
+          cursor: "opaque-orphan-cursor",
+          branch: null,
+          orphan: { btc_orphan_class: "strict_btc_orphan" },
+          view: { mode: "unheighted_anchor", anchor_hash: hash, select_hash: hash, center_hash: hash },
+          view_error: null,
+        }],
+        total: 30,
+        facets: { orphan_classes: { strict: 16, weak: 14, excluded: 0, pending: 0 } },
+        next_cursor: "opaque-orphan-cursor",
+      }),
+    },
+  });
+  await page.goto("/");
+  await page.locator("#nav-goto").selectOption("orphan");
+  await expect.poll(() => navigatorRequests.some((url) => (
+    url.pathname.endsWith("/api/v1/navigator/orphan")
+  ))).toBe(true);
+  await expect(page.locator("#nav-readout")).toContainText("2015-07-04 · 1 of 30 · strict 16 · weak 14");
+});
+
+test("Latest orphan branch readout includes depth and 1 of N", async ({ page }) => {
+  const navigatorRequests = [];
+  const hash = "3".repeat(64);
+  await stubApi(page, [], {
+    navigatorRequests,
+    navigator: {
+      "orphan-branch": navigatorPayload("orphan-branch", {
+        items: [{
+          id: `orphan-${hash}`,
+          kind: "orphan-branch",
+          primary_hash: hash,
+          label: "Orphan branch 1435968000",
+          position: { axis: "time", min: 1435968000, max: 1435968000 },
+          index: 1,
+          cursor: "opaque-orphan-branch-cursor",
+          branch: { branch_id: `orphan-${hash}`, root_hash: hash, tip_hashes: ["4".repeat(64)], depth: 2 },
+          orphan: null,
+          view: { mode: "unheighted_anchor", anchor_hash: hash, select_hash: hash, center_hash: hash },
+          view_error: null,
+        }],
+        total: 6,
+        next_cursor: "opaque-orphan-branch-cursor",
+      }),
+    },
+  });
+  await page.goto("/");
+  await page.locator("#nav-goto").selectOption("orphanBranch");
+  await expect.poll(() => navigatorRequests.some((url) => (
+    url.pathname.endsWith("/api/v1/navigator/orphan-branch")
+  ))).toBe(true);
+  await expect(page.locator("#nav-readout")).toContainText("2015-07-04 · depth 2 · 1 of 6");
 });

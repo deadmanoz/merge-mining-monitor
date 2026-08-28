@@ -6,6 +6,10 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Show which item of the current Go-to index the stepper is on (`n of N`)
+  while walking stales, stale branches, error blocks, orphans, and orphan
+  branches.
+
 - Remove the Auto refresh interval picker and dedicated refresh icon from the
   topbar. Data still refreshes every 60s; click the Updated stamp to reload the
   current view, or Retry when that view has not loaded yet.
