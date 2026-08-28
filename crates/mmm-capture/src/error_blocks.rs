@@ -105,12 +105,32 @@ mod tests {
         let hash =
             BlockHash::from_str("00000000000000000000c3d95a4bdc068dfe0c6d1e7ad13045c6f570e58d9ed7")
                 .unwrap();
-        assert_eq!(len(), 33);
+        assert_eq!(len(), 35);
         assert_eq!(hashes().count(), len());
         assert_eq!(
             lookup(&hash.to_byte_array()),
             Some(ErrorBlock {
                 height: 946_213,
+                rejection_reason: TIME_BELOW_MTP,
+            })
+        );
+        let hathor_649674 =
+            BlockHash::from_str("00000000000000000008c80c1f8c101f8aa1fabd59d63ab1350bd1d5dba425e6")
+                .unwrap();
+        assert_eq!(
+            lookup(&hathor_649674.to_byte_array()),
+            Some(ErrorBlock {
+                height: 649_674,
+                rejection_reason: "bip34_coinbase_height_missing",
+            })
+        );
+        let f2pool_957780 =
+            BlockHash::from_str("0000000000000000000198e12592edbe83c84a78f75b3f8d67a3fe2075ef2ffb")
+                .unwrap();
+        assert_eq!(
+            lookup(&f2pool_957780.to_byte_array()),
+            Some(ErrorBlock {
+                height: 957_780,
                 rejection_reason: TIME_BELOW_MTP,
             })
         );

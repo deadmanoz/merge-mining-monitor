@@ -25,7 +25,7 @@ pub(super) fn valid_manifest() -> PublicationManifest {
         .map(|spec| {
             let row_count = if !assigned_total && spec.lifecycle != SourceLifecycle::Surveyed {
                 assigned_total = true;
-                576_662
+                580_320
             } else {
                 0
             };
@@ -66,7 +66,7 @@ pub(super) fn valid_manifest() -> PublicationManifest {
         source_repo_commit: PINNED_RESEARCH_COMMIT.as_str().to_owned(),
         publication_manifest_path: "results/monitor-evidence/manifest.json".to_owned(),
         publication_manifest_sha256: "0".repeat(64),
-        total_event_rows: 576_662,
+        total_event_rows: 580_320,
         aggregate_rows: 21,
         error_observation_rows: 0,
         required_columns: NORMALIZED_COLUMNS
@@ -95,14 +95,16 @@ fn add_error_observation_artifact(manifest: &mut PublicationManifest) {
         },
         source_chain_counts: BTreeMap::from([
             ("devcoin".to_owned(), 16),
-            ("elastos".to_owned(), 1),
+            ("elastos".to_owned(), 2),
             ("emercoin".to_owned(), 1),
+            ("fractal".to_owned(), 1),
             ("groupcoin".to_owned(), 1),
+            ("hathor".to_owned(), 1),
             ("i0coin".to_owned(), 1),
             ("ixcoin".to_owned(), 13),
-            ("namecoin".to_owned(), 32),
+            ("namecoin".to_owned(), 33),
             ("rsk".to_owned(), 5),
-            ("syscoin".to_owned(), 2),
+            ("syscoin".to_owned(), 3),
             ("unobtanium".to_owned(), 1),
         ]),
     });
