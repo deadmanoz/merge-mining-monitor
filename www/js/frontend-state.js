@@ -433,9 +433,9 @@ function refreshRelativeTimes() {
 }
 
 // The labels also tick on their own fixed cadence, independent of the data
-// auto-refresh interval, so "how long ago" keeps advancing even when the user
-// has set auto-refresh to OFF. 30s is fine granularity for minute/hour/day
-// labels; refreshRelativeTimes() is a no-op when no detail is open.
+// auto-refresh interval, so "how long ago" keeps advancing between tree
+// refreshes. 30s is fine granularity for minute/hour/day labels;
+// refreshRelativeTimes() is a no-op when no detail is open.
 const RELATIVE_TIME_TICK_MS = 30000;
 let relativeTimeTimer = null;
 

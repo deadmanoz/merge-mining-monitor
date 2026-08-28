@@ -136,11 +136,43 @@ test("manual refresh loads sources and the view concurrently", async ({ page }) 
     if (request.url().includes("/api/v1/tree")) order.push("tree:start");
   });
 
-  await page.locator("#refresh-now").click();
+  await page.locator("#last-updated").click();
   await expect.poll(() => order.includes("sources:done")).toBe(true);
 
   expect(order).toContain("tree:start");
   expect(order.indexOf("tree:start")).toBeLessThan(order.indexOf("sources:done"));
+});
+
+test("the freshness stamp is a button and keyboard-activates refresh", async ({ page }) => {
+  const order = [];
+  await stubApi(page, []);
+  await page.goto("/");
+  await expect(page.locator(".tree-card")).toBeVisible();
+
+  const stamp = page.locator("#last-updated");
+  expect(await stamp.evaluate((el) => el.tagName)).toBe("BUTTON");
+  await expect(stamp).toHaveAccessibleName(/Updated \d{2}:\d{2}:\d{2}; refresh now/);
+
+  await page.route("**/api/v1/sources", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    order.push("sources:done");
+    await route.fulfill({ json: { schema_version: "v1", generated_at: GENERATED_AT, sources: [] } });
+  });
+  page.on("request", (request) => {
+    if (request.url().includes("/api/v1/tree")) order.push("tree:start");
+  });
+
+  await stamp.focus();
+  await page.keyboard.press("Enter");
+  await expect.poll(() => order.includes("sources:done")).toBe(true);
+  expect(order).toContain("tree:start");
+  expect(order.indexOf("tree:start")).toBeLessThan(order.indexOf("sources:done"));
+
+  const afterEnter = { sources: order.filter((item) => item === "sources:done").length };
+  await stamp.focus();
+  await page.keyboard.press("Space");
+  await expect.poll(() => order.filter((item) => item === "sources:done").length)
+    .toBeGreaterThan(afterEnter.sources);
 });
 
 test("the tree-scoped wrapper keeps the rail spacing", async ({ page }) => {

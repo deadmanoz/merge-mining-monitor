@@ -10,6 +10,16 @@ This changelog starts with the initial release.
   while walking stales, stale branches, error blocks, orphans, and orphan
   branches.
 
+- Remove the Auto refresh interval picker and dedicated refresh icon from the
+  topbar. Data still refreshes every 60s; click the Updated stamp to reload the
+  current view, or Retry when that view has not loaded yet.
+
+- Pin the compact error-block catalogue and historical publication to the same
+  merge-mining-research commit. Error observations are now 78 rows across 35
+  parents, including Hathor-witnessed 649674 and the 2026 F2Pool
+  `time_below_mtp` twin at 957780. That research commit already publishes
+  Hathor's 3,664-row event file, so the historical event total is 580,320.
+
 ## [0.7.2] - 2026-08-27
 
 - Clear stale Bitcoin Core link-error telemetry after Core revalidates the

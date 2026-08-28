@@ -177,7 +177,7 @@ matching branch through `anchor_hash`, so interior members resolve too.
 
 "Latest error block" navigates consensus-invalid, full-proof-of-work
 blocks, backed by `/api/v1/navigator/error-block`. The readout is the same
-height-plus-place form as "Latest stale", for example `#946,213 · 1 of 33`,
+height-plus-place form as "Latest stale", for example `#957,780 · 1 of 35`,
 because each item is a single block on the height axis. Ordering is newest-first
 by height and then by stored hash bytes: more than one error block can share a
 height, so the hash tie-break is what makes stepping return every member exactly
@@ -353,8 +353,11 @@ approximate "go to roughly this date" landing, since the backend does not echo
 the exact resolved block), and Live tip and the initial load center on the chain
 tip (nothing is newer than the tip, so the right half of the canvas is
 intentionally empty). Re-entering the active height or date recenters without a
-refetch. Refresh preserves the current pan/zoom, and source/kind highlight
-toggles never move the camera.
+refetch. The topbar has no interval picker or dedicated refresh icon: a silent
+60s timer refreshes sources always and the tree while that view is active. The
+shared `Updated HH:MM:SS` stamp force-reloads the current view and still
+preserves the current pan/zoom. Source/kind highlight toggles never move the
+camera.
 
 Multi-block stale branches should read as horizontal branch rows: a stale block
 that builds on another stale block advances by Bitcoin height along the same

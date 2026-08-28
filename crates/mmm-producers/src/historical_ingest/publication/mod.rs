@@ -63,7 +63,7 @@ pub(super) const RSK_SIDECAR_COLUMNS: &[&str] = &[
     "rsk_coinbase_tail",
 ];
 
-const ERROR_OBSERVATION_ROW_COUNT: u64 = 73;
+const ERROR_OBSERVATION_ROW_COUNT: u64 = 78;
 
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(serde::Serialize))]
@@ -225,7 +225,7 @@ fn validate_manifest(manifest: &PublicationManifest) -> Result<()> {
         "unexpected pinned error-observation row total"
     );
     ensure!(
-        manifest.total_event_rows == 576_662,
+        manifest.total_event_rows == 580_320,
         "unexpected pinned publication event total"
     );
     ensure!(
@@ -720,7 +720,7 @@ mod tests {
             .iter_mut()
             .find(|artifact| artifact.role == ArtifactRole::ErrorObservation)
             .expect("error-observation artifact");
-        error.source_chain_counts = BTreeMap::from([("doichain".to_owned(), 73)]);
+        error.source_chain_counts = BTreeMap::from([("doichain".to_owned(), 78)]);
         assert!(
             validate_manifest(&manifest)
                 .unwrap_err()

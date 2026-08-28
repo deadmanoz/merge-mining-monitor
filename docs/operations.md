@@ -275,7 +275,7 @@ child-height bounds:
 just reconcile-read-model --all --batch-size 1000 --max-iterations 1000
 ```
 
-The current 576,662-row publication needs more than the default 10,000-event
+The current 580,320-row publication needs more than the default 10,000-event
 budget; this command permits one million rows. It revisits already-captured
 proof-of-work-valid headers, including existing `unknown` rows that predate the
 pinned catalogue, records every match as `error_block`, and rebuilds the

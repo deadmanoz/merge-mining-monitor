@@ -58,7 +58,7 @@
           <!-- Buttons are rendered from the view-shell registry, one per
                registered view, so adding a view adds no markup here. -->
           <div id="view-switcher" class="view-switcher" role="tablist" aria-label="View" hidden></div>
-          <span id="last-updated" class="last-updated" aria-live="polite"></span>
+          <button id="last-updated" class="last-updated" type="button" aria-live="polite" aria-label="Retry; refresh now" title="Retry; refresh now">Retry</button>
           <div class="source-status-shell">
             <button id="source-status-button" class="source-status-button" type="button" aria-expanded="false" aria-controls="source-status-popover">
               <span class="source-status-bead" aria-hidden="true"></span>
@@ -72,18 +72,6 @@
               <div id="source-status-content"></div>
             </div>
           </div>
-          <label class="refresh-control" title="Auto-refresh interval">
-            <span>Auto</span>
-            <select id="refresh-interval" aria-label="Auto-refresh interval">
-              <option value="0">Off</option>
-              <option value="30">30s</option>
-              <option value="60">60s</option>
-              <option value="300">5m</option>
-            </select>
-          </label>
-          <button id="refresh-now" class="icon-button" type="button" aria-label="Refresh now" title="Refresh now">
-            <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></svg>
-          </button>
           <button id="theme-button" class="icon-button" type="button" aria-label="Toggle theme" title="Toggle theme">
             <svg class="ui-icon theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
             <svg class="ui-icon theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" /></svg>
