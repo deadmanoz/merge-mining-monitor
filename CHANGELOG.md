@@ -6,6 +6,11 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Pin the historical publication and compact error-block catalogue to
+  merge-mining-research `c26e86c`. Error observations stay 78 rows across 35
+  parents; the aggregate is now the 34-column monitor union (27 evidence
+  columns plus the seven RSK sidecar columns).
+
 ## [0.7.3] - 2026-08-28
 
 - Show which item of the current Go-to index the stepper is on (`n of N`)
