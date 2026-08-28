@@ -159,9 +159,9 @@ test("the metric explainer opens from the view title", async ({ page }) => {
 });
 
 test("the auto-refresh timer never refetches competitions", async ({ page }) => {
-  // The shortest selectable interval is 30s and the whole test timeout is 30s,
-  // so a real tick cannot complete; drive a fake clock instead. Both endpoints
-  // are counted, because a scheduled tick must still refresh sources.
+  // The timer is a fixed 60s and the whole test timeout is 30s, so a real tick
+  // cannot complete; drive a fake clock instead. Both endpoints are counted,
+  // because a scheduled tick must still refresh sources.
   await page.clock.install();
   let competitions = 0;
   let sources = 0;
@@ -175,16 +175,15 @@ test("the auto-refresh timer never refetches competitions", async ({ page }) => 
   await expect(page.locator("#delta-main")).toBeVisible();
   const afterLoad = { competitions, sources };
 
-  await page.locator("#refresh-interval").selectOption("30");
-  await page.clock.runFor("00:31");
+  await page.clock.runFor("01:01");
   // Wait for the tick to actually reach the network before judging it: the
   // sources request proves the scheduled refresh ran at all, so a competitions
   // count that has not moved by then is a real absence, not a race.
   await expect.poll(() => sources).toBeGreaterThan(afterLoad.sources);
   expect(competitions).toBe(afterLoad.competitions);
 
-  // The manual button, by contrast, does refetch the active view.
-  await page.locator("#refresh-now").click();
+  // The Updated stamp, by contrast, does refetch the active view.
+  await page.locator("#last-updated").click();
   await expect.poll(() => competitions).toBeGreaterThan(afterLoad.competitions);
 });
 
@@ -656,7 +655,7 @@ test("bounds that move after a failed load rewrite the era in the URL", async ({
   await page.route("**/api/v1/competitions", (route) => route.fulfill({
     json: competitionsPayload([makeCompetition("a".repeat(64), 700000, 5, { stale_header_time: Y2024 })]),
   }));
-  await page.locator("#refresh-now").click();
+  await page.locator("#last-updated").click();
   await expect(page.locator("#delta-chart .bar-mark").first()).toBeVisible();
 
   await expect(page.locator("#delta-year-from")).toHaveValue("2024");
@@ -765,8 +764,7 @@ test("a tree load that lands while the tree is hidden is repainted on return", a
     await route.fallback();
   });
 
-  await page.locator("#refresh-interval").selectOption("30");
-  await page.clock.runFor("00:31");
+  await page.clock.runFor("01:01");
   await page.locator('.view-tab[data-view="delta"]').click();
   await expect(page.locator("#delta-main")).toBeVisible();
   release();
