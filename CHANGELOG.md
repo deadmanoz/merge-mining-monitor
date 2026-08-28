@@ -6,6 +6,11 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Pin the historical publication and compact error-block catalogue to
+  merge-mining-research `c26e86c`. Error observations stay 78 rows across 35
+  parents; the aggregate is now the 34-column monitor union (27 evidence
+  columns plus the seven RSK sidecar columns).
+
 - `import-all` records each artifact's content SHA after a successful
   publication finalize and skips classify, write, and authoritative reconcile
   when that SHA has not changed. `--seed-imported-receipts` loads the last
