@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-08-28
+
 - Pin the historical publication and compact error-block catalogue to
   merge-mining-research `c26e86c`. Error observations stay 78 rows across 35
   parents; the aggregate is now the 34-column monitor union (27 evidence
