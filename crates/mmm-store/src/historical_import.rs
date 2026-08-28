@@ -24,6 +24,7 @@ pub async fn count_historical_event_provenance_by_chain<C: GenericClient>(
             "SELECT chain, count(*)::bigint \
              FROM historical_event_provenance \
              WHERE publication_ref = $1 \
+               AND artifact_scope <> 'error-block-observations' \
              GROUP BY chain",
             &[&publication_ref],
         )

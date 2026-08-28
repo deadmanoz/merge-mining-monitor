@@ -247,7 +247,8 @@ Pass `--seed-imported-receipts` once on a production upgrade to load
 `data/historical/imported-artifact-seed.json` (the last imported production
 pin) so unchanged historical files NOP. The flag refuses to seed unless
 each non-empty seed event chain already has matching
-`historical_event_provenance` rows for that pin. Fresh or incomplete
+`historical_event_provenance` rows for that pin, excluding
+`error-block-observations` scope. Fresh or incomplete
 databases omit the flag and import every artifact. Receipts are written
 only by `import-all`, after stale-branch reconciliation and the
 source-health rebuild succeed, and they store the artifact identity
