@@ -8,7 +8,7 @@ This changelog starts with the initial release.
 
 - Remove the Auto refresh interval picker and dedicated refresh icon from the
   topbar. Data still refreshes every 60s; click the Updated stamp to reload the
-  current view.
+  current view, or Retry when that view has not loaded yet.
 
 - Pin the compact error-block catalogue and historical publication to the same
   merge-mining-research commit. Error observations are now 78 rows across 35

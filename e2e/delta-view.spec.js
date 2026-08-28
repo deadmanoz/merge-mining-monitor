@@ -246,6 +246,28 @@ test("deselecting clears the block detail, not just the URL", async ({ page }) =
   await expect(page.locator(".workspace")).toHaveAttribute("data-drawer-collapsed", "true");
 });
 
+test("a failed first load leaves a visible retry stamp", async ({ page }) => {
+  // Scheduled ticks never refetch competitions, so a failed first load used
+  // to leave an empty, zero-size stamp and no way to retry. The fallback
+  // label has to be visible and large enough to click.
+  await stubApi(page, [], withCompetitions());
+  await page.route("**/api/v1/competitions", (route) => route.fulfill({
+    status: 500,
+    json: { schema_version: "v1", generated_at: GENERATED_AT, error: { code: "internal_error", message: "boom" } },
+  }));
+  await page.goto("/?view=delta");
+  await expect(page.locator("#delta-main")).toBeVisible();
+
+  const stamp = page.locator("#last-updated");
+  await expect(stamp).toBeVisible();
+  await expect(stamp).toHaveText("Retry");
+  await expect(stamp).toHaveAccessibleName("Retry; refresh now");
+  const box = await stamp.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box.width).toBeGreaterThan(20);
+  expect(box.height).toBeGreaterThan(12);
+});
+
 test("an endpoint failure is not reported as an empty filter", async ({ page }) => {
   await stubApi(page, [], withCompetitions());
   await page.route("**/api/v1/competitions", (route) => route.fulfill({

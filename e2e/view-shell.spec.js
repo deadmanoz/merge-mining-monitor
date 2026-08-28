@@ -151,7 +151,7 @@ test("the freshness stamp is a button and keyboard-activates refresh", async ({ 
 
   const stamp = page.locator("#last-updated");
   expect(await stamp.evaluate((el) => el.tagName)).toBe("BUTTON");
-  await expect(stamp).toHaveAccessibleName("Refresh now");
+  await expect(stamp).toHaveAccessibleName(/Updated \d{2}:\d{2}:\d{2}; refresh now/);
 
   await page.route("**/api/v1/sources", async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 400));

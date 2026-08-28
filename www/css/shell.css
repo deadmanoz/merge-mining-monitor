@@ -197,7 +197,7 @@
   white-space: nowrap;
   background: transparent;
   border-color: transparent;
-  padding: 0;
+  padding: 2px 6px;
   min-height: 0;
   cursor: pointer;
 }
