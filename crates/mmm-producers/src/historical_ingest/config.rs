@@ -88,6 +88,9 @@ pub struct HistoricalImportConfig {
     pub limit: Option<usize>,
     /// Allows a deliberately membership-free diagnostic database.
     pub allow_empty_known_stales: bool,
+    /// Single-chain imports drop the publication receipt so the next
+    /// `import-all` re-runs authoritative reconcile for this source.
+    pub invalidate_import_receipt: bool,
 }
 
 /// Resolved options for the manifest-driven full publication import.
@@ -98,6 +101,7 @@ pub struct HistoricalImportAllConfig {
     pub require_pinned_checkout: bool,
     pub batch_size: usize,
     pub allow_empty_known_stales: bool,
+    pub seed_imported_receipts: bool,
 }
 
 impl HistoricalImportConfig {
@@ -114,6 +118,7 @@ impl HistoricalImportConfig {
             batch_size: DEFAULT_BATCH_SIZE,
             limit: None,
             allow_empty_known_stales: false,
+            invalidate_import_receipt: true,
         }
     }
 
@@ -206,6 +211,7 @@ impl HistoricalImportConfig {
             batch_size,
             limit,
             allow_empty_known_stales,
+            invalidate_import_receipt: true,
         })
     }
 }
@@ -216,6 +222,7 @@ impl HistoricalImportAllConfig {
         let mut artifact_root = None;
         let mut batch_size = DEFAULT_BATCH_SIZE;
         let mut allow_empty_known_stales = false;
+        let mut seed_imported_receipts = false;
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--manifest" => manifest_path = next_path(&mut args, "--manifest")?,
@@ -229,6 +236,7 @@ impl HistoricalImportAllConfig {
                     }
                 }
                 "--allow-empty-known-stales" => allow_empty_known_stales = true,
+                "--seed-imported-receipts" => seed_imported_receipts = true,
                 "-h" | "--help" => bail!(import_all_usage_message()),
                 other => bail!(
                     "unknown import-all argument {other:?}\n{}",
@@ -246,6 +254,7 @@ impl HistoricalImportAllConfig {
             require_pinned_checkout: !explicit_artifact_root,
             batch_size,
             allow_empty_known_stales,
+            seed_imported_receipts,
         })
     }
 
@@ -265,6 +274,7 @@ impl HistoricalImportAllConfig {
                     batch_size: self.batch_size,
                     limit: None,
                     allow_empty_known_stales: self.allow_empty_known_stales,
+                    invalidate_import_receipt: false,
                 })
             })
             .collect()
@@ -294,7 +304,7 @@ fn usage_message() -> &'static str {
 
 fn import_all_usage_message() -> &'static str {
     "usage: import-all [--artifact-root DIR] [--manifest PATH] [--batch-size N] \
-     [--allow-empty-known-stales]"
+     [--allow-empty-known-stales] [--seed-imported-receipts]"
 }
 
 fn resolve_manifest_csv_path(

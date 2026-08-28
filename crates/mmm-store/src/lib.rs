@@ -14,6 +14,7 @@
 mod bitcoin_core_header;
 mod chains;
 mod event;
+mod historical_import;
 mod known_stale;
 mod pending_reconcile;
 mod poll_cursor;
@@ -48,6 +49,12 @@ pub use event::{
     fill_event_child_coinbase, upsert_event_pool_attributions,
     upsert_event_pool_attributions_without_stale_cleanup, upsert_merge_mining_event,
     upsert_merge_mining_event_with_attributions,
+};
+pub use historical_import::{
+    HistoricalImportArtifact, count_historical_event_provenance_by_chain,
+    count_historical_import_artifacts, delete_historical_import_artifact,
+    load_historical_import_artifacts, seed_historical_import_artifacts,
+    upsert_historical_import_artifact,
 };
 pub use known_stale::{count_known_stale_blocks, is_known_stale_hash, upsert_known_stale_block};
 pub use pending_reconcile::{

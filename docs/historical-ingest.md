@@ -238,7 +238,28 @@ Import the complete publication:
 just import-all
 ```
 
-The command preflights all artifacts before importing the first chain, processes
+The command still requires a complete pin and manifest. After that completeness
+preflight it compares each artifact SHA to the last successfully imported
+receipt and skips classify, write, and authoritative reconcile for unchanged
+files. The Bitcoin Core lock is taken only when at least one artifact still
+needs work. An empty receipt table is not treated as "already imported."
+Pass `--seed-imported-receipts` once on a production upgrade to load
+`data/historical/imported-artifact-seed.json` (the last imported production
+pin) so unchanged historical files NOP. The flag refuses to seed unless
+each non-empty seed event chain already has matching
+`historical_event_provenance` rows for that pin, excluding
+`error-block-observations` scope. Fresh or incomplete
+databases omit the flag and import every artifact. Receipts are written
+only by `import-all`, after stale-branch reconciliation and the
+source-health rebuild succeed, and they store the artifact identity
+verified during preflight, including surveyed zero-row files. The summary
+reports `skipped_unchanged`. `import-dataset` never writes a receipt; a
+successful single-chain write deletes that chain's event receipt in the
+same transaction so a later `import-all` cannot skip a source whose
+database state no longer matches the pin.
+
+The command preflights all artifacts before importing the first changed chain,
+processes
 chains in deterministic order, shares a Bitcoin-parent classification cache,
 combines candidate parsing, validation, and preclassification into one stream,
 fills the Bitcoin RPC client's configured bounded concurrency, and runs targeted
@@ -280,8 +301,11 @@ just import-dataset rsk
 ```
 
 `import-dataset` commits only the named chain and does not run the cross-source
-stale-branch reconciliation pass. Use `import-all` to establish the complete
-publication state; the single-chain command is for diagnostics and recovery.
+stale-branch reconciliation pass. It also drops that chain's `import-all`
+receipt so the next publication import re-runs classify, write, and
+authoritative reconcile for the source. Use `import-all` to establish the
+complete publication state; the single-chain command is for diagnostics and
+recovery.
 
 `--csv PATH` is an explicit fixture or operator override. It must still use the
 normalized schema, but it has no monitor-manifest checksum expectation. It is
@@ -296,8 +320,9 @@ just reclassify-pools
 ```
 
 `import-all` already rebuilds source health and performs the targeted
-stale-branch pass. A second full import is an idempotence check, not a required
-classification phase.
+stale-branch pass. A later `import-all` whose receipts still match is a
+completeness check of the pin and receipt table, not a replay of
+database-write idempotence.
 
 ## Production Cutover
 

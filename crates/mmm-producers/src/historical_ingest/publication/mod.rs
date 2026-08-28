@@ -104,6 +104,16 @@ pub(super) enum ArtifactRole {
     ErrorObservation,
 }
 
+impl ArtifactRole {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Event => "event",
+            Self::Aggregate => "aggregate",
+            Self::ErrorObservation => "error_observation",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(serde::Serialize))]
 pub(super) struct PublicationCounts {
@@ -258,6 +268,7 @@ fn valid_sha256(value: &str) -> bool {
 pub(super) struct ArtifactPreflight {
     pub(super) row_count: u64,
     pub(super) counts: PublicationCounts,
+    pub(super) identity: Option<PublicationArtifact>,
     file: File,
 }
 
@@ -409,6 +420,7 @@ fn inspect_csv(
     Ok(ArtifactPreflight {
         row_count,
         counts,
+        identity: expected.cloned(),
         file,
     })
 }
@@ -853,6 +865,7 @@ mod tests {
             require_pinned_checkout: false,
             batch_size: 10,
             allow_empty_known_stales: true,
+            seed_imported_receipts: false,
         };
 
         preflight_required_aggregate_artifacts(&config).expect("aggregate preflight");

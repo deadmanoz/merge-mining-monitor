@@ -11,6 +11,14 @@ This changelog starts with the initial release.
   parents; the aggregate is now the 34-column monitor union (27 evidence
   columns plus the seven RSK sidecar columns).
 
+- `import-all` records each artifact's content SHA after a successful
+  publication finalize and skips classify, write, and authoritative reconcile
+  when that SHA has not changed. `--seed-imported-receipts` loads the last
+  imported pin (`091e01a`) only after matching event-scope provenance counts
+  prove that pin is already present. `import-dataset` does not write receipts;
+  a successful single-chain import deletes that chain's receipt so the next
+  `import-all` re-runs authoritative reconcile.
+
 ## [0.7.3] - 2026-08-28
 
 - Show which item of the current Go-to index the stepper is on (`n of N`)

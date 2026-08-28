@@ -1196,6 +1196,76 @@ async fn operator_csv_is_additive_for_historical_sources() -> Result<()> {
 }
 
 #[tokio::test]
+async fn import_dataset_invalidates_receipt_so_import_all_reconciles_extras() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let published = header_meeting_bits(0x207f_ffff, 1_700_000_080, 80);
+        let extra = header_meeting_bits(0x207f_ffff, 1_700_000_081, 81);
+        let extra_csv =
+            write_normalized_csv(&extra, "canonical", "", "canonical_parent", &[], 700_081)?;
+        let fixture = write_manifest_fixture(&published)?;
+        let result = async {
+            let classifier =
+                ConfiguredParentClassifier::Fake(FakeParentClassifier::new_sequence([
+                    canonical_verdict(&published, 700_080),
+                    canonical_verdict(&extra, 700_081),
+                    canonical_verdict(&published, 700_080),
+                ]));
+            let publication = vec![devcoin_publication_config(&fixture)];
+            let first = run_historical_import_configs_for_test(
+                &mut client,
+                &classifier,
+                publication.clone(),
+            )
+            .await?;
+            assert_eq!(first.chains[0].1.ingested, 1);
+            assert_eq!(first.skipped_unchanged, 0);
+            assert_eq!(devcoin_event_receipt_count(&client).await?, 1);
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:devcoin").await?,
+                1
+            );
+
+            let skipped = run_historical_import_configs_for_test(
+                &mut client,
+                &classifier,
+                publication.clone(),
+            )
+            .await?;
+            assert_eq!(skipped.skipped_unchanged, 1);
+            assert!(skipped.chains.is_empty());
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:devcoin").await?,
+                1
+            );
+
+            run_historical_import(&mut client, &classifier, &devcoin_import_config(&extra_csv))
+                .await?;
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:devcoin").await?,
+                2
+            );
+            assert_eq!(devcoin_event_receipt_count(&client).await?, 0);
+
+            let reconciled =
+                run_historical_import_configs_for_test(&mut client, &classifier, publication)
+                    .await?;
+            assert_eq!(reconciled.skipped_unchanged, 0);
+            assert_eq!(reconciled.chains[0].1.removed, 1);
+            assert_eq!(
+                active_source_event_count(&client, "auxpow:devcoin").await?,
+                1
+            );
+            assert_eq!(devcoin_event_receipt_count(&client).await?, 1);
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        std::fs::remove_dir_all(&fixture.root)
+            .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
+        finish_import_with_cleanup(result, &[&extra_csv])
+    })
+}
+
+#[tokio::test]
 async fn live_import_is_additive_and_never_removes_live_events() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let header = header_meeting_bits(0x207f_ffff, 1_700_000_011, 22);
@@ -1374,6 +1444,31 @@ fn devcoin_import_config(csv_path: &Path) -> HistoricalImportConfig {
     config
 }
 
+fn devcoin_publication_config(fixture: &ManifestFixture) -> HistoricalImportConfig {
+    HistoricalImportConfig {
+        chain: "devcoin".into(),
+        csv_path: fixture.artifact_path.clone(),
+        manifest_path: Some(fixture.config.manifest_path.clone()),
+        artifact_root: Some(fixture.config.artifact_root.clone()),
+        require_pinned_checkout: false,
+        batch_size: 10,
+        limit: None,
+        allow_empty_known_stales: true,
+        invalidate_import_receipt: false,
+    }
+}
+
+async fn devcoin_event_receipt_count(client: &tokio_postgres::Client) -> Result<i64> {
+    Ok(client
+        .query_one(
+            "SELECT count(*) FROM historical_import_artifact \
+             WHERE role = 'event' AND chain = 'devcoin'",
+            &[],
+        )
+        .await?
+        .get(0))
+}
+
 struct ManifestFixture {
     root: PathBuf,
     artifact_path: PathBuf,
@@ -1489,6 +1584,7 @@ fn write_manifest_fixture_rows_with_counts(
             require_pinned_checkout: false,
             batch_size: 10,
             allow_empty_known_stales: true,
+            seed_imported_receipts: false,
         },
         root,
     })

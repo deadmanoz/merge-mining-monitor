@@ -30,6 +30,11 @@ directories.
   `just gen-historical-source-manifest`.
 - `historical/historical-source-manifest.sha256` - checksum of the committed
   historical manifest.
+- `historical/imported-artifact-seed.json` - last successfully imported
+  production pin identities. `import-all --seed-imported-receipts` loads this
+  into an empty receipt table only after event provenance counts for that pin
+  match. Omit the flag on a fresh or incomplete database. A later
+  `import-dataset` deletes that chain's receipt.
 
 The `csv_path` values inside `historical/historical-source-manifest.json` are
 relative to the external [merge-mining-research](https://github.com/deadmanoz/merge-mining-research)
