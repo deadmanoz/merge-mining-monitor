@@ -265,7 +265,7 @@ test("a failed first load leaves a visible retry stamp", async ({ page }) => {
   const box = await stamp.boundingBox();
   expect(box).not.toBeNull();
   expect(box.width).toBeGreaterThan(20);
-  expect(box.height).toBeGreaterThan(12);
+  expect(box.height).toBeGreaterThanOrEqual(32);
 });
 
 test("an endpoint failure is not reported as an empty filter", async ({ page }) => {

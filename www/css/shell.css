@@ -198,7 +198,7 @@
   background: transparent;
   border-color: transparent;
   padding: 2px 6px;
-  min-height: 0;
+  min-height: 32px;
   cursor: pointer;
 }
 
