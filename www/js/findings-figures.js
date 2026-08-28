@@ -1,7 +1,7 @@
 // Data-native evidence figures for Findings. The generated corpus owns the
 // values and annotations; this module owns only scales and presentation.
 
-import { esc } from "./frontend-state.js?v=0.7.2";
+import { esc } from "./frontend-state.js?v=0.7.3";
 
 const DAY_MS = 86_400_000;
 const CHART = { width: 880, height: 300, pad: { left: 64, right: 24, top: 54, bottom: 36 } };
