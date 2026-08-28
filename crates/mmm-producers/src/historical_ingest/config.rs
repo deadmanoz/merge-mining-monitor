@@ -88,6 +88,9 @@ pub struct HistoricalImportConfig {
     pub limit: Option<usize>,
     /// Allows a deliberately membership-free diagnostic database.
     pub allow_empty_known_stales: bool,
+    /// Single-chain imports drop the publication receipt so the next
+    /// `import-all` re-runs authoritative reconcile for this source.
+    pub invalidate_import_receipt: bool,
 }
 
 /// Resolved options for the manifest-driven full publication import.
@@ -115,6 +118,7 @@ impl HistoricalImportConfig {
             batch_size: DEFAULT_BATCH_SIZE,
             limit: None,
             allow_empty_known_stales: false,
+            invalidate_import_receipt: true,
         }
     }
 
@@ -207,6 +211,7 @@ impl HistoricalImportConfig {
             batch_size,
             limit,
             allow_empty_known_stales,
+            invalidate_import_receipt: true,
         })
     }
 }
@@ -269,6 +274,7 @@ impl HistoricalImportAllConfig {
                     batch_size: self.batch_size,
                     limit: None,
                     allow_empty_known_stales: self.allow_empty_known_stales,
+                    invalidate_import_receipt: false,
                 })
             })
             .collect()

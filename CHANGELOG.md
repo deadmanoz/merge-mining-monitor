@@ -15,7 +15,9 @@ This changelog starts with the initial release.
   publication finalize and skips classify, write, and authoritative reconcile
   when that SHA has not changed. `--seed-imported-receipts` loads the last
   imported pin (`091e01a`) only after matching event-scope provenance counts
-  prove that pin is already present. `import-dataset` does not write receipts.
+  prove that pin is already present. `import-dataset` does not write receipts;
+  a successful single-chain import deletes that chain's receipt so the next
+  `import-all` re-runs authoritative reconcile.
 
 ## [0.7.3] - 2026-08-28
 

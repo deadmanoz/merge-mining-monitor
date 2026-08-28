@@ -52,8 +52,9 @@ pub use event::{
 };
 pub use historical_import::{
     HistoricalImportArtifact, count_historical_event_provenance_by_chain,
-    count_historical_import_artifacts, load_historical_import_artifacts,
-    seed_historical_import_artifacts, upsert_historical_import_artifact,
+    count_historical_import_artifacts, delete_historical_import_artifact,
+    load_historical_import_artifacts, seed_historical_import_artifacts,
+    upsert_historical_import_artifact,
 };
 pub use known_stale::{count_known_stale_blocks, is_known_stale_hash, upsert_known_stale_block};
 pub use pending_reconcile::{

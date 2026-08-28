@@ -310,7 +310,9 @@ just reclassify-pools
 
 `import-all` verifies all 27 per-chain artifacts before the first database
 mutation. Unchanged artifact SHAs are skipped, including authoritative
-reconcile. On a production upgrade whose last imported pin still has matching
+reconcile. `import-dataset` does not leave that skip in place: a successful
+single-chain import deletes the chain receipt so the next `import-all`
+re-applies the pin. On a production upgrade whose last imported pin still has matching
 event provenance, pass `--seed-imported-receipts` once so the empty
 receipt table does not replay unchanged files. Fresh or incomplete
 databases omit the flag; a mismatched provenance count refuses the seed.

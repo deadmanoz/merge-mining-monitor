@@ -48,7 +48,10 @@ mod error_observations;
 use error_observations::import_error_observations;
 use error_observations::preflight_error_observations;
 mod receipts;
-use receipts::{ImportPlan, load_or_seed_receipts, plan_publication_import, record_receipts};
+use receipts::{
+    ImportPlan, invalidate_chain_receipt, load_or_seed_receipts, plan_publication_import,
+    record_receipts,
+};
 mod write_plan;
 use write_plan::{PlannedWrite, write_planned_imports};
 
@@ -373,19 +376,7 @@ pub(super) async fn run_historical_import_with_cache(
     )
     .await?;
 
-    if config.is_authoritative_snapshot(spec) {
-        summary.removed = reconcile_authoritative_historical_source_in_transaction(
-            &txn,
-            source_id,
-            super::config::PINNED_RESEARCH_COMMIT.as_str(),
-            spec.chain,
-        )
-        .await?;
-    }
-    invalidate_source_health_in_transaction(&txn).await?;
-    txn.commit()
-        .await
-        .with_context(|| format!("commit {} historical chain transaction", spec.chain))?;
+    commit_chain_import_transaction(txn, spec, config, source_id, &mut summary).await?;
     drain_historical_reconcile_queue_with_nbits_table(
         client,
         classifier,
@@ -398,6 +389,32 @@ pub(super) async fn run_historical_import_with_cache(
         rebuild_historical_source_health(client).await?;
     }
     Ok((summary, identity))
+}
+
+async fn commit_chain_import_transaction(
+    txn: Transaction<'_>,
+    spec: &super::config::HistoricalChainSpec,
+    config: &HistoricalImportConfig,
+    source_id: i64,
+    summary: &mut HistoricalImportSummary,
+) -> Result<()> {
+    if config.is_authoritative_snapshot(spec) {
+        summary.removed = reconcile_authoritative_historical_source_in_transaction(
+            &txn,
+            source_id,
+            super::config::PINNED_RESEARCH_COMMIT.as_str(),
+            spec.chain,
+        )
+        .await?;
+    }
+    if config.invalidate_import_receipt {
+        invalidate_chain_receipt(&txn, spec.chain).await?;
+    }
+    invalidate_source_health_in_transaction(&txn).await?;
+    txn.commit()
+        .await
+        .with_context(|| format!("commit {} historical chain transaction", spec.chain))?;
+    Ok(())
 }
 
 async fn import_rows_in_transaction(

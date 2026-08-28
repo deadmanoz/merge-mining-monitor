@@ -5,8 +5,9 @@ use std::collections::BTreeMap;
 use anyhow::{Context, Result, bail, ensure};
 use mmm_store::{
     HistoricalImportArtifact, count_historical_event_provenance_by_chain,
-    count_historical_import_artifacts, load_historical_import_artifacts,
-    seed_historical_import_artifacts, upsert_historical_import_artifact,
+    count_historical_import_artifacts, delete_historical_import_artifact,
+    load_historical_import_artifacts, seed_historical_import_artifacts,
+    upsert_historical_import_artifact,
 };
 use serde::Deserialize;
 use tokio_postgres::{Client, GenericClient};
@@ -191,6 +192,14 @@ fn first_seed_provenance_mismatch(
             (actual != artifact.row_count)
                 .then(|| (artifact.chain.clone(), artifact.row_count, actual))
         })
+}
+
+pub(super) async fn invalidate_chain_receipt<C: GenericClient>(
+    client: &C,
+    chain: &str,
+) -> Result<()> {
+    delete_historical_import_artifact(client, "event", chain).await?;
+    Ok(())
 }
 
 pub(super) async fn record_receipt(client: &Client, artifact: &PublicationArtifact) -> Result<()> {

@@ -253,7 +253,10 @@ databases omit the flag and import every artifact. Receipts are written
 only by `import-all`, after stale-branch reconciliation and the
 source-health rebuild succeed, and they store the artifact identity
 verified during preflight, including surveyed zero-row files. The summary
-reports `skipped_unchanged`.
+reports `skipped_unchanged`. `import-dataset` never writes a receipt; a
+successful single-chain write deletes that chain's event receipt in the
+same transaction so a later `import-all` cannot skip a source whose
+database state no longer matches the pin.
 
 The command preflights all artifacts before importing the first changed chain,
 processes
@@ -298,8 +301,11 @@ just import-dataset rsk
 ```
 
 `import-dataset` commits only the named chain and does not run the cross-source
-stale-branch reconciliation pass. Use `import-all` to establish the complete
-publication state; the single-chain command is for diagnostics and recovery.
+stale-branch reconciliation pass. It also drops that chain's `import-all`
+receipt so the next publication import re-runs classify, write, and
+authoritative reconcile for the source. Use `import-all` to establish the
+complete publication state; the single-chain command is for diagnostics and
+recovery.
 
 `--csv PATH` is an explicit fixture or operator override. It must still use the
 normalized schema, but it has no monitor-manifest checksum expectation. It is

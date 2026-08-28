@@ -100,6 +100,21 @@ pub async fn upsert_historical_import_artifact<C: GenericClient>(
     Ok(())
 }
 
+pub async fn delete_historical_import_artifact<C: GenericClient>(
+    client: &C,
+    role: &str,
+    chain: &str,
+) -> Result<u64> {
+    let rows = client
+        .execute(
+            "DELETE FROM historical_import_artifact WHERE role = $1 AND chain = $2",
+            &[&role, &chain],
+        )
+        .await
+        .context("delete historical_import_artifact")?;
+    Ok(rows)
+}
+
 pub async fn seed_historical_import_artifacts<C: GenericClient>(
     client: &C,
     artifacts: &[HistoricalImportArtifact],
