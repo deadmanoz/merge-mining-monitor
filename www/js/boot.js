@@ -80,28 +80,11 @@ async function scheduledRefresh() {
   refreshRelativeTimes();
 }
 
-let refreshTimer = null;
+const REFRESH_INTERVAL_MS = 60_000;
 
-function setRefreshInterval(seconds) {
-  if (refreshTimer) {
-    clearInterval(refreshTimer);
-    refreshTimer = null;
-  }
-  if (seconds > 0) refreshTimer = setInterval(scheduledRefresh, seconds * 1000);
-}
-
-function wireRefreshControls() {
-  const select = $("#refresh-interval");
-  if (select) {
-    const stored = localStorage.getItem("mmm-refresh-interval");
-    select.value = stored !== null ? stored : "60";
-    setRefreshInterval(Number(select.value));
-    select.addEventListener("change", () => {
-      localStorage.setItem("mmm-refresh-interval", select.value);
-      setRefreshInterval(Number(select.value));
-    });
-  }
-  $("#refresh-now")?.addEventListener("click", manualRefresh);
+function startRefresh() {
+  setInterval(scheduledRefresh, REFRESH_INTERVAL_MS);
+  $("#last-updated")?.addEventListener("click", manualRefresh);
 }
 
 function wireAboutDialog() {
@@ -512,7 +495,7 @@ function wireEvents() {
       handleClassificationFilterChange();
     }
   });
-  wireRefreshControls();
+  startRefresh();
   wireViewSwitcher();
   wireAboutDialog();
   INFO_DIALOGS.forEach(wireInfoDialog);

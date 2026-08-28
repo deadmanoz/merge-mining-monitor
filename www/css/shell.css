@@ -189,24 +189,26 @@
   background: var(--surface-alt);
 }
 
-/* Top-right freshness indicator, updated on every data load/refresh. */
+/* Top-right freshness stamp: force-reload affordance, updated on every load. */
 .last-updated {
   color: var(--muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  background: transparent;
+  border-color: transparent;
+  padding: 2px 6px;
+  min-height: 32px;
+  cursor: pointer;
 }
 
-/* Auto-refresh interval picker in the topbar. */
-.refresh-control {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 12px;
+.last-updated:hover,
+.last-updated:focus-visible {
+  border-color: var(--line-strong);
+  background: var(--surface-alt);
 }
 
-/* Crisp 16px line icons for icon buttons (refresh-now, theme). */
+/* Crisp 16px line icons for icon buttons (theme). */
 .ui-icon {
   width: 16px;
   height: 16px;

@@ -532,14 +532,18 @@ function renderUpdated() {
   const el = $("#last-updated");
   if (!el) return;
   const at = state.updatedAt[state.query.view];
-  el.textContent = at
+  const label = at
     ? `Updated ${new Date(at).toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
       hour12: false,
     })}`
-    : "";
+    : "Retry";
+  el.textContent = label;
+  const action = `${label}; refresh now`;
+  el.setAttribute("aria-label", action);
+  el.setAttribute("title", action);
 }
 
 // An error block is a plain height-axis single block with no competitor and no

@@ -353,8 +353,11 @@ approximate "go to roughly this date" landing, since the backend does not echo
 the exact resolved block), and Live tip and the initial load center on the chain
 tip (nothing is newer than the tip, so the right half of the canvas is
 intentionally empty). Re-entering the active height or date recenters without a
-refetch. Refresh preserves the current pan/zoom, and source/kind highlight
-toggles never move the camera.
+refetch. The topbar has no interval picker or dedicated refresh icon: a silent
+60s timer refreshes sources always and the tree while that view is active. The
+shared `Updated HH:MM:SS` stamp force-reloads the current view and still
+preserves the current pan/zoom. Source/kind highlight toggles never move the
+camera.
 
 Multi-block stale branches should read as horizontal branch rows: a stale block
 that builds on another stale block advances by Bitcoin height along the same
