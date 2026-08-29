@@ -11,9 +11,9 @@
 // activate (which loads, because the mutator marked the tree dirty), then
 // centre once the window exists.
 
-import { centerCameraOnHeight } from "./api-client.js?v=0.7.5";
-import { state, writeForm } from "./frontend-state.js?v=0.7.5";
-import { activateHeightLookup } from "./tree-query-state.js?v=0.7.5";
+import { centerCameraOnHeight } from "./api-client.js?v=0.7.6";
+import { state, writeForm } from "./frontend-state.js?v=0.7.6";
+import { activateHeightLookup } from "./tree-query-state.js?v=0.7.6";
 
 async function showInTree(height) {
   // A navigation gesture, so it takes the epoch with it: a navigator request
@@ -28,7 +28,7 @@ async function showInTree(height) {
   writeForm();
   // Dynamic import: a static edge here would close the module cycle with
   // view-shell, which imports the views that call this.
-  const shell = await import("./view-shell.js?v=0.7.5");
+  const shell = await import("./view-shell.js?v=0.7.6");
   await shell.activateView("tree");
   // The load is awaited, so a gesture made during it owns the camera now.
   // Centring the superseded height would drag the camera off the user's actual

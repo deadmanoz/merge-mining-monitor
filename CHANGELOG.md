@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-08-29
+
 - Accept the research catalogue's legacy `median_time_past_violation` token as
   equivalent to a live `time_below_mtp` verdict while preserving the pinned
   token in imported evidence.

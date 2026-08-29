@@ -1,7 +1,7 @@
-import { loadTree, refreshActiveNavigatorTarget, renderUpdated } from "./api-client.js?v=0.7.5";
-import { applyTreeHighlight, renderTreePanel } from "./controls.js?v=0.7.5";
-import { $, DEFAULTS, esc, state } from "./frontend-state.js?v=0.7.5";
-import { syncUrl } from "./tree-query-state.js?v=0.7.5";
+import { loadTree, refreshActiveNavigatorTarget, renderUpdated } from "./api-client.js?v=0.7.6";
+import { applyTreeHighlight, renderTreePanel } from "./controls.js?v=0.7.6";
+import { $, DEFAULTS, esc, state } from "./frontend-state.js?v=0.7.6";
+import { syncUrl } from "./tree-query-state.js?v=0.7.6";
 
 
 /// Top-level views, keyed by their `view=` URL value.

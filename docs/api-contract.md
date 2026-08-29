@@ -102,12 +102,21 @@ Example:
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.7.5",
+  "version": "0.7.6",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 15,
+    "release_count": 16,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.7.6",
+        "date": "2026-08-29",
+        "items": [
+          "Import pinned error observations that use the legacy `median_time_past_violation` reason when Bitcoin Core reports the equivalent current `time_below_mtp` verdict. Preserve the pinned reason in publication evidence and keep every other reason and height check strict."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
       {
         "version": "0.7.5",
         "date": "2026-08-29",
