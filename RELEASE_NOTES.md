@@ -1,5 +1,12 @@
 # Release Notes
 
+## [0.7.6] - 2026-08-29
+
+- Import pinned error observations that use the legacy
+  `median_time_past_violation` reason when Bitcoin Core reports the equivalent
+  current `time_below_mtp` verdict. Preserve the pinned reason in publication
+  evidence and keep every other reason and height check strict.
+
 ## [0.7.5] - 2026-08-29
 
 - Let `import-all` detect already-loaded historical files by comparing their
