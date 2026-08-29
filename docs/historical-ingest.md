@@ -238,25 +238,22 @@ Import the complete publication:
 just import-all
 ```
 
-The command still requires a complete pin and manifest. After that completeness
-preflight it compares each artifact SHA to the last successfully imported
-receipt and skips classify, write, and authoritative reconcile for unchanged
-files. The Bitcoin Core lock is taken only when at least one artifact still
-needs work. An empty receipt table is not treated as "already imported."
-Pass `--seed-imported-receipts` once on a production upgrade to load
-`data/historical/imported-artifact-seed.json` (the last imported production
-pin) so unchanged historical files NOP. The flag refuses to seed unless
-each non-empty seed event chain already has matching
-`historical_event_provenance` rows for that pin, excluding
-`error-block-observations` scope. Fresh or incomplete
-databases omit the flag and import every artifact. Receipts are written
-only by `import-all`, after stale-branch reconciliation and the
-source-health rebuild succeed, and they store the artifact identity
-verified during preflight, including surveyed zero-row files. The summary
-reports `skipped_unchanged`. `import-dataset` never writes a receipt; a
-successful single-chain write deletes that chain's event receipt in the
-same transaction so a later `import-all` cannot skip a source whose
-database state no longer matches the pin.
+The command still requires a complete pin and manifest. Artifact SHA values
+verify publication bytes only. During the same CSV parse used for preflight,
+`import-all` constructs a normalized projection of publication-owned state and
+compares it with stored non-operator provenance from any research pin. A
+matching file skips classification, writes, and authoritative reconciliation.
+The summary reports `skipped_matching_state`.
+
+Historical and partial sources require the exact authoritative base-event set,
+including detection of operator-created extras. Live sources permit additional
+database rows. The current error-observation publication is a required subset
+of retained deduplicated history, and surveyed zero-row sources are checked
+explicitly. Database-only enrichment is accepted only where the publication
+omitted the corresponding field. If every artifact matches, the command checks
+the durable historical queue, source-health readiness, and published stale
+branches. A clean match returns before taking the Bitcoin Core lock. Pending
+derived work takes the lock and finalizes without replaying source rows.
 
 The command preflights all artifacts before importing the first changed chain,
 processes
@@ -301,11 +298,10 @@ just import-dataset rsk
 ```
 
 `import-dataset` commits only the named chain and does not run the cross-source
-stale-branch reconciliation pass. It also drops that chain's `import-all`
-receipt so the next publication import re-runs classify, write, and
-authoritative reconcile for the source. Use `import-all` to establish the
-complete publication state; the single-chain command is for diagnostics and
-recovery.
+stale-branch reconciliation pass. A later `import-all` observes any resulting
+authoritative difference directly from provenance and base-event state. Use
+`import-all` to establish the complete publication state; the single-chain
+command is for diagnostics and recovery.
 
 `--csv PATH` is an explicit fixture or operator override. It must still use the
 normalized schema, but it has no monitor-manifest checksum expectation. It is
@@ -320,9 +316,8 @@ just reclassify-pools
 ```
 
 `import-all` already rebuilds source health and performs the targeted
-stale-branch pass. A later `import-all` whose receipts still match is a
-completeness check of the pin and receipt table, not a replay of
-database-write idempotence.
+stale-branch pass. A later matching `import-all` is a publication-versus-database
+completeness check, not a replay of database-write idempotence.
 
 ## Production Cutover
 

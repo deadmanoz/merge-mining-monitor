@@ -33,7 +33,7 @@ pub(crate) fn preflight_required_aggregate_artifacts(
 fn inspect_aggregate_csv(path: &std::path::Path, expected: &PublicationArtifact) -> Result<()> {
     let mut file = super::open_artifact_file(path, Some(expected))?;
     let mut reader = csv::Reader::from_reader(&mut file);
-    let (row_count, counts) = inspect_rows(&mut reader, path, &expected.chain, true)?;
+    let (row_count, counts, _) = inspect_rows(&mut reader, path, &expected.chain, None, true)?;
     ensure!(
         row_count == expected.row_count,
         "artifact row-count mismatch for {}: expected {}, got {}",

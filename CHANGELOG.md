@@ -6,6 +6,12 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Determine `import-all` work from normalized publication-owned database state
+  instead of cached artifact SHAs. Skip matching event files and retained error
+  observations before taking the Bitcoin Core lock, while still completing any
+  pending reconciliation, source-health, or published-stale work. Remove the
+  receipt seed, CLI flag, code paths, store APIs, and receipt table.
+
 ## [0.7.4] - 2026-08-28
 
 - Pin the historical publication and compact error-block catalogue to

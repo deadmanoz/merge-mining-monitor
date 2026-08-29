@@ -52,6 +52,11 @@ Use `just` targets, not raw commands, when a target exists:
 - Historical and partial source imports are authoritative snapshots. Live
   source publication imports are additive. Keep this lifecycle distinction in
   the shared source registry, not in per-chain schema branches.
+- `import-all` determines work by comparing normalized publication-owned fields
+  with non-operator historical provenance and base events across research pins.
+  Artifact SHA values verify bytes only. A complete match must return before
+  taking the Bitcoin Core cache lock; pending derived work takes the lock and
+  finalizes without replaying source rows.
 - Historical base/provenance writes enqueue affected parents in the same
   transaction. Drain `historical_reconcile_queue` in bounded parent
   transactions and retain changed-hash seeds until dependent cascades succeed;

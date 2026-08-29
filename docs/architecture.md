@@ -22,7 +22,10 @@ and the API serves those derived projections without writing capture state.
    child-chain source ──> parser / verifier ──> merge_mining_event
                                                  chain sidecar tables
                                                  event_pool_attribution
-   historical publication ────────────────────> historical_event_provenance
+   historical publication ──> preflight / database-state comparison
+                                  matching ──> no-op before Core lock
+                                  mismatch ──> merge_mining_event
+                                                historical_event_provenance
                                                 historical_reconcile_queue
 
    operator import (import-known-stales) ──────> known_stale_block
@@ -51,6 +54,12 @@ transaction. The read-model drains one parent at a time after commit and keeps
 the exact dependent-cascade seeds durable until that cascade succeeds. This
 preserves chain-level snapshot atomicity without retaining a transaction-level
 advisory lock for every parent in a broad publication.
+Before that write path, `import-all` streams publication provenance and compact
+event state from `mmm-store`. Research publication references are deliberately
+excluded from logical identity, while operator provenance is excluded from row
+matching and remains visible through authoritative base-event comparison. A
+complete match returns without Core access; incomplete derived state enters the
+same reconciliation path without replaying publication rows.
 Bounded Bitcoin Core reorg repair uses the same durability principle at a
 different ownership boundary. The read-model atomically replaces the canonical
 suffix and enqueues every old and new parent in
