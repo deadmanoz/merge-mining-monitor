@@ -16,6 +16,8 @@ use super::{
 };
 use crate::support::{db::seed_bitcoin_core_header_cache_through, header_meeting_bits};
 
+const LEGACY_MTP_REJECTION_REASON: &str = "median_time_past_violation";
+
 #[tokio::test]
 async fn import_requires_catalogue_match_before_writing() -> Result<()> {
     crate::run_mut_db_test!(client, {
@@ -90,6 +92,58 @@ async fn import_requires_catalogue_match_before_writing() -> Result<()> {
         }
         .await;
         finish_import_with_cleanup(result, &[&unsupported_path, &accepted_path])
+    })
+}
+
+#[tokio::test]
+async fn import_accepts_live_mtp_verdict_for_legacy_catalogue_token() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let header = legacy_mtp_header()?;
+        let parent_hash = header.block_hash().to_byte_array();
+        let path = write_csv(
+            &header,
+            "namecoin",
+            255_293,
+            380_992,
+            LEGACY_MTP_REJECTION_REASON,
+        )?;
+        let result = async {
+            let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+                ParentClassification::error_block(
+                    &header,
+                    380_992,
+                    HeightSource::PrevCanonical,
+                    Some(true),
+                    TIME_BELOW_MTP,
+                ),
+            ));
+
+            let summary = run_error_observation_import_for_test(
+                &mut client,
+                &classifier,
+                &path,
+                &[parent_hash],
+            )
+            .await?;
+            assert_eq!(summary.ingested, 1);
+
+            let row = client
+                .query_one(
+                    "SELECT btc_height_source, error_block_reason \
+                     FROM block \
+                     WHERE btc_header_hash = $1",
+                    &[&parent_hash.as_slice()],
+                )
+                .await?;
+            assert_eq!(row.get::<_, String>(0), "prev-canonical");
+            assert_eq!(
+                row.get::<_, Option<String>>(1).as_deref(),
+                Some(LEGACY_MTP_REJECTION_REASON)
+            );
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        finish_import_with_cleanup(result, &[&path])
     })
 }
 
@@ -224,6 +278,13 @@ fn catalogued_header() -> Result<Header> {
         "00a0032bb223f1aad55892df75d0ff4712f0543959c5065ab89d000000000000000000005eba715327fc82c765fa651bd6226c4b4a6a846cd60197bcd76d47ada0611cfce335df696913021725806e70",
     )?)
     .context("decode catalogued time_below_mtp error-block header")
+}
+
+fn legacy_mtp_header() -> Result<Header> {
+    deserialize(&hex::decode(
+        "0300000092d98cb6018e9baa8dfe136fa81266dfa588c0ee23b26e030000000000000000af324cb995102e1d1c5e7d59459d5f651090881815f2a63f0eba667ce3db7538cf003156140f12182744ec68",
+    )?)
+    .context("decode catalogued median_time_past_violation error-block header")
 }
 
 fn retarget_header() -> Result<Header> {
