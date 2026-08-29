@@ -1,6 +1,6 @@
 //! Preflight for the aggregate error-witness artifact.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Seek, SeekFrom};
 use std::path::Path;
@@ -11,7 +11,10 @@ use super::{
     NORMALIZED_COLUMNS, PublicationArtifact, RSK_SIDECAR_COLUMNS, open_artifact_file,
     required_column,
 };
-use crate::historical_ingest::config::is_historical_import_chain;
+use crate::historical_ingest::config::{historical_chain_spec, is_historical_import_chain};
+use crate::historical_ingest::csv_source::{
+    CsvLayout, ExpectedPublicationState, publication_state_from_record,
+};
 
 /// Verified error-observation aggregate retained for the write phase after all
 /// normal artifacts have preflighted. Its rows carry their real source chain,
@@ -20,7 +23,7 @@ use crate::historical_ingest::config::is_historical_import_chain;
 pub(crate) struct ErrorObservationPreflight {
     pub(crate) row_count: u64,
     pub(crate) source_chain_counts: BTreeMap<String, u64>,
-    pub(crate) identity: Option<PublicationArtifact>,
+    pub(crate) state_rows: Vec<ExpectedPublicationState>,
     file: File,
 }
 
@@ -53,8 +56,11 @@ pub(crate) fn inspect_error_observation_csv(
     );
     let chain_index = required_column(reader.headers()?, "chain")?;
     let classification_index = required_column(reader.headers()?, "classification")?;
+    let headers = reader.headers()?.clone();
     let mut row_count = 0_u64;
     let mut source_chain_counts = BTreeMap::new();
+    let mut state_rows = Vec::new();
+    let mut coordinates = BTreeSet::new();
     for (offset, record) in reader.records().enumerate() {
         let record =
             record.with_context(|| format!("parse {} row {}", path.display(), offset + 2))?;
@@ -75,6 +81,27 @@ pub(crate) fn inspect_error_observation_csv(
             path.display(),
             offset + 2
         );
+        let spec = historical_chain_spec(chain).expect("historical chain checked above");
+        let layout = CsvLayout::new(&headers, spec)?;
+        let state =
+            publication_state_from_record(spec, &layout, &record, true).map_err(|reason| {
+                anyhow::anyhow!(
+                    "normalize {} row {} for state comparison: {}",
+                    path.display(),
+                    offset + 2,
+                    reason.as_str()
+                )
+            })?;
+        ensure!(
+            coordinates.insert(state.key.clone()),
+            "{} row {} duplicates publication coordinate {}:{}:{}",
+            path.display(),
+            offset + 2,
+            state.key.chain,
+            state.key.source_path,
+            state.key.source_row_number
+        );
+        state_rows.push(state);
         *source_chain_counts.entry(chain.to_owned()).or_insert(0) += 1;
         row_count += 1;
     }
@@ -95,10 +122,11 @@ pub(crate) fn inspect_error_observation_csv(
     drop(reader);
     file.seek(SeekFrom::Start(0))
         .with_context(|| format!("rewind {}", path.display()))?;
+    state_rows.sort_by(|left, right| left.key.cmp(&right.key));
     Ok(ErrorObservationPreflight {
         row_count,
         source_chain_counts,
-        identity: expected.cloned(),
+        state_rows,
         file,
     })
 }

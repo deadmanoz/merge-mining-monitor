@@ -309,20 +309,21 @@ just reclassify-pools
 ```
 
 `import-all` verifies all 27 per-chain artifacts before the first database
-mutation. Unchanged artifact SHAs are skipped, including authoritative
-reconcile. `import-dataset` does not leave that skip in place: a successful
-single-chain import deletes the chain receipt so the next `import-all`
-re-applies the pin. On a production upgrade whose last imported pin still has matching
-event provenance, pass `--seed-imported-receipts` once so the empty
-receipt table does not replay unchanged files. Fresh or incomplete
-databases omit the flag; a mismatched provenance count refuses the seed.
-Each changed chain then commits atomically. Historical and partial sources
-are authoritative snapshots; live sources are additive; Doichain is a surveyed
-zero-row no-op. Parent read-model work then drains from the durable historical
-queue in bounded transactions, retaining cascade seeds until their dependent
-work succeeds. Stop live pollers during a production cutover and retain the
-backup until event totals, block details, orphan exclusions, and poller health
-are verified.
+mutation. It then compares normalized publication-owned fields with stored
+non-operator provenance and base events across research pins. Matching files
+skip classification, writes, and authoritative reconciliation before the
+Bitcoin Core lock is taken. Historical and partial sources require an exact
+base-event set, live sources permit additional rows, retained error observations
+use subset semantics, and Doichain is an explicit surveyed zero-row source.
+Database-only enrichment is accepted when the publication omitted that field.
+
+Pending historical queue, source-health, or published-stale work produces a
+finalization-only run instead of replaying source files. Each mismatched chain
+commits atomically. Parent read-model work drains from the durable historical
+queue in bounded transactions, retaining cascade seeds until dependent work
+succeeds. Stop live pollers during a production cutover and retain the backup
+until event totals, block details, orphan exclusions, and poller health are
+verified.
 
 ## Live Test Deployment
 

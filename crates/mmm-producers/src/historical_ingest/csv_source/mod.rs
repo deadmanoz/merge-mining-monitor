@@ -20,7 +20,12 @@ use super::rsk_sidecar::RskSidecarColumns;
 
 mod candidate;
 mod parent_coinbase;
+mod publication_state;
 pub(super) use candidate::{candidate_from_record, error_observation_candidate_from_record};
+pub(super) use publication_state::{
+    ComparablePublicationState, ExpectedPublicationState, PublicationRowKey,
+    publication_state_from_record,
+};
 
 #[cfg(test)]
 mod contract_tests;

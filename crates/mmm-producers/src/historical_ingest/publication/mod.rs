@@ -14,7 +14,10 @@ use serde::Deserialize;
 use super::config::{
     HistoricalChainSpec, HistoricalImportConfig, PINNED_RESEARCH_COMMIT, importable_chains,
 };
-use super::csv_source::{CsvLayout, PublicationCategory, publication_category};
+use super::csv_source::{
+    CsvLayout, ExpectedPublicationState, PublicationCategory, publication_category,
+    publication_state_from_record,
+};
 
 mod aggregate_preflight;
 mod error_observations;
@@ -102,16 +105,6 @@ pub(super) enum ArtifactRole {
     Event,
     Aggregate,
     ErrorObservation,
-}
-
-impl ArtifactRole {
-    pub(super) fn as_str(self) -> &'static str {
-        match self {
-            Self::Event => "event",
-            Self::Aggregate => "aggregate",
-            Self::ErrorObservation => "error_observation",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -268,7 +261,7 @@ fn valid_sha256(value: &str) -> bool {
 pub(super) struct ArtifactPreflight {
     pub(super) row_count: u64,
     pub(super) counts: PublicationCounts,
-    pub(super) identity: Option<PublicationArtifact>,
+    pub(super) state_rows: Vec<ExpectedPublicationState>,
     file: File,
 }
 
@@ -390,7 +383,15 @@ fn inspect_csv(
         .with_context(|| format!("rewind {}", path.display()))?;
     let mut reader = csv::Reader::from_reader(&mut file);
     verify_header(reader.headers()?, spec.chain)?;
-    let (row_count, counts) = inspect_rows(&mut reader, path, spec.chain, expected.is_some())?;
+    let layout = CsvLayout::new(reader.headers()?, spec)?;
+    let state_context = expected.is_some().then_some((spec, &layout));
+    let (row_count, counts, state_rows) = inspect_rows(
+        &mut reader,
+        path,
+        spec.chain,
+        state_context,
+        expected.is_some(),
+    )?;
     drop(reader);
     file.seek(SeekFrom::Start(0))
         .with_context(|| format!("rewind {}", path.display()))?;
@@ -420,7 +421,7 @@ fn inspect_csv(
     Ok(ArtifactPreflight {
         row_count,
         counts,
-        identity: expected.cloned(),
+        state_rows,
         file,
     })
 }
@@ -456,12 +457,15 @@ fn inspect_rows<R: Read>(
     reader: &mut csv::Reader<R>,
     path: &Path,
     chain: &str,
+    state_context: Option<(&HistoricalChainSpec, &CsvLayout)>,
     require_valid_taxonomy: bool,
-) -> Result<(u64, PublicationCounts)> {
+) -> Result<(u64, PublicationCounts, Vec<ExpectedPublicationState>)> {
     let headers = reader.headers()?.clone();
     let indices = CountIndices::new(&headers)?;
     let mut row_count = 0_u64;
     let mut counts = PublicationCounts::default();
+    let mut state_rows = Vec::new();
+    let mut coordinates = BTreeSet::new();
     for (offset, record) in reader.records().enumerate() {
         let record =
             record.with_context(|| format!("parse {} row {}", path.display(), offset + 2))?;
@@ -477,9 +481,31 @@ fn inspect_rows<R: Read>(
             return Err(error)
                 .with_context(|| format!("classify {} row {}", path.display(), offset + 2));
         }
+        if let Some((spec, layout)) = state_context {
+            let state =
+                publication_state_from_record(spec, layout, &record, false).map_err(|reason| {
+                    anyhow::anyhow!(
+                        "normalize {} row {} for state comparison: {}",
+                        path.display(),
+                        offset + 2,
+                        reason.as_str()
+                    )
+                })?;
+            ensure!(
+                coordinates.insert(state.key.clone()),
+                "{} row {} duplicates publication coordinate {}:{}:{}",
+                path.display(),
+                offset + 2,
+                state.key.chain,
+                state.key.source_path,
+                state.key.source_row_number
+            );
+            state_rows.push(state);
+        }
         row_count += 1;
     }
-    Ok((row_count, counts))
+    state_rows.sort_by(|left, right| left.key.cmp(&right.key));
+    Ok((row_count, counts, state_rows))
 }
 
 fn reject_lfs_pointer(path: &Path) -> Result<()> {
@@ -825,23 +851,42 @@ mod tests {
         let error_path = publication_dir.join("error-block-observations_monitor_evidence.csv");
         let mut error_columns = NORMALIZED_COLUMNS.to_vec();
         error_columns.extend_from_slice(RSK_SIDECAR_COLUMNS);
-        let classification_index = error_columns
-            .iter()
-            .position(|column| *column == "classification")
-            .expect("classification column");
-        let source_chain_counts = manifest
-            .error_observation_artifact()
+        let column = |name: &str| {
+            error_columns
+                .iter()
+                .position(|column| *column == name)
+                .unwrap_or_else(|| panic!("missing {name} column"))
+        };
+        manifest
+            .artifacts
+            .iter_mut()
+            .find(|artifact| artifact.role == ArtifactRole::ErrorObservation)
             .expect("error-observation artifact")
-            .source_chain_counts
-            .clone();
+            .source_chain_counts = BTreeMap::from([("devcoin".to_owned(), 78)]);
         let mut error_observations = format!("{}\n", error_columns.join(","));
-        for (chain, row_count) in source_chain_counts {
-            for _ in 0..row_count {
-                let mut row = vec![""; error_columns.len()];
-                row[0] = &chain;
-                row[classification_index] = "error_block";
-                error_observations.push_str(&format!("{}\n", row.join(",")));
-            }
+        let genesis_header = "0100000000000000000000000000000000000000000000000000000000000000\
+                              000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4\
+                              b1e5e4a29ab5f49ffff001d1dac2b7c"
+            .replace(char::is_whitespace, "");
+        for source_row_number in 1..=78 {
+            let mut row = vec![String::new(); error_columns.len()];
+            row[column("chain")] = "devcoin".to_owned();
+            row[column("source_kind")] = "monitor-evidence".to_owned();
+            row[column("source_path")] = "fixture/errors.csv".to_owned();
+            row[column("source_row_number")] = source_row_number.to_string();
+            row[column("artifact_scope")] = "error-block-observations".to_owned();
+            row[column("provenance")] = "fixture".to_owned();
+            row[column("child_height")] = "1".to_owned();
+            row[column("btc_height")] = "0".to_owned();
+            row[column("btc_header_hash")] =
+                "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".to_owned();
+            row[column("btc_prev_hash")] = "0".repeat(64);
+            row[column("btc_header_hex")] = genesis_header.clone();
+            row[column("classification")] = "error_block".to_owned();
+            row[column("validation_status")] = "VALID_ERROR_BLOCK".to_owned();
+            row[column("expected_nbits")] = "1d00ffff".to_owned();
+            row[column("rejection_reason")] = "fixture_error".to_owned();
+            error_observations.push_str(&format!("{}\n", row.join(",")));
         }
         std::fs::write(&error_path, &error_observations)
             .expect("write error-observation aggregate fixture");
@@ -865,7 +910,6 @@ mod tests {
             require_pinned_checkout: false,
             batch_size: 10,
             allow_empty_known_stales: true,
-            seed_imported_receipts: false,
         };
 
         preflight_required_aggregate_artifacts(&config).expect("aggregate preflight");

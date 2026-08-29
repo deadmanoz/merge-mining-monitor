@@ -18,12 +18,12 @@ use super::{
     parse_positive_i64, publication_category, validate_child_bundle, validate_parent_fields,
 };
 
-struct ChildFields {
-    height: Option<i32>,
-    block_hash: Option<Vec<u8>>,
-    header_bytes: Option<Vec<u8>>,
-    block_time: Option<i64>,
-    nbits: Option<u32>,
+pub(super) struct ChildFields {
+    pub(super) height: Option<i32>,
+    pub(super) block_hash: Option<Vec<u8>>,
+    pub(super) header_bytes: Option<Vec<u8>>,
+    pub(super) block_time: Option<i64>,
+    pub(super) nbits: Option<u32>,
 }
 
 struct TaxonomyFields {
@@ -161,7 +161,7 @@ fn candidate_from_record_with_taxonomy(
     })
 }
 
-fn parse_child_fields(
+pub(super) fn parse_child_fields(
     spec: &HistoricalChainSpec,
     layout: &CsvLayout,
     record: &csv::StringRecord,
