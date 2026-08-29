@@ -6,6 +6,10 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Accept the research catalogue's legacy `median_time_past_violation` token as
+  equivalent to a live `time_below_mtp` verdict while preserving the pinned
+  token in imported evidence.
+
 ## [0.7.5] - 2026-08-29
 
 - Determine `import-all` work from normalized publication-owned database state

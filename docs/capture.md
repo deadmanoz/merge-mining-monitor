@@ -22,7 +22,9 @@ eleven linked predecessor headers to apply Bitcoin's median-time-past rule. A
 timestamp at or below that median becomes `error_block` with the
 `time_below_mtp` reason. The pinned consensus-invalid catalogue remains the
 fallback for rules not yet derived live, and cross-checks a live MTP verdict
-when both are available. An incomplete MTP window stays `unknown`, never an
+when both are available. Its legacy `median_time_past_violation` evidence token
+is semantically equivalent to `time_below_mtp`; matching live classifications
+retain the catalogue token. An incomplete MTP window stays `unknown`, never an
 orphan. Other Core-absent target-valid parents remain `unknown` until a later
 `reclassify-unknown-parents` pass can upgrade them. BTC orphan status is a later
 refinement of Core-absent `unknown`
