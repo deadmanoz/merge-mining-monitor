@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-08-29
+
 - Determine `import-all` work from normalized publication-owned database state
   instead of cached artifact SHAs. Skip matching event files and retained error
   observations before taking the Bitcoin Core lock, while still completing any
