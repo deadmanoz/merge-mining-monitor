@@ -90,7 +90,7 @@ async fn import_all_state_check_skips_matches_and_reconciles_operator_extras() -
             set_source_health_ready(&client, false).await?;
             let finalized = run_historical_import_configs_for_test(
                 &mut client,
-                &classifier,
+                &ConfiguredParentClassifier::Disabled,
                 publication.clone(),
             )
             .await?;

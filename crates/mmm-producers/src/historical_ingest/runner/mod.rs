@@ -582,18 +582,22 @@ async fn run_historical_import_configs_locked(
             ..HistoricalImportAllSummary::default()
         });
     }
-    let environment_configs = if needs_finalization && import_configs.is_empty() {
-        configs
-            .iter()
-            .filter(|config| {
-                historical_chain_spec(&config.chain).is_some_and(|spec| {
-                    spec.lifecycle != mmm_capture::source_registry::SourceLifecycle::Surveyed
+    let finalization_requires_import_environment = plan
+        .as_ref()
+        .is_some_and(|plan| plan.finalization_requires_import_environment);
+    let environment_configs =
+        if finalization_requires_import_environment && import_configs.is_empty() {
+            configs
+                .iter()
+                .filter(|config| {
+                    historical_chain_spec(&config.chain).is_some_and(|spec| {
+                        spec.lifecycle != mmm_capture::source_registry::SourceLifecycle::Surveyed
+                    })
                 })
-            })
-            .collect::<Vec<_>>()
-    } else {
-        import_configs
-    };
+                .collect::<Vec<_>>()
+        } else {
+            import_configs
+        };
     ensure_import_environment(client, classifier, &environment_configs).await?;
     let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
     let expected_error_parents = error_observations::pinned_error_parent_hashes();

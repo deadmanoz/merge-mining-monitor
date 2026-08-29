@@ -18,6 +18,7 @@ pub(super) struct ImportPlan {
     pub(super) work_chain: Vec<bool>,
     pub(super) work_error_observations: bool,
     pub(super) needs_finalization: bool,
+    pub(super) finalization_requires_import_environment: bool,
     pub(super) skipped_matching_state: u64,
 }
 
@@ -61,6 +62,7 @@ pub(super) async fn plan_publication_import(
         work_chain: vec![false; configs.len()],
         work_error_observations: false,
         needs_finalization: false,
+        finalization_requires_import_environment: false,
         skipped_matching_state: 0,
     };
     let chain_indices = configs
@@ -83,9 +85,10 @@ pub(super) async fn plan_publication_import(
         .await?;
 
     if plan.work_chain.iter().all(|work| !work) && !plan.work_error_observations {
-        plan.needs_finalization = mmm_store::load_historical_finalization_state(client)
-            .await?
-            .required();
+        let finalization = mmm_store::load_historical_finalization_state(client).await?;
+        plan.needs_finalization = finalization.required();
+        plan.finalization_requires_import_environment =
+            finalization.reconcile_pending || finalization.published_stale_pending;
     }
     plan.skipped_matching_state = u64::try_from(
         plan.work_chain.iter().filter(|work| !**work).count()
