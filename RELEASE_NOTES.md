@@ -1,5 +1,14 @@
 # Release Notes
 
+## [0.7.5] - 2026-08-29
+
+- Let `import-all` detect already-loaded historical files by comparing their
+  publication-owned state with stored provenance and events across research
+  pins, so an empty receipt cache no longer triggers a replay.
+- Remove receipt seeding and the retired receipt table. Matching publications
+  return before the Bitcoin Core lock, while pending derived work can complete
+  without replaying source rows.
+
 ## [0.7.4] - 2026-08-28
 
 - Pin the historical publication and error-block catalogue to research

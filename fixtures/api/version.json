@@ -1,12 +1,22 @@
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.7.4",
+  "version": "0.7.5",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 14,
+    "release_count": 15,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.7.5",
+        "date": "2026-08-29",
+        "items": [
+          "Let `import-all` detect already-loaded historical files by comparing their publication-owned state with stored provenance and events across research pins, so an empty receipt cache no longer triggers a replay.",
+          "Remove receipt seeding and the retired receipt table. Matching publications return before the Bitcoin Core lock, while pending derived work can complete without replaying source rows."
+        ],
+        "item_count": 2,
+        "truncated": false
+      },
       {
         "version": "0.7.4",
         "date": "2026-08-28",
