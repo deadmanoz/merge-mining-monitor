@@ -121,6 +121,7 @@ fn candidate_from_record_with_taxonomy(
     } else {
         None
     };
+    require_importable_child_identity(&child, taxonomy.source_classification)?;
     let rsk_evidence = if let Some(columns) = &layout.rsk_sidecar {
         Some(parse_rsk_sidecar(
             columns,
@@ -169,9 +170,6 @@ pub(super) fn parse_child_fields(
     let height = parse_optional_nonnegative_i32(record.get(layout.child_height))?;
     let header_bytes = parse_optional_hex_field(record.get(layout.child_header))?;
     let mut block_hash = parse_optional_hash_field(record.get(layout.child_hash))?;
-    if height.is_none() && block_hash.is_none() && header_bytes.is_none() {
-        return Err(SkipReason::EmptyField);
-    }
     let block_time = parse_optional_nonnegative_i64(record.get(layout.child_time))?;
     let nbits = parse_optional_compact_target(record.get(layout.child_nbits))?;
     validate_child_bundle(
@@ -193,6 +191,20 @@ pub(super) fn parse_child_fields(
         block_time,
         nbits,
     })
+}
+
+pub(super) fn require_importable_child_identity(
+    child: &ChildFields,
+    classification: SourceClassification,
+) -> Result<(), SkipReason> {
+    if child.height.is_some() || child.block_hash.is_some() || child.header_bytes.is_some() {
+        return Ok(());
+    }
+    if classification == SourceClassification::Canonical {
+        Err(SkipReason::MissingChildIdentity)
+    } else {
+        Err(SkipReason::EmptyField)
+    }
 }
 
 fn parse_taxonomy_fields(

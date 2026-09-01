@@ -64,3 +64,9 @@ jobs:
 
       - name: Tests
         run: cargo test --workspace --all-features
+
+      - name: Publication artifact contract
+        run: |
+          ./scripts/test-historical-source-manifest.sh
+          ./scripts/test-gen-research-publication-pins.sh
+          ./scripts/gen-research-publication-pins.sh --check --allow-missing-repo

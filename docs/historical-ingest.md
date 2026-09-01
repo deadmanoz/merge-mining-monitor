@@ -8,9 +8,33 @@ The compact catalogue header in `data/consensus/error_blocks.csv` must name
 that same commit; `just gen-error-blocks-catalogue` refuses a
 `--source-commit` that disagrees.
 
+Refresh both pins from one committed Research publication:
+
+```bash
+just gen-research-publication-pins \
+  --repo-dir "$MERGE_MINING_RESEARCH_DIR" \
+  --source-commit "$RESEARCH_COMMIT"
+```
+
+Materialize Research's event-file LFS payloads before running this command. The
+manifest generator verifies their pinned size and checksum, then measures each
+artifact's parent-only rows. The combined command stages the manifest and
+catalogue together and publishes them only after both generators succeed. It
+also takes the error-observation chain inventory from Research's
+`observation_chain_counts` field. The combined command does not accept `--out`.
+Run it again with `--check` before importing or releasing.
+
+Routine repository gates use `--check --allow-missing-repo`; that mode reuses
+the committed parent-only counts while still checking the Git publication
+metadata. The explicit release check above omits that flag and rescans the
+materialized payloads.
+
+`import-all` verifies the source revision, manifest, and all 29 artifacts once,
+before database mutation, then imports the verified readers in chain order.
+
 ## Publication Contract
 
-The publication contains 580,320 event rows across 27 uniform per-chain files:
+The publication contains 1,037,005 event rows across 27 uniform per-chain files:
 
 ```text
 results/monitor-evidence/<chain>_monitor_evidence.csv
@@ -21,6 +45,15 @@ separate 21-row `stale-descendants` file is an aggregate view, not an event
 source, because its contributing chain observations already exist in the
 per-chain files.
 
+The total includes 456,660 canonical Namecoin rows whose historical source does
+not authenticate a child hash or height. The Monitor manifest pins that
+parent-only count per artifact. Preflight verifies and counts those rows, but
+omits them from state comparison and import because `merge_mining_event`
+requires one of those partial identities.
+Fractal's 58,970 canonical rows retain child height and remain importable even
+though they lack an exact child hash. Every non-canonical row still requires a
+child hash or height.
+
 A complete publication also carries
 `error-block-observations_monitor_evidence.csv`: documented child witnesses for
 proof-of-work-valid but Bitcoin-consensus-invalid parent headers. It is a
@@ -29,11 +62,12 @@ is `classification=error_block`, has `VALID_ERROR_BLOCK`, the catalogue's
 Bitcoin height and rejection reason, and blank stale-relevance fields. The file
 uses the normal 27-column header plus the seven RSK sidecar columns; non-RSK
 sidecar cells are blank and RSK witnesses carry complete sidecars. Its manifest
-requires exactly one 78-row entry with the generated source-chain inventory, so
-a missing, truncated, or cross-chain-substituted aggregate fails before database
-mutation. Its `error-block-observations` scope is reserved to that aggregate;
+requires exactly one error-observation entry whose row count and generated
+source-chain inventory match the committed manifest, so a missing, truncated,
+or cross-chain-substituted aggregate fails before database mutation. Its
+`error-block-observations` scope is reserved to that aggregate;
 ordinary historical artifacts using it are rejected. Preflight also requires
-coverage of all 35 pinned error parents across its witnesses, and checks
+coverage of all 39 pinned error parents across its witnesses, and checks
 retarget observations against the Core-derived target for their stated height.
 
 `data/historical/historical-source-manifest.json` pins each event payload by
@@ -53,8 +87,9 @@ Error-observation rows are admitted through a separate parser rather than
 widening the normal valid-evidence taxonomy. Bitcoin Core is mandatory: the
 importer requires both an exact local catalogue match and the shared
 Core-plus-catalogue parent resolver to produce the same `error_block` height
-and rejection reason. A row that would be skipped aborts the complete
-publication before it writes any normal chain artifact.
+and rejection reason. Except for the manifest-counted parent-only rows above, a
+row that would be skipped aborts the complete publication before it writes any
+normal chain artifact.
 
 Their `expected_nbits` is still required to be a valid compact target, but it
 records the network target expected at the catalogued height. It can therefore

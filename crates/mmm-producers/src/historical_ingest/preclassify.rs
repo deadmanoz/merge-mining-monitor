@@ -75,6 +75,7 @@ pub(super) async fn preflight_and_classify_candidates<C: GenericClient>(
             Some(nbits_table),
         ) {
             Ok(candidate) => candidate,
+            Err(SkipReason::MissingChildIdentity) => continue,
             Err(_) if config.manifest_path.is_none() => continue,
             Err(reason) => {
                 bail!(

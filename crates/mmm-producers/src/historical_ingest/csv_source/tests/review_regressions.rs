@@ -1,6 +1,37 @@
 use super::*;
 
 #[test]
+fn identity_free_rsk_rows_have_consistent_skip_reason() {
+    let mut rsk_row = row(TestRow {
+        chain: "rsk",
+        classification: "canonical",
+        relevance_reason: "canonical_parent",
+        ..TestRow::default()
+    });
+    rsk_row.pop();
+    rsk_row.push_str(",,,,,,,\n");
+    assert_eq!(
+        candidate("rsk", &rsk_row).unwrap_err(),
+        SkipReason::MissingChildIdentity
+    );
+
+    let spec = historical_chain_spec("rsk").unwrap();
+    let mut input = NORMALIZED_COLUMNS.join(",");
+    input.push_str(
+        ",rsk_miner,merge_mining_hash,is_uncle,uncle_index,\
+         uncle_parent_height,rsk_merkle_proof,rsk_coinbase_tail\n",
+    );
+    input.push_str(&rsk_row);
+    let mut reader = csv::Reader::from_reader(input.as_bytes());
+    let layout = CsvLayout::new(reader.headers().unwrap(), spec).unwrap();
+    let record = reader.records().next().unwrap().unwrap();
+    assert_eq!(
+        publication_state_from_record(spec, &layout, &record, false).unwrap_err(),
+        SkipReason::MissingChildIdentity
+    );
+}
+
+#[test]
 fn published_orphan_bucket_accepts_only_stronger_cross_chain_promotion() {
     assert_eq!(
         filter_unknown(

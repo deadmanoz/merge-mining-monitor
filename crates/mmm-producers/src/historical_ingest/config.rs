@@ -251,25 +251,31 @@ impl HistoricalImportAllConfig {
         })
     }
 
+    pub(super) fn event_config(
+        &self,
+        artifact: &super::publication::PublicationArtifact,
+    ) -> HistoricalImportConfig {
+        HistoricalImportConfig {
+            chain: artifact.chain.clone(),
+            csv_path: self.artifact_root.join(&artifact.csv_path),
+            manifest_path: Some(self.manifest_path.clone()),
+            artifact_root: Some(self.artifact_root.clone()),
+            require_pinned_checkout: self.require_pinned_checkout,
+            batch_size: self.batch_size,
+            limit: None,
+            allow_empty_known_stales: self.allow_empty_known_stales,
+        }
+    }
+
+    #[cfg(feature = "db-integration")]
     pub(super) fn chain_configs(&self) -> Result<Vec<HistoricalImportConfig>> {
         let manifest = super::publication::load_publication_manifest(&self.manifest_path)?;
         let mut artifacts = manifest.event_artifacts().collect::<Vec<_>>();
         artifacts.sort_by_key(|artifact| artifact.chain.as_str());
-        artifacts
+        Ok(artifacts
             .into_iter()
-            .map(|artifact| {
-                Ok(HistoricalImportConfig {
-                    chain: artifact.chain.clone(),
-                    csv_path: self.artifact_root.join(&artifact.csv_path),
-                    manifest_path: Some(self.manifest_path.clone()),
-                    artifact_root: Some(self.artifact_root.clone()),
-                    require_pinned_checkout: self.require_pinned_checkout,
-                    batch_size: self.batch_size,
-                    limit: None,
-                    allow_empty_known_stales: self.allow_empty_known_stales,
-                })
-            })
-            .collect()
+            .map(|artifact| self.event_config(artifact))
+            .collect())
     }
 }
 
@@ -314,6 +320,16 @@ fn resolve_manifest_csv_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn research_pins_name_the_same_publication() {
+        let catalogue = include_str!("../../../../data/consensus/error_blocks.csv");
+        let catalogue_commit = catalogue
+            .lines()
+            .find_map(|line| line.strip_prefix("# Source commit: "))
+            .expect("error-block catalogue must name its Research commit");
+        assert_eq!(catalogue_commit, PINNED_RESEARCH_COMMIT.as_str());
+    }
 
     #[test]
     fn registry_defines_all_twenty_seven_published_chain_sources() {
