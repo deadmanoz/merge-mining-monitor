@@ -1,5 +1,15 @@
 # Release Notes
 
+## [0.7.7] - 2026-09-01
+
+- Import Research's canonical publication: 1,037,005 ordinary events, 21
+  stale-descendant summaries, and 86 authenticated error observations covering
+  39 consensus-invalid Bitcoin parents. The four ancestry-recovered BIP34
+  mismatches become error blocks rather than orphans.
+- Verify all 29 publication artifacts before database mutation, including
+  parent-only Namecoin counts, and refresh the historical manifest and compact
+  error catalogue from the same Research commit.
+
 ## [0.7.6] - 2026-08-29
 
 - Import pinned error observations that use the legacy
