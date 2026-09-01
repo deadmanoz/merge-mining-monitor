@@ -102,12 +102,22 @@ Example:
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.7.6",
+  "version": "0.7.7",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 16,
+    "release_count": 17,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.7.7",
+        "date": "2026-09-01",
+        "items": [
+          "Import Research's canonical publication: 1,037,005 ordinary events, 21 stale-descendant summaries, and 86 authenticated error observations covering 39 consensus-invalid Bitcoin parents. The four ancestry-recovered BIP34 mismatches become error blocks rather than orphans.",
+          "Verify all 29 publication artifacts before database mutation, including parent-only Namecoin counts, and refresh the historical manifest and compact error catalogue from the same Research commit."
+        ],
+        "item_count": 2,
+        "truncated": false
+      },
       {
         "version": "0.7.6",
         "date": "2026-08-29",

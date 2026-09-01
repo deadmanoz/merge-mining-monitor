@@ -1,6 +1,6 @@
-import { applyTreeHighlight } from "./controls.js?v=0.7.6";
-import { $, BLOCK_H, BLOCK_W, chainColor, chainDisplayName, EDGE_KINDS, EDGE_LEGEND, esc, KINDS, ORPHAN_LEGEND, state } from "./frontend-state.js?v=0.7.6";
-import { DEFAULT_TREE_LAYOUT, layoutTreeNodes } from "./tree-layout.js?v=0.7.6";
+import { applyTreeHighlight } from "./controls.js?v=0.7.7";
+import { $, BLOCK_H, BLOCK_W, chainColor, chainDisplayName, EDGE_KINDS, EDGE_LEGEND, esc, KINDS, ORPHAN_LEGEND, state } from "./frontend-state.js?v=0.7.7";
+import { DEFAULT_TREE_LAYOUT, layoutTreeNodes } from "./tree-layout.js?v=0.7.7";
 
 function nodeLabel(node) {
   if (node?.height != null) return String(node.height);

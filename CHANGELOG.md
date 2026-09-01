@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-09-01
+
 - Pin Research's 1,037,005 ordinary events, 21-row stale-descendant aggregate,
   and 86 error observations covering 39 parents, including four recovered BIP34
   height mismatches. The publication includes 456,660 canonical parent-only
