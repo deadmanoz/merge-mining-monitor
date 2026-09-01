@@ -68,8 +68,8 @@ build:
 test:
     cargo test --workspace
     ./scripts/test-historical-source-manifest.sh
-    ./scripts/gen-historical-source-manifest.sh --check --allow-missing-repo
-    ./scripts/gen-error-blocks-catalogue.sh --check --allow-missing-repo
+    ./scripts/test-gen-research-publication-pins.sh
+    ./scripts/gen-research-publication-pins.sh --check --allow-missing-repo
     ./scripts/live-test-deployment.sh self-check
 
 test-integration: db-up
@@ -104,8 +104,8 @@ check-data-artifacts:
     find data -type f -name '*.json' -print0 | xargs -0 jq empty
     just gen-source-artifacts --check
     ./scripts/test-historical-source-manifest.sh
-    ./scripts/gen-historical-source-manifest.sh --check --allow-missing-repo
-    ./scripts/gen-error-blocks-catalogue.sh --check --allow-missing-repo
+    ./scripts/test-gen-research-publication-pins.sh
+    ./scripts/gen-research-publication-pins.sh --check --allow-missing-repo
 
 # Regenerate data/pools/current.json from a clean upstream
 # bitcoin-data/mining-pools clone. Pin --generated-at for byte-for-byte
@@ -131,15 +131,15 @@ gen-pool-snapshot *args="":
 gen-source-artifacts *args="":
     cargo run --quiet --features artifact-generation --bin gen_source_artifacts -- {{args}}
 
-# Regenerate the pinned normalized monitor-evidence manifest from the local
-# research publication commit and Git LFS object metadata.
+# Refresh both Research pins from one commit, manifest first.
+gen-research-publication-pins *args="":
+    ./scripts/gen-research-publication-pins.sh {{args}}
+
+# Focused normalized monitor-evidence manifest generator.
 gen-historical-source-manifest *args="":
     ./scripts/gen-historical-source-manifest.sh {{args}}
 
-# Regenerate (or --check) the compact pinned error-block catalogue from a
-# merge-mining-research commit. The selected commit must match
-# historical-source-manifest.json source_repo_commit. Pass --source-commit
-# only after the publication pin already names that SHA.
+# Focused compact error-block catalogue generator.
 gen-error-blocks-catalogue *args="":
     ./scripts/gen-error-blocks-catalogue.sh {{args}}
 

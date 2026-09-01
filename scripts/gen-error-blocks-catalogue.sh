@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
     cat <<'USAGE'
-Usage: scripts/gen-error-blocks-catalogue.sh [--check] [--allow-missing-repo] [--repo-dir DIR] [--source-commit COMMIT] [--out PATH]
+Usage: scripts/gen-error-blocks-catalogue.sh [--check] [--allow-missing-repo] [--repo-dir DIR] [--source-commit COMMIT] [--historical-manifest PATH] [--out PATH]
 
 Generate or verify the compact pinned mirror of merge-mining-research
 data/error-blocks/error_blocks.csv.
@@ -17,6 +17,9 @@ Options:
                   Research commit (default: the committed catalogue pin).
                   Must match source_repo_commit in
                   data/historical/historical-source-manifest.json.
+  --historical-manifest PATH
+                  Manifest whose Research pin must match (default:
+                  data/historical/historical-source-manifest.json).
   --out PATH      Output path (default: data/consensus/error_blocks.csv)
 USAGE
 }
@@ -93,6 +96,11 @@ while [ "$#" -gt 0 ]; do
         --source-commit)
             [ "$#" -ge 2 ] || die "--source-commit requires a value"
             source_commit="$2"
+            shift 2
+            ;;
+        --historical-manifest)
+            [ "$#" -ge 2 ] || die "--historical-manifest requires a value"
+            historical_manifest="$2"
             shift 2
             ;;
         --out)

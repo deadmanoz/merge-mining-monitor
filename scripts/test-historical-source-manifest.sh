@@ -29,16 +29,18 @@ jq -e '
     and .source_repo == "merge-mining-research"
     and (.source_repo_commit | test("^[0-9a-f]{40}$"))
     and (.publication_manifest_sha256 | test("^[0-9a-f]{64}$"))
-    and .total_event_rows == 580320
-    and .aggregate_rows == 21
+    and .total_event_rows == ([.artifacts[] | select(.role == "event") | .row_count] | add)
+    and .aggregate_rows == ([.artifacts[] | select(.role == "aggregate") | .row_count] | add)
     and ([.artifacts[] | select(.role == "event")] | length) == 27
     and ([.artifacts[] | select(.role == "aggregate" and .chain == "stale-descendants")] | length) == 1
     and ([.artifacts[] | select(.role == "error_observation" and .chain == "error-block-observations")] | length) == 1
     and .error_observation_rows == ([.artifacts[] | select(.role == "error_observation") | .row_count] | add)
-    and ([.artifacts[].chain] | unique | length) == 29
+    and (.artifacts | length) == 29
+    and ([.artifacts[].chain] | unique | length) == (.artifacts | length)
     and all(.artifacts[];
         (.sha256 | test("^[0-9a-f]{64}$"))
         and (.size_bytes >= 0)
+        and (.parent_only_rows >= 0)
         and (if .role == "error_observation" then
             (.row_count == .counts.error_block)
             and ([.source_chain_counts[]] | add) == .row_count
@@ -50,6 +52,11 @@ jq -e '
                 + .counts.strict_btc_orphan
                 + .counts.weak_btc_orphan
             )
+          end)
+        and (if .role == "event" then
+            .parent_only_rows <= .counts.canonical
+          else
+            .parent_only_rows == 0
           end)
     )
 ' "${manifest}" >/dev/null || die "committed publication manifest is invalid"

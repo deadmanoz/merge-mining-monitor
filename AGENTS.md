@@ -25,6 +25,8 @@ Use `just` targets, not raw commands, when a target exists:
   membership import and retroactive demotion.
 - `just import-all` / `just import-dataset CHAIN` - pinned normalized
   historical publication import.
+- `just gen-research-publication-pins` - refresh both Research pins from one
+  committed revision, manifest first.
 - `just reclassify-unknown-parents`, `just reclassify-pools`,
   `just reconcile-read-model` - repair and enrichment commands.
 
@@ -38,7 +40,9 @@ Use `just` targets, not raw commands, when a target exists:
 - `data/consensus/error_blocks.csv` is a pinned compact mirror of the research
   catalogue. A proof-of-work-valid match is an `error_block`, never stale or
   orphan evidence; reconciliation persists its catalogue height and rejection
-  reason in the derived `block` row.
+  reason in the derived `block` row. Refresh it and the historical manifest
+  together via `just gen-research-publication-pins`; the manifest consumes
+  Research's canonical observation-chain inventory.
 - Producers write only `merge_mining_event` plus 1:1 chain sidecars and
   attribution rows. Historical ingest also attaches
   `historical_event_provenance`. The further base table,

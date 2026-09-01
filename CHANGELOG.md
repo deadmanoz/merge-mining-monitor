@@ -6,6 +6,18 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Pin Research's 1,037,005 ordinary events, 21-row stale-descendant aggregate,
+  and 86 error observations covering 39 parents, including four recovered BIP34
+  height mismatches. The publication includes 456,660 canonical parent-only
+  Namecoin rows; the manifest pins that count, and `import-all` skips them until
+  Research can authenticate a child hash or height. The first import refreshes
+  22 existing rows with canonical provenance and recovered fields and uses the
+  larger full-reconcile budget.
+
+- Derive publication totals, parent-only counts, and observation-chain
+  inventories from Research's publication, preflight it once, and refresh both
+  Monitor pins from one revision via `just gen-research-publication-pins`.
+
 ## [0.7.6] - 2026-08-29
 
 - Accept the research catalogue's legacy `median_time_past_violation` token as

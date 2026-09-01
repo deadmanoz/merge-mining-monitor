@@ -24,7 +24,7 @@ mod publication_state;
 pub(super) use candidate::{candidate_from_record, error_observation_candidate_from_record};
 pub(super) use publication_state::{
     ComparablePublicationState, ExpectedPublicationState, PublicationRowKey,
-    publication_state_from_record,
+    publication_row_key_from_record, publication_state_from_record,
 };
 
 #[cfg(test)]
@@ -72,6 +72,7 @@ pub(super) struct ImportCandidate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum SkipReason {
     EmptyField,
+    MissingChildIdentity,
     Malformed,
     HashMismatch,
     EvidenceMismatch,
@@ -90,6 +91,7 @@ impl SkipReason {
     pub(super) const fn as_str(self) -> &'static str {
         match self {
             Self::EmptyField => "empty_field",
+            Self::MissingChildIdentity => "missing_child_identity",
             Self::Malformed => "malformed",
             Self::HashMismatch => "hash_mismatch",
             Self::EvidenceMismatch => "evidence_mismatch",
@@ -805,7 +807,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_identity_free_rows_and_accepts_independent_header_companions() {
+    fn classifies_identity_free_canonical_rows_as_non_importable() {
         assert_eq!(
             candidate(
                 "devcoin",
@@ -817,8 +819,36 @@ mod tests {
                 }),
             )
             .unwrap_err(),
+            SkipReason::MissingChildIdentity
+        );
+        assert_eq!(
+            candidate(
+                "devcoin",
+                &row(TestRow {
+                    chain: "devcoin",
+                    classification: "stale",
+                    relevance_reason: "valid_direct_stale",
+                    ..TestRow::default()
+                }),
+            )
+            .unwrap_err(),
             SkipReason::EmptyField
         );
+        let malformed_parent = row(TestRow {
+            chain: "devcoin",
+            classification: "canonical",
+            relevance_reason: "canonical_parent",
+            ..TestRow::default()
+        })
+        .replacen(GENESIS_HEADER, "", 1);
+        assert_eq!(
+            candidate("devcoin", &malformed_parent).unwrap_err(),
+            SkipReason::EmptyField
+        );
+    }
+
+    #[test]
+    fn accepts_independent_header_companions() {
         let (hash, header) = child_identity();
         for partial in [
             TestRow {

@@ -139,6 +139,92 @@ async fn import_all_state_check_skips_matches_and_reconciles_operator_extras() -
     })
 }
 
+#[tokio::test]
+async fn parent_only_rows_skip_accounting_and_converge_after_identity_removal() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let old = header_meeting_bits(0x207f_ffff, 1_700_000_090, 90);
+        let current = header_meeting_bits(0x207f_ffff, 1_700_000_091, 91);
+        let old_row = normalized_csv_line(
+            &old,
+            &NormalizedCsvRow {
+                chain: "devcoin",
+                source_row_number: 1,
+                classification: "canonical",
+                relevance: "",
+                relevance_reason: "canonical_parent",
+                coinbase_script: &[],
+                btc_height: 700_090,
+                child_height: 12,
+                child_hash: None,
+            },
+        );
+        let current_row = normalized_csv_line(
+            &current,
+            &NormalizedCsvRow {
+                chain: "devcoin",
+                source_row_number: 2,
+                classification: "canonical",
+                relevance: "",
+                relevance_reason: "canonical_parent",
+                coinbase_script: &[],
+                btc_height: 700_091,
+                child_height: 13,
+                child_hash: None,
+            },
+        );
+        let initial = write_manifest_fixture_rows(std::slice::from_ref(&old_row))?;
+        let revised = write_manifest_fixture_rows_with_parent_only(
+            &[without_child_identity(&old_row), current_row],
+            1,
+        )?;
+        let result = async {
+            let first = run_historical_import_configs_for_test(
+                &mut client,
+                &ConfiguredParentClassifier::Fake(FakeParentClassifier::new(canonical_verdict(
+                    &old, 700_090,
+                ))),
+                vec![devcoin_publication_config(&initial)],
+            )
+            .await?;
+            assert_eq!(first.chains[0].1.ingested, 1);
+
+            let corrected = run_historical_import_configs_for_test(
+                &mut client,
+                &ConfiguredParentClassifier::Fake(FakeParentClassifier::new(canonical_verdict(
+                    &current, 700_091,
+                ))),
+                vec![devcoin_publication_config(&revised)],
+            )
+            .await?;
+            let summary = &corrected.chains[0].1;
+            assert_eq!(summary.rows_seen, 2);
+            assert_eq!(summary.ingested, 1);
+            assert_eq!(summary.removed, 1);
+            assert_eq!(summary.skipped.get("missing_child_identity"), Some(&1));
+            assert_eq!(
+                summary.rows_seen,
+                summary.ingested + summary.skipped.values().sum::<u64>()
+            );
+
+            let converged = run_historical_import_configs_for_test(
+                &mut client,
+                &ConfiguredParentClassifier::Disabled,
+                vec![devcoin_publication_config(&revised)],
+            )
+            .await?;
+            assert_eq!(converged.skipped_matching_state, 1);
+            assert!(converged.chains.is_empty());
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        for fixture in [&initial, &revised] {
+            std::fs::remove_dir_all(&fixture.root)
+                .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
+        }
+        result
+    })
+}
+
 fn devcoin_publication_config(fixture: &ManifestFixture) -> HistoricalImportConfig {
     HistoricalImportConfig {
         chain: "devcoin".into(),

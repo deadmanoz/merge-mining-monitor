@@ -272,15 +272,14 @@ After applying migration 0008, run the following unbounded full scan without
 child-height bounds:
 
 ```bash
-just reconcile-read-model --all --batch-size 1000 --max-iterations 1000
+just reconcile-read-model --all --batch-size 1000 --max-iterations 100000
 ```
 
-The current 580,320-row publication needs more than the default 10,000-event
-budget; this command permits one million rows. It revisits already-captured
-proof-of-work-valid headers, including existing `unknown` rows that predate the
-pinned catalogue, records every match as `error_block`, and rebuilds the
-separate source-health counter. An error block is not stale or orphan evidence,
-so no orphan reclassification command is required.
+The 1,037,005-row publication plus live-producer rows exceeds the default
+budget, so this uses the deployment smoke test's full-scan ceiling. It revisits
+captured headers, records catalogue matches as `error_block`, and rebuilds
+source health. Error blocks are neither stale nor orphan evidence, so no orphan
+reclassification is required.
 
 `just import-known-stales --csv PATH --source-label LABEL` loads the operator
 known-stale membership (`known_stale_block`) from an upstream

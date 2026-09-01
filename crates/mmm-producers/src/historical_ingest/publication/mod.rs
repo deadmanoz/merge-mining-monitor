@@ -1,5 +1,4 @@
 //! Monitor-owned provenance and artifact preflight for the research publication.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -15,16 +14,17 @@ use super::config::{
     HistoricalChainSpec, HistoricalImportConfig, PINNED_RESEARCH_COMMIT, importable_chains,
 };
 use super::csv_source::{
-    CsvLayout, ExpectedPublicationState, PublicationCategory, publication_category,
-    publication_state_from_record,
+    CsvLayout, ExpectedPublicationState, PublicationCategory, SkipReason, publication_category,
+    publication_row_key_from_record, publication_state_from_record,
 };
-
 mod aggregate_preflight;
 mod error_observations;
 mod validation;
-pub(super) use aggregate_preflight::preflight_required_aggregate_artifacts;
+#[cfg(test)]
+use aggregate_preflight::preflight_publication_for_test;
+pub(super) use aggregate_preflight::{PreparedPublication, preflight_publication};
 pub(super) use error_observations::{ErrorObservationPreflight, inspect_error_observation_csv};
-use validation::{ArtifactSetValidation, validate_artifact_set};
+use validation::{validate_artifact_set, validate_parent_only_rows};
 
 pub(super) const NORMALIZED_COLUMNS: &[&str] = &[
     "chain",
@@ -66,8 +66,6 @@ pub(super) const RSK_SIDECAR_COLUMNS: &[&str] = &[
     "rsk_coinbase_tail",
 ];
 
-const ERROR_OBSERVATION_ROW_COUNT: u64 = 78;
-
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(test, derive(serde::Serialize))]
 pub(super) struct PublicationManifest {
@@ -78,7 +76,6 @@ pub(super) struct PublicationManifest {
     publication_manifest_sha256: String,
     total_event_rows: u64,
     aggregate_rows: u64,
-    #[serde(default)]
     error_observation_rows: u64,
     required_columns: Vec<String>,
     artifacts: Vec<PublicationArtifact>,
@@ -91,6 +88,7 @@ pub(super) struct PublicationArtifact {
     pub(super) csv_path: String,
     pub(super) role: ArtifactRole,
     pub(super) row_count: u64,
+    pub(super) parent_only_rows: u64,
     pub(super) size_bytes: u64,
     pub(super) sha256: String,
     pub(super) counts: PublicationCounts,
@@ -120,16 +118,12 @@ pub(super) struct PublicationCounts {
 }
 
 impl PublicationCounts {
-    pub(super) fn total(self) -> u64 {
+    pub(super) fn ordinary_total(self) -> u64 {
         self.canonical
             + self.stale
             + self.stale_descendant
             + self.strict_btc_orphan
             + self.weak_btc_orphan
-    }
-
-    pub(super) fn error_total(self) -> u64 {
-        self.error_block
     }
 }
 
@@ -160,7 +154,7 @@ impl PublicationManifest {
 }
 
 pub(super) fn load_publication_manifest(path: &Path) -> Result<PublicationManifest> {
-    let manifest: PublicationManifest = serde_json::from_slice(
+    let manifest = serde_json::from_slice(
         &std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
     )
     .with_context(|| format!("parse {}", path.display()))?;
@@ -196,45 +190,7 @@ fn validate_manifest(manifest: &PublicationManifest) -> Result<()> {
         .iter()
         .map(|spec| spec.chain.to_owned())
         .collect::<BTreeSet<_>>();
-    let ArtifactSetValidation {
-        event_chains,
-        aggregate_chains,
-        error_observation,
-        event_rows,
-        aggregate_rows,
-    } = validate_artifact_set(manifest, &registry_chains)?;
-    ensure!(
-        event_chains == registry_chains,
-        "event artifact set does not match the source registry"
-    );
-    ensure!(
-        aggregate_chains == BTreeSet::from(["stale-descendants".to_owned()]),
-        "stale-descendants aggregate artifact is required"
-    );
-    ensure!(
-        event_rows == manifest.total_event_rows,
-        "total_event_rows does not equal event artifact rows"
-    );
-    ensure!(
-        aggregate_rows == manifest.aggregate_rows,
-        "aggregate_rows does not equal aggregate artifact rows"
-    );
-    ensure!(
-        error_observation == Some(ERROR_OBSERVATION_ROW_COUNT),
-        "error-observation aggregate artifact is required with its pinned row total"
-    );
-    ensure!(
-        manifest.error_observation_rows == ERROR_OBSERVATION_ROW_COUNT,
-        "unexpected pinned error-observation row total"
-    );
-    ensure!(
-        manifest.total_event_rows == 580_320,
-        "unexpected pinned publication event total"
-    );
-    ensure!(
-        manifest.aggregate_rows == 21,
-        "unexpected pinned publication aggregate total"
-    );
+    validate_artifact_set(manifest, &registry_chains)?;
     for spec in importable_chains() {
         let artifact = manifest
             .event_artifact(spec.chain)
@@ -259,7 +215,9 @@ fn valid_sha256(value: &str) -> bool {
 
 #[derive(Debug)]
 pub(super) struct ArtifactPreflight {
+    pub(super) chain: &'static str,
     pub(super) row_count: u64,
+    pub(super) parent_only_rows: Option<u64>,
     pub(super) counts: PublicationCounts,
     pub(super) state_rows: Vec<ExpectedPublicationState>,
     file: File,
@@ -410,6 +368,7 @@ fn inspect_csv(
             expected.counts,
             counts
         );
+        validate_parent_only_rows(expected, row_count - state_rows.len() as u64, path)?;
     }
     if spec.lifecycle == SourceLifecycle::Surveyed {
         ensure!(
@@ -419,7 +378,9 @@ fn inspect_csv(
         );
     }
     Ok(ArtifactPreflight {
+        chain: spec.chain,
         row_count,
+        parent_only_rows: expected.map(|artifact| artifact.parent_only_rows),
         counts,
         state_rows,
         file,
@@ -482,24 +443,39 @@ fn inspect_rows<R: Read>(
                 .with_context(|| format!("classify {} row {}", path.display(), offset + 2));
         }
         if let Some((spec, layout)) = state_context {
-            let state =
-                publication_state_from_record(spec, layout, &record, false).map_err(|reason| {
+            let coordinate =
+                publication_row_key_from_record(spec, layout, &record).map_err(|reason| {
                     anyhow::anyhow!(
-                        "normalize {} row {} for state comparison: {}",
+                        "normalize {} row {} source coordinate: {}",
                         path.display(),
                         offset + 2,
                         reason.as_str()
                     )
                 })?;
             ensure!(
-                coordinates.insert(state.key.clone()),
+                coordinates.insert(coordinate.clone()),
                 "{} row {} duplicates publication coordinate {}:{}:{}",
                 path.display(),
                 offset + 2,
-                state.key.chain,
-                state.key.source_path,
-                state.key.source_row_number
+                coordinate.chain,
+                coordinate.source_path,
+                coordinate.source_row_number
             );
+            let state = match publication_state_from_record(spec, layout, &record, false) {
+                Ok(state) => state,
+                Err(SkipReason::MissingChildIdentity) => {
+                    row_count += 1;
+                    continue;
+                }
+                Err(reason) => {
+                    return Err(anyhow::anyhow!(
+                        "normalize {} row {} for state comparison: {}",
+                        path.display(),
+                        offset + 2,
+                        reason.as_str()
+                    ));
+                }
+            };
             state_rows.push(state);
         }
         row_count += 1;
@@ -632,9 +608,22 @@ mod test_support;
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::{temp_path, valid_manifest};
+    use std::str::FromStr;
+
+    use super::test_support::{
+        TEST_ERROR_OBSERVATION_ROWS, assert_parent_only_fixture, temp_path, valid_manifest,
+        write_empty_event_artifacts, write_identity_free_canonical_event,
+    };
     use super::*;
     use crate::historical_ingest::config::{HistoricalImportAllConfig, historical_chain_spec};
+
+    fn fixture_error_parents() -> BTreeSet<[u8; 32]> {
+        BTreeSet::from([bitcoin::BlockHash::from_str(
+            "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
+        )
+        .expect("genesis hash")
+        .to_byte_array()])
+    }
 
     #[test]
     fn normalized_schema_is_one_uniform_common_header() {
@@ -674,6 +663,14 @@ mod tests {
             (
                 "aggregate_total",
                 "aggregate_rows does not equal aggregate artifact rows",
+            ),
+            (
+                "event_total",
+                "total_event_rows does not equal event artifact rows",
+            ),
+            (
+                "error_observation_total",
+                "error_observation_rows does not equal the error-observation artifact",
             ),
         ] {
             let mut manifest = valid_manifest();
@@ -724,7 +721,9 @@ mod tests {
                         .retain(|artifact| artifact.role != ArtifactRole::ErrorObservation);
                     manifest.error_observation_rows = 0;
                 }
-                "aggregate_total" => manifest.aggregate_rows = 22,
+                "aggregate_total" => manifest.aggregate_rows += 1,
+                "event_total" => manifest.total_event_rows += 1,
+                "error_observation_total" => manifest.error_observation_rows += 1,
                 _ => unreachable!("table defines every case"),
             }
             let error = validate_manifest(&manifest).expect_err(case);
@@ -745,7 +744,10 @@ mod tests {
             .iter_mut()
             .find(|artifact| artifact.role == ArtifactRole::ErrorObservation)
             .expect("error-observation artifact");
-        error.source_chain_counts.insert("devcoin".to_owned(), 15);
+        *error
+            .source_chain_counts
+            .get_mut("devcoin")
+            .expect("fixture devcoin source count") += 1;
         assert!(
             validate_manifest(&manifest)
                 .unwrap_err()
@@ -758,7 +760,8 @@ mod tests {
             .iter_mut()
             .find(|artifact| artifact.role == ArtifactRole::ErrorObservation)
             .expect("error-observation artifact");
-        error.source_chain_counts = BTreeMap::from([("doichain".to_owned(), 78)]);
+        error.source_chain_counts =
+            BTreeMap::from([("doichain".to_owned(), TEST_ERROR_OBSERVATION_ROWS)]);
         assert!(
             validate_manifest(&manifest)
                 .unwrap_err()
@@ -779,6 +782,7 @@ mod tests {
             csv_path: path.display().to_string(),
             role: ArtifactRole::Event,
             row_count: 0,
+            parent_only_rows: 0,
             size_bytes,
             sha256: "0".repeat(64),
             counts: PublicationCounts::default(),
@@ -822,7 +826,7 @@ mod tests {
     }
 
     #[test]
-    fn import_all_preflights_the_required_aggregate_artifact() {
+    fn import_all_preflights_the_complete_publication() {
         let root = temp_path("aggregate-root");
         let publication_dir = root.join("results/monitor-evidence");
         std::fs::create_dir_all(&publication_dir).expect("create publication fixture");
@@ -830,15 +834,15 @@ mod tests {
         let research_manifest = b"{\"fixture\":\"aggregate-preflight\"}\n";
         std::fs::write(publication_dir.join("manifest.json"), research_manifest)
             .expect("write research manifest");
+        let mut manifest = valid_manifest();
         let aggregate_path = root.join("results/stale-descendants.csv");
         let mut aggregate =
             "chain,classification,btc_stale_relevance,relevance_reason\n".to_owned();
-        for _ in 0..21 {
+        for _ in 0..manifest.aggregate_rows {
             aggregate.push_str("stale-descendants,stale_descendant,,valid_stale_descendant\n");
         }
         std::fs::write(&aggregate_path, &aggregate).expect("write aggregate fixture");
 
-        let mut manifest = valid_manifest();
         manifest.publication_manifest_sha256 = sha256::Hash::hash(research_manifest).to_string();
         let aggregate_artifact = manifest
             .artifacts
@@ -862,13 +866,14 @@ mod tests {
             .iter_mut()
             .find(|artifact| artifact.role == ArtifactRole::ErrorObservation)
             .expect("error-observation artifact")
-            .source_chain_counts = BTreeMap::from([("devcoin".to_owned(), 78)]);
+            .source_chain_counts =
+            BTreeMap::from([("devcoin".to_owned(), TEST_ERROR_OBSERVATION_ROWS)]);
         let mut error_observations = format!("{}\n", error_columns.join(","));
         let genesis_header = "0100000000000000000000000000000000000000000000000000000000000000\
                               000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4\
                               b1e5e4a29ab5f49ffff001d1dac2b7c"
             .replace(char::is_whitespace, "");
-        for source_row_number in 1..=78 {
+        for source_row_number in 1..=TEST_ERROR_OBSERVATION_ROWS {
             let mut row = vec![String::new(); error_columns.len()];
             row[column("chain")] = "devcoin".to_owned();
             row[column("source_kind")] = "monitor-evidence".to_owned();
@@ -898,6 +903,9 @@ mod tests {
         error_artifact.size_bytes = error_observations.len() as u64;
         error_artifact.sha256 = sha256::Hash::hash(error_observations.as_bytes()).to_string();
 
+        write_empty_event_artifacts(&root, &mut manifest);
+        write_identity_free_canonical_event(&root, &mut manifest, "devcoin");
+
         let manifest_path = root.join("monitor-manifest.json");
         std::fs::write(
             &manifest_path,
@@ -911,10 +919,12 @@ mod tests {
             batch_size: 10,
             allow_empty_known_stales: true,
         };
-
-        preflight_required_aggregate_artifacts(&config).expect("aggregate preflight");
+        let expected_error_parents = fixture_error_parents();
+        let prepared = preflight_publication_for_test(&config, &expected_error_parents)
+            .expect("publication preflight");
+        assert_parent_only_fixture(&prepared);
         std::fs::remove_file(&aggregate_path).expect("remove aggregate fixture");
-        let error = preflight_required_aggregate_artifacts(&config)
+        let error = preflight_publication_for_test(&config, &expected_error_parents)
             .expect_err("missing aggregate must fail import-all preflight");
         assert!(error.to_string().contains("open"));
         std::fs::remove_dir_all(&root).expect("remove aggregate fixture root");

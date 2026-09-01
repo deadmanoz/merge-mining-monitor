@@ -17,17 +17,16 @@ directories.
   full-proof-of-work invalid header as `error_block`, never as stale or an
   orphan. The catalogue header pin must match
   `historical/historical-source-manifest.json` `source_repo_commit`; the
-  generator refuses a `--source-commit` that disagrees. Update the publication
-  pin first, then `just gen-error-blocks-catalogue --source-commit
-  <research-sha>`.
+  generator refuses a `--source-commit` that disagrees. Refresh both pins with
+  `just gen-research-publication-pins --source-commit <research-sha>`.
 - `sources/chain_profiles.json` - hand-authored source profile data used by
   `just gen-source-artifacts`.
 - `findings/` - hand-authored evidence-backed findings, one JSON file per
   finding (filename matches the slug). Compiled into
   `www/js/findings.generated.js` by `just gen-source-artifacts`.
 - `historical/historical-source-manifest.json` - generated provenance manifest
-  for historical stale-block CSV inputs. Regenerate with
-  `just gen-historical-source-manifest`.
+  for historical stale-block CSV inputs. Regenerate both Research pins with
+  `just gen-research-publication-pins`.
 - `historical/historical-source-manifest.sha256` - checksum of the committed
   historical manifest.
 
