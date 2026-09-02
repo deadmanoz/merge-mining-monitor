@@ -102,12 +102,21 @@ Example:
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.7.10",
+  "version": "0.7.11",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 20,
+    "release_count": 21,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.7.11",
+        "date": "2026-09-02",
+        "items": [
+          "Bulk-reconcile historical parents whose canonical status and event evidence already agree with Bitcoin Core, retaining strict reconciliation for ambiguous or conflicting evidence."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
       {
         "version": "0.7.10",
         "date": "2026-09-02",

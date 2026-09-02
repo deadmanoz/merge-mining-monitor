@@ -1,5 +1,11 @@
 # Release Notes
 
+## [0.7.11] - 2026-09-02
+
+- Bulk-reconcile historical parents whose canonical status and event evidence
+  already agree with Bitcoin Core, retaining strict reconciliation for
+  ambiguous or conflicting evidence.
+
 ## [0.7.10] - 2026-09-02
 
 - Preserve existing observation times during historical publication refreshes

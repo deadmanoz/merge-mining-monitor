@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.7.11] - 2026-09-02
+
 - Bulk-reconcile historical parents whose canonical classification is already
   proven by the local Bitcoin Core-backed block, while retaining strict
   per-parent handling for stale, error, unknown, or inconsistent evidence.
