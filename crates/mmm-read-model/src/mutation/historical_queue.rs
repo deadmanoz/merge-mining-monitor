@@ -363,7 +363,10 @@ async fn cached_classification_matches_core_view<C: GenericClient>(
             .await
             .context("validate cached classification against canonical height")?;
         if canonical.is_empty() {
-            return Ok(true);
+            // A cached canonical can be the first writer at this height. A
+            // cached stale verdict, however, is valid only while its exact
+            // canonical competitor still exists.
+            return Ok(classification.kind != ParentKind::Stale);
         }
         let [row] = canonical.as_slice() else {
             return Ok(false);

@@ -311,10 +311,15 @@ just reclassify-pools
 mutation. It then compares normalized publication-owned fields with stored
 non-operator provenance and base events across research pins. Matching files
 skip classification, writes, and authoritative reconciliation before the
-Bitcoin Core lock is taken. Historical and partial sources require an exact
-base-event set, live sources permit additional rows, retained error observations
-use subset semantics, and Doichain is an explicit surveyed zero-row source.
-Database-only enrichment is accepted when the publication omitted that field.
+Bitcoin Core lock is taken. Changed files reuse compatible Core-attested
+canonical or structurally complete stale classifications already proven in the
+derived `block` state. Event-only canonical, unknown, or incompatible parents
+still require strict live Core classification. The dedicated error-observation
+aggregate also retains its Core-plus-catalogue check. Historical and partial
+sources require an exact base-event set, live sources permit additional rows,
+retained error observations use subset semantics, and Doichain is an explicit
+surveyed zero-row source. Database-only enrichment is accepted when the
+publication omitted that field.
 
 Pending historical queue, source-health, or published-stale work produces a
 finalization-only run instead of replaying source files. Each mismatched chain

@@ -43,13 +43,11 @@ async fn import_all_state_check_skips_matches_and_reconciles_operator_extras() -
             write_normalized_csv(&extra, "canonical", "", "canonical_parent", &[], 700_081)?;
         let fixture = write_manifest_fixture(&published)?;
         let result = async {
-            let classifier =
-                ConfiguredParentClassifier::Fake(FakeParentClassifier::new_sequence([
-                    canonical_verdict(&published, 700_080),
-                    canonical_verdict(&published, 700_080),
-                    canonical_verdict(&extra, 700_081),
-                    canonical_verdict(&published, 700_080),
-                ]));
+            let fake = FakeParentClassifier::new_sequence([
+                canonical_verdict(&published, 700_080),
+                canonical_verdict(&extra, 700_081),
+            ]);
+            let classifier = ConfiguredParentClassifier::Fake(fake.clone());
             let publication = vec![devcoin_publication_config(&fixture)];
             let first = run_historical_import_configs_for_test(
                 &mut client,
@@ -59,6 +57,7 @@ async fn import_all_state_check_skips_matches_and_reconciles_operator_extras() -
             .await?;
             assert_eq!(first.chains[0].1.ingested, 1);
             assert_eq!(first.skipped_matching_state, 0);
+            assert_eq!(fake.call_count().await, 1);
             assert_eq!(
                 active_source_event_count(&client, "auxpow:devcoin").await?,
                 1
@@ -113,9 +112,11 @@ async fn import_all_state_check_skips_matches_and_reconciles_operator_extras() -
             .await?;
             assert_eq!(repaired.skipped_matching_state, 0);
             assert_eq!(repaired.chains[0].1.ingested, 1);
+            assert_eq!(fake.call_count().await, 1);
 
             run_historical_import(&mut client, &classifier, &devcoin_import_config(&extra_csv))
                 .await?;
+            assert_eq!(fake.call_count().await, 2);
             assert_eq!(
                 active_source_event_count(&client, "auxpow:devcoin").await?,
                 2
@@ -126,6 +127,7 @@ async fn import_all_state_check_skips_matches_and_reconciles_operator_extras() -
                     .await?;
             assert_eq!(reconciled.skipped_matching_state, 0);
             assert_eq!(reconciled.chains[0].1.removed, 1);
+            assert_eq!(fake.call_count().await, 2);
             assert_eq!(
                 active_source_event_count(&client, "auxpow:devcoin").await?,
                 1
@@ -136,6 +138,200 @@ async fn import_all_state_check_skips_matches_and_reconciles_operator_extras() -
         std::fs::remove_dir_all(&fixture.root)
             .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
         finish_import_with_cleanup(result, &[&extra_csv])
+    })
+}
+
+#[tokio::test]
+async fn changed_artifact_reuses_safe_persisted_parent_classification() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let published = header_meeting_bits(0x207f_ffff, 1_700_000_085, 85);
+        let fixture = write_manifest_fixture(&published)?;
+        let result = async {
+            let initial = FakeParentClassifier::new(canonical_verdict(&published, 700_085));
+            let first = run_historical_import_configs_for_test(
+                &mut client,
+                &ConfiguredParentClassifier::Fake(initial.clone()),
+                vec![devcoin_publication_config(&fixture)],
+            )
+            .await?;
+            assert_eq!(first.chains[0].1.ingested, 1);
+            assert_eq!(initial.call_count().await, 1);
+
+            client
+                .execute(
+                    "UPDATE historical_event_provenance SET provenance = 'drifted' \
+                     WHERE chain = 'devcoin'",
+                    &[],
+                )
+                .await?;
+            let persisted = FakeParentClassifier::new(canonical_verdict(&published, 700_085))
+                .with_classification_error_on_call(1);
+            let repaired = run_historical_import_configs_for_test(
+                &mut client,
+                &ConfiguredParentClassifier::Fake(persisted.clone()),
+                vec![devcoin_publication_config(&fixture)],
+            )
+            .await?;
+            assert_eq!(repaired.chains[0].1.ingested, 1);
+            assert_eq!(persisted.call_count().await, 0);
+
+            client
+                .execute(
+                    "UPDATE historical_event_provenance SET provenance = 'drifted-unattested' \
+                     WHERE chain = 'devcoin'",
+                    &[],
+                )
+                .await?;
+            client
+                .execute(
+                    "UPDATE block SET core_attested = FALSE, live_observed = FALSE \
+                     WHERE btc_header_hash = $1",
+                    &[&published.block_hash().to_byte_array().to_vec()],
+                )
+                .await?;
+            let unattested = FakeParentClassifier::new(canonical_verdict(&published, 700_085));
+            let upgraded = run_historical_import_configs_for_test(
+                &mut client,
+                &ConfiguredParentClassifier::Fake(unattested.clone()),
+                vec![devcoin_publication_config(&fixture)],
+            )
+            .await?;
+            assert_eq!(upgraded.chains[0].1.ingested, 1);
+            assert_eq!(unattested.call_count().await, 1);
+
+            client
+                .execute(
+                    "UPDATE historical_event_provenance SET provenance = 'drifted-again' \
+                     WHERE chain = 'devcoin'",
+                    &[],
+                )
+                .await?;
+            client
+                .execute(
+                    "UPDATE block \
+                     SET kind = 'unknown', btc_height = NULL, btc_height_source = NULL, \
+                         canonical_competitor_hash = NULL \
+                     WHERE btc_header_hash = $1",
+                    &[&published.block_hash().to_byte_array().to_vec()],
+                )
+                .await?;
+            let fallback = FakeParentClassifier::new(canonical_verdict(&published, 700_085));
+            let refreshed = run_historical_import_configs_for_test(
+                &mut client,
+                &ConfiguredParentClassifier::Fake(fallback.clone()),
+                vec![devcoin_publication_config(&fixture)],
+            )
+            .await?;
+            assert_eq!(refreshed.chains[0].1.ingested, 1);
+            assert_eq!(fallback.call_count().await, 1);
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        std::fs::remove_dir_all(&fixture.root)
+            .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
+        result
+    })
+}
+
+#[tokio::test]
+async fn changed_artifact_reuses_stale_only_while_competitor_is_intact() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let published = header_meeting_bits(0x207f_ffff, 1_700_000_086, 86);
+        let competitor = header_meeting_bits(0x207f_ffff, 1_700_000_087, 87);
+        let competitor_hash = competitor.block_hash().to_byte_array().to_vec();
+        let row = normalized_csv_line(
+            &published,
+            &NormalizedCsvRow {
+                chain: "devcoin",
+                source_row_number: 1,
+                classification: "stale",
+                relevance: "",
+                relevance_reason: "valid_direct_stale",
+                coinbase_script: &[],
+                btc_height: 700_086,
+                child_height: 12,
+                child_hash: None,
+            },
+        );
+        let fixture = write_manifest_fixture_rows_with_counts(
+            &[row],
+            serde_json::json!({
+                "canonical": 0,
+                "stale": 1,
+                "stale_descendant": 0,
+                "strict_btc_orphan": 0,
+                "weak_btc_orphan": 0
+            }),
+            0,
+        )?;
+        let inferred_stale = || {
+            let mut classification = stale_verdict_with_competitor_header(
+                &published,
+                700_086,
+                competitor,
+                competitor_hash.clone(),
+            );
+            classification.height_source = Some(mmm_bitcoin_core::HeightSource::PrevCanonical);
+            classification.live_observed = false;
+            classification.core_attested = false;
+            classification
+        };
+        let result = async {
+            let initial = FakeParentClassifier::new(inferred_stale());
+            run_historical_import_configs_for_test(
+                &mut client,
+                &ConfiguredParentClassifier::Fake(initial.clone()),
+                vec![devcoin_publication_config(&fixture)],
+            )
+            .await?;
+            assert_eq!(initial.call_count().await, 3);
+
+            client
+                .execute(
+                    "UPDATE historical_event_provenance SET provenance = 'drifted' \
+                     WHERE chain = 'devcoin'",
+                    &[],
+                )
+                .await?;
+            let persisted =
+                FakeParentClassifier::new(inferred_stale()).with_classification_error_on_call(1);
+            run_historical_import_configs_for_test(
+                &mut client,
+                &ConfiguredParentClassifier::Fake(persisted.clone()),
+                vec![devcoin_publication_config(&fixture)],
+            )
+            .await?;
+            assert_eq!(persisted.call_count().await, 0);
+
+            client
+                .execute(
+                    "UPDATE historical_event_provenance SET provenance = 'drifted-again' \
+                     WHERE chain = 'devcoin'",
+                    &[],
+                )
+                .await?;
+            client
+                .execute(
+                    "UPDATE block SET kind = 'unknown', btc_height = NULL, \
+                         btc_height_source = NULL \
+                     WHERE btc_header_hash = $1",
+                    &[&competitor_hash],
+                )
+                .await?;
+            let fallback = FakeParentClassifier::new(inferred_stale());
+            run_historical_import_configs_for_test(
+                &mut client,
+                &ConfiguredParentClassifier::Fake(fallback.clone()),
+                vec![devcoin_publication_config(&fixture)],
+            )
+            .await?;
+            assert_eq!(fallback.call_count().await, 3);
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        std::fs::remove_dir_all(&fixture.root)
+            .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
+        result
     })
 }
 

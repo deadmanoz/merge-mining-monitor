@@ -162,6 +162,80 @@ async fn invalidated_cached_canonical_with_unknown_recheck_stays_pending() -> Re
 }
 
 #[tokio::test]
+async fn invalidated_cached_stale_with_unknown_competitor_stays_pending() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let stale_header = header_meeting_bits(0x207f_ffff, 1_700_000_088, 88);
+        let competitor_header = header_meeting_bits(0x207f_ffff, 1_700_000_089, 89);
+        let stale_hash = stale_header.block_hash().to_byte_array().to_vec();
+        let competitor_hash = competitor_header.block_hash().to_byte_array().to_vec();
+        let height = 700_088;
+        let event_id = seed_identity_event(
+            &client,
+            "auxpow:devcoin",
+            &stale_header,
+            88,
+            Some(vec![0x88; 32]),
+        )
+        .await?;
+        client
+            .execute(
+                "UPDATE merge_mining_event \
+                 SET btc_parent_kind = 'stale', btc_parent_height = $2, \
+                     difficulty_epoch_ok = TRUE \
+                 WHERE id = $1",
+                &[&event_id, &height],
+            )
+            .await?;
+        insert_block(
+            &client,
+            &competitor_hash,
+            &competitor_header.prev_blockhash.to_byte_array(),
+            None,
+            "unknown",
+            i64::from(competitor_header.time),
+            None,
+        )
+        .await?;
+        enqueue_historical_parent_reconcile(&client, &stale_hash).await?;
+
+        let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+            unknown_verdict(&stale_header),
+        ));
+        let classifications = std::collections::HashMap::from([(
+            stale_hash.clone(),
+            crate::support::scenario::stale_verdict(&stale_header, height, competitor_hash.clone()),
+        )]);
+        let error = drain_historical_reconcile_queue(&mut client, &classifier, &classifications)
+            .await
+            .expect_err("a stale cache with a demoted competitor must remain pending");
+        assert!(
+            error
+                .to_string()
+                .contains("fresh classification is unknown")
+        );
+
+        let primary_pending: bool = client
+            .query_one(
+                "SELECT primary_pending FROM historical_reconcile_queue \
+                 WHERE btc_parent_header_hash = $1",
+                &[&stale_hash],
+            )
+            .await?
+            .get(0);
+        assert!(primary_pending);
+        let competitor_kind: String = client
+            .query_one(
+                "SELECT kind FROM block WHERE btc_header_hash = $1",
+                &[&competitor_hash],
+            )
+            .await?
+            .get(0);
+        assert_eq!(competitor_kind, "unknown");
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn anchored_historical_reconcile_locks_all_parent_events_before_queue() -> Result<()> {
     crate::run_db_test!(client, schema, {
         let header = header_meeting_bits(0x207f_ffff, 1_700_000_066, 66);
