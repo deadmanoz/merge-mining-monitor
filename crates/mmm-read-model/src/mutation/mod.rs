@@ -28,11 +28,14 @@ use mmm_capture::capture::{MergeMiningEventPayload, ParentKind, apply_classifica
 use mmm_store::EventWriteOutcome;
 
 mod historical_queue;
-#[cfg(feature = "db-integration")]
-pub use historical_queue::drain_historical_reconcile_queue_with_budget_for_test;
 use historical_queue::enqueue_historical_parent;
 pub use historical_queue::{
     drain_historical_reconcile_queue, drain_historical_reconcile_queue_with_nbits_table,
+};
+#[cfg(feature = "db-integration")]
+pub use historical_queue::{
+    drain_historical_reconcile_queue_with_budget_for_test,
+    reconcile_proven_canonical_batch_for_test,
 };
 
 mod core_suffix;

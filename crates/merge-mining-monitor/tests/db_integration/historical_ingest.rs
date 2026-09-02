@@ -18,13 +18,14 @@ use mmm_read_model::{
     clear_authoritative_historical_provenance_in_transaction, drain_historical_reconcile_queue,
     drain_historical_reconcile_queue_with_budget_for_test, enqueue_historical_parent_reconcile,
     rebuild_source_health, reconcile_authoritative_historical_source_in_transaction,
+    reconcile_proven_canonical_batch_for_test,
 };
 use mmm_store::get_source_id;
 
 use crate::support::scenario::{
     canonical_verdict, stale_verdict_with_competitor_header, unknown_verdict,
 };
-use crate::support::seed::insert_block;
+use crate::support::seed::{EventSeed, insert_block, insert_event};
 use crate::support::{
     absent_classifier, btc_400000_coinbase_script, btc_400000_header, btc_400000_orphan_fixture,
     header_meeting_bits,

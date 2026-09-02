@@ -1,6 +1,127 @@
 use super::*;
 
 #[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the end-to-end bulk reconcile assertion includes its complete database fixture"
+)]
+async fn proven_core_canonical_queue_is_rebuilt_in_bulk() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let header = header_meeting_bits(0x207f_ffff, 1_700_000_071, 71);
+        let parent_hash = header.block_hash().to_byte_array().to_vec();
+        let prev_hash = header.prev_blockhash.to_byte_array().to_vec();
+        let height = 700_071;
+        let source_id = get_source_id(&client, "auxpow:elastos").await?;
+        let event_id = insert_event(
+            &client,
+            EventSeed {
+                source_id,
+                child_height: 800_071,
+                child_hash: vec![0x71; 32],
+                parent_hash: parent_hash.clone(),
+                prev_hash: prev_hash.clone(),
+                parent_time: i64::from(header.time),
+                kind: "canonical",
+                pow_validates_btc_target: true,
+                btc_height: Some(height),
+                pool_id: None,
+            },
+        )
+        .await?;
+        let header_bytes = serialize(&header);
+        client
+            .execute(
+                "UPDATE merge_mining_event \
+                 SET btc_parent_header_bytes = $2, difficulty_epoch_ok = TRUE \
+                 WHERE id = $1",
+                &[&event_id, &header_bytes],
+            )
+            .await?;
+        insert_block(
+            &client,
+            &parent_hash,
+            &prev_hash,
+            Some(height),
+            "canonical",
+            i64::from(header.time),
+            None,
+        )
+        .await?;
+        client
+            .execute(
+                "UPDATE block \
+                 SET btc_header_bytes = $2, live_observed = TRUE, core_attested = TRUE, \
+                     difficulty_epoch_ok = TRUE \
+                 WHERE btc_header_hash = $1",
+                &[&parent_hash, &header_bytes],
+            )
+            .await?;
+        enqueue_historical_parent_reconcile(&client, &parent_hash).await?;
+
+        assert_eq!(
+            reconcile_proven_canonical_batch_for_test(&mut client, 10).await?,
+            1
+        );
+
+        let rollup: (i32, i32, i32, Option<i64>, Option<i64>) = client
+            .query_one(
+                "SELECT total_attestations, distinct_sources, auxpow_chain_count, \
+                        first_attested_at, last_attested_at \
+                 FROM block WHERE btc_header_hash = $1",
+                &[&parent_hash],
+            )
+            .await
+            .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3), row.get(4)))?;
+        assert_eq!(
+            rollup,
+            (
+                1,
+                2,
+                1,
+                Some(i64::from(header.time)),
+                Some(i64::from(header.time))
+            )
+        );
+        let proof_ids: Vec<i64> = client
+            .query_one(
+                "SELECT ARRAY( \
+                     SELECT jsonb_array_elements_text(evidence->'contributing_event_ids')::bigint \
+                 ) \
+                 FROM attestation_proof \
+                 WHERE btc_header_hash = $1 AND source_id = $2 AND proof_kind = 'auxpow'",
+                &[&parent_hash, &source_id],
+            )
+            .await?
+            .get(0);
+        assert_eq!(proof_ids, vec![event_id]);
+        let queued: i64 = client
+            .query_one("SELECT count(*) FROM historical_reconcile_queue", &[])
+            .await?
+            .get(0);
+        assert_eq!(queued, 0);
+
+        client
+            .execute(
+                "UPDATE merge_mining_event SET btc_parent_kind = 'stale' WHERE id = $1",
+                &[&event_id],
+            )
+            .await?;
+        enqueue_historical_parent_reconcile(&client, &parent_hash).await?;
+        assert_eq!(
+            reconcile_proven_canonical_batch_for_test(&mut client, 10).await?,
+            0,
+            "classification disagreement must stay on the strict path"
+        );
+        let queued: i64 = client
+            .query_one("SELECT count(*) FROM historical_reconcile_queue", &[])
+            .await?
+            .get(0);
+        assert_eq!(queued, 1);
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn orphan_historical_reconcile_locks_parent_before_queue_row() -> Result<()> {
     crate::run_db_test!(client, schema, {
         let parent_hash = vec![0x64; 32];
