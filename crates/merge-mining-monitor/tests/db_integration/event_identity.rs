@@ -168,6 +168,44 @@ async fn exact_and_partial_observations_are_idempotent() -> Result<()> {
 }
 
 #[tokio::test]
+async fn exact_observation_refreshes_parent_output_text_projection() -> Result<()> {
+    crate::run_db_test!(client, {
+        let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let mut initial = exact_payload(1_014, 2_014)?;
+        initial.btc_parent_coinbase_outputs_text =
+            Some("76a9145399c3093d31e4b0af4be1215d59b857b861ad5d88ac".to_owned());
+        let initial_outcome = upsert_merge_mining_event(&client, source_id, &initial).await?;
+
+        let mut refreshed = initial.clone();
+        refreshed.btc_parent_coinbase_outputs_text =
+            Some("76a9145399c3093d31e4b0af4be1215d59b857b861ad5d88ac:".to_owned());
+        let refreshed_outcome = upsert_merge_mining_event(&client, source_id, &refreshed).await?;
+
+        assert_eq!(refreshed_outcome.event_id, initial_outcome.event_id);
+        assert_eq!(
+            refreshed_outcome.disposition,
+            EventWriteDisposition::Updated
+        );
+        let stored: Option<String> = client
+            .query_one(
+                "SELECT btc_parent_coinbase_outputs_text FROM merge_mining_event WHERE id = $1",
+                &[&initial_outcome.event_id],
+            )
+            .await?
+            .get(0);
+        assert_eq!(stored, refreshed.btc_parent_coinbase_outputs_text);
+
+        let mut contradictory = refreshed;
+        contradictory.btc_parent_coinbase_outputs = Some(vec![0x42]);
+        let error = upsert_merge_mining_event(&client, source_id, &contradictory)
+            .await
+            .expect_err("contradictory binary output evidence must remain rejected");
+        assert!(error.to_string().contains("contradicts stored evidence"));
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn hathor_state_reads_tolerate_height_only_historical_events() -> Result<()> {
     crate::run_db_test!(client, {
         let source_id = get_source_id(&client, HATHOR_SOURCE_CODE).await?;
