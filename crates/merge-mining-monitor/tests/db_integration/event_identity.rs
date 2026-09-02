@@ -2,11 +2,14 @@ use anyhow::Result;
 use bitcoin::consensus::serialize;
 use bitcoin::hashes::Hash as _;
 use mmm_capture::capture::{
-    ClassificationProof, MergeMiningEventPayload, ResolvedPoolAttributions, build_event_payload,
+    ClassificationProof, HistoricalEventProvenance, MergeMiningEventPayload,
+    ResolvedPoolAttributions, build_event_payload,
 };
 use mmm_capture::source_registry::{HATHOR_SOURCE_CODE, NAMECOIN_SOURCE_CODE};
+use mmm_read_model::write_historical_base_in_transaction;
 use mmm_store::{
     EventWriteDisposition, get_source_id, hathor_events_at_height, upsert_merge_mining_event,
+    upsert_merge_mining_event_with_attributions,
 };
 
 use crate::support::parse_auxpow_fixture;
@@ -201,6 +204,94 @@ async fn exact_observation_refreshes_parent_output_text_projection() -> Result<(
             .await
             .expect_err("contradictory binary output evidence must remain rejected");
         assert!(error.to_string().contains("contradicts stored evidence"));
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn historical_projection_refresh_preserves_time_and_parent_read_model_state() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let mut initial = exact_payload(1_015, 2_015)?;
+        initial.btc_parent_coinbase_outputs_text = Some("script:value".to_owned());
+        initial.historical_provenance = Some(HistoricalEventProvenance {
+            publication_ref: "operator-csv".to_owned(),
+            chain: "namecoin".to_owned(),
+            source_kind: "full_inventory".to_owned(),
+            source_path: "fixture.csv".to_owned(),
+            source_row_number: 1,
+            artifact_scope: "full_classifier_inventory".to_owned(),
+            provenance: "fixture".to_owned(),
+            classification: "unknown".to_owned(),
+            btc_height: None,
+            validation_status: Some("UNKNOWN".to_owned()),
+            btc_stale_relevance: None,
+            relevance_reason: Some("strict_btc_orphan".to_owned()),
+        });
+        let inserted = upsert_merge_mining_event(&client, source_id, &initial).await?;
+        assert!(inserted.parent_read_model_changed);
+
+        let mut refreshed = initial.clone();
+        refreshed.discovered_at = 3_015;
+        refreshed.confirmed_at = 3_015;
+        refreshed.btc_parent_coinbase_outputs_text = Some("script:value:".to_owned());
+        let txn = client.transaction().await?;
+        let updated = write_historical_base_in_transaction(
+            &txn,
+            source_id,
+            &mmm_bitcoin_core::ConfiguredParentClassifier::Disabled,
+            &mut refreshed,
+            None,
+            async |txn: &tokio_postgres::Transaction<'_>, source_id, payload| {
+                upsert_merge_mining_event_with_attributions(txn, source_id, payload).await
+            },
+        )
+        .await?;
+
+        assert_eq!(updated.event_id, inserted.event_id);
+        assert_eq!(updated.disposition, EventWriteDisposition::Updated);
+        assert!(!updated.parent_read_model_changed);
+        let queued: i64 = txn
+            .query_one("SELECT count(*) FROM historical_reconcile_queue", &[])
+            .await?
+            .get(0);
+        assert_eq!(
+            queued, 0,
+            "projection-only refresh must not enqueue a parent"
+        );
+        txn.commit().await?;
+
+        let stored: (i64, i64, Option<String>) = client
+            .query_one(
+                "SELECT discovered_at, confirmed_at, btc_parent_coinbase_outputs_text \
+                 FROM merge_mining_event WHERE id = $1",
+                &[&inserted.event_id],
+            )
+            .await
+            .map(|row| (row.get(0), row.get(1), row.get(2)))?;
+        assert_eq!(
+            stored,
+            (
+                2_015,
+                2_015,
+                refreshed.btc_parent_coinbase_outputs_text.clone()
+            )
+        );
+
+        let mut reclassified = refreshed;
+        mmm_capture::capture::apply_classification_proof(
+            &mut reclassified,
+            ClassificationProof {
+                parent_kind: Some(mmm_capture::capture::ParentKind::Canonical),
+                parent_height: Some(500_000),
+                difficulty_epoch_ok: Some(true),
+            },
+        )?;
+        let changed = upsert_merge_mining_event(&client, source_id, &reclassified).await?;
+        assert!(
+            changed.parent_read_model_changed,
+            "a new parent classification must still enqueue reconciliation"
+        );
         Ok::<_, anyhow::Error>(())
     })
 }

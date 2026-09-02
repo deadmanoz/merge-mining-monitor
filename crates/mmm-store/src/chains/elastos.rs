@@ -19,8 +19,9 @@ pub async fn write_elastos_capture_in_txn<C: GenericClient>(
     source_id: i64,
     payload: &MergeMiningEventPayload,
 ) -> Result<EventWriteOutcome> {
-    let outcome = upsert_merge_mining_event_with_attributions(client, source_id, payload).await?;
-    client
+    let mut outcome =
+        upsert_merge_mining_event_with_attributions(client, source_id, payload).await?;
+    let reactivated = client
         .execute(
             "UPDATE merge_mining_event \
                 SET revoked_at = NULL, revocation_reason = NULL \
@@ -29,6 +30,7 @@ pub async fn write_elastos_capture_in_txn<C: GenericClient>(
         )
         .await
         .context("clear reversible Elastos revocation on recapture")?;
+    outcome.parent_read_model_changed |= reactivated > 0;
     Ok(outcome)
 }
 
