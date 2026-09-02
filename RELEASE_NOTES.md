@@ -1,5 +1,10 @@
 # Release Notes
 
+## [0.7.9] - 2026-09-02
+
+- Refresh canonical parent coinbase-output text during historical imports
+  while keeping binary outputs and full coinbase transactions fail closed.
+
 ## [0.7.8] - 2026-09-02
 
 - Reuse compatible, proven parent classifications during historical imports,

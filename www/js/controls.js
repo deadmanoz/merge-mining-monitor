@@ -1,11 +1,11 @@
-import { loadTree, reconcileNavFromSelected, refreshNavControls, selectTreeNode } from "./api-client.js?v=0.7.8";
-import { showDialog } from "./dialogs.js?v=0.7.8";
-import { auxpowHelpFor, consensusRuleHelpFor, errorSummary, kvRows, renderDrawer } from "./drawer-renderer.js?v=0.7.8";
-import { $, $all, CLASSIFICATION_DEFAULT, compareSourcesForDisplay, DELTA_HELP, EDGE_KINDS, esc, kindHelpFor, KINDS, matchesSourceFilter, readForm, SOURCE_GROUPS, sourceChain, sourceDisplayName, sourceGroupKey, sourceMeta, state, VISIBLE_KIND_CONTROLS, writeForm } from "./frontend-state.js?v=0.7.8";
-import { collectCitedReferenceIds, formatCitedText, renderSourceDialog, renderSourcesSection, sourceTagline } from "./source-dialog.js?v=0.7.8";
-import { renderSourceRailStatus } from "./source-status.js?v=0.7.8";
-import { clearTreeViewModes, syncUrl } from "./tree-query-state.js?v=0.7.8";
-import { drawSelectionOverlay, renderTree, renderTreeLegend } from "./tree-renderer.js?v=0.7.8";
+import { loadTree, reconcileNavFromSelected, refreshNavControls, selectTreeNode } from "./api-client.js?v=0.7.9";
+import { showDialog } from "./dialogs.js?v=0.7.9";
+import { auxpowHelpFor, consensusRuleHelpFor, errorSummary, kvRows, renderDrawer } from "./drawer-renderer.js?v=0.7.9";
+import { $, $all, CLASSIFICATION_DEFAULT, compareSourcesForDisplay, DELTA_HELP, EDGE_KINDS, esc, kindHelpFor, KINDS, matchesSourceFilter, readForm, SOURCE_GROUPS, sourceChain, sourceDisplayName, sourceGroupKey, sourceMeta, state, VISIBLE_KIND_CONTROLS, writeForm } from "./frontend-state.js?v=0.7.9";
+import { collectCitedReferenceIds, formatCitedText, renderSourceDialog, renderSourcesSection, sourceTagline } from "./source-dialog.js?v=0.7.9";
+import { renderSourceRailStatus } from "./source-status.js?v=0.7.9";
+import { clearTreeViewModes, syncUrl } from "./tree-query-state.js?v=0.7.9";
+import { drawSelectionOverlay, renderTree, renderTreeLegend } from "./tree-renderer.js?v=0.7.9";
 
 
 const UI_ICONS = {
