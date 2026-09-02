@@ -8,13 +8,13 @@
 // (`registerFindingsView(registerView)`) from boot to avoid a static module
 // cycle with view-shell.
 
-import { markUpdated } from "./api-client.js?v=0.7.10";
-import { INFO_DIALOGS, openInfoDialog } from "./controls.js?v=0.7.10";
-import { FINDINGS } from "./findings.generated.js?v=0.7.10";
-import { CATEGORIES, STATUSES, renderArticle, renderFeed } from "./findings-render.js?v=0.7.10";
-import { $, matchesSourceFilter, state } from "./frontend-state.js?v=0.7.10";
-import { showInTree } from "./tree-jump.js?v=0.7.10";
-import { syncUrl } from "./tree-query-state.js?v=0.7.10";
+import { markUpdated } from "./api-client.js?v=0.7.11";
+import { INFO_DIALOGS, openInfoDialog } from "./controls.js?v=0.7.11";
+import { FINDINGS } from "./findings.generated.js?v=0.7.11";
+import { CATEGORIES, STATUSES, renderArticle, renderFeed } from "./findings-render.js?v=0.7.11";
+import { $, matchesSourceFilter, state } from "./frontend-state.js?v=0.7.11";
+import { showInTree } from "./tree-jump.js?v=0.7.11";
+import { syncUrl } from "./tree-query-state.js?v=0.7.11";
 
 let mounted = false;
 

@@ -1,6 +1,6 @@
-import { blockExplorer } from "./explorer-links.js?v=0.7.10";
-import { fmtDelta } from "./delta-scales.js?v=0.7.10";
-import { $, chainDisplayName, CLASSIFICATION_META, esc, formatEpoch, formatScalar, formatSourceList, formatSourceRef, state } from "./frontend-state.js?v=0.7.10";
+import { blockExplorer } from "./explorer-links.js?v=0.7.11";
+import { fmtDelta } from "./delta-scales.js?v=0.7.11";
+import { $, chainDisplayName, CLASSIFICATION_META, esc, formatEpoch, formatScalar, formatSourceList, formatSourceRef, state } from "./frontend-state.js?v=0.7.11";
 
 
 // Contextual help for the esoteric AuxPoW and merge-mining concepts in the
