@@ -6,6 +6,10 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Bulk-reconcile historical parents whose canonical classification is already
+  proven by the local Bitcoin Core-backed block, while retaining strict
+  per-parent handling for stale, error, unknown, or inconsistent evidence.
+
 ## [0.7.10] - 2026-09-02
 
 - Preserve observation timestamps when refreshing historical rows, and skip

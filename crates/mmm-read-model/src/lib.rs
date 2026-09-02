@@ -39,6 +39,7 @@ pub use mutation::{
 pub use mutation::{
     drain_core_reconcile_queue_with_budget_for_test,
     drain_historical_reconcile_queue_with_budget_for_test,
+    reconcile_proven_canonical_batch_for_test,
 };
 pub use source_health_sql::invalidate_source_health_in_transaction;
 #[cfg(any(test, feature = "db-integration"))]

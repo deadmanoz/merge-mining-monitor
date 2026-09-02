@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result, bail};
 use tokio_postgres::{Client, GenericClient};
+use tracing::info;
 
 use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
 use mmm_capture::capture::ParentKind;
@@ -16,6 +17,8 @@ use crate::{
     load_event, lock_block_hash, lock_event_for_source_health, preclassify_event_parent,
     rebuild_parent_read_model, reconcile_one_event_in_txn,
 };
+
+const CANONICAL_BULK_RECONCILE_BATCH_SIZE: i64 = 10_000;
 
 /// Drain durable historical parent work to completion.
 ///
@@ -80,6 +83,16 @@ async fn drain_historical_reconcile_queue_with_budget(
     nbits_table: Option<&NbitsTable>,
 ) -> Result<()> {
     loop {
+        let bulk_reconciled =
+            reconcile_proven_canonical_batch(client, CANONICAL_BULK_RECONCILE_BATCH_SIZE).await?;
+        if bulk_reconciled > 0 {
+            info!(
+                parents_reconciled = bulk_reconciled,
+                "bulk-reconciled proven canonical historical parents"
+            );
+            continue;
+        }
+
         let Some(row) = client
             .query_opt(
                 "SELECT btc_parent_header_hash, primary_pending, changed_hashes, generation \
@@ -137,6 +150,205 @@ async fn drain_historical_reconcile_queue_with_budget(
             .await
             .context("complete historical reconcile work")?;
     }
+}
+
+/// Rebuild one bounded batch of queue entries whose canonical classification is
+/// already proven by the local Core-backed `block` row.
+///
+/// These parents need no per-header RPC or classification work. The publication
+/// import holds the exclusive Core-cache barrier while draining this queue, so a
+/// set-based transaction can safely refresh their event rollups and AuxPoW proofs.
+/// Any parent with inconsistent event classification/header evidence, or any
+/// non-canonical parent, remains on the strict per-parent path below.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the canonical bulk reconcile is one auditable SQL statement"
+)]
+async fn reconcile_proven_canonical_batch(client: &mut Client, batch_size: i64) -> Result<u64> {
+    let txn = client
+        .transaction()
+        .await
+        .context("begin canonical historical bulk reconcile")?;
+    let row = txn
+        .query_one(
+            r#"
+WITH eligible AS MATERIALIZED (
+    SELECT q.btc_parent_header_hash
+    FROM historical_reconcile_queue q
+    JOIN block b ON b.btc_header_hash = q.btc_parent_header_hash
+    WHERE q.primary_pending
+      AND b.kind = 'canonical'
+      AND b.core_attested
+      AND b.live_observed
+      AND b.btc_height IS NOT NULL
+      AND b.difficulty_epoch_ok = TRUE
+      AND EXISTS (
+          SELECT 1
+          FROM merge_mining_event e
+          WHERE e.btc_parent_header_hash = q.btc_parent_header_hash
+            AND e.btc_parent_kind <> 'near'
+            AND e.revoked_at IS NULL
+      )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM merge_mining_event e
+          WHERE e.btc_parent_header_hash = q.btc_parent_header_hash
+            AND e.btc_parent_kind <> 'near'
+            AND e.revoked_at IS NULL
+            AND (
+                e.btc_parent_kind <> 'canonical'
+                OR e.btc_parent_height IS DISTINCT FROM b.btc_height
+                OR e.difficulty_epoch_ok IS DISTINCT FROM TRUE
+                OR NOT e.pow_validates_btc_target
+                OR e.btc_parent_header_bytes IS DISTINCT FROM b.btc_header_bytes
+                OR e.btc_parent_prev_header_hash IS DISTINCT FROM b.btc_prev_header_hash
+            )
+      )
+    ORDER BY q.enqueued_at, q.btc_parent_header_hash
+    LIMIT $1
+    FOR UPDATE OF q SKIP LOCKED
+),
+rollups AS MATERIALIZED (
+    SELECT e.btc_parent_header_hash,
+           count(*)::int AS total_attestations,
+           count(DISTINCT e.source_id)::int + 1 AS distinct_sources,
+           count(DISTINCT s.chain) FILTER (WHERE s.kind = 'auxpow')::int
+               AS auxpow_chain_count,
+           min(e.discovered_at) AS first_attested_at,
+           max(e.confirmed_at) AS last_attested_at
+    FROM eligible x
+    JOIN merge_mining_event e
+      ON e.btc_parent_header_hash = x.btc_parent_header_hash
+     AND e.btc_parent_kind <> 'near'
+     AND e.revoked_at IS NULL
+    JOIN source s ON s.id = e.source_id
+    GROUP BY e.btc_parent_header_hash
+),
+updated_blocks AS (
+    UPDATE block b
+       SET total_attestations = r.total_attestations,
+           distinct_sources = r.distinct_sources,
+           auxpow_chain_count = r.auxpow_chain_count,
+           pow_validated = TRUE,
+           difficulty_epoch_ok = TRUE,
+           first_attested_at = r.first_attested_at,
+           last_attested_at = r.last_attested_at,
+           updated_at = extract(epoch from now())::bigint
+      FROM rollups r
+     WHERE b.btc_header_hash = r.btc_parent_header_hash
+       AND (
+           b.total_attestations IS DISTINCT FROM r.total_attestations
+           OR b.distinct_sources IS DISTINCT FROM r.distinct_sources
+           OR b.auxpow_chain_count IS DISTINCT FROM r.auxpow_chain_count
+           OR b.pow_validated IS DISTINCT FROM TRUE
+           OR b.difficulty_epoch_ok IS DISTINCT FROM TRUE
+           OR b.first_attested_at IS DISTINCT FROM r.first_attested_at
+           OR b.last_attested_at IS DISTINCT FROM r.last_attested_at
+       )
+    RETURNING b.btc_header_hash
+),
+proof_rollups AS MATERIALIZED (
+    SELECT e.btc_parent_header_hash,
+           e.source_id,
+           array_agg(e.id ORDER BY e.id) FILTER (WHERE e.revoked_at IS NULL) AS active_ids,
+           array_agg(e.id ORDER BY e.id) AS historical_ids,
+           min(e.confirmed_at) FILTER (WHERE e.revoked_at IS NULL) AS active_confirmed_at,
+           bool_or(e.pow_validates_btc_target) FILTER (WHERE e.revoked_at IS NULL) AS active_pow,
+           min(e.discovered_at) AS historical_discovered_at,
+           min(e.confirmed_at) AS historical_confirmed_at,
+           bool_or(e.pow_validates_btc_target) AS historical_pow,
+           max(e.revoked_at) AS max_revoked_at,
+           (array_agg(e.revocation_reason ORDER BY e.revoked_at DESC NULLS LAST, e.id))[1]
+               AS revocation_reason
+    FROM eligible x
+    JOIN merge_mining_event e
+      ON e.btc_parent_header_hash = x.btc_parent_header_hash
+     AND e.btc_parent_kind <> 'near'
+    GROUP BY e.btc_parent_header_hash, e.source_id
+),
+updated_proofs AS (
+    INSERT INTO attestation_proof (
+        btc_header_hash, source_id, proof_kind, evidence, pow_validated,
+        discovered_at, confirmed_at, revoked_at, revocation_reason
+    )
+    SELECT btc_parent_header_hash,
+           source_id,
+           'auxpow',
+           jsonb_build_object(
+               'contributing_event_ids', COALESCE(active_ids, historical_ids)
+           ),
+           COALESCE(active_pow, historical_pow, FALSE),
+           historical_discovered_at,
+           COALESCE(active_confirmed_at, historical_confirmed_at),
+           CASE WHEN active_ids IS NULL THEN max_revoked_at ELSE NULL END,
+           CASE WHEN active_ids IS NULL THEN revocation_reason ELSE NULL END
+    FROM proof_rollups
+    WHERE active_ids IS NOT NULL OR max_revoked_at IS NOT NULL
+    ON CONFLICT (btc_header_hash, source_id, proof_kind) DO UPDATE SET
+        evidence = EXCLUDED.evidence,
+        pow_validated = EXCLUDED.pow_validated,
+        discovered_at = EXCLUDED.discovered_at,
+        confirmed_at = EXCLUDED.confirmed_at,
+        revoked_at = EXCLUDED.revoked_at,
+        revocation_reason = EXCLUDED.revocation_reason
+    WHERE attestation_proof.evidence IS DISTINCT FROM EXCLUDED.evidence
+       OR attestation_proof.pow_validated IS DISTINCT FROM EXCLUDED.pow_validated
+       OR attestation_proof.discovered_at IS DISTINCT FROM EXCLUDED.discovered_at
+       OR attestation_proof.confirmed_at IS DISTINCT FROM EXCLUDED.confirmed_at
+       OR attestation_proof.revoked_at IS DISTINCT FROM EXCLUDED.revoked_at
+       OR attestation_proof.revocation_reason IS DISTINCT FROM EXCLUDED.revocation_reason
+    RETURNING btc_header_hash
+),
+completed AS (
+    DELETE FROM historical_reconcile_queue q
+    USING eligible x
+    WHERE q.btc_parent_header_hash = x.btc_parent_header_hash
+      AND q.primary_pending
+      AND cardinality(q.changed_hashes) = 0
+    RETURNING q.btc_parent_header_hash
+),
+pending_cascade AS (
+    UPDATE historical_reconcile_queue q
+       SET primary_pending = FALSE,
+           generation = q.generation + 1,
+           updated_at = now()
+      FROM eligible x
+     WHERE q.btc_parent_header_hash = x.btc_parent_header_hash
+       AND q.primary_pending
+       AND cardinality(q.changed_hashes) > 0
+    RETURNING q.btc_parent_header_hash
+)
+SELECT (SELECT count(*) FROM completed)
+     + (SELECT count(*) FROM pending_cascade) AS reconciled,
+       (SELECT count(*) FROM updated_blocks) AS blocks_updated,
+       (SELECT count(*) FROM updated_proofs) AS proofs_updated
+"#,
+            &[&batch_size],
+        )
+        .await
+        .context("bulk reconcile proven canonical historical parents")?;
+    let reconciled: i64 = row.get(0);
+    let blocks_updated: i64 = row.get(1);
+    let proofs_updated: i64 = row.get(2);
+    txn.commit()
+        .await
+        .context("commit canonical historical bulk reconcile")?;
+    if reconciled > 0 {
+        info!(
+            reconciled,
+            blocks_updated, proofs_updated, "canonical historical bulk batch committed"
+        );
+    }
+    u64::try_from(reconciled).context("canonical historical reconcile count exceeds u64")
+}
+
+#[cfg(feature = "db-integration")]
+#[doc(hidden)]
+pub async fn reconcile_proven_canonical_batch_for_test(
+    client: &mut Client,
+    batch_size: i64,
+) -> Result<u64> {
+    reconcile_proven_canonical_batch(client, batch_size).await
 }
 
 pub(super) async fn enqueue_historical_parent<C: GenericClient>(

@@ -199,7 +199,10 @@ authoritative rows, retires manifest-backed provenance from every superseded
 publication commit for that chain, and enqueues affected parents in one
 transaction. Additive `operator-csv` provenance is preserved. A failure before
 that commit rolls back the whole chain, including restoration of the previous
-publication provenance. After commit, the importer drains the durable queue in
+publication provenance. After commit, the importer first rebuilds proven
+Core-canonical parents in bounded set-based batches. A parent qualifies only
+when every active event agrees with the Core-backed block's header, height,
+difficulty, and canonical classification. All other parents drain through
 bounded per-parent transactions. Primary reconcile results store their
 changed-hash cascade seeds in the same transaction, and queue work is removed
 only after its dependent cascade succeeds. An interruption at either boundary
