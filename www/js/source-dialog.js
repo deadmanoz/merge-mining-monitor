@@ -4,10 +4,10 @@
 // emitted by `just gen-source-artifacts`); Capture combines editorial provenance
 // with the live /sources payload.
 // Extracted from controls.js so neither file exceeds the arch-lint budget.
-import { CHAIN_PROFILES, SOURCE_LIFECYCLE } from "./source-registry.generated.js?v=0.7.7";
-import { esc, formatScalar, relativeTime, sourceChain } from "./frontend-state.js?v=0.7.7";
-import { kvRows } from "./drawer-renderer.js?v=0.7.7";
-import { sourceSyncLabel } from "./source-status.js?v=0.7.7";
+import { CHAIN_PROFILES, SOURCE_LIFECYCLE } from "./source-registry.generated.js?v=0.7.8";
+import { esc, formatScalar, relativeTime, sourceChain } from "./frontend-state.js?v=0.7.8";
+import { kvRows } from "./drawer-renderer.js?v=0.7.8";
+import { sourceSyncLabel } from "./source-status.js?v=0.7.8";
 
 const TABS = [
   { id: "history", label: "General" },

@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-09-02
+
 - Reuse compatible, proven parent classifications from the derived `block`
   state when a changed historical publication artifact names an already-known
   parent. This avoids replaying Bitcoin Core header and full-block RPCs for

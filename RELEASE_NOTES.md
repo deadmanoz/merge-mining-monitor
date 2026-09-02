@@ -1,5 +1,11 @@
 # Release Notes
 
+## [0.7.8] - 2026-09-02
+
+- Reuse compatible, proven parent classifications during historical imports,
+  avoiding redundant Bitcoin Core header and full-block RPCs while retaining
+  strict live validation for unknown, incomplete, or incompatible evidence.
+
 ## [0.7.7] - 2026-09-01
 
 - Import Research's canonical publication: 1,037,005 ordinary events, 21

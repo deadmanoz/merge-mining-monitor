@@ -1,12 +1,21 @@
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.7.7",
+  "version": "0.7.8",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 17,
+    "release_count": 18,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.7.8",
+        "date": "2026-09-02",
+        "items": [
+          "Reuse compatible, proven parent classifications during historical imports, avoiding redundant Bitcoin Core header and full-block RPCs while retaining strict live validation for unknown, incomplete, or incompatible evidence."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
       {
         "version": "0.7.7",
         "date": "2026-09-01",
