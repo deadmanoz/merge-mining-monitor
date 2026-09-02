@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Preserve observation timestamps when refreshing historical rows, and skip durable parent reconciliation when only publication provenance or presentation text changed.
+
 ## [0.7.9] - 2026-09-02
 
 - Refresh a stored parent coinbase-output text projection when the canonical

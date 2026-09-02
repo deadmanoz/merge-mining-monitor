@@ -25,14 +25,59 @@ pub enum EventWriteDisposition {
 pub struct EventWriteOutcome {
     pub event_id: i64,
     pub disposition: EventWriteDisposition,
+    /// Whether this write changed an input consumed by the parent read model.
+    /// Presentation-only projections, provenance, and sidecars do not require
+    /// an otherwise redundant parent reconciliation.
+    pub parent_read_model_changed: bool,
 }
 
 impl EventWriteOutcome {
-    const fn new(event_id: i64, disposition: EventWriteDisposition) -> Self {
+    const fn new(
+        event_id: i64,
+        disposition: EventWriteDisposition,
+        parent_read_model_changed: bool,
+    ) -> Self {
         Self {
             event_id,
             disposition,
+            parent_read_model_changed,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParentReadModelInput {
+    child_height: Option<i32>,
+    btc_parent_kind: String,
+    btc_parent_height: Option<i32>,
+    difficulty_epoch_ok: Option<bool>,
+    btc_parent_coinbase_script: Option<Vec<u8>>,
+    btc_parent_coinbase_outputs: Option<Vec<u8>>,
+    discovered_at: i64,
+    confirmed_at: i64,
+    revoked_at: Option<i64>,
+}
+
+impl ParentReadModelInput {
+    fn from_row(row: &tokio_postgres::Row, offset: usize) -> Self {
+        Self {
+            child_height: row.get(offset),
+            btc_parent_kind: row.get(offset + 1),
+            btc_parent_height: row.get(offset + 2),
+            difficulty_epoch_ok: row.get(offset + 3),
+            btc_parent_coinbase_script: row.get(offset + 4),
+            btc_parent_coinbase_outputs: row.get(offset + 5),
+            discovered_at: row.get(offset + 6),
+            confirmed_at: row.get(offset + 7),
+            revoked_at: row.get(offset + 8),
+        }
+    }
+
+    fn classification_matches(&self, payload: &MergeMiningEventPayload) -> bool {
+        self.btc_parent_kind == payload.btc_parent_kind.as_db_str()
+            && self.btc_parent_height == payload.btc_parent_height
+            && (payload.difficulty_epoch_ok.is_none()
+                || self.difficulty_epoch_ok == payload.difficulty_epoch_ok)
     }
 }
 
@@ -57,11 +102,9 @@ pub async fn upsert_merge_mining_event<C: GenericClient>(
     }
     match payload.child_block_hash.as_deref() {
         Some(child_hash) => {
-            if exact_event_id(client, source_id, child_hash)
-                .await?
-                .is_some()
-            {
-                return insert_event(client, source_id, payload, Exactness::Exact).await;
+            if let Some(existing) = exact_event_parent_input(client, source_id, child_hash).await? {
+                return insert_event(client, source_id, payload, Exactness::Exact, Some(existing))
+                    .await;
             }
             if let Some(child_height) = payload.child_height
                 && let Some(id) =
@@ -71,9 +114,10 @@ pub async fn upsert_merge_mining_event<C: GenericClient>(
                 return Ok(EventWriteOutcome::new(
                     event_id,
                     EventWriteDisposition::Promoted,
+                    true,
                 ));
             }
-            insert_event(client, source_id, payload, Exactness::Exact).await
+            insert_event(client, source_id, payload, Exactness::Exact, None).await
         }
         None => {
             let child_height = payload
@@ -82,12 +126,13 @@ pub async fn upsert_merge_mining_event<C: GenericClient>(
             let exact_ids =
                 matching_exact_event_ids(client, source_id, child_height, payload).await?;
             match exact_ids.as_slice() {
-                [] => insert_event(client, source_id, payload, Exactness::Partial).await,
+                [] => insert_event(client, source_id, payload, Exactness::Partial, None).await,
                 [id] => {
                     fill_existing_event(client, *id, payload).await?;
                     Ok(EventWriteOutcome::new(
                         *id,
                         EventWriteDisposition::SatisfiedByExistingExact,
+                        true,
                     ))
                 }
                 _ => bail!(
@@ -118,21 +163,24 @@ fn identity_conflict_clause(exactness: Exactness) -> &'static str {
     }
 }
 
-async fn exact_event_id<C: GenericClient>(
+async fn exact_event_parent_input<C: GenericClient>(
     client: &C,
     source_id: i64,
     child_hash: &[u8],
-) -> Result<Option<i64>> {
+) -> Result<Option<ParentReadModelInput>> {
     let row = client
         .query_opt(
-            "SELECT id FROM merge_mining_event \
+            "SELECT child_height, btc_parent_kind, btc_parent_height, \
+                    difficulty_epoch_ok, btc_parent_coinbase_script, \
+                    btc_parent_coinbase_outputs, discovered_at, confirmed_at, revoked_at \
+             FROM merge_mining_event \
              WHERE source_id = $1 AND child_block_hash = $2 \
              FOR UPDATE",
             &[&source_id, &child_hash],
         )
         .await
         .context("look up exact child observation")?;
-    Ok(row.map(|row| row.get(0)))
+    Ok(row.map(|row| ParentReadModelInput::from_row(&row, 0)))
 }
 
 async fn matching_partial_event_id<C: GenericClient>(
@@ -309,6 +357,7 @@ async fn insert_event<C: GenericClient>(
     source_id: i64,
     payload: &MergeMiningEventPayload,
     exactness: Exactness,
+    previous_parent_input: Option<ParentReadModelInput>,
 ) -> Result<EventWriteOutcome> {
     let btc_parent_kind = payload.btc_parent_kind.as_db_str();
     let child_nbits = payload.child_nbits.map(i64::from);
@@ -332,7 +381,9 @@ async fn insert_event<C: GenericClient>(
             $21, $22, $23, $24, $25, $26, $27, $28 \
          ) \
          {conflict} \
-            confirmed_at = GREATEST(merge_mining_event.confirmed_at, EXCLUDED.confirmed_at), \
+            confirmed_at = CASE WHEN $29 \
+                THEN merge_mining_event.confirmed_at \
+                ELSE GREATEST(merge_mining_event.confirmed_at, EXCLUDED.confirmed_at) END, \
             child_height = COALESCE(merge_mining_event.child_height, EXCLUDED.child_height), \
             child_header_bytes = COALESCE(merge_mining_event.child_header_bytes, EXCLUDED.child_header_bytes), \
             child_block_time = COALESCE(merge_mining_event.child_block_time, EXCLUDED.child_block_time), \
@@ -358,8 +409,12 @@ async fn insert_event<C: GenericClient>(
            AND (merge_mining_event.btc_parent_coinbase_script IS NULL OR EXCLUDED.btc_parent_coinbase_script IS NULL OR merge_mining_event.btc_parent_coinbase_script = EXCLUDED.btc_parent_coinbase_script) \
            AND (merge_mining_event.btc_parent_coinbase_outputs IS NULL OR EXCLUDED.btc_parent_coinbase_outputs IS NULL OR merge_mining_event.btc_parent_coinbase_outputs = EXCLUDED.btc_parent_coinbase_outputs) \
            AND (merge_mining_event.btc_parent_coinbase_tx_bytes IS NULL OR EXCLUDED.btc_parent_coinbase_tx_bytes IS NULL OR merge_mining_event.btc_parent_coinbase_tx_bytes = EXCLUDED.btc_parent_coinbase_tx_bytes) \
-         RETURNING id, (xmax = 0) AS inserted"
+         RETURNING id, (xmax = 0) AS inserted, \
+                   child_height, btc_parent_kind, btc_parent_height, \
+                   difficulty_epoch_ok, btc_parent_coinbase_script, \
+                   btc_parent_coinbase_outputs, discovered_at, confirmed_at, revoked_at"
     );
+    let preserve_observation_time = payload.historical_provenance.is_some();
     let row = client
         .query_opt(
             &sql,
@@ -392,20 +447,32 @@ async fn insert_event<C: GenericClient>(
                 &payload.confirmed_at,
                 &payload.revoked_at,
                 &payload.revocation_reason,
+                &preserve_observation_time,
             ],
         )
         .await
         .context("upsert merge_mining_event")?;
-    row.map(|row| {
-        let event_id = row.get(0);
-        let disposition = if row.get(1) {
-            EventWriteDisposition::Inserted
-        } else {
-            EventWriteDisposition::Updated
-        };
-        EventWriteOutcome::new(event_id, disposition)
-    })
-    .ok_or_else(|| anyhow::anyhow!("merge-mining observation contradicts stored evidence"))
+    row.map(|row| event_write_outcome(&row, previous_parent_input.as_ref(), payload))
+        .ok_or_else(|| anyhow::anyhow!("merge-mining observation contradicts stored evidence"))
+}
+
+fn event_write_outcome(
+    row: &tokio_postgres::Row,
+    previous_parent_input: Option<&ParentReadModelInput>,
+    payload: &MergeMiningEventPayload,
+) -> EventWriteOutcome {
+    let event_id = row.get(0);
+    let inserted: bool = row.get(1);
+    let disposition = if inserted {
+        EventWriteDisposition::Inserted
+    } else {
+        EventWriteDisposition::Updated
+    };
+    let current_parent_input = ParentReadModelInput::from_row(row, 2);
+    let parent_read_model_changed = inserted
+        || previous_parent_input != Some(&current_parent_input)
+        || !current_parent_input.classification_matches(payload);
+    EventWriteOutcome::new(event_id, disposition, parent_read_model_changed)
 }
 
 /// Upsert the event row, then apply a COMPLETE pool-attribution snapshot for it:
