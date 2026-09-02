@@ -44,7 +44,9 @@ impl EventWriteOutcome {
 /// Exact observations refine one unambiguous matching partial row in place;
 /// hashless observations already represented by one exact row return that row
 /// instead of minting a duplicate. Conflicts fill only missing evidence and
-/// reject contradictory non-null values.
+/// reject contradictory non-null values. Parent-output text is the exception:
+/// it is a mutable publication projection, while the separately stored binary
+/// outputs and full coinbase transaction remain fail-closed evidence.
 pub async fn upsert_merge_mining_event<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -198,7 +200,7 @@ async fn promote_partial_event<C: GenericClient>(
                 btc_parent_coinbase_txid = COALESCE(btc_parent_coinbase_txid, $10), \
                 btc_parent_coinbase_script = COALESCE(btc_parent_coinbase_script, $11), \
                 btc_parent_coinbase_outputs = COALESCE(btc_parent_coinbase_outputs, $12), \
-                btc_parent_coinbase_outputs_text = COALESCE(btc_parent_coinbase_outputs_text, $13), \
+                btc_parent_coinbase_outputs_text = COALESCE($13, btc_parent_coinbase_outputs_text), \
                 btc_parent_coinbase_tx_bytes = COALESCE(btc_parent_coinbase_tx_bytes, $14), \
                 aux_merkle_proof = COALESCE(aux_merkle_proof, $15) \
              WHERE id = $1 \
@@ -211,7 +213,6 @@ async fn promote_partial_event<C: GenericClient>(
                AND (btc_parent_coinbase_txid IS NULL OR $10::bytea IS NULL OR btc_parent_coinbase_txid = $10) \
                AND (btc_parent_coinbase_script IS NULL OR $11::bytea IS NULL OR btc_parent_coinbase_script = $11) \
                AND (btc_parent_coinbase_outputs IS NULL OR $12::bytea IS NULL OR btc_parent_coinbase_outputs = $12) \
-               AND (btc_parent_coinbase_outputs_text IS NULL OR $13::text IS NULL OR btc_parent_coinbase_outputs_text = $13) \
                AND (btc_parent_coinbase_tx_bytes IS NULL OR $14::bytea IS NULL OR btc_parent_coinbase_tx_bytes = $14) \
              RETURNING id",
             &[
@@ -253,7 +254,7 @@ async fn fill_existing_event<C: GenericClient>(
                 btc_parent_coinbase_txid = COALESCE(btc_parent_coinbase_txid, $3), \
                 btc_parent_coinbase_script = COALESCE(btc_parent_coinbase_script, $4), \
                 btc_parent_coinbase_outputs = COALESCE(btc_parent_coinbase_outputs, $5), \
-                btc_parent_coinbase_outputs_text = COALESCE(btc_parent_coinbase_outputs_text, $6), \
+                btc_parent_coinbase_outputs_text = COALESCE($6, btc_parent_coinbase_outputs_text), \
                 btc_parent_coinbase_tx_bytes = COALESCE(btc_parent_coinbase_tx_bytes, $7), \
                 child_header_bytes = COALESCE(child_header_bytes, $16), \
                 child_block_time = COALESCE(child_block_time, $8), \
@@ -273,7 +274,6 @@ async fn fill_existing_event<C: GenericClient>(
                AND (btc_parent_coinbase_txid IS NULL OR $3::bytea IS NULL OR btc_parent_coinbase_txid = $3) \
                AND (btc_parent_coinbase_script IS NULL OR $4::bytea IS NULL OR btc_parent_coinbase_script = $4) \
                AND (btc_parent_coinbase_outputs IS NULL OR $5::bytea IS NULL OR btc_parent_coinbase_outputs = $5) \
-               AND (btc_parent_coinbase_outputs_text IS NULL OR $6::text IS NULL OR btc_parent_coinbase_outputs_text = $6) \
                AND (btc_parent_coinbase_tx_bytes IS NULL OR $7::bytea IS NULL OR btc_parent_coinbase_tx_bytes = $7) \
              RETURNING id",
             &[
@@ -341,7 +341,7 @@ async fn insert_event<C: GenericClient>(
             btc_parent_coinbase_txid = COALESCE(merge_mining_event.btc_parent_coinbase_txid, EXCLUDED.btc_parent_coinbase_txid), \
             btc_parent_coinbase_script = COALESCE(merge_mining_event.btc_parent_coinbase_script, EXCLUDED.btc_parent_coinbase_script), \
             btc_parent_coinbase_outputs = COALESCE(merge_mining_event.btc_parent_coinbase_outputs, EXCLUDED.btc_parent_coinbase_outputs), \
-            btc_parent_coinbase_outputs_text = COALESCE(merge_mining_event.btc_parent_coinbase_outputs_text, EXCLUDED.btc_parent_coinbase_outputs_text), \
+            btc_parent_coinbase_outputs_text = COALESCE(EXCLUDED.btc_parent_coinbase_outputs_text, merge_mining_event.btc_parent_coinbase_outputs_text), \
             btc_parent_coinbase_tx_bytes = COALESCE(merge_mining_event.btc_parent_coinbase_tx_bytes, EXCLUDED.btc_parent_coinbase_tx_bytes), \
             child_coinbase_txid = COALESCE(merge_mining_event.child_coinbase_txid, EXCLUDED.child_coinbase_txid), \
             child_coinbase_script = COALESCE(merge_mining_event.child_coinbase_script, EXCLUDED.child_coinbase_script), \
@@ -357,7 +357,6 @@ async fn insert_event<C: GenericClient>(
            AND (merge_mining_event.btc_parent_coinbase_txid IS NULL OR EXCLUDED.btc_parent_coinbase_txid IS NULL OR merge_mining_event.btc_parent_coinbase_txid = EXCLUDED.btc_parent_coinbase_txid) \
            AND (merge_mining_event.btc_parent_coinbase_script IS NULL OR EXCLUDED.btc_parent_coinbase_script IS NULL OR merge_mining_event.btc_parent_coinbase_script = EXCLUDED.btc_parent_coinbase_script) \
            AND (merge_mining_event.btc_parent_coinbase_outputs IS NULL OR EXCLUDED.btc_parent_coinbase_outputs IS NULL OR merge_mining_event.btc_parent_coinbase_outputs = EXCLUDED.btc_parent_coinbase_outputs) \
-           AND (merge_mining_event.btc_parent_coinbase_outputs_text IS NULL OR EXCLUDED.btc_parent_coinbase_outputs_text IS NULL OR merge_mining_event.btc_parent_coinbase_outputs_text = EXCLUDED.btc_parent_coinbase_outputs_text) \
            AND (merge_mining_event.btc_parent_coinbase_tx_bytes IS NULL OR EXCLUDED.btc_parent_coinbase_tx_bytes IS NULL OR merge_mining_event.btc_parent_coinbase_tx_bytes = EXCLUDED.btc_parent_coinbase_tx_bytes) \
          RETURNING id, (xmax = 0) AS inserted"
     );

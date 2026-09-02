@@ -6,6 +6,10 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Refresh a stored parent coinbase-output text projection when the canonical
+  Research publication renders the same observation in its newer claim format.
+  Binary outputs and full coinbase transactions remain immutable evidence.
+
 ## [0.7.8] - 2026-09-02
 
 - Reuse compatible, proven parent classifications from the derived `block`
