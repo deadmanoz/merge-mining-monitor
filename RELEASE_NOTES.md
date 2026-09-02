@@ -1,5 +1,11 @@
 # Release Notes
 
+## [0.7.10] - 2026-09-02
+
+- Preserve existing observation times during historical publication refreshes
+  and skip parent reconciliation when only provenance or presentation text
+  changed.
+
 ## [0.7.9] - 2026-09-02
 
 - Refresh canonical parent coinbase-output text during historical imports
