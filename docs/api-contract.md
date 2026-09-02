@@ -102,12 +102,21 @@ Example:
 {
   "schema_version": "v1",
   "generated_at": 1779792000,
-  "version": "0.7.9",
+  "version": "0.7.10",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 19,
+    "release_count": 20,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.7.10",
+        "date": "2026-09-02",
+        "items": [
+          "Preserve existing observation times during historical publication refreshes and skip parent reconciliation when only provenance or presentation text changed."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
       {
         "version": "0.7.9",
         "date": "2026-09-02",

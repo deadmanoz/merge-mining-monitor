@@ -1,16 +1,16 @@
-import { centerCameraOnHeight, centerCameraOnNode, centerCameraOnWindowMidHeight, goTo, loadBlock, loadNavigatorLatest, loadSources, loadTree, navSelectLabel, reconcileNavFromSelected, refreshActiveNavigatorTarget, refreshNavControls, stepNav } from "./api-client.js?v=0.7.9";
-import { applyStoredRailWidth, applyTreeHighlight, clearStoredTreeTransform, INFO_DIALOGS, openInfoDialog, RAILS, renderInfoDialogs, renderKindControls, setRailCollapsed, updateSourceGroupSelectedMarkers, wireRailResize } from "./controls.js?v=0.7.9";
-import { activateModalTab, closeDialog, showDialog, wireModalTabs } from "./dialogs.js?v=0.7.9";
-import { renderDrawer } from "./drawer-renderer.js?v=0.7.9";
-import { $, $all, API_BASE, esc, hydrateFormFromUrl, readForm, refreshRelativeTimes, startRelativeTimeTicker, state, writeForm } from "./frontend-state.js?v=0.7.9";
-import { anyNavTargetBusy, NAV_COARSE_STRIDE, navMenuTargets, resetNavigatorTargetState } from "./nav-targets.js?v=0.7.9";
-import { wireSourceStatusPopover } from "./source-status.js?v=0.7.9";
-import { inputDateTimeToUtc } from "./tree-lookup.js?v=0.7.9";
-import { hasExplicitTreeView, hasManualTreeLookup, hasUnheightedAnchorView, syncUrl, treeWindowError } from "./tree-query-state.js?v=0.7.9";
-import { wireTreeLegend } from "./tree-renderer.js?v=0.7.9";
-import { prepareFocus, registerDeltaView } from "./delta-view.js?v=0.7.9";
-import { registerFindingsView } from "./findings-view.js?v=0.7.9";
-import { activateView, applyViewScopes, registerView, wireViewSwitcher } from "./view-shell.js?v=0.7.9";
+import { centerCameraOnHeight, centerCameraOnNode, centerCameraOnWindowMidHeight, goTo, loadBlock, loadNavigatorLatest, loadSources, loadTree, navSelectLabel, reconcileNavFromSelected, refreshActiveNavigatorTarget, refreshNavControls, stepNav } from "./api-client.js?v=0.7.10";
+import { applyStoredRailWidth, applyTreeHighlight, clearStoredTreeTransform, INFO_DIALOGS, openInfoDialog, RAILS, renderInfoDialogs, renderKindControls, setRailCollapsed, updateSourceGroupSelectedMarkers, wireRailResize } from "./controls.js?v=0.7.10";
+import { activateModalTab, closeDialog, showDialog, wireModalTabs } from "./dialogs.js?v=0.7.10";
+import { renderDrawer } from "./drawer-renderer.js?v=0.7.10";
+import { $, $all, API_BASE, esc, hydrateFormFromUrl, readForm, refreshRelativeTimes, startRelativeTimeTicker, state, writeForm } from "./frontend-state.js?v=0.7.10";
+import { anyNavTargetBusy, NAV_COARSE_STRIDE, navMenuTargets, resetNavigatorTargetState } from "./nav-targets.js?v=0.7.10";
+import { wireSourceStatusPopover } from "./source-status.js?v=0.7.10";
+import { inputDateTimeToUtc } from "./tree-lookup.js?v=0.7.10";
+import { hasExplicitTreeView, hasManualTreeLookup, hasUnheightedAnchorView, syncUrl, treeWindowError } from "./tree-query-state.js?v=0.7.10";
+import { wireTreeLegend } from "./tree-renderer.js?v=0.7.10";
+import { prepareFocus, registerDeltaView } from "./delta-view.js?v=0.7.10";
+import { registerFindingsView } from "./findings-view.js?v=0.7.10";
+import { activateView, applyViewScopes, registerView, wireViewSwitcher } from "./view-shell.js?v=0.7.10";
 
 async function reloadAll() {
   readForm();
