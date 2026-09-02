@@ -11,10 +11,10 @@
 // points, because the rail fieldsets alone would exceed its architecture
 // budget as static markup.
 
-import { loadBlock, loadCompetitions } from "./api-client.js?v=0.7.8";
-import { clearSelection, updateSourceGroupSelectedMarkers } from "./controls.js?v=0.7.8";
-import { hideTip, renderContext, renderCoverage, renderHistogram } from "./delta-chart.js?v=0.7.8";
-import { applyOutliersOpen, forgetScroll, renderOutliers, revealFocusedRow } from "./delta-outliers.js?v=0.7.8";
+import { loadBlock, loadCompetitions } from "./api-client.js?v=0.7.9";
+import { clearSelection, updateSourceGroupSelectedMarkers } from "./controls.js?v=0.7.9";
+import { hideTip, renderContext, renderCoverage, renderHistogram } from "./delta-chart.js?v=0.7.9";
+import { applyOutliersOpen, forgetScroll, renderOutliers, revealFocusedRow } from "./delta-outliers.js?v=0.7.9";
 import {
   binKeyFor,
   clamp,
@@ -26,10 +26,10 @@ import {
   fmtTick,
   partitionByDelta,
   quantile,
-} from "./delta-scales.js?v=0.7.8";
-import { $, esc, matchesSourceFilter, parseEra, state } from "./frontend-state.js?v=0.7.8";
-import { syncUrl } from "./tree-query-state.js?v=0.7.8";
-import { showInTree } from "./tree-jump.js?v=0.7.8";
+} from "./delta-scales.js?v=0.7.9";
+import { $, esc, matchesSourceFilter, parseEra, state } from "./frontend-state.js?v=0.7.9";
+import { syncUrl } from "./tree-query-state.js?v=0.7.9";
+import { showInTree } from "./tree-jump.js?v=0.7.9";
 
 const PRESETS = [
   { label: "±10s", half: 10 },
