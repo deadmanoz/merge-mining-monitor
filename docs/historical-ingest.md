@@ -295,13 +295,23 @@ processes
 chains in deterministic order, shares a Bitcoin-parent classification cache,
 combines candidate parsing, validation, and preclassification into one stream,
 fills the Bitcoin RPC client's configured bounded concurrency, and runs targeted
-stale-branch reconciliation after all sources are present. Canonical and
-Core-indexed stale parents do not query predecessor state from the database;
-that read-model lookup is deferred until Core proves the candidate header is
-absent. Transient Bitcoin Core transport failures and warmup responses are
-retried with bounded exponential backoff. Exhausting those retries fails
-preclassification explicitly instead of converting an operational failure
-into an `unknown` parent classification.
+stale-branch reconciliation after all sources are present. A parent already
+proved Core-attested canonical or structurally complete stale in the derived
+`block` state is reused when that verdict is compatible with the publication
+row. This avoids repeating Bitcoin Core header and full-block lookups merely
+because another publication coordinate changed. An inferred stale verdict is
+reused only for a row carrying stale or known-branch publication evidence and
+only while its stored canonical-competitor relationship remains intact.
+Event-only canonical, unknown, missing, half-rebuilt, or
+publication-incompatible state still goes through strict live Core
+classification. The dedicated error-observation aggregate also retains its
+Core-plus-catalogue check. Canonical and Core-indexed stale parents on the live
+path do not query predecessor state from the database; that read-model lookup
+is deferred until Core proves the candidate header is absent. Transient Bitcoin
+Core transport failures and warmup responses are retried with bounded
+exponential backoff. Exhausting those retries fails preclassification explicitly
+instead of converting an operational failure into an `unknown` parent
+classification.
 Digest verification, manifest-count inspection, and database mutation still
 read the artifact separately.
 Its per-chain and total summaries report expected, ingested, inserted, updated,

@@ -6,6 +6,13 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Reuse compatible, proven parent classifications from the derived `block`
+  state when a changed historical publication artifact names an already-known
+  parent. This avoids replaying Bitcoin Core header and full-block RPCs for
+  existing Core-attested canonical and structurally complete stale evidence;
+  event-only canonical, unknown, or incompatible state still requires strict
+  live Core classification, as does the dedicated error-observation aggregate.
+
 ## [0.7.7] - 2026-09-01
 
 - Pin Research's 1,037,005 ordinary events, 21-row stale-descendant aggregate,

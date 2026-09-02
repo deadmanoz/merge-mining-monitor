@@ -60,7 +60,11 @@ Use `just` targets, not raw commands, when a target exists:
   with non-operator historical provenance and base events across research pins.
   Artifact SHA values verify bytes only. A complete match must return before
   taking the Bitcoin Core cache lock; pending derived work takes the lock and
-  finalizes without replaying source rows.
+  finalizes without replaying source rows. For a changed artifact, reuse a
+  compatible Core-attested canonical or structurally complete stale
+  classification already proven in `block`;
+  unknown, absent, publication-incompatible, and dedicated error-observation
+  state must still use strict live Core classification.
 - Historical base/provenance writes enqueue affected parents in the same
   transaction. Drain `historical_reconcile_queue` in bounded parent
   transactions and retain changed-hash seeds until dependent cascades succeed;
