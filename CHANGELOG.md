@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.7.12] - 2026-09-03
+
 - Annotate the two F2Pool `bad-blk-sigops` stale blocks (heights 783,426 and
   784,121) as body-invalid without reclassifying them: a new operator-imported
   `body_invalid_stale` reference table (migration 0017, loaded by
