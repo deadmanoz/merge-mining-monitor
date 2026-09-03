@@ -1,0 +1,7 @@
+# Mirror of deadmanoz/merge-mining-research data/error-blocks/body_invalid_stales.csv
+# Source commit: 6e3f3e1a97fe9755a1b9785b69a4d49fe3162afd
+# Fields intentionally retained here: canonical BTC height, display-order hash,
+# the externally attested body-level consensus rule, and its evidence URL.
+height,hash,rule,evidence_url
+783426,00000000000000000002ec935e245f8ae70fc68cc828f05bf4cfa002668599e4,bad-blk-sigops,https://b10c.me/observations/11-invalid-blocks-783426-and-784121/
+784121,000000000000000000046a2698233ed93bb5e74ba7d2146a68ddb0c2504c980d,bad-blk-sigops,https://b10c.me/observations/11-invalid-blocks-783426-and-784121/
