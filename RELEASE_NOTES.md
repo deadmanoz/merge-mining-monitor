@@ -1,5 +1,12 @@
 # Release Notes
 
+## [0.7.12] - 2026-09-03
+
+- Annotate the two F2Pool `bad-blk-sigops` stale blocks (heights 783426 and
+  784121) as body-invalid without changing their kind. Those blocks show a
+  Body validity row with the rule's help and an evidence link, and remain
+  ordinary stales.
+
 ## [0.7.11] - 2026-09-02
 
 - Bulk-reconcile historical parents whose canonical status and event evidence
