@@ -29,6 +29,8 @@ pub(super) struct BlockDetailRow {
     pub(super) kind: ParentKind,
     pub(super) btc_orphan_class: Option<String>,
     pub(super) error_block_reason: Option<String>,
+    pub(super) body_invalid_rule: Option<String>,
+    pub(super) body_invalid_evidence_url: Option<String>,
     pub(super) header_bytes: Vec<u8>,
     pub(super) header_time: i64,
     pub(super) bitcoin_miner_pool: PoolObject,
@@ -121,9 +123,12 @@ pub(super) async fn load_block_detail(
             "SELECT b.btc_header_hash, b.btc_prev_header_hash, b.btc_height, b.kind, \
                     b.btc_header_bytes, b.btc_header_time, b.live_observed, \
                     b.core_attested, b.pow_validated, p.id, p.slug, p.canonical_name, \
-                    b.btc_orphan_class, b.error_block_reason, b.btc_coinbase_script \
+                    b.btc_orphan_class, b.error_block_reason, b.btc_coinbase_script, \
+                    bis.rule, bis.evidence_url \
              FROM block b \
              LEFT JOIN pool p ON p.id = b.bitcoin_miner_pool_id \
+             LEFT JOIN body_invalid_stale bis \
+               ON bis.hash = b.btc_header_hash AND b.kind = 'stale' \
              WHERE b.btc_header_hash = $1",
             &[&hash],
         )
@@ -138,6 +143,8 @@ pub(super) async fn load_block_detail(
             kind: parent_kind_from_db(&kind)?,
             btc_orphan_class: row.get(12),
             error_block_reason: row.get(13),
+            body_invalid_rule: row.get(15),
+            body_invalid_evidence_url: row.get(16),
             header_bytes: row.get(4),
             header_time: row.get(5),
             live_observed: row.get(6),

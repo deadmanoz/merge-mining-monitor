@@ -7,6 +7,7 @@
     "kind": "error_block",
     "btc_orphan_class": null,
     "error_block_reason": "time_below_mtp",
+    "body_invalid": null,
     "coinbase_tag": null,
     "header": {
       "version": 721657856,

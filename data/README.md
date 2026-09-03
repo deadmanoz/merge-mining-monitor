@@ -19,6 +19,12 @@ directories.
   `historical/historical-source-manifest.json` `source_repo_commit`; the
   generator refuses a `--source-commit` that disagrees. Refresh both pins with
   `just gen-research-publication-pins --source-commit <research-sha>`.
+- `consensus/body_invalid_stales.csv` - compact mirror of the pinned
+  research body-invalid stales overlay: stale blocks whose complete body is
+  known consensus-invalid from external full-block evidence. A display
+  annotation loaded by `import-body-invalid-stales`; it never reclassifies a
+  block. Its header pin must match the manifest and error-block catalogue;
+  all three refresh together via `just gen-research-publication-pins`.
 - `sources/chain_profiles.json` - hand-authored source profile data used by
   `just gen-source-artifacts`.
 - `findings/` - hand-authored evidence-backed findings, one JSON file per

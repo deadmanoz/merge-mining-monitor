@@ -18,6 +18,7 @@ tree view from that evidence.
 | `event_pool_attribution` | Attribution rows connecting an event to a pool with source/provenance details. |
 | `poll_cursor` | Live poll progress. Backfills never move the cursor. |
 | `block` | Derived Bitcoin parent block state: canonical, stale, consensus-invalid error block, or unknown. |
+| `body_invalid_stale` | Operator-imported annotation of stale blocks whose complete body is known consensus-invalid from external full-block evidence (the research body-invalid stales overlay, mirrored in `data/consensus/body_invalid_stales.csv`). Display annotation joined at API projection only; loaded by `import-body-invalid-stales`. |
 | `attestation_proof` | Derived proof rows supporting a block. |
 | `source_health` | Per-source rollup counters for UI/API health reporting. |
 
@@ -50,6 +51,21 @@ demotes rows classified before the membership was imported.
 Published direct-stale and stale-descendant provenance is also an exclusion
 from strict/weak orphan classification while a branch remains derived
 `unknown`.
+
+The `body_invalid_stale` membership is the deliberate opposite of an error
+block: annotate, never promote. A member's header passed every check the stale
+evidence profile can apply, so its derived row stays `kind='stale'` with its
+ordinary competition and branch semantics, and the annotation (`rule`,
+`evidence_url`) is joined only at API projection time. Nothing in parent
+classification, orphan-class derivation, source-health counters, or
+reconciliation consults the table, and membership cannot create an
+`error_block` (that kind requires the pinned research catalogue plus the 0008
+CHECK constraints). The importer refuses any hash that is also in the pinned
+error-block catalogue, so the annotation set and the catalogue stay disjoint;
+each import is an authoritative snapshot of the mirror (withdrawn rows are
+pruned in the same transaction), and the API join is gated on
+`kind = 'stale'` so an annotation row can never surface on a non-stale
+block.
 
 Historical error witnesses retain `classification=error_block` in
 `historical_event_provenance`, while `block.error_block_reason` is derived by

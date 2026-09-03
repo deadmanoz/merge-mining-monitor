@@ -2,12 +2,15 @@
   "schema_version": "v1",
   "generated_at": 1779792000,
   "block": {
-    "hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-    "height": 700004,
+    "hash": "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd",
+    "height": 700006,
     "kind": "stale",
     "btc_orphan_class": null,
-"error_block_reason": null,
-    "body_invalid": null,
+    "error_block_reason": null,
+    "body_invalid": {
+      "rule": "bad-blk-sigops",
+      "evidence_url": "https://b10c.me/observations/11-invalid-blocks-783426-and-784121/"
+    },
     "coinbase_tag": null,
     "header": {
       "version": 536870912,
@@ -73,7 +76,7 @@
       "child_header_hex": null,
       "child_block_time": 1779774100,
       "child_nbits": null,
-      "btc_parent_header_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "btc_parent_header_hash": "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd",
       "event_parent_kind": "unknown",
       "btc_parent_coinbase_txid": "2727272727272727272727272727272727272727272727272727272727272727",
       "btc_parent_coinbase_script_hex": "03e6f505",
@@ -137,9 +140,9 @@
     }
   ],
   "competition": {
-    "btc_height": 700004,
-    "stale_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-    "canonical_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "btc_height": 700006,
+    "stale_hash": "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd",
+    "canonical_hash": "cececececececececececececececececececececececececececececececece",
     "stale_bitcoin_miner_pool": {
       "id": 7,
       "slug": "antpool",
@@ -156,17 +159,17 @@
     "propagation_delta_s": null
   },
   "stale_branch": {
-    "branch_id": "stale-700004-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-    "root_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-    "tip_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "branch_id": "stale-700006-bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd",
+    "root_hash": "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd",
+    "tip_hash": "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd",
     "member_hashes": [
-      "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd"
     ],
     "canonical_competitor_hashes": [
-      "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      "cececececececececececececececececececececececececececececececece"
     ],
-    "btc_height_min": 700004,
-    "btc_height_max": 700004,
+    "btc_height_min": 700006,
+    "btc_height_max": 700006,
     "depth": 1,
     "position": "root_and_tip",
     "parent_stale_hash": null,

@@ -12,6 +12,7 @@
 //! chain is a new `chains/<chain>.rs`, not an append to one god file.
 
 mod bitcoin_core_header;
+mod body_invalid;
 mod chains;
 mod event;
 mod historical_import;
@@ -29,6 +30,9 @@ pub use bitcoin_core_header::{
     load_bitcoin_core_nbits_table_if_present, lock_bitcoin_core_header_cache,
     lock_bitcoin_core_header_cache_shared, lock_bitcoin_core_header_cache_shared_in_transaction,
     record_bitcoin_core_header, replace_bitcoin_core_header_cache,
+};
+pub use body_invalid::{
+    count_body_invalid_stales, delete_body_invalid_stales_not_in, upsert_body_invalid_stale,
 };
 pub use chains::elastos::{
     ElastosIdentityReresolveRow, active_event_ids_at_height, load_elastos_identity_reresolve_batch,

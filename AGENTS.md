@@ -45,9 +45,14 @@ Use `just` targets, not raw commands, when a target exists:
   Research's canonical observation-chain inventory.
 - Producers write only `merge_mining_event` plus 1:1 chain sidecars and
   attribution rows. Historical ingest also attaches
-  `historical_event_provenance`. The further base table,
-  `known_stale_block`, is operator-imported via `import-known-stales`
-  (written through `mmm-store`, never by capture producers). `block`,
+  `historical_event_provenance`. The further base tables,
+  `known_stale_block` and `body_invalid_stale`, are operator-imported via
+  `import-known-stales` / `import-body-invalid-stales`
+  (written through `mmm-store`, never by capture producers).
+  `body_invalid_stale` (pinned mirror `data/consensus/body_invalid_stales.csv`)
+  is a display annotation joined at API projection only: an annotated block
+  stays `kind='stale'`, and the annotation never feeds classification, orphan
+  derivation, or reconciliation. `block`,
   `attestation_proof`, and `source_health` are derived through
   `mmm-read-model`.
 - Treat child height, hash, header, time, and `nBits` as independent optional

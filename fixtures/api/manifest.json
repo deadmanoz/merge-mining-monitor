@@ -42,6 +42,11 @@
       "scenario": "RSK uncle evidence for a near parent with nullable authenticated child header and nBits evidence"
     },
     {
+      "file": "block-body-invalid-stale.json",
+      "endpoint_family": "/api/v1/block/:hash",
+      "scenario": "Stale block carrying the operator-imported body-invalid annotation (rule + evidence URL) while kind stays stale"
+    },
+    {
       "file": "navigator-stale.json",
       "endpoint_family": "/api/v1/navigator/stale",
       "scenario": "Unified navigator stale target: height-keyed stale items with per-item newest-first index, opaque cursors, and tree-window view metadata"
