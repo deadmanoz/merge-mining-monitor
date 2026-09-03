@@ -202,6 +202,33 @@ fn assert_block_fixture_contract(file: &str, fixture: &Value) {
             "{file} non-error block must carry error_block_reason: null"
         );
     }
+    assert!(
+        block.contains_key("body_invalid"),
+        "{file} block must include nullable body_invalid"
+    );
+    if let Some(body_invalid) = block["body_invalid"].as_object() {
+        assert_eq!(
+            block.get("kind").and_then(Value::as_str),
+            Some("stale"),
+            "{file} body_invalid annotates stale blocks only (annotate, never promote)"
+        );
+        assert!(
+            body_invalid
+                .get("rule")
+                .and_then(Value::as_str)
+                .is_some_and(|rule| !rule.is_empty()),
+            "{file} body_invalid must carry a non-empty rule"
+        );
+        assert!(
+            body_invalid.contains_key("evidence_url"),
+            "{file} body_invalid must include nullable evidence_url"
+        );
+    } else {
+        assert!(
+            block["body_invalid"].is_null(),
+            "{file} body_invalid must be an object or null"
+        );
+    }
     let events = fixture["event_details"]
         .as_array()
         .unwrap_or_else(|| panic!("{file} must carry an event_details array"));

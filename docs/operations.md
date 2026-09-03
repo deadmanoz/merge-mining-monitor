@@ -295,6 +295,15 @@ contaminated strict/weak rows to `excluded` in the same transaction, maintaining
 available to repeat that repair independently. See
 `docs/historical-ingest.md` for the full fresh-database ordering.
 
+Import the body-invalid stale annotations once per database after migrations
+(order relative to dataset imports does not matter; the annotation gates
+nothing): `just import-body-invalid-stales --csv
+data/consensus/body_invalid_stales.csv --source-label
+"merge-mining-research@<commit>"`. The command is strict about malformed rows,
+refuses an empty mirror, and refuses a hash that is also in the pinned
+error-block catalogue; re-runs are authoritative snapshots that replace rows
+in place and prune withdrawn annotations. See `docs/historical-ingest.md`.
+
 ## Historical Publication
 
 Materialize the pinned research Git LFS objects, then import the whole

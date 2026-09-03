@@ -258,6 +258,32 @@ membership-free diagnostic database. It is not a production cutover option.
 `--limit` must be greater than zero and makes a manifest import additive rather
 than authoritative.
 
+## Body-Invalid Stale Annotations
+
+Import the pinned body-invalid stales mirror after migrations, in any order
+relative to the publication import (the annotation is display-only and gates
+nothing; unlike the historical imports, this command does not require a
+Bitcoin Core connection):
+
+```bash
+just import-body-invalid-stales \
+  --csv data/consensus/body_invalid_stales.csv \
+  --source-label "merge-mining-research@<commit>"
+```
+
+The mirror is refreshed together with the error-block catalogue and the
+historical manifest by `just gen-research-publication-pins`, and its header
+pin must name the same research commit. The importer is strict: any malformed
+row, an empty file, or a hash that is also in the pinned error-block
+catalogue is fatal (the research overlay and catalogue are disjoint by
+construction, so an overlap means the pins are out of step). The mirror is an
+authoritative snapshot: re-imports replace rows in place and prune any
+annotation the newest pin withdrew, so a corrected rule, a corrected evidence
+URL, or a removed row propagates without an operator delete. Annotated blocks
+remain ordinary `stale` rows; only the block detail and tree hover surface
+the annotation, and the projection join is additionally gated on
+`kind = 'stale'`.
+
 ## Import
 
 Prepare the database and research artifacts:

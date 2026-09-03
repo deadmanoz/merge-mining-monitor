@@ -120,6 +120,13 @@ pub struct TreeNode {
     /// for canonical/stale/error-block nodes and for pending/never-Core-checked
     /// unknowns.
     pub btc_orphan_class: Option<String>,
+    /// Body-level consensus annotation rule from the operator-imported
+    /// `body_invalid_stale` reference table (e.g. `bad-blk-sigops`): the node
+    /// stays `kind='stale'` but its complete body is known consensus-invalid
+    /// from external full-block evidence. Serde-skipped when absent, so only
+    /// annotated nodes carry the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_invalid_rule: Option<String>,
     pub prev_id: Option<usize>,
     pub prev_hash: String,
     pub bitcoin_miner_pool: PoolObject,
@@ -206,9 +213,10 @@ pub struct TreeLegend {
 const BLOCK_ROW_SELECT: &str = "\
 SELECT b.btc_header_hash, b.btc_prev_header_hash, b.btc_height, b.kind, \
        b.btc_header_time, b.live_observed, b.core_attested, b.pow_validated, \
-       p.id, p.slug, p.canonical_name, b.btc_orphan_class \
+       p.id, p.slug, p.canonical_name, b.btc_orphan_class, bis.rule \
 FROM block b \
-LEFT JOIN pool p ON p.id = b.bitcoin_miner_pool_id";
+LEFT JOIN pool p ON p.id = b.bitcoin_miner_pool_id \
+LEFT JOIN body_invalid_stale bis ON bis.hash = b.btc_header_hash AND b.kind = 'stale'";
 
 fn tree_window_from_resolved(
     window: ResolvedTreeWindow,

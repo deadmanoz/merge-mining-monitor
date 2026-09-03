@@ -27,6 +27,7 @@ pub(super) struct ParentProjection {
     pub(super) height: Option<i32>,
     pub(super) kind: ParentKind,
     pub(super) btc_orphan_class: Option<String>,
+    pub(super) body_invalid_rule: Option<String>,
     pub(super) header_time: i64,
     pub(super) bitcoin_miner_pool: PoolObject,
     /// Best-available display miner: the strict `bitcoin_miner_pool` when known,
@@ -87,6 +88,7 @@ pub(super) fn project_blocks(
                 height: block.height,
                 kind: block.kind,
                 btc_orphan_class: block.btc_orphan_class.clone(),
+                body_invalid_rule: block.body_invalid_rule.clone(),
                 header_time: block.header_time,
                 bitcoin_miner_pool: block.bitcoin_miner_pool.clone(),
                 display_miner_pool,
@@ -157,6 +159,7 @@ pub(super) fn project_direct_events(
             // Direct-event projections have no read-model `block` row, so no
             // Core-gated orphan class (pending by construction).
             btc_orphan_class: None,
+            body_invalid_rule: None,
             header_time: first.header_time,
             bitcoin_miner_pool: unknown_pool(),
             // Near/unknown direct-event parents are not validated Bitcoin blocks,

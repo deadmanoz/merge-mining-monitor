@@ -60,6 +60,7 @@ seed, and append-only forward migrations.
 | `0014_add_error_block_historical_provenance.sql` | Allows the retained `error-block-observations` publication scope to record its actual `error_block` classification in source-row provenance; normal historical taxonomy is unchanged. |
 | `0015_add_historical_import_artifact.sql` | Adds the 0.7.4 `historical_import_artifact` receipt table. It is retained as applied migration history and retired by `0016`. |
 | `0016_drop_historical_import_artifact.sql` | Drops the receipt table after `import-all` switches to publication-versus-database state comparison. Artifact SHA values remain integrity checks only. |
+| `0017_add_body_invalid_stale.sql` | Adds the operator-imported `body_invalid_stale` annotation table (hash PK in internal byte order, advisory `btc_height`, `rule`, `evidence_url`, `source_label`, `imported_at`) for stale blocks whose body is known consensus-invalid from external full-block evidence. Display annotation joined at API projection only; never consulted by classification or reconciliation, and never promotes a row to `error_block`. Loaded by `import-body-invalid-stales`. |
 
 `0002_seed_sources.sql` is only for fresh/reset databases. It intentionally
 raises if `source` is already populated, so a non-reset database fails cleanly

@@ -706,6 +706,10 @@ Each tree node has:
   `kind` stays
   the structural evidence state; `btc_orphan_class` is the refinement the UI
   renders. It is a per-node detail field, not a navigable bucket;
+- `body_invalid_rule` (optional): the body-invalid annotation rule (e.g.
+  `bad-blk-sigops`) from the operator-imported `body_invalid_stale` table,
+  present only on annotated stale nodes (omitted elsewhere). A display
+  annotation: the node's `kind` stays `stale`;
 - `pool`;
 - `source_summary`;
 - `child_chain_evidence[]`, grouped by active AuxPoW `source` and
@@ -792,7 +796,11 @@ Response fields:
   `weak_btc_orphan` / `excluded`, else `null`), nullable
   `error_block_reason` (the live classifier or pinned fallback catalogue's
   primary consensus-rejection token for `kind = 'error_block'`, otherwise
-  `null`), nullable `coinbase_tag`
+  `null`), nullable `body_invalid` (`{ rule, evidence_url }` from the
+  operator-imported `body_invalid_stale` annotation table for a stale block
+  whose complete body is known consensus-invalid from external full-block
+  evidence; the kind stays `stale` and `null` means no annotation row),
+  nullable `coinbase_tag`
   (for Core-attested canonical rows with stored Core coinbase
   evidence, extracted from `block.btc_coinbase_script`; otherwise extracted
   from the representative Bitcoin coinbase script in
@@ -800,7 +808,8 @@ Response fields:
   `bitcoin_miner_pool`, `display_miner_pool` + `display_miner_basis` (the
   best-available display miner; see the glossary), and `source_summary`.
   Direct-projected near/unknown blocks (no read-model row) carry
-  `btc_orphan_class: null` and `error_block_reason: null`;
+  `btc_orphan_class: null`, `error_block_reason: null`, and
+  `body_invalid: null`;
 - `proofs`;
 - `event_details`;
 - `competition`;
@@ -1125,6 +1134,7 @@ roughly doubles the payload for a value this endpoint's clients do not need.
 | `block.height` | null (direct-projected) | null (direct-projected) | required | required | required |
 | `block.kind` | required | required | required | required | required |
 | `block.error_block_reason` | null | null | null | null | required |
+| `block.body_invalid` | null | null | null | object or null | null |
 | `block.coinbase_tag` | null or printable tag | null or printable tag | null or printable tag | null or printable tag | null or printable tag |
 | `block.header` | required | required | required | required | required |
 | `block.bitcoin_miner_pool` | required | required | required | required | required |

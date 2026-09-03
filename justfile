@@ -143,6 +143,10 @@ gen-historical-source-manifest *args="":
 gen-error-blocks-catalogue *args="":
     ./scripts/gen-error-blocks-catalogue.sh {{args}}
 
+# Focused body-invalid stales mirror generator (data/consensus/body_invalid_stales.csv).
+gen-body-invalid-stales *args="":
+    ./scripts/gen-body-invalid-stales.sh {{args}}
+
 serve:
     cargo run -- serve
 
@@ -191,6 +195,9 @@ import-all *args:
 
 import-known-stales *args:
     cargo run -- import-known-stales {{args}}
+
+import-body-invalid-stales *args:
+    cargo run -- import-body-invalid-stales {{args}}
 
 reclassify-known-stales *args:
     cargo run -- reclassify-known-stales {{args}}

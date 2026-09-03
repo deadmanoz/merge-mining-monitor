@@ -6,6 +6,19 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Annotate the two F2Pool `bad-blk-sigops` stale blocks (heights 783,426 and
+  784,121) as body-invalid without reclassifying them: a new operator-imported
+  `body_invalid_stale` reference table (migration 0017, loaded by
+  `import-body-invalid-stales` from the pinned
+  `data/consensus/body_invalid_stales.csv` mirror, refreshed with the other
+  Research pins) is joined at API projection time as a nullable
+  `block.body_invalid` object and an optional tree-node `body_invalid_rule`,
+  and the UI surfaces a Body validity row with the rule's help dialog and an
+  external evidence link plus a tree hover annotation. Annotated blocks remain
+  ordinary `kind='stale'` rows; classification, orphan derivation, and
+  reconciliation never consult the table, and the importer refuses any hash
+  that is also in the pinned error-block catalogue.
+
 ## [0.7.11] - 2026-09-02
 
 - Bulk-reconcile historical parents whose canonical classification is already

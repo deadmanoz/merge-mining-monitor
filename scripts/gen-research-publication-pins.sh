@@ -8,9 +8,10 @@ usage() {
     cat <<'USAGE'
 Usage: scripts/gen-research-publication-pins.sh [--check] [--allow-missing-repo] [--repo-dir DIR] [--source-commit COMMIT]
 
-Generate or verify the historical manifest and compact error-block catalogue
-from one Research commit. Generation stages both outputs before publishing
-them; --check runs both checks and fails if either one fails.
+Generate or verify the historical manifest, compact error-block catalogue,
+and compact body-invalid stales mirror from one Research commit. Generation
+stages every output before publishing them; --check runs every check and
+fails if any one fails.
 
 Output paths are managed by this command and cannot be overridden.
 USAGE
@@ -43,6 +44,7 @@ if [ "${check}" -eq 1 ]; then
     status=0
     ./scripts/gen-historical-source-manifest.sh "${args[@]}" || status=1
     ./scripts/gen-error-blocks-catalogue.sh "${args[@]}" || status=1
+    ./scripts/gen-body-invalid-stales.sh "${args[@]}" || status=1
     exit "${status}"
 fi
 
@@ -55,13 +57,19 @@ trap cleanup EXIT
 
 manifest="${scratch}/historical-source-manifest.json"
 catalogue="${scratch}/error_blocks.csv"
+body_invalid="${scratch}/body_invalid_stales.csv"
 ./scripts/gen-historical-source-manifest.sh "${args[@]}" --out "${manifest}"
 ./scripts/gen-error-blocks-catalogue.sh \
     "${args[@]}" \
     --historical-manifest "${manifest}" \
     --out "${catalogue}"
+./scripts/gen-body-invalid-stales.sh \
+    "${args[@]}" \
+    --historical-manifest "${manifest}" \
+    --out "${body_invalid}"
 
 mv -f "${manifest}" data/historical/historical-source-manifest.json
 mv -f "${manifest%.json}.sha256" data/historical/historical-source-manifest.sha256
 mv -f "${catalogue}" data/consensus/error_blocks.csv
-printf 'published both staged Research pins\n'
+mv -f "${body_invalid}" data/consensus/body_invalid_stales.csv
+printf 'published all staged Research pins\n'

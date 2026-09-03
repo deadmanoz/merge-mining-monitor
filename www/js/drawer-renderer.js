@@ -114,7 +114,17 @@ function auxpowHelpFor(topic) {
 // classifier can emit tokens this map has not seen yet. An unmapped token falls
 // back to its raw value with no help control (see `consensusRuleHelpFor` and
 // `renderParentBlock`) rather than opening an empty or mislabelled dialog.
+// Core reject-family tokens surfaced by the body-invalid annotation (e.g.
+// `bad-blk-sigops`) resolve through the same map and dialog.
 const CONSENSUS_RULE_HELP = {
+  "bad-blk-sigops": {
+    name: "Too many sigops (bad-blk-sigops)",
+    meta: "Signature-operation cost exceeds Bitcoin's 80,000 limit",
+    body: [
+      "Bitcoin caps a block's total signature-operation cost at 80,000. A block over the cap is rejected by every consensus-following node with bad-blk-sigops, however much proof of work it carries.",
+      "This violation lives in the block body, which merge-mining stale evidence cannot see: the header and coinbase alone pass every available check. The monitor therefore keeps such a block as an ordinary stale and carries this annotation from externally observed full-block evidence (the two known cases are the F2Pool blocks at heights 783,426 and 784,121).",
+    ],
+  },
   bip34_v2_coinbase_height_mismatch: {
     name: "BIP34 coinbase height mismatch (version 2+)",
     meta: "Coinbase scriptSig does not begin with this block's height",
@@ -268,6 +278,19 @@ function consensusRejectionValue(token) {
   return `${esc(help.name)} ${consensusRuleInfoButton(token, help)}`;
 }
 
+// The "Body validity" row value for a body_invalid annotation: the humanised
+// rule (with its help control when mapped) plus an external evidence link.
+// The block's kind stays stale; this row only surfaces the annotation.
+function bodyInvalidValue(bodyInvalid) {
+  const help = consensusRuleHelpFor(bodyInvalid.rule);
+  const name = help
+    ? `${esc(help.name)} ${consensusRuleInfoButton(bodyInvalid.rule, help)}`
+    : esc(bodyInvalid.rule);
+  if (!bodyInvalid.evidence_url) return name;
+  const label = "Open the external full-block evidence for this annotation";
+  return `${name} <a class="explorer-link" href="${esc(bodyInvalid.evidence_url)}" target="_blank" rel="noopener noreferrer" title="${label}" aria-label="${label}">evidence</a>`;
+}
+
 function renderDrawer() {
   const container = $("#drawer");
   const error = state.errors.block;
@@ -323,6 +346,12 @@ function renderParentBlock(block) {
   }
   if (block.kind === "error_block") {
     rows.push(["Consensus rejection", consensusRejectionValue(block.error_block_reason)]);
+  }
+  // A body_invalid annotation marks a stale block whose complete body is known
+  // consensus-invalid from external full-block evidence. The kind stays stale
+  // (the header passed every stale-profile check); only this row changes.
+  if (block.body_invalid) {
+    rows.push(["Body validity", bodyInvalidValue(block.body_invalid)]);
   }
   if (block.coinbase_tag) {
     rows.push(["Coinbase tag", esc(block.coinbase_tag)]);
