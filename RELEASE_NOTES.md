@@ -2,8 +2,8 @@
 
 ## [0.7.13] - 2026-09-09
 
-- Import the complete historical Research publication, including ROD's
-  authenticated evidence and corrected external-target handling for Xaya.
+- Support importing the complete historical Research publication, including
+  ROD's authenticated evidence and corrected external-target handling for Xaya.
 - Mark i0coin's current chain status as Unknown because March 2026 snapshot
   timestamps establish an evidence boundary, not current network availability.
 

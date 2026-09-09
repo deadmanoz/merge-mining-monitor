@@ -1,6 +1,6 @@
 {
   "schema_version": "v1",
-  "generated_at": 1788965117,
+  "generated_at": 1788968000,
   "version": "0.7.13",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
@@ -11,7 +11,7 @@
         "version": "0.7.13",
         "date": "2026-09-09",
         "items": [
-          "Import the complete historical Research publication, including ROD's authenticated evidence and corrected external-target handling for Xaya.",
+          "Support importing the complete historical Research publication, including ROD's authenticated evidence and corrected external-target handling for Xaya.",
           "Mark i0coin's current chain status as Unknown because March 2026 snapshot timestamps establish an evidence boundary, not current network availability."
         ],
         "item_count": 2,
