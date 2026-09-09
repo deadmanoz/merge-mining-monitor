@@ -22,6 +22,8 @@ This changelog starts with the initial release.
 - Align strict coinbase eligibility with the refreshed Research evidence for
   Hathor now that the reconstructed coinbase is preserved, so a real
   coinbase can satisfy the same historical validation rule as other sources.
+  Schedule a durable full orphan recheck on upgrade so eligible existing
+  Hathor-backed unknown parents converge from the earlier weak verdict.
 
 - Register SpaceXpanse ROD as historical source `auxpow:rod` at permanent id
   35, with a complete native-node recovery profile through child height
