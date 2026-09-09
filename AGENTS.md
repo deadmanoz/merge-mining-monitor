@@ -30,6 +30,10 @@ Use `just` targets, not raw commands, when a target exists:
 - `just reclassify-unknown-parents`, `just reclassify-pools`,
   `just reconcile-read-model` - repair and enrichment commands.
 
+Database-backed test binaries run serially in `just test-integration` and CI
+because schema isolation does not isolate PostgreSQL advisory locks. Preserve
+concurrent tasks inside each locking test.
+
 ## Architecture Rules
 
 - The workspace is split by ownership: `mmm-pg` opens connections,
