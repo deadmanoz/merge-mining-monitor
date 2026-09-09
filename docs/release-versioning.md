@@ -18,7 +18,10 @@ Release tags use `v<SemVer>`, for example `v0.1.0`.
 3. Update `CHANGELOG.md` and replace every static `?v=<old-version>` import and
    stylesheet cache key under `www/` with `?v=<new-version>`.
 4. Regenerate `fixtures/api/version.json` from the actual `/api/v1/version`
-   response after editing `RELEASE_NOTES.md`.
+   response after editing `RELEASE_NOTES.md`. Refresh the matching
+   `/api/v1/version` example in `docs/api-contract.md` and update the
+   `fixtures/api/manifest.json` scenario when the runtime version or release
+   projection changes.
 5. Run the quality gates: `just lint`, `just test`, `just test-integration`.
 6. Build from the same commit.
 7. Tag the commit as `vX.Y.Z`.
