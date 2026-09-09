@@ -365,6 +365,7 @@ Lifecycle Registry with lifecycle `historical`; no live producer):
 - `auxpow:ixcoin`
 - `auxpow:lyncoin`
 - `auxpow:myriadcoin`
+- `auxpow:rod`
 - `auxpow:sixeleven`
 - `auxpow:terracoin`
 - `auxpow:unobtanium`

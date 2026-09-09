@@ -124,7 +124,7 @@
       "notable": [
         "Core placement decides canonical and stale before any orphan logic runs.",
         "Core-absent does not automatically mean orphan; candidates still need Bitcoin proof of work and `nBits` checks.",
-        "Strict orphan classification requires a real Bitcoin coinbase with a post-BIP34 height plus an `nBits` epoch match. Sources with no trustworthy BTC coinbase height, including RSK and Hathor, are limited to weak classification.[^1][^2]",
+        "Strict orphan classification requires a real Bitcoin coinbase with a post-BIP34 height plus an `nBits` epoch match. Reconstructed Hathor coinbases can satisfy this when the height and other gates pass; sources without a trustworthy BTC coinbase height, including RSK, remain limited to weak classification.[^1][^2]",
         "If the committed `nBits` table does not yet cover a candidate, the row stays pending instead of being guessed."
       ],
       "key_facts": [
@@ -1029,11 +1029,11 @@
     "technical": {
       "mechanism": "Hathor uses RFC 0006 split-header AuxPoW.[^6] The proof stores the parent header edges, the coinbase pieces, and the merkle path; the monitor recomputes the parent transaction merkle root from the coinbase and merkle path, splices it into the 80-byte header, and accepts the rebuilt SHA-256d parent header only when it hashes back to the Hathor block.",
       "uniqueness": "The important difference from Namecoin-family AuxPoW is format and parent scope. Hathor uses the ASCII `Hath` commitment marker, RFC 0006 defines no chain ID or strict chain-ID field, and the parent can be any SHA-256d chain.[^6] Bitcoin relevance is therefore a classification result, not something assumed from the Hathor block itself.",
-      "capture": "The monitor reads Hathor through the public REST API because mainnet is permissioned for node operation. For each candidate block, it reconstructs the SHA-256d parent header from the split-header proof, verifies the reconstruction identity, checks Bitcoin proof of work, and filters non-Bitcoin SHA-256d parents through the `nBits` table. Bitcoin Core then places known parent hashes as canonical or stale; Core-absent Hathor parents are weak orphan evidence because the proof does not provide a trustworthy BIP34 Bitcoin coinbase height.",
+      "capture": "The monitor reads Hathor through the public REST API because mainnet is permissioned for node operation. For each candidate block, it reconstructs the SHA-256d parent header and real Bitcoin coinbase from the split-header proof, verifies the reconstruction identity, checks Bitcoin proof of work, and filters non-Bitcoin SHA-256d parents through the `nBits` table. Bitcoin Core then places known parent hashes as canonical or stale; Core-absent Hathor parents can use strict or weak orphan checks depending on whether the reconstructed coinbase supplies a valid BIP34 height and the other gates pass.",
       "bitcoin_relevance": "Hathor is useful after filtering, not because every Hathor parent is Bitcoin. Its short block interval creates many chances to observe a BTC parent, but the recovered stale signal mostly corroborates older merge-mined sources.",
       "notable": [
         "A reconstructed header is admitted only after the hash identity matches; a plausible-looking header is not enough.",
-        "Hathor evidence alone supports weak orphan checks, not strict orphan checks, because no trustworthy BIP34 height is available."
+        "Hathor's reconstructed Bitcoin coinbase can support strict orphan checks when its BIP34 height and other validation gates pass; rows without a trustworthy height remain weak."
       ],
       "key_facts": [
         {
@@ -1050,12 +1050,12 @@
         },
         {
           "label": "Orphan limit",
-          "value": "Weak only unless another source supplies a trustworthy Bitcoin BIP34 height"
+          "value": "Strict when reconstructed coinbase height and other gates pass; weak fallback when the height is absent"
         }
       ],
       "recovery": [
         "Non-Bitcoin SHA-256d parents are skipped before rows become Bitcoin evidence.",
-        "Rows that pass filtering are placed by Bitcoin Core; Core-absent Hathor parents remain weak orphan evidence."
+        "Rows that pass filtering are placed by Bitcoin Core; Core-absent Hathor parents use strict checks when reconstructed coinbase evidence is sufficient and weak checks otherwise."
       ]
     },
     "provenance": {

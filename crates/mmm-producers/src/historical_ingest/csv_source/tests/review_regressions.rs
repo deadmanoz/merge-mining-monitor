@@ -31,6 +31,33 @@ fn xaya_powdata_target_requires_zero_pure_header_nbits() {
 }
 
 #[test]
+fn accepts_real_xaya_publication_with_zero_header_and_external_target() {
+    let input = include_str!("../../../../../../fixtures/xaya/xaya_monitor_evidence.csv");
+    let row = input.lines().nth(1).expect("Xaya fixture data row");
+    let parsed = candidate("xaya", row).expect("authenticated Xaya canonical witness");
+
+    assert_eq!(parsed.evidence.child_height, Some(901));
+    assert_eq!(
+        parsed.evidence.child_block_hash,
+        Some(
+            hex::decode("532e410b32f1c9e6ed8ce17afe58e9b0aa408d958481e8ffcb6eefc9aa40679d")
+                .unwrap()
+        )
+    );
+    let header = parsed.evidence.child_header_bytes.as_ref().unwrap();
+    assert_eq!(&header[72..76], &[0, 0, 0, 0]);
+    assert_eq!(parsed.evidence.child_block_time, Some(1_531_504_538));
+    assert_eq!(parsed.evidence.child_nbits, Some(0x1830_fe39));
+    assert_eq!(parsed.evidence.pow_validates_child_target, Some(true));
+    assert_eq!(
+        parsed.btc_parent_display_hash,
+        "00000000000000000033ee726f0e7d55a5c2cc7e4aead173e925130c68977595"
+    );
+    assert_eq!(parsed.historical_provenance.btc_height, Some(531_784));
+    assert_eq!(parsed.historical_provenance.classification, "canonical");
+}
+
+#[test]
 fn rod_powdata_target_uses_external_nbits_for_parent_work() {
     let (hash, header) = child_identity_with_nbits(0);
     for (child_nbits, expected_pow) in [("1d00ffff", true), ("184c238c", false)] {
