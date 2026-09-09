@@ -71,13 +71,15 @@ Core supplying canonical context:
   (2011), Syscoin (2016), RSK (2018), Elastos (2018), Hathor (2020), and Fractal
   Bitcoin (2024). Bitcoin Core supplies the canonical backbone and classifies
   every header.
-- **Recovered datasets** (19 chains) are historical AuxPoW records from chains with
+- **Recovered datasets** (20 chains) are historical AuxPoW records from chains with
   no live producer, ingested from recovered evidence: Argentum, Bitcoin Vault,
   Bitmark, CoiledCoin, Crown, Devcoin, Electric Cash, Emercoin, Geistgeld,
-  Groupcoin, Huntercoin, i0coin, Ixcoin, Lyncoin, Myriadcoin, SixEleven,
+  Groupcoin, Huntercoin, i0coin, Ixcoin, Lyncoin, Myriadcoin, SpaceXpanse ROD, SixEleven,
   Terracoin, Unobtanium, and Xaya. Lyncoin is complete from genesis through the
   last SHA-256d block at height 260,499 (11 canonical Bitcoin parents);
-  SixEleven is complete through its available tip at height 999,406 (seven).
+  SixEleven is complete through its available tip at height 999,406 (seven),
+  and ROD's sealed full-chain scan through height 4,127,689 found one canonical
+  Bitcoin witness.
   The recovered dataset production artefacts live in the companion
   [`merge-mining-research`](https://github.com/deadmanoz/merge-mining-research)
   repository; this monitor commits the provenance manifest and derived runtime

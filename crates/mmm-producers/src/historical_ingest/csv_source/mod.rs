@@ -13,6 +13,7 @@ use mmm_capture::capture::{
     HistoricalEventProvenance, NormalizedEventEvidence, RskEvidencePayload,
 };
 use mmm_capture::nbits_table::NbitsTable;
+use mmm_capture::source_registry::ChildTargetLocation;
 
 use super::config::HistoricalChainSpec;
 use super::publication::NORMALIZED_COLUMNS;
@@ -233,12 +234,15 @@ fn validate_parent_fields(
 }
 
 fn validate_child_bundle(
-    chain: &str,
+    child_target_location: ChildTargetLocation,
     child_hash: Option<&[u8]>,
     child_header: Option<&[u8]>,
     child_time: Option<i64>,
     child_nbits: Option<u32>,
 ) -> Result<(), SkipReason> {
+    if child_target_location == ChildTargetLocation::PowData && child_nbits == Some(0) {
+        return Err(SkipReason::EvidenceMismatch);
+    }
     let Some(header) = child_header else {
         return Ok(());
     };
@@ -262,8 +266,17 @@ fn validate_child_bundle(
             .try_into()
             .expect("80-byte child header has nBits field"),
     );
-    if chain != "xaya" && child_nbits.is_some_and(|nbits| header_nbits != nbits) {
-        return Err(SkipReason::EvidenceMismatch);
+    match child_target_location {
+        ChildTargetLocation::HeaderNbits => {
+            if child_nbits.is_some_and(|nbits| header_nbits != nbits) {
+                return Err(SkipReason::EvidenceMismatch);
+            }
+        }
+        ChildTargetLocation::PowData => {
+            if header_nbits != 0 {
+                return Err(SkipReason::EvidenceMismatch);
+            }
+        }
     }
     Ok(())
 }
@@ -583,7 +596,12 @@ mod tests {
     }
 
     fn child_identity() -> (String, String) {
-        let raw = hex::decode(GENESIS_HEADER).unwrap();
+        child_identity_with_nbits(0x1d00_ffff)
+    }
+
+    fn child_identity_with_nbits(nbits: u32) -> (String, String) {
+        let mut raw = hex::decode(GENESIS_HEADER).unwrap();
+        raw[72..76].copy_from_slice(&nbits.to_le_bytes());
         let hash = sha256d::Hash::hash(&raw).to_byte_array();
         (hex::encode(hash), hex::encode(raw))
     }
@@ -901,28 +919,6 @@ mod tests {
                 SkipReason::HashMismatch | SkipReason::EvidenceMismatch
             ));
         }
-    }
-
-    #[test]
-    fn xaya_uses_its_external_authenticated_child_target() {
-        let (hash, header) = child_identity();
-        let parsed = candidate(
-            "xaya",
-            &row(TestRow {
-                chain: "xaya",
-                child_height: "42",
-                child_hash: &hash,
-                child_header: &header,
-                child_time: "1231006505",
-                child_nbits: "184c238c",
-                classification: "stale",
-                relevance_reason: "valid_direct_stale",
-                ..TestRow::default()
-            }),
-        )
-        .unwrap();
-        assert_eq!(parsed.evidence.child_nbits, Some(0x184c238c));
-        assert_eq!(parsed.evidence.pow_validates_child_target, Some(false));
     }
 
     #[test]

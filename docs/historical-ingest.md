@@ -29,12 +29,12 @@ the committed parent-only counts while still checking the Git publication
 metadata. The explicit release check above omits that flag and rescans the
 materialized payloads.
 
-`import-all` verifies the source revision, manifest, and all 29 artifacts once,
+`import-all` verifies the source revision, manifest, and all 30 artifacts once,
 before database mutation, then imports the verified readers in chain order.
 
 ## Publication Contract
 
-The publication contains 1,037,005 event rows across 27 uniform per-chain files:
+The publication contains 1,283,863 event rows across 28 uniform per-chain files:
 
 ```text
 results/monitor-evidence/<chain>_monitor_evidence.csv
@@ -43,7 +43,8 @@ results/monitor-evidence/<chain>_monitor_evidence.csv
 Doichain participates through the same path with a valid zero-row file. The
 separate 21-row `stale-descendants` file is an aggregate view, not an event
 source, because its contributing chain observations already exist in the
-per-chain files.
+per-chain files. The complete artifact set also includes 88 authenticated
+error-observation witnesses, for 1,283,972 rows across 30 artifacts.
 
 The total includes 456,660 canonical Namecoin rows whose historical source does
 not authenticate a child hash or height. The Monitor manifest pins that
@@ -53,6 +54,15 @@ requires one of those partial identities.
 Fractal's 58,970 canonical rows retain child height and remain importable even
 though they lack an exact child hash. Every non-canonical row still requires a
 child hash or height.
+
+The refreshed I0coin artifact contains 27,854 rows. Its canonical Bitcoin
+parents span heights 158,531 through 689,505 and Bitcoin times 1,324,518,895
+through 1,625,316,364; its 191 stale parents span heights 160,948 through
+645,179 and Bitcoin times 1,325,885,242 through 1,598,297,126. The canonical
+rows carry no child height; the stale rows span child heights 179,843 through
+3,259,608. RSK contributes 236,432 rows, including
+236,073 canonical and 353 stale rows; its child heights span 141,809 through
+9,220,885 for canonical rows and 263,443 through 9,214,131 for stale rows.
 
 A complete publication also carries
 `error-block-observations_monitor_evidence.csv`: documented child witnesses for
@@ -128,15 +138,29 @@ exact SHA256d child hash when the hash cell is empty. This is authenticated
 identity from the supplied header, not a placeholder. The importer never
 substitutes a scan counter, Bitcoin parent time, zero, or another synthetic
 value. An individual event must have a child hash, child height, or child
-header. When a child hash, timestamp, or `nBits` is also present, the header
-must authenticate that companion independently. Xaya is the documented
-exception to the header-field `nBits` comparison because its authenticated
-effective target lives in `PowData`.
+header. When a child hash or timestamp is also present, the header must
+authenticate that companion independently. For ordinary sources, a present
+`child_nbits` must equal the header field. Xaya and ROD declare the `PowData`
+target location explicitly in the source registry: their pure-header `nBits`
+must be zero and a present, non-zero `child_nbits` is the effective target
+imported from the reviewed Research publication.
 
 When `child_nbits` is present, the importer compares the imported Bitcoin
 parent hash with that compact target and persists the result as
 `pow_validates_child_target`. This is the same target test used by live
-Namecoin-family capture, including Xaya's authenticated effective target.
+Namecoin-family capture. For a `PowData` source, the importer verifies the zero
+pure-header field and the Bitcoin parent's work against the imported effective
+target. It does not retain or parse the `PowData` envelope, so the target's
+provenance is the pinned, digested Research publication rather than something
+it can derive from `child_header_hex` alone.
+
+ROD is registered as a historical source even though its native chain remains
+live. Its sealed recovery scan covers child heights 0 through 4,127,689 and
+authenticated 1,058,017 SHA256d observations. One row meets the publication
+gates: ROD block 2,697,753 witnesses canonical Bitcoin block 886,688 on 7 March
+2025. The matching Research artifact and accepted revision are now represented
+by the refreshed Monitor publication pins. This documents import readiness
+only; it does not claim that a database import or deployment has completed.
 
 A real child hash is exact identity: `(source_id, child_block_hash)`. A hashless
 row uses `(source_id, child_height, btc_parent_header_hash)` as partial identity.
@@ -149,7 +173,7 @@ An exact identity represents the one child-ledger block exposed under that
 hash, including the parent proof retained by the child node. A later row with
 the same source and child hash but a different Bitcoin parent is contradictory
 source evidence, not a second event, and fails closed. The pinned publication
-contains 244,016 non-null child hashes with no duplicate
+contains 494,655 non-null child hashes with no duplicate
 `(chain, child_block_hash)` identities.
 
 `child_block_hash` encodes the exact bytes stored by live capture. For
@@ -162,7 +186,7 @@ cross-checks, while the stored parent identity is derived from
 `expected_nbits` is the publication validator's expected Bitcoin target for an
 admitted row. When populated, it must equal the `nBits` encoded in
 `btc_header_hex`; disagreement is contradictory evidence and fails closed.
-All 3,696 populated values in the pinned publication satisfy this invariant.
+All 3,951 populated values in the pinned publication satisfy this invariant.
 
 `historical_event_provenance` retains every imported source row. Its
 `publication_ref` is the pinned research commit for manifest-backed imports and

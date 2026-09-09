@@ -275,7 +275,7 @@ child-height bounds:
 just reconcile-read-model --all --batch-size 1000 --max-iterations 100000
 ```
 
-The 1,037,005-row publication plus live-producer rows exceeds the default
+The 1,283,863-row publication plus live-producer rows exceeds the default
 budget, so this uses the deployment smoke test's full-scan ceiling. It revisits
 captured headers, records catalogue matches as `error_block`, and rebuilds
 source health. Error blocks are neither stale nor orphan evidence, so no orphan

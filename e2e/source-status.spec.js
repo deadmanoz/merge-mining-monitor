@@ -210,6 +210,44 @@ function sourceFixture() {
       },
       {
         ...base,
+        id: 35,
+        code: "auxpow:rod",
+        chain: "rod",
+        last_seen_at: 1741327653,
+        status: "stale",
+        sync: {
+          mode: "historical",
+          state: "historical",
+          progress_height: null,
+          progress_updated_at: null,
+          target_height: null,
+          latest_evidence_at: null,
+          error_code: null,
+          error_height: null,
+        },
+        counts: { events: 1, near: 0, unknown: 0, canonical: 1, stale: 0, strict_orphan: 0, weak_orphan: 0, error_block: 0 },
+      },
+      {
+        ...base,
+        id: 18,
+        code: "auxpow:i0coin",
+        chain: "i0coin",
+        last_seen_at: 1774483200,
+        status: "stale",
+        sync: {
+          mode: "historical",
+          state: "historical",
+          progress_height: null,
+          progress_updated_at: null,
+          target_height: null,
+          latest_evidence_at: 1774483200,
+          error_code: null,
+          error_height: null,
+        },
+        counts: { events: 27854, near: 0, unknown: 2, canonical: 27661, stale: 191, strict_orphan: 2, weak_orphan: 0, error_block: 0 },
+      },
+      {
+        ...base,
         id: 29,
         code: "auxpow:doichain",
         chain: "doichain",
@@ -610,6 +648,23 @@ test("relationship chip distinguishes every public source lifecycle", async ({ p
   await expect(sixelevenCapture.locator('dt:text-is("Events") + dd')).toHaveText("7");
   await expect(sixelevenCapture.locator('dt:text-is("Canonical") + dd')).toHaveText("7");
   await expect(sixelevenCapture.locator('dt:text-is("Stale") + dd')).toHaveText("0");
+  await closeDialog();
+
+  await page.locator('.source-info-button[data-source-info="auxpow:rod"]').click();
+  await expect(history).toContainText("Recovered dataset");
+  await expect(history).toContainText("4,127,689");
+  await expect(history).toContainText("chain remains live");
+  await page.locator("#sd-tab-capture").click();
+  const rodCapture = page.locator("#sd-panel-capture");
+  await expect(rodCapture.locator('dt:text-is("Events") + dd')).toHaveText("1");
+  await expect(rodCapture.locator('dt:text-is("Canonical") + dd')).toHaveText("1");
+  await expect(rodCapture.locator('dt:text-is("Stale") + dd')).toHaveText("0");
+  await closeDialog();
+
+  await page.locator('.source-info-button[data-source-info="auxpow:i0coin"]').click();
+  await expect(history).toContainText("Recovered dataset");
+  await expect(history).toContainText("Unknown.");
+  await expect(history).toContainText("26 March 2026");
   await closeDialog();
 
   // Partial recovered subset: selectable, with explicit partial scope and the

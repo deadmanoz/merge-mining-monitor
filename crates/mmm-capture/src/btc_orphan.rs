@@ -22,6 +22,7 @@ pub const STRICT_BIP34_CHAINS: &[&str] = &[
     "fractal",
     "geistgeld",
     "groupcoin",
+    "hathor",
     "huntercoin",
     "i0coin",
     "ixcoin",

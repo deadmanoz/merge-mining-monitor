@@ -1160,27 +1160,27 @@
   },
   "i0coin": {
     "ticker": "I0C",
-    "chain_status": "dead",
-    "status_detail": "Recovered historical dataset, not a live producer. The recovered window is overwhelmingly canonical attestation: 16,958 Bitcoin main-chain blocks merge-mined from December 2011 into January 2018 (F2Pool dominant, with BTC.TOP and Eligius also prominent among the pools), alongside 166 admitted stale blocks, the last in January 2018. Coverage comes from a January 2018 i0coin block snapshot, and no reachable explorer exposes the chain producing blocks today.",
+    "chain_status": "unknown",
+    "status_detail": "Recovered historical dataset with no live Monitor producer. A complete March 2026 block-file snapshot contributes 27,661 canonical Bitcoin observations, 191 accepted direct stales and two strict BTC-orphan observations. Accepted Bitcoin evidence ends in July 2021; stored child-block timestamps extend into March 2026.[^10]",
     "tagline": "Early 90-second AuxPoW chain with dense recovered Bitcoin stale evidence.",
-    "byline": "2011-2018",
+    "byline": "2011-2026 snapshot",
     "display": {
       "name": "i0coin"
     },
     "history": {
       "founded": "Launched in August 2011 as an early SHA-256d Bitcoin-family chain.[^1]",
       "merge_mining": "Began merge-mining Bitcoin at i0coin (I0C) height `160,000` on 20 December 2011.[^2]",
-      "ended": "Treated here as a historical Bitcoin-evidence source. Recovery uses a January 2018 third-party block snapshot rather than live polling; that snapshot bounds current coverage, and the January 2018 last stale is only the last admitted off-chain block, not the limit of the canonical attestation. No public i0coin explorer is reachable today, so the chain is treated as dead for this monitor.",
-      "narrative": "i0coin (I0C) appears in the 2018 merge-mining study as one of the early SHA-256d AuxPoW chains.[^9]\n\nIts 90-second block target is the important difference for Bitcoin stale recovery. Over one ten-minute Bitcoin interval, i0coin could record roughly six or seven AuxPoW proofs, giving short-lived Bitcoin stales more chances to be preserved than on ten-minute child chains.\n\nFor this monitor, i0coin is a recovered historical source, and most of its value is canonical. 16,958 of its merge-mined blocks attest to Bitcoin main-chain blocks, spanning BTC heights `158,531`-`505,261` (December 2011 to January 2018), mined by Bitcoin pools with F2Pool dominant and BTC.TOP and Eligius also prominent. Against that backbone sit 166 admitted stale blocks across BTC heights `160,948`-`504,952` (January 2012 to January 2018): the rarer cases where i0coin hashpower committed to a Bitcoin block the main chain did not keep. January 2018 bounds the recovered snapshot, not the chain's whole history; anything after that snapshot is not represented here."
+      "ended": "The recovered snapshot contains child-block timestamps through 26 March 2026. Its latest accepted canonical Bitcoin parent is from July 2021 and its latest accepted direct stale is from August 2020. These are evidence boundaries, not a verified shutdown date or an assessment of current network availability.[^10]",
+      "narrative": "i0coin (I0C) appears in the 2018 merge-mining study as one of the early SHA-256d AuxPoW chains.[^9]\n\nIts 90-second block target provides roughly six or seven child-block opportunities per ten-minute Bitcoin interval. That creates opportunities to preserve short-lived Bitcoin stales, without guaranteeing that any particular stale was observed.\n\nThe complete March 2026 snapshot contributes 27,661 canonical observations across Bitcoin heights `158,531`-`689,505` (December 2011 to July 2021), 191 accepted direct stales across `160,948`-`645,179` (January 2012 to August 2020), and two strict BTC-orphan observations. The snapshot adds 25 I0coin stale witnesses, all for headers already recovered through other child chains.[^10]"
     },
     "technical": {
       "mechanism": "i0coin uses Namecoin-family `CAuxPow`: a merge-mined block embeds a Bitcoin parent header, parent coinbase, and Merkle branch proving the i0coin block commitment. AuxPoW starts at I0C height `160,000`; the child chain uses strict chain ID `2`.[^2]",
-      "uniqueness": "The short block target creates dense sampling. Several i0coin blocks can point at the same Bitcoin parent work inside one Bitcoin interval, so evidence is counted by distinct Bitcoin parent header, not by child block count.",
-      "capture": "i0coin is imported from a committed historical CSV, not polled live. Recovery parsed a January 2018 third-party `blk*.dat` snapshot originally distributed through the i0coin archival site.[^3] It kept AuxPoW rows at or above I0C height `160,000`, reconstructed Bitcoin parent headers, filtered for Bitcoin proof of work, deduplicated repeated parent hashes, and classified surviving parents with Bitcoin Core. The monitor imports the committed validated stale CSV and revalidates each row before it enters the Bitcoin tree.",
-      "bitcoin_relevance": "i0coin contributes recovered Bitcoin evidence across BTC heights `158,531`-`505,261` (December 2011 to January 2018): 16,958 canonical blocks attesting to the Bitcoin main chain (F2Pool dominant, with BTC.TOP and Eligius also present), plus 166 admitted stales within BTC `160,948`-`504,952` (the last in January 2018). The canonical body is the merge-mining attestation itself; the stales are the off-chain subset. Its short 90-second cadence makes it a dense witness for short-lived stales, while the January 2018 snapshot defines the current coverage boundary.",
+      "uniqueness": "The short block target creates dense sampling. Distinct child blocks can witness the same Bitcoin parent; the Monitor preserves each authenticated child event while grouping shared parent headers in the Bitcoin tree.",
+      "capture": "Recovery processed all 87 block files in the March 2026 snapshot, containing 4,700,682 distinct stored child headers. Every qualifying AuxPoW observation was independently checked, and Bitcoin Core classified its parent. The Monitor imports the normalized per-chain publication with full Bitcoin coinbases and exact child identities; it does not run a live I0coin producer.[^10]",
+      "bitcoin_relevance": "The publication contributes 27,661 canonical Bitcoin observations, 191 accepted direct stales and two strict BTC-orphan observations. Canonical parents span BTC `158,531`-`689,505`; direct stales span `160,948`-`645,179`. Three I0coin witnesses of already catalogued invalid Bitcoin parents are carried separately as error observations, never as stales or orphans.[^10]",
       "notable": [
         "Strict chain ID `2` distinguishes i0coin from other early Namecoin-family chains in the AuxPoW header.[^2]",
-        "The 90-second target is why duplicate Bitcoin parent headers are expected and deduplicated before classification."
+        "Distinct child witnesses remain separate even when they carry the same Bitcoin parent header."
       ],
       "key_facts": [
         {
@@ -1201,14 +1201,14 @@
         }
       ],
       "recovery": [
-        "Committed dataset contributes 16,958 canonical Bitcoin blocks (BTC `158,531`-`505,261`, mined by F2Pool, BTC.TOP, Eligius, and other pools) and 166 admitted stale blocks (BTC `160,948`-`504,952`).",
-        "The recovered set overlaps both upstream bitcoin-data/stale-blocks and Namecoin's validated set.",
-        "Post-BCH-fork rows are admitted only when `nBits` confirms they match Bitcoin difficulty."
+        "The complete March 2026 snapshot preserves all 166 earlier accepted I0coin stales and adds 25 witnesses, yielding 191 accepted direct stales.[^10]",
+        "Canonical Bitcoin observations increase to 27,661, with 27,854 ordinary publication rows including two strict BTC-orphan observations.[^10]",
+        "The snapshot timestamps extend into March 2026, while accepted canonical Bitcoin evidence ends in July 2021 and direct-stale evidence ends in August 2020.[^10]"
       ]
     },
     "provenance": {
-      "source": "Recovered historical dataset from an offline parse of a January 2018 third-party i0coin `blk*.dat` snapshot; monitor ingestion uses the normalized `results/monitor-evidence/i0coin_monitor_evidence.csv` publication from merge-mining-research.",
-      "coverage": "Canonical attestation spans BTC heights `158,531`-`505,261` (December 2011 to January 2018) / I0C child heights `161,910`-`2,358,495`; the 166 admitted stales fall within BTC `160,948`-`504,952` (January 2012 to January 2018, the last in January 2018). The January 2018 endpoint is the recovered snapshot boundary, not an Emercoin-style shutdown date; I0C blocks below `160,000` predate AuxPoW, and activity after the snapshot is not covered by the current monitor dataset."
+      "source": "Offline processing of the complete March 2026 I0coin block-file snapshot; Monitor ingestion consumes the normalized `results/monitor-evidence/i0coin_monitor_evidence.csv` publication from merge-mining-research.[^10]",
+      "coverage": "All 87 block files and 4,700,682 distinct stored child headers were processed. Canonical Bitcoin parents span heights `158,531`-`689,505`, and direct stales span `160,948`-`645,179`. Stored child timestamps range from August 2011 to March 2026; this does not establish active-chain membership or replay full child-chain consensus.[^10]"
     },
     "references": [
       {
@@ -1222,14 +1222,14 @@
         "url": "https://raw.githubusercontent.com/domob1812/i0coin/master/src/chainparams.cpp"
       },
       {
-        "id": 3,
-        "label": "izerocoin.org (archival project site)",
-        "url": "https://izerocoin.org/"
-      },
-      {
         "id": 9,
         "label": "Stifter et al. 2018 (merge-mining study, IACR ePrint)",
         "url": "https://eprint.iacr.org/2018/1134.pdf"
+      },
+      {
+        "id": 10,
+        "label": "Reviewed I0coin snapshot recovery and evidence boundaries",
+        "url": "https://github.com/deadmanoz/merge-mining-research/blob/e09f52b11c207a6a226ea5531e093ab80ca6a5fd/docs/chains/i0coin.md"
       }
     ]
   },
@@ -1521,7 +1521,8 @@
       "recovery": [
         "Uncle traversal matters: uncles can expose Bitcoin parent headers that are not visible in the canonical RSK block stream.",
         "RSK overlaps the Foundry-era mining landscape, which older recovered datasets cannot cover.",
-        "Core-absent RSK parents are useful investigation material, but RSK evidence alone cannot supply the BIP34 height needed for strict orphan placement."
+        "Core-absent RSK parents are useful investigation material, but RSK evidence alone cannot supply the BIP34 height needed for strict orphan placement.",
+        "The pinned historical publication contributes 236,073 canonical Bitcoin observations, 353 direct-stale observations, three stale-descendant observations and three strict BTC-orphan observations corroborated by the publication. RSK alone still cannot supply a real Bitcoin coinbase height.[^4]"
       ]
     },
     "provenance": {
@@ -1543,6 +1544,11 @@
         "id": 3,
         "label": "Modern Merge-mining (Sergio Lerner, IOVlabs)",
         "url": "https://medium.com/iovlabs-innovation-stories/modern-merge-mining-f294e45101a0"
+      },
+      {
+        "id": 4,
+        "label": "Reviewed RSK historical recovery",
+        "url": "https://github.com/deadmanoz/merge-mining-research/blob/e09f52b11c207a6a226ea5531e093ab80ca6a5fd/docs/chains/rsk.md"
       }
     ]
   },
@@ -2238,6 +2244,71 @@
         "id": 2,
         "label": "Poolin VCash merged mining guide",
         "url": "https://help.poolin.me/hc/en-us/articles/360028328092-Poolin-com-has-supported-merged-mining-of-Vcash-alongside-BTC"
+      }
+    ]
+  },
+  "rod": {
+    "display": {
+      "name": "SpaceXpanse ROD"
+    },
+    "ticker": "ROD",
+    "chain_status": "active",
+    "status_detail": "Recovered historical dataset from a complete unpruned native-node scan through ROD height 4,127,689. The chain remains live, but this monitor does not poll it. Of 1,058,017 authenticated SHA256d merge-mining observations, one meets the Monitor's Bitcoin publication gates: ROD block 2,697,753 witnesses canonical Bitcoin block 886,688 on 7 March 2025.",
+    "tagline": "Complete historical scan with one authenticated canonical Bitcoin witness.",
+    "byline": "2022-2026",
+    "history": {
+      "founded": "Mainnet genesis is dated 4 June 2022 in the pinned ROD consensus source.[^1]",
+      "merge_mining": "ROD uses a dual-algorithm proof design. Its SHA256d branch serializes a `PowData` envelope with merge-mined algorithm byte `0x81` and Namecoin-family AuxPoW; its other proof branch carries no Bitcoin parent.[^1]",
+      "ended": "The ROD chain remains live. The Monitor registers a completed historical capture through height `4,127,689` rather than a live producer, so later child blocks are outside this recovery snapshot.",
+      "narrative": "SpaceXpanse ROD launched from its mainnet genesis in June 2022 and supports both NeoScrypt and SHA256d proof of work.[^1]\n\nThe recovered dataset comes from a fully synchronized, unpruned native node. Every child block from genesis through height `4,127,689` was read, with no missing blocks, and every SHA256d merge-mining proof was authenticated before its Bitcoin parent was classified.\n\nThe scan found one parent that meets the publication gates: ROD block `2,697,753` records canonical Bitcoin block `886,688`, dated 7 March 2025. The remaining observations are retained as research diagnostics: 68,246 build on active Bitcoin predecessors but have insufficient work for Bitcoin’s target, one builds on a known stale predecessor at lower work, and 989,769 have unresolved parent-network identity and fail the Bitcoin admission screens."
+    },
+    "technical": {
+      "mechanism": "ROD's SHA256d blocks use a Xaya-style `PowData` wrapper. Algorithm byte `0x81` identifies merge-mined SHA256d, followed by an external compact target and a Namecoin-family `CAuxPow` proof binding the ROD child block to a SHA256d parent header; Bitcoin identity is checked separately.[^1]",
+      "uniqueness": "The pure 80-byte child header deliberately carries zero `nBits`; the authenticated effective target comes from `PowData`. ROD uses AuxPoW chain ID `1899` and mainnet message magic `a2f2f693`.[^1]",
+      "capture": "A pinned ROD 0.6.8.10 node at source revision `248f1af050579a369af527288f5773a021ae8492` synchronized the complete unpruned chain and exposed full historical blocks. Recovery scanned child heights `0` through `4,127,689`, authenticated 1,058,017 SHA256d observations, checked child identity and Merkle proofs, and applied the external child target plus Bitcoin work and Core-placement gates.",
+      "bitcoin_relevance": "The recovered snapshot contributes one eligible canonical witness. ROD block `2,697,753` (`4707fda9b70993a867cf9026a4c977a5fc8ebf8c4bb3b3512596357520bae21b`) authenticates Bitcoin block `886,688` (`00000000000000000001822dc3db70b75d281687f8baa10d1818d0703f49fec0`). Full block bodies, Merkle roots, BIP34 height, coinbase commitment, AuxPoW proof, external child target, and Bitcoin parent identity were independently rechecked.",
+      "notable": [
+        "ROD is active, while this source lifecycle is historical: the registration describes a sealed recovery snapshot and does not imply live polling.",
+        "The external `PowData` target must be non-zero while the pure-header `nBits` field remains zero; ordinary header-target equality would reject valid ROD evidence.",
+        "A complete chain scan can yield a very small admitted set. Lower-work and unresolved observations remain research evidence but do not enter the Bitcoin tree."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Namecoin-family `CAuxPow` inside an external-target `PowData` envelope[^1]"
+        },
+        {
+          "label": "Branch filter",
+          "value": "`0x81` merge-mined SHA256d"
+        },
+        {
+          "label": "Chain ID",
+          "value": "`1899`"
+        },
+        {
+          "label": "Recovered window",
+          "value": "ROD heights `0` through `4,127,689`"
+        },
+        {
+          "label": "Admitted evidence",
+          "value": "One canonical Bitcoin witness at BTC height `886,688`"
+        }
+      ],
+      "recovery": [
+        "The full scan covered 4,127,690 child blocks and authenticated 1,058,017 SHA256d merge-mining observations with zero missing blocks.",
+        "One row passes the publication gates: ROD `2,697,753` to canonical Bitcoin `886,688` on 7 March 2025.",
+        "The non-published inventory contains 68,246 lower-work observations on active Bitcoin predecessors, one lower-work observation on a known stale predecessor, and 989,769 unresolved observations."
+      ]
+    },
+    "provenance": {
+      "source": "Complete historical recovery from a native ROD 0.6.8.10 node built from pinned source revision `248f1af050579a369af527288f5773a021ae8492`; the node retained full blocks and verified ROD consensus while the recovery pass authenticated and classified embedded Bitcoin parents.[^1]",
+      "coverage": "Every ROD block from genesis through height `4,127,689`, whose endpoint hash is `4a16afd2df5efd2ae7db5e07ba83820bf3174914efe2754da618a150c3df6b0a`. The later live chain is outside this sealed capture."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "SpaceXpanse ROD source at pinned revision 248f1af",
+        "url": "https://github.com/SpaceXpanse/rod-core-wallet/tree/248f1af050579a369af527288f5773a021ae8492"
       }
     ]
   }

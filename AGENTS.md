@@ -65,6 +65,17 @@ concurrent tasks inside each locking test.
 - Historical and partial source imports are authoritative snapshots. Live
   source publication imports are additive. Keep this lifecycle distinction in
   the shared source registry, not in per-chain schema branches.
+- The current Research pin is generated from committed revision `e09f52b` and
+  covers 28 event artifacts plus the stale-descendant and error-observation
+  aggregates, 30 artifacts and 1,283,972 rows in total. Refresh the manifest
+  and catalogue together with `just gen-research-publication-pins`; a refreshed
+  pin documents import readiness, not a completed database import or deploy.
+- Historical describes the recovered dataset, not whether its native chain is
+  still active. ROD has no live Monitor producer. The registry's
+  `ChildTargetLocation` also owns the target contract: Xaya and ROD use
+  `PowData`, with zero pure-header `nBits` and a non-zero effective target
+  supplied by the pinned Research publication. The importer checks parent work
+  against that target; the pure header alone cannot authenticate it.
 - `import-all` determines work by comparing normalized publication-owned fields
   with non-operator historical provenance and base events across research pins.
   Artifact SHA values verify bytes only. A complete match must return before

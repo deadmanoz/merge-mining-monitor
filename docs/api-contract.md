@@ -1029,6 +1029,10 @@ block, and sources endpoints as documented per endpoint above. See
 
 Purpose: drive source filters and health panels.
 
+The source fixture includes ROD (`auxpow:rod`, permanent id 35) as a
+historical capture with one canonical observation and no live-poller progress.
+Its native chain can remain active independently of the capture lifecycle.
+
 Response fields:
 
 - `sources[]` sorted by `id`.

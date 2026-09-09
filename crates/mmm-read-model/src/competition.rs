@@ -206,9 +206,10 @@ pub(crate) async fn resolve_persisted_core_coinbase_bitcoin_miner_pool_id<C: Gen
 /// Best BIP34 coinbase height usable as STRICT orphan evidence for this parent:
 /// any active non-near event from a strict-eligible chain (see
 /// [`btc_orphan::STRICT_BIP34_CHAINS`]) whose stored BTC parent coinbase
-/// scriptSig decodes to a height >= BIP34 activation. RSK (NULL coinbase),
-/// Hathor (reconstructed coinbase), and Xaya are excluded by the chain join, so
-/// they are weak-only. Returns `None` when no strict evidence is available.
+/// scriptSig decodes to a height >= BIP34 activation. Hathor's reconstructed
+/// Bitcoin coinbase preserves this evidence. RSK (NULL coinbase) and Xaya are
+/// excluded by the chain join, so they are weak-only. Returns `None` when no
+/// strict evidence is available.
 ///
 /// Crate-internal: the api crate cannot (and must not) reach this
 /// writer-crate helper; it carries its own DECLARED read-only copy in

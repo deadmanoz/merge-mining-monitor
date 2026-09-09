@@ -173,7 +173,7 @@ pub(super) fn parse_child_fields(
     let block_time = parse_optional_nonnegative_i64(record.get(layout.child_time))?;
     let nbits = parse_optional_compact_target(record.get(layout.child_nbits))?;
     validate_child_bundle(
-        spec.chain,
+        spec.child_target_location,
         block_hash.as_deref(),
         header_bytes.as_deref(),
         block_time,

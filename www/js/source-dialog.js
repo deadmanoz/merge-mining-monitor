@@ -17,7 +17,7 @@ const TABS = [
 
 // `chain_status` is a modal-only editorial label. Source grouping/filtering uses
 // (kind, SOURCE_LIFECYCLE) via relationshipChip(), not these status labels.
-const STATUS_LABELS = { active: "Active", zombie: "Zombie", dormant: "Dormant", dead: "Dead" };
+const STATUS_LABELS = { active: "Active", zombie: "Zombie", dormant: "Dormant", dead: "Dead", unknown: "Unknown" };
 
 // How this monitor relates to the chain, from (kind, lifecycle) - NOT lifecycle
 // alone, so the Bitcoin Core parent context is never labelled a producer.
