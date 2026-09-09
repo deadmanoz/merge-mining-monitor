@@ -109,7 +109,10 @@ concurrent tasks inside each locking test.
 - Hash byte order is fixed: store rust-bitcoin `to_byte_array()` bytes directly;
   use display/RPC hex only at presentation boundaries.
 - SQL migrations are append-only after they reach a persistent database. Add a
-  new migration; do not edit historical migrations.
+  new migration; do not edit historical migrations. The documented exception
+  is the registry-generated `0002` fresh/reset seed: regenerate it when adding
+  a source and also add an idempotent forward migration for existing databases
+  (see `migrations/README.md`).
 - Real database migrations go only through `just db-migrate-dev` or
   `just db-migrate-deploy`.
 - Never hand-edit generated runtime artifacts such as `data/pools/current.json`,
