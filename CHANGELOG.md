@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.7.13] - 2026-09-09
+
 - Refresh the Research publication pin to `e09f52b`, covering 1,283,863
   ordinary events across 28 chain artifacts, 21 stale-descendant summary rows,
   and 88 authenticated error witnesses. Preserve the 456,660 canonical
