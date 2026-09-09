@@ -375,8 +375,8 @@ function renderKindDialog(kind) {
   ].join("");
 }
 
-// The "About sources" explainer: source classes plus the reminder that a
-// chain's own status (active/zombie/dormant/dead) is separate from its source class.
+// The "About sources" explainer: source classes plus the reminder that native
+// chain status is separate from Monitor lifecycle and evidence coverage.
 function renderSourcesAboutDialog() {
   const classes = kvRows([
     ["Bitcoin Core parent chain", "The live Bitcoin Core node that classifies every recovered parent header. It is the classification authority, not a merge-mined producer."],
@@ -389,7 +389,7 @@ function renderSourcesAboutDialog() {
   return [
     `<p>Sources are grouped by how this monitor relates to each chain:</p>`,
     classes,
-    `<p>A source's <strong>Chain status</strong> row is a separate thing: it describes the altcoin's own state (active, zombie, dormant, or dead), which is not the same as whether this monitor has live evidence from that chain. Active means a current Bitcoin-evidence path; zombie means the chain still produces blocks but at negligible, sub-Bitcoin difficulty, so it is not active coverage. Dormant means inactive, uncertain, catalogued, or not yet recovered; dead means verified stopped, abandoned, migrated or forked away, or unreachable.</p>`,
+    `<p>A source's <strong>Chain status</strong> row describes the native chain's own state, separately from this monitor's lifecycle and evidence coverage. Active means the chain is currently producing blocks; zombie means it still produces blocks but at negligible, sub-Bitcoin difficulty; dormant means it is inactive or its state is uncertain; dead means it is verified stopped, abandoned, migrated or forked away, or unreachable; Unknown means the current native-chain status has not been established. A live monitor evidence path and a native Active status are separate facts: historical sources can provide recovered evidence without a poller, and an Active chain can lack current monitor evidence.</p>`,
   ].join("");
 }
 

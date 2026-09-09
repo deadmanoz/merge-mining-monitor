@@ -74,9 +74,10 @@ Core supplying canonical context:
 - **Recovered datasets** (20 chains) are historical AuxPoW records from chains with
   no live producer, ingested from recovered evidence: Argentum, Bitcoin Vault,
   Bitmark, CoiledCoin, Crown, Devcoin, Electric Cash, Emercoin, Geistgeld,
-  Groupcoin, Huntercoin, i0coin, Ixcoin, Lyncoin, Myriadcoin, SpaceXpanse ROD, SixEleven,
-  Terracoin, Unobtanium, and Xaya. Lyncoin is complete from genesis through the
-  last SHA-256d block at height 260,499 (11 canonical Bitcoin parents);
+  Groupcoin, Huntercoin, i0coin, Ixcoin, Lyncoin, Myriadcoin, SixEleven,
+  SpaceXpanse ROD, Terracoin, Unobtanium, and Xaya. Lyncoin is complete from
+  genesis through the last SHA-256d block at height 260,499 (11 canonical
+  Bitcoin parents);
   SixEleven is complete through its available tip at height 999,406 (seven),
   and ROD's sealed full-chain scan through height 4,127,689 found one canonical
   Bitcoin witness.

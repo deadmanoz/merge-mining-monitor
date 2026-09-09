@@ -324,7 +324,6 @@ fn resolve_manifest_csv_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mmm_capture::source_registry::ChildTargetLocation;
 
     #[test]
     fn research_pins_name_the_same_publication() {

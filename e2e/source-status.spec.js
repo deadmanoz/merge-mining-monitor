@@ -709,6 +709,8 @@ test("relationship chip distinguishes every public source lifecycle", async ({ p
   await expect(page.locator("#sources-about-dialog-body")).toContainText("Recovered subset");
   await expect(page.locator("#sources-about-dialog-body")).toContainText("Recovered survey");
   await expect(page.locator("#sources-about-dialog-body")).toContainText("Catalogued (not recovered)");
+  await expect(page.locator("#sources-about-dialog-body")).toContainText("Unknown means the current native-chain status has not been established");
+  await expect(page.locator("#sources-about-dialog-body")).toContainText("native Active status are separate facts");
 });
 
 test("deep links retain partial sources and drop non-selectable lifecycles", async ({ page }) => {

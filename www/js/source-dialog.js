@@ -175,8 +175,8 @@ function historyPanel(source, profile) {
   const cited = collectCites(profile.status_detail, h.founded, h.merge_mining, h.ended, h.narrative);
   const localMap = localRefMap(cited);
   // ONE source-class chip (the monitor's relationship to the source). The
-  // chain's own state (active/zombie/dormant/dead) moves to a scoped "Chain status"
-  // row, so it never reads as the source's evidence-liveness.
+  // native chain state moves to a scoped "Chain status" row, so it never reads
+  // as the Monitor lifecycle or evidence coverage.
   const rel = relationshipChip(source);
   const chips = `<div class="sd-chips">${chip(rel.label, `rel-${rel.cls}`)}</div>`;
   const chainStatus = STATUS_LABELS[profile.chain_status] || "Unknown";
