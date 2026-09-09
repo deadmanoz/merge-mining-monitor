@@ -283,11 +283,19 @@ fn xaya_powdata_target_rejects_nonzero_pure_header_or_zero_external_target() {
 #[test]
 fn xaya_powdata_target_keeps_child_hash_and_time_checks() {
     let (hash, header) = child_identity_with_nbits(0);
-    for (child_hash, child_time) in [
-        ("11".repeat(32), "1231006505".to_owned()),
-        (hash.clone(), "1231006506".to_owned()),
+    for (child_hash, child_time, expected_reason) in [
+        (
+            "11".repeat(32),
+            "1231006505".to_owned(),
+            SkipReason::HashMismatch,
+        ),
+        (
+            hash.clone(),
+            "1231006506".to_owned(),
+            SkipReason::EvidenceMismatch,
+        ),
     ] {
-        assert!(matches!(
+        assert_eq!(
             candidate(
                 "xaya",
                 &row(TestRow {
@@ -303,8 +311,8 @@ fn xaya_powdata_target_keeps_child_hash_and_time_checks() {
                 }),
             )
             .unwrap_err(),
-            SkipReason::HashMismatch | SkipReason::EvidenceMismatch
-        ));
+            expected_reason
+        );
     }
 }
 
