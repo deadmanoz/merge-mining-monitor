@@ -316,9 +316,10 @@ just import-all
 just reclassify-pools
 ```
 
-`import-all` verifies all 27 per-chain artifacts before the first database
-mutation. It then compares normalized publication-owned fields with stored
-non-operator provenance and base events across research pins. Matching files
+`import-all` verifies all 30 publication artifacts before the first database
+mutation: 28 per-chain event files, the stale-descendant aggregate, and the
+error-observation file. It then compares normalized publication-owned fields
+with stored non-operator provenance and base events across research pins. Matching files
 skip classification, writes, and authoritative reconciliation before the
 Bitcoin Core lock is taken. Changed files reuse compatible Core-attested
 canonical or structurally complete stale classifications already proven in the
