@@ -206,13 +206,15 @@ pub(crate) async fn resolve_persisted_core_coinbase_bitcoin_miner_pool_id<C: Gen
 /// Best BIP34 coinbase height usable as STRICT orphan evidence for this parent:
 /// any active non-near event from a strict-eligible chain (see
 /// [`btc_orphan::STRICT_BIP34_CHAINS`]) whose stored BTC parent coinbase
-/// scriptSig decodes to a height >= BIP34 activation. RSK (NULL coinbase),
-/// Hathor (reconstructed coinbase), and Xaya are excluded by the chain join, so
-/// they are weak-only. Returns `None` when no strict evidence is available.
+/// evidence passes the shared strict-height validator. Hathor additionally
+/// requires a complete coinbase transaction whose sole input script matches
+/// the stored script. RSK (NULL coinbase) and Xaya are excluded by the chain
+/// join, so they are weak-only. Returns `None` when no strict evidence is
+/// available.
 ///
 /// Crate-internal: the api crate cannot (and must not) reach this
 /// writer-crate helper; it carries its own DECLARED read-only copy in
-/// `crates/mmm-api/src/projection/shared.rs`, built on the shared
+/// `crates/mmm-api/src/projection/shared/mod.rs`, built on the shared
 /// mmm-capture parser and constants.
 pub(crate) async fn load_strict_bip34_height<C: GenericClient>(
     client: &C,
@@ -221,7 +223,7 @@ pub(crate) async fn load_strict_bip34_height<C: GenericClient>(
     let strict_chains: &[&str] = btc_orphan::STRICT_BIP34_CHAINS;
     let rows = client
         .query(
-            "SELECT e.btc_parent_coinbase_script \
+            "SELECT s.chain, e.btc_parent_coinbase_script, e.btc_parent_coinbase_tx_bytes \
              FROM merge_mining_event e \
              JOIN source s ON s.id = e.source_id \
              WHERE e.btc_parent_header_hash = $1 \
@@ -235,9 +237,11 @@ pub(crate) async fn load_strict_bip34_height<C: GenericClient>(
         .await
         .context("load strict BIP34 coinbase candidates")?;
     for row in rows {
-        let script: Vec<u8> = row.get(0);
-        if let Some(height) = parse_bip34_height(&script)
-            && height >= btc_orphan::BIP34_HEIGHT
+        let chain: String = row.get(0);
+        let script: Vec<u8> = row.get(1);
+        let tx_bytes: Option<Vec<u8>> = row.get(2);
+        if let Some(height) =
+            btc_orphan::strict_bip34_height_from_evidence(&chain, &script, tx_bytes.as_deref())
         {
             return Ok(Some(height));
         }

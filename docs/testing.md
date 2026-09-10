@@ -33,7 +33,10 @@ manifested.
 DB integration tests create isolated schemas, apply migrations, and tear down
 even when test bodies fail. Keep tests that assert table layout close to direct
 SQL seed helpers; use scenario helpers when the behavior should flow through
-production mutation paths.
+production mutation paths. The DB-backed test binaries run one test at a time:
+PostgreSQL advisory locks are database-wide, so separate schemas do not isolate
+the Core-cache barrier or its timing assertions. Concurrent tasks inside each
+test still exercise the production locking behavior.
 
 ## Frontend Tests
 

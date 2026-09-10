@@ -8,9 +8,33 @@ The compact catalogue header in `data/consensus/error_blocks.csv` must name
 that same commit; `just gen-error-blocks-catalogue` refuses a
 `--source-commit` that disagrees.
 
+Refresh both pins from one committed Research publication:
+
+```bash
+just gen-research-publication-pins \
+  --repo-dir "$MERGE_MINING_RESEARCH_DIR" \
+  --source-commit "$RESEARCH_COMMIT"
+```
+
+Materialize Research's event-file LFS payloads before running this command. The
+manifest generator verifies their pinned size and checksum, then measures each
+artifact's parent-only rows. The combined command stages the manifest and
+catalogue together and publishes them only after both generators succeed. It
+also takes the error-observation chain inventory from Research's
+`observation_chain_counts` field. The combined command does not accept `--out`.
+Run it again with `--check` before importing or releasing.
+
+Routine repository gates use `--check --allow-missing-repo`; that mode reuses
+the committed parent-only counts while still checking the Git publication
+metadata. The explicit release check above omits that flag and rescans the
+materialized payloads.
+
+`import-all` verifies the source revision, manifest, and all 30 artifacts once,
+before database mutation, then imports the verified readers in chain order.
+
 ## Publication Contract
 
-The publication contains 580,320 event rows across 27 uniform per-chain files:
+The publication contains 1,283,863 event rows across 28 uniform per-chain files:
 
 ```text
 results/monitor-evidence/<chain>_monitor_evidence.csv
@@ -19,7 +43,26 @@ results/monitor-evidence/<chain>_monitor_evidence.csv
 Doichain participates through the same path with a valid zero-row file. The
 separate 21-row `stale-descendants` file is an aggregate view, not an event
 source, because its contributing chain observations already exist in the
-per-chain files.
+per-chain files. The complete artifact set also includes 88 authenticated
+error-observation witnesses, for 1,283,972 rows across 30 artifacts.
+
+The total includes 456,660 canonical Namecoin rows whose historical source does
+not authenticate a child hash or height. The Monitor manifest pins that
+parent-only count per artifact. Preflight verifies and counts those rows, but
+omits them from state comparison and import because `merge_mining_event`
+requires one of those partial identities.
+Fractal's 58,970 canonical rows retain child height and remain importable even
+though they lack an exact child hash. Every non-canonical row still requires a
+child hash or height.
+
+The refreshed I0coin artifact contains 27,854 rows. Its canonical Bitcoin
+parents span heights 158,531 through 689,505 and Bitcoin times 1,324,518,895
+through 1,625,316,364; its 191 stale parents span heights 160,948 through
+645,179 and Bitcoin times 1,325,885,242 through 1,598,297,126. The canonical
+rows carry no child height; the stale rows span child heights 179,843 through
+3,259,608. RSK contributes 236,432 rows, including
+236,073 canonical and 353 stale rows; its child heights span 141,809 through
+9,220,885 for canonical rows and 263,443 through 9,214,131 for stale rows.
 
 A complete publication also carries
 `error-block-observations_monitor_evidence.csv`: documented child witnesses for
@@ -29,11 +72,12 @@ is `classification=error_block`, has `VALID_ERROR_BLOCK`, the catalogue's
 Bitcoin height and rejection reason, and blank stale-relevance fields. The file
 uses the normal 27-column header plus the seven RSK sidecar columns; non-RSK
 sidecar cells are blank and RSK witnesses carry complete sidecars. Its manifest
-requires exactly one 78-row entry with the generated source-chain inventory, so
-a missing, truncated, or cross-chain-substituted aggregate fails before database
-mutation. Its `error-block-observations` scope is reserved to that aggregate;
+requires exactly one error-observation entry whose row count and generated
+source-chain inventory match the committed manifest, so a missing, truncated,
+or cross-chain-substituted aggregate fails before database mutation. Its
+`error-block-observations` scope is reserved to that aggregate;
 ordinary historical artifacts using it are rejected. Preflight also requires
-coverage of all 35 pinned error parents across its witnesses, and checks
+coverage of all 39 pinned error parents across its witnesses, and checks
 retarget observations against the Core-derived target for their stated height.
 
 `data/historical/historical-source-manifest.json` pins each event payload by
@@ -53,8 +97,9 @@ Error-observation rows are admitted through a separate parser rather than
 widening the normal valid-evidence taxonomy. Bitcoin Core is mandatory: the
 importer requires both an exact local catalogue match and the shared
 Core-plus-catalogue parent resolver to produce the same `error_block` height
-and rejection reason. A row that would be skipped aborts the complete
-publication before it writes any normal chain artifact.
+and rejection reason. Except for the manifest-counted parent-only rows above, a
+row that would be skipped aborts the complete publication before it writes any
+normal chain artifact.
 
 Their `expected_nbits` is still required to be a valid compact target, but it
 records the network target expected at the catalogued height. It can therefore
@@ -93,15 +138,29 @@ exact SHA256d child hash when the hash cell is empty. This is authenticated
 identity from the supplied header, not a placeholder. The importer never
 substitutes a scan counter, Bitcoin parent time, zero, or another synthetic
 value. An individual event must have a child hash, child height, or child
-header. When a child hash, timestamp, or `nBits` is also present, the header
-must authenticate that companion independently. Xaya is the documented
-exception to the header-field `nBits` comparison because its authenticated
-effective target lives in `PowData`.
+header. When a child hash or timestamp is also present, the header must
+authenticate that companion independently. For ordinary sources, a present
+`child_nbits` must equal the header field. Xaya and ROD declare the `PowData`
+target location explicitly in the source registry: their pure-header `nBits`
+must be zero and a present, non-zero `child_nbits` is the effective target
+imported from the reviewed Research publication.
 
 When `child_nbits` is present, the importer compares the imported Bitcoin
 parent hash with that compact target and persists the result as
 `pow_validates_child_target`. This is the same target test used by live
-Namecoin-family capture, including Xaya's authenticated effective target.
+Namecoin-family capture. For a `PowData` source, the importer verifies the zero
+pure-header field and the Bitcoin parent's work against the imported effective
+target. It does not retain or parse the `PowData` envelope, so the target's
+provenance is the pinned, digested Research publication rather than something
+it can derive from `child_header_hex` alone.
+
+ROD is registered as a historical source even though its native chain remains
+live. Its sealed recovery scan covers child heights 0 through 4,127,689 and
+authenticated 1,058,017 SHA256d observations. One row meets the publication
+gates: ROD block 2,697,753 witnesses canonical Bitcoin block 886,688 on 7 March
+2025. The matching Research artifact and accepted revision are now represented
+by the refreshed Monitor publication pins. This documents import readiness
+only; it does not claim that a database import or deployment has completed.
 
 A real child hash is exact identity: `(source_id, child_block_hash)`. A hashless
 row uses `(source_id, child_height, btc_parent_header_hash)` as partial identity.
@@ -114,7 +173,7 @@ An exact identity represents the one child-ledger block exposed under that
 hash, including the parent proof retained by the child node. A later row with
 the same source and child hash but a different Bitcoin parent is contradictory
 source evidence, not a second event, and fails closed. The pinned publication
-contains 244,016 non-null child hashes with no duplicate
+contains 494,655 non-null child hashes with no duplicate
 `(chain, child_block_hash)` identities.
 
 `child_block_hash` encodes the exact bytes stored by live capture. For
@@ -127,7 +186,7 @@ cross-checks, while the stored parent identity is derived from
 `expected_nbits` is the publication validator's expected Bitcoin target for an
 admitted row. When populated, it must equal the `nBits` encoded in
 `btc_header_hex`; disagreement is contradictory evidence and fails closed.
-All 3,696 populated values in the pinned publication satisfy this invariant.
+All 3,951 populated values in the pinned publication satisfy this invariant.
 
 `historical_event_provenance` retains every imported source row. Its
 `publication_ref` is the pinned research commit for manifest-backed imports and
@@ -144,6 +203,11 @@ research publication legitimately contains raw scriptPubKey, address, and
 value-paired forms. Recognizable Bitcoin payout addresses participate in
 capture-time attribution, and `reclassify-pools` can replay from the stored
 text later.
+
+For Hathor unknown parents, strict BIP34 evidence requires a matching full
+coinbase transaction. A script without that transaction contributes only to the
+weak path, using the same rule as live capture, reconciliation and API height
+selection. Malformed transactions and contradictory scripts are rejected.
 
 ## Source Lifecycles And Existing Data
 
@@ -164,7 +228,10 @@ authoritative rows, retires manifest-backed provenance from every superseded
 publication commit for that chain, and enqueues affected parents in one
 transaction. Additive `operator-csv` provenance is preserved. A failure before
 that commit rolls back the whole chain, including restoration of the previous
-publication provenance. After commit, the importer drains the durable queue in
+publication provenance. After commit, the importer first rebuilds proven
+Core-canonical parents in bounded set-based batches. A parent qualifies only
+when every active event agrees with the Core-backed block's header, height,
+difficulty, and canonical classification. All other parents drain through
 bounded per-parent transactions. Primary reconcile results store their
 changed-hash cascade seeds in the same transaction, and queue work is removed
 only after its dependent cascade succeeds. An interruption at either boundary
@@ -220,6 +287,32 @@ membership-free diagnostic database. It is not a production cutover option.
 `--limit` must be greater than zero and makes a manifest import additive rather
 than authoritative.
 
+## Body-Invalid Stale Annotations
+
+Import the pinned body-invalid stales mirror after migrations, in any order
+relative to the publication import (the annotation is display-only and gates
+nothing; unlike the historical imports, this command does not require a
+Bitcoin Core connection):
+
+```bash
+just import-body-invalid-stales \
+  --csv data/consensus/body_invalid_stales.csv \
+  --source-label "merge-mining-research@<commit>"
+```
+
+The mirror is refreshed together with the error-block catalogue and the
+historical manifest by `just gen-research-publication-pins`, and its header
+pin must name the same research commit. The importer is strict: any malformed
+row, an empty file, or a hash that is also in the pinned error-block
+catalogue is fatal (the research overlay and catalogue are disjoint by
+construction, so an overlap means the pins are out of step). The mirror is an
+authoritative snapshot: re-imports replace rows in place and prune any
+annotation the newest pin withdrew, so a corrected rule, a corrected evidence
+URL, or a removed row propagates without an operator delete. Annotated blocks
+remain ordinary `stale` rows; only the block detail and tree hover surface
+the annotation, and the projection join is additionally gated on
+`kind = 'stale'`.
+
 ## Import
 
 Prepare the database and research artifacts:
@@ -260,13 +353,23 @@ processes
 chains in deterministic order, shares a Bitcoin-parent classification cache,
 combines candidate parsing, validation, and preclassification into one stream,
 fills the Bitcoin RPC client's configured bounded concurrency, and runs targeted
-stale-branch reconciliation after all sources are present. Canonical and
-Core-indexed stale parents do not query predecessor state from the database;
-that read-model lookup is deferred until Core proves the candidate header is
-absent. Transient Bitcoin Core transport failures and warmup responses are
-retried with bounded exponential backoff. Exhausting those retries fails
-preclassification explicitly instead of converting an operational failure
-into an `unknown` parent classification.
+stale-branch reconciliation after all sources are present. A parent already
+proved Core-attested canonical or structurally complete stale in the derived
+`block` state is reused when that verdict is compatible with the publication
+row. This avoids repeating Bitcoin Core header and full-block lookups merely
+because another publication coordinate changed. An inferred stale verdict is
+reused only for a row carrying stale or known-branch publication evidence and
+only while its stored canonical-competitor relationship remains intact.
+Event-only canonical, unknown, missing, half-rebuilt, or
+publication-incompatible state still goes through strict live Core
+classification. The dedicated error-observation aggregate also retains its
+Core-plus-catalogue check. Canonical and Core-indexed stale parents on the live
+path do not query predecessor state from the database; that read-model lookup
+is deferred until Core proves the candidate header is absent. Transient Bitcoin
+Core transport failures and warmup responses are retried with bounded
+exponential backoff. Exhausting those retries fails preclassification explicitly
+instead of converting an operational failure into an `unknown` parent
+classification.
 Digest verification, manifest-count inspection, and database mutation still
 read the artifact separately.
 Its per-chain and total summaries report expected, ingested, inserted, updated,

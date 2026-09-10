@@ -101,13 +101,78 @@ Example:
 ```json
 {
   "schema_version": "v1",
-  "generated_at": 1779792000,
-  "version": "0.7.6",
+  "generated_at": 1788968000,
+  "version": "0.7.13",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 16,
+    "release_count": 23,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.7.13",
+        "date": "2026-09-09",
+        "items": [
+          "Support importing the complete historical Research publication, including ROD's authenticated evidence and corrected external-target handling for Xaya.",
+          "Mark i0coin's current chain status as Unknown because March 2026 snapshot timestamps establish an evidence boundary, not current network availability."
+        ],
+        "item_count": 2,
+        "truncated": false
+      },
+      {
+        "version": "0.7.12",
+        "date": "2026-09-03",
+        "items": [
+          "Annotate the two F2Pool `bad-blk-sigops` stale blocks (heights 783426 and 784121) as body-invalid without changing their kind. Those blocks show a Body validity row with the rule's help and an evidence link, and remain ordinary stales."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
+      {
+        "version": "0.7.11",
+        "date": "2026-09-02",
+        "items": [
+          "Bulk-reconcile historical parents whose canonical status and event evidence already agree with Bitcoin Core, retaining strict reconciliation for ambiguous or conflicting evidence."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
+      {
+        "version": "0.7.10",
+        "date": "2026-09-02",
+        "items": [
+          "Preserve existing observation times during historical publication refreshes and skip parent reconciliation when only provenance or presentation text changed."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
+      {
+        "version": "0.7.9",
+        "date": "2026-09-02",
+        "items": [
+          "Refresh canonical parent coinbase-output text during historical imports while keeping binary outputs and full coinbase transactions fail closed."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
+      {
+        "version": "0.7.8",
+        "date": "2026-09-02",
+        "items": [
+          "Reuse compatible, proven parent classifications during historical imports, avoiding redundant Bitcoin Core header and full-block RPCs while retaining strict live validation for unknown, incomplete, or incompatible evidence."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
+      {
+        "version": "0.7.7",
+        "date": "2026-09-01",
+        "items": [
+          "Import Research's canonical publication: 1,037,005 ordinary events, 21 stale-descendant summaries, and 86 authenticated error observations covering 39 consensus-invalid Bitcoin parents. The four ancestry-recovered BIP34 mismatches become error blocks rather than orphans.",
+          "Verify all 29 publication artifacts before database mutation, including parent-only Namecoin counts, and refresh the historical manifest and compact error catalogue from the same Research commit."
+        ],
+        "item_count": 2,
+        "truncated": false
+      },
       {
         "version": "0.7.6",
         "date": "2026-08-29",
@@ -310,6 +375,7 @@ Lifecycle Registry with lifecycle `historical`; no live producer):
 - `auxpow:ixcoin`
 - `auxpow:lyncoin`
 - `auxpow:myriadcoin`
+- `auxpow:rod`
 - `auxpow:sixeleven`
 - `auxpow:terracoin`
 - `auxpow:unobtanium`
@@ -660,6 +726,10 @@ Each tree node has:
   `kind` stays
   the structural evidence state; `btc_orphan_class` is the refinement the UI
   renders. It is a per-node detail field, not a navigable bucket;
+- `body_invalid_rule` (optional): the body-invalid annotation rule (e.g.
+  `bad-blk-sigops`) from the operator-imported `body_invalid_stale` table,
+  present only on annotated stale nodes (omitted elsewhere). A display
+  annotation: the node's `kind` stays `stale`;
 - `pool`;
 - `source_summary`;
 - `child_chain_evidence[]`, grouped by active AuxPoW `source` and
@@ -746,7 +816,11 @@ Response fields:
   `weak_btc_orphan` / `excluded`, else `null`), nullable
   `error_block_reason` (the live classifier or pinned fallback catalogue's
   primary consensus-rejection token for `kind = 'error_block'`, otherwise
-  `null`), nullable `coinbase_tag`
+  `null`), nullable `body_invalid` (`{ rule, evidence_url }` from the
+  operator-imported `body_invalid_stale` annotation table for a stale block
+  whose complete body is known consensus-invalid from external full-block
+  evidence; the kind stays `stale` and `null` means no annotation row),
+  nullable `coinbase_tag`
   (for Core-attested canonical rows with stored Core coinbase
   evidence, extracted from `block.btc_coinbase_script`; otherwise extracted
   from the representative Bitcoin coinbase script in
@@ -754,7 +828,8 @@ Response fields:
   `bitcoin_miner_pool`, `display_miner_pool` + `display_miner_basis` (the
   best-available display miner; see the glossary), and `source_summary`.
   Direct-projected near/unknown blocks (no read-model row) carry
-  `btc_orphan_class: null` and `error_block_reason: null`;
+  `btc_orphan_class: null`, `error_block_reason: null`, and
+  `body_invalid: null`;
 - `proofs`;
 - `event_details`;
 - `competition`;
@@ -965,6 +1040,10 @@ block, and sources endpoints as documented per endpoint above. See
 
 Purpose: drive source filters and health panels.
 
+The source fixture includes ROD (`auxpow:rod`, permanent id 35) as a
+historical capture with one canonical observation and no live-poller progress.
+Its native chain can remain active independently of the capture lifecycle.
+
 Response fields:
 
 - `sources[]` sorted by `id`.
@@ -1079,6 +1158,7 @@ roughly doubles the payload for a value this endpoint's clients do not need.
 | `block.height` | null (direct-projected) | null (direct-projected) | required | required | required |
 | `block.kind` | required | required | required | required | required |
 | `block.error_block_reason` | null | null | null | null | required |
+| `block.body_invalid` | null | null | null | object or null | null |
 | `block.coinbase_tag` | null or printable tag | null or printable tag | null or printable tag | null or printable tag | null or printable tag |
 | `block.header` | required | required | required | required | required |
 | `block.bitcoin_miner_pool` | required | required | required | required | required |

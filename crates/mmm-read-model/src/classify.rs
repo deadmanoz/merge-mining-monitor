@@ -455,7 +455,38 @@ pub(crate) async fn persisted_classification_from_block<C: GenericClient>(
     event: &MergeMiningEvent,
     header: &Header,
 ) -> Result<Option<ParentClassification>> {
-    let persisted = load_block_cascade_state(client, &event.btc_parent_header_hash).await?;
+    persisted_classification_from_hash(client, &event.btc_parent_header_hash, header).await
+}
+
+/// Reuse a proven derived classification for an exact parent header.
+///
+/// Historical publication updates commonly attach new provenance to parents
+/// that the read model has already classified. Core-attested canonical state
+/// and structurally complete stale state are reusable by the ordinary
+/// publication path. A stale verdict may be inferred rather than Core-attested;
+/// its caller must still match it to stale publication evidence, and the stored
+/// canonical-competitor relationship must remain intact. Event-only canonical,
+/// error, unknown, and orphan state is not returned because those cases require
+/// their existing strict checks.
+pub async fn load_proven_parent_classification<C: GenericClient>(
+    client: &C,
+    header: &Header,
+) -> Result<Option<ParentClassification>> {
+    let classification =
+        persisted_classification_from_hash(client, &header.block_hash().to_byte_array(), header)
+            .await?;
+    Ok(classification.filter(|classification| {
+        classification.kind == ParentKind::Stale
+            || (classification.kind == ParentKind::Canonical && classification.core_attested)
+    }))
+}
+
+async fn persisted_classification_from_hash<C: GenericClient>(
+    client: &C,
+    parent_hash: &[u8],
+    header: &Header,
+) -> Result<Option<ParentClassification>> {
+    let persisted = load_block_cascade_state(client, parent_hash).await?;
     let Some(persisted) = persisted else {
         return Ok(None);
     };
@@ -467,7 +498,7 @@ pub(crate) async fn persisted_classification_from_block<C: GenericClient>(
     }
     if persisted.kind == BlockKind::ErrorBlock
         && persisted.btc_height_source == Some(HeightSource::ErrorBlockCatalog)
-        && mmm_capture::error_blocks::lookup(&event.btc_parent_header_hash).is_none()
+        && mmm_capture::error_blocks::lookup(parent_hash).is_none()
     {
         return Ok(None);
     }

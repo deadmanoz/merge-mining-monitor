@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::{BlockKind, ConfiguredParentClassifier, ParentClassification};
 use mmm_capture::capture::{
@@ -39,8 +39,8 @@ use super::preclassify::{ImportDecision, import_decision, preflight_and_classify
 #[cfg(feature = "db-integration")]
 use super::publication::inspect_error_observation_csv;
 use super::publication::{
-    ArtifactPreflight, ErrorObservationPreflight, preflight_artifact,
-    preflight_required_aggregate_artifacts,
+    ArtifactPreflight, ErrorObservationPreflight, PreparedPublication, preflight_artifact,
+    preflight_publication,
 };
 
 mod error_observations;
@@ -420,6 +420,7 @@ async fn import_rows_in_transaction(
         ..HistoricalImportSummary::default()
     };
     let mut parent_counts = HashMap::new();
+    let expected_parent_only_rows = artifact.parent_only_rows;
     let (mut reader, layout) = artifact.open_reader(context.spec)?;
 
     for record in reader.records() {
@@ -484,6 +485,22 @@ async fn import_rows_in_transaction(
             );
         }
     }
+    if context.config.limit.is_none()
+        && let Some(expected) = expected_parent_only_rows
+    {
+        let actual = summary
+            .skipped
+            .get(SkipReason::MissingChildIdentity.as_str())
+            .copied()
+            .unwrap_or_default();
+        ensure!(
+            actual == expected,
+            "{} import skipped {} parent-only rows, expected {}",
+            context.spec.chain,
+            actual,
+            expected
+        );
+    }
     Ok((summary, parent_counts))
 }
 
@@ -494,11 +511,22 @@ pub async fn run_historical_import_all(
     classifier: &ConfiguredParentClassifier,
     config: &super::config::HistoricalImportAllConfig,
 ) -> Result<HistoricalImportAllSummary> {
-    let error_observations = preflight_required_aggregate_artifacts(config)?;
-    let configs = config.chain_configs()?;
-    run_historical_import_configs(client, classifier, configs, error_observations).await
+    let PreparedPublication {
+        configs,
+        event_artifacts,
+        error_observations,
+    } = preflight_publication(config)?;
+    run_preflighted_historical_import_configs(
+        client,
+        classifier,
+        configs,
+        event_artifacts,
+        Some(error_observations),
+    )
+    .await
 }
 
+#[cfg(feature = "db-integration")]
 async fn run_historical_import_configs(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -513,6 +541,31 @@ async fn run_historical_import_configs(
         let artifact = preflight_artifact(chain_config, spec)?;
         preflighted_artifacts.push(artifact);
     }
+    run_preflighted_historical_import_configs(
+        client,
+        classifier,
+        configs,
+        preflighted_artifacts,
+        error_observations,
+    )
+    .await
+}
+
+async fn run_preflighted_historical_import_configs(
+    client: &mut Client,
+    classifier: &ConfiguredParentClassifier,
+    configs: Vec<HistoricalImportConfig>,
+    preflighted_artifacts: Vec<ArtifactPreflight>,
+    error_observations: Option<ErrorObservationPreflight>,
+) -> Result<HistoricalImportAllSummary> {
+    ensure!(
+        configs.len() == preflighted_artifacts.len()
+            && configs
+                .iter()
+                .zip(&preflighted_artifacts)
+                .all(|(config, artifact)| config.chain == artifact.chain),
+        "preflighted artifact order does not match import configs"
+    );
     let publication_backed = configs.iter().all(|config| config.manifest_path.is_some());
     let plan = if publication_backed {
         Some(

@@ -75,6 +75,7 @@ pub(super) async fn preflight_and_classify_candidates<C: GenericClient>(
             Some(nbits_table),
         ) {
             Ok(candidate) => candidate,
+            Err(SkipReason::MissingChildIdentity) => continue,
             Err(_) if config.manifest_path.is_none() => continue,
             Err(reason) => {
                 bail!(
@@ -156,6 +157,24 @@ async fn resolve_candidate<C: GenericClient>(
     candidate: ImportCandidate,
     parent_hash: Vec<u8>,
 ) -> Result<(Vec<u8>, ParentClassification)> {
+    if let Some(classification) = mmm_read_model::load_proven_parent_classification(
+        client,
+        &candidate.evidence.btc_parent_header,
+    )
+    .await?
+        && matches!(
+            classified_import_decision(
+                candidate.source_classification,
+                candidate.relevance_selection,
+                candidate.orphan_verdict,
+                classification.clone(),
+            ),
+            ImportDecision::CapturePreclassified(_)
+        )
+    {
+        return Ok((parent_hash, classification));
+    }
+
     let prev_hash = candidate
         .evidence
         .btc_parent_header

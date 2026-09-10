@@ -217,7 +217,7 @@ function blockPayload(hash, overrides = {}) {
   return {
     schema_version: "v1",
     generated_at: GENERATED_AT,
-    block,
+    block: { ...block, body_invalid: null },
     ...overrides,
   };
 }

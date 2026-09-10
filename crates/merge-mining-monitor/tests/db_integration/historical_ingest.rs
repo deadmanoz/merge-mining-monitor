@@ -18,13 +18,14 @@ use mmm_read_model::{
     clear_authoritative_historical_provenance_in_transaction, drain_historical_reconcile_queue,
     drain_historical_reconcile_queue_with_budget_for_test, enqueue_historical_parent_reconcile,
     rebuild_source_health, reconcile_authoritative_historical_source_in_transaction,
+    reconcile_proven_canonical_batch_for_test,
 };
 use mmm_store::get_source_id;
 
 use crate::support::scenario::{
     canonical_verdict, stale_verdict_with_competitor_header, unknown_verdict,
 };
-use crate::support::seed::insert_block;
+use crate::support::seed::{EventSeed, insert_block, insert_event};
 use crate::support::{
     absent_classifier, btc_400000_coinbase_script, btc_400000_header, btc_400000_orphan_fixture,
     header_meeting_bits,
@@ -1401,6 +1402,13 @@ fn write_manifest_fixture(header: &Header) -> Result<ManifestFixture> {
 }
 
 fn write_manifest_fixture_rows(rows: &[String]) -> Result<ManifestFixture> {
+    write_manifest_fixture_rows_with_parent_only(rows, 0)
+}
+
+fn write_manifest_fixture_rows_with_parent_only(
+    rows: &[String],
+    parent_only_rows: u64,
+) -> Result<ManifestFixture> {
     let row_count = u64::try_from(rows.len()).context("fixture row count exceeds u64")?;
     write_manifest_fixture_rows_with_counts(
         rows,
@@ -1411,12 +1419,14 @@ fn write_manifest_fixture_rows(rows: &[String]) -> Result<ManifestFixture> {
             "strict_btc_orphan": 0,
             "weak_btc_orphan": 0
         }),
+        parent_only_rows,
     )
 }
 
 fn write_manifest_fixture_rows_with_counts(
     rows: &[String],
     counts: serde_json::Value,
+    parent_only_rows: u64,
 ) -> Result<ManifestFixture> {
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1459,6 +1469,7 @@ fn write_manifest_fixture_rows_with_counts(
         .as_u64()
         .context("devcoin row_count")?;
     artifacts[devcoin_index]["row_count"] = serde_json::json!(row_count);
+    artifacts[devcoin_index]["parent_only_rows"] = serde_json::json!(parent_only_rows);
     artifacts[devcoin_index]["size_bytes"] = serde_json::json!(artifact_bytes.len());
     artifacts[devcoin_index]["sha256"] =
         serde_json::json!(sha256::Hash::hash(&artifact_bytes).to_string());
@@ -1599,6 +1610,18 @@ fn write_normalized_csv_row(header: &Header, row: &NormalizedCsvRow<'_>) -> Resu
 
 fn normalized_csv_line(header: &Header, row: &NormalizedCsvRow<'_>) -> String {
     normalized_csv_line_with_parent_coinbase(header, row, "", "")
+}
+
+fn without_child_identity(row: &str) -> String {
+    let mut fields = row
+        .trim_end()
+        .split(',')
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    fields[6].clear();
+    fields[7].clear();
+    fields[8].clear();
+    format!("{}\n", fields.join(","))
 }
 
 fn normalized_csv_line_with_child_header(

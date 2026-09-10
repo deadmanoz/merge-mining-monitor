@@ -63,4 +63,11 @@ jobs:
         run: ./scripts/migrate-safe.sh dev
 
       - name: Tests
-        run: cargo test --workspace --all-features
+        # Test schemas share production database-wide advisory locks.
+        run: cargo test --workspace --all-features -- --test-threads=1
+
+      - name: Publication artifact contract
+        run: |
+          ./scripts/test-historical-source-manifest.sh
+          ./scripts/test-gen-research-publication-pins.sh
+          ./scripts/gen-research-publication-pins.sh --check --allow-missing-repo

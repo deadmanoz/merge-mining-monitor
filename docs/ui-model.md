@@ -176,9 +176,9 @@ panel reports the supplied action. Clicking any branch member hydrates the
 matching branch through `anchor_hash`, so interior members resolve too.
 
 "Latest error block" navigates consensus-invalid, full-proof-of-work
-blocks, backed by `/api/v1/navigator/error-block`. The readout is the same
-height-plus-place form as "Latest stale", for example `#957,780 · 1 of 35`,
-because each item is a single block on the height axis. Ordering is newest-first
+blocks, backed by `/api/v1/navigator/error-block`. The readout uses the same
+height-plus-place form as "Latest stale" because each item is a single block on
+the height axis. Ordering is newest-first
 by height and then by stored hash bytes: more than one error block can share a
 height, so the hash tie-break is what makes stepping return every member exactly
 once. It accepts no `classification` filter, since consensus invalidity is not a

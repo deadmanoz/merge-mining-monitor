@@ -3,7 +3,7 @@
 //! writer in `super::capture`.
 
 use anyhow::{Context, Result};
-use futures::future::try_join_all;
+use futures::{StreamExt, future::try_join_all};
 use tracing::warn;
 
 use crate::chains::rsk::rpc::{RskBlock, RskRpcClient, decode_quantity_i64};
@@ -148,6 +148,20 @@ pub(crate) async fn fetch_rsk_height_bundle<S: RskBlockSource>(
         canonical: Some(canonical),
         uncles,
     })
+}
+
+/// Build the order-preserving fetch stream for the exact inclusive backfill
+/// range supplied by the operator. This helper is shared by production and its
+/// regression test so a future poller-floor clamp cannot bypass the test.
+pub(crate) fn fetch_rsk_height_bundles<S: RskBlockSource>(
+    source: S,
+    start_height: i32,
+    end_height: i32,
+    fetch_concurrency: usize,
+) -> impl futures::Stream<Item = Result<RskHeightBundle>> {
+    futures::stream::iter(start_height..=end_height)
+        .map(move |height| fetch_rsk_height_bundle(source.clone(), i64::from(height)))
+        .buffered(fetch_concurrency)
 }
 
 #[cfg(test)]
@@ -410,35 +424,30 @@ mod tests {
 
     #[test]
     fn backfill_fetch_pipeline_fetches_below_floor_heights_unclamped() {
-        use futures::StreamExt;
-
         // Regression pin for the acquisition-floor correction: the bounded
         // backfill must fetch its configured range verbatim. Heights below
-        // the poller's 139,999 acquisition floor are reachable history —
+        // the poller's 139,999 acquisition floor are reachable history:
         // pre-floor blocks carrying a complete 80-byte BTC parent header
-        // capture fine — so no `start.max(floor)` clamp may enter the
+        // capture fine, so no `start.max(floor)` clamp may enter the
         // backfill fetch/traverse path (the floor is applied only by the
-        // poller's `effective_start`). `run_rsk_backfill` itself needs a
-        // live RPC endpoint and a DB handle, so this drives the same
-        // `stream::iter(range).map(fetch_rsk_height_bundle).buffered(K)`
-        // pipeline its fetch stage runs.
+        // poller's `effective_start`). `run_rsk_backfill` itself needs a live
+        // RPC endpoint and a DB handle, so this drives its shared fetch-stream
+        // helper with an in-memory source.
         let floor = i64::from(crate::chains::by_id(crate::chains::ChainId::Rsk).activation_floor);
-        let (start, end) = (112_829_i64, 112_830_i64);
+        let (start, end) = (112_829_i32, 112_830_i32);
         assert!(
-            end < floor,
+            i64::from(end) < floor,
             "test range {start}..={end} must sit below the {floor} acquisition floor"
         );
 
         // The real pre-floor block (RSK 112,829, complete 80-byte BTC parent
         // header); 112,830 stands in as a legitimately absent height.
         let block = load_rsk_block_fixture("canonical-pre-floor-full-header");
-        let source =
-            FakeRskSource::default().with_canonical(start, FakeResponse::block(block.clone()));
+        let source = FakeRskSource::default()
+            .with_canonical(i64::from(start), FakeResponse::block(block.clone()));
 
         let observed = block_on(async {
-            let mut fetches = futures::stream::iter(start..=end)
-                .map(|height| fetch_rsk_height_bundle(source.clone(), height))
-                .buffered(2);
+            let mut fetches = fetch_rsk_height_bundles(source, start, end, 2);
             let mut bundles = Vec::new();
             while let Some(bundle) = fetches.next().await {
                 bundles.push(bundle.unwrap());
@@ -447,7 +456,7 @@ mod tests {
         });
 
         // Both below-floor heights were fetched: the present canonical
-        // arrives verbatim and the absent height yields an empty bundle —
+        // arrives verbatim and the absent height yields an empty bundle;
         // the range was not clamped away.
         assert_eq!(observed.len(), 2);
         assert_eq!(observed[0].canonical.as_ref(), Some(&block));

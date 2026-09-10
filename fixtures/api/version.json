@@ -1,12 +1,77 @@
 {
   "schema_version": "v1",
-  "generated_at": 1779792000,
-  "version": "0.7.6",
+  "generated_at": 1788968000,
+  "version": "0.7.13",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 16,
+    "release_count": 23,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.7.13",
+        "date": "2026-09-09",
+        "items": [
+          "Support importing the complete historical Research publication, including ROD's authenticated evidence and corrected external-target handling for Xaya.",
+          "Mark i0coin's current chain status as Unknown because March 2026 snapshot timestamps establish an evidence boundary, not current network availability."
+        ],
+        "item_count": 2,
+        "truncated": false
+      },
+      {
+        "version": "0.7.12",
+        "date": "2026-09-03",
+        "items": [
+          "Annotate the two F2Pool `bad-blk-sigops` stale blocks (heights 783426 and 784121) as body-invalid without changing their kind. Those blocks show a Body validity row with the rule's help and an evidence link, and remain ordinary stales."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
+      {
+        "version": "0.7.11",
+        "date": "2026-09-02",
+        "items": [
+          "Bulk-reconcile historical parents whose canonical status and event evidence already agree with Bitcoin Core, retaining strict reconciliation for ambiguous or conflicting evidence."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
+      {
+        "version": "0.7.10",
+        "date": "2026-09-02",
+        "items": [
+          "Preserve existing observation times during historical publication refreshes and skip parent reconciliation when only provenance or presentation text changed."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
+      {
+        "version": "0.7.9",
+        "date": "2026-09-02",
+        "items": [
+          "Refresh canonical parent coinbase-output text during historical imports while keeping binary outputs and full coinbase transactions fail closed."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
+      {
+        "version": "0.7.8",
+        "date": "2026-09-02",
+        "items": [
+          "Reuse compatible, proven parent classifications during historical imports, avoiding redundant Bitcoin Core header and full-block RPCs while retaining strict live validation for unknown, incomplete, or incompatible evidence."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
+      {
+        "version": "0.7.7",
+        "date": "2026-09-01",
+        "items": [
+          "Import Research's canonical publication: 1,037,005 ordinary events, 21 stale-descendant summaries, and 86 authenticated error observations covering 39 consensus-invalid Bitcoin parents. The four ancestry-recovered BIP34 mismatches become error blocks rather than orphans.",
+          "Verify all 29 publication artifacts before database mutation, including parent-only Namecoin counts, and refresh the historical manifest and compact error catalogue from the same Research commit."
+        ],
+        "item_count": 2,
+        "truncated": false
+      },
       {
         "version": "0.7.6",
         "date": "2026-08-29",

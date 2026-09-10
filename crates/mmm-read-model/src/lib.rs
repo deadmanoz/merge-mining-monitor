@@ -16,7 +16,7 @@ mod mutation;
 mod source_health_sql;
 mod unknown_reclassify;
 
-pub use classify::resolve_parent_classification;
+pub use classify::{load_proven_parent_classification, resolve_parent_classification};
 pub use cli_args::{ArgCursor, drive_args, require_positive};
 pub use known_stale_reclassify::{
     KnownStaleReclassifySummary, ReclassifyKnownStalesConfig,
@@ -39,6 +39,7 @@ pub use mutation::{
 pub use mutation::{
     drain_core_reconcile_queue_with_budget_for_test,
     drain_historical_reconcile_queue_with_budget_for_test,
+    reconcile_proven_canonical_batch_for_test,
 };
 pub use source_health_sql::invalidate_source_health_in_transaction;
 #[cfg(any(test, feature = "db-integration"))]
@@ -65,7 +66,6 @@ use mmm_bitcoin_core::{
     BlockKind, ClassifiedHeader, ConfiguredParentClassifier, HeightSource, ParentClassification,
     ParentPreflight,
 };
-use mmm_capture::auxpow::parse_bip34_height;
 use mmm_capture::btc_orphan::{self, BtcOrphanVerdict};
 use mmm_capture::capture::{MergeMiningEventPayload, ParentKind, apply_classification_proof};
 use mmm_capture::core_coinbase::resolve_btc_pool_from_coinbase;

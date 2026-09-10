@@ -6,6 +6,104 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Clarify RSK's 139,999 live acquisition floor and verify bounded backfills
+  below it with a real full-header fixture. Preserve complete parent-header
+  evidence from early blocks and evaluate their uncles independently; RSK
+  height 112,829 is retained as `near` because its parent does not meet the
+  Bitcoin proof-of-work target.
+
+## [0.7.13] - 2026-09-09
+
+- Refresh the Research publication pin to `e09f52b`, covering 1,283,863
+  ordinary events across 28 chain artifacts, 21 stale-descendant summary rows,
+  and 88 authenticated error witnesses. Preserve the 456,660 canonical
+  parent-only Namecoin rows and 58,970 Fractal rows with child height but no
+  exact child hash. Add I0coin's 27,854 rows, RSK's 236,432 rows, and ROD's
+  single authenticated row to the publication closure. Mark I0coin’s current
+  chain status as unknown because snapshot timestamps do not establish network
+  availability. The refreshed pins make
+  the complete `import-all` workflow ready for review; they do not claim that a
+  database import or deployment has completed.
+
+- Align strict coinbase eligibility with the refreshed Research evidence for
+  Hathor now that the reconstructed coinbase is preserved, so a real
+  coinbase can satisfy the same historical validation rule as other sources.
+  Schedule a durable full orphan recheck on upgrade so eligible existing
+  Hathor-backed unknown parents converge from the earlier weak verdict.
+  Document the operator requirement to stop the runtime through migration and
+  the new classifier's recheck so an older binary cannot consume the retry flags.
+  Validate and retain Hathor's full parent coinbase transaction before using
+  its script as strict evidence, including during historical imports and
+  retained-data rechecks.
+
+- Register SpaceXpanse ROD as historical source `auxpow:rod` at permanent id
+  35, with a complete native-node recovery profile through child height
+  4,127,689 and one authenticated canonical Bitcoin witness. The ROD chain
+  remains live, but the Monitor source is a sealed historical capture with no
+  live producer.
+
+- Validate Xaya's historical `PowData` child target explicitly: its pure
+  80-byte header must carry zero `nBits`, while the reviewed publication's
+  non-zero external target drives the persisted child-work verdict. Historical
+  imports now obtain this rule from shared source metadata rather than a
+  chain-name exception.
+
+## [0.7.12] - 2026-09-03
+
+- Annotate the two F2Pool `bad-blk-sigops` stale blocks (heights 783,426 and
+  784,121) as body-invalid without reclassifying them: a new operator-imported
+  `body_invalid_stale` reference table (migration 0017, loaded by
+  `import-body-invalid-stales` from the pinned
+  `data/consensus/body_invalid_stales.csv` mirror, refreshed with the other
+  Research pins) is joined at API projection time as a nullable
+  `block.body_invalid` object and an optional tree-node `body_invalid_rule`,
+  and the UI surfaces a Body validity row with the rule's help dialog and an
+  external evidence link plus a tree hover annotation. Annotated blocks remain
+  ordinary `kind='stale'` rows; classification, orphan derivation, and
+  reconciliation never consult the table, and the importer refuses any hash
+  that is also in the pinned error-block catalogue.
+
+## [0.7.11] - 2026-09-02
+
+- Bulk-reconcile historical parents whose canonical classification is already
+  proven by the local Bitcoin Core-backed block, while retaining strict
+  per-parent handling for stale, error, unknown, or inconsistent evidence.
+
+## [0.7.10] - 2026-09-02
+
+- Preserve observation timestamps when refreshing historical rows, and skip
+  durable parent reconciliation when only publication provenance or
+  presentation text changed.
+
+## [0.7.9] - 2026-09-02
+
+- Refresh a stored parent coinbase-output text projection when the canonical
+  Research publication renders the same observation in its newer claim format.
+  Binary outputs and full coinbase transactions remain immutable evidence.
+
+## [0.7.8] - 2026-09-02
+
+- Reuse compatible, proven parent classifications from the derived `block`
+  state when a changed historical publication artifact names an already-known
+  parent. This avoids replaying Bitcoin Core header and full-block RPCs for
+  existing Core-attested canonical and structurally complete stale evidence;
+  event-only canonical, unknown, or incompatible state still requires strict
+  live Core classification, as does the dedicated error-observation aggregate.
+
+## [0.7.7] - 2026-09-01
+
+- Pin Research's 1,037,005 ordinary events, 21-row stale-descendant aggregate,
+  and 86 error observations covering 39 parents, including four recovered BIP34
+  height mismatches. The publication includes 456,660 canonical parent-only
+  Namecoin rows; the manifest pins that count, and `import-all` skips them until
+  Research can authenticate a child hash or height. The first import refreshes
+  22 existing rows with canonical provenance and recovered fields and uses the
+  larger full-reconcile budget.
+
+- Derive publication totals, parent-only counts, and observation-chain
+  inventories from Research's publication, preflight it once, and refresh both
+  Monitor pins from one revision via `just gen-research-publication-pins`.
+
 ## [0.7.6] - 2026-08-29
 
 - Accept the research catalogue's legacy `median_time_past_violation` token as

@@ -6,6 +6,7 @@
 
 mod bitcoin_core_backbone;
 mod bitcoin_epoch_cache;
+mod body_invalid_import;
 #[cfg(any(test, feature = "db-integration"))]
 pub mod chains;
 #[cfg(not(any(test, feature = "db-integration")))]
@@ -29,6 +30,9 @@ pub use bitcoin_core_backbone::{
     run_sync_bitcoin_core_follow,
 };
 pub use bitcoin_epoch_cache::refresh_bitcoin_core_header_cache;
+pub use body_invalid_import::{
+    BodyInvalidImportConfig, BodyInvalidImportSummary, run_import_body_invalid_stales,
+};
 pub use chains::{
     is_producer_command, no_command_help, run_hathor_cache_command, run_producer_command,
     unknown_command_message,

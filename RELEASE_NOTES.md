@@ -1,5 +1,52 @@
 # Release Notes
 
+## [0.7.13] - 2026-09-09
+
+- Support importing the complete historical Research publication, including
+  ROD's authenticated evidence and corrected external-target handling for Xaya.
+- Mark i0coin's current chain status as Unknown because March 2026 snapshot
+  timestamps establish an evidence boundary, not current network availability.
+
+## [0.7.12] - 2026-09-03
+
+- Annotate the two F2Pool `bad-blk-sigops` stale blocks (heights 783426 and
+  784121) as body-invalid without changing their kind. Those blocks show a
+  Body validity row with the rule's help and an evidence link, and remain
+  ordinary stales.
+
+## [0.7.11] - 2026-09-02
+
+- Bulk-reconcile historical parents whose canonical status and event evidence
+  already agree with Bitcoin Core, retaining strict reconciliation for
+  ambiguous or conflicting evidence.
+
+## [0.7.10] - 2026-09-02
+
+- Preserve existing observation times during historical publication refreshes
+  and skip parent reconciliation when only provenance or presentation text
+  changed.
+
+## [0.7.9] - 2026-09-02
+
+- Refresh canonical parent coinbase-output text during historical imports
+  while keeping binary outputs and full coinbase transactions fail closed.
+
+## [0.7.8] - 2026-09-02
+
+- Reuse compatible, proven parent classifications during historical imports,
+  avoiding redundant Bitcoin Core header and full-block RPCs while retaining
+  strict live validation for unknown, incomplete, or incompatible evidence.
+
+## [0.7.7] - 2026-09-01
+
+- Import Research's canonical publication: 1,037,005 ordinary events, 21
+  stale-descendant summaries, and 86 authenticated error observations covering
+  39 consensus-invalid Bitcoin parents. The four ancestry-recovered BIP34
+  mismatches become error blocks rather than orphans.
+- Verify all 29 publication artifacts before database mutation, including
+  parent-only Namecoin counts, and refresh the historical manifest and compact
+  error catalogue from the same Research commit.
+
 ## [0.7.6] - 2026-08-29
 
 - Import pinned error observations that use the legacy

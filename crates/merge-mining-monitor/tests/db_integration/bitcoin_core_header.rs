@@ -116,6 +116,61 @@ async fn seed_replaceable_core_suffix(
 }
 
 #[tokio::test]
+async fn migration_0019_schedules_a_full_orphan_recheck_until_successful_refresh() -> Result<()> {
+    let (mut client, schema) =
+        crate::support::db::new_test_db_through("0018_add_rod_source").await?;
+    let result = async {
+        client
+            .execute(
+                "UPDATE bitcoin_core_header_cache_state \
+                 SET reclassification_needed = FALSE, orphan_recheck_needed = FALSE \
+                 WHERE singleton",
+                &[],
+            )
+            .await?;
+
+        client
+            .batch_execute(include_str!(
+                "../../../../migrations/0019_recheck_orphans_after_hathor_bip34.sql"
+            ))
+            .await?;
+
+        let state = client
+            .query_one(
+                "SELECT reclassification_needed, orphan_recheck_needed \
+                 FROM bitcoin_core_header_cache_state WHERE singleton",
+                &[],
+            )
+            .await?;
+        assert!(state.get::<_, bool>(0));
+        assert!(state.get::<_, bool>(1));
+
+        let classifier = ConfiguredParentClassifier::Fake(
+            FakeParentClassifier::new(ParentClassification::unknown(
+                &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
+            ))
+            .with_synced_tip_height(2030)
+            .with_canonical_header(core_header(0, 0, 1, 0x1d00_ffff))
+            .with_canonical_header(core_header(2016, 1, 2, 0x1c00_ffff))
+            .with_canonical_header(core_header(2030, 2, 3, 0x1c00_ffff)),
+        );
+        refresh_bitcoin_core_header_cache(&mut client, &classifier).await?;
+        let completed = client
+            .query_one(
+                "SELECT reclassification_needed, orphan_recheck_needed \
+                 FROM bitcoin_core_header_cache_state WHERE singleton",
+                &[],
+            )
+            .await?;
+        assert!(!completed.get::<_, bool>(0));
+        assert!(!completed.get::<_, bool>(1));
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    crate::support::db::teardown_test_db(&client, &schema, result).await
+}
+
+#[tokio::test]
 async fn core_header_cache_retains_epochs_replaces_horizon_and_rejects_conflicts() -> Result<()> {
     crate::run_mut_db_test!(client, {
         // `new_test_db` supplies this genesis row. An identical observation is

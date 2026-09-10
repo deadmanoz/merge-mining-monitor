@@ -13,7 +13,7 @@ use tracing::{info, warn};
 use crate::chains::backfill::BackfillConfig;
 use crate::chains::rsk::capture::{HeightOutcome, RskCaptureContext, write_rsk_bundle};
 use crate::chains::rsk::rpc::RskRpcClient;
-use crate::chains::rsk::traverse::fetch_rsk_height_bundle;
+use crate::chains::rsk::traverse::fetch_rsk_height_bundles;
 use crate::producer_runtime::{ProducerRuntime, run_post_backfill_repair};
 use mmm_capture::capture::now_epoch_seconds;
 
@@ -96,7 +96,7 @@ pub(crate) async fn run_rsk_backfill(
     if config.start_height < config.spec.activation_floor {
         warn!(
             start_height = config.start_height,
-            first_auxpow_height = config.spec.activation_floor,
+            acquisition_floor = config.spec.activation_floor,
             "start-height precedes the RSK acquisition floor; below-floor blocks without a complete 80-byte BTC parent header (fallback-signature payloads) will be skipped"
         );
     }
@@ -120,9 +120,12 @@ pub(crate) async fn run_rsk_backfill(
     // failed chunk.
     let started = Instant::now();
     let mut summary = RskBackfillSummary::default();
-    let mut fetches = futures::stream::iter(config.start_height..=config.end_height)
-        .map(|height| fetch_rsk_height_bundle(rpc.clone(), height as i64))
-        .buffered(fetch_concurrency);
+    let mut fetches = fetch_rsk_height_bundles(
+        rpc,
+        config.start_height,
+        config.end_height,
+        fetch_concurrency,
+    );
 
     while let Some(bundle) = fetches.next().await {
         let outcome = write_rsk_bundle(&mut client, &context, bundle?, &now_epoch_seconds).await?;

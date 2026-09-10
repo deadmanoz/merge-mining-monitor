@@ -19,12 +19,12 @@ use mmm_capture::source_registry::{
 
 /// Historical acquisition floor for the live poller. RSK history below this
 /// height predates the monitor's acquisition and contains a mix of full
-/// 80-byte BTC parent headers and 69/70-byte fallback signatures; the
+/// 80-byte BTC parent headers and variable-width fallback signatures; the
 /// backfill command captures the former and cleanly skips the latter.
 /// (The RSKIP-92 merge-mining format change is at RSK height 729,000, well
 /// above this floor.) The floor exists so the poller never rescans the
 /// backfilled static range on startup.
-const RSK_FIRST_AUXPOW_HEIGHT: i32 = 139_999;
+const RSK_ACQUISITION_FLOOR: i32 = 139_999;
 /// Current Syscoin chain-2 begins carrying AuxPoW evidence at this height.
 const SYSCOIN_FIRST_AUXPOW_HEIGHT: i32 = 1_973;
 /// Fractal Bitcoin merge-mines from height 1 (AuxPoW activation at mainnet
@@ -164,9 +164,10 @@ pub struct ChainSpec {
     /// The chain's `source_registry` code (`auxpow:<slug>`); the conformance
     /// test asserts the full binding.
     pub source_code: &'static str,
-    /// First height that can carry AuxPoW evidence; earlier heights are
-    /// skipped (with a per-chain warning where the spec's backfill data says
-    /// so).
+    /// Lower bound used by the live poller. For most chains this is the first
+    /// height that can carry AuxPoW evidence. RSK is the deliberate exception:
+    /// its value is a historical acquisition floor, and bounded backfills may
+    /// capture complete parent headers below it.
     pub activation_floor: i32,
     /// Live-poll defaults; `<PREFIX>_*` env vars override each field.
     pub poller: PollerDefaults,
@@ -212,7 +213,7 @@ pub static CHAINS: [ChainSpec; 6] = [
         display_name: "RSK",
         env_prefix: "RSK",
         source_code: RSK_SOURCE_CODE,
-        activation_floor: RSK_FIRST_AUXPOW_HEIGHT,
+        activation_floor: RSK_ACQUISITION_FLOOR,
         poller: PollerDefaults {
             poll_interval_seconds: 30,
             batch_size: 100,
@@ -408,9 +409,6 @@ mod tests {
     fn by_id_returns_the_matching_row() {
         assert_eq!(by_id(ChainId::Namecoin).slug, "namecoin");
         assert_eq!(by_id(ChainId::Elastos).slug, "elastos");
-        assert_eq!(
-            by_id(ChainId::Rsk).activation_floor,
-            RSK_FIRST_AUXPOW_HEIGHT
-        );
+        assert_eq!(by_id(ChainId::Rsk).activation_floor, RSK_ACQUISITION_FLOOR);
     }
 }

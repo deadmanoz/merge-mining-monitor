@@ -180,6 +180,7 @@ pub(super) struct BlockRow {
     pub(super) height: Option<i32>,
     pub(super) kind: ParentKind,
     pub(super) btc_orphan_class: Option<String>,
+    pub(super) body_invalid_rule: Option<String>,
     pub(super) header_time: i64,
     pub(super) bitcoin_miner_pool: PoolObject,
     pub(super) live_observed: bool,
@@ -261,6 +262,7 @@ pub(super) fn rows_to_blocks(rows: Vec<tokio_postgres::Row>) -> Result<Vec<Block
                 height: row.get(2),
                 kind: parent_kind_from_db(&kind)?,
                 btc_orphan_class: row.get(11),
+                body_invalid_rule: row.get(12),
                 header_time: row.get(4),
                 bitcoin_miner_pool: pool_from_columns(row.get(8), row.get(9), row.get(10)),
                 live_observed: row.get(5),
@@ -504,23 +506,22 @@ pub(super) fn ensure_unknown_btc_target(
 /// Strict-BIP34 height lookup over base evidence, API-local.
 ///
 /// DECLARED DUPLICATION of mmm-read-model's `load_strict_bip34_height` SQL
-/// shell (the pure parser and constants are shared via mmm-capture): the api
-/// must not depend on the writer crate, and this read-only SELECT over
-/// merge_mining_event is squarely projection-query territory. Preserves the
-/// BIP34 activation-floor guard - a decoded height below activation is never
-/// usable strict evidence.
+/// shell (the pure evidence validator and constants are shared via
+/// mmm-capture): the api must not depend on the writer crate, and this read-only
+/// SELECT over merge_mining_event is squarely projection-query territory.
+/// Preserves the BIP34 activation-floor guard - a decoded height below
+/// activation is never usable strict evidence.
 pub(crate) async fn load_strict_bip34_height<C: tokio_postgres::GenericClient>(
     client: &C,
     hash: &[u8],
 ) -> anyhow::Result<Option<i32>> {
     use anyhow::Context as _;
-    use mmm_capture::auxpow::parse_bip34_height;
-    use mmm_capture::btc_orphan::{BIP34_HEIGHT, STRICT_BIP34_CHAINS};
+    use mmm_capture::btc_orphan::{STRICT_BIP34_CHAINS, strict_bip34_height_from_evidence};
 
     let strict_chains: &[&str] = STRICT_BIP34_CHAINS;
     let rows = client
         .query(
-            "SELECT e.btc_parent_coinbase_script \
+            "SELECT s.chain, e.btc_parent_coinbase_script, e.btc_parent_coinbase_tx_bytes \
              FROM merge_mining_event e \
              JOIN source s ON s.id = e.source_id \
              WHERE e.btc_parent_header_hash = $1 \
@@ -534,9 +535,11 @@ pub(crate) async fn load_strict_bip34_height<C: tokio_postgres::GenericClient>(
         .await
         .context("load strict BIP34 coinbase candidates")?;
     for row in rows {
-        let script: Vec<u8> = row.get(0);
-        if let Some(height) = parse_bip34_height(&script)
-            && height >= BIP34_HEIGHT
+        let chain: String = row.get(0);
+        let script: Vec<u8> = row.get(1);
+        let tx_bytes: Option<Vec<u8>> = row.get(2);
+        if let Some(height) =
+            strict_bip34_height_from_evidence(&chain, &script, tx_bytes.as_deref())
         {
             return Ok(Some(height));
         }

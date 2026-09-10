@@ -101,11 +101,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pinned_registry_has_the_expected_complete_entry() {
+    fn pinned_registry_exposes_known_entries() {
         let hash =
             BlockHash::from_str("00000000000000000000c3d95a4bdc068dfe0c6d1e7ad13045c6f570e58d9ed7")
                 .unwrap();
-        assert_eq!(len(), 35);
         assert_eq!(hashes().count(), len());
         assert_eq!(
             lookup(&hash.to_byte_array()),

@@ -50,10 +50,13 @@ and `known_stale_block` holds known-stale membership loaded by
 `import-known-stales`. The reconciler consults both as orphan-classification
 exclusion evidence.
 Historical import also writes `historical_reconcile_queue` in the base
-transaction. The read-model drains one parent at a time after commit and keeps
-the exact dependent-cascade seeds durable until that cascade succeeds. This
-preserves chain-level snapshot atomicity without retaining a transaction-level
-advisory lock for every parent in a broad publication.
+transaction. After commit, the read-model bulk-rebuilds bounded batches whose
+canonical classification is already proven by the Core-backed `block` row.
+Stale, error, unknown, or inconsistent parents retain the strict one-parent
+transaction path. Exact dependent-cascade seeds stay durable until their
+cascade succeeds. This preserves chain-level snapshot atomicity without
+retaining a transaction-level advisory lock for every parent in a broad
+publication.
 Before that write path, `import-all` streams publication provenance and compact
 event state from `mmm-store`. Research publication references are deliberately
 excluded from logical identity, while operator provenance is excluded from row

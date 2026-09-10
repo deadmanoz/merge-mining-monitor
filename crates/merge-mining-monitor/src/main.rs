@@ -31,6 +31,7 @@ async fn main() -> Result<()> {
         Some("import-dataset") => cmd_import_dataset(args).await?,
         Some("import-all") => cmd_import_all(args).await?,
         Some("import-known-stales") => cmd_import_known_stales(args).await?,
+        Some("import-body-invalid-stales") => cmd_import_body_invalid_stales(args).await?,
         Some("reclassify-unknown-parents") => cmd_reclassify_unknown_parents(args).await?,
         Some("reclassify-parent") => cmd_reclassify_parent(args).await?,
         Some("reclassify-known-stales") => cmd_reclassify_known_stales(args).await?,
@@ -77,6 +78,18 @@ async fn cmd_import_known_stales(args: std::env::Args) -> Result<()> {
     let config = mmm_producers::KnownStaleImportConfig::from_args(args)?;
     let (mut pg_client, _) = mmm_producers::connect_core_required_from_env().await?;
     let summary = mmm_producers::run_import_known_stales(&mut pg_client, &config).await?;
+    summary.print();
+
+    Ok(())
+}
+
+async fn cmd_import_body_invalid_stales(args: std::env::Args) -> Result<()> {
+    let config = mmm_producers::BodyInvalidImportConfig::from_args(args)?;
+    // Display-only annotation: unlike the classification-adjacent imports,
+    // this command needs no Bitcoin Core view, so a plain Postgres connection
+    // keeps it runnable while Core is down or deliberately unconfigured.
+    let mut pg_client = mmm_producers::connect_from_env().await?;
+    let summary = mmm_producers::run_import_body_invalid_stales(&mut pg_client, &config).await?;
     summary.print();
 
     Ok(())

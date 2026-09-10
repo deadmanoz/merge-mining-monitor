@@ -1,6 +1,6 @@
-import { applyTreeHighlight } from "./controls.js?v=0.7.6";
-import { $, BLOCK_H, BLOCK_W, chainColor, chainDisplayName, EDGE_KINDS, EDGE_LEGEND, esc, KINDS, ORPHAN_LEGEND, state } from "./frontend-state.js?v=0.7.6";
-import { DEFAULT_TREE_LAYOUT, layoutTreeNodes } from "./tree-layout.js?v=0.7.6";
+import { applyTreeHighlight } from "./controls.js?v=0.7.13";
+import { $, BLOCK_H, BLOCK_W, chainColor, chainDisplayName, EDGE_KINDS, EDGE_LEGEND, esc, KINDS, ORPHAN_LEGEND, state } from "./frontend-state.js?v=0.7.13";
+import { DEFAULT_TREE_LAYOUT, layoutTreeNodes } from "./tree-layout.js?v=0.7.13";
 
 function nodeLabel(node) {
   if (node?.height != null) return String(node.height);
@@ -251,7 +251,12 @@ function formatInt(value) {
 }
 
 function treeNodeTitle(node, chains) {
-  const base = `${node.kind} ${node.height ?? "unheighted"} ${node.hash}`;
+  // body_invalid_rule is present only on annotated stale nodes (serde-skipped
+  // elsewhere): surface it in the hover title without changing the node kind.
+  const kindLabel = node.body_invalid_rule
+    ? `${node.kind} (body-invalid: ${node.body_invalid_rule})`
+    : node.kind;
+  const base = `${kindLabel} ${node.height ?? "unheighted"} ${node.hash}`;
   if (!chains.length) return base;
   const label = chains.map((item) => `${chainDisplayName(item.chain)}${item.count ? ` x${item.count}` : ""}`).join(", ");
   return `${base} | ${label}`;

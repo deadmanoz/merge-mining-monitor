@@ -55,6 +55,14 @@ superseded prior when its Bitcoin parent matches the validated live block.
 
 ## Polling And Backfill
 
+Hathor capture requires the reconstructed parent transaction to be a coinbase
+before accepting its input script, and retains the full transaction for later
+validation. Strict BIP34 classification checks that transaction and its script
+match. For unknown parents, older Hathor observations without the full
+transaction retain weaker evidence semantics until normal replay or historical
+import supplies it; reclassification alone does not authenticate a retained
+script.
+
 Live pollers use `poll_cursor`, not `MAX(child_height)`, as progress state.
 Cursor seeding order is:
 
@@ -65,6 +73,13 @@ Cursor seeding order is:
 Backfills are bounded, idempotent over event identity, and do not move the live
 cursor. Use the `just poll-CHAIN` and `just backfill-CHAIN START END` recipes
 for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
+
+RSK's live acquisition floor of 139,999 records the historical capture boundary,
+not the first usable merge-mining proof or the RSKIP-92 format transition.
+Explicit bounded backfills can start below it. Capture accepts complete
+80-byte Bitcoin parent headers and skips fallback-signature payloads, evaluating
+each listed uncle independently. The real RSK 112,829 fixture produces `near`
+evidence because its parent header fails the Bitcoin proof-of-work target.
 
 ## Shared Producer Rules
 

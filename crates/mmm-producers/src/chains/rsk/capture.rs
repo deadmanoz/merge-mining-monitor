@@ -244,7 +244,7 @@ where
     if canonical_result == BlockOutcome::PreRskip92Skipped {
         debug!(
             rsk_hash = %canonical.hash,
-            "pre-RSKIP-92 RSK canonical block; uncles at the same era will also skip"
+            "RSK canonical block lacks a complete 80-byte BTC parent header; evaluating listed uncles independently"
         );
     }
 

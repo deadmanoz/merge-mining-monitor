@@ -4,10 +4,10 @@
 // emitted by `just gen-source-artifacts`); Capture combines editorial provenance
 // with the live /sources payload.
 // Extracted from controls.js so neither file exceeds the arch-lint budget.
-import { CHAIN_PROFILES, SOURCE_LIFECYCLE } from "./source-registry.generated.js?v=0.7.6";
-import { esc, formatScalar, relativeTime, sourceChain } from "./frontend-state.js?v=0.7.6";
-import { kvRows } from "./drawer-renderer.js?v=0.7.6";
-import { sourceSyncLabel } from "./source-status.js?v=0.7.6";
+import { CHAIN_PROFILES, SOURCE_LIFECYCLE } from "./source-registry.generated.js?v=0.7.13";
+import { esc, formatScalar, relativeTime, sourceChain } from "./frontend-state.js?v=0.7.13";
+import { kvRows } from "./drawer-renderer.js?v=0.7.13";
+import { sourceSyncLabel } from "./source-status.js?v=0.7.13";
 
 const TABS = [
   { id: "history", label: "General" },
@@ -17,7 +17,7 @@ const TABS = [
 
 // `chain_status` is a modal-only editorial label. Source grouping/filtering uses
 // (kind, SOURCE_LIFECYCLE) via relationshipChip(), not these status labels.
-const STATUS_LABELS = { active: "Active", zombie: "Zombie", dormant: "Dormant", dead: "Dead" };
+const STATUS_LABELS = { active: "Active", zombie: "Zombie", dormant: "Dormant", dead: "Dead", unknown: "Unknown" };
 
 // How this monitor relates to the chain, from (kind, lifecycle) - NOT lifecycle
 // alone, so the Bitcoin Core parent context is never labelled a producer.
@@ -175,8 +175,8 @@ function historyPanel(source, profile) {
   const cited = collectCites(profile.status_detail, h.founded, h.merge_mining, h.ended, h.narrative);
   const localMap = localRefMap(cited);
   // ONE source-class chip (the monitor's relationship to the source). The
-  // chain's own state (active/zombie/dormant/dead) moves to a scoped "Chain status"
-  // row, so it never reads as the source's evidence-liveness.
+  // native chain state moves to a scoped "Chain status" row, so it never reads
+  // as the Monitor lifecycle or evidence coverage.
   const rel = relationshipChip(source);
   const chips = `<div class="sd-chips">${chip(rel.label, `rel-${rel.cls}`)}</div>`;
   const chainStatus = STATUS_LABELS[profile.chain_status] || "Unknown";

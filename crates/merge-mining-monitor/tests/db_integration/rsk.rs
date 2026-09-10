@@ -160,27 +160,33 @@ async fn writes_pre_floor_full_header_event() -> Result<()> {
         ));
         let context = rsk_context_with_known_miner(&client, classifier).await?;
         let inputs = ready_inputs(&context, &block, false, None, None);
+        let child_block_hash = inputs
+            .payload
+            .child_block_hash
+            .clone()
+            .expect("RSK fixture carries an exact child-block identity");
 
         let outcome = capture_ready_rsk_inputs_for_test(&mut client, &context, inputs).await?;
         assert_eq!(outcome, BlockOutcome::Written);
 
         let row = client
             .query_one(
-                "SELECT btc_parent_kind, btc_parent_header_hash \
+                "SELECT child_height, btc_parent_kind, btc_parent_header_hash \
                  FROM merge_mining_event \
-                 WHERE source_id = $1 AND child_height = $2",
-                &[&context.source_id(), &112_829_i32],
+                 WHERE source_id = $1 AND child_block_hash = $2",
+                &[&context.source_id(), &child_block_hash],
             )
             .await?;
         // The pre-floor RSK header is merge-mining work evidence whose hash
-        // does not meet the target declared in its own nBits — for this real
+        // does not meet the target declared in its own nBits. For this real
         // fixture that IS BTC's era target, which the RSK miner did not solve
         // (RSK's difficulty is lower). Capture maps
         // pow_validates_btc_target == false to ParentKind::Near before the
         // classifier verdict is consulted, so `near` is the correct stored
         // kind for this fixture.
-        assert_eq!(row.get::<_, String>(0), "near");
-        assert_eq!(row.get::<_, Vec<u8>>(1), parent_hash);
+        assert_eq!(row.get::<_, Option<i32>>(0), Some(112_829));
+        assert_eq!(row.get::<_, String>(1), "near");
+        assert_eq!(row.get::<_, Vec<u8>>(2), parent_hash);
 
         Ok::<_, anyhow::Error>(())
     })

@@ -11,10 +11,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/argentum_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 29,
-      "sha256": "6293215e776a51ae034ee188b62a8a21225cd4cb5294736316129b7f4077408e",
-      "size_bytes": 89262
+      "sha256": "80227515625f5c7a2ad40bebe3d06ac84087b8f893da7e9762ecf53297e5e077",
+      "size_bytes": 70481
     },
     {
       "chain": "bitcoin-vault",
@@ -26,10 +27,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/bitcoin-vault_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 2575,
-      "sha256": "a95508d2d69fe32be85114892ef429e0928ca1f4e4b4ff3d46aaf60d9cbbae66",
-      "size_bytes": 2470244
+      "sha256": "d47dac30b4fa71504f00e8edb9c5726718905c75e7afe9ec1e6dda8ba5853736",
+      "size_bytes": 2448473
     },
     {
       "chain": "bitmark",
@@ -41,10 +43,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/bitmark_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 898,
-      "sha256": "dde64e3dfd422e23425dd931a0a919facbf1469163c2c98077dc0518ffba2d8d",
-      "size_bytes": 942597
+      "sha256": "25a095a200f2bd63b1e8ab1ad4e7078300755a8f71f18da7caacdd715be9bbc4",
+      "size_bytes": 938812
     },
     {
       "chain": "coiledcoin",
@@ -56,10 +59,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/coiledcoin_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 635,
-      "sha256": "986eca0abdc4fd4d617d43dce993858be3ec2842b4a9576e74265d68a7560ddb",
-      "size_bytes": 1702815
+      "sha256": "5dafb83af14606a42ba09e0918d53806820d0723741e8b9ada0b5dfbe09d782e",
+      "size_bytes": 1344963
     },
     {
       "chain": "crown",
@@ -71,10 +75,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/crown_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 5506,
-      "sha256": "db7d20c950dc76ed94da00beb531ec41eeccaaba1d68cedb45da32b6a0932b82",
-      "size_bytes": 5832586
+      "sha256": "72694cd980d4ca405d6b7633b22d92ea1d2f696fe0c430b16d25217c2d3eb0fe",
+      "size_bytes": 5670617
     },
     {
       "chain": "devcoin",
@@ -86,10 +91,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/devcoin_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 54572,
-      "sha256": "7e26b8597a99f97ede0df2cd3c7a07a3cd0e994f64ab59341132ea42f9508095",
-      "size_bytes": 69313039
+      "sha256": "56b2e8874a68a255d17d6ad4d98764a45dd2422f7d487a2ebc2250a80d4840aa",
+      "size_bytes": 63134137
     },
     {
       "chain": "doichain",
@@ -101,6 +107,7 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/doichain_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 0,
       "sha256": "783ea31e30711dfe7ca9459f12032289e240afe66ce2872312ddcde8e1e72d06",
@@ -116,10 +123,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/elastos_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 175235,
-      "sha256": "900fdd32350f21c0fa721f071a1e79ec7123d3f87922acbb92f8c3302113cc19",
-      "size_bytes": 167173465
+      "sha256": "9a9f7ac76b4846034c975183f9cf5579ddf05498dfeaa087d2e2d5478bea172b",
+      "size_bytes": 164169619
     },
     {
       "chain": "elcash",
@@ -131,10 +139,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/elcash_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 2429,
-      "sha256": "827199fab8bf7a9341f7a18beb221213e3c785e9d1bd9a37bba3067941fd2bbf",
-      "size_bytes": 2590633
+      "sha256": "31d57851f7b7552c68ea90f42de0f9a8da6d0c4a76a74c944c634edc511e9ff0",
+      "size_bytes": 2560832
     },
     {
       "chain": "emercoin",
@@ -146,36 +155,38 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/emercoin_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 45691,
-      "sha256": "622df4f0d6d6a5e35cfc4240475763c5373184a12b8cbae1e5b129c0c30371e7",
-      "size_bytes": 52088602
+      "sha256": "ba8bae5f1cd6d98c45705e5940e11823cb97258c7b55927a96f783742b117698",
+      "size_bytes": 51322259
     },
     {
       "chain": "error-block-observations",
       "counts": {
         "canonical": 0,
-        "error_block": 78,
+        "error_block": 88,
         "stale": 0,
         "stale_descendant": 0,
         "strict_btc_orphan": 0,
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/error-block-observations_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "error_observation",
-      "row_count": 78,
-      "sha256": "57b1bf982048c70605e182da085e0a86aa5619bd710dd9798f0f15faf4116b94",
-      "size_bytes": 80186,
+      "row_count": 88,
+      "sha256": "0d928a52361986193fc3fffd11851ed0e3a0618dc60b3097f552d758c5f77700",
+      "size_bytes": 100404,
       "source_chain_counts": {
-        "devcoin": 16,
+        "devcoin": 18,
         "elastos": 2,
         "emercoin": 1,
         "fractal": 1,
         "groupcoin": 1,
         "hathor": 1,
-        "i0coin": 1,
-        "ixcoin": 13,
-        "namecoin": 33,
+        "i0coin": 3,
+        "ixcoin": 15,
+        "namecoin": 37,
         "rsk": 5,
         "syscoin": 3,
         "unobtanium": 1
@@ -184,17 +195,18 @@
     {
       "chain": "fractal",
       "counts": {
-        "canonical": 58980,
-        "stale": 31,
-        "stale_descendant": 0,
+        "canonical": 58970,
+        "stale": 40,
+        "stale_descendant": 1,
         "strict_btc_orphan": 0,
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/fractal_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 59011,
-      "sha256": "84d1014e788cbc21ab0464b96df8d92da89d50250987af02223f15afe5480eca",
-      "size_bytes": 61541299
+      "sha256": "302490885637de8eca71189e26d6d923efb291ec3599fa679658e5b6e5bdea8c",
+      "size_bytes": 60422817
     },
     {
       "chain": "geistgeld",
@@ -206,6 +218,7 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/geistgeld_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 1,
       "sha256": "3d541a4e3a0136fbb3f75a26e9b719f55ab4676f2ad934e34843452cb1005f19",
@@ -221,10 +234,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/groupcoin_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 2153,
-      "sha256": "23fa9068c550dceec1e8e2d547ea5594d74b0fac6cbab3bb75ca68a345780d4c",
-      "size_bytes": 2316510
+      "sha256": "3d46ce1fb56e3589bee44d031b52e0123b2342b6d9aa894fac60ef4c5f26b545",
+      "size_bytes": 2196065
     },
     {
       "chain": "hathor",
@@ -236,10 +250,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/hathor_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 3664,
-      "sha256": "bd1fb95c6fe294aba4d8a65689c974be01c91dec6ec1907d9d9324d459087ea9",
-      "size_bytes": 4199325
+      "sha256": "876d454b8116a9fdb495d2eb6810cb99c5b7d50f0a6ae1331cee143633f33ab7",
+      "size_bytes": 4121408
     },
     {
       "chain": "huntercoin",
@@ -251,25 +266,27 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/huntercoin_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 870,
-      "sha256": "bd881355360ddf61246e70419e48f2e2d04adfcc3684a93cb4df3dd3dec579fa",
-      "size_bytes": 2143061
+      "sha256": "433b1b4ba9eff74e6eac7025126aa02fb95e0b2944b9faf5439ad59a8720ab75",
+      "size_bytes": 1713586
     },
     {
       "chain": "i0coin",
       "counts": {
-        "canonical": 16958,
-        "stale": 166,
+        "canonical": 27661,
+        "stale": 191,
         "stale_descendant": 0,
         "strict_btc_orphan": 2,
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/i0coin_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
-      "row_count": 17126,
-      "sha256": "c13a2810a9c0d51efc7c1a102dc0686b4fefc106dc8201cd7e02258895d11354",
-      "size_bytes": 18499988
+      "row_count": 27854,
+      "sha256": "a0c885ee6aa0b5e271ed63ea6ca58953865a172e353f8182a854c24432fbcf74",
+      "size_bytes": 43612303
     },
     {
       "chain": "ixcoin",
@@ -281,10 +298,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/ixcoin_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 47279,
-      "sha256": "2f07b95531dca7599aee9d26ae84532ad3e893c5a7caa7116bedeee04abddd24",
-      "size_bytes": 69925751
+      "sha256": "bca7473d29bb0ab8d7fceecd161bbde74aaff03189cc7eb4e11c5df1f7690c2f",
+      "size_bytes": 60970576
     },
     {
       "chain": "lyncoin",
@@ -296,10 +314,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/lyncoin_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 11,
-      "sha256": "2a1531207081b2816444cbe67fdf34761aa06a131e20114e8ac8b2abe86f64f7",
-      "size_bytes": 9703
+      "sha256": "c66b3dc34de2a519e3f98d590adf2c284c8cbd47edf17af6877faee2c7199ddb",
+      "size_bytes": 9527
     },
     {
       "chain": "myriadcoin",
@@ -311,40 +330,59 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/myriadcoin_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 14745,
-      "sha256": "284507d52ccfaefd59fb6e695d30d8fd202aad9557a6b10fd9d09ef1f2b01d04",
-      "size_bytes": 15795185
+      "sha256": "b0f759d8ddc92f7e5dc32d7a98c8dd67b7af97383d0ec63515ca5ca43d5e658e",
+      "size_bytes": 15508862
     },
     {
       "chain": "namecoin",
       "counts": {
-        "canonical": 0,
-        "stale": 1625,
-        "stale_descendant": 19,
+        "canonical": 456660,
+        "stale": 1649,
+        "stale_descendant": 20,
         "strict_btc_orphan": 11,
         "weak_btc_orphan": 10
       },
       "csv_path": "results/monitor-evidence/namecoin_monitor_evidence.csv",
+      "parent_only_rows": 456660,
       "role": "event",
-      "row_count": 1665,
-      "sha256": "b30fa66328f93fbc58be6cad9df9b9780477ecbdb6244717a83899204ea8ebf7",
-      "size_bytes": 1786290
+      "row_count": 458350,
+      "sha256": "d0ac94bed2b98d901538ac653b451e215b71f55358f64d7e89ec1049ef44567a",
+      "size_bytes": 404797363
+    },
+    {
+      "chain": "rod",
+      "counts": {
+        "canonical": 1,
+        "stale": 0,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/rod_monitor_evidence.csv",
+      "parent_only_rows": 0,
+      "role": "event",
+      "row_count": 1,
+      "sha256": "7d041b656308527bf529a74236ab4b47bb2c1c7b48d0481500bd8cd55d264538",
+      "size_bytes": 6135
     },
     {
       "chain": "rsk",
       "counts": {
-        "canonical": 0,
-        "stale": 298,
-        "stale_descendant": 2,
+        "canonical": 236073,
+        "stale": 353,
+        "stale_descendant": 3,
         "strict_btc_orphan": 3,
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/rsk_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
-      "row_count": 303,
-      "sha256": "9810c68ee9735fd10c494c8687a609ca31577bc283d8d6c0c58d23e1c974a0a5",
-      "size_bytes": 513712
+      "row_count": 236432,
+      "sha256": "ef424c9543e2e453246ddabca2f17d71a7fd0674f9e01c451686c10dcd783a34",
+      "size_bytes": 391120518
     },
     {
       "chain": "sixeleven",
@@ -356,10 +394,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/sixeleven_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 7,
-      "sha256": "e7102e9f1a51d5fa43c155a5b91093e10d66894c7d7c38245659448c51ec4b51",
-      "size_bytes": 8262
+      "sha256": "7a7c9e32a2d926f2d56e0c155b3cbc70635d7062c9e97867aee59ee975d8057e",
+      "size_bytes": 7622
     },
     {
       "chain": "stale-descendants",
@@ -371,10 +410,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/stale-descendants_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "aggregate",
       "row_count": 21,
-      "sha256": "e77e92bf2d6006faf7b2c35fe7e0f754520716393afac6e5f38eb1456bd204da",
-      "size_bytes": 23274
+      "sha256": "4cfabcdb3205a1df833504e2fdf547d7d81bb5c834ad2a2908308c42280ab33f",
+      "size_bytes": 21916
     },
     {
       "chain": "syscoin",
@@ -386,10 +426,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/syscoin_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 98713,
-      "sha256": "2649d2f2e87c26eeb7cb1af5c2a5f92ae882a9d462cd5f93682eb30162df6f65",
-      "size_bytes": 76370409
+      "sha256": "909b67239676dba2dcd5c96624f84fd507946014c0a74faf6713ab2debcf14c4",
+      "size_bytes": 74348332
     },
     {
       "chain": "terracoin",
@@ -401,10 +442,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/terracoin_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 11292,
-      "sha256": "4071f1f2f273f8049017a337be5d69c06e952f839809894190c5f477512a7503",
-      "size_bytes": 11069472
+      "sha256": "eaf7483005d5e85b9dad47e6ae500b95d651f3afb51bb0aca7076ec6788f8865",
+      "size_bytes": 11079317
     },
     {
       "chain": "unobtanium",
@@ -416,10 +458,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/unobtanium_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 15001,
-      "sha256": "a5f976459e4d6711669cbdef70b15d6d2f4fab33af50dc7cedf36d3becaf6d34",
-      "size_bytes": 16212224
+      "sha256": "be734dafb8c3c944470bd2ac7497c3ccf21fdb31eccf98ffe36334ab9eda1005",
+      "size_bytes": 15952263
     },
     {
       "chain": "vcash",
@@ -431,10 +474,11 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/vcash_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 68,
-      "sha256": "c32cc2674db4cb38e2d5b108e7c45e37ac6a9f58d0b339cce803de29b2380b73",
-      "size_bytes": 119373
+      "sha256": "09411645db37c504fca0dd55852606d41f2b1cd829bbbeeeb971645171ab127b",
+      "size_bytes": 118407
     },
     {
       "chain": "xaya",
@@ -446,16 +490,17 @@
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/xaya_monitor_evidence.csv",
+      "parent_only_rows": 0,
       "role": "event",
       "row_count": 20841,
-      "sha256": "0ba1d2e397bbe2a84880d51e6c15e824cb8ab673e57709d1474acc909932cb73",
-      "size_bytes": 25802500
+      "sha256": "caefbd64b03ab3d5578ec485a8c3713fb4b935b03152c91778c781f02bfb8ea0",
+      "size_bytes": 25406781
     }
   ],
-  "error_observation_rows": 78,
+  "error_observation_rows": 88,
   "manifest_generator": "scripts/gen-historical-source-manifest.sh",
   "publication_manifest_path": "results/monitor-evidence/monitor-evidence-manifest.json",
-  "publication_manifest_sha256": "dff8e424ce3d270e21f593a2e7c01bb4e8c1f148789fd0268618a34541ca6df8",
+  "publication_manifest_sha256": "2168b0aa739f60e6588fdd0a20753fb9c16272be1955a1fade4294f98de929bc",
   "required_columns": [
     "chain",
     "source_kind",
@@ -488,6 +533,6 @@
   "schema_version": 2,
   "scope": "uniform_monitor_evidence_v1",
   "source_repo": "merge-mining-research",
-  "source_repo_commit": "c26e86cf048c350dd5dbf40d48205627d1c6da95",
-  "total_event_rows": 580320
+  "source_repo_commit": "e09f52b11c207a6a226ea5531e093ab80ca6a5fd",
+  "total_event_rows": 1283863
 }

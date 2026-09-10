@@ -5,7 +5,7 @@ use bitcoin::CompactTarget;
 use bitcoin::hashes::{Hash as _, HashEngine as _, sha256};
 use mmm_capture::auxpow::validates_target;
 
-use super::candidate::parse_child_fields;
+use super::candidate::{parse_child_fields, require_importable_child_identity};
 use super::parent_coinbase::parse_parent_coinbase_fields;
 use super::{
     CsvLayout, SkipReason, non_empty, optional_string, parse_optional_compact_target,
@@ -314,16 +314,24 @@ pub(crate) fn publication_state_from_record(
     let mask = publication_field_mask(&state);
     let fingerprint = state.fingerprint(mask);
     Ok(ExpectedPublicationState {
-        key: PublicationRowKey {
-            chain: spec.chain.to_owned(),
-            source_path: non_empty(record.get(layout.source_path))?.to_owned(),
-            source_row_number: parse_positive_i64(record.get(layout.source_row_number))?,
-        },
+        key: publication_row_key_from_record(spec, layout, record)?,
         mask,
         fingerprint,
         child_height: state.child_height,
         child_block_hash: state.child_block_hash,
         btc_parent_header_hash: state.btc_parent_header_hash,
+    })
+}
+
+pub(crate) fn publication_row_key_from_record(
+    spec: &HistoricalChainSpec,
+    layout: &CsvLayout,
+    record: &csv::StringRecord,
+) -> Result<PublicationRowKey, SkipReason> {
+    Ok(PublicationRowKey {
+        chain: spec.chain.to_owned(),
+        source_path: non_empty(record.get(layout.source_path))?.to_owned(),
+        source_row_number: parse_positive_i64(record.get(layout.source_row_number))?,
     })
 }
 
@@ -334,6 +342,11 @@ fn comparable_state_from_record(
     error_observation: bool,
 ) -> Result<ComparablePublicationState, SkipReason> {
     let child = parse_child_fields(spec, layout, record)?;
+    let source_classification = if error_observation {
+        super::SourceClassification::ErrorBlock
+    } else {
+        super::parse_source_classification(record.get(layout.classification))?
+    };
     let header = parse_parent_header(record.get(layout.btc_header))?;
     let display_hash = header.block_hash().to_string();
     let rejection_reason = optional_string(record.get(layout.rejection_reason));
@@ -357,11 +370,12 @@ fn comparable_state_from_record(
     )?;
     let child_hash = option_array32(child.block_hash.as_deref())?;
     let parent_hash = header.block_hash().to_byte_array();
+    require_importable_child_identity(&child, source_classification)?;
     let rsk = comparable_rsk_state(layout, record, &child)?;
     let pow_validates_child_target = child
         .nbits
         .map(|nbits| validates_target(header.block_hash(), CompactTarget::from_consensus(nbits)));
-    Ok(ComparablePublicationState {
+    let state = ComparablePublicationState {
         source_kind: non_empty(record.get(layout.source_kind))?.to_owned(),
         artifact_scope: artifact_scope.clone(),
         provenance: non_empty(record.get(layout.provenance))?.to_owned(),
@@ -394,7 +408,8 @@ fn comparable_state_from_record(
         } else {
             None
         },
-    })
+    };
+    Ok(state)
 }
 
 fn comparable_rsk_state(

@@ -25,8 +25,14 @@ Use `just` targets, not raw commands, when a target exists:
   membership import and retroactive demotion.
 - `just import-all` / `just import-dataset CHAIN` - pinned normalized
   historical publication import.
+- `just gen-research-publication-pins` - refresh both Research pins from one
+  committed revision, manifest first.
 - `just reclassify-unknown-parents`, `just reclassify-pools`,
   `just reconcile-read-model` - repair and enrichment commands.
+
+Database-backed test binaries run serially in `just test-integration` and CI
+because schema isolation does not isolate PostgreSQL advisory locks. Preserve
+concurrent tasks inside each locking test.
 
 ## Architecture Rules
 
@@ -38,12 +44,19 @@ Use `just` targets, not raw commands, when a target exists:
 - `data/consensus/error_blocks.csv` is a pinned compact mirror of the research
   catalogue. A proof-of-work-valid match is an `error_block`, never stale or
   orphan evidence; reconciliation persists its catalogue height and rejection
-  reason in the derived `block` row.
+  reason in the derived `block` row. Refresh it and the historical manifest
+  together via `just gen-research-publication-pins`; the manifest consumes
+  Research's canonical observation-chain inventory.
 - Producers write only `merge_mining_event` plus 1:1 chain sidecars and
   attribution rows. Historical ingest also attaches
-  `historical_event_provenance`. The further base table,
-  `known_stale_block`, is operator-imported via `import-known-stales`
-  (written through `mmm-store`, never by capture producers). `block`,
+  `historical_event_provenance`. The further base tables,
+  `known_stale_block` and `body_invalid_stale`, are operator-imported via
+  `import-known-stales` / `import-body-invalid-stales`
+  (written through `mmm-store`, never by capture producers).
+  `body_invalid_stale` (pinned mirror `data/consensus/body_invalid_stales.csv`)
+  is a display annotation joined at API projection only: an annotated block
+  stays `kind='stale'`, and the annotation never feeds classification, orphan
+  derivation, or reconciliation. `block`,
   `attestation_proof`, and `source_health` are derived through
   `mmm-read-model`.
 - Treat child height, hash, header, time, and `nBits` as independent optional
@@ -52,11 +65,31 @@ Use `just` targets, not raw commands, when a target exists:
 - Historical and partial source imports are authoritative snapshots. Live
   source publication imports are additive. Keep this lifecycle distinction in
   the shared source registry, not in per-chain schema branches.
+- The current Research pin is generated from committed revision `e09f52b` and
+  covers 28 event artifacts plus the stale-descendant and error-observation
+  aggregates, 30 artifacts and 1,283,972 rows in total. Refresh the manifest
+  and catalogue together with `just gen-research-publication-pins`; a refreshed
+  pin documents import readiness, not a completed database import or deploy.
+- Historical describes the recovered dataset, not whether its native chain is
+  still active. ROD has no live Monitor producer. The registry's
+  `ChildTargetLocation` also owns the target contract: Xaya and ROD use
+  `PowData`, with zero pure-header `nBits` and a non-zero effective target
+  supplied by the pinned Research publication. The importer checks parent work
+  against that target; the pure header alone cannot authenticate it.
+- Hathor strict BIP34 evidence requires a full parent coinbase transaction
+  whose input script matches the retained script. Live capture validates and
+  stores that transaction; legacy script-only observations remain weaker
+  until normal replay/import enriches them. Historical import, writer and API
+  height selection share the validator in `mmm-capture::btc_orphan`.
 - `import-all` determines work by comparing normalized publication-owned fields
   with non-operator historical provenance and base events across research pins.
   Artifact SHA values verify bytes only. A complete match must return before
   taking the Bitcoin Core cache lock; pending derived work takes the lock and
-  finalizes without replaying source rows.
+  finalizes without replaying source rows. For a changed artifact, reuse a
+  compatible Core-attested canonical or structurally complete stale
+  classification already proven in `block`;
+  unknown, absent, publication-incompatible, and dedicated error-observation
+  state must still use strict live Core classification.
 - Historical base/provenance writes enqueue affected parents in the same
   transaction. Drain `historical_reconcile_queue` in bounded parent
   transactions and retain changed-hash seeds until dependent cascades succeed;
@@ -81,7 +114,10 @@ Use `just` targets, not raw commands, when a target exists:
 - Hash byte order is fixed: store rust-bitcoin `to_byte_array()` bytes directly;
   use display/RPC hex only at presentation boundaries.
 - SQL migrations are append-only after they reach a persistent database. Add a
-  new migration; do not edit historical migrations.
+  new migration; do not edit historical migrations. The documented exception
+  is the registry-generated `0002` fresh/reset seed: regenerate it when adding
+  a source and also add an idempotent forward migration for existing databases
+  (see `migrations/README.md`).
 - Real database migrations go only through `just db-migrate-dev` or
   `just db-migrate-deploy`.
 - Never hand-edit generated runtime artifacts such as `data/pools/current.json`,

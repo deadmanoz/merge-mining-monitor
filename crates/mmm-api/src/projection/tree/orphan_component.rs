@@ -463,6 +463,7 @@ pub(super) fn push_member_nodes(
             height: None,
             kind: "unknown",
             btc_orphan_class: projection.btc_orphan_class,
+            body_invalid_rule: projection.body_invalid_rule,
             prev_id,
             prev_hash: projection.prev_hash,
             bitcoin_miner_pool: projection.bitcoin_miner_pool,

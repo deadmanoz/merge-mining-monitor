@@ -28,11 +28,14 @@ use mmm_capture::capture::{MergeMiningEventPayload, ParentKind, apply_classifica
 use mmm_store::EventWriteOutcome;
 
 mod historical_queue;
-#[cfg(feature = "db-integration")]
-pub use historical_queue::drain_historical_reconcile_queue_with_budget_for_test;
 use historical_queue::enqueue_historical_parent;
 pub use historical_queue::{
     drain_historical_reconcile_queue, drain_historical_reconcile_queue_with_nbits_table,
+};
+#[cfg(feature = "db-integration")]
+pub use historical_queue::{
+    drain_historical_reconcile_queue_with_budget_for_test,
+    reconcile_proven_canonical_batch_for_test,
 };
 
 mod core_suffix;
@@ -344,11 +347,12 @@ where
 /// Write one historical observation inside a caller-owned chain transaction.
 ///
 /// Historical publication imports intentionally stop at base evidence here.
-/// The affected parent is enqueued durably in the same transaction, then
-/// [`drain_historical_reconcile_queue`] rebuilds parent and dependent read-model
-/// state after the chain snapshot commits. Keeping advisory read-model locks out
-/// of the chain transaction prevents a broad import from retaining one lock per
-/// parent until commit.
+/// A parent whose read-model inputs changed is enqueued durably in the same
+/// transaction, then [`drain_historical_reconcile_queue`] rebuilds parent and
+/// dependent state after the chain snapshot commits. Provenance and
+/// presentation-only refreshes skip that redundant work. Keeping advisory
+/// read-model locks out of the chain transaction prevents a broad import from
+/// retaining one lock per parent until commit.
 pub async fn write_historical_base_in_transaction<F>(
     txn: &Transaction<'_>,
     source_id: i64,
@@ -369,7 +373,9 @@ where
         }
     }
     let outcome = upsert(txn, source_id, payload).await?;
-    enqueue_historical_parent(txn, &payload.btc_parent_header_hash).await?;
+    if outcome.parent_read_model_changed {
+        enqueue_historical_parent(txn, &payload.btc_parent_header_hash).await?;
+    }
     Ok(outcome)
 }
 
