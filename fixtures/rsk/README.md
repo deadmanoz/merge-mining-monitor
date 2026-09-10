@@ -19,4 +19,8 @@ Cases:
 - `uncle-second-miner` - second-miner uncle/canonical sample used for traversal
   and pool-identity progression tests.
 - `pre-rskip92` - block with a non-80-byte merge-mining header sentinel.
+- `canonical-pre-floor-full-header` - real RSKj result for RSK height 112,829
+  (pre-acquisition-floor) carrying a complete 80-byte BTC parent header
+  (`00000000000002fe6f…42cd`); proves the capture gate is byte-shape-based,
+  not height-based.
 - `malformed-header` - block whose merge-mining header field is invalid hex.

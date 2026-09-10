@@ -241,8 +241,8 @@ mod tests {
     }
 
     #[test]
-    fn fetch_pre_rskip92_canonical_is_kept_in_bundle() {
-        // Pre-RSKIP-92 / decode skips are downstream concerns; the fetch stage
+    fn fetch_canonical_without_parent_header_is_kept_in_bundle() {
+        // Parent-header shape and decode skips are downstream concerns; the fetch stage
         // keeps any present canonical block verbatim.
         let block = load_rsk_block_fixture("pre-rskip92");
         let source =

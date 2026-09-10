@@ -141,17 +141,18 @@ impl RskCaptureContext {
 pub enum BlockOutcome {
     /// Block decoded cleanly and its `(event, evidence)` pair committed.
     Written,
-    /// Block predates RSKIP-92: no (or short) 80-byte BTC parent header, so
-    /// nothing is written. Retryable-clean, not an error.
-    PreRskip92Skipped,
+    /// Block carries no complete 80-byte BTC parent header (absent, empty, or
+    /// a shorter pre-Orchid/RSKIP-92 fallback signature), so nothing is written.
+    /// Retryable-clean, not an error.
+    NoParentHeaderSkipped,
     /// A merge-mining field was undecodable (bad hex, wrong byte length, height
     /// overflow). Skipped so one bad block never aborts the backfill.
     MalformedSkipped,
 }
 
 /// Inputs ready for transactional RSK capture. Produced by
-/// [`prepare_rsk_capture`] when the block parses cleanly and the BTC parent
-/// header is post-RSKIP-92.
+/// [`prepare_rsk_capture`] when the block parses cleanly and carries a
+/// complete 80-byte BTC parent header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RskCaptureInputs {
     pub payload: MergeMiningEventPayload,
@@ -160,12 +161,12 @@ pub struct RskCaptureInputs {
 
 /// Decision produced by [`prepare_rsk_capture`]. Either the block is ready
 /// to write (with its `(payload, evidence)` pair) or a structural property
-/// of the RPC response prevents writing (pre-RSKIP-92 era or malformed
-/// fields).
+/// of the RPC response prevents writing (no complete 80-byte BTC parent
+/// header, or malformed fields).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureDecision {
     Ready(Box<RskCaptureInputs>),
-    PreRskip92Skipped,
+    NoParentHeaderSkipped,
     MalformedSkipped,
 }
 
@@ -180,7 +181,7 @@ pub struct HeightOutcome {
     pub canonical: Option<BlockOutcome>,
     pub uncles_seen: usize,
     pub uncles_written: usize,
-    pub uncles_pre_rskip92: usize,
+    pub uncles_no_parent_header: usize,
     pub uncles_malformed: usize,
 }
 
@@ -240,10 +241,10 @@ where
         None => return Ok(outcome),
     };
 
-    if canonical_result == BlockOutcome::PreRskip92Skipped {
+    if canonical_result == BlockOutcome::NoParentHeaderSkipped {
         debug!(
             rsk_hash = %canonical.hash,
-            "pre-RSKIP-92 RSK canonical block; uncles at the same era will also skip"
+            "RSK canonical block lacks a complete 80-byte BTC parent header; evaluating listed uncles independently"
         );
     }
 
@@ -273,7 +274,7 @@ where
         .await?;
         match uncle_result {
             BlockOutcome::Written => outcome.uncles_written += 1,
-            BlockOutcome::PreRskip92Skipped => outcome.uncles_pre_rskip92 += 1,
+            BlockOutcome::NoParentHeaderSkipped => outcome.uncles_no_parent_header += 1,
             BlockOutcome::MalformedSkipped => outcome.uncles_malformed += 1,
         }
     }
@@ -302,7 +303,7 @@ where
         observed_at()?,
     )? {
         CaptureDecision::Ready(inputs) => capture_ready_inputs(client, context, *inputs).await,
-        CaptureDecision::PreRskip92Skipped => Ok(BlockOutcome::PreRskip92Skipped),
+        CaptureDecision::NoParentHeaderSkipped => Ok(BlockOutcome::NoParentHeaderSkipped),
         CaptureDecision::MalformedSkipped => Ok(BlockOutcome::MalformedSkipped),
     }
 }
@@ -337,13 +338,13 @@ pub async fn capture_ready_rsk_inputs_for_test(
 }
 
 /// Decode the 80-byte BTC parent header field, mapping absent/short payloads
-/// to the pre-RSKIP-92 skip and undecodable bytes to the malformed skip.
+/// to the missing-parent-header skip and undecodable bytes to the malformed skip.
 fn decode_rsk_parent_header(block: &RskBlock) -> Result<Result<Header, CaptureDecision>> {
     let Some(header_hex) = block.bitcoin_merged_mining_header.as_deref() else {
-        return Ok(Err(CaptureDecision::PreRskip92Skipped));
+        return Ok(Err(CaptureDecision::NoParentHeaderSkipped));
     };
     if header_hex.trim_start_matches("0x").is_empty() {
-        return Ok(Err(CaptureDecision::PreRskip92Skipped));
+        return Ok(Err(CaptureDecision::NoParentHeaderSkipped));
     }
     let header_bytes = match decode_hex_bytes(header_hex) {
         Ok(b) => b,
@@ -357,8 +358,9 @@ fn decode_rsk_parent_header(block: &RskBlock) -> Result<Result<Header, CaptureDe
         }
     };
     if header_bytes.len() != 80 {
-        // Pre-RSKIP-92 blocks have shorter merge-mining payloads.
-        return Ok(Err(CaptureDecision::PreRskip92Skipped));
+        // Blocks without a complete 80-byte header (pre-Orchid/RSKIP-92
+        // fallback-signature payloads) land here.
+        return Ok(Err(CaptureDecision::NoParentHeaderSkipped));
     }
     let header: Header = match deserialize(&header_bytes) {
         Ok(h) => h,
@@ -405,8 +407,8 @@ struct RskBlockQuantities {
 }
 
 /// Decode and validate every merge-mining field on the RSK block, mapping
-/// each defect onto the documented skip decision (pre-RSKIP-92 short/absent
-/// payloads vs malformed evidence) with the original warn! diagnostics.
+/// each defect onto the documented skip decision (missing complete parent
+/// header or malformed evidence) with the original warn! diagnostics.
 fn decode_rsk_block_fields(block: &RskBlock) -> Result<Result<DecodedRskFields, CaptureDecision>> {
     let header = match decode_rsk_parent_header(block)? {
         Ok(parsed) => parsed,
@@ -864,12 +866,45 @@ mod tests {
     }
 
     #[test]
-    fn pre_rskip92_block_is_skipped() {
+    fn absent_parent_header_is_skipped() {
         let block = load_rsk_block_fixture("pre-rskip92");
 
         let decision =
             prepare_rsk_capture(&fixture_context(), &block, false, None, None, 0).unwrap();
-        assert_eq!(decision, CaptureDecision::PreRskip92Skipped);
+        assert_eq!(decision, CaptureDecision::NoParentHeaderSkipped);
+    }
+
+    #[test]
+    fn pre_floor_full_header_block_is_ready() {
+        let block = load_rsk_block_fixture("canonical-pre-floor-full-header");
+        // RSK height 112,829 is below the 139,999 acquisition floor.
+        assert_eq!(block.number, "0x1b8bd");
+
+        let decision =
+            prepare_rsk_capture(&fixture_context(), &block, false, None, None, 9_999_999).unwrap();
+        let inputs = match decision {
+            CaptureDecision::Ready(inputs) => *inputs,
+            other => panic!("expected Ready, got {other:?}"),
+        };
+
+        // The captured BTC parent header hash (wire order) is the real block's
+        // double-SHA256 hash, proving the gate keys on byte shape, not height.
+        assert_eq!(
+            hex::encode(&inputs.payload.btc_parent_header_hash),
+            "cd4251720c9b476be332ee0db5307d75d4fc927a924f676ffe02000000000000"
+        );
+    }
+
+    #[test]
+    fn pre_floor_fallback_signature_block_skips() {
+        let mut block = load_rsk_block_fixture("canonical-pre-floor-full-header");
+        block.number = "0x1b800".to_owned();
+        // A 69-byte pre-Orchid fallback signature, not a complete header.
+        block.bitcoin_merged_mining_header = Some(format!("0x{}", "ab".repeat(69)));
+
+        let decision =
+            prepare_rsk_capture(&fixture_context(), &block, false, None, None, 0).unwrap();
+        assert_eq!(decision, CaptureDecision::NoParentHeaderSkipped);
     }
 
     #[test]

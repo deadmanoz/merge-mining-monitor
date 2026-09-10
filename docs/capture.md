@@ -74,6 +74,15 @@ Backfills are bounded, idempotent over event identity, and do not move the live
 cursor. Use the `just poll-CHAIN` and `just backfill-CHAIN START END` recipes
 for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
 
+RSK's live acquisition floor of 139,999 records the historical capture boundary,
+not the first usable merge-mining proof or the RSKIP-92 format transition.
+Explicit bounded backfills can start below it. Capture accepts complete
+80-byte Bitcoin parent headers and skips fallback-signature payloads, evaluating
+each listed uncle independently. A parent header that fails the Bitcoin
+proof-of-work target is stored as `near`. Backfill summary fields
+`canonical_no_parent_header` and `uncles_no_parent_header` count skips lacking
+a complete parent header.
+
 ## Shared Producer Rules
 
 - Namecoin-family chains should extend the shared chain spec and AuxPoW family

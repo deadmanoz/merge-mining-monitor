@@ -6,6 +6,13 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Clarify RSK's 139,999 live acquisition floor and verify bounded backfills
+  below it with a real full-header fixture. Preserve complete parent-header
+  evidence from early blocks and evaluate their uncles independently; RSK
+  height 112,829 is retained as `near` because its parent does not meet the
+  Bitcoin proof-of-work target. Rename missing-parent-header skip counters
+  to describe the evidence shape instead of an upgrade era.
+
 ## [0.7.13] - 2026-09-09
 
 - Refresh the Research publication pin to `e09f52b`, covering 1,283,863

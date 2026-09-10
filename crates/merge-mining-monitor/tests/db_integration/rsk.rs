@@ -145,6 +145,54 @@ async fn rsk_capture_reconciles_read_model_in_transaction() -> Result<()> {
 }
 
 #[tokio::test]
+async fn writes_pre_floor_full_header_event() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        // RSK height 112,829 is below the 139,999 acquisition floor. The
+        // durable regression pin: the capture/write path must not height-gate
+        // this event. (The floor as a start boundary lives in the poller's
+        // activation_floor in spec.rs and is not exercised here.)
+        let block = load_rsk_block_fixture("canonical-pre-floor-full-header");
+        let header = btc_header_from_fixture(&block);
+        let parent_hash = header.block_hash().to_byte_array().to_vec();
+        let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+            // Height is arbitrary: the verdict is never consulted (see below).
+            canonical_verdict(&header, 490_000),
+        ));
+        let context = rsk_context_with_known_miner(&client, classifier).await?;
+        let inputs = ready_inputs(&context, &block, false, None, None);
+        let child_block_hash = inputs
+            .payload
+            .child_block_hash
+            .clone()
+            .expect("RSK fixture carries an exact child-block identity");
+
+        let outcome = capture_ready_rsk_inputs_for_test(&mut client, &context, inputs).await?;
+        assert_eq!(outcome, BlockOutcome::Written);
+
+        let row = client
+            .query_one(
+                "SELECT child_height, btc_parent_kind, btc_parent_header_hash \
+                 FROM merge_mining_event \
+                 WHERE source_id = $1 AND child_block_hash = $2",
+                &[&context.source_id(), &child_block_hash],
+            )
+            .await?;
+        // The pre-floor RSK header is merge-mining work evidence whose hash
+        // does not meet the target declared in its own nBits. For this real
+        // fixture that IS BTC's era target, which the RSK miner did not solve
+        // (RSK's difficulty is lower). Capture maps
+        // pow_validates_btc_target == false to ParentKind::Near before the
+        // classifier verdict is consulted, so `near` is the correct stored
+        // kind for this fixture.
+        assert_eq!(row.get::<_, Option<i32>>(0), Some(112_829));
+        assert_eq!(row.get::<_, String>(1), "near");
+        assert_eq!(row.get::<_, Vec<u8>>(2), parent_hash);
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn rsk_role_flip_replay_refreshes_sidecar_role() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let context =
