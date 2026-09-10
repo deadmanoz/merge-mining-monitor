@@ -1,21 +1,26 @@
 use anyhow::Result;
 use bitcoin::block::Header;
-use bitcoin::consensus::deserialize;
+use bitcoin::hashes::Hash as _;
+use bitcoin::{
+    Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness, absolute,
+    consensus::{deserialize, serialize},
+    transaction,
+};
 use mmm_api::projection::{self};
 use mmm_api::query::{self, NavigatorTarget};
 use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier};
-use mmm_capture::source_registry::SYSCOIN_SOURCE_CODE;
-use mmm_read_model::restore_merge_mining_event;
+use mmm_capture::source_registry::{HATHOR_SOURCE_CODE, SYSCOIN_SOURCE_CODE};
+use mmm_read_model::{reconcile_from_merge_mining_event, restore_merge_mining_event};
 use tokio_postgres::Client;
 
 use crate::support::scenario::{
     ChildEvidence, capture_child_event, orphan_candidate_verdict, revoke_event,
 };
-use crate::support::seed::{display_hash, hash_bytes, header_hash_bytes};
+use crate::support::seed::{display_hash, hash_bytes, header_hash_bytes, insert_block};
 
 use crate::helpers::{
     classify_all_unknowns_strict, format_api_error, format_projection_error, insert_unknown_block,
-    set_orphan_class,
+    project_tree, set_orphan_class,
 };
 
 /// Bitcoin mainnet block 400000 (2016-02-25): raw 80-byte header and the
@@ -71,6 +76,141 @@ fn orphan_class(item: &projection::NavigatorItem) -> Option<&str> {
     item.orphan
         .as_ref()
         .and_then(|orphan| orphan.btc_orphan_class.as_deref())
+}
+
+fn serialized_coinbase_tx(script_sig: &[u8]) -> Vec<u8> {
+    serialize(&Transaction {
+        version: transaction::Version::ONE,
+        lock_time: absolute::LockTime::ZERO,
+        input: vec![TxIn {
+            previous_output: OutPoint::null(),
+            script_sig: ScriptBuf::from_bytes(script_sig.to_vec()),
+            sequence: Sequence::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![TxOut {
+            value: Amount::ZERO,
+            script_pubkey: ScriptBuf::new(),
+        }],
+    })
+}
+
+#[tokio::test]
+async fn retained_hathor_script_needs_matching_full_coinbase_for_strict_evidence() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let parent: Header = deserialize(&hex::decode(BTC_400000_HEADER_HEX)?)?;
+        crate::support::db::seed_bitcoin_core_header_cache_through(
+            &client,
+            400_000,
+            i64::from(parent.time),
+            parent.bits.to_consensus(),
+        )
+        .await?;
+        let parent_hash = header_hash_bytes(&parent);
+        let script_sig = hex::decode(BTC_400000_COINBASE_SCRIPTSIG_HEX)?;
+        let absent = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
+            orphan_candidate_verdict(&parent),
+        ));
+
+        // Retained Hathor rows predate structural coinbase validation. A
+        // height-shaped stored script without the complete transaction must
+        // therefore remain weak in both the writer and read-only projection.
+        let event_id = capture_child_event(
+            &mut client,
+            ChildEvidence::new(
+                "retained_hathor",
+                HATHOR_SOURCE_CODE,
+                4_000_000,
+                0x5c,
+                parent,
+                orphan_candidate_verdict(&parent),
+                1_000,
+            )
+            .with_parent_coinbase_script(script_sig.clone()),
+        )
+        .await?;
+        assert_eq!(
+            btc_orphan_class(&client, &parent_hash).await?.as_deref(),
+            Some("weak_btc_orphan")
+        );
+        let weak = fetch_default_orphans_page(&client, 10).await?;
+        assert_eq!(weak.total, 1);
+        assert_eq!(orphan_class(&weak.items[0]), Some("weak_btc_orphan"));
+
+        // Simulate a supported replay/import enriching the retained event's
+        // existing nullable column, then use the normal reconciler to rebuild
+        // the writer-owned classification. The API independently evaluates
+        // the same shared evidence rule and must agree with the stored class.
+        let tx_bytes = serialized_coinbase_tx(&script_sig);
+        client
+            .execute(
+                "UPDATE merge_mining_event \
+                 SET btc_parent_coinbase_tx_bytes = $2 \
+                 WHERE id = $1",
+                &[&event_id, &tx_bytes],
+            )
+            .await?;
+        reconcile_from_merge_mining_event(&mut client, event_id, &absent, None).await?;
+
+        assert_eq!(
+            btc_orphan_class(&client, &parent_hash).await?.as_deref(),
+            Some("strict_btc_orphan")
+        );
+        let strict = fetch_default_orphans_page(&client, 10).await?;
+        assert_eq!(strict.total, 1);
+        assert_eq!(orphan_class(&strict.items[0]), Some("strict_btc_orphan"));
+
+        // Anchor projection independently loads strict evidence through the
+        // API-local query shell. Seed the small canonical context it needs and
+        // require exact BIP34 placement, proving the read-only path consumed
+        // the matching Hathor transaction rather than falling back to time.
+        let canonical_prev = parent.prev_blockhash.to_byte_array().to_vec();
+        insert_block(
+            &client,
+            &canonical_prev,
+            &hash_bytes(0x3f_fffe),
+            Some(399_999),
+            "canonical",
+            i64::from(parent.time) - 600,
+            None,
+        )
+        .await?;
+        let canonical = hash_bytes(0x40_0000);
+        insert_block(
+            &client,
+            &canonical,
+            &canonical_prev,
+            Some(400_000),
+            "canonical",
+            i64::from(parent.time),
+            None,
+        )
+        .await?;
+        insert_block(
+            &client,
+            &hash_bytes(0x40_0001),
+            &canonical,
+            Some(400_001),
+            "canonical",
+            i64::from(parent.time) + 600,
+            None,
+        )
+        .await?;
+        let tree = project_tree(
+            &client,
+            Some(&format!("unheighted_anchor={}", display_hash(&parent_hash))),
+        )
+        .await?;
+        let placed = tree
+            .nodes
+            .iter()
+            .find(|node| node.hash == display_hash(&parent_hash))
+            .expect("Hathor orphan node present");
+        assert_eq!(placed.placement_height, Some(400_000));
+        assert!(!placed.placement_approx, "validated height is exact");
+
+        Ok::<_, anyhow::Error>(())
+    })
 }
 
 #[tokio::test]

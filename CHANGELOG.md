@@ -26,6 +26,8 @@ This changelog starts with the initial release.
   Hathor-backed unknown parents converge from the earlier weak verdict.
   Require a stopped runtime through migration and the new classifier's recheck
   so an older binary cannot consume the retry flags.
+  Validate and retain Hathor's full parent coinbase transaction before using
+  its script as strict evidence, including during retained-data rechecks.
 
 - Register SpaceXpanse ROD as historical source `auxpow:rod` at permanent id
   35, with a complete native-node recovery profile through child height

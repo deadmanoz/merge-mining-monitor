@@ -66,7 +66,6 @@ use mmm_bitcoin_core::{
     BlockKind, ClassifiedHeader, ConfiguredParentClassifier, HeightSource, ParentClassification,
     ParentPreflight,
 };
-use mmm_capture::auxpow::parse_bip34_height;
 use mmm_capture::btc_orphan::{self, BtcOrphanVerdict};
 use mmm_capture::capture::{MergeMiningEventPayload, ParentKind, apply_classification_proof};
 use mmm_capture::core_coinbase::resolve_btc_pool_from_coinbase;

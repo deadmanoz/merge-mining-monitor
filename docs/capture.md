@@ -55,6 +55,14 @@ superseded prior when its Bitcoin parent matches the validated live block.
 
 ## Polling And Backfill
 
+Hathor capture requires the reconstructed parent transaction to be a coinbase
+before accepting its input script, and retains the full transaction for later
+validation. Strict BIP34 classification checks that transaction and its script
+match. For unknown parents, older Hathor observations without the full
+transaction retain weaker evidence semantics until normal replay or historical
+import supplies it; reclassification alone does not authenticate a retained
+script.
+
 Live pollers use `poll_cursor`, not `MAX(child_height)`, as progress state.
 Cursor seeding order is:
 
