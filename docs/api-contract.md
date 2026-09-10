@@ -101,13 +101,23 @@ Example:
 ```json
 {
   "schema_version": "v1",
-  "generated_at": 1779792000,
-  "version": "0.7.12",
+  "generated_at": 1788968000,
+  "version": "0.7.13",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 22,
+    "release_count": 23,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.7.13",
+        "date": "2026-09-09",
+        "items": [
+          "Support importing the complete historical Research publication, including ROD's authenticated evidence and corrected external-target handling for Xaya.",
+          "Mark i0coin's current chain status as Unknown because March 2026 snapshot timestamps establish an evidence boundary, not current network availability."
+        ],
+        "item_count": 2,
+        "truncated": false
+      },
       {
         "version": "0.7.12",
         "date": "2026-09-03",
@@ -365,6 +375,7 @@ Lifecycle Registry with lifecycle `historical`; no live producer):
 - `auxpow:ixcoin`
 - `auxpow:lyncoin`
 - `auxpow:myriadcoin`
+- `auxpow:rod`
 - `auxpow:sixeleven`
 - `auxpow:terracoin`
 - `auxpow:unobtanium`
@@ -1028,6 +1039,10 @@ block, and sources endpoints as documented per endpoint above. See
 ### `/api/v1/sources`
 
 Purpose: drive source filters and health panels.
+
+The source fixture includes ROD (`auxpow:rod`, permanent id 35) as a
+historical capture with one canonical observation and no live-poller progress.
+Its native chain can remain active independently of the capture lifecycle.
 
 Response fields:
 

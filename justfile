@@ -73,8 +73,8 @@ test:
     ./scripts/live-test-deployment.sh self-check
 
 test-integration: db-up
-    cargo test -p merge-mining-monitor --features db-integration --test db_integration
-    cargo test -p merge-mining-monitor --features db-integration --test api_db_integration
+    cargo test -p merge-mining-monitor --features db-integration --test db_integration -- --test-threads=1
+    cargo test -p merge-mining-monitor --features db-integration --test api_db_integration -- --test-threads=1
 
 test-e2e:
     npm run test:e2e

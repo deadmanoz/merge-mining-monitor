@@ -55,6 +55,41 @@ just db-backup
 
 Do not run raw migration commands against a persistent database.
 
+### Hathor recheck upgrade (0019)
+
+Migration `0019` schedules a full orphan recheck for the new Hathor classifier.
+This is a stop/migrate/start upgrade, not an online migration. An older
+producer can consume and clear the same retry flags without applying the new
+Hathor rule, so a database lock during the migration alone is insufficient.
+
+1. Stop all Monitor processes using this database, including Core sync/follow,
+   live pollers, backfills, imports, reclassification and reconciliation jobs.
+   Disable their timers or automatic restarts and verify that no old process
+   remains. In production, use the deployment repository's maintenance mode,
+   `just drain-cutover`, and `just verify-runtime-stopped`; its migration wrapper
+   also verifies the drained runtime. For the on-demand development workspace,
+   stop the app and any one-off jobs, leaving PostgreSQL running. The local
+   migration wrapper takes a backup but does not stop application processes.
+2. Apply the pending migrations through the backup-first wrapper and verify
+   `0019_recheck_orphans_after_hathor_bip34` is recorded. Keep the runtime stopped.
+3. Select only the new release binary (0.7.13 or later with the Hathor rule)
+   for all subsequent commands. Run `just reclassify-unknown-parents
+   --recheck-orphans` with that binary and the configured Core RPC, then verify
+   both Core-cache retry flags are false and retain before/after Hathor verdict
+   counts. Resume services only with the new release after this succeeds.
+
+The reclassification command refreshes the Core cache during connection setup.
+That refresh completes the scheduled strict sweep and clears its retry flags
+before the explicit recheck runs. No background Core-sync service is needed
+for this acceptance step. The explicit recheck also covers the case where an
+older process already consumed the flags.
+
+If an old process ran after `0019`, stop it and repeat the explicit full
+recheck with the new binary even if the flags are already false. Re-running
+the migration wrapper will not reschedule an already-recorded migration. After
+a binary rollback, repeat this stop/migrate/start acceptance when upgrading
+again; do not infer classifier completion from the migration receipt alone.
+
 Migration 0007 preserves existing event values while making child evidence
 nullable. Its publication cutover is a separate, explicit operation. Stop live
 pollers, back up, apply the migration, and run `just import-all`; authoritative
@@ -275,7 +310,7 @@ child-height bounds:
 just reconcile-read-model --all --batch-size 1000 --max-iterations 100000
 ```
 
-The 1,037,005-row publication plus live-producer rows exceeds the default
+The 1,283,863-row publication plus live-producer rows exceeds the default
 budget, so this uses the deployment smoke test's full-scan ceiling. It revisits
 captured headers, records catalogue matches as `error_block`, and rebuilds
 source health. Error blocks are neither stale nor orphan evidence, so no orphan
@@ -316,9 +351,10 @@ just import-all
 just reclassify-pools
 ```
 
-`import-all` verifies all 27 per-chain artifacts before the first database
-mutation. It then compares normalized publication-owned fields with stored
-non-operator provenance and base events across research pins. Matching files
+`import-all` verifies all 30 publication artifacts before the first database
+mutation: 28 per-chain event files, the stale-descendant aggregate, and the
+error-observation file. It then compares normalized publication-owned fields
+with stored non-operator provenance and base events across research pins. Matching files
 skip classification, writes, and authoritative reconciliation before the
 Bitcoin Core lock is taken. Changed files reuse compatible Core-attested
 canonical or structurally complete stale classifications already proven in the

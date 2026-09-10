@@ -502,6 +502,7 @@ fn assert_sources_fixture_contract(fixture: &Value) {
     for (code, mode) in [
         ("auxpow:lyncoin", "historical"),
         ("auxpow:sixeleven", "historical"),
+        ("auxpow:rod", "historical"),
         ("auxpow:vcash", "partial"),
         ("auxpow:doichain", "surveyed"),
         ("auxpow:bitcoin-stash", "catalogued"),
@@ -530,6 +531,7 @@ fn assert_sources_fixture_contract(fixture: &Value) {
         ("auxpow:vcash", 68, 1_659_809_588),
         ("auxpow:lyncoin", 11, 1_721_667_253),
         ("auxpow:sixeleven", 7, 1_536_793_971),
+        ("auxpow:rod", 1, 1_741_327_653),
     ] {
         let source = sources
             .iter()

@@ -74,7 +74,7 @@
     {
       "file": "sources.json",
       "endpoint_family": "/api/v1/sources",
-      "scenario": "Source registry with evidence freshness, operational progress, per-source counts including strict/weak BTC-orphan sub-counts, live and historical sources including recovered Lyncoin and SixEleven, a partial VCash subset, a surveyed Doichain recovery, and a catalogued Bitcoin Stash source"
+      "scenario": "Source registry with evidence freshness, operational progress, per-source counts including strict/weak BTC-orphan sub-counts, live and historical sources including recovered Lyncoin, SixEleven and ROD, a partial VCash subset, a surveyed Doichain recovery, and a catalogued Bitcoin Stash source"
     },
     {
       "file": "competitions.json",
@@ -84,7 +84,7 @@
     {
       "file": "version.json",
       "endpoint_family": "/api/v1/version",
-      "scenario": "Runtime application SemVer v0.7.12 plus the complete RELEASE_NOTES.md release-note projection for the About dialog"
+      "scenario": "Runtime application SemVer v0.7.13 plus the complete RELEASE_NOTES.md release-note projection for the About dialog"
     },
     {
       "file": "error-backbone-conflict.json",

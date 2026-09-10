@@ -114,6 +114,7 @@ enum ChainStatus {
     Zombie,
     Dormant,
     Dead,
+    Unknown,
 }
 
 /// One per-chain editorial profile, keyed by chain slug in `chain_profiles.json`.
@@ -478,7 +479,7 @@ mod tests {
             sql.contains("OVERRIDING SYSTEM VALUE"),
             "explicit identity override present"
         );
-        assert!(sql.contains("RESTART WITH 35"), "next identity is 35");
+        assert!(sql.contains("RESTART WITH 36"), "next identity is 36");
         assert!(sql.contains("INSERT INTO source"));
         // One VALUES row per registry entry, terminated by a single `;`.
         assert_eq!(
@@ -487,7 +488,7 @@ mod tests {
         );
         // The identity restart is the last statement and ends the file.
         assert!(
-            sql.trim_end().ends_with("RESTART WITH 35;"),
+            sql.trim_end().ends_with("RESTART WITH 36;"),
             "ends with the identity restart"
         );
         // the Bitcoin live source carries its instance; auxpow rows are NULL.
@@ -535,6 +536,7 @@ mod tests {
         assert!(js.contains("\"auxpow:argentum\": \"historical\""));
         assert!(js.contains("\"auxpow:lyncoin\": \"historical\""));
         assert!(js.contains("\"auxpow:sixeleven\": \"historical\""));
+        assert!(js.contains("\"auxpow:rod\": \"historical\""));
         assert!(js.contains("\"auxpow:vcash\": \"partial\""));
         assert!(js.contains("\"auxpow:doichain\": \"surveyed\""));
         assert!(!js.contains("auxpow:mazacoin"));

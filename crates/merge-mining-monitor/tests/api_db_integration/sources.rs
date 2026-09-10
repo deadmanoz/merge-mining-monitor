@@ -22,6 +22,7 @@ const ADD_ELCASH_MIGRATION: &str =
     include_str!("../../../../migrations/0003_add_elcash_source.sql");
 const REMOVE_MAZACOIN_MIGRATION: &str =
     include_str!("../../../../migrations/0004_remove_mazacoin_source.sql");
+const ADD_ROD_MIGRATION: &str = include_str!("../../../../migrations/0018_add_rod_source.sql");
 
 #[tokio::test]
 async fn sources_counts_events_without_classifier_observation_counts() -> Result<()> {
@@ -487,12 +488,135 @@ async fn elcash_forward_migration_assigns_permanent_id_on_legacy_sequence() -> R
 }
 
 #[tokio::test]
+async fn rod_forward_migration_converges_identity_and_advances_sequence() -> Result<()> {
+    crate::run_db_test!(client, {
+        client
+            .batch_execute(
+                "DELETE FROM source WHERE code = 'auxpow:rod'; \
+                 ALTER TABLE source ALTER COLUMN id RESTART WITH 35;",
+            )
+            .await?;
+
+        client.batch_execute(ADD_ROD_MIGRATION).await?;
+        client.batch_execute(ADD_ROD_MIGRATION).await?;
+        let row = client
+            .query_one(
+                "SELECT id, kind, chain, instance, count(*) OVER () \
+                 FROM source WHERE code = 'auxpow:rod'",
+                &[],
+            )
+            .await?;
+        assert_eq!(row.get::<_, i64>(0), 35);
+        assert_eq!(row.get::<_, String>(1), "auxpow");
+        assert_eq!(row.get::<_, String>(2), "rod");
+        assert_eq!(row.get::<_, Option<String>>(3), None);
+        assert_eq!(row.get::<_, i64>(4), 1, "0018 must remain idempotent");
+
+        let next_id: i64 = client
+            .query_one(
+                "INSERT INTO source (code, kind, chain, instance, created_at) \
+                 VALUES ('auxpow:identity-probe', 'auxpow', 'identity-probe', NULL, 1) \
+                 RETURNING id",
+                &[],
+            )
+            .await?
+            .get(0);
+        assert_eq!(next_id, 36, "identity must resume after permanent id 35");
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn rod_forward_migration_preserves_an_ahead_identity_sequence() -> Result<()> {
+    crate::run_db_test!(client, {
+        client
+            .batch_execute(
+                "DELETE FROM source WHERE code = 'auxpow:rod'; \
+                 ALTER TABLE source ALTER COLUMN id RESTART WITH 50;",
+            )
+            .await?;
+
+        client.batch_execute(ADD_ROD_MIGRATION).await?;
+        let next_id: i64 = client
+            .query_one(
+                "INSERT INTO source (code, kind, chain, instance, created_at) \
+                 VALUES ('auxpow:identity-probe', 'auxpow', 'identity-probe', NULL, 1) \
+                 RETURNING id",
+                &[],
+            )
+            .await?
+            .get(0);
+        assert_eq!(
+            next_id, 50,
+            "migration must not move the sequence backwards"
+        );
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn rod_forward_migration_rejects_id_collision() -> Result<()> {
+    crate::run_db_test!(client, {
+        client
+            .batch_execute(
+                "DELETE FROM source WHERE code = 'auxpow:rod'; \
+                 INSERT INTO source (id, code, kind, chain, instance, created_at) \
+                 OVERRIDING SYSTEM VALUE \
+                 VALUES (35, 'auxpow:other', 'auxpow', 'other', NULL, 1);",
+            )
+            .await?;
+
+        let error = client
+            .batch_execute(ADD_ROD_MIGRATION)
+            .await
+            .expect_err("occupied permanent id must block ROD insertion");
+        assert_migration_error(&error, "source id 35 belongs to auxpow:other");
+        let count: i64 = client
+            .query_one("SELECT count(*) FROM source WHERE code = 'auxpow:rod'", &[])
+            .await?
+            .get(0);
+        assert_eq!(count, 0);
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn rod_forward_migration_rejects_code_collision() -> Result<()> {
+    crate::run_db_test!(client, {
+        client
+            .batch_execute(
+                "DELETE FROM source WHERE code = 'auxpow:rod'; \
+                 INSERT INTO source (id, code, kind, chain, instance, created_at) \
+                 OVERRIDING SYSTEM VALUE \
+                 VALUES (36, 'auxpow:rod', 'auxpow', 'rod', NULL, 1);",
+            )
+            .await?;
+
+        let error = client
+            .batch_execute(ADD_ROD_MIGRATION)
+            .await
+            .expect_err("wrong permanent id must block ROD insertion");
+        assert_migration_error(&error, "expected source id 35, found 36");
+        let id: i64 = client
+            .query_one("SELECT id FROM source WHERE code = 'auxpow:rod'", &[])
+            .await?
+            .get(0);
+        assert_eq!(id, 36, "collision guard must preserve the existing row");
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn mazacoin_removal_migration_rejects_wrong_elcash_identity_before_cleanup() -> Result<()> {
     crate::run_db_test!(client, {
         client
             .batch_execute(
                 "DELETE FROM source WHERE code = 'auxpow:elcash'; \
-                 ALTER TABLE source ALTER COLUMN id RESTART WITH 35;",
+                 ALTER TABLE source ALTER COLUMN id RESTART WITH 36;",
             )
             .await?;
         client.batch_execute(ADD_ELCASH_MIGRATION).await?;
@@ -500,7 +624,7 @@ async fn mazacoin_removal_migration_rejects_wrong_elcash_identity_before_cleanup
             .query_one("SELECT id FROM source WHERE code = 'auxpow:elcash'", &[])
             .await?
             .get(0);
-        assert_eq!(wrong_id, 35, "test setup must exercise the bad 0003 path");
+        assert_eq!(wrong_id, 36, "test setup must exercise the bad 0003 path");
 
         insert_legacy_mazacoin_source(&client).await?;
         insert_legacy_mazacoin_state(&client).await?;
@@ -541,7 +665,7 @@ async fn mazacoin_removal_migration_cleans_state_preserves_ids_and_is_idempotent
 
         let rows = client
             .query(
-                "SELECT id, code FROM source WHERE id IN (33, 34) ORDER BY id",
+                "SELECT id, code FROM source WHERE id IN (33, 34, 35) ORDER BY id",
                 &[],
             )
             .await?;
@@ -552,6 +676,7 @@ async fn mazacoin_removal_migration_cleans_state_preserves_ids_and_is_idempotent
             vec![
                 (33, "auxpow:bitcoin-stash".to_owned()),
                 (34, "auxpow:elcash".to_owned()),
+                (35, "auxpow:rod".to_owned()),
             ]
         );
 
@@ -564,7 +689,7 @@ async fn mazacoin_removal_migration_cleans_state_preserves_ids_and_is_idempotent
             )
             .await?
             .get(0);
-        assert_eq!(next_id, 35, "fresh-seed identity must resume after max id");
+        assert_eq!(next_id, 36, "fresh-seed identity must resume after max id");
 
         Ok::<_, anyhow::Error>(())
     })

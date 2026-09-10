@@ -6,6 +6,42 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.7.13] - 2026-09-09
+
+- Refresh the Research publication pin to `e09f52b`, covering 1,283,863
+  ordinary events across 28 chain artifacts, 21 stale-descendant summary rows,
+  and 88 authenticated error witnesses. Preserve the 456,660 canonical
+  parent-only Namecoin rows and 58,970 Fractal rows with child height but no
+  exact child hash. Add I0coin's 27,854 rows, RSK's 236,432 rows, and ROD's
+  single authenticated row to the publication closure. Mark I0coin’s current
+  chain status as unknown because snapshot timestamps do not establish network
+  availability. The refreshed pins make
+  the complete `import-all` workflow ready for review; they do not claim that a
+  database import or deployment has completed.
+
+- Align strict coinbase eligibility with the refreshed Research evidence for
+  Hathor now that the reconstructed coinbase is preserved, so a real
+  coinbase can satisfy the same historical validation rule as other sources.
+  Schedule a durable full orphan recheck on upgrade so eligible existing
+  Hathor-backed unknown parents converge from the earlier weak verdict.
+  Document the operator requirement to stop the runtime through migration and
+  the new classifier's recheck so an older binary cannot consume the retry flags.
+  Validate and retain Hathor's full parent coinbase transaction before using
+  its script as strict evidence, including during historical imports and
+  retained-data rechecks.
+
+- Register SpaceXpanse ROD as historical source `auxpow:rod` at permanent id
+  35, with a complete native-node recovery profile through child height
+  4,127,689 and one authenticated canonical Bitcoin witness. The ROD chain
+  remains live, but the Monitor source is a sealed historical capture with no
+  live producer.
+
+- Validate Xaya's historical `PowData` child target explicitly: its pure
+  80-byte header must carry zero `nBits`, while the reviewed publication's
+  non-zero external target drives the persisted child-work verdict. Historical
+  imports now obtain this rule from shared source metadata rather than a
+  chain-name exception.
+
 ## [0.7.12] - 2026-09-03
 
 - Annotate the two F2Pool `bad-blk-sigops` stale blocks (heights 783,426 and

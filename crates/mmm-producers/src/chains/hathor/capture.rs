@@ -640,13 +640,14 @@ where
 /// Build the hand-assembled evidence + sidecar + pool ids + nBits verdict from a
 /// reconstructed parent. Deserializes the reconstructed coinbase once.
 ///
-/// Returns `Ok(None)` when the reconstructed coinbase is not a consensus-valid
-/// transaction (trailing bytes, or no input). The parent passed its own PoW
-/// target to get here, but the coinbase bytes are untrusted reconstruction
-/// output: a malformed one is a per-block skip like every other format
-/// violation, NOT an error - an `Err` here would fail the live tick and pin
-/// the poller on that height forever (observed on archive height 1292779,
-/// whose RFC-0006 coinbase carries trailing bytes).
+/// Returns `Ok(None)` when the reconstructed bytes do not deserialize as a
+/// transaction with coinbase input structure (trailing bytes, a non-coinbase
+/// prevout, or no input). The parent passed its own PoW target to get here, but
+/// the coinbase bytes are untrusted reconstruction output: a malformed one is
+/// a per-block skip like every other format violation, NOT an error - an `Err`
+/// here would fail the live tick and pin the poller on that height forever
+/// (observed on archive height 1292779, whose RFC-0006 coinbase carries
+/// trailing bytes).
 fn build_hathor_capture(
     context: &HathorCaptureContext,
     tx: &HathorTransaction,
@@ -667,13 +668,14 @@ fn build_hathor_capture(
             return Ok(None);
         }
     };
-    let Some(coinbase_input) = coinbase.input.first() else {
+    if !coinbase.is_coinbase() {
         error!(
             height = hathor_height,
-            "reconstructed BTC parent coinbase has no input; skipping"
+            "reconstructed BTC parent transaction is not coinbase; skipping"
         );
         return Ok(None);
-    };
+    }
+    let coinbase_input = &coinbase.input[0];
     let script_sig = coinbase_input.script_sig.as_bytes().to_vec();
     let bip34_height = parse_bip34_height(&script_sig);
     let output_addresses = derive_output_addresses(&coinbase);
@@ -728,7 +730,7 @@ fn build_hathor_capture(
         btc_parent_coinbase_script: Some(script_sig),
         btc_parent_coinbase_outputs: Some(serialize(&coinbase.output)),
         btc_parent_coinbase_outputs_text: None,
-        btc_parent_coinbase_tx_bytes: None,
+        btc_parent_coinbase_tx_bytes: Some(recon.full_coinbase.clone()),
         child_coinbase_txid: None,
         child_coinbase_script: None,
         child_coinbase_outputs: None,
@@ -870,11 +872,10 @@ impl ChainPoller for HathorChainPoller {
 mod tests {
     use super::*;
 
-    /// A coinbase that fails consensus deserialization (trailing bytes) is a
-    /// per-block skip, not an error: an `Err` would fail the live tick and pin
-    /// the poller on that height forever (archive height 1292779 regression).
+    /// Valid reconstructed coinbase bytes are retained, while malformed or
+    /// non-coinbase transactions skip without pinning the live poller.
     #[test]
-    fn malformed_reconstructed_coinbase_skips_instead_of_erroring() {
+    fn reconstructed_coinbase_validation_preserves_valid_and_skips_invalid() {
         let context = HathorCaptureContext {
             resolver: PoolResolver::from_default_snapshot().unwrap(),
             reward_identities: std::collections::HashMap::new(),
@@ -911,9 +912,15 @@ mod tests {
             funds_graph,
             &nbits_table,
         )
-        .unwrap();
-        assert!(intact.is_some(), "fixture coinbase must build");
+        .unwrap()
+        .expect("fixture coinbase must build");
+        assert_eq!(
+            intact.evidence.btc_parent_coinbase_tx_bytes.as_deref(),
+            Some(recon.full_coinbase.as_slice()),
+            "validated reconstructed coinbase bytes must be retained"
+        );
 
+        let pristine_coinbase = recon.full_coinbase.clone();
         recon.full_coinbase.push(0x00);
         let corrupted = build_hathor_capture(
             &context,
@@ -928,6 +935,27 @@ mod tests {
         assert!(
             corrupted.is_none(),
             "trailing-byte coinbase must skip, not error"
+        );
+
+        let mut non_coinbase: Transaction = deserialize(&pristine_coinbase).unwrap();
+        non_coinbase.input[0].previous_output =
+            bitcoin::OutPoint::new(bitcoin::Txid::from_byte_array([1; 32]), 0);
+        assert!(!non_coinbase.is_coinbase());
+        recon.full_coinbase = serialize(&non_coinbase);
+
+        let built = build_hathor_capture(
+            &context,
+            &tx,
+            height,
+            &aux_pow,
+            &recon,
+            funds_graph,
+            &nbits_table,
+        )
+        .unwrap();
+        assert!(
+            built.is_none(),
+            "well-formed non-coinbase transaction must skip"
         );
     }
 

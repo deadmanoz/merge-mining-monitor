@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use anyhow::{Context, Result, bail};
-use mmm_capture::source_registry::{SOURCE_REGISTRY, SourceKind, SourceLifecycle};
+use mmm_capture::source_registry::{
+    ChildTargetLocation, SOURCE_REGISTRY, SourceKind, SourceLifecycle,
+};
 
 const PINNED_RESEARCH_MANIFEST: &str =
     include_str!("../../../../data/historical/historical-source-manifest.json");
@@ -37,6 +39,7 @@ pub(super) struct HistoricalChainSpec {
     pub(super) chain: &'static str,
     pub(super) source_code: &'static str,
     pub(super) lifecycle: SourceLifecycle,
+    pub(super) child_target_location: ChildTargetLocation,
 }
 
 impl HistoricalChainSpec {
@@ -59,6 +62,7 @@ fn build_importable_chains() -> Vec<HistoricalChainSpec> {
             chain: source.chain,
             source_code: source.code,
             lifecycle: source.lifecycle,
+            child_target_location: source.child_target_location,
         })
         .collect()
 }
@@ -332,8 +336,8 @@ mod tests {
     }
 
     #[test]
-    fn registry_defines_all_twenty_seven_published_chain_sources() {
-        assert_eq!(importable_chains().len(), 27);
+    fn registry_defines_all_twenty_eight_importable_chain_sources() {
+        assert_eq!(importable_chains().len(), 28);
         let mut seen = std::collections::BTreeSet::new();
         for spec in importable_chains() {
             assert!(spec.source_code.starts_with("auxpow:"));
@@ -346,6 +350,18 @@ mod tests {
         assert_eq!(
             historical_chain_spec("namecoin").map(|spec| spec.lifecycle),
             Some(SourceLifecycle::Live)
+        );
+        assert_eq!(
+            historical_chain_spec("xaya").map(|spec| spec.child_target_location),
+            Some(ChildTargetLocation::PowData)
+        );
+        assert_eq!(
+            historical_chain_spec("rod").map(|spec| (spec.lifecycle, spec.child_target_location)),
+            Some((SourceLifecycle::Historical, ChildTargetLocation::PowData))
+        );
+        assert_eq!(
+            historical_chain_spec("devcoin").map(|spec| spec.child_target_location),
+            Some(ChildTargetLocation::HeaderNbits)
         );
         assert!(historical_chain_spec("jax-network").is_none());
     }

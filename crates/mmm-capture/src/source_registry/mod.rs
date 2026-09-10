@@ -54,10 +54,11 @@ impl SourceKind {
 }
 
 /// The source-class axis. Registry-derived display metadata; `Live` covers the
-/// active producers and the Bitcoin classifier; `Historical` covers the
-/// recovered dead chains; `Partial` covers an ingestible recovered subset whose
-/// full child chain remains unavailable; `Surveyed` covers a recovered and
-/// reviewed chain that yielded no admissible Bitcoin evidence; `Catalogued`
+/// active producers and the Bitcoin classifier; `Historical` covers recovered
+/// datasets without a live Monitor producer; `Partial` covers an ingestible
+/// recovered subset whose full child chain remains unavailable; `Surveyed`
+/// covers a recovered and reviewed chain that yielded no admissible Bitcoin
+/// evidence; `Catalogued`
 /// covers chains known to have BTC-merge-mined but with no recovered data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceLifecycle {
@@ -84,6 +85,17 @@ impl SourceLifecycle {
     }
 }
 
+/// Where a child chain serializes the target its Bitcoin parent must meet.
+///
+/// This belongs in the shared source registry because historical imports use
+/// the same child-evidence contract as live producers. `PowData` is the
+/// Xaya-style envelope: its pure 80-byte header deliberately has zero `nBits`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChildTargetLocation {
+    HeaderNbits,
+    PowData,
+}
+
 /// One source definition. `code` is `<kind>:<chain>[:instance]`;
 /// the unit tests assert `code` decomposes to exactly `kind`/`chain`/`instance`.
 #[derive(Debug, Clone, Copy)]
@@ -95,6 +107,7 @@ pub struct SourceDefinition {
     pub instance: Option<&'static str>,
     pub kind: SourceKind,
     pub lifecycle: SourceLifecycle,
+    pub child_target_location: ChildTargetLocation,
 }
 
 // ---------------------------------------------------------------------------
@@ -121,10 +134,11 @@ const fn live_auxpow(id: i64, code: &'static str, chain: &'static str) -> Source
         instance: None,
         kind: SourceKind::Auxpow,
         lifecycle: SourceLifecycle::Live,
+        child_target_location: ChildTargetLocation::HeaderNbits,
     }
 }
 
-/// A historical (recovered, dead-chain) AuxPoW source.
+/// A recovered AuxPoW dataset without a live Monitor producer.
 const fn historical_auxpow(id: i64, code: &'static str, chain: &'static str) -> SourceDefinition {
     SourceDefinition {
         id,
@@ -133,6 +147,20 @@ const fn historical_auxpow(id: i64, code: &'static str, chain: &'static str) -> 
         instance: None,
         kind: SourceKind::Auxpow,
         lifecycle: SourceLifecycle::Historical,
+        child_target_location: ChildTargetLocation::HeaderNbits,
+    }
+}
+
+/// A historical source whose effective target is serialized in a PowData
+/// envelope, with a zero `nBits` field in its pure child header.
+const fn historical_powdata_auxpow(
+    id: i64,
+    code: &'static str,
+    chain: &'static str,
+) -> SourceDefinition {
+    SourceDefinition {
+        child_target_location: ChildTargetLocation::PowData,
+        ..historical_auxpow(id, code, chain)
     }
 }
 
@@ -145,6 +173,7 @@ const fn partial_auxpow(id: i64, code: &'static str, chain: &'static str) -> Sou
         instance: None,
         kind: SourceKind::Auxpow,
         lifecycle: SourceLifecycle::Partial,
+        child_target_location: ChildTargetLocation::HeaderNbits,
     }
 }
 
@@ -157,6 +186,7 @@ const fn surveyed_auxpow(id: i64, code: &'static str, chain: &'static str) -> So
         instance: None,
         kind: SourceKind::Auxpow,
         lifecycle: SourceLifecycle::Surveyed,
+        child_target_location: ChildTargetLocation::HeaderNbits,
     }
 }
 
@@ -171,6 +201,7 @@ const fn catalogued_auxpow(id: i64, code: &'static str, chain: &'static str) -> 
         instance: None,
         kind: SourceKind::Auxpow,
         lifecycle: SourceLifecycle::Catalogued,
+        child_target_location: ChildTargetLocation::HeaderNbits,
     }
 }
 
@@ -186,6 +217,7 @@ pub const SOURCE_REGISTRY: &[SourceDefinition] = &[
         instance: Some("core"),
         kind: SourceKind::LiveChaintip,
         lifecycle: SourceLifecycle::Live,
+        child_target_location: ChildTargetLocation::HeaderNbits,
     },
     live_auxpow(4, SYSCOIN_SOURCE_CODE, "syscoin"),
     live_auxpow(5, FRACTAL_SOURCE_CODE, "fractal"),
@@ -207,7 +239,7 @@ pub const SOURCE_REGISTRY: &[SourceDefinition] = &[
     historical_auxpow(20, "auxpow:myriadcoin", "myriadcoin"),
     historical_auxpow(21, "auxpow:terracoin", "terracoin"),
     historical_auxpow(22, "auxpow:unobtanium", "unobtanium"),
-    historical_auxpow(23, "auxpow:xaya", "xaya"),
+    historical_powdata_auxpow(23, "auxpow:xaya", "xaya"),
     // -- recovery candidates and recovered datasets --
     partial_auxpow(24, "auxpow:vcash", "vcash"),
     historical_auxpow(25, "auxpow:lyncoin", "lyncoin"),
@@ -220,6 +252,7 @@ pub const SOURCE_REGISTRY: &[SourceDefinition] = &[
     // id 32 is retired. Mazacoin was removed after its source audit found no AuxPoW.
     catalogued_auxpow(33, "auxpow:bitcoin-stash", "bitcoin-stash"),
     historical_auxpow(34, "auxpow:elcash", "elcash"),
+    historical_powdata_auxpow(35, "auxpow:rod", "rod"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -241,7 +274,7 @@ pub fn live() -> impl Iterator<Item = &'static SourceDefinition> {
         .filter(|s| s.lifecycle == SourceLifecycle::Live)
 }
 
-/// The historical (recovered, dead-chain) sources.
+/// The recovered dataset sources without live Monitor producers.
 #[cfg(any(test, feature = "test-support"))]
 pub fn historical() -> impl Iterator<Item = &'static SourceDefinition> {
     SOURCE_REGISTRY
@@ -379,6 +412,7 @@ mod tests {
             (31, "auxpow:jincoin"),
             (33, "auxpow:bitcoin-stash"),
             (34, "auxpow:elcash"),
+            (35, "auxpow:rod"),
         ];
         let got: Vec<(i64, &str)> = SOURCE_REGISTRY.iter().map(|s| (s.id, s.code)).collect();
         assert_eq!(got, want);
@@ -388,11 +422,11 @@ mod tests {
     #[test]
     fn registry_lifecycle_counts_match_recovery_state() {
         assert_eq!(live().count(), 7);
-        assert_eq!(historical().count(), 19);
+        assert_eq!(historical().count(), 20);
         assert_eq!(partial().count(), 1);
         assert_eq!(surveyed().count(), 1);
         assert_eq!(catalogued().count(), 5);
-        assert_eq!(SOURCE_REGISTRY.len(), 33);
+        assert_eq!(SOURCE_REGISTRY.len(), 34);
         // Every historical entry is recovered AuxPoW evidence.
         for s in historical() {
             assert_eq!(s.kind, SourceKind::Auxpow, "{}", s.code);
@@ -411,6 +445,14 @@ mod tests {
         assert_eq!(
             by_code("auxpow:sixeleven").unwrap().lifecycle,
             SourceLifecycle::Historical
+        );
+        let rod = by_code("auxpow:rod").unwrap();
+        assert_eq!(rod.id, 35);
+        assert_eq!(rod.lifecycle, SourceLifecycle::Historical);
+        assert_eq!(rod.child_target_location, ChildTargetLocation::PowData);
+        assert_eq!(
+            by_code("auxpow:elcash").unwrap().child_target_location,
+            ChildTargetLocation::HeaderNbits
         );
     }
 

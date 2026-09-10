@@ -1,5 +1,12 @@
 # Release Notes
 
+## [0.7.13] - 2026-09-09
+
+- Support importing the complete historical Research publication, including
+  ROD's authenticated evidence and corrected external-target handling for Xaya.
+- Mark i0coin's current chain status as Unknown because March 2026 snapshot
+  timestamps establish an evidence boundary, not current network availability.
+
 ## [0.7.12] - 2026-09-03
 
 - Annotate the two F2Pool `bad-blk-sigops` stale blocks (heights 783426 and

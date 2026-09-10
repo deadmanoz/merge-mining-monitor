@@ -30,6 +30,10 @@ Use `just` targets, not raw commands, when a target exists:
 - `just reclassify-unknown-parents`, `just reclassify-pools`,
   `just reconcile-read-model` - repair and enrichment commands.
 
+Database-backed test binaries run serially in `just test-integration` and CI
+because schema isolation does not isolate PostgreSQL advisory locks. Preserve
+concurrent tasks inside each locking test.
+
 ## Architecture Rules
 
 - The workspace is split by ownership: `mmm-pg` opens connections,
@@ -61,6 +65,22 @@ Use `just` targets, not raw commands, when a target exists:
 - Historical and partial source imports are authoritative snapshots. Live
   source publication imports are additive. Keep this lifecycle distinction in
   the shared source registry, not in per-chain schema branches.
+- The current Research pin is generated from committed revision `e09f52b` and
+  covers 28 event artifacts plus the stale-descendant and error-observation
+  aggregates, 30 artifacts and 1,283,972 rows in total. Refresh the manifest
+  and catalogue together with `just gen-research-publication-pins`; a refreshed
+  pin documents import readiness, not a completed database import or deploy.
+- Historical describes the recovered dataset, not whether its native chain is
+  still active. ROD has no live Monitor producer. The registry's
+  `ChildTargetLocation` also owns the target contract: Xaya and ROD use
+  `PowData`, with zero pure-header `nBits` and a non-zero effective target
+  supplied by the pinned Research publication. The importer checks parent work
+  against that target; the pure header alone cannot authenticate it.
+- Hathor strict BIP34 evidence requires a full parent coinbase transaction
+  whose input script matches the retained script. Live capture validates and
+  stores that transaction; legacy script-only observations remain weaker
+  until normal replay/import enriches them. Historical import, writer and API
+  height selection share the validator in `mmm-capture::btc_orphan`.
 - `import-all` determines work by comparing normalized publication-owned fields
   with non-operator historical provenance and base events across research pins.
   Artifact SHA values verify bytes only. A complete match must return before
@@ -94,7 +114,10 @@ Use `just` targets, not raw commands, when a target exists:
 - Hash byte order is fixed: store rust-bitcoin `to_byte_array()` bytes directly;
   use display/RPC hex only at presentation boundaries.
 - SQL migrations are append-only after they reach a persistent database. Add a
-  new migration; do not edit historical migrations.
+  new migration; do not edit historical migrations. The documented exception
+  is the registry-generated `0002` fresh/reset seed: regenerate it when adding
+  a source and also add an idempotent forward migration for existing databases
+  (see `migrations/README.md`).
 - Real database migrations go only through `just db-migrate-dev` or
   `just db-migrate-deploy`.
 - Never hand-edit generated runtime artifacts such as `data/pools/current.json`,

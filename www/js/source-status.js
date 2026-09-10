@@ -1,4 +1,4 @@
-import { $, compareSourcesForDisplay, esc, relativeTime, sourceDisplayName, state } from "./frontend-state.js?v=0.7.12";
+import { $, compareSourcesForDisplay, esc, relativeTime, sourceDisplayName, state } from "./frontend-state.js?v=0.7.13";
 
 
 const OPERATIONAL_SOURCE_SYNC_MODES = new Set(["live", "bitcoin-core-backbone"]);
