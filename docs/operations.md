@@ -78,6 +78,12 @@ Hathor rule, so a database lock during the migration alone is insufficient.
    both Core-cache retry flags are false and retain before/after Hathor verdict
    counts. Resume services only with the new release after this succeeds.
 
+The reclassification command refreshes the Core cache during connection setup.
+That refresh completes the scheduled strict sweep and clears its retry flags
+before the explicit recheck runs. No background Core-sync service is needed
+for this acceptance step. The explicit recheck also covers the case where an
+older process already consumed the flags.
+
 If an old process ran after `0019`, stop it and repeat the explicit full
 recheck with the new binary even if the flags are already false. Re-running
 the migration wrapper will not reschedule an already-recorded migration. After

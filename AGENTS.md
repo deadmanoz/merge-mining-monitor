@@ -79,8 +79,8 @@ concurrent tasks inside each locking test.
 - Hathor strict BIP34 evidence requires a full parent coinbase transaction
   whose input script matches the retained script. Live capture validates and
   stores that transaction; legacy script-only observations remain weaker
-  until normal replay/import enriches them. Writer and API height selection
-  share the validator in `mmm-capture::btc_orphan`.
+  until normal replay/import enriches them. Historical import, writer and API
+  height selection share the validator in `mmm-capture::btc_orphan`.
 - `import-all` determines work by comparing normalized publication-owned fields
   with non-operator historical provenance and base events across research pins.
   Artifact SHA values verify bytes only. A complete match must return before

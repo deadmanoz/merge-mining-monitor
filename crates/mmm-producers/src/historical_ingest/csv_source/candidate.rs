@@ -115,6 +115,7 @@ fn candidate_from_record_with_taxonomy(
             spec.chain,
             &header,
             coinbase.script.as_deref(),
+            coinbase.tx_bytes.as_deref(),
         );
         filter_unknown(verdict, taxonomy.relevance_selection)?;
         Some(verdict)

@@ -204,6 +204,11 @@ value-paired forms. Recognizable Bitcoin payout addresses participate in
 capture-time attribution, and `reclassify-pools` can replay from the stored
 text later.
 
+For Hathor unknown parents, strict BIP34 evidence requires a matching full
+coinbase transaction. A script without that transaction contributes only to the
+weak path, using the same rule as live capture, reconciliation and API height
+selection. Malformed transactions and contradictory scripts are rejected.
+
 ## Source Lifecycles And Existing Data
 
 The shared source registry controls reconciliation:
