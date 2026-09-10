@@ -31,12 +31,12 @@ pub(crate) const RSK_DEFAULT_BACKFILL_FETCH_CONCURRENCY: usize = 16;
 pub(crate) struct RskBackfillSummary {
     pub(crate) heights_processed: usize,
     pub(crate) canonical_written: usize,
-    pub(crate) canonical_pre_rskip92: usize,
+    pub(crate) canonical_no_parent_header: usize,
     pub(crate) canonical_malformed: usize,
     pub(crate) canonical_missing: usize,
     pub(crate) uncles_seen: usize,
     pub(crate) uncles_written: usize,
-    pub(crate) uncles_pre_rskip92: usize,
+    pub(crate) uncles_no_parent_header: usize,
     pub(crate) uncles_malformed: usize,
 }
 
@@ -141,12 +141,12 @@ pub(crate) async fn run_rsk_backfill(
     info!(
         heights_processed = summary.heights_processed,
         canonical_written = summary.canonical_written,
-        canonical_pre_rskip92 = summary.canonical_pre_rskip92,
+        canonical_no_parent_header = summary.canonical_no_parent_header,
         canonical_malformed = summary.canonical_malformed,
         canonical_missing = summary.canonical_missing,
         uncles_seen = summary.uncles_seen,
         uncles_written = summary.uncles_written,
-        uncles_pre_rskip92 = summary.uncles_pre_rskip92,
+        uncles_no_parent_header = summary.uncles_no_parent_header,
         uncles_malformed = summary.uncles_malformed,
         elapsed_secs = elapsed.as_secs_f64(),
         blocks_per_sec,
@@ -174,8 +174,8 @@ fn accumulate_rsk_summary(summary: &mut RskBackfillSummary, outcome: HeightOutco
     }
     match outcome.canonical {
         Some(crate::chains::rsk::capture::BlockOutcome::Written) => summary.canonical_written += 1,
-        Some(crate::chains::rsk::capture::BlockOutcome::PreRskip92Skipped) => {
-            summary.canonical_pre_rskip92 += 1;
+        Some(crate::chains::rsk::capture::BlockOutcome::NoParentHeaderSkipped) => {
+            summary.canonical_no_parent_header += 1;
         }
         Some(crate::chains::rsk::capture::BlockOutcome::MalformedSkipped) => {
             summary.canonical_malformed += 1;
@@ -184,6 +184,6 @@ fn accumulate_rsk_summary(summary: &mut RskBackfillSummary, outcome: HeightOutco
     }
     summary.uncles_seen += outcome.uncles_seen;
     summary.uncles_written += outcome.uncles_written;
-    summary.uncles_pre_rskip92 += outcome.uncles_pre_rskip92;
+    summary.uncles_no_parent_header += outcome.uncles_no_parent_header;
     summary.uncles_malformed += outcome.uncles_malformed;
 }

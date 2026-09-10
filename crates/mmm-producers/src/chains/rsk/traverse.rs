@@ -151,8 +151,8 @@ pub(crate) async fn fetch_rsk_height_bundle<S: RskBlockSource>(
 }
 
 /// Build the order-preserving fetch stream for the exact inclusive backfill
-/// range supplied by the operator. This helper is shared by production and its
-/// regression test so a future poller-floor clamp cannot bypass the test.
+/// range supplied by the caller. This helper does not apply an acquisition floor;
+/// the caller remains responsible for passing the configured range unchanged.
 pub(crate) fn fetch_rsk_height_bundles<S: RskBlockSource>(
     source: S,
     start_height: i32,
@@ -423,16 +423,10 @@ mod tests {
     }
 
     #[test]
-    fn backfill_fetch_pipeline_fetches_below_floor_heights_unclamped() {
-        // Regression pin for the acquisition-floor correction: the bounded
-        // backfill must fetch its configured range verbatim. Heights below
-        // the poller's 139,999 acquisition floor are reachable history:
-        // pre-floor blocks carrying a complete 80-byte BTC parent header
-        // capture fine, so no `start.max(floor)` clamp may enter the
-        // backfill fetch/traverse path (the floor is applied only by the
-        // poller's `effective_start`). `run_rsk_backfill` itself needs a live
-        // RPC endpoint and a DB handle, so this drives its shared fetch-stream
-        // helper with an in-memory source.
+    fn backfill_fetch_stream_returns_supplied_below_floor_range() {
+        // Exercise the shared fetch stream with a real below-floor block and
+        // a missing height. This covers the helper's supplied range; it does
+        // not test the live-RPC/DB caller's choice of range arguments.
         let floor = i64::from(crate::chains::by_id(crate::chains::ChainId::Rsk).activation_floor);
         let (start, end) = (112_829_i32, 112_830_i32);
         assert!(
