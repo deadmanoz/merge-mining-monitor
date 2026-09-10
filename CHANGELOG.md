@@ -24,6 +24,8 @@ This changelog starts with the initial release.
   coinbase can satisfy the same historical validation rule as other sources.
   Schedule a durable full orphan recheck on upgrade so eligible existing
   Hathor-backed unknown parents converge from the earlier weak verdict.
+  Require a stopped runtime through migration and the new classifier's recheck
+  so an older binary cannot consume the retry flags.
 
 - Register SpaceXpanse ROD as historical source `auxpow:rod` at permanent id
   35, with a complete native-node recovery profile through child height

@@ -36,6 +36,10 @@ NNNN_short_description.sql
   state, then deletes the source row. Never close or reuse the resulting gap.
 - Materialized view refresh strategies should be documented in the migration
   that creates the view and exercised by a test.
+- Before applying `0019`, stop all Monitor processes and prevent old binaries
+  from restarting until the new classifier completes the full orphan recheck.
+  Follow the stop/migrate/start procedure in `docs/operations.md`; the retry
+  booleans do not identify which binary consumed them.
 
 ## Current Migrations
 
