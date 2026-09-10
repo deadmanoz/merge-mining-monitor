@@ -13,7 +13,7 @@ use tracing::{info, warn};
 use crate::chains::backfill::BackfillConfig;
 use crate::chains::rsk::capture::{HeightOutcome, RskCaptureContext, write_rsk_bundle};
 use crate::chains::rsk::rpc::RskRpcClient;
-use crate::chains::rsk::traverse::fetch_rsk_height_bundles;
+use crate::chains::rsk::traverse::fetch_rsk_height_bundle;
 use crate::producer_runtime::{ProducerRuntime, run_post_backfill_repair};
 use mmm_capture::capture::now_epoch_seconds;
 
@@ -25,7 +25,7 @@ pub(crate) const RSK_DEFAULT_BACKFILL_FETCH_CONCURRENCY: usize = 16;
 
 /// Grand totals a backfill run folds [`HeightOutcome`](crate::chains::rsk::capture::HeightOutcome)s
 /// into, via `accumulate_rsk_summary`.
-/// Canonical counts partition by outcome (written / pre-RSKIP-92 / malformed /
+/// Canonical counts partition by outcome (written / no parent header / malformed /
 /// missing); uncle counts sum across all heights. Logged at run end.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct RskBackfillSummary {
@@ -120,12 +120,9 @@ pub(crate) async fn run_rsk_backfill(
     // failed chunk.
     let started = Instant::now();
     let mut summary = RskBackfillSummary::default();
-    let mut fetches = fetch_rsk_height_bundles(
-        rpc,
-        config.start_height,
-        config.end_height,
-        fetch_concurrency,
-    );
+    let mut fetches = futures::stream::iter(config.start_height..=config.end_height)
+        .map(|height| fetch_rsk_height_bundle(rpc.clone(), i64::from(height)))
+        .buffered(fetch_concurrency);
 
     while let Some(bundle) = fetches.next().await {
         let outcome = write_rsk_bundle(&mut client, &context, bundle?, &now_epoch_seconds).await?;

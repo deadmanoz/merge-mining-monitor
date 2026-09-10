@@ -407,8 +407,8 @@ struct RskBlockQuantities {
 }
 
 /// Decode and validate every merge-mining field on the RSK block, mapping
-/// each defect onto the documented skip decision (pre-RSKIP-92 short/absent
-/// payloads vs malformed evidence) with the original warn! diagnostics.
+/// each defect onto the documented skip decision (missing complete parent
+/// header or malformed evidence) with the original warn! diagnostics.
 fn decode_rsk_block_fields(block: &RskBlock) -> Result<Result<DecodedRskFields, CaptureDecision>> {
     let header = match decode_rsk_parent_header(block)? {
         Ok(parsed) => parsed,

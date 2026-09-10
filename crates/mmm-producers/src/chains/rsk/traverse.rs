@@ -3,7 +3,7 @@
 //! writer in `super::capture`.
 
 use anyhow::{Context, Result};
-use futures::{StreamExt, future::try_join_all};
+use futures::future::try_join_all;
 use tracing::warn;
 
 use crate::chains::rsk::rpc::{RskBlock, RskRpcClient, decode_quantity_i64};
@@ -150,20 +150,6 @@ pub(crate) async fn fetch_rsk_height_bundle<S: RskBlockSource>(
     })
 }
 
-/// Build the order-preserving fetch stream for the exact inclusive backfill
-/// range supplied by the caller. This helper does not apply an acquisition floor;
-/// the caller remains responsible for passing the configured range unchanged.
-pub(crate) fn fetch_rsk_height_bundles<S: RskBlockSource>(
-    source: S,
-    start_height: i32,
-    end_height: i32,
-    fetch_concurrency: usize,
-) -> impl futures::Stream<Item = Result<RskHeightBundle>> {
-    futures::stream::iter(start_height..=end_height)
-        .map(move |height| fetch_rsk_height_bundle(source.clone(), i64::from(height)))
-        .buffered(fetch_concurrency)
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -255,8 +241,8 @@ mod tests {
     }
 
     #[test]
-    fn fetch_pre_rskip92_canonical_is_kept_in_bundle() {
-        // Pre-RSKIP-92 / decode skips are downstream concerns; the fetch stage
+    fn fetch_canonical_without_parent_header_is_kept_in_bundle() {
+        // Parent-header shape and decode skips are downstream concerns; the fetch stage
         // keeps any present canonical block verbatim.
         let block = load_rsk_block_fixture("pre-rskip92");
         let source =
@@ -420,40 +406,5 @@ mod tests {
         });
 
         assert_eq!(observed, (200_000_i64..=200_009).collect::<Vec<_>>());
-    }
-
-    #[test]
-    fn backfill_fetch_stream_returns_supplied_below_floor_range() {
-        // Exercise the shared fetch stream with a real below-floor block and
-        // a missing height. This covers the helper's supplied range; it does
-        // not test the live-RPC/DB caller's choice of range arguments.
-        let floor = i64::from(crate::chains::by_id(crate::chains::ChainId::Rsk).activation_floor);
-        let (start, end) = (112_829_i32, 112_830_i32);
-        assert!(
-            i64::from(end) < floor,
-            "test range {start}..={end} must sit below the {floor} acquisition floor"
-        );
-
-        // The real pre-floor block (RSK 112,829, complete 80-byte BTC parent
-        // header); 112,830 stands in as a legitimately absent height.
-        let block = load_rsk_block_fixture("canonical-pre-floor-full-header");
-        let source = FakeRskSource::default()
-            .with_canonical(i64::from(start), FakeResponse::block(block.clone()));
-
-        let observed = block_on(async {
-            let mut fetches = fetch_rsk_height_bundles(source, start, end, 2);
-            let mut bundles = Vec::new();
-            while let Some(bundle) = fetches.next().await {
-                bundles.push(bundle.unwrap());
-            }
-            bundles
-        });
-
-        // Both below-floor heights were fetched: the present canonical
-        // arrives verbatim and the absent height yields an empty bundle;
-        // the range was not clamped away.
-        assert_eq!(observed.len(), 2);
-        assert_eq!(observed[0].canonical.as_ref(), Some(&block));
-        assert!(observed[1].canonical.is_none());
     }
 }
