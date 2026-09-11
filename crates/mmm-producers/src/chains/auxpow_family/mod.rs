@@ -429,7 +429,9 @@ async fn attach_child_payout_if_needed(
 }
 
 /// Live capture chain for the bitcoind family. Heights up to the tip always
-/// exist, so `process_height` always returns `Advance`.
+/// exist, so `process_height` never returns `Retry`; it advances past every
+/// captured or skipped height and returns `Hold` only for a malformed proof
+/// under the `HoldInterval` policy (see `height_progress_for`).
 struct AuxpowFamilyPoller {
     state: ChainPollerState,
     rpc: BitcoindRpcClient,
