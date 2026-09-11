@@ -10,8 +10,11 @@ that combines child-chain RPC with database writes.
 `mmm-producers` owns no base-table or derived-table SQL of its own. It calls
 `mmm-store` helpers with data (which turn it into base-table SQL) and routes every
 derived-state mutation through `mmm-read-model`'s `read_model::mutation` entry
-points. Producers write only `merge_mining_event` and its 1:1 chain sidecars;
-`block`, `attestation_proof`, and `source_health` are reconciler-derived. Live
+points. Producers write only `merge_mining_event`, its 1:1 chain sidecars, and
+the producer-owned `capture_error` operational state (one row per height a
+producer could not capture, cleared only when that same height is reprocessed
+successfully); `block`, `attestation_proof`, and `source_health` are
+reconciler-derived. Live
 poll progress is the monotonic `poll_cursor` table, never
 `MAX(child_height)`, and backfills never move the cursor.
 
