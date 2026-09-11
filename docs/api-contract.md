@@ -844,11 +844,15 @@ payload.
 `commitment` is the parent-level AuxPoW merge-mining commitment, or `null`
 (matching `competition` / `stale_branch`) when the block has no recognized
 AuxPoW-format event. When present it carries `format`
-(`namecoin-aux` / `rsk-opaque` / `hathor-rfc0006`, chosen by family priority:
-any Namecoin-family event wins, else RSK, else Hathor), `parent_coinbase_txid`,
-`parent_coinbase_script_hex`, and `marker`. `marker` is non-null only for a
-Namecoin-family parent whose coinbase scriptSig yields a `0xfabe6d6d` marker; it
-carries `magic_present`, `aux_merkle_root`, `merkle_size`, and `merkle_nonce`.
+(`namecoin-aux` / `qbit-aux` / `rsk-opaque` / `hathor-rfc0006`, chosen by
+family priority: any Namecoin-family event wins, else Qbit, else RSK, else
+Hathor), `parent_coinbase_txid`, `parent_coinbase_script_hex`, and `marker`.
+Namecoin-family and Qbit events both persist the real parent coinbase, so
+both formats carry the txid and script. `marker` is non-null only for a
+Namecoin-family or Qbit parent whose coinbase scriptSig yields a `0xfabe6d6d`
+marker (Qbit mainnet also accepts the legacy no-marker placement, so a Qbit
+commitment with a null marker is normal); it carries `magic_present`,
+`aux_merkle_root`, `merkle_size`, and `merkle_nonce`.
 `aux_merkle_root` is a hash-like field in the standard reversed/display order
 (the reverse of its raw scriptSig bytes), like every other API hash. RSK and
 Hathor are never scanned for the marker, so their commitment is format-only with

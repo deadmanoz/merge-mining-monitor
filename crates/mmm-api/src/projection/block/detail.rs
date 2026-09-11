@@ -91,44 +91,24 @@ pub(super) fn marker_projection(marker: &AuxMarker) -> AuxMarkerProjection {
 }
 
 /// Build the parent-level merge-mining commitment from a block's event rows,
-/// with an explicit family priority (NamecoinFamily > Rsk > Hathor). The
+/// with an explicit family priority (NamecoinFamily > Qbit > Rsk > Hathor). The
 /// representative row (which sets `format`, `parent_coinbase_txid`,
 /// `parent_coinbase_script_hex`, and `marker`) is a single row, so the script and
-/// the marker always agree: the first Namecoin-family row that decodes a marker
-/// (ascending event id), else the first Namecoin-family row with `marker = None`.
+/// the marker always agree: within the winning coinbase-bearing family, the
+/// first row that decodes a marker (ascending event id), else its first row with
+/// `marker = None` (see `coinbase_commitment`).
 pub(super) fn derive_commitment(rows: &[EventDetailRow]) -> Option<Commitment> {
-    let is_family = |r: &&EventDetailRow, family: ChainFamily| {
-        chain_family(r.source.chain.as_deref()) == family
-    };
-
-    if rows
-        .iter()
-        .any(|r| chain_family(r.source.chain.as_deref()) == ChainFamily::NamecoinFamily)
+    // Families that persist the real parent coinbase come first, richest
+    // evidence winning: any Namecoin-family event, else Qbit. Both carry the
+    // coinbase txid and script and may yield a `0xfabe6d6d` marker (Qbit
+    // mainnet also accepts the legacy no-marker placement, so a null marker is
+    // normal there). RSK and Hathor are format-only.
+    if let Some(commitment) = coinbase_commitment(rows, ChainFamily::NamecoinFamily, "namecoin-aux")
     {
-        let mut namecoin: Vec<&EventDetailRow> = rows
-            .iter()
-            .filter(|r| is_family(r, ChainFamily::NamecoinFamily))
-            .collect();
-        namecoin.sort_by_key(|r| r.id);
-        let decoded = namecoin.iter().find_map(|r| {
-            r.btc_parent_coinbase_script
-                .as_deref()
-                .and_then(decode_aux_marker)
-                .map(|marker| (*r, marker))
-        });
-        let (rep, marker) = match decoded {
-            Some((row, marker)) => (row, Some(marker)),
-            None => (*namecoin.first().expect("non-empty family"), None),
-        };
-        return Some(Commitment {
-            format: "namecoin-aux",
-            parent_coinbase_txid: rep
-                .btc_parent_coinbase_txid
-                .as_deref()
-                .and_then(|bytes| display_hash(bytes).ok()),
-            parent_coinbase_script_hex: rep.btc_parent_coinbase_script.as_deref().map(hex::encode),
-            marker: marker.as_ref().map(marker_projection),
-        });
+        return Some(commitment);
+    }
+    if let Some(commitment) = coinbase_commitment(rows, ChainFamily::Qbit, "qbit-aux") {
+        return Some(commitment);
     }
     if rows
         .iter()
@@ -153,6 +133,44 @@ pub(super) fn derive_commitment(rows: &[EventDetailRow]) -> Option<Commitment> {
         });
     }
     None
+}
+
+/// Commitment for a family whose events persist the real parent coinbase.
+/// The representative is the lowest-id member whose coinbase scriptSig yields
+/// a `0xfabe6d6d` marker, else the lowest-id member with a null marker. `None`
+/// when no row belongs to `family`.
+fn coinbase_commitment(
+    rows: &[EventDetailRow],
+    family: ChainFamily,
+    format: &'static str,
+) -> Option<Commitment> {
+    let mut members: Vec<&EventDetailRow> = rows
+        .iter()
+        .filter(|r| chain_family(r.source.chain.as_deref()) == family)
+        .collect();
+    if members.is_empty() {
+        return None;
+    }
+    members.sort_by_key(|r| r.id);
+    let decoded = members.iter().find_map(|r| {
+        r.btc_parent_coinbase_script
+            .as_deref()
+            .and_then(decode_aux_marker)
+            .map(|marker| (*r, marker))
+    });
+    let (rep, marker) = match decoded {
+        Some((row, marker)) => (row, Some(marker)),
+        None => (members[0], None),
+    };
+    Some(Commitment {
+        format,
+        parent_coinbase_txid: rep
+            .btc_parent_coinbase_txid
+            .as_deref()
+            .and_then(|bytes| display_hash(bytes).ok()),
+        parent_coinbase_script_hex: rep.btc_parent_coinbase_script.as_deref().map(hex::encode),
+        marker: marker.as_ref().map(marker_projection),
+    })
 }
 
 /// Fallback `coinbase_tag`: extract printable tag runs from the commitment
@@ -599,6 +617,61 @@ mod tests {
         let c = derive_commitment(&[r, n]).expect("commitment");
         assert_eq!(c.format, "namecoin-aux");
         assert!(c.marker.is_none());
+    }
+
+    /// A parent observed only by Qbit must not fall through to `null`: Qbit
+    /// persists the real parent coinbase, so it gets its own format and the
+    /// `coinbase_tag` fallback keeps working from the projected script.
+    #[test]
+    fn commitment_qbit_only_is_qbit_aux_with_coinbase() {
+        let mut q = event_row(1, "qbit");
+        q.btc_parent_coinbase_txid = Some(vec![0xab; 32]);
+        q.btc_parent_coinbase_script = Some(vec![0x03, 0xe5, 0xf5, 0x05]); // no marker
+        let c = derive_commitment(&[q]).expect("Qbit-only parent must yield a commitment");
+        assert_eq!(c.format, "qbit-aux");
+        assert!(
+            c.parent_coinbase_txid.is_some(),
+            "coinbase txid must be projected"
+        );
+        assert_eq!(
+            c.parent_coinbase_script_hex.as_deref(),
+            Some("03e5f505"),
+            "coinbase script must be projected for the tag fallback"
+        );
+        assert!(
+            c.marker.is_none(),
+            "legacy no-marker placement is a null marker"
+        );
+    }
+
+    /// Qbit's commitment decodes a `0xfabe6d6d` marker exactly as Namecoin's.
+    #[test]
+    fn commitment_qbit_with_marker_decodes() {
+        let mut q = event_row(1, "qbit");
+        q.btc_parent_coinbase_script = Some(synthetic_marker_script());
+        let c = derive_commitment(&[q]).expect("commitment");
+        assert_eq!(c.format, "qbit-aux");
+        let marker = c.marker.expect("marker");
+        assert!(marker.magic_present);
+        assert_eq!(marker.merkle_size, 8);
+    }
+
+    /// Family priority: Namecoin-family beats Qbit, and Qbit beats the
+    /// format-only RSK and Hathor, regardless of row id.
+    #[test]
+    fn commitment_priority_namecoin_over_qbit_over_rsk() {
+        let qbit = || {
+            let mut q = event_row(1, "qbit");
+            q.btc_parent_coinbase_script = Some(vec![0x03, 0xe5, 0xf5, 0x05]);
+            q
+        };
+        let c = derive_commitment(&[event_row(2, "rsk"), qbit()]).expect("commitment");
+        assert_eq!(c.format, "qbit-aux", "Qbit beats RSK even with a higher id");
+
+        let mut n = event_row(3, "namecoin");
+        n.btc_parent_coinbase_script = Some(vec![0x03, 0xe5, 0xf5, 0x05]);
+        let c = derive_commitment(&[event_row(2, "rsk"), qbit(), n]).expect("commitment");
+        assert_eq!(c.format, "namecoin-aux", "Namecoin-family beats Qbit");
     }
 
     #[test]
