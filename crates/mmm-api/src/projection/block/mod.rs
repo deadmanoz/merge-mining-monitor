@@ -237,17 +237,22 @@ pub struct EventPoolAttributionProjection {
     pub details: Value,
 }
 
-/// The decoded CAuxPow merkle proofs for one auxiliary block: the redundant
-/// `hash_block` plus the two branches (`coinbase_branch` from the coinbase
-/// txid to the parent transaction merkle root; `blockchain_branch` from the aux
-/// block hash to the marker's `aux_merkle_root`). Replaces the opaque proof-byte
-/// hex in the UI. All hashes are display-order hex.
+/// The decoded merge-mining merkle proofs for one auxiliary block: the two
+/// branches (`coinbase_branch` from the coinbase txid to the parent
+/// transaction merkle root; `blockchain_branch` from the aux block hash to
+/// the committed aux merkle root), plus the classic-only `hash_block`.
+/// Replaces the opaque proof-byte hex in the UI. All hashes are display-order
+/// hex.
 #[derive(Debug, Clone, Serialize)]
 pub struct AuxProofDetail {
     /// `CAuxPow::hashBlock`: a redundant convenience hash the verifier ignores,
     /// conventionally all-zero for Namecoin-family blocks. NOT the actual parent
     /// block hash (that is `block.hash` / `event.btc_parent_header_hash`).
-    pub hash_block: String,
+    /// A classic-CAuxPow wire field: always present for Namecoin-family
+    /// proofs and OMITTED for qbit-format proofs, whose wire format has no
+    /// such field (never synthesize a placeholder hash).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash_block: Option<String>,
     pub coinbase_branch: AuxBranchDetail,
     pub blockchain_branch: AuxBranchDetail,
 }

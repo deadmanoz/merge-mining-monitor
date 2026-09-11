@@ -6,6 +6,23 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Add the Qbit native merge-mining proof decoder to the capture path,
+  validated against four real mainnet controls (child heights 78,053-78,064;
+  the positive control embeds Bitcoin block 966,017) and a native
+  synthetic-parent proof, pinned to Qbit revision `70fea84` via the
+  merge-mining-research reference adapter. Qbit's extended header is not a
+  classic CAuxPow: it has no `hashBlock` field, commits the display-order
+  chain-merkle fold of the pure child header, and always checks the parent
+  header against the CHILD's own nBits target. The block API selects the
+  proof decoder explicitly from the chain slug (never sniffed), cites Qbit's
+  AuxPoW chain id 47, and now omits the classic-only `aux_proof.hash_block`
+  member for qbit-format proofs (existing families serialize unchanged).
+  Sync `STRICT_BIP34_CHAINS` with the research classifier's
+  `BTC_COINBASE_SCRIPTSIG_CHAINS` (the cross-repo drift guard flags the
+  addition of `qbit`; the entry is inert until a qbit source exists). No
+  Qbit producer, source-registry entry, or import exists yet; this is the
+  decoder slice only.
+
 - Clarify RSK's 139,999 live acquisition floor and verify bounded backfills
   below it with a real full-header fixture. Preserve complete parent-header
   evidence from early blocks and evaluate their uncles independently; RSK

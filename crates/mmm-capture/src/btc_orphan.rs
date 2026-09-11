@@ -29,6 +29,7 @@ pub const STRICT_BIP34_CHAINS: &[&str] = &[
     "ixcoin",
     "myriadcoin",
     "namecoin",
+    "qbit",
     "syscoin",
     "terracoin",
     "unobtanium",

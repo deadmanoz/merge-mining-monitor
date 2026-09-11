@@ -1,4 +1,5 @@
-//! Namecoin-family AuxPoW parsing.
+//! Namecoin-family AuxPoW parsing, plus Qbit's distinct native proof format
+//! (the `qbit` submodule).
 //!
 //! Namecoin-family producers work from raw `getblock <hash> 0` bytes. Namecoin's
 //! AuxPoW payload sits between the 80-byte child header and the child
@@ -139,12 +140,16 @@ pub struct AuxpowProof {
 }
 
 mod decode;
+mod qbit;
+#[cfg(test)]
+mod qbit_tests;
 mod reader;
 #[cfg(test)]
 mod tests;
 mod verify;
 
 pub use decode::*;
+pub use qbit::*;
 pub(crate) use reader::*;
 pub use verify::*;
 
@@ -413,7 +418,7 @@ pub fn parse_elastos_auxpow(
 /// parser internals, so wire-format knowledge stays in one module.
 pub mod evidence {
     pub use super::{
-        AuxMarker, TxOut, decode_aux_marker, decode_auxpow_proof, extract_coinbase_tag,
-        output_addresses,
+        AuxMarker, AuxMerkleBranchDetail, TxOut, decode_aux_marker, decode_auxpow_proof,
+        decode_qbit_auxpow_proof, extract_coinbase_tag, output_addresses,
     };
 }
