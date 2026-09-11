@@ -368,12 +368,16 @@ pub static CHAINS: [ChainSpec; 7] = [
         poller: PollerDefaults {
             // Qbit blocks land about a minute apart, so the shared 30s tick
             // and 100-height batch used by the other bitcoind-family chains
-            // keep the cursor at the tip without oversampling. A one-block
-            // trailing rescan re-reads the tip each tick, which is where a
-            // short Qbit reorg would land.
+            // keep the cursor at the tip without oversampling. The default
+            // trailing rescan is 0, matching Namecoin, Syscoin and Fractal:
+            // the shared runner has no same-height reconciliation yet (see
+            // `ReorgPolicy`), so a rescan that finds a replaced block would
+            // insert the replacement as a NEW active event and leave the
+            // displaced one active. Operators may opt in with
+            // `QBIT_REORG_DEPTH` once replacement revocation exists.
             poll_interval_seconds: 30,
             batch_size: 100,
-            reorg_depth: 1,
+            reorg_depth: 0,
         },
         reorg_policy: ReorgPolicy::EnvConfigurable,
         family: Some(FamilySpec {
