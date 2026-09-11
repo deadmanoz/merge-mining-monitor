@@ -90,6 +90,24 @@ pub(super) fn marker_projection(marker: &AuxMarker) -> AuxMarkerProjection {
     }
 }
 
+/// Family-aware marker projection. Classic CAuxPow commits the chain root in
+/// wire/internal order, so `marker_projection` reverses it for display. Qbit
+/// commits the root ALREADY in display order (the verifier in
+/// `mmm_capture::auxpow::qbit` reverses the internal-order fold before matching
+/// the scriptSig), so its 32 raw scriptSig bytes are the display hex as-is and
+/// must not be reversed a second time.
+fn marker_projection_for(family: ChainFamily, marker: &AuxMarker) -> AuxMarkerProjection {
+    match family {
+        ChainFamily::Qbit => AuxMarkerProjection {
+            magic_present: true,
+            aux_merkle_root: hex::encode(marker.aux_merkle_root.to_byte_array()),
+            merkle_size: marker.merkle_size,
+            merkle_nonce: marker.merkle_nonce,
+        },
+        _ => marker_projection(marker),
+    }
+}
+
 /// Build the parent-level merge-mining commitment from a block's event rows,
 /// with an explicit family priority (NamecoinFamily > Qbit > Rsk > Hathor). The
 /// representative row (which sets `format`, `parent_coinbase_txid`,
@@ -169,7 +187,7 @@ fn coinbase_commitment(
             .as_deref()
             .and_then(|bytes| display_hash(bytes).ok()),
         parent_coinbase_script_hex: rep.btc_parent_coinbase_script.as_deref().map(hex::encode),
-        marker: marker.as_ref().map(marker_projection),
+        marker: marker.as_ref().map(|m| marker_projection_for(family, m)),
     })
 }
 
@@ -644,16 +662,58 @@ mod tests {
         );
     }
 
-    /// Qbit's commitment decodes a `0xfabe6d6d` marker exactly as Namecoin's.
+    /// A marker script whose root is ASYMMETRIC, so a byte-order mistake in
+    /// projection cannot hide behind a palindromic root.
+    fn asymmetric_marker_script() -> (Vec<u8>, [u8; 32]) {
+        let mut root = [0u8; 32];
+        for (i, b) in root.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        let mut script = vec![0x03, 0xab, 0x77, 0x0e];
+        script.extend_from_slice(&[0xfa, 0xbe, 0x6d, 0x6d]);
+        script.extend_from_slice(&root);
+        script.extend_from_slice(&8u32.to_le_bytes());
+        script.extend_from_slice(&3u32.to_le_bytes());
+        (script, root)
+    }
+
+    /// Qbit commits the chain root in DISPLAY order, so its projected
+    /// `aux_merkle_root` must be the raw scriptSig bytes as-is. Classic
+    /// Namecoin commits wire order and is reversed for display. The same
+    /// asymmetric bytes must therefore project differently per family.
     #[test]
-    fn commitment_qbit_with_marker_decodes() {
+    fn commitment_qbit_marker_root_is_not_reversed_a_second_time() {
+        let (script, root) = asymmetric_marker_script();
+        let as_is = hex::encode(root);
+        let reversed = {
+            let mut r = root;
+            r.reverse();
+            hex::encode(r)
+        };
+
         let mut q = event_row(1, "qbit");
-        q.btc_parent_coinbase_script = Some(synthetic_marker_script());
-        let c = derive_commitment(&[q]).expect("commitment");
-        assert_eq!(c.format, "qbit-aux");
-        let marker = c.marker.expect("marker");
-        assert!(marker.magic_present);
-        assert_eq!(marker.merkle_size, 8);
+        q.btc_parent_coinbase_script = Some(script.clone());
+        let qc = derive_commitment(&[q]).expect("commitment");
+        assert_eq!(qc.format, "qbit-aux");
+        let qm = qc.marker.expect("marker");
+        assert!(qm.magic_present);
+        assert_eq!(qm.merkle_size, 8);
+        assert_eq!(
+            qm.aux_merkle_root, as_is,
+            "Qbit root is already display order"
+        );
+
+        let mut n = event_row(1, "namecoin");
+        n.btc_parent_coinbase_script = Some(script);
+        let nm = derive_commitment(&[n])
+            .expect("commitment")
+            .marker
+            .expect("marker");
+        assert_eq!(
+            nm.aux_merkle_root, reversed,
+            "classic root is wire order, reversed for display"
+        );
+        assert_ne!(qm.aux_merkle_root, nm.aux_merkle_root);
     }
 
     /// Family priority: Namecoin-family beats Qbit, and Qbit beats the
