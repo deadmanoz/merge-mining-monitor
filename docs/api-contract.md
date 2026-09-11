@@ -870,22 +870,26 @@ commitments therefore report `coinbase_tag: null` because their representative
 commitment intentionally has no recoverable Bitcoin coinbase script.
 
 `event_details[]` additionally carry `chain_id` (the reference AuxPoW chain id;
-cite-or-null, Namecoin = 1, `null` for not-yet-cited chains and non-Namecoin
-families) and `slot_index` (this chain's `nChainIndex` slot in the parent's aux
-merkle tree, decoded from the stored CAuxPow blob). Both are Namecoin-family-only
-and otherwise `null`; `slot_index` is additionally gated on the blob's embedded
+cite-or-null, Namecoin = 1, Qbit = 47, `null` for not-yet-cited chains and
+non-AuxPoW families) and `slot_index` (this chain's slot in the parent's aux
+merkle tree, decoded from the stored proof blob). Both are selected per proof
+format from the chain slug — classic CAuxPow for the Namecoin family, Qbit's
+native format for `qbit`, never sniffed from stored bytes — and are `null` for
+every other family; `slot_index` is additionally gated on the blob's embedded
 parent header matching the event's `btc_parent_header_hash`, so a
 parseable-but-mismatched blob never surfaces a foreign slot.
 
-`event_details[].aux_proof` is the decoded CAuxPow merkle proof (the human
+`event_details[].aux_proof` is the decoded merge-mining merkle proof (the human
 breakdown the UI renders in place of the opaque proof-byte hex): the redundant
 `hash_block` (`CAuxPow::hashBlock`, conventionally all-zero and not the real
 parent hash) plus `coinbase_branch` (coinbase txid up to the parent transaction
-merkle root) and `blockchain_branch` (aux block hash up to the marker's
+merkle root) and `blockchain_branch` (aux block hash up to the committed
 `aux_merkle_root`), each with an `index` (side-mask; the `blockchain_branch`
-index is the slot) and display-order `siblings`. Same gate
-as `slot_index` (Namecoin-family, parent-header match), `null` otherwise. The
-raw `aux_merkle_proof_hex` stays in the payload for programmatic use.
+index is the slot) and display-order `siblings`. `hash_block` is a
+classic-CAuxPow wire field: always present for Namecoin-family proofs and
+absent for qbit-format proofs, whose wire format has no such field. Same gate
+as `slot_index` (per-format selection, parent-header match), `null` otherwise.
+The raw `aux_merkle_proof_hex` stays in the payload for programmatic use.
 
 For direct `near` and `unknown` projections, group active non-revoked
 `merge_mining_event` rows by `btc_parent_header_hash`. Current kind precedence

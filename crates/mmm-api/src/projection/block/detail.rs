@@ -20,7 +20,8 @@ use crate::query::kind_as_str;
 use bitcoin::block::Header;
 use bitcoin::consensus::encode::deserialize;
 use mmm_capture::auxpow::evidence::{
-    AuxMarker, decode_aux_marker, decode_auxpow_proof, extract_coinbase_tag,
+    AuxMarker, AuxMerkleBranchDetail, decode_aux_marker, decode_auxpow_proof,
+    decode_qbit_auxpow_proof, extract_coinbase_tag,
 };
 use mmm_capture::pool_resolver::PoolResolver;
 
@@ -28,6 +29,10 @@ use mmm_capture::pool_resolver::PoolResolver;
 pub(super) enum ChainFamily {
     /// Namecoin / Syscoin / Fractal: standard `fabe6d6d` AuxPoW marker.
     NamecoinFamily,
+    /// Qbit: native proof format (no `hashBlock`, display-order chain
+    /// commitment); stored proofs decode via `decode_qbit_auxpow_proof`,
+    /// never the classic CAuxPow decoder.
+    Qbit,
     /// RSK: RSKIP-92 midstate compression discards the coinbase (opaque).
     Rsk,
     /// Hathor: RFC 0006 `"Hath"` split-header form, never scanned for `fabe6d6d`.
@@ -37,14 +42,17 @@ pub(super) enum ChainFamily {
 
 /// Map a child chain slug to its AuxPoW `ChainFamily`. The single gate that
 /// decides which chains get fabe6d6d marker scanning + slot/aux-proof decoding
-/// (NamecoinFamily: namecoin/syscoin/fractal/elastos) vs opaque (rsk) vs
-/// split-header (hathor). Adding a family chain is a new arm here, never a
-/// cloned module (architecture rule).
+/// (NamecoinFamily: namecoin/syscoin/fractal/elastos) vs the Qbit native
+/// format (qbit) vs opaque (rsk) vs split-header (hathor). Proof-format
+/// selection is explicit per slug — never sniffed from stored bytes, and
+/// never a try-one-then-the-other fallback. Adding a family chain is a new
+/// arm here, never a cloned module (architecture rule).
 pub(super) fn chain_family(chain: Option<&str>) -> ChainFamily {
     match chain {
         Some("namecoin") | Some("syscoin") | Some("fractal") | Some("elastos") => {
             ChainFamily::NamecoinFamily
         }
+        Some("qbit") => ChainFamily::Qbit,
         Some("rsk") => ChainFamily::Rsk,
         Some("hathor") => ChainFamily::Hathor,
         _ => ChainFamily::Other,
@@ -54,13 +62,16 @@ pub(super) fn chain_family(chain: Option<&str>) -> ChainFamily {
 /// Reference AuxPoW chain id per child chain, **cite-or-null**. Namecoin's
 /// `AUXPOW_CHAIN_ID` is 1 (the merged-mining spec's worked example confirms slot
 /// derivation with `chain_id = 1`). Elastos's is 1224, verified against live
-/// blocks. Syscoin / Fractal are not yet cited from their chainparams, so they
-/// return `None` until a sourced constant is added. `slot_index` (decoded from
-/// the proof) is the per-block datum used for verification.
+/// blocks. Qbit's is 47, cited from pinned Qbit revision `70fea84` chainparams
+/// (the version field's chain-id bits and the LCG slot input). Syscoin /
+/// Fractal are not yet cited from their chainparams, so they return `None`
+/// until a sourced constant is added. `slot_index` (decoded from the proof) is
+/// the per-block datum used for verification.
 pub(super) fn chain_id_for_chain(chain: &str) -> Option<u32> {
     match chain {
         "namecoin" => Some(1),
         "elastos" => Some(1224),
+        "qbit" => Some(47),
         _ => None,
     }
 }
@@ -186,10 +197,11 @@ pub(super) fn normalize_core_coinbase_tag(tag: &str) -> Option<String> {
 /// Sort and render `EventDetailRow`s into wire `EventDetail`s. Deterministic
 /// order: confirmed_at, source code, child height, child hash, id (pins the
 /// `event_details` array, block-*.json). chain_id/slot_index/aux_proof are
-/// Namecoin-family-only and slot_index is gated on the decoded blob's embedded
-/// parent header matching this event's own parent (a mismatched-but-parseable
-/// blob never leaks another parent's slot, constraint #5). Decodes via
-/// mmm_capture::auxpow::evidence.
+/// selected per proof format (classic CAuxPow for the Namecoin family, the
+/// Qbit native format for qbit; see `event_proof_projection`), and slot_index
+/// is gated on the decoded blob's embedded parent header matching this
+/// event's own parent (a mismatched-but-parseable blob never leaks another
+/// parent's slot, constraint #5). Decodes via mmm_capture::auxpow::evidence.
 pub(super) fn render_event_details(
     mut rows: Vec<EventDetailRow>,
     pool_attributions_by_event: &HashMap<i64, EventPoolAttributions>,
@@ -204,50 +216,7 @@ pub(super) fn render_event_details(
     });
     rows.into_iter()
         .map(|row| {
-            // chain_id / slot_index are Namecoin-family-only. slot_index is gated
-            // on the stored blob's embedded parent header matching this event's
-            // own parent, so a parseable-but-mismatched blob never surfaces a slot
-            // that belongs to a different parent.
-            let family = chain_family(row.source.chain.as_deref());
-            let (chain_id, slot_index, aux_proof) = if family == ChainFamily::NamecoinFamily {
-                let chain_id = row.source.chain.as_deref().and_then(chain_id_for_chain);
-                // Decode the CAuxPow blob once, gated on the embedded parent
-                // header matching this event's own parent, then derive both the
-                // quick-glance slot and the full branch breakdown from it.
-                let proof = row
-                    .aux_merkle_proof
-                    .as_deref()
-                    .and_then(decode_auxpow_proof)
-                    .filter(|detail| {
-                        detail.parent_header_hash.to_byte_array().as_slice()
-                            == row.parent_hash.as_slice()
-                    });
-                let slot_index = proof.as_ref().map(|detail| detail.slot_index);
-                let aux_proof = proof.map(|detail| AuxProofDetail {
-                    hash_block: detail.hash_block.to_string(),
-                    coinbase_branch: AuxBranchDetail {
-                        index: detail.coinbase_branch.index,
-                        siblings: detail
-                            .coinbase_branch
-                            .siblings
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect(),
-                    },
-                    blockchain_branch: AuxBranchDetail {
-                        index: detail.blockchain_branch.index,
-                        siblings: detail
-                            .blockchain_branch
-                            .siblings
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect(),
-                    },
-                });
-                (chain_id, slot_index, aux_proof)
-            } else {
-                (None, None, None)
-            };
+            let (chain_id, slot_index, aux_proof) = event_proof_projection(&row);
             let rsk = row.rsk.map(render_rsk_detail);
             let child_block_hash = row
                 .child_block_hash
@@ -290,6 +259,74 @@ pub(super) fn render_event_details(
             })
         })
         .collect()
+}
+
+/// Decode chain_id / slot_index / aux_proof for one event row, selected
+/// EXPLICITLY by chain family: classic CAuxPow for the Namecoin family, the
+/// Qbit native format (no `hashBlock` on the wire) for qbit; every other
+/// family projects nulls. No sniffing and no try-one-then-the-other
+/// fallback. The blob decodes once, gated on its embedded parent header
+/// matching this event's own parent, so a parseable-but-mismatched blob
+/// never surfaces a slot or branch breakdown that belongs to a different
+/// parent; `chain_id` is cite-or-null independent of the blob.
+fn event_proof_projection(
+    row: &EventDetailRow,
+) -> (Option<u32>, Option<u32>, Option<AuxProofDetail>) {
+    let decoded = match chain_family(row.source.chain.as_deref()) {
+        ChainFamily::NamecoinFamily => row
+            .aux_merkle_proof
+            .as_deref()
+            .and_then(decode_auxpow_proof)
+            .map(|detail| {
+                (
+                    detail.parent_header_hash,
+                    detail.slot_index,
+                    aux_proof_detail(
+                        Some(detail.hash_block.to_string()),
+                        &detail.coinbase_branch,
+                        &detail.blockchain_branch,
+                    ),
+                )
+            }),
+        ChainFamily::Qbit => row
+            .aux_merkle_proof
+            .as_deref()
+            .and_then(decode_qbit_auxpow_proof)
+            .map(|detail| {
+                (
+                    detail.parent_header_hash,
+                    detail.slot_index,
+                    aux_proof_detail(None, &detail.coinbase_branch, &detail.blockchain_branch),
+                )
+            }),
+        ChainFamily::Rsk | ChainFamily::Hathor | ChainFamily::Other => return (None, None, None),
+    };
+    let chain_id = row.source.chain.as_deref().and_then(chain_id_for_chain);
+    let gated = decoded.filter(|(embedded_parent, _, _)| {
+        embedded_parent.to_byte_array().as_slice() == row.parent_hash.as_slice()
+    });
+    match gated {
+        Some((_, slot_index, aux_proof)) => (chain_id, Some(slot_index), Some(aux_proof)),
+        None => (chain_id, None, None),
+    }
+}
+
+/// Shared `AuxProofDetail` constructor for the classic and Qbit arms: branch
+/// projection is identical, and only classic CAuxPow carries a `hashBlock`.
+fn aux_proof_detail(
+    hash_block: Option<String>,
+    coinbase_branch: &AuxMerkleBranchDetail,
+    blockchain_branch: &AuxMerkleBranchDetail,
+) -> AuxProofDetail {
+    let branch = |detail: &AuxMerkleBranchDetail| AuxBranchDetail {
+        index: detail.index,
+        siblings: detail.siblings.iter().map(ToString::to_string).collect(),
+    };
+    AuxProofDetail {
+        hash_block,
+        coinbase_branch: branch(coinbase_branch),
+        blockchain_branch: branch(blockchain_branch),
+    }
 }
 
 fn cmp_option_none_last<T: Ord>(left: &Option<T>, right: &Option<T>) -> std::cmp::Ordering {
@@ -593,6 +630,10 @@ mod tests {
         let rendered = render_event_details(vec![ok], &HashMap::new()).expect("render");
         assert!(rendered[0].slot_index.is_some());
         assert_eq!(rendered[0].chain_id, None);
+        // Classic CAuxPow serialization keeps its hash_block member (the
+        // qbit-format arm omits it; see qbit_arm_projects_slot_and_omits_hash_block).
+        let json = serde_json::to_value(&rendered[0]).expect("serialize event");
+        assert!(json["aux_proof"]["hash_block"].is_string());
 
         // Mismatched parent hash -> slot_index None (coherence guard fires).
         let mut bad = event_row(1, "fractal");
@@ -600,5 +641,79 @@ mod tests {
         bad.parent_hash = vec![0xffu8; 32];
         let rendered = render_event_details(vec![bad], &HashMap::new()).expect("render");
         assert!(rendered[0].slot_index.is_none());
+    }
+
+    #[test]
+    fn qbit_arm_projects_slot_and_omits_hash_block() {
+        // The qbit arm is unreachable from real data in this slice (no source
+        // registry entry yet), so it needs a constructed row: prove the
+        // explicit format selection, the embedded-parent gate, the cited
+        // chain id, and that serialization omits the classic-only hash_block.
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../../fixtures/qbit/qbit_controls.json"
+        ))
+        .expect("parse qbit controls fixture");
+        let control = fixture["controls"]
+            .as_array()
+            .expect("controls array")
+            .iter()
+            .find(|control| control["parent_self_pow"] == json!(true))
+            .expect("positive control");
+        let raw =
+            hex::decode(control["header_hex"].as_str().expect("header hex")).expect("decode hex");
+        let height = u32::try_from(control["height"].as_u64().expect("height")).expect("u32");
+        let parsed = match mmm_capture::auxpow::parse_qbit_extended_header(&raw, height)
+            .expect("parse Qbit extended header")
+        {
+            mmm_capture::auxpow::ParsedQbitBlock::Auxpow(parsed) => *parsed,
+            mmm_capture::auxpow::ParsedQbitBlock::Direct(_) => panic!("expected merged proof"),
+        };
+
+        assert_eq!(chain_family(Some("qbit")), ChainFamily::Qbit);
+
+        // Matching parent hash -> chain_id 47, slot and branch breakdown
+        // surface, and the serialized aux_proof carries NO hash_block member.
+        let mut ok = event_row(1, "qbit");
+        ok.aux_merkle_proof = Some(parsed.auxpow_bytes.clone());
+        ok.parent_hash = parsed.parent_header.hash().to_byte_array().to_vec();
+        let rendered = render_event_details(vec![ok], &HashMap::new()).expect("render");
+        assert_eq!(rendered[0].chain_id, Some(47));
+        assert_eq!(
+            rendered[0].slot_index,
+            Some(u32::try_from(parsed.chain_branch.index).expect("non-negative slot"))
+        );
+        let aux = rendered[0].aux_proof.as_ref().expect("aux proof");
+        assert_eq!(aux.hash_block, None);
+        assert_eq!(aux.coinbase_branch.index, 0);
+        assert_eq!(
+            aux.coinbase_branch.siblings,
+            parsed
+                .coinbase_branch
+                .hashes
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            aux.blockchain_branch.siblings,
+            parsed
+                .chain_branch
+                .hashes
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        );
+        let json = serde_json::to_value(&rendered[0]).expect("serialize event");
+        assert!(json["aux_proof"].get("hash_block").is_none());
+
+        // Mismatched parent hash -> the embedded-parent gate zeroes the proof
+        // projection while the cite-or-null chain_id stays.
+        let mut bad = event_row(1, "qbit");
+        bad.aux_merkle_proof = Some(parsed.auxpow_bytes);
+        bad.parent_hash = vec![0xffu8; 32];
+        let rendered = render_event_details(vec![bad], &HashMap::new()).expect("render");
+        assert_eq!(rendered[0].chain_id, Some(47));
+        assert!(rendered[0].slot_index.is_none());
+        assert!(rendered[0].aux_proof.is_none());
     }
 }

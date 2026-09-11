@@ -157,21 +157,25 @@ pub fn pow_validates_target(header: &Header) -> bool {
     validates_target(header.block_hash(), header.bits)
 }
 
-pub fn validates_target(hash: BlockHash, bits: CompactTarget) -> bool {
-    // Reject the malformed compact-target cases the previous helper
-    // rejected: sign bit, zero mantissa, zero exponent, exponent > 32.
-    // `Target::from_compact` is a decoder and does not reject these, so
-    // without this guard a corrupt nBits could spuriously satisfy a low
-    // decoded target and mis-classify a parent header as PoW-valid.
+/// Decode a compact `nBits`, rejecting the malformed encodings
+/// `Target::from_compact` would happily decode: sign bit, zero mantissa,
+/// zero exponent, exponent > 32. Without this guard a corrupt nBits could
+/// spuriously satisfy a low decoded target and mis-classify a parent header
+/// as PoW-valid. Shared by [`validates_target`] and the Qbit child-target
+/// gate (which adds its own pow-limit bound on top).
+pub(crate) fn well_formed_compact_target(bits: CompactTarget) -> Option<Target> {
     let raw_bits = bits.to_consensus();
     let exponent = (raw_bits >> 24) as usize;
     let mantissa = raw_bits & 0x007f_ffff;
     let sign = raw_bits & 0x0080_0000 != 0;
     if sign || mantissa == 0 || exponent == 0 || exponent > 32 {
-        return false;
+        return None;
     }
-    let target = Target::from_compact(bits);
-    target.is_met_by(hash)
+    Some(Target::from_compact(bits))
+}
+
+pub fn validates_target(hash: BlockHash, bits: CompactTarget) -> bool {
+    well_formed_compact_target(bits).is_some_and(|target| target.is_met_by(hash))
 }
 
 pub fn parse_bip34_height(script_sig: &[u8]) -> Option<i32> {
