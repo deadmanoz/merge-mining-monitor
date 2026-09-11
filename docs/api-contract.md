@@ -853,8 +853,13 @@ Namecoin-family or Qbit parent whose coinbase scriptSig yields a `0xfabe6d6d`
 marker (Qbit mainnet also accepts the legacy no-marker placement, so a Qbit
 commitment with a null marker is normal); it carries `magic_present`,
 `aux_merkle_root`, `merkle_size`, and `merkle_nonce`.
-`aux_merkle_root` is a hash-like field in the standard reversed/display order
-(the reverse of its raw scriptSig bytes), like every other API hash. RSK and
+`aux_merkle_root` is always emitted in the standard display order, like every
+other API hash, but how that relates to the raw scriptSig bytes depends on the
+format: for `namecoin-aux` the scriptSig commits the root in wire order, so
+the field is the reverse of those 32 bytes; for `qbit-aux` the scriptSig
+already commits the display-order root, so the field is those 32 bytes as-is.
+A client verifying a commitment against the raw script must apply the rule
+for its `format`, not reverse unconditionally. RSK and
 Hathor are never scanned for the marker, so their commitment is format-only with
 a null marker and null coinbase fields. The marker is decoded in Rust from the
 already-stored parent coinbase bytes; no `aux_target` value is surfaced (only the
