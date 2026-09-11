@@ -763,18 +763,21 @@ mod tests {
         let spec = by_id(ChainId::Qbit);
         let config = BackfillConfig::from_args(spec, ["78050", "78060"]).expect("parse range");
 
-        let mut summary = BackfillSummary::default();
-        for effect in [
-            BackfillHeightEffect::AuxpowWritten,
-            BackfillHeightEffect::NonAuxpowSkipped,
-        ] {
-            summary.record_for_test(effect);
-        }
-        ensure_backfill_complete(spec, &config, &summary)
+        let clean = BackfillSummary {
+            processed: 2,
+            auxpow_written: 1,
+            non_auxpow_skipped: 1,
+            ..BackfillSummary::default()
+        };
+        ensure_backfill_complete(spec, &config, &clean)
             .expect("a clean range completes successfully");
 
-        summary.record_for_test(BackfillHeightEffect::MalformedHeld);
-        let err = ensure_backfill_complete(spec, &config, &summary)
+        let held = BackfillSummary {
+            processed: 3,
+            malformed_held: 1,
+            ..clean
+        };
+        let err = ensure_backfill_complete(spec, &config, &held)
             .expect_err("a held height must fail the run");
         assert_eq!(
             err.to_string(),

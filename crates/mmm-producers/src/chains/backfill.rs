@@ -141,13 +141,6 @@ pub(crate) enum BackfillHeightEffect {
 }
 
 impl BackfillSummary {
-    /// Fold one height's effect in. Test-visible so the shared runner's
-    /// completion verdict can be exercised without driving a range.
-    #[cfg(test)]
-    pub(crate) fn record_for_test(&mut self, effect: BackfillHeightEffect) {
-        self.record(effect);
-    }
-
     fn record(&mut self, effect: BackfillHeightEffect) {
         self.processed += 1;
         match effect {

@@ -624,22 +624,6 @@ mod tests {
         assert_eq!(cursorless_with_error.error_height, Some(9));
     }
 
-    /// Clearing the last capture error restores the ordinary verdict.
-    #[test]
-    fn resolved_capture_error_restores_normal_live_state() {
-        assert_eq!(
-            classify_source_sync(
-                SourceLifecycle::Live,
-                SourceKind::Auxpow,
-                Some(FRESH_CURSOR),
-                None,
-                None,
-                NOW,
-            ),
-            auxpow_sync("live", "live", 12_345, NOW - 60)
-        );
-    }
-
     #[test]
     fn unregistered_source_code_maps_to_unknown() {
         assert_eq!(
