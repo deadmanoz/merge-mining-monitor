@@ -418,7 +418,7 @@ pub fn parse_elastos_auxpow(
 /// parser internals, so wire-format knowledge stays in one module.
 pub mod evidence {
     pub use super::{
-        AuxMarker, AuxMerkleBranchDetail, QbitProofDetail, TxOut, decode_aux_marker,
-        decode_auxpow_proof, decode_qbit_auxpow_proof, extract_coinbase_tag, output_addresses,
+        AuxMarker, AuxMerkleBranchDetail, TxOut, decode_aux_marker, decode_auxpow_proof,
+        decode_qbit_auxpow_proof, extract_coinbase_tag, output_addresses,
     };
 }
