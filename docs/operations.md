@@ -169,6 +169,14 @@ just backfill-elastos START END
 just backfill-qbit START END
 ```
 
+The first `poll-qbit` run against a database that already holds the imported
+Qbit historical publication must set `QBIT_START_HEIGHT` at or below that
+publication's final height (80,986 for the pinned generation) and remove it
+once the cursor is persisted. Without it the poller seeds its cursor at the
+node's current tip, and every height between the publication boundary and
+that tip is never captured, although `/api/v1/sources` still reports the
+source as live. The same applies after any controlled cursor reset.
+
 A Qbit backfill exits non-zero when any height in the range holds an unresolved
 capture error. The written evidence and the read-model repair still complete;
 the non-zero exit says the range is not fully covered. Inspect the open heights
