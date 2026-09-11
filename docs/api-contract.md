@@ -5,7 +5,7 @@ Fixture examples live in `fixtures/api/`; fixture
 coverage is listed by `fixtures/api/manifest.json`.
 
 The current implementation supports Namecoin, RSK, Syscoin, Fractal Bitcoin,
-Hathor, and Elastos capture. See `docs/data-model.md` for schema details,
+Hathor, Elastos, and Qbit capture. See `docs/data-model.md` for schema details,
 `docs/architecture.md` for current code flow, and
 `docs/tree-semantics.md` for implementation notes on deriving `/api/v1/tree`
 and orphan navigator responses.
@@ -356,6 +356,7 @@ Reserved source codes:
 - `auxpow:fractal`
 - `auxpow:hathor`
 - `auxpow:elastos`
+- `auxpow:qbit`
 - `live-chaintip:bitcoin:core`
 
 Reserved historical (recovered) AuxPoW source codes (defined in the Source
@@ -1069,15 +1070,27 @@ Response fields:
   or the current Bitcoin Core backbone target tip height, else JSON `null`.
 - `sync.latest_evidence_at`: latest AuxPoW evidence time for live AuxPoW
   sources, else JSON `null`.
-- `sync.error_code`: latest Bitcoin Core backbone error code, else JSON `null`.
-- `sync.error_height`: Bitcoin height associated with `sync.error_code`, else
-  JSON `null`.
+- `sync.error_code`: the source's current capture error, else JSON `null`. Two
+  independent classes use this field. For the Bitcoin Core live-chaintip source
+  it is the latest backbone error code from `bitcoin_core_sync_state`. For a
+  live AuxPoW source it is `auxpow_capture_error`, meaning the producer holds at
+  least one unresolved height it could not capture.
+- `sync.error_height`: the height associated with `sync.error_code`, else JSON
+  `null`. For the backbone that is a Bitcoin height; for a live AuxPoW source it
+  is the CHILD height of the earliest unresolved capture error, which is the
+  bound on trustworthy coverage for that source. A source holding several
+  unresolved heights still reports exactly one record, carrying the lowest.
 
 `progress_height` and `progress_updated_at` are both present or both null. Live
-AuxPoW sources use a capture-specific 1-hour cursor-age window first: a missing
+AuxPoW sources report `error` whenever `sync.error_code` is set, ahead of every
+other verdict: the poll cursor is monotonic, so it can be fresh and already past
+a height the producer never captured. Otherwise they use a capture-specific
+1-hour cursor-age window: a missing
 cursor is `not_started`, an old cursor is `stale`, a fresh cursor below a known
 `target_height` is `catching_up`, and a fresh cursor with no target or at or
-above target is `live`. A fresh AuxPoW source can transiently report
+above target is `live`. The `error` state clears only when the producer
+reprocesses each held height successfully; progress fields keep reporting the
+real cursor throughout. A fresh AuxPoW source can transiently report
 `catching_up` over its configured reorg window after the initial tip-anchored
 seed. Historical, partial, surveyed, and catalogued sources report their
 lifecycle token as both mode and state with null progress fields.

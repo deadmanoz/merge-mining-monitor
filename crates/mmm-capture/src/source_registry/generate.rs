@@ -479,7 +479,7 @@ mod tests {
             sql.contains("OVERRIDING SYSTEM VALUE"),
             "explicit identity override present"
         );
-        assert!(sql.contains("RESTART WITH 36"), "next identity is 36");
+        assert!(sql.contains("RESTART WITH 37"), "next identity is 37");
         assert!(sql.contains("INSERT INTO source"));
         // One VALUES row per registry entry, terminated by a single `;`.
         assert_eq!(
@@ -488,7 +488,7 @@ mod tests {
         );
         // The identity restart is the last statement and ends the file.
         assert!(
-            sql.trim_end().ends_with("RESTART WITH 36;"),
+            sql.trim_end().ends_with("RESTART WITH 37;"),
             "ends with the identity restart"
         );
         // the Bitcoin live source carries its instance; auxpow rows are NULL.

@@ -113,7 +113,7 @@ pub(crate) fn parse_height(label: &'static str, value: &str) -> Result<i32> {
 }
 
 /// Tally of a bounded backfill for the final log line. `processed` equals the
-/// sum of the three outcome counters.
+/// sum of the four outcome counters.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct BackfillSummary {
     /// Heights visited (every height in the requested inclusive range).
@@ -122,8 +122,13 @@ pub(crate) struct BackfillSummary {
     pub auxpow_written: usize,
     /// Heights skipped as non-AuxPoW or failing the version gate.
     pub non_auxpow_skipped: usize,
-    /// Heights skipped as malformed-but-claimed-AuxPoW (held, not written).
+    /// Heights skipped as malformed-but-claimed-AuxPoW (logged, not written)
+    /// under `MalformedPolicy::SkipAndContinue`.
     pub malformed_skipped: usize,
+    /// Heights that failed to decode under `MalformedPolicy::HoldInterval`.
+    /// Each one persisted a `capture_error` row, and a non-zero count makes
+    /// the whole range incomplete: the caller must not report success.
+    pub malformed_held: usize,
 }
 
 /// Per-height contribution to a [`BackfillSummary`].
@@ -132,15 +137,24 @@ pub(crate) enum BackfillHeightEffect {
     AuxpowWritten,
     NonAuxpowSkipped,
     MalformedSkipped,
+    MalformedHeld,
 }
 
 impl BackfillSummary {
+    /// Fold one height's effect in. Test-visible so the shared runner's
+    /// completion verdict can be exercised without driving a range.
+    #[cfg(test)]
+    pub(crate) fn record_for_test(&mut self, effect: BackfillHeightEffect) {
+        self.record(effect);
+    }
+
     fn record(&mut self, effect: BackfillHeightEffect) {
         self.processed += 1;
         match effect {
             BackfillHeightEffect::AuxpowWritten => self.auxpow_written += 1,
             BackfillHeightEffect::NonAuxpowSkipped => self.non_auxpow_skipped += 1,
             BackfillHeightEffect::MalformedSkipped => self.malformed_skipped += 1,
+            BackfillHeightEffect::MalformedHeld => self.malformed_held += 1,
         }
     }
 }

@@ -14,14 +14,20 @@ API and frontend.
 
 The diagram shows the same ownership model as the text below: producers capture
 base evidence, the read-model reconciler is the only writer of derived tables,
-and the API serves those derived projections without writing capture state.
+and the API serves those derived projections without writing capture state. It
+predates the Qbit producer and the producer-owned `capture_error` table; the
+text flow below is current.
 
 ```text
 1. CAPTURE          producers parse source evidence into base tables
 ──────────────────────────────────────────────────────────────────────
-   child-chain source ──> parser / verifier ──> merge_mining_event
-                                                 chain sidecar tables
-                                                 event_pool_attribution
+   child-chain source ──> parser / verifier ─┬─> merge_mining_event
+                                             │   chain sidecar tables
+                                             │   event_pool_attribution
+                                             └─> capture_error
+                                                 (a proof that will not decode,
+                                                  on a hold-policy chain)
+
    historical publication ──> preflight / database-state comparison
                                   matching ──> no-op before Core lock
                                   mismatch ──> merge_mining_event
@@ -40,7 +46,8 @@ and the API serves those derived projections without writing capture state.
 
 3. SERVE            the API projects derived tables to the frontend
 ──────────────────────────────────────────────────────────────────────
-   derived tables ──────> axum API (`serve`) ──> static frontend in www/
+   derived tables ──────┬─> axum API (`serve`) ──> static frontend in www/
+   capture_error ───────┘   (source capture-error state)
 ```
 
 The key design choice is that producers write base evidence only (stage 1).
@@ -84,6 +91,12 @@ canonical barrier. This ordering lets cache refresh drain a committed suffix
 queue before reclassification without a cache/canonical lock cycle. The suffix
 validates its pinned Core target after acquiring the barriers and again after
 staging the mutation.
+Producers additionally own `capture_error`, the durable record of a height a
+producer could not capture. It is operational state, not evidence: it is written
+before the failing height returns, cleared only when that same height is
+reprocessed successfully, and read directly by `/api/v1/sources`. It exists
+because the monotonic `poll_cursor` has no way to express a gap and
+`source_health` is derived state this crate does not write.
 Derived state (`block`, `attestation_proof`, `source_health`) is rebuilt from
 that evidence by the read-model reconciler (stage 2), so a bad event can be
 revoked and the affected parent block recomputed. Bitcoin Core feeds the
@@ -100,7 +113,7 @@ that annotate those rows.
 | `mmm-capture` | Offline parsing, normalization, pool resolution, source registry, and Bitcoin nBits/orphan helpers. No network or database I/O in normal builds. |
 | `mmm-rpc` | Shared HTTP transport policy for child-chain clients. |
 | `mmm-bitcoin-core` | The only crate that links `corepc-client`; wraps Bitcoin Core RPC and parent classification. |
-| `mmm-store` | SQL for producer base tables: events, sidecars, cursors, and seed helpers. It also exposes the read-only Core-header-cache loader shared by reconciliation and the API. |
+| `mmm-store` | SQL for producer base tables: events, sidecars, cursors, capture errors, and seed helpers. It also exposes the read-only Core-header-cache loader shared by reconciliation and the API. |
 | `mmm-read-model` | Sole writer of derived tables: `block`, `attestation_proof`, and `source_health`. |
 | `mmm-producers` | Runtime engines: chain pollers/backfills, historical importer, Bitcoin Core backbone sync, and pool reclassification. |
 | `mmm-api` | Read-only API views plus static frontend serving. |

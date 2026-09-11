@@ -119,9 +119,10 @@ async fn run_poll_command(
     rt: crate::producer_runtime::ProducerRuntime,
 ) -> anyhow::Result<()> {
     match spec.id {
-        spec::ChainId::Namecoin | spec::ChainId::Syscoin | spec::ChainId::Fractal => {
-            auxpow_family::poll(spec, rt).await
-        }
+        spec::ChainId::Namecoin
+        | spec::ChainId::Syscoin
+        | spec::ChainId::Fractal
+        | spec::ChainId::Qbit => auxpow_family::poll(spec, rt).await,
         spec::ChainId::Rsk => rsk::backfill::poll(spec, rt).await,
         spec::ChainId::Hathor => hathor::backfill::poll(spec, rt).await,
         spec::ChainId::Elastos => elastos::backfill::poll(spec, rt).await,
@@ -133,9 +134,10 @@ async fn run_backfill_command(
     config: backfill::BackfillConfig,
 ) -> anyhow::Result<()> {
     match config.spec.id {
-        spec::ChainId::Namecoin | spec::ChainId::Syscoin | spec::ChainId::Fractal => {
-            auxpow_family::backfill(rt, config).await
-        }
+        spec::ChainId::Namecoin
+        | spec::ChainId::Syscoin
+        | spec::ChainId::Fractal
+        | spec::ChainId::Qbit => auxpow_family::backfill(rt, config).await,
         spec::ChainId::Rsk => rsk::backfill::backfill(rt, config).await,
         spec::ChainId::Hathor => hathor::backfill::backfill(rt, config).await,
         spec::ChainId::Elastos => elastos::backfill::backfill(rt, config).await,
@@ -293,12 +295,13 @@ mod tests {
     }
 
     /// Captured byte-for-byte from the pre-consolidation binary
-    /// (src/main.rs Some(other) arm). The generator must never drift from it.
-    const GOLDEN_UNKNOWN: &str = "unknown command \"bogus\"; expected poll-namecoin, poll-rsk, poll-syscoin, poll-fractal, poll-hathor, poll-elastos, backfill-namecoin, backfill-rsk, backfill-syscoin, backfill-fractal, backfill-hathor, backfill-hathor-cache, backfill-elastos, import-dataset, import-all, import-known-stales, import-body-invalid-stales, reclassify-known-stales, reclassify-unknown-parents, reclassify-pools, sync-bitcoin-core, reconcile-read-model, revoke-merge-mining-event, restore-merge-mining-event, or serve";
+    /// (src/main.rs Some(other) arm), with each later chain appended in `CHAINS`
+    /// order. The generator must never drift from it.
+    const GOLDEN_UNKNOWN: &str = "unknown command \"bogus\"; expected poll-namecoin, poll-rsk, poll-syscoin, poll-fractal, poll-hathor, poll-elastos, poll-qbit, backfill-namecoin, backfill-rsk, backfill-syscoin, backfill-fractal, backfill-hathor, backfill-hathor-cache, backfill-elastos, backfill-qbit, import-dataset, import-all, import-known-stales, import-body-invalid-stales, reclassify-known-stales, reclassify-unknown-parents, reclassify-pools, sync-bitcoin-core, reconcile-read-model, revoke-merge-mining-event, restore-merge-mining-event, or serve";
 
     /// Captured byte-for-byte from the pre-consolidation binary
-    /// (src/main.rs None arm).
-    const GOLDEN_HELP: &str = "No command selected. Use `poll-namecoin` or `backfill-namecoin <start-height> <end-height>` for the Namecoin producer, `poll-rsk` / `backfill-rsk <start-height> <end-height>` for the RSK producer, `poll-syscoin` / `backfill-syscoin <start-height> <end-height>` for the Syscoin producer, `poll-fractal` / `backfill-fractal <start-height> <end-height>` for the Fractal producer, `poll-hathor` / `backfill-hathor <start-height> <end-height>` for the Hathor producer, `poll-elastos` / `backfill-elastos <start-height> <end-height>` for the Elastos producer, `sync-bitcoin-core` for the Bitcoin Core backbone, or `serve` for the read API.";
+    /// (src/main.rs None arm), with each later chain appended in `CHAINS` order.
+    const GOLDEN_HELP: &str = "No command selected. Use `poll-namecoin` or `backfill-namecoin <start-height> <end-height>` for the Namecoin producer, `poll-rsk` / `backfill-rsk <start-height> <end-height>` for the RSK producer, `poll-syscoin` / `backfill-syscoin <start-height> <end-height>` for the Syscoin producer, `poll-fractal` / `backfill-fractal <start-height> <end-height>` for the Fractal producer, `poll-hathor` / `backfill-hathor <start-height> <end-height>` for the Hathor producer, `poll-elastos` / `backfill-elastos <start-height> <end-height>` for the Elastos producer, `poll-qbit` / `backfill-qbit <start-height> <end-height>` for the Qbit producer, `sync-bitcoin-core` for the Bitcoin Core backbone, or `serve` for the read API.";
 
     #[test]
     fn unknown_command_message_is_byte_identical_to_the_golden_capture() {
@@ -379,6 +382,34 @@ mod tests {
             assert!(
                 doc.contains(special),
                 "configuration.md does not document {special}"
+            );
+        }
+    }
+
+    /// `just poll-<chain>` / `just backfill-<chain>` is the documented operator
+    /// interface, but the named recipes are hand-written wrappers over the
+    /// generic ones rather than generated from `CHAINS`. This drift gate keeps
+    /// a new chain from shipping with a dispatchable binary command and no
+    /// `just` recipe.
+    #[test]
+    fn justfile_wraps_every_spec_producer_command() {
+        let justfile = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../justfile"),
+        )
+        .expect("read justfile");
+        for spec in &CHAINS {
+            assert!(
+                justfile.contains(&format!("poll-{}: (poll \"{}\")", spec.slug, spec.slug)),
+                "justfile has no poll-{} recipe",
+                spec.slug
+            );
+            assert!(
+                justfile.contains(&format!(
+                    "backfill-{} start end: (backfill \"{}\" start end)",
+                    spec.slug, spec.slug
+                )),
+                "justfile has no backfill-{} recipe",
+                spec.slug
             );
         }
     }

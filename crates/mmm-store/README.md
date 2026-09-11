@@ -40,6 +40,7 @@ Shared, table-generic modules:
 | `pool` | Pool snapshot upserts, the generic registry-only pool seeding, and the namespace `pool_identity` seeding and lookup helper. |
 | `poll_cursor` | The `poll_cursor` live-progress table: source-id lookup, cursor load, and monotonic upsert (with optional observed target). Backfills never move the cursor. |
 | `pending_reconcile` | The pending-reconcile work-queue rows: list, upsert, attempt-bump, revocation-reason retag, and delete. |
+| `capture_error` | The producer-owned `capture_error` table: record (upsert preserving `first_seen_at`) and clear one `(source_id, height)`. The monotonic `poll_cursor` cannot express a gap, and `source_health` is derived, so a held height lives here. |
 
 Per-chain modules under `chains/` (each chain's SQL in one place):
 

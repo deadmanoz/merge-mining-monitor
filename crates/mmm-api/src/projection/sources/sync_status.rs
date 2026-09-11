@@ -40,6 +40,12 @@ const SOURCE_FRESHNESS_THRESHOLD_SECS: i64 = 7 * 24 * 60 * 60;
 /// is reported `stale`. Governs capture-progress freshness, NOT the 7-day
 /// evidence freshness used for the top-level `status`.
 const CAPTURE_PROGRESS_STALE_THRESHOLD_SECS: i64 = 60 * 60;
+/// The `sync.error_code` a live AuxPoW source reports while it holds an
+/// unresolved `capture_error` row. One wire code covers every stored
+/// `error_kind`: the kind (`malformed_auxpow_proof` today) is operator
+/// diagnostics, this string is the wire contract. Distinct from the Bitcoin
+/// Core backbone's own error codes, which come from `bitcoin_core_sync_state`.
+const AUXPOW_CAPTURE_ERROR_CODE: &str = "auxpow_capture_error";
 
 /// Top-level source `status` wire value from `last_seen_at`: `not_started` when
 /// never seen, else `fresh`/`stale` against SOURCE_FRESHNESS_THRESHOLD_SECS
@@ -62,6 +68,7 @@ pub(super) fn sync_for_source_code(
     code: &str,
     cursor: Option<SourceCursorProgress>,
     backbone: Option<SourceBackboneProgress>,
+    capture_error_height: Option<i32>,
     reference_now: i64,
 ) -> SourceSyncStatus {
     let Some(definition) = source_registry::by_code(code) else {
@@ -72,21 +79,24 @@ pub(super) fn sync_for_source_code(
         definition.kind,
         cursor,
         backbone,
+        capture_error_height,
         reference_now,
     )
 }
 
 /// Pure classification of a source's `sync` status from its registry
-/// lifecycle+kind and decoded cursor/backbone progress. Non-live lifecycle
-/// classes return their corresponding empty state; live-chaintip uses the
-/// backbone path; live AuxPoW uses the cursor path (catching_up when below
-/// target, stale past CAPTURE_PROGRESS_STALE_THRESHOLD_SECS). Everything else
+/// lifecycle+kind and decoded cursor/backbone/capture-error progress. Non-live
+/// lifecycle classes return their corresponding empty state; live-chaintip uses
+/// the backbone path; live AuxPoW uses the cursor path (catching_up when below
+/// target, stale past CAPTURE_PROGRESS_STALE_THRESHOLD_SECS), with an
+/// unresolved capture error taking precedence over all three. Everything else
 /// is unknown. No I/O, so the inline tests pin every branch.
 fn classify_source_sync(
     lifecycle: SourceLifecycle,
     kind: SourceKind,
     cursor: Option<SourceCursorProgress>,
     backbone: Option<SourceBackboneProgress>,
+    capture_error_height: Option<i32>,
     reference_now: i64,
 ) -> SourceSyncStatus {
     if lifecycle == SourceLifecycle::Historical {
@@ -112,9 +122,22 @@ fn classify_source_sync(
         _ => return SourceSyncStatus::unknown(),
     };
     let Some(cursor) = cursor else {
-        return SourceSyncStatus::empty(mode, "not_started");
+        // A source with no cursor row can still hold a capture error from an
+        // earlier run: the cursor is progress, the error row is coverage.
+        let Some(height) = capture_error_height else {
+            return SourceSyncStatus::empty(mode, "not_started");
+        };
+        return SourceSyncStatus {
+            error_code: Some(AUXPOW_CAPTURE_ERROR_CODE.to_owned()),
+            error_height: Some(height),
+            ..SourceSyncStatus::empty(mode, "error")
+        };
     };
-    let state = if reference_now.saturating_sub(cursor.updated_at_epoch)
+    // An unresolved capture error outranks ordinary freshness: the cursor can
+    // be moving and current while the interval below it still has a hole.
+    let state = if capture_error_height.is_some() {
+        "error"
+    } else if reference_now.saturating_sub(cursor.updated_at_epoch)
         > CAPTURE_PROGRESS_STALE_THRESHOLD_SECS
     {
         "stale"
@@ -133,8 +156,8 @@ fn classify_source_sync(
         progress_updated_at: Some(cursor.updated_at_epoch),
         latest_evidence_at: None,
         target_height: cursor.target_height,
-        error_code: None,
-        error_height: None,
+        error_code: capture_error_height.map(|_| AUXPOW_CAPTURE_ERROR_CODE.to_owned()),
+        error_height: capture_error_height,
     }
 }
 
@@ -268,6 +291,7 @@ mod tests {
                 SourceKind::Auxpow,
                 Some(FRESH_CURSOR),
                 None,
+                None,
                 NOW,
             ),
             auxpow_sync("live", "live", 12_345, NOW - 60)
@@ -277,6 +301,7 @@ mod tests {
                 SourceLifecycle::Live,
                 SourceKind::Auxpow,
                 Some(STALE_CURSOR),
+                None,
                 None,
                 NOW,
             ),
@@ -288,7 +313,14 @@ mod tests {
             )
         );
         assert_eq!(
-            classify_source_sync(SourceLifecycle::Live, SourceKind::Auxpow, None, None, NOW),
+            classify_source_sync(
+                SourceLifecycle::Live,
+                SourceKind::Auxpow,
+                None,
+                None,
+                None,
+                NOW
+            ),
             SourceSyncStatus::empty("live", "not_started")
         );
     }
@@ -305,6 +337,7 @@ mod tests {
                 SourceKind::Auxpow,
                 Some(catching_up),
                 None,
+                None,
                 NOW,
             ),
             auxpow_sync_with_target("live", "catching_up", 12_345, NOW - 60, Some(12_346))
@@ -320,6 +353,7 @@ mod tests {
                 SourceKind::Auxpow,
                 Some(caught_up),
                 None,
+                None,
                 NOW,
             ),
             auxpow_sync_with_target("live", "live", 12_345, NOW - 60, Some(12_345))
@@ -334,6 +368,7 @@ mod tests {
                 SourceLifecycle::Live,
                 SourceKind::Auxpow,
                 Some(stale_behind_target),
+                None,
                 None,
                 NOW,
             ),
@@ -355,6 +390,7 @@ mod tests {
                 SourceKind::LiveChaintip,
                 None,
                 None,
+                None,
                 NOW,
             ),
             SourceSyncStatus::empty("bitcoin-core-backbone", "not_started")
@@ -365,6 +401,7 @@ mod tests {
                 SourceKind::LiveChaintip,
                 None,
                 Some(backbone(-1, Some(953_700), NOW - 60)),
+                None,
                 NOW,
             ),
             SourceSyncStatus {
@@ -384,6 +421,7 @@ mod tests {
                 SourceKind::LiveChaintip,
                 None,
                 Some(backbone(953_699, Some(953_700), NOW - 60)),
+                None,
                 NOW,
             ),
             SourceSyncStatus {
@@ -403,6 +441,7 @@ mod tests {
                 SourceKind::LiveChaintip,
                 None,
                 Some(backbone(953_700, Some(953_700), NOW - 60)),
+                None,
                 NOW,
             ),
             SourceSyncStatus {
@@ -430,6 +469,7 @@ mod tests {
                     Some(953_700),
                     NOW - CAPTURE_PROGRESS_STALE_THRESHOLD_SECS - 1,
                 )),
+                None,
                 NOW,
             )
             .state,
@@ -444,6 +484,7 @@ mod tests {
                 Some(953_700),
                 NOW - CAPTURE_PROGRESS_STALE_THRESHOLD_SECS - 1,
             )),
+            None,
             NOW,
         );
         assert_eq!(never_progressed_stale.state, "stale");
@@ -459,6 +500,7 @@ mod tests {
                     last_error_height: Some(953_700),
                     ..backbone(953_699, Some(953_700), NOW - 60)
                 }),
+                None,
                 NOW,
             ),
             SourceSyncStatus {
@@ -477,6 +519,7 @@ mod tests {
             SourceKind::LiveChaintip,
             None,
             Some(backbone(953_699, None, NOW - 60)),
+            None,
             NOW,
         );
         assert_eq!(targetless.state, "not_started");
@@ -492,6 +535,7 @@ mod tests {
                 SourceKind::Auxpow,
                 Some(FRESH_CURSOR),
                 None,
+                None,
                 NOW,
             ),
             SourceSyncStatus::empty("historical", "historical")
@@ -506,6 +550,7 @@ mod tests {
                 SourceKind::Auxpow,
                 Some(FRESH_CURSOR),
                 None,
+                None,
                 NOW,
             ),
             SourceSyncStatus::empty("catalogued", "catalogued")
@@ -519,16 +564,86 @@ mod tests {
             (SourceLifecycle::Surveyed, "surveyed"),
         ] {
             assert_eq!(
-                classify_source_sync(lifecycle, SourceKind::Auxpow, Some(FRESH_CURSOR), None, NOW,),
+                classify_source_sync(
+                    lifecycle,
+                    SourceKind::Auxpow,
+                    Some(FRESH_CURSOR),
+                    None,
+                    None,
+                    NOW,
+                ),
                 SourceSyncStatus::empty(mode, mode)
             );
         }
     }
 
+    /// An unresolved capture error outranks every ordinary live-AuxPoW state
+    /// and carries the reduced height, so a moving cursor cannot mask a hole
+    /// below it.
+    #[test]
+    fn capture_error_outranks_live_and_stale_capture_progress() {
+        let live_with_error = classify_source_sync(
+            SourceLifecycle::Live,
+            SourceKind::Auxpow,
+            Some(FRESH_CURSOR),
+            None,
+            Some(78_060),
+            NOW,
+        );
+        assert_eq!(live_with_error.state, "error");
+        assert_eq!(
+            live_with_error.error_code.as_deref(),
+            Some("auxpow_capture_error")
+        );
+        assert_eq!(live_with_error.error_height, Some(78_060));
+        // Progress is still reported: the cursor is real, it is just not proof
+        // of complete coverage.
+        assert_eq!(live_with_error.progress_height, Some(12_345));
+
+        let stale_with_error = classify_source_sync(
+            SourceLifecycle::Live,
+            SourceKind::Auxpow,
+            Some(STALE_CURSOR),
+            None,
+            Some(7),
+            NOW,
+        );
+        assert_eq!(stale_with_error.state, "error");
+        assert_eq!(stale_with_error.error_height, Some(7));
+
+        let cursorless_with_error = classify_source_sync(
+            SourceLifecycle::Live,
+            SourceKind::Auxpow,
+            None,
+            None,
+            Some(9),
+            NOW,
+        );
+        assert_eq!(cursorless_with_error.state, "error");
+        assert_eq!(cursorless_with_error.progress_height, None);
+        assert_eq!(cursorless_with_error.error_height, Some(9));
+    }
+
+    /// Clearing the last capture error restores the ordinary verdict.
+    #[test]
+    fn resolved_capture_error_restores_normal_live_state() {
+        assert_eq!(
+            classify_source_sync(
+                SourceLifecycle::Live,
+                SourceKind::Auxpow,
+                Some(FRESH_CURSOR),
+                None,
+                None,
+                NOW,
+            ),
+            auxpow_sync("live", "live", 12_345, NOW - 60)
+        );
+    }
+
     #[test]
     fn unregistered_source_code_maps_to_unknown() {
         assert_eq!(
-            sync_for_source_code("auxpow:missing", Some(FRESH_CURSOR), None, NOW),
+            sync_for_source_code("auxpow:missing", Some(FRESH_CURSOR), None, None, NOW),
             SourceSyncStatus::unknown()
         );
     }

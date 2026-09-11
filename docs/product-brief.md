@@ -34,6 +34,9 @@ Different child chains preserve different evidence shapes:
 - Hathor commits through its own RFC 0006 merged-mining layout, served over a
   public REST API.
 - Elastos reconstructs an 84-byte child header around its AuxPoW commitment.
+- Qbit is Namecoin-adjacent but not interchangeable: its extended header has no
+  `hashBlock` field and commits the chain-merkle root in display order, so a
+  classic decoder cannot read it and its own decoder rejects classic bytes.
 
 The product contract is therefore multi-source from the start. A single-chain
 model would hide real differences in child-chain target validation, pool

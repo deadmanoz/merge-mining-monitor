@@ -462,3 +462,45 @@ fn witness_encoded_coinbase_is_rejected() {
     encoded.extend_from_slice(&raw[off.tx_end - 4..]);
     assert!(parse_err(&encoded, 78_058).contains("non-witness encoding"));
 }
+
+/// The producer reads whole blocks, not exact extended headers. The prefix
+/// reader must locate the exact header/proof region inside a full block, and
+/// the parser must then accept that prefix while still rejecting the block.
+#[test]
+fn prefix_reader_splits_the_extended_header_out_of_a_full_block() {
+    for control in controls() {
+        let exact = hex::decode(&control.header_hex).expect("decode control hex");
+        // A plausible block body: a one-transaction tx vector after the proof.
+        let mut full_block = exact.clone();
+        full_block.extend_from_slice(&[0x01, 0xde, 0xad, 0xbe, 0xef]);
+
+        // The whole block is not an exact extended header.
+        let err = parse_err(&full_block, control.height);
+        assert!(
+            err.contains("trailing bytes"),
+            "full block must be rejected as an exact header: {err}"
+        );
+
+        let prefix = qbit_extended_header_prefix(&full_block, control.height)
+            .expect("prefix reader locates the extended header");
+        assert_eq!(prefix, exact.as_slice());
+        let parsed = parse_auxpow(prefix, control.height);
+        assert_eq!(parsed.child_header.hash().to_string(), control.hash);
+        assert_eq!(parsed.parent_header.hash().to_string(), control.parent_hash);
+    }
+}
+
+/// A directly mined block's extended header is just its 80-byte pure header,
+/// so the prefix stops there and the block body is never reinterpreted.
+#[test]
+fn prefix_reader_stops_at_the_header_for_a_direct_block() {
+    let header_only = serialize(&ground_direct_header());
+    let mut raw = header_only.clone();
+    raw.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]);
+    let prefix = qbit_extended_header_prefix(&raw, 1).expect("direct prefix is the header");
+    assert_eq!(prefix, header_only.as_slice());
+    assert!(matches!(
+        parse_qbit_extended_header(prefix, 1).expect("direct header parses"),
+        ParsedQbitBlock::Direct(_)
+    ));
+}

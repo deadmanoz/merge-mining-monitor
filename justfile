@@ -172,6 +172,8 @@ poll-hathor: (poll "hathor")
 
 poll-elastos: (poll "elastos")
 
+poll-qbit: (poll "qbit")
+
 backfill-namecoin start end: (backfill "namecoin" start end)
 
 backfill-rsk start end: (backfill "rsk" start end)
@@ -183,6 +185,8 @@ backfill-fractal start end: (backfill "fractal" start end)
 backfill-hathor start end: (backfill "hathor" start end)
 
 backfill-elastos start end: (backfill "elastos" start end)
+
+backfill-qbit start end: (backfill "qbit" start end)
 
 backfill-hathor-cache csv *args:
     cargo run -- backfill-hathor-cache {{csv}} {{args}}

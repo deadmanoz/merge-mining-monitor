@@ -336,8 +336,8 @@ mod tests {
     }
 
     #[test]
-    fn registry_defines_all_twenty_eight_importable_chain_sources() {
-        assert_eq!(importable_chains().len(), 28);
+    fn registry_defines_all_twenty_nine_importable_chain_sources() {
+        assert_eq!(importable_chains().len(), 29);
         let mut seen = std::collections::BTreeSet::new();
         for spec in importable_chains() {
             assert!(spec.source_code.starts_with("auxpow:"));
@@ -364,6 +364,12 @@ mod tests {
             Some(ChildTargetLocation::HeaderNbits)
         );
         assert!(historical_chain_spec("jax-network").is_none());
+        // Live sources are importable too: a live publication import is
+        // additive, which is why Qbit is registered Live rather than Historical.
+        assert_eq!(
+            historical_chain_spec("qbit").map(|spec| (spec.lifecycle, spec.child_target_location)),
+            Some((SourceLifecycle::Live, ChildTargetLocation::HeaderNbits))
+        );
     }
 
     #[test]

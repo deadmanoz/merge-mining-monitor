@@ -14,7 +14,7 @@ use mmm_capture::child_payout::{
 };
 use mmm_capture::source_registry::{
     ELASTOS_SOURCE_CODE, FRACTAL_SOURCE_CODE, HATHOR_SOURCE_CODE, NAMECOIN_SOURCE_CODE,
-    RSK_SOURCE_CODE, SYSCOIN_SOURCE_CODE,
+    QBIT_SOURCE_CODE, RSK_SOURCE_CODE, SYSCOIN_SOURCE_CODE,
 };
 
 /// Historical acquisition floor for the live poller. RSK history below this
@@ -47,6 +47,16 @@ const ELASTOS_FIRST_AUXPOW_HEIGHT: i32 = 177_000;
 /// `parse_namecoin_block`/`parse_auxpow_header_blob` is insufficient as the
 /// Fractal gate.
 const FRACTAL_MERGE_MINED_VERSION: i32 = 0x2024_0100;
+/// Qbit accepts merged-mining commitments from height zero, so its activation
+/// floor is a true floor, not an acquisition floor: no Qbit height above it is
+/// outside the producer's reach.
+const QBIT_FIRST_AUXPOW_HEIGHT: i32 = 0;
+/// Qbit mainnet genesis block hash (display order), pinned from the Qbit 1.0.0
+/// source revision `70fea84`. The proof decoder deliberately pins no chain
+/// identity, so the producer authenticates it here: a node answering height 0
+/// with anything else is not Qbit mainnet.
+const QBIT_GENESIS_BLOCK_HASH: &str =
+    "0000000000004d60aa5d46013991d0a0e2995d89ee98e53068ae196d763e79f2";
 
 /// Stable identity for a live producer chain. Consulted by registry dispatch
 /// and spec lookup only; shared implementations branch on spec DATA, not on
@@ -59,6 +69,7 @@ pub enum ChainId {
     Fractal,
     Hathor,
     Elastos,
+    Qbit,
 }
 
 /// How a bitcoind-family chain authenticates its JSON-RPC endpoint.
@@ -85,6 +96,33 @@ pub enum FetchStrategy {
     /// `exact_version` are merge-mined; every other class is skipped before
     /// any parse. Parsed by `parse_auxpow_header_blob`.
     HeaderBlob { exact_version: i32 },
+    /// `getblock <hash> 0` (Qbit): the raw block opens with a Qbit extended
+    /// header, which is NOT a classic CAuxPow. The exact header/proof prefix
+    /// is split out by `qbit_extended_header_prefix` and verified by
+    /// `parse_qbit_extended_header`, which rejects trailing bytes; the block
+    /// body is never reinterpreted. `genesis_block_hash` is the display-order
+    /// mainnet genesis the producer pins at height 0, because the decoder
+    /// deliberately authenticates no chain identity.
+    QbitExtendedHeader { genesis_block_hash: &'static str },
+}
+
+/// What a shared-runner chain does with a height whose block claims a
+/// merge-mining proof that fails to decode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MalformedPolicy {
+    /// Log the failure, write nothing, and let the run continue past the
+    /// height. The incumbent bitcoind-family behavior (Namecoin, Syscoin,
+    /// Fractal): a malformed block is rare and the interval is still reported
+    /// complete.
+    SkipAndContinue,
+    /// Persist a `capture_error` row for the height BEFORE returning, then
+    /// refuse to report the interval complete: a new live height holds the
+    /// cursor, a replayed height continues (replay is best-effort by the
+    /// poller's contract) while the persisted row keeps the gap visible, and a
+    /// bounded backfill over a range containing one fails the run. The
+    /// monotonic poll cursor cannot express a gap on its own, which is why the
+    /// durable row exists.
+    HoldInterval,
 }
 
 /// A parse-time backfill range cap (a public/untrusted-endpoint foot-gun
@@ -109,8 +147,8 @@ pub enum RepairScope {
 }
 
 /// The bitcoind-family sharing contract: everything that distinguishes
-/// Namecoin/Syscoin/Fractal from each other, as data consumed by ONE shared
-/// client + capture + backfill implementation (`chains::bitcoind_rpc`,
+/// Namecoin/Syscoin/Fractal/Qbit from each other, as data consumed by ONE
+/// shared client + capture + backfill implementation (`chains::bitcoind_rpc`,
 /// `chains::auxpow_family`). Chains with genuinely divergent protocols (RSK,
 /// Hathor, Elastos) carry `None` and keep real implementations.
 #[derive(Debug, Clone, Copy)]
@@ -133,6 +171,10 @@ pub struct FamilySpec {
     /// Whether post-backfill read-model repair scans all sources or only this
     /// chain's source (see [`RepairScope`]).
     pub repair_scope: RepairScope,
+    /// What happens to a height whose block claims a proof that fails to
+    /// decode (see [`MalformedPolicy`]). Declared on every family row so the
+    /// incumbent chains pin their current behavior explicitly.
+    pub malformed_policy: MalformedPolicy,
 }
 
 /// Whether `<PREFIX>_REORG_DEPTH` may configure a trailing rescan window.
@@ -182,8 +224,8 @@ pub struct ChainSpec {
 }
 
 /// The live producer chains, in the order `main.rs` historically listed their
-/// subcommands.
-pub static CHAINS: [ChainSpec; 6] = [
+/// subcommands, with later additions appended.
+pub static CHAINS: [ChainSpec; 7] = [
     ChainSpec {
         id: ChainId::Namecoin,
         slug: "namecoin",
@@ -204,6 +246,7 @@ pub static CHAINS: [ChainSpec; 6] = [
             child_payout: Some(NAMECOIN_CHILD_PAYOUT_PARAMS),
             floor_warning: None,
             repair_scope: RepairScope::Global,
+            malformed_policy: MalformedPolicy::SkipAndContinue,
         }),
         backfill_range_cap: None,
     },
@@ -245,6 +288,7 @@ pub static CHAINS: [ChainSpec; 6] = [
                 "start-height precedes Syscoin AuxPoW activation; earlier blocks parse as non-AuxPoW and will be skipped",
             ),
             repair_scope: RepairScope::SourceScoped,
+            malformed_policy: MalformedPolicy::SkipAndContinue,
         }),
         backfill_range_cap: None,
     },
@@ -272,6 +316,7 @@ pub static CHAINS: [ChainSpec; 6] = [
                 "start-height precedes Fractal AuxPoW activation; earlier blocks are skipped",
             ),
             repair_scope: RepairScope::SourceScoped,
+            malformed_policy: MalformedPolicy::SkipAndContinue,
         }),
         backfill_range_cap: None,
     },
@@ -312,6 +357,41 @@ pub static CHAINS: [ChainSpec; 6] = [
             default_max: 50_000,
             note: "needed for a full 177000..tip backfill",
         }),
+    },
+    ChainSpec {
+        id: ChainId::Qbit,
+        slug: "qbit",
+        display_name: "Qbit",
+        env_prefix: "QBIT",
+        source_code: QBIT_SOURCE_CODE,
+        activation_floor: QBIT_FIRST_AUXPOW_HEIGHT,
+        poller: PollerDefaults {
+            // Qbit blocks land about a minute apart, so the shared 30s tick
+            // and 100-height batch used by the other bitcoind-family chains
+            // keep the cursor at the tip without oversampling. A one-block
+            // trailing rescan re-reads the tip each tick, which is where a
+            // short Qbit reorg would land.
+            poll_interval_seconds: 30,
+            batch_size: 100,
+            reorg_depth: 1,
+        },
+        reorg_policy: ReorgPolicy::EnvConfigurable,
+        family: Some(FamilySpec {
+            label: "Qbit",
+            auth: RpcAuth::OptionalUserPassOrCookie,
+            fetch: FetchStrategy::QbitExtendedHeader {
+                genesis_block_hash: QBIT_GENESIS_BLOCK_HASH,
+            },
+            // Qbit publishes no child payout registry; only BTC-parent-side
+            // attribution is resolvable.
+            child_payout: None,
+            // Merged mining is accepted from height 0, so no height is below
+            // activation and there is nothing to warn about.
+            floor_warning: None,
+            repair_scope: RepairScope::SourceScoped,
+            malformed_policy: MalformedPolicy::HoldInterval,
+        }),
+        backfill_range_cap: None,
     },
 ];
 
@@ -402,6 +482,46 @@ mod tests {
                 "duplicate source code {}",
                 spec.source_code
             );
+        }
+    }
+
+    /// The shared runner's malformed-proof behavior is per-spec data, so a new
+    /// chain cannot silently change an incumbent's. Every chain that predates
+    /// Qbit pins `SkipAndContinue`; Qbit is the only `HoldInterval` row.
+    #[test]
+    fn only_qbit_holds_the_interval_on_a_malformed_proof() {
+        for spec in &CHAINS {
+            let Some(family) = spec.family.as_ref() else {
+                continue;
+            };
+            let expected = if spec.id == ChainId::Qbit {
+                MalformedPolicy::HoldInterval
+            } else {
+                MalformedPolicy::SkipAndContinue
+            };
+            assert_eq!(
+                family.malformed_policy, expected,
+                "{} malformed policy",
+                spec.slug
+            );
+        }
+    }
+
+    #[test]
+    fn qbit_is_a_family_chain_pinned_to_its_genesis() {
+        let spec = by_id(ChainId::Qbit);
+        assert_eq!(spec.source_code, QBIT_SOURCE_CODE);
+        assert_eq!(spec.activation_floor, 0);
+        assert_eq!(spec.env_prefix, "QBIT");
+        assert!(spec.backfill_range_cap.is_none());
+        let family = spec.family.as_ref().expect("Qbit is a family chain");
+        assert!(family.child_payout.is_none());
+        match family.fetch {
+            FetchStrategy::QbitExtendedHeader { genesis_block_hash } => assert_eq!(
+                genesis_block_hash,
+                "0000000000004d60aa5d46013991d0a0e2995d89ee98e53068ae196d763e79f2"
+            ),
+            other => panic!("Qbit must use the extended-header fetch, got {other:?}"),
         }
     }
 

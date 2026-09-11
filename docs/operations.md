@@ -154,6 +154,7 @@ just poll-syscoin
 just poll-fractal
 just poll-hathor
 just poll-elastos
+just poll-qbit
 ```
 
 Bounded backfills use:
@@ -165,7 +166,17 @@ just backfill-syscoin START END
 just backfill-fractal START END
 just backfill-hathor START END
 just backfill-elastos START END
+just backfill-qbit START END
 ```
+
+A Qbit backfill exits non-zero when any height in the range holds an unresolved
+capture error. The written evidence and the read-model repair still complete;
+the non-zero exit says the range is not fully covered. Inspect the open heights
+with `SELECT height, error_kind, detail FROM capture_error WHERE source_id =
+(SELECT id FROM source WHERE code = 'auxpow:qbit') ORDER BY height;`, then
+re-run the range once the node can serve them. `/api/v1/sources` reports the
+earliest unresolved height as `sync.error_code = auxpow_capture_error` until
+each held height is reprocessed successfully.
 
 ## Bitcoin Core Backbone
 

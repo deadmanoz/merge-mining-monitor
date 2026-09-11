@@ -5,6 +5,7 @@ export const CHAIN_COLORS = {
   "fractal": "#e07a3f",
   "hathor": "#3d6fb4",
   "namecoin": "#8172b2",
+  "qbit": "#5c9e6f",
   "rsk": "#3aa6b9",
   "syscoin": "#c9a227"
 };
@@ -36,6 +37,7 @@ export const CHAIN_DISPLAY_NAMES = {
   "lyncoin": "Lyncoin",
   "myriadcoin": "Myriadcoin",
   "namecoin": "Namecoin",
+  "qbit": "Qbit",
   "rod": "SpaceXpanse ROD",
   "rsk": "RSK",
   "sixeleven": "SixEleven",
@@ -52,6 +54,7 @@ export const SOURCE_DISPLAY_ORDER = {
   "fractal": 6,
   "hathor": 5,
   "namecoin": 1,
+  "qbit": 7,
   "rsk": 3,
   "syscoin": 2
 };
@@ -82,6 +85,7 @@ export const SOURCE_LIFECYCLE = {
   "auxpow:lyncoin": "historical",
   "auxpow:myriadcoin": "historical",
   "auxpow:namecoin": "live",
+  "auxpow:qbit": "live",
   "auxpow:rod": "historical",
   "auxpow:rsk": "live",
   "auxpow:sixeleven": "historical",
@@ -1751,6 +1755,73 @@ export const CHAIN_PROFILES = {
         "id": 4,
         "label": "BIP34 specification (bitcoin/bips)",
         "url": "https://github.com/bitcoin/bips/blob/master/bip-0034.mediawiki"
+      }
+    ]
+  },
+  "qbit": {
+    "ticker": "QBIT",
+    "chain_status": "active",
+    "status_detail": "Active since its July 2026 genesis and merge-mined from height zero. Roughly one Qbit block in five carries a Bitcoin AuxPoW proof, and a minority of those parents meet Bitcoin's own target.",
+    "tagline": "2026-launch Bitcoin Core fork whose extended header carries a Namecoin-style proof with no `hashBlock` field.",
+    "byline": "2026 · ~1 min blocks",
+    "help": {
+      "data": "Qbit extended headers carrying a merged-mining proof: the Bitcoin parent header, its non-witness coinbase, and both merkle branches",
+      "pool": "BTC parent coinbase tags and payout addresses when the pool resolver recognizes them; Qbit publishes no child payout registry"
+    },
+    "history": {
+      "founded": "Mainnet genesis `0000000000004d60aa5d46013991d0a0e2995d89ee98e53068ae196d763e79f2` is dated 15 July 2026 in the pinned Qbit 1.0.0 source.[^1]",
+      "merge_mining": "Merged mining is active from height zero: the pinned consensus rules accept display-order chain commitments at every height, including the legacy no-marker placement rule.[^1] The first observed AuxPoW block is child 916, on 16 July 2026.",
+      "ended": "Still active. Qbit is this monitor's newest live AuxPoW producer.",
+      "narrative": "Qbit launched in July 2026 as a Bitcoin Core fork with its own merged-mining design and AuxPoW chain ID `47`.[^1]\n\nIts extended header is a near relative of Namecoin's CAuxPow but not the same wire format. The pure 80-byte child header is followed directly by the non-witness Bitcoin coinbase transaction, the two merkle branches with signed indices, and the 80-byte Bitcoin parent header. There is no legacy 32-byte `hashBlock` field, so a classic CAuxPow decoder cannot read a Qbit proof and the Qbit decoder does not accept classic bytes.\n\nA complete native archive scan through child height 80,986 authenticated 16,418 AuxPoW observations. Of the 2,564 parents that pass their own encoded target, Bitcoin Core placed 2,536 as canonical and four as stale; the remaining 24 are synthetic zero-predecessor templates that fail every Bitcoin epoch target. Qbit is therefore a dense, very recent parent-header witness rather than a source of novel stale identities."
+    },
+    "technical": {
+      "mechanism": "A merged Qbit block serializes: pure 80-byte child header, non-witness Bitcoin parent coinbase transaction, parent merkle branch (one count byte plus 32-byte siblings) and signed `i32` index, chain merkle branch and signed `i32` index, then the 80-byte Bitcoin parent header.[^1]",
+      "uniqueness": "Two things separate Qbit from classic Namecoin-family AuxPoW. There is no `hashBlock` field between the coinbase transaction and the parent branch, and the chain-commitment fold runs in internal byte order while the coinbase scriptSig commits the reversed, display-order root. Classic proofs fold the reversed leaf and commit wire order, so the two conventions are not interchangeable.[^1]",
+      "capture": "The monitor polls a self-hosted Qbit node over Bitcoin Core-style RPC. Each height is read with `getblockhash` then `getblock <hash> 0`, and only the exact extended-header prefix of that raw block is handed to the decoder; the block body is never reinterpreted. The producer authenticates native placement itself by requiring the decoded child header hash to equal the height's `getblockhash` result and by pinning the mainnet genesis hash at height zero. Bitcoin Core then places the parent as canonical or stale, and Core-absent parents continue into the usual orphan checks.",
+      "bitcoin_relevance": "Qbit is the newest live AuxPoW source in this monitor and its youngest chain: it has only existed since July 2026, so every observation it contributes is recent. At roughly one-minute blocks with about one in five carrying a proof, it yields a Bitcoin parent header every few minutes, which is sparser than Fractal or RSK but still a steady independent witness for recent stale-block and pool-attribution evidence.",
+      "notable": [
+        "The child's effective target is always its own pure-header `nBits`. The Bitcoin parent hash must meet the CHILD target, and the parent's own `nBits` is never consulted for proof validity.",
+        "Most Qbit proofs embed a parent that does not meet Bitcoin's own difficulty. Those are valid Qbit proofs and near-miss Bitcoin evidence, not stale blocks.",
+        "Twenty-four early proofs embed synthetic zero-predecessor parent templates whose targets equal the Qbit child target. They pass Qbit consensus and fail every Bitcoin epoch relevance gate.",
+        "A malformed Qbit proof holds its interval rather than being skipped: the height is recorded as a durable capture error and the live cursor does not advance past it."
+      ],
+      "key_facts": [
+        {
+          "label": "Proof format",
+          "value": "Qbit extended header; Namecoin-style branches with no `hashBlock` field[^1]"
+        },
+        {
+          "label": "Chain ID",
+          "value": "`47` in version bits 13 through 28[^1]"
+        },
+        {
+          "label": "Activation",
+          "value": "Merged mining accepted from height `0`"
+        },
+        {
+          "label": "Genesis",
+          "value": "`0000000000004d60aa5d46013991d0a0e2995d89ee98e53068ae196d763e79f2`, 15 July 2026[^1]"
+        },
+        {
+          "label": "Evidence carried",
+          "value": "Bitcoin parent header, Bitcoin coinbase, both merkle branches, and the child header"
+        }
+      ],
+      "recovery": [
+        "A complete native archive scan of heights `0` through `80,986` authenticated 16,418 AuxPoW observations with no missing blocks.",
+        "2,564 parents pass their own encoded target; Bitcoin Core places 2,536 as canonical and four as stale.",
+        "All four stale observations are already witnessed upstream by RSK, so Qbit contributes independent corroboration rather than new stale identities."
+      ]
+    },
+    "provenance": {
+      "source": "Live self-hosted Qbit node over Bitcoin Core-style RPC, built from the pinned source revision `70fea84f5becfb57463247af09790df5ddd424f8` (Qbit 1.0.0).[^1] Extended-header proofs are authenticated offline before any Bitcoin parent is classified.",
+      "coverage": "Live and ongoing from Qbit mainnet genesis on 15 July 2026. Only merged blocks carry Bitcoin parent evidence; directly mined blocks are skipped."
+    },
+    "references": [
+      {
+        "id": 1,
+        "label": "Qbit source at pinned revision 70fea84 (Qbit 1.0.0)",
+        "url": "https://github.com/Qbit-Org/qbit/tree/70fea84f5becfb57463247af09790df5ddd424f8"
       }
     ]
   },

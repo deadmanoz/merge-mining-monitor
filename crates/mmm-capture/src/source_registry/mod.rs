@@ -123,6 +123,7 @@ pub const SYSCOIN_SOURCE_CODE: &str = "auxpow:syscoin";
 pub const FRACTAL_SOURCE_CODE: &str = "auxpow:fractal";
 pub const HATHOR_SOURCE_CODE: &str = "auxpow:hathor";
 pub const ELASTOS_SOURCE_CODE: &str = "auxpow:elastos";
+pub const QBIT_SOURCE_CODE: &str = "auxpow:qbit";
 pub const BITCOIN_SOURCE_CODE: &str = "live-chaintip:bitcoin:core";
 
 /// A live AuxPoW producer source.
@@ -253,6 +254,7 @@ pub const SOURCE_REGISTRY: &[SourceDefinition] = &[
     catalogued_auxpow(33, "auxpow:bitcoin-stash", "bitcoin-stash"),
     historical_auxpow(34, "auxpow:elcash", "elcash"),
     historical_powdata_auxpow(35, "auxpow:rod", "rod"),
+    live_auxpow(36, QBIT_SOURCE_CODE, "qbit"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -413,6 +415,7 @@ mod tests {
             (33, "auxpow:bitcoin-stash"),
             (34, "auxpow:elcash"),
             (35, "auxpow:rod"),
+            (36, "auxpow:qbit"),
         ];
         let got: Vec<(i64, &str)> = SOURCE_REGISTRY.iter().map(|s| (s.id, s.code)).collect();
         assert_eq!(got, want);
@@ -421,12 +424,12 @@ mod tests {
 
     #[test]
     fn registry_lifecycle_counts_match_recovery_state() {
-        assert_eq!(live().count(), 7);
+        assert_eq!(live().count(), 8);
         assert_eq!(historical().count(), 20);
         assert_eq!(partial().count(), 1);
         assert_eq!(surveyed().count(), 1);
         assert_eq!(catalogued().count(), 5);
-        assert_eq!(SOURCE_REGISTRY.len(), 34);
+        assert_eq!(SOURCE_REGISTRY.len(), 35);
         // Every historical entry is recovered AuxPoW evidence.
         for s in historical() {
             assert_eq!(s.kind, SourceKind::Auxpow, "{}", s.code);
@@ -454,6 +457,10 @@ mod tests {
             by_code("auxpow:elcash").unwrap().child_target_location,
             ChildTargetLocation::HeaderNbits
         );
+        let qbit = by_code(QBIT_SOURCE_CODE).unwrap();
+        assert_eq!(qbit.id, 36);
+        assert_eq!(qbit.lifecycle, SourceLifecycle::Live);
+        assert_eq!(qbit.child_target_location, ChildTargetLocation::HeaderNbits);
     }
 
     #[test]

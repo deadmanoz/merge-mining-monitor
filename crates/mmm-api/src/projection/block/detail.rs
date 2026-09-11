@@ -645,9 +645,9 @@ mod tests {
 
     #[test]
     fn qbit_arm_projects_slot_and_omits_hash_block() {
-        // The qbit arm is unreachable from real data in this slice (no source
-        // registry entry yet), so it needs a constructed row: prove the
-        // explicit format selection, the embedded-parent gate, the cited
+        // Qbit capture is live, but this test builds its row directly rather
+        // than depending on captured data, so it pins the projection alone:
+        // the explicit format selection, the embedded-parent gate, the cited
         // chain id, and that serialization omits the classic-only hash_block.
         let fixture: Value = serde_json::from_str(include_str!(
             "../../../../../fixtures/qbit/qbit_controls.json"

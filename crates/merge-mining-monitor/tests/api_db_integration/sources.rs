@@ -3,11 +3,15 @@ use std::collections::BTreeSet;
 use anyhow::Result;
 use mmm_api::projection::{self, SourceEndpointRecord, SourcesPayload};
 use mmm_capture::source_registry::{
-    BITCOIN_SOURCE_CODE, NAMECOIN_SOURCE_CODE, RSK_SOURCE_CODE, SYSCOIN_SOURCE_CODE,
+    BITCOIN_SOURCE_CODE, NAMECOIN_SOURCE_CODE, QBIT_SOURCE_CODE, RSK_SOURCE_CODE,
+    SYSCOIN_SOURCE_CODE,
 };
 use mmm_capture::source_registry::{SOURCE_REGISTRY, SourceLifecycle};
 use mmm_read_model::rebuild_source_health;
-use mmm_store::get_source_id;
+use mmm_store::{
+    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error, get_source_id, record_capture_error,
+    upsert_poll_cursor_with_target,
+};
 use time::Month;
 use tokio_postgres::Client;
 
@@ -23,6 +27,7 @@ const ADD_ELCASH_MIGRATION: &str =
 const REMOVE_MAZACOIN_MIGRATION: &str =
     include_str!("../../../../migrations/0004_remove_mazacoin_source.sql");
 const ADD_ROD_MIGRATION: &str = include_str!("../../../../migrations/0018_add_rod_source.sql");
+const ADD_QBIT_MIGRATION: &str = include_str!("../../../../migrations/0020_add_qbit_source.sql");
 
 #[tokio::test]
 async fn sources_counts_events_without_classifier_observation_counts() -> Result<()> {
@@ -521,7 +526,10 @@ async fn rod_forward_migration_converges_identity_and_advances_sequence() -> Res
             )
             .await?
             .get(0);
-        assert_eq!(next_id, 36, "identity must resume after permanent id 35");
+        assert_eq!(
+            next_id, 37,
+            "identity must resume after the highest permanent id"
+        );
 
         Ok::<_, anyhow::Error>(())
     })
@@ -591,7 +599,7 @@ async fn rod_forward_migration_rejects_code_collision() -> Result<()> {
                 "DELETE FROM source WHERE code = 'auxpow:rod'; \
                  INSERT INTO source (id, code, kind, chain, instance, created_at) \
                  OVERRIDING SYSTEM VALUE \
-                 VALUES (36, 'auxpow:rod', 'auxpow', 'rod', NULL, 1);",
+                 VALUES (37, 'auxpow:rod', 'auxpow', 'rod', NULL, 1);",
             )
             .await?;
 
@@ -599,12 +607,12 @@ async fn rod_forward_migration_rejects_code_collision() -> Result<()> {
             .batch_execute(ADD_ROD_MIGRATION)
             .await
             .expect_err("wrong permanent id must block ROD insertion");
-        assert_migration_error(&error, "expected source id 35, found 36");
+        assert_migration_error(&error, "expected source id 35, found 37");
         let id: i64 = client
             .query_one("SELECT id FROM source WHERE code = 'auxpow:rod'", &[])
             .await?
             .get(0);
-        assert_eq!(id, 36, "collision guard must preserve the existing row");
+        assert_eq!(id, 37, "collision guard must preserve the existing row");
 
         Ok::<_, anyhow::Error>(())
     })
@@ -616,7 +624,7 @@ async fn mazacoin_removal_migration_rejects_wrong_elcash_identity_before_cleanup
         client
             .batch_execute(
                 "DELETE FROM source WHERE code = 'auxpow:elcash'; \
-                 ALTER TABLE source ALTER COLUMN id RESTART WITH 36;",
+                 ALTER TABLE source ALTER COLUMN id RESTART WITH 37;",
             )
             .await?;
         client.batch_execute(ADD_ELCASH_MIGRATION).await?;
@@ -624,7 +632,7 @@ async fn mazacoin_removal_migration_rejects_wrong_elcash_identity_before_cleanup
             .query_one("SELECT id FROM source WHERE code = 'auxpow:elcash'", &[])
             .await?
             .get(0);
-        assert_eq!(wrong_id, 36, "test setup must exercise the bad 0003 path");
+        assert_eq!(wrong_id, 37, "test setup must exercise the bad 0003 path");
 
         insert_legacy_mazacoin_source(&client).await?;
         insert_legacy_mazacoin_state(&client).await?;
@@ -665,7 +673,7 @@ async fn mazacoin_removal_migration_cleans_state_preserves_ids_and_is_idempotent
 
         let rows = client
             .query(
-                "SELECT id, code FROM source WHERE id IN (33, 34, 35) ORDER BY id",
+                "SELECT id, code FROM source WHERE id IN (33, 34, 35, 36) ORDER BY id",
                 &[],
             )
             .await?;
@@ -677,6 +685,7 @@ async fn mazacoin_removal_migration_cleans_state_preserves_ids_and_is_idempotent
                 (33, "auxpow:bitcoin-stash".to_owned()),
                 (34, "auxpow:elcash".to_owned()),
                 (35, "auxpow:rod".to_owned()),
+                (36, "auxpow:qbit".to_owned()),
             ]
         );
 
@@ -689,7 +698,7 @@ async fn mazacoin_removal_migration_cleans_state_preserves_ids_and_is_idempotent
             )
             .await?
             .get(0);
-        assert_eq!(next_id, 36, "fresh-seed identity must resume after max id");
+        assert_eq!(next_id, 37, "fresh-seed identity must resume after max id");
 
         Ok::<_, anyhow::Error>(())
     })
@@ -867,6 +876,268 @@ async fn sources_projection_maps_strict_and_weak_orphan_counts() -> Result<()> {
         );
         assert_eq!(rsk_row.counts.weak_orphan, 0);
         assert_eq!(rsk_row.counts.unknown, 1);
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn qbit_forward_migration_converges_identity_and_advances_sequence() -> Result<()> {
+    crate::run_db_test!(client, {
+        client
+            .batch_execute(
+                "DELETE FROM source WHERE code = 'auxpow:qbit'; \
+                 ALTER TABLE source ALTER COLUMN id RESTART WITH 36;",
+            )
+            .await?;
+
+        // Executed TWICE: idempotency is proved by running it, not asserted.
+        client.batch_execute(ADD_QBIT_MIGRATION).await?;
+        client.batch_execute(ADD_QBIT_MIGRATION).await?;
+        let row = client
+            .query_one(
+                "SELECT id, kind, chain, instance, count(*) OVER () \
+                 FROM source WHERE code = 'auxpow:qbit'",
+                &[],
+            )
+            .await?;
+        assert_eq!(row.get::<_, i64>(0), 36);
+        assert_eq!(row.get::<_, String>(1), "auxpow");
+        assert_eq!(row.get::<_, String>(2), "qbit");
+        assert_eq!(row.get::<_, Option<String>>(3), None);
+        assert_eq!(row.get::<_, i64>(4), 1, "0020 must remain idempotent");
+
+        let next_id: i64 = client
+            .query_one(
+                "INSERT INTO source (code, kind, chain, instance, created_at) \
+                 VALUES ('auxpow:identity-probe', 'auxpow', 'identity-probe', NULL, 1) \
+                 RETURNING id",
+                &[],
+            )
+            .await?
+            .get(0);
+        assert_eq!(next_id, 37, "identity must resume after permanent id 36");
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn qbit_forward_migration_preserves_an_ahead_identity_sequence() -> Result<()> {
+    crate::run_db_test!(client, {
+        client
+            .batch_execute(
+                "DELETE FROM source WHERE code = 'auxpow:qbit'; \
+                 ALTER TABLE source ALTER COLUMN id RESTART WITH 60;",
+            )
+            .await?;
+
+        client.batch_execute(ADD_QBIT_MIGRATION).await?;
+        let next_id: i64 = client
+            .query_one(
+                "INSERT INTO source (code, kind, chain, instance, created_at) \
+                 VALUES ('auxpow:identity-probe', 'auxpow', 'identity-probe', NULL, 1) \
+                 RETURNING id",
+                &[],
+            )
+            .await?
+            .get(0);
+        assert_eq!(
+            next_id, 60,
+            "migration must not move the sequence backwards"
+        );
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn qbit_forward_migration_rejects_id_collision() -> Result<()> {
+    crate::run_db_test!(client, {
+        client
+            .batch_execute(
+                "DELETE FROM source WHERE code = 'auxpow:qbit'; \
+                 INSERT INTO source (id, code, kind, chain, instance, created_at) \
+                 OVERRIDING SYSTEM VALUE \
+                 VALUES (36, 'auxpow:other', 'auxpow', 'other', NULL, 1);",
+            )
+            .await?;
+
+        let error = client
+            .batch_execute(ADD_QBIT_MIGRATION)
+            .await
+            .expect_err("occupied permanent id must block Qbit insertion");
+        assert_migration_error(&error, "source id 36 belongs to auxpow:other");
+        let count: i64 = client
+            .query_one(
+                "SELECT count(*) FROM source WHERE code = 'auxpow:qbit'",
+                &[],
+            )
+            .await?
+            .get(0);
+        assert_eq!(count, 0);
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn qbit_forward_migration_rejects_code_collision() -> Result<()> {
+    crate::run_db_test!(client, {
+        client
+            .batch_execute(
+                "DELETE FROM source WHERE code = 'auxpow:qbit'; \
+                 INSERT INTO source (id, code, kind, chain, instance, created_at) \
+                 OVERRIDING SYSTEM VALUE \
+                 VALUES (37, 'auxpow:qbit', 'auxpow', 'qbit', NULL, 1);",
+            )
+            .await?;
+
+        let error = client
+            .batch_execute(ADD_QBIT_MIGRATION)
+            .await
+            .expect_err("wrong permanent id must block Qbit insertion");
+        assert_migration_error(&error, "expected source id 36, found 37");
+        let id: i64 = client
+            .query_one("SELECT id FROM source WHERE code = 'auxpow:qbit'", &[])
+            .await?
+            .get(0);
+        assert_eq!(id, 37, "collision guard must preserve the existing row");
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn qbit_forward_migration_rejects_incompatible_metadata() -> Result<()> {
+    crate::run_db_test!(client, {
+        client
+            .batch_execute("UPDATE source SET chain = 'not-qbit' WHERE code = 'auxpow:qbit';")
+            .await?;
+
+        let error = client
+            .batch_execute(ADD_QBIT_MIGRATION)
+            .await
+            .expect_err("incompatible metadata must block the migration");
+        assert_migration_error(&error, "source id 36 has incompatible metadata");
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+/// A source holding several unresolved capture errors still yields exactly one
+/// `/api/v1/sources` record, reporting the EARLIEST gap. That error state wins
+/// over the ordinary live/stale verdict even while the cursor is fresh and has
+/// already advanced past the gap, which is the replayed-height case the
+/// monotonic cursor cannot express on its own. Clearing the errors restores the
+/// normal state.
+#[tokio::test]
+async fn capture_errors_reduce_to_the_earliest_gap_and_outrank_live_status() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let qbit_source_id = get_source_id(&client, QBIT_SOURCE_CODE).await?;
+
+        // The cursor is fresh and already ABOVE both malformed heights: the
+        // replay case. Nothing in poll_cursor can express the hole.
+        upsert_poll_cursor_with_target(&client, qbit_source_id, 78_100, Some(78_100)).await?;
+        // `poll_cursor.updated_at` is server `now()`, so anchor the reference
+        // clock to it: the point of this test is the error precedence, not the
+        // one-hour capture-progress staleness window.
+        let cursor_updated_at: i64 = client
+            .query_one(
+                "SELECT EXTRACT(EPOCH FROM updated_at)::BIGINT FROM poll_cursor \
+                 WHERE source_id = $1",
+                &[&qbit_source_id],
+            )
+            .await?
+            .get(0);
+        let now = cursor_updated_at + 60;
+        for (height, seen) in [(78_064, now - 600), (78_058, now - 300)] {
+            record_capture_error(
+                &client,
+                qbit_source_id,
+                height,
+                Some(&hash_bytes(height as u32)),
+                CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF,
+                Some("Qbit parent coinbase Merkle root mismatch"),
+                seen,
+            )
+            .await?;
+        }
+
+        rebuild_source_health(&mut client).await?;
+        let payload = projection::sources(&client, now as u64)
+            .await
+            .map_err(format_projection_error)?;
+        let qbit_rows: Vec<&SourceEndpointRecord> = payload
+            .sources
+            .iter()
+            .filter(|source| source.code == QBIT_SOURCE_CODE)
+            .collect();
+        assert_eq!(qbit_rows.len(), 1, "one record per source");
+        let qbit = qbit_rows[0];
+        assert_eq!(qbit.id, 36);
+        assert_eq!(qbit.sync.mode, "live");
+        assert_eq!(qbit.sync.state, "error", "capture error outranks live");
+        assert_eq!(
+            qbit.sync.error_code.as_deref(),
+            Some("auxpow_capture_error")
+        );
+        assert_eq!(
+            qbit.sync.error_height,
+            Some(78_058),
+            "the earliest gap bounds trustworthy coverage"
+        );
+        assert_eq!(qbit.sync.progress_height, Some(78_100));
+
+        // Re-observing a height refreshes last_seen_at and preserves
+        // first_seen_at, so the row keeps showing how long the gap has been open.
+        record_capture_error(
+            &client,
+            qbit_source_id,
+            78_058,
+            Some(&hash_bytes(78_058)),
+            CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF,
+            Some("Qbit parent coinbase Merkle root mismatch"),
+            now,
+        )
+        .await?;
+        let seen: (i64, i64) = client
+            .query_one(
+                "SELECT first_seen_at, last_seen_at FROM capture_error \
+                 WHERE source_id = $1 AND height = 78058",
+                &[&qbit_source_id],
+            )
+            .await
+            .map(|row| (row.get(0), row.get(1)))?;
+        assert_eq!(seen, (now - 300, now));
+
+        // Clearing the earliest gap promotes the next one, not the normal state.
+        assert!(clear_capture_error(&client, qbit_source_id, 78_058).await?);
+        let payload = projection::sources(&client, now as u64)
+            .await
+            .map_err(format_projection_error)?;
+        let qbit = source_row(&payload, QBIT_SOURCE_CODE);
+        assert_eq!(qbit.sync.state, "error");
+        assert_eq!(qbit.sync.error_height, Some(78_064));
+
+        // Only when the LAST one clears does the source read normally again.
+        assert!(clear_capture_error(&client, qbit_source_id, 78_064).await?);
+        assert!(
+            !clear_capture_error(&client, qbit_source_id, 78_064).await?,
+            "clearing an absent height is a no-op"
+        );
+        let payload = projection::sources(&client, now as u64)
+            .await
+            .map_err(format_projection_error)?;
+        let qbit = source_row(&payload, QBIT_SOURCE_CODE);
+        assert_eq!(qbit.sync.state, "live");
+        assert_eq!(qbit.sync.error_code, None);
+        assert_eq!(qbit.sync.error_height, None);
+
+        // Every other source is unaffected by Qbit's capture errors.
+        let namecoin = source_row(&payload, NAMECOIN_SOURCE_CODE);
+        assert_eq!(namecoin.sync.error_code, None);
+        assert_eq!(namecoin.sync.error_height, None);
 
         Ok::<_, anyhow::Error>(())
     })

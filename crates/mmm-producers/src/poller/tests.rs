@@ -343,6 +343,38 @@ async fn tick_policy_hold_stops_without_advancing() -> Result<()> {
     Ok(())
 }
 
+/// Replay is best-effort by contract: a `Hold` in the ALREADY-processed
+/// sub-range does not stop the tick and does not lower the monotonic cursor.
+/// The shared AuxPoW runner relies on this, which is why a held Qbit height
+/// also persists a durable `capture_error` row: the hold alone is invisible
+/// once the cursor is past the height.
+#[tokio::test]
+async fn tick_policy_replay_hold_continues_without_lowering_the_cursor() -> Result<()> {
+    let mut cursor = 6;
+    let mut seen = Vec::new();
+    let processed = run_tick_policy(
+        &mut cursor,
+        TickWindow {
+            rescan_start: 4,
+            end: 8,
+        },
+        async |height| {
+            seen.push(height);
+            if height == 5 {
+                Ok(HeightProgress::Hold)
+            } else {
+                Ok(HeightProgress::Advance)
+            }
+        },
+    )
+    .await?;
+    // The held replay height 5 did not stop heights 6, 7 and 8.
+    assert_eq!(seen, vec![4, 5, 6, 7, 8]);
+    assert_eq!(cursor, 8, "a replay hold never lowers the cursor");
+    assert_eq!(processed, 5);
+    Ok(())
+}
+
 #[tokio::test]
 async fn tick_policy_new_height_abort_bails() -> Result<()> {
     // The Hathor Core-cache horizon maps TableHorizonHold -> Abort: a new
