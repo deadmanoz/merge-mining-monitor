@@ -45,7 +45,7 @@ use mmm_store::{
     CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error, load_pool_identities_by_namespace,
     record_capture_error, upsert_merge_mining_event_with_attributions,
 };
-use qbit::{fetch_qbit_candidate, write_qbit_event};
+use qbit::{ensure_qbit_mainnet_endpoint, fetch_qbit_candidate, write_qbit_event};
 
 mod qbit;
 
@@ -507,6 +507,7 @@ fn height_progress_for(outcome: HeightOutcome) -> HeightProgress {
 pub(crate) async fn poll(spec: &'static ChainSpec, rt: ProducerRuntime) -> Result<()> {
     let rpc_config = crate::chains::config::bitcoind_rpc_config(spec)?;
     let rpc = BitcoindRpcClient::new(family_of(spec).label, rpc_config)?;
+    ensure_qbit_mainnet_endpoint(&rpc, family_of(spec)).await?;
     let poller_config = crate::chains::config::poller_config(spec)?;
     let context =
         AuxpowCaptureContext::new_with_classifier(&rt.pg_client, spec, rt.parent_classifier)
@@ -541,6 +542,7 @@ pub(crate) async fn run_auxpow_backfill(
     } = rt;
     let spec = config.spec;
     let family = family_of(spec);
+    ensure_qbit_mainnet_endpoint(&rpc, family).await?;
 
     let chain_tip = rpc
         .get_block_count()

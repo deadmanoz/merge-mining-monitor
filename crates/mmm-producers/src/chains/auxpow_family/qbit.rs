@@ -18,7 +18,7 @@ use tracing::debug;
 
 use super::{AuxpowCaptureContext, AuxpowFetch, write_event_in_txn};
 use crate::chains::bitcoind_rpc::BitcoindRpcClient;
-use crate::chains::spec::{ChainSpec, FamilySpec};
+use crate::chains::spec::{ChainSpec, FamilySpec, FetchStrategy};
 use mmm_capture::auxpow::{
     ParsedQbitAuxpow, ParsedQbitBlock, parse_qbit_extended_header, qbit_extended_header_prefix,
     validates_target,
@@ -86,6 +86,38 @@ pub(super) async fn fetch_qbit_candidate(
         }
         ParsedQbitBlock::Auxpow(parsed) => Ok(AuxpowFetch::Qbit(parsed)),
     }
+}
+
+/// Pin the endpoint to Qbit mainnet once, at producer startup, before any
+/// height is accepted. The per-height guard below only reaches its genesis
+/// comparison when height 0 itself is processed, which the default poller
+/// (seeded at `tip - reorg_depth`) and any backfill starting above zero never
+/// do. Without this, a testnet or fork endpoint using Qbit's format and chain
+/// ID would pass every per-height check and be persisted as `auxpow:qbit`.
+/// A no-op for every other fetch strategy.
+pub(super) async fn ensure_qbit_mainnet_endpoint(
+    rpc: &BitcoindRpcClient,
+    family: &'static FamilySpec,
+) -> Result<()> {
+    let FetchStrategy::QbitExtendedHeader { genesis_block_hash } = family.fetch else {
+        return Ok(());
+    };
+    let actual = rpc
+        .get_block_hash(0)
+        .await
+        .with_context(|| format!("get {} genesis hash to pin the endpoint", family.label))?;
+    ensure_qbit_genesis(family.label, &actual, genesis_block_hash)
+}
+
+/// The pure comparison behind [`ensure_qbit_mainnet_endpoint`], split out so
+/// the refusal is unit-testable without an RPC endpoint.
+fn ensure_qbit_genesis(label: &str, actual: &BlockHash, genesis_block_hash: &str) -> Result<()> {
+    ensure!(
+        actual.to_string() == genesis_block_hash,
+        "{label} endpoint height 0 is {actual} but mainnet genesis is {genesis_block_hash}; \
+         refusing to capture from a non-mainnet node",
+    );
+    Ok(())
 }
 
 /// Authenticate that a decoded Qbit block really is the mainnet block at
@@ -346,5 +378,30 @@ mod tests {
         let genesis_hash: BlockHash = genesis.parse().expect("parse pinned genesis");
         ensure_qbit_native_placement("Qbit", 0, &genesis_hash, genesis_hash, genesis)
             .expect("pinned genesis is accepted at height 0");
+    }
+
+    /// The startup pin is what protects a poller seeded above height 0 and a
+    /// backfill that never touches genesis: the per-height guard above cannot
+    /// see those. An endpoint whose `getblockhash(0)` is not Qbit mainnet
+    /// genesis must be refused outright, and the real genesis must pass.
+    #[test]
+    fn startup_pin_refuses_a_non_mainnet_endpoint() {
+        let genesis = match family_of(by_id(ChainId::Qbit)).fetch {
+            FetchStrategy::QbitExtendedHeader { genesis_block_hash } => genesis_block_hash,
+            other => panic!("Qbit must use the extended-header fetch, got {other:?}"),
+        };
+        let genesis_hash: BlockHash = genesis.parse().expect("parse pinned genesis");
+        ensure_qbit_genesis("Qbit", &genesis_hash, genesis).expect("mainnet genesis is accepted");
+
+        // A fork or testnet sharing Qbit's format and chain ID but not its genesis.
+        let (_, parsed) = parsed_positive_control();
+        let foreign = parsed.child_header.hash();
+        let err = ensure_qbit_genesis("Qbit", &foreign, genesis)
+            .expect_err("a foreign genesis must be refused before any height is accepted");
+        assert!(
+            err.to_string()
+                .contains("refusing to capture from a non-mainnet node"),
+            "unexpected error: {err}"
+        );
     }
 }
