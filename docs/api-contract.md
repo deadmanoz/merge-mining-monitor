@@ -5,7 +5,7 @@ Fixture examples live in `fixtures/api/`; fixture
 coverage is listed by `fixtures/api/manifest.json`.
 
 The current implementation supports Namecoin, RSK, Syscoin, Fractal Bitcoin,
-Hathor, and Elastos capture. See `docs/data-model.md` for schema details,
+Hathor, Elastos, and Qbit capture. See `docs/data-model.md` for schema details,
 `docs/architecture.md` for current code flow, and
 `docs/tree-semantics.md` for implementation notes on deriving `/api/v1/tree`
 and orphan navigator responses.
@@ -356,6 +356,7 @@ Reserved source codes:
 - `auxpow:fractal`
 - `auxpow:hathor`
 - `auxpow:elastos`
+- `auxpow:qbit`
 - `live-chaintip:bitcoin:core`
 
 Reserved historical (recovered) AuxPoW source codes (defined in the Source
@@ -843,13 +844,22 @@ payload.
 `commitment` is the parent-level AuxPoW merge-mining commitment, or `null`
 (matching `competition` / `stale_branch`) when the block has no recognized
 AuxPoW-format event. When present it carries `format`
-(`namecoin-aux` / `rsk-opaque` / `hathor-rfc0006`, chosen by family priority:
-any Namecoin-family event wins, else RSK, else Hathor), `parent_coinbase_txid`,
-`parent_coinbase_script_hex`, and `marker`. `marker` is non-null only for a
-Namecoin-family parent whose coinbase scriptSig yields a `0xfabe6d6d` marker; it
-carries `magic_present`, `aux_merkle_root`, `merkle_size`, and `merkle_nonce`.
-`aux_merkle_root` is a hash-like field in the standard reversed/display order
-(the reverse of its raw scriptSig bytes), like every other API hash. RSK and
+(`namecoin-aux` / `qbit-aux` / `rsk-opaque` / `hathor-rfc0006`, chosen by
+family priority: any Namecoin-family event wins, else Qbit, else RSK, else
+Hathor), `parent_coinbase_txid`, `parent_coinbase_script_hex`, and `marker`.
+Namecoin-family and Qbit events both persist the real parent coinbase, so
+both formats carry the txid and script. `marker` is non-null only for a
+Namecoin-family or Qbit parent whose coinbase scriptSig yields a `0xfabe6d6d`
+marker (Qbit mainnet also accepts the legacy no-marker placement, so a Qbit
+commitment with a null marker is normal); it carries `magic_present`,
+`aux_merkle_root`, `merkle_size`, and `merkle_nonce`.
+`aux_merkle_root` is always emitted in the standard display order, like every
+other API hash, but how that relates to the raw scriptSig bytes depends on the
+format: for `namecoin-aux` the scriptSig commits the root in wire order, so
+the field is the reverse of those 32 bytes; for `qbit-aux` the scriptSig
+already commits the display-order root, so the field is those 32 bytes as-is.
+A client verifying a commitment against the raw script must apply the rule
+for its `format`, not reverse unconditionally. RSK and
 Hathor are never scanned for the marker, so their commitment is format-only with
 a null marker and null coinbase fields. The marker is decoded in Rust from the
 already-stored parent coinbase bytes; no `aux_target` value is surfaced (only the
@@ -1069,15 +1079,27 @@ Response fields:
   or the current Bitcoin Core backbone target tip height, else JSON `null`.
 - `sync.latest_evidence_at`: latest AuxPoW evidence time for live AuxPoW
   sources, else JSON `null`.
-- `sync.error_code`: latest Bitcoin Core backbone error code, else JSON `null`.
-- `sync.error_height`: Bitcoin height associated with `sync.error_code`, else
-  JSON `null`.
+- `sync.error_code`: the source's current capture error, else JSON `null`. Two
+  independent classes use this field. For the Bitcoin Core live-chaintip source
+  it is the latest backbone error code from `bitcoin_core_sync_state`. For a
+  live AuxPoW source it is `auxpow_capture_error`, meaning the producer holds at
+  least one unresolved height it could not capture.
+- `sync.error_height`: the height associated with `sync.error_code`, else JSON
+  `null`. For the backbone that is a Bitcoin height; for a live AuxPoW source it
+  is the CHILD height of the earliest unresolved capture error, which is the
+  bound on trustworthy coverage for that source. A source holding several
+  unresolved heights still reports exactly one record, carrying the lowest.
 
 `progress_height` and `progress_updated_at` are both present or both null. Live
-AuxPoW sources use a capture-specific 1-hour cursor-age window first: a missing
+AuxPoW sources report `error` whenever `sync.error_code` is set, ahead of every
+other verdict: the poll cursor is monotonic, so it can be fresh and already past
+a height the producer never captured. Otherwise they use a capture-specific
+1-hour cursor-age window: a missing
 cursor is `not_started`, an old cursor is `stale`, a fresh cursor below a known
 `target_height` is `catching_up`, and a fresh cursor with no target or at or
-above target is `live`. A fresh AuxPoW source can transiently report
+above target is `live`. The `error` state clears only when the producer
+reprocesses each held height successfully; progress fields keep reporting the
+real cursor throughout. A fresh AuxPoW source can transiently report
 `catching_up` over its configured reorg window after the initial tip-anchored
 seed. Historical, partial, surveyed, and catalogued sources report their
 lifecycle token as both mode and state with null progress fields.

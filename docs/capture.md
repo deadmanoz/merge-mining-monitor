@@ -51,6 +51,7 @@ Hathor live capture can promote a matching height-only historical observation
 to exact child-hash identity in place. Such a hashless row is not considered a
 superseded prior when its Bitcoin parent matches the validated live block.
 | Elastos | JSON-RPC `getblockbyheight`. | Reconstructs the 84-byte child header and verifies the AuxPoW commitment. |
+| Qbit | Core-style raw block RPC: `getblock <hash> 0`, of which only the exact extended-header prefix is decoded. | Qbit's extended header is not a classic CAuxPoW and has no `hashBlock` field, so it uses the dedicated Qbit decoder and is projected straight into normalized evidence. |
 | Bitcoin Core | `sync-bitcoin-core`. | Writes canonical backbone headers and coinbase evidence for tree browsing; follow mode atomically repairs bounded near-tip or lagged-cursor reorg suffixes and retains the displaced side as stale evidence. |
 
 ## Polling And Backfill
@@ -72,7 +73,34 @@ Cursor seeding order is:
 
 Backfills are bounded, idempotent over event identity, and do not move the live
 cursor. Use the `just poll-CHAIN` and `just backfill-CHAIN START END` recipes
-for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
+for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, `elastos`, and `qbit`.
+
+### Malformed Proofs
+
+A height whose block claims a merge-mining proof that fails to decode is never
+written and never demotes prior evidence. What happens next is per-chain spec
+data, not a property of the failure:
+
+- Namecoin, Syscoin, and Fractal log the failure and continue. The interval is
+  still reported complete.
+- Qbit holds the interval. The producer persists a `capture_error` row for the
+  height BEFORE returning, so a crash between detection and return cannot lose
+  the signal. A new live height then holds the cursor; a replayed height
+  continues, because replay is best-effort by the poller's contract, and the
+  persisted row is what keeps that gap visible once the monotonic cursor is past
+  it; a bounded backfill over a range containing one exits non-zero rather than
+  logging completion.
+
+The row clears only when that SAME height is reprocessed successfully. An
+unrelated cursor advance never clears it, and the poll cursor is never lowered.
+`/api/v1/sources` reports the source's earliest unresolved height as
+`sync.error_code = auxpow_capture_error`, ahead of the ordinary live/stale
+verdict.
+
+A held live height is retried every tick, so a permanently undecodable block
+stops the cursor until an operator resolves it. That is deliberate: the
+alternative is a complete-looking interval with a silent hole. The source reads
+`error` throughout, and `capture_error.detail` carries the decode failure.
 
 RSK's live acquisition floor of 139,999 records the historical capture boundary,
 not the first usable merge-mining proof or the RSKIP-92 format transition.

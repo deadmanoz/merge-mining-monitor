@@ -353,6 +353,22 @@
       "size_bytes": 404797363
     },
     {
+      "chain": "qbit",
+      "counts": {
+        "canonical": 2536,
+        "stale": 4,
+        "stale_descendant": 0,
+        "strict_btc_orphan": 0,
+        "weak_btc_orphan": 0
+      },
+      "csv_path": "results/monitor-evidence/qbit_monitor_evidence.csv",
+      "parent_only_rows": 0,
+      "role": "event",
+      "row_count": 2540,
+      "sha256": "75fbb531dcfdb9e7a47ff25cbc27ee5992d68f3f4f6bf903894e22298d5c5093",
+      "size_bytes": 3499430
+    },
+    {
       "chain": "rod",
       "counts": {
         "canonical": 1,
@@ -500,7 +516,7 @@
   "error_observation_rows": 88,
   "manifest_generator": "scripts/gen-historical-source-manifest.sh",
   "publication_manifest_path": "results/monitor-evidence/monitor-evidence-manifest.json",
-  "publication_manifest_sha256": "2168b0aa739f60e6588fdd0a20753fb9c16272be1955a1fade4294f98de929bc",
+  "publication_manifest_sha256": "742578bbed74c248aaafdc8d1f3c056ee8024e48a8aa264f2a9e1e30079545cd",
   "required_columns": [
     "chain",
     "source_kind",
@@ -533,6 +549,6 @@
   "schema_version": 2,
   "scope": "uniform_monitor_evidence_v1",
   "source_repo": "merge-mining-research",
-  "source_repo_commit": "e09f52b11c207a6a226ea5531e093ab80ca6a5fd",
-  "total_event_rows": 1283863
+  "source_repo_commit": "e3dc6d620b984b72b80cff3d3c2a67c9532444ae",
+  "total_event_rows": 1286403
 }

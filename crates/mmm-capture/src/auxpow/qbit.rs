@@ -27,9 +27,12 @@
 //!
 //! Scope boundary: validating this proof envelope is NOT validating Qbit
 //! body consensus or Bitcoin parent placement. `child_height` is a caller
-//! claim (explorer/import provenance) authenticated separately by later
-//! slices; it feeds only the version-cadence gate. There is deliberately no
-//! genesis-hash pin here: chain identity is the importer/producer's job.
+//! claim (explorer/import provenance); it feeds only the version-cadence
+//! gate. There is deliberately no genesis-hash pin here: chain identity is
+//! the importer/producer's job, and the live producer authenticates it in
+//! `chains::auxpow_family::qbit` by matching the decoded child header hash
+//! against the height's `getblockhash` result and pinning mainnet genesis at
+//! height zero.
 
 use super::*;
 
@@ -140,6 +143,33 @@ pub fn parse_qbit_extended_header(raw: &[u8], child_height: u32) -> Result<Parse
         chain_branch: auxpow.chain_branch,
         auxpow_bytes,
     })))
+}
+
+/// Split the exact Qbit extended-header prefix out of a full `getblock <hash>
+/// 0` block. Qbit's RPC returns the complete block, but
+/// [`parse_qbit_extended_header`] deliberately rejects trailing bytes, so the
+/// producer must hand it exactly the header/proof region and nothing more.
+///
+/// Bounded by the same structural reads the parser uses (branch caps, fixed
+/// 80-byte headers, one non-witness coinbase transaction), so a hostile block
+/// cannot make this scan past its own bytes. Verification is NOT performed
+/// here: this only locates the region, and the returned prefix is re-read and
+/// fully verified by [`parse_qbit_extended_header`].
+pub fn qbit_extended_header_prefix(raw: &[u8], child_height: u32) -> Result<&[u8]> {
+    ensure!(
+        raw.len() >= Header::SIZE,
+        "Qbit block is shorter than an 80-byte header"
+    );
+    let child_header = parse_header(raw[0..Header::SIZE].try_into().unwrap())
+        .context("parse Qbit child header")?;
+    let version = child_header.header.version.to_consensus() as u32;
+    if !qbit_version_gate(version, child_height)? {
+        return Ok(&raw[..Header::SIZE]);
+    }
+    let mut reader = Reader::new(raw);
+    reader.skip(Header::SIZE)?;
+    read_qbit_auxpow(&mut reader)?;
+    Ok(&raw[..reader.position()])
 }
 
 /// Enforce Qbit mainnet's version layout and return whether the block is

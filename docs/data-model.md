@@ -17,6 +17,7 @@ tree view from that evidence.
 | chain sidecars | One-to-one evidence details for chains with extra structured data, such as RSK and Hathor. |
 | `event_pool_attribution` | Attribution rows connecting an event to a pool with source/provenance details. |
 | `poll_cursor` | Live poll progress. Backfills never move the cursor. |
+| `capture_error` | Producer-owned operational state: one row per `(source_id, height)` a producer could not capture, with the failure kind, a diagnostic detail, and first/last seen times. Written and cleared only by capture; `/api/v1/sources` reads the earliest unresolved height per source. |
 | `block` | Derived Bitcoin parent block state: canonical, stale, consensus-invalid error block, or unknown. |
 | `body_invalid_stale` | Operator-imported annotation of stale blocks whose complete body is known consensus-invalid from external full-block evidence (the research body-invalid stales overlay, mirrored in `data/consensus/body_invalid_stales.csv`). Display annotation joined at API projection only; loaded by `import-body-invalid-stales`. |
 | `attestation_proof` | Derived proof rows supporting a block. |
@@ -180,6 +181,30 @@ remain attached to the event. The text field preserves address, value/script,
 and raw scriptPubKey forms that cannot be represented as a value-complete
 `Vec<TxOut>`.
 
+## Capture Errors
+
+`capture_error` is the one producer-owned table that records a gap rather than
+evidence. It exists because neither of the obvious homes can carry one:
+`poll_cursor` is monotonic (upserted through `GREATEST`) with no error column,
+so once the cursor is past a height the hole is invisible; `source_health` is
+derived state whose sole writer is `mmm-read-model`.
+
+- Written by capture, BEFORE returning from the failing height, so a crash
+  between detection and return cannot lose the signal.
+- Keyed `(source_id, height)`. Re-observing a height refreshes `last_seen_at`
+  and preserves `first_seen_at`.
+- Cleared only when that SAME height is reprocessed successfully. An unrelated
+  cursor advance never clears it.
+- `error_kind` is the stored diagnostic vocabulary (`malformed_auxpow_proof`
+  today); `detail` is diagnostic only and is never projected onto the wire.
+- `/api/v1/sources` reduces a source's rows to the LOWEST unresolved height,
+  the earliest gap and therefore the bound on trustworthy coverage, and reports
+  it as `sync.error_code = auxpow_capture_error` ahead of the ordinary
+  live/stale verdict.
+
+Which chains write rows is `FamilySpec::malformed_policy` on the chain spec, not
+a global rule; see `docs/capture.md`.
+
 ## Read-Model Rules
 
 - Derived rows are written through `mmm-read-model` mutation entry points.
@@ -216,6 +241,10 @@ Public migration history starts with:
 - `0002_seed_sources.sql` - generated source seed for fresh databases.
 
 Later schema changes are appended as new numbered forward migrations.
+
+`0020_add_qbit_source.sql` converges live source `auxpow:qbit` on permanent id
+36 for databases that applied an earlier `0002`, and
+`0021_add_capture_error.sql` adds the producer-owned `capture_error` table.
 
 `0007_support_partial_child_evidence.sql` makes child evidence nullable, adds
 authenticated child header and `nBits` storage, replaces the old composite

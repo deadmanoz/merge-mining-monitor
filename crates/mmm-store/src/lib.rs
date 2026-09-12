@@ -13,6 +13,7 @@
 
 mod bitcoin_core_header;
 mod body_invalid;
+mod capture_error;
 mod chains;
 mod event;
 mod historical_import;
@@ -33,6 +34,9 @@ pub use bitcoin_core_header::{
 };
 pub use body_invalid::{
     count_body_invalid_stales, delete_body_invalid_stales_not_in, upsert_body_invalid_stale,
+};
+pub use capture_error::{
+    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error, record_capture_error,
 };
 pub use chains::elastos::{
     ElastosIdentityReresolveRow, active_event_ids_at_height, load_elastos_identity_reresolve_batch,

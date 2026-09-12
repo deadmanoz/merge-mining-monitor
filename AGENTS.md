@@ -20,7 +20,7 @@ Use `just` targets, not raw commands, when a target exists:
   `just db-backup` - local DB and backup-first migration workflow.
 - `just serve` - read API plus static `www/` frontend.
 - `just poll-CHAIN` / `just backfill-CHAIN START END` - chain capture for
-  `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, and `elastos`.
+  `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, `elastos`, and `qbit`.
 - `just import-known-stales` / `just reclassify-known-stales` - known-stale
   membership import and retroactive demotion.
 - `just import-all` / `just import-dataset CHAIN` - pinned normalized
@@ -47,8 +47,12 @@ concurrent tasks inside each locking test.
   reason in the derived `block` row. Refresh it and the historical manifest
   together via `just gen-research-publication-pins`; the manifest consumes
   Research's canonical observation-chain inventory.
-- Producers write only `merge_mining_event` plus 1:1 chain sidecars and
-  attribution rows. Historical ingest also attaches
+- Producers write only `merge_mining_event` plus 1:1 chain sidecars,
+  attribution rows, and the producer-owned `capture_error` operational state
+  (one row per height a producer could not capture; written before the failing
+  height returns, cleared only when that same height is reprocessed
+  successfully, and projected by `/api/v1/sources` as the earliest unresolved
+  height). Historical ingest also attaches
   `historical_event_provenance`. The further base tables,
   `known_stale_block` and `body_invalid_stale`, are operator-imported via
   `import-known-stales` / `import-body-invalid-stales`
@@ -65,9 +69,9 @@ concurrent tasks inside each locking test.
 - Historical and partial source imports are authoritative snapshots. Live
   source publication imports are additive. Keep this lifecycle distinction in
   the shared source registry, not in per-chain schema branches.
-- The current Research pin is generated from committed revision `e09f52b` and
-  covers 28 event artifacts plus the stale-descendant and error-observation
-  aggregates, 30 artifacts and 1,283,972 rows in total. Refresh the manifest
+- The current Research pin is generated from committed revision `e3dc6d6` and
+  covers 29 event artifacts plus the stale-descendant and error-observation
+  aggregates, 31 artifacts and 1,286,512 rows in total. Refresh the manifest
   and catalogue together with `just gen-research-publication-pins`; a refreshed
   pin documents import readiness, not a completed database import or deploy.
 - Historical describes the recovered dataset, not whether its native chain is

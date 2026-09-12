@@ -44,7 +44,7 @@ Doichain participates through the same path with a valid zero-row file. The
 separate 21-row `stale-descendants` file is an aggregate view, not an event
 source, because its contributing chain observations already exist in the
 per-chain files. The complete artifact set also includes 88 authenticated
-error-observation witnesses, for 1,283,972 rows across 30 artifacts.
+error-observation witnesses, for 1,286,512 rows across 31 artifacts.
 
 The total includes 456,660 canonical Namecoin rows whose historical source does
 not authenticate a child hash or height. The Monitor manifest pins that

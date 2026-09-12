@@ -5,13 +5,13 @@ automatically via `set dotenv-load`; the binary itself does not.
 
 ## Per-Chain Variables
 
-Prefixes: `NAMECOIN`, `RSK`, `SYSCOIN`, `FRACTAL`, `HATHOR`, `ELASTOS`.
+Prefixes: `NAMECOIN`, `RSK`, `SYSCOIN`, `FRACTAL`, `HATHOR`, `ELASTOS`, `QBIT`.
 
 | Variable | Applies to | Contract |
 |---|---|---|
-| `<PREFIX>_RPC_URL` | all | Endpoint. Required for Namecoin, RSK, Syscoin, and Fractal; defaults exist for Hathor and Elastos. |
+| `<PREFIX>_RPC_URL` | all | Endpoint. Required for Namecoin, RSK, Syscoin, Fractal, and Qbit; defaults exist for Hathor and Elastos. |
 | `<PREFIX>_RPC_USER` / `<PREFIX>_RPC_PASSWORD` | all but Hathor | Auth policy is chain-specific and pinned by tests. Set both unless that chain explicitly allows unauthenticated access or cookie auth. |
-| `<PREFIX>_RPC_COOKIEFILE` | Syscoin, Fractal | Bitcoin Core-style `user:password` cookie file used when the user/password pair is unset. |
+| `<PREFIX>_RPC_COOKIEFILE` | Syscoin, Fractal, Qbit | Bitcoin Core-style `user:password` cookie file used when the user/password pair is unset. |
 | `<PREFIX>_RPC_TIMEOUT_SECS` | all | Whole-request HTTP timeout, default 15 seconds. |
 | `<PREFIX>_START_HEIGHT` | all | Explicit live cursor seed override. Use once for first deploy or controlled reset, then remove. |
 | `<PREFIX>_POLL_INTERVAL_SECONDS` | all | Live tick interval, default 30 seconds. |

@@ -527,6 +527,38 @@ fn assert_sources_fixture_contract(fixture: &Value) {
             );
         }
     }
+    // The live AuxPoW capture-error class: the wire code, the reduced height,
+    // and precedence over the ordinary live/stale verdict even while the cursor
+    // is fresh and already past the gap.
+    let qbit = sources
+        .iter()
+        .find(|source| source["code"] == "auxpow:qbit")
+        .expect("sources fixture must include auxpow:qbit");
+    assert_eq!(qbit["id"], 36, "Qbit holds permanent source id 36");
+    assert_eq!(qbit["sync"]["mode"], "live");
+    assert_eq!(qbit["sync"]["state"], "error");
+    assert_eq!(qbit["sync"]["error_code"], "auxpow_capture_error");
+    assert_eq!(qbit["sync"]["error_height"], 78_058);
+    assert!(
+        qbit["sync"]["progress_height"].as_i64().expect("progress")
+            > qbit["sync"]["error_height"].as_i64().expect("error height"),
+        "the capture error must outrank a cursor already past the gap"
+    );
+    assert_eq!(qbit["status"], "fresh", "evidence freshness is independent");
+
+    // Every other live AuxPoW source stays free of the error fields, so the
+    // class is per-source and not a payload-wide flag.
+    for source in sources {
+        if source["sync"]["mode"] != "live" || source["code"] == "auxpow:qbit" {
+            continue;
+        }
+        assert!(
+            source["sync"]["error_code"].is_null() && source["sync"]["error_height"].is_null(),
+            "{} must not carry capture-error fields",
+            source["code"]
+        );
+    }
+
     for (code, expected_events, expected_last_seen) in [
         ("auxpow:vcash", 68, 1_659_809_588),
         ("auxpow:lyncoin", 11, 1_721_667_253),

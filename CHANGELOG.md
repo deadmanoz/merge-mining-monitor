@@ -6,6 +6,43 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Register Qbit as live source id 36 and wire its producer through the shared
+  bitcoind-family path: a `ChainSpec` row with `QBIT_*` settings, `poll-qbit`
+  and `backfill-qbit`, and the regenerated `0002` seed plus
+  `0020_add_qbit_source.sql` for databases that already applied the earlier
+  seed. Qbit's RPC returns whole blocks, so capture splits out the exact
+  extended-header prefix and hands only that to the decoder, which still
+  rejects trailing bytes; the block body is never reinterpreted. The producer
+  authenticates native placement itself, because the decoder deliberately does
+  not: the decoded child header hash must equal the height's `getblockhash`
+  result, and height 0 must be the pinned mainnet genesis. Qbit evidence
+  reaches the write path as `NormalizedEventEvidence` rather than a synthetic
+  `ParsedAuxpowBlock`, which would need a `hashBlock` value the Qbit wire
+  format never carries.
+
+- Stop reporting a capture interval complete after skipping a proof that would
+  not decode. `FamilySpec::malformed_policy` makes this per-chain: Namecoin,
+  Syscoin, and Fractal keep the existing skip-and-continue behaviour, while
+  Qbit holds the interval. A held height persists a `capture_error` row
+  (`0021_add_capture_error.sql`) before the producer returns, so a crash cannot
+  lose the signal; a new live height then holds the cursor, a replayed height
+  continues with the persisted row keeping the gap visible, and a bounded
+  backfill over such a range exits non-zero instead of logging completion. The
+  row clears only when that same height is reprocessed successfully, and the
+  monotonic poll cursor is never lowered. `/api/v1/sources` extends
+  `sync.error_code` / `sync.error_height` beyond the Bitcoin Core backbone: a
+  live AuxPoW source holding unresolved capture errors reports
+  `auxpow_capture_error` with its earliest unresolved child height, ahead of
+  the ordinary live/stale verdict.
+
+- Refresh the Research publication pin to `e3dc6d6`, adding Qbit's 2,540
+  monitor-evidence rows (2,536 canonical, four stale) for 1,286,403 ordinary
+  events across 29 chain artifacts. Every prior artifact is byte-for-byte
+  unchanged. Registering a source and pinning its publication are one change:
+  the manifest artifact set is validated for equality against the registry, so
+  a registered source with no pinned artifact fails preflight. The refreshed
+  pin documents import readiness; no import has been run.
+
 - Add the Qbit native merge-mining proof decoder to the capture path,
   validated against four real mainnet controls (child heights 78,053-78,064;
   the positive control embeds Bitcoin block 966,017) and a native
@@ -19,9 +56,9 @@ This changelog starts with the initial release.
   member for qbit-format proofs (existing families serialize unchanged).
   Sync `STRICT_BIP34_CHAINS` with the research classifier's
   `BTC_COINBASE_SCRIPTSIG_CHAINS` (the cross-repo drift guard flags the
-  addition of `qbit`; the entry is inert until a qbit source exists). No
-  Qbit producer, source-registry entry, or import exists yet; this is the
-  decoder slice only.
+  addition of `qbit`; the entry becomes live with the Qbit source above). No
+  Qbit producer, source-registry entry, or import existed at this point; this
+  was the decoder slice only.
 
 - Clarify RSK's 139,999 live acquisition floor and verify bounded backfills
   below it with a real full-header fixture. Preserve complete parent-header

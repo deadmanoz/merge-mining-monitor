@@ -1,9 +1,9 @@
 //! The shared thin JSON-RPC client for bitcoind-family chains.
 //!
-//! Namecoin, Syscoin, and Fractal expose Bitcoin Core-style RPC; the only
-//! per-chain differences are configuration (endpoint, auth mode, timeout) and
-//! which proof-fetch method the capture path calls, so ONE client serves all
-//! three. The chain label parameterizes error contexts; auth material arrives
+//! Namecoin, Syscoin, Fractal, and Qbit expose Bitcoin Core-style RPC; the
+//! only per-chain differences are configuration (endpoint, auth mode, timeout)
+//! and which proof-fetch method the capture path calls, so ONE client serves
+//! all four. The chain label parameterizes error contexts; auth material arrives
 //! resolved from `chains::config` (this module never reads process env).
 
 use std::str::FromStr;
@@ -39,7 +39,7 @@ pub(crate) struct BitcoindRpcConfig {
 /// any bitcoind-family chain; the chain `label` only colors error contexts.
 #[derive(Debug, Clone)]
 pub(crate) struct BitcoindRpcClient {
-    /// Chain label for error contexts ("Namecoin", "Syscoin", "Fractal").
+    /// Chain label for error contexts ("Namecoin", "Syscoin", "Fractal", "Qbit").
     label: &'static str,
     config: BitcoindRpcConfig,
     http: Client,

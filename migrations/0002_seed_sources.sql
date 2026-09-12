@@ -56,6 +56,7 @@ VALUES
     (31, 'auxpow:jincoin', 'auxpow', 'jincoin', NULL, extract(epoch from now())::bigint),
     (33, 'auxpow:bitcoin-stash', 'auxpow', 'bitcoin-stash', NULL, extract(epoch from now())::bigint),
     (34, 'auxpow:elcash', 'auxpow', 'elcash', NULL, extract(epoch from now())::bigint),
-    (35, 'auxpow:rod', 'auxpow', 'rod', NULL, extract(epoch from now())::bigint);
+    (35, 'auxpow:rod', 'auxpow', 'rod', NULL, extract(epoch from now())::bigint),
+    (36, 'auxpow:qbit', 'auxpow', 'qbit', NULL, extract(epoch from now())::bigint);
 
-ALTER TABLE source ALTER COLUMN id RESTART WITH 36;
+ALTER TABLE source ALTER COLUMN id RESTART WITH 37;

@@ -48,6 +48,11 @@ pub struct SourceEndpointRecord {
 /// current phase (not_started, catching_up, live, stale, error, historical,
 /// partial, surveyed, catalogued). All fields are the locked
 /// wire contract; `&'static str` mode/state values are part of that contract.
+///
+/// `error_code` / `error_height` carry two independent error classes: the
+/// Bitcoin Core backbone's own `bitcoin_core_sync_state` error, and (for a live
+/// AuxPoW source) the earliest unresolved `capture_error` height, reported as
+/// `auxpow_capture_error`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SourceSyncStatus {
     pub mode: &'static str,
@@ -89,6 +94,9 @@ struct SourceEndpointBaseRow {
     created_at: i64,
     cursor: Option<SourceCursorProgress>,
     backbone: Option<SourceBackboneProgress>,
+    /// Lowest unresolved `capture_error` height for this source, or `None`
+    /// when it holds none.
+    capture_error_height: Option<i32>,
 }
 
 /// One `source_health` row (events + last_event_seen + the SourceCounts tallies)
@@ -142,8 +150,13 @@ pub async fn sources(
                     // not by event-derived source_health counts.
                     None
                 };
-                let mut sync =
-                    sync_for_source_code(&row.code, row.cursor, row.backbone, reference_now);
+                let mut sync = sync_for_source_code(
+                    &row.code,
+                    row.cursor,
+                    row.backbone,
+                    row.capture_error_height,
+                    reference_now,
+                );
                 if row.kind == "auxpow" && sync.mode == "live" {
                     sync.latest_evidence_at = last_seen_at;
                 }
@@ -164,10 +177,17 @@ pub async fn sources(
     })
 }
 
-/// Load every `source` row joined LEFT to its poll_cursor progress and (for the
-/// live-chaintip backbone) its contiguous bitcoin_core_sync_state, ordered by
-/// `source.id` to fix the wire output order. Bails if a join yields a partial
-/// cursor (height/updated-at split) or a null contiguous-height/updated-at.
+/// Load every `source` row joined LEFT to its poll_cursor progress, (for the
+/// live-chaintip backbone) its contiguous bitcoin_core_sync_state, and its
+/// lowest unresolved capture-error height, ordered by `source.id` to fix the
+/// wire output order. Bails if a join yields a partial cursor (height/updated-at
+/// split) or a null contiguous-height/updated-at.
+///
+/// `capture_error` holds one row per `(source_id, height)`, so a source can hold
+/// several while `/api/v1/sources` allows exactly one record per source. The
+/// lateral reduction takes the LOWEST height: the earliest gap is what bounds
+/// trustworthy coverage, and the primary key makes that choice unique without a
+/// tie-break.
 async fn load_source_endpoint_rows(client: &Client) -> Result<Vec<SourceEndpointBaseRow>> {
     let rows = client
         .query(
@@ -176,11 +196,18 @@ async fn load_source_endpoint_rows(client: &Client) -> Result<Vec<SourceEndpoint
                     pc.cursor_height, EXTRACT(EPOCH FROM pc.updated_at)::BIGINT, \
                     pc.target_height, \
                     bcs.source_id, bcs.target_tip_height, bcs.contiguous_complete_height, \
-                    bcs.last_error_code, bcs.last_error_height, bcs.updated_at \
+                    bcs.last_error_code, bcs.last_error_height, bcs.updated_at, \
+                    ce.height \
              FROM source \
              LEFT JOIN poll_cursor pc ON pc.source_id = source.id \
              LEFT JOIN bitcoin_core_sync_state bcs \
                 ON bcs.source_id = source.id AND bcs.sync_mode = 'contiguous' \
+             LEFT JOIN LATERAL ( \
+                SELECT capture_error.height FROM capture_error \
+                WHERE capture_error.source_id = source.id \
+                ORDER BY capture_error.height \
+                LIMIT 1 \
+             ) ce ON TRUE \
              ORDER BY source.id",
             &[],
         )
@@ -226,6 +253,7 @@ async fn load_source_endpoint_rows(client: &Client) -> Result<Vec<SourceEndpoint
                 created_at: row.get(5),
                 cursor,
                 backbone,
+                capture_error_height: row.get(15),
             })
         })
         .collect()

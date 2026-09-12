@@ -22,6 +22,8 @@ checks, and Playwright frontend smoke tests.
 - `fixtures/fractal/` - Fractal AuxPoW and child-block samples.
 - `fixtures/hathor/` - Hathor REST transaction samples.
 - `fixtures/elastos/` - Elastos RPC and AuxPoW samples.
+- `fixtures/qbit/` - Qbit mainnet extended-header controls and a native
+  synthetic-parent proof.
 - `fixtures/api/` - shared API examples listed in `fixtures/api/manifest.json`.
 
 API fixtures are contract examples, not exhaustive endpoint tests. Endpoint and

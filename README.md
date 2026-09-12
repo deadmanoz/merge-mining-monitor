@@ -67,10 +67,10 @@ From it you can:
 The source rail groups chains by the evidence we actually hold, with Bitcoin
 Core supplying canonical context:
 
-- **Live sources** (6 producers) follow their chain tips continuously: Namecoin
-  (2011), Syscoin (2016), RSK (2018), Elastos (2018), Hathor (2020), and Fractal
-  Bitcoin (2024). Bitcoin Core supplies the canonical backbone and classifies
-  every header.
+- **Live sources** (7 producers) follow their chain tips continuously: Namecoin
+  (2011), Syscoin (2016), RSK (2018), Elastos (2018), Hathor (2020), Fractal
+  Bitcoin (2024), and Qbit (2026). Bitcoin Core supplies the canonical backbone
+  and classifies every header.
 - **Recovered datasets** (20 chains) are historical AuxPoW records from chains with
   no live producer, ingested from recovered evidence: Argentum, Bitcoin Vault,
   Bitmark, CoiledCoin, Crown, Devcoin, Electric Cash, Emercoin, Geistgeld,
