@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use mmm_capture::capture::{
     ClassificationProof, MergeMiningEventPayload, ResolvedPoolAttributions, build_event_payload,
@@ -8,6 +10,7 @@ use mmm_store::{
 };
 use tokio_postgres::Client;
 
+use crate::support::db::connect_to_schema;
 use crate::support::parse_auxpow_fixture;
 
 const HEIGHT: i32 = 1_030;
@@ -33,6 +36,20 @@ fn exact_at_height(fixture: &str, hash: [u8; 32]) -> Result<MergeMiningEventPayl
     Ok(payload)
 }
 
+/// Record the chain's block in its own committed transaction, as a producer
+/// with no event to write would.
+async fn record(
+    client: &mut Client,
+    source_id: i64,
+    hash: &[u8],
+    observed_at: i64,
+) -> Result<ChildDisplacementOutcome> {
+    let txn = client.transaction().await?;
+    let outcome = record_child_chain_block(&txn, source_id, HEIGHT, hash, observed_at).await?;
+    txn.commit().await?;
+    Ok(outcome)
+}
+
 /// `(child_block_hash, child_displaced_at, child_displaced_by, revoked_at)` for
 /// every event at `HEIGHT`, ordered by hash with the hashless row first.
 async fn rows_at_height(
@@ -56,7 +73,7 @@ async fn rows_at_height(
 
 #[tokio::test]
 async fn flip_flop_keeps_exactly_one_current_block_and_revokes_nothing() -> Result<()> {
-    crate::run_db_test!(client, {
+    crate::run_mut_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         let a = exact_at_height("500000-valid-parent", HASH_A)?;
         let mut b = a.clone();
@@ -64,12 +81,12 @@ async fn flip_flop_keeps_exactly_one_current_block_and_revokes_nothing() -> Resu
 
         // A is captured and is the chain's block: nothing to displace.
         upsert_merge_mining_event(&client, source_id, &a).await?;
-        let outcome = record_child_chain_block(&client, source_id, HEIGHT, &HASH_A, 3_001).await?;
+        let outcome = record(&mut client, source_id, &HASH_A, 3_001).await?;
         assert_eq!(outcome, ChildDisplacementOutcome::default());
 
         // The chain replaces A with B: A is displaced by B, B is current.
         upsert_merge_mining_event(&client, source_id, &b).await?;
-        let outcome = record_child_chain_block(&client, source_id, HEIGHT, &HASH_B, 3_002).await?;
+        let outcome = record(&mut client, source_id, &HASH_B, 3_002).await?;
         assert_eq!(
             outcome,
             ChildDisplacementOutcome {
@@ -91,12 +108,12 @@ async fn flip_flop_keeps_exactly_one_current_block_and_revokes_nothing() -> Resu
         );
 
         // Seeing B again changes nothing, and A keeps its first record.
-        let outcome = record_child_chain_block(&client, source_id, HEIGHT, &HASH_B, 3_003).await?;
+        let outcome = record(&mut client, source_id, &HASH_B, 3_003).await?;
         assert_eq!(outcome, ChildDisplacementOutcome::default());
         assert_eq!(rows_at_height(&client, source_id).await?[0].1, Some(3_002));
 
         // The chain flips back to A: A is restored, B is displaced by A.
-        let outcome = record_child_chain_block(&client, source_id, HEIGHT, &HASH_A, 3_004).await?;
+        let outcome = record(&mut client, source_id, &HASH_A, 3_004).await?;
         assert_eq!(
             outcome,
             ChildDisplacementOutcome {
@@ -122,7 +139,7 @@ async fn flip_flop_keeps_exactly_one_current_block_and_revokes_nothing() -> Resu
 
 #[tokio::test]
 async fn hashless_revoked_and_eventless_blocks_follow_the_chain() -> Result<()> {
-    crate::run_db_test!(client, {
+    crate::run_mut_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         let a = exact_at_height("500000-valid-parent", HASH_A)?;
         let mut b = a.clone();
@@ -138,7 +155,7 @@ async fn hashless_revoked_and_eventless_blocks_follow_the_chain() -> Result<()> 
 
         // A is current: the hashless row belongs to another block, so it is
         // displaced by A.
-        let outcome = record_child_chain_block(&client, source_id, HEIGHT, &HASH_A, 3_001).await?;
+        let outcome = record(&mut client, source_id, &HASH_A, 3_001).await?;
         assert_eq!(outcome.displaced, 1);
         let rows = rows_at_height(&client, source_id).await?;
         assert_eq!(rows[0].0, None);
@@ -156,7 +173,7 @@ async fn hashless_revoked_and_eventless_blocks_follow_the_chain() -> Result<()> 
             )
             .await?;
         upsert_merge_mining_event(&client, source_id, &b).await?;
-        let outcome = record_child_chain_block(&client, source_id, HEIGHT, &HASH_B, 3_003).await?;
+        let outcome = record(&mut client, source_id, &HASH_B, 3_003).await?;
         assert_eq!(outcome.displaced, 1);
         let rows = rows_at_height(&client, source_id).await?;
         assert_eq!(rows[0].2, Some(HASH_A.to_vec()));
@@ -172,18 +189,81 @@ async fn hashless_revoked_and_eventless_blocks_follow_the_chain() -> Result<()> 
         assert_eq!(rows[2], (Some(HASH_B.to_vec()), None, None, None));
 
         // The chain moves to a block with no event (no AuxPoW): B is displaced
-        // and the height has no current event at all.
-        let outcome = record_child_chain_block(&client, source_id, HEIGHT, &HASH_C, 3_004).await?;
+        // and the height has no current event at all. A second such block
+        // changes nothing: the columns record the first displacement.
+        let outcome = record(&mut client, source_id, &HASH_C, 3_004).await?;
         assert_eq!(outcome.displaced, 1);
         let rows = rows_at_height(&client, source_id).await?;
         assert!(rows.iter().all(|row| row.1.is_some()));
         assert_eq!(rows[2].2, Some(HASH_C.to_vec()));
+        let outcome = record(&mut client, source_id, &[0x0d; 32], 3_005).await?;
+        assert_eq!(outcome, ChildDisplacementOutcome::default());
+        assert_eq!(rows_at_height(&client, source_id).await?, rows);
 
         // A hash of the wrong length is refused before any write.
-        let error = record_child_chain_block(&client, source_id, HEIGHT, &[0x0d; 31], 3_005)
+        let error = record(&mut client, source_id, &[0x0e; 31], 3_006)
             .await
             .expect_err("a 31-byte hash must be refused");
         assert!(error.to_string().contains("32 bytes"));
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn concurrent_restores_at_one_height_serialize_and_the_later_commit_wins() -> Result<()> {
+    crate::run_mut_db_test!(client, schema, {
+        let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let a = exact_at_height("500000-valid-parent", HASH_A)?;
+        let mut b = a.clone();
+        b.child_block_hash = Some(HASH_B.to_vec());
+        upsert_merge_mining_event(&client, source_id, &a).await?;
+        upsert_merge_mining_event(&client, source_id, &b).await?;
+        // An eventless block displaces both, so neither row is current and
+        // the two restores below touch different rows.
+        record(&mut client, source_id, &HASH_C, 3_001).await?;
+
+        // The first transaction restores A and holds the height lock open.
+        let first = client.transaction().await?;
+        record_child_chain_block(&first, source_id, HEIGHT, &HASH_A, 3_002).await?;
+
+        // A second connection records B at the same height. Without the
+        // per-height lock it would restore B at once, leaving A and B both
+        // current; with it, it must wait for the first commit.
+        let mut other = connect_to_schema(&schema).await?;
+        let mut second = tokio::spawn(async move {
+            let txn = other.transaction().await?;
+            let outcome = record_child_chain_block(&txn, source_id, HEIGHT, &HASH_B, 3_003).await?;
+            txn.commit().await?;
+            Ok::<_, anyhow::Error>(outcome)
+        });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(500), &mut second)
+                .await
+                .is_err(),
+            "the second record must block on the height lock"
+        );
+
+        first.commit().await?;
+        let outcome = second.await??;
+        assert_eq!(
+            outcome,
+            ChildDisplacementOutcome {
+                restored: 1,
+                displaced: 1
+            }
+        );
+        assert_eq!(
+            rows_at_height(&client, source_id).await?,
+            vec![
+                (
+                    Some(HASH_A.to_vec()),
+                    Some(3_003),
+                    Some(HASH_B.to_vec()),
+                    None
+                ),
+                (Some(HASH_B.to_vec()), None, None, None),
+            ]
+        );
         Ok::<_, anyhow::Error>(())
     })
 }

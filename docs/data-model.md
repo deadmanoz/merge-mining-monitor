@@ -198,16 +198,28 @@ through revocation.
   the parent projections) never read these columns. Only child-centric views,
   which block the child chain carries at a height, consult them.
 - Revocation keeps its one meaning: the evidence itself is bad.
-- `mmm-store::record_child_chain_block(source, height, hash, observed_at)` is
-  the one write. It clears displacement on the event for that hash (a chain
-  that flips back) and marks every other event at the height that is not
-  yet displaced, hashless partial observations included, as displaced by
-  it. An already-displaced event keeps its first displacement record, so
-  the chain's current block at a height is the event with no displacement.
-  It is idempotent, ignores revocation state, changes only the two columns,
-  and so needs no parent reconciliation or parent lock; producers call it
-  inside the capture transaction after upserting the current block's
-  event, or alone when the current block carries no AuxPoW.
+- `mmm-store::record_child_chain_block(txn, source, height, hash, observed_at)`
+  is the one write. It clears displacement on the event for that hash (a
+  chain that flips back) and marks every other event at the height that is
+  not yet displaced, hashless partial observations included, as displaced
+  by it. An already-displaced event keeps its first displacement record:
+  the columns say when a block first left the chain and what replaced it
+  then, not which block is current now. The chain's current block at a
+  height is the event with no displacement; when the chain carries a block
+  with no AuxPoW there is no current event, and a later such block changes
+  nothing. The write takes a transaction-scoped advisory lock on the
+  height so concurrent callers serialize and the later commit wins, is
+  one UPDATE, is idempotent, ignores revocation state, and changes only
+  the two columns, so it needs no parent reconciliation or parent lock.
+  Producers call it inside the capture transaction after upserting the
+  current block's event, or in a transaction of its own when the current
+  block carries no AuxPoW.
+- Only an observation of the child chain can say which block is current.
+  A write that inserts a new event at a height without one, such as a
+  historical publication import for a live chain, leaves that event
+  undisplaced beside the recorded current block until the next
+  observation of the height (a poller rescan or a backfill) records the
+  chain again.
 
 `0022_add_child_displacement.sql` adds the columns with their constraints
 `NOT VALID`, and `0023_validate_child_displacement.sql` validates them under

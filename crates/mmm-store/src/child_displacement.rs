@@ -7,7 +7,13 @@
 //! Displacement".
 
 use anyhow::{Context, Result, ensure};
-use tokio_postgres::GenericClient;
+use tokio_postgres::Transaction;
+
+/// Two-int advisory-lock class for serializing the per-height transition. The
+/// two-int `pg_advisory_xact_lock(int4, int4)` space is disjoint from the
+/// one-int space the per-block hash locks use, and the class keeps it apart
+/// from the source-health class in the same space.
+const CHILD_CHAIN_LOCK_CLASS: i32 = 0x4348; // 'CH' - child chain block at a height
 
 /// What one `record_child_chain_block` call changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -26,9 +32,11 @@ pub struct ChildDisplacementOutcome {
 /// flips back to an earlier block is recorded, and marks every other event at
 /// the height that is not yet displaced as displaced by it, with `observed_at`
 /// as the displacement time. An event already displaced keeps its first
-/// displacement record, so the two columns say when a block first left the
-/// chain and which block took its place at that moment; the chain's current
-/// block at a height is the event with no displacement.
+/// displacement record: the two columns say when a block first left the chain
+/// and which block took its place at that moment, and are not a pointer to the
+/// chain's current block. The current block is the event with no
+/// displacement; when the chain carries a block with no AuxPoW there is no
+/// current event, and a later such block changes nothing the columns record.
 ///
 /// Hashless partial observations at the height are displaced too. A partial
 /// observation of the current block would have been promoted to its exact
@@ -37,17 +45,24 @@ pub struct ChildDisplacementOutcome {
 /// same as active ones: displacement tracks the child chain and revocation
 /// tracks evidence validity, and neither reads the other.
 ///
-/// The transition is one UPDATE, so it is atomic under autocommit as well as
-/// inside a transaction: a failure can never leave the height half-moved, and
-/// two callers recording different blocks at the same height serialize on the
-/// row locks, with the later commit describing the chain. Idempotent: repeating
-/// the call for the same block changes nothing. Only the two displacement
-/// columns change, so no parent read-model reconciliation and no parent
-/// advisory lock are needed. Producers call it inside the capture transaction
-/// after the current block's event has been upserted, or on its own when the
-/// current block carries no AuxPoW and has no event.
-pub async fn record_child_chain_block<C: GenericClient>(
-    client: &C,
+/// The call runs inside the caller's transaction and first takes a
+/// transaction-scoped advisory lock on `(source_id, child_height)`, so two
+/// callers recording different blocks at one height serialize and the later
+/// commit describes the chain; the transition itself is one UPDATE, so a
+/// failure never leaves the height half-moved. It is idempotent, and it
+/// changes only the two displacement columns, so no parent read-model
+/// reconciliation and no parent advisory lock are needed. Producers call it
+/// inside the capture transaction after the current block's event has been
+/// upserted, or in a transaction of its own when the current block carries no
+/// AuxPoW and has no event.
+///
+/// Only an observation of the child chain can say which block is current. A
+/// write that inserts a new event at a height without one, such as a
+/// historical publication import for a live chain, leaves that event
+/// undisplaced beside the recorded current block until the next observation
+/// of the height (a poller rescan or a backfill) records the chain again.
+pub async fn record_child_chain_block(
+    txn: &Transaction<'_>,
     source_id: i64,
     child_height: i32,
     current_block_hash: &[u8],
@@ -58,7 +73,17 @@ pub async fn record_child_chain_block<C: GenericClient>(
         "child block hash must be 32 bytes, got {}",
         current_block_hash.len()
     );
-    let rows = client
+    txn.execute(
+        "SELECT pg_advisory_xact_lock($1, hashint8(($2::bigint << 32) | $3::bigint))",
+        &[
+            &CHILD_CHAIN_LOCK_CLASS,
+            &source_id,
+            &i64::from(child_height),
+        ],
+    )
+    .await
+    .context("lock the child chain height")?;
+    let rows = txn
         .query(
             "UPDATE merge_mining_event \
              SET child_displaced_at = CASE WHEN child_block_hash = $3 THEN NULL ELSE $4::bigint END, \
