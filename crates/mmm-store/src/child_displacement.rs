@@ -7,7 +7,7 @@
 //! Displacement".
 
 use anyhow::{Context, Result, ensure};
-use tokio_postgres::Transaction;
+use tokio_postgres::{Client, Transaction};
 
 /// Two-int advisory-lock class for serializing the per-height transition. The
 /// two-int `pg_advisory_xact_lock(int4, int4)` space is disjoint from the
@@ -25,6 +25,63 @@ pub struct ChildDisplacementOutcome {
     pub displaced: u64,
 }
 
+/// The advisory-lock key for one `(source_id, child_height)`: the class in
+/// key one, a hash of the pair in key two.
+const CHILD_CHAIN_LOCK_KEY: &str = "$1, hashint8(($2::bigint << 32) | $3::bigint)";
+
+/// Hold the per-height lock at session level across a producer's observation
+/// of the child chain and the writes that follow, so that what a producer
+/// observed is what it records: two producers overlapping on one height (a
+/// live poller and a bounded backfill) observe and write one after the other,
+/// and the later observation describes the chain. The transaction-level lock
+/// the capture transaction takes on the same key is re-entrant for the
+/// session that holds this one. Pair every call with
+/// [`finish_child_chain_height_operation`].
+pub async fn lock_child_chain_height_session(
+    client: &Client,
+    source_id: i64,
+    child_height: i32,
+) -> Result<()> {
+    client
+        .execute(
+            &format!("SELECT pg_advisory_lock({CHILD_CHAIN_LOCK_KEY})"),
+            &[
+                &CHILD_CHAIN_LOCK_CLASS,
+                &source_id,
+                &i64::from(child_height),
+            ],
+        )
+        .await
+        .context("lock the child chain height for the session")?;
+    Ok(())
+}
+
+/// Release the session-level height lock and fold the unlock into the
+/// operation's result: the operation's error wins when both fail.
+pub async fn finish_child_chain_height_operation<T>(
+    client: &Client,
+    source_id: i64,
+    child_height: i32,
+    result: Result<T>,
+) -> Result<T> {
+    let unlock = client
+        .execute(
+            &format!("SELECT pg_advisory_unlock({CHILD_CHAIN_LOCK_KEY})"),
+            &[
+                &CHILD_CHAIN_LOCK_CLASS,
+                &source_id,
+                &i64::from(child_height),
+            ],
+        )
+        .await
+        .context("unlock the child chain height for the session");
+    match (result, unlock) {
+        (Ok(value), Ok(_)) => Ok(value),
+        (Ok(_), Err(err)) => Err(err),
+        (Err(err), _) => Err(err),
+    }
+}
+
 /// Take the transaction-scoped advisory lock that serializes every change to
 /// which block the child chain carries at `(source_id, child_height)`.
 ///
@@ -39,7 +96,7 @@ pub async fn lock_child_chain_height(
     child_height: i32,
 ) -> Result<()> {
     txn.execute(
-        "SELECT pg_advisory_xact_lock($1, hashint8(($2::bigint << 32) | $3::bigint))",
+        &format!("SELECT pg_advisory_xact_lock({CHILD_CHAIN_LOCK_KEY})"),
         &[
             &CHILD_CHAIN_LOCK_CLASS,
             &source_id,

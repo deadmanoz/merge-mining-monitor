@@ -47,9 +47,13 @@ which block the child chain carries at every height it processes. A captured
 AuxPoW block is recorded inside its capture transaction, after the event
 upsert and under the per-height lock the capture transaction takes first; a
 block that yields no event (non-AuxPoW, or a malformed proof) is recorded in
-a transaction of its own. A rescanned height whose block changed therefore
-marks the earlier event displaced rather than leaving two current blocks, and
-a flip back restores it. Poll and backfill share the per-height path, so a
+a transaction of its own. The whole height, from the `getblockhash`
+observation to the last write, runs under a session-level lock on the height,
+so an overlapping poller and backfill observe and write one after the other
+and the later observation describes the chain. A rescanned height whose block
+changed therefore marks the earlier event displaced rather than leaving two
+current blocks, and a flip back restores it. Poll and backfill share the
+per-height path, so a
 backfill over a reorged range repairs it the same way. See `docs/data-model.md`,
 "Child Displacement". Hathor and Elastos do not record displacement yet.
 

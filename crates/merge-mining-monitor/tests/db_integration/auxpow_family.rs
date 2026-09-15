@@ -79,6 +79,19 @@ fn non_auxpow_block() -> Vec<u8> {
     raw
 }
 
+/// Advisory locks this session still holds. The session-level height lock
+/// must be released once a height is processed, whatever its outcome.
+async fn advisory_locks_held(client: &Client) -> Result<i64> {
+    Ok(client
+        .query_one(
+            "SELECT count(*) FROM pg_locks \
+             WHERE locktype = 'advisory' AND pid = pg_backend_pid()",
+            &[],
+        )
+        .await?
+        .get(0))
+}
+
 /// `(child_block_hash, child_displaced_by, revoked_at)` for every event at
 /// `HEIGHT`, ordered by hash.
 async fn rows_at_height(
@@ -123,6 +136,7 @@ async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_on
             rows_at_height(&client, source_id).await?,
             vec![(hash(&block_a), None, None)]
         );
+        assert_eq!(advisory_locks_held(&client).await?, 0);
 
         // Tick 2: a reorg replaces A with B at the same height. B is written
         // and current, A is displaced by B, and nothing is revoked.
@@ -155,6 +169,7 @@ async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_on
         let rows = rows_at_height(&client, source_id).await?;
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| row.2.is_none()));
+        assert_eq!(advisory_locks_held(&client).await?, 0);
         assert_eq!(
             rows.iter()
                 .find(|row| row.0 == hash(&block_a))

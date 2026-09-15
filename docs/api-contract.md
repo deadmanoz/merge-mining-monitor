@@ -1223,10 +1223,12 @@ pair: the epoch second a producer observed the child chain no longer carrying
 this event's block at `child_height`, and the hash of the block carried there
 instead, in the same display order as `child_block_hash`. They are always set
 or cleared together. A null pair means no displacement has been recorded for
-the event, not that the event is the chain's current block at that height:
-no producer records displacement yet, and an event written without a chain
-observation (a historical import for a live chain) stays null until the
-height is observed again. Displacement is child-side only: a displaced event
+the event, not that the event is the chain's current block at that height.
+The Namecoin, Syscoin, Fractal and Qbit producers record it for every height
+they process; Hathor and Elastos do not record it yet, and an event written
+without a chain observation (a historical import for a live chain) stays
+null until the height is observed again. Displacement is child-side only: a
+displaced event
 still contributes to every Bitcoin-side field (`block`, proofs, source
 summaries, source health) exactly as before, and is distinct from revocation
 (`event_revoked_at`), which marks bad evidence.

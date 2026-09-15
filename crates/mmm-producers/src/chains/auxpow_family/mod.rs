@@ -42,8 +42,9 @@ use mmm_capture::child_payout::PoolIdentityLookup;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::capture_in_txn;
 use mmm_store::{
-    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error, load_pool_identities_by_namespace,
-    record_capture_error, record_child_chain_block, upsert_merge_mining_event_with_attributions,
+    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error, finish_child_chain_height_operation,
+    load_pool_identities_by_namespace, lock_child_chain_height_session, record_capture_error,
+    record_child_chain_block, upsert_merge_mining_event_with_attributions,
 };
 use qbit::{ensure_qbit_mainnet_endpoint, fetch_qbit_candidate, write_qbit_event};
 
@@ -191,7 +192,27 @@ fn is_merge_mined(blob: &[u8], exact_version: i32) -> Result<bool> {
 /// its own. A rescanned height whose block changed therefore marks the earlier
 /// event displaced instead of leaving two current blocks. Poll and backfill
 /// share this path, so a backfill over a reorged range repairs it the same way.
+///
+/// The whole height, from the `getblockhash` observation through the last
+/// write, runs under a session-level lock on `(source, height)`, so what a
+/// producer observed is what it records: a live poller and a bounded backfill
+/// overlapping on one height observe and write one after the other, and the
+/// later observation describes the chain.
 pub async fn process_auxpow_height(
+    client: &mut Client,
+    rpc: &impl BitcoindRpc,
+    context: &AuxpowCaptureContext,
+    height: i32,
+) -> Result<HeightOutcome> {
+    let source_id = context.source_id();
+    lock_child_chain_height_session(client, source_id, height).await?;
+    let result = process_locked_height(client, rpc, context, height).await;
+    finish_child_chain_height_operation(client, source_id, height, result).await
+}
+
+/// One height's observation and writes, under the session-level height lock
+/// [`process_auxpow_height`] holds around it.
+async fn process_locked_height(
     client: &mut Client,
     rpc: &impl BitcoindRpc,
     context: &AuxpowCaptureContext,
