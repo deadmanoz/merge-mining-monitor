@@ -7,7 +7,7 @@ use mmm_bitcoin_core::BitcoinCoreBlockCoinbase;
 use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, RSK_SOURCE_CODE};
 use mmm_read_model::{CoreCanonicalWrite, write_core_canonical};
-use mmm_store::get_source_id;
+use mmm_store::{get_source_id, record_child_chain_block};
 use serde_json::json;
 use time::Month;
 use tokio_postgres::Client;
@@ -517,6 +517,62 @@ async fn block_returns_not_found_for_valid_hash_without_evidence() -> Result<()>
             Err(err) => err,
         };
         assert!(matches!(err, ProjectionError::Api(_)));
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn block_projects_child_displacement_on_event_details() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let namecoin = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let ts = day_epoch(2026, Month::May, 10);
+        // Two Namecoin blocks at one child height, each committing to its own
+        // Bitcoin parent, so each parent's block payload carries one event.
+        let displaced_child = hash_bytes(0x9a01);
+        let current_child = hash_bytes(0x9a02);
+        let displaced_parent = hash_bytes(0x9b01);
+        let current_parent = hash_bytes(0x9b02);
+        for (child_hash, parent_hash) in [
+            (displaced_child.clone(), displaced_parent.clone()),
+            (current_child.clone(), current_parent.clone()),
+        ] {
+            insert_event(
+                &client,
+                EventSeed {
+                    source_id: namecoin,
+                    child_height: 120,
+                    child_hash,
+                    parent_hash,
+                    prev_hash: hash_bytes(0x9b00),
+                    parent_time: ts,
+                    kind: "near",
+                    pow_validates_btc_target: false,
+                    btc_height: None,
+                    pool_id: None,
+                },
+            )
+            .await?;
+        }
+        let txn = client.transaction().await?;
+        record_child_chain_block(&txn, namecoin, 120, &current_child, ts + 60).await?;
+        txn.commit().await?;
+
+        let displaced = project_block(&client, &displaced_parent).await?;
+        assert_eq!(displaced.event_details.len(), 1);
+        assert_eq!(displaced.event_details[0].child_displaced_at, Some(ts + 60));
+        assert_eq!(
+            displaced.event_details[0].child_displaced_by.as_deref(),
+            Some(display_hash(&current_child).as_str())
+        );
+        // Displacement is child-side only: the parent still projects as before.
+        assert_eq!(displaced.block.kind, "near");
+        assert_eq!(displaced.block.source_summary.distinct_sources, 1);
+
+        let current = project_block(&client, &current_parent).await?;
+        assert_eq!(current.event_details.len(), 1);
+        assert_eq!(current.event_details[0].child_displaced_at, None);
+        assert_eq!(current.event_details[0].child_displaced_by, None);
 
         Ok::<_, anyhow::Error>(())
     })

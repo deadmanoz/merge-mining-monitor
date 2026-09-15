@@ -91,6 +91,13 @@ This changelog starts with the initial release.
   It is idempotent and touches only the two displacement columns, so it
   needs no parent reconciliation. No producer calls it yet.
 
+- Project child-side displacement on block event details: each
+  `event_details[]` entry now carries `child_displaced_at` and
+  `child_displaced_by` (the displacing block hash in the same display order
+  as `child_block_hash`), both `null` while the block is the child chain's
+  block at its height. Bitcoin-side fields are unchanged. The block fixtures,
+  their manifest and the fixture contract test carry the new pair.
+
 ## [0.7.13] - 2026-09-09
 
 - Refresh the Research publication pin to `e09f52b`, covering 1,283,863

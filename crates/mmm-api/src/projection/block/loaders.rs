@@ -53,6 +53,8 @@ pub(super) struct EventDetailRow {
     pub(super) child_header_bytes: Option<Vec<u8>>,
     pub(super) child_block_time: Option<i64>,
     pub(super) child_nbits: Option<i64>,
+    pub(super) child_displaced_at: Option<i64>,
+    pub(super) child_displaced_by: Option<Vec<u8>>,
     pub(super) parent_hash: Vec<u8>,
     pub(super) prev_hash: Vec<u8>,
     pub(super) parent_header_bytes: Vec<u8>,
@@ -319,7 +321,8 @@ pub(super) fn event_detail_sql(predicate: &str) -> String {
                 r.is_uncle, r.uncle_index, r.uncle_parent_height, r.rsk_miner, \
                 r.merge_mining_hash, r.merkle_proof, r.coinbase_tail, \
                 r.proof_format, pi.id, pi.namespace, pi.identifier, \
-                e.child_header_bytes, e.child_nbits \
+                e.child_header_bytes, e.child_nbits, \
+                e.child_displaced_at, e.child_displaced_by \
          FROM merge_mining_event e \
          JOIN source s ON s.id = e.source_id \
          LEFT JOIN pool cmp ON cmp.id = e.child_miner_pool_id \
@@ -354,6 +357,8 @@ pub(super) fn map_event_detail_rows(rows: Vec<tokio_postgres::Row>) -> Result<Ve
                 child_block_time: row.get(8),
                 child_header_bytes: row.get("child_header_bytes"),
                 child_nbits: row.get("child_nbits"),
+                child_displaced_at: row.get("child_displaced_at"),
+                child_displaced_by: row.get("child_displaced_by"),
                 parent_hash: row.get(9),
                 prev_hash: row.get(10),
                 parent_header_bytes: row.get(11),

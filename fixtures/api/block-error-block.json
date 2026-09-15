@@ -72,6 +72,8 @@
       "child_header_hex": null,
       "child_block_time": 1776876260,
       "child_nbits": null,
+      "child_displaced_at": null,
+      "child_displaced_by": null,
       "btc_parent_header_hash": "00000000000000000000c3d95a4bdc068dfe0c6d1e7ad13045c6f570e58d9ed7",
       "event_parent_kind": "error_block",
       "btc_parent_coinbase_txid": null,

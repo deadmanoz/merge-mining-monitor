@@ -259,6 +259,11 @@ pub(super) fn render_event_details(
                 .as_deref()
                 .map(|hash| display_child_block_hash(&row.source.code, hash))
                 .transpose()?;
+            let child_displaced_by = row
+                .child_displaced_by
+                .as_deref()
+                .map(|hash| display_child_block_hash(&row.source.code, hash))
+                .transpose()?;
             Ok(EventDetail {
                 id: row.id,
                 source: row.source.code,
@@ -268,6 +273,8 @@ pub(super) fn render_event_details(
                 child_header_hex: row.child_header_bytes.map(hex::encode),
                 child_block_time: row.child_block_time,
                 child_nbits: row.child_nbits.map(|nbits| format!("{nbits:08x}")),
+                child_displaced_at: row.child_displaced_at,
+                child_displaced_by,
                 btc_parent_header_hash: display_hash(&row.parent_hash)?,
                 event_parent_kind: kind_as_str(row.kind),
                 btc_parent_coinbase_txid: display_hash_opt(row.btc_parent_coinbase_txid)?,
@@ -544,6 +551,8 @@ mod tests {
             child_header_bytes: None,
             child_block_time: Some(1_600_000_000),
             child_nbits: None,
+            child_displaced_at: None,
+            child_displaced_by: None,
             parent_hash: vec![0u8; 32],
             prev_hash: vec![0u8; 32],
             parent_header_bytes: vec![0u8; 80],

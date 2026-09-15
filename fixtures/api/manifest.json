@@ -19,7 +19,7 @@
     {
       "file": "block-multi-block-stale-branch.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "Multi-block stale branch root detail with nullable authenticated child header and nBits evidence"
+      "scenario": "Multi-block stale branch root detail with nullable authenticated child header and nBits evidence; one event detail shows child-side displacement (child_displaced_at and child_displaced_by set, the rest null)"
     },
     {
       "file": "block-rsk-near.json",
