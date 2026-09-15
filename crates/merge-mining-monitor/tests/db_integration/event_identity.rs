@@ -76,6 +76,21 @@ async fn migration_pairs_child_displacement_and_rejects_self_displacement() -> R
             .clone();
         let other_hash = vec![0x11u8; 32];
 
+        // 0022 adds the constraints NOT VALID; 0023 must have validated them.
+        let validated: Vec<bool> = client
+            .query(
+                "SELECT convalidated FROM pg_constraint \
+                 WHERE conrelid = 'merge_mining_event'::regclass \
+                   AND conname LIKE 'chk_mme_child_displace%' \
+                 ORDER BY conname",
+                &[],
+            )
+            .await?
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
+        assert_eq!(validated, vec![true, true, true]);
+
         // The pair constraint: a time without a displacing hash is rejected.
         let half_set = client
             .execute(

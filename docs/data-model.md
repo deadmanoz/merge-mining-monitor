@@ -199,8 +199,10 @@ it.
   which block the child chain carries at a height, consult them.
 - Revocation keeps its one meaning: the evidence itself is bad.
 
-`0022_add_child_displacement.sql` adds the columns. No producer writes them
-yet; the producer and read-side changes follow separately.
+`0022_add_child_displacement.sql` adds the columns with their constraints
+`NOT VALID`, and `0023_validate_child_displacement.sql` validates them under
+the weaker lock in its own transaction. No producer writes them yet; the
+producer and read-side changes follow separately.
 
 ## Capture Errors
 
@@ -270,7 +272,8 @@ Later schema changes are appended as new numbered forward migrations.
 36 for databases that applied an earlier `0002`, and
 `0021_add_capture_error.sql` adds the producer-owned `capture_error` table.
 `0022_add_child_displacement.sql` adds the nullable `child_displaced_at` and
-`child_displaced_by` columns to `merge_mining_event`.
+`child_displaced_by` columns to `merge_mining_event` with `NOT VALID`
+constraints, and `0023_validate_child_displacement.sql` validates them.
 
 `0007_support_partial_child_evidence.sql` makes child evidence nullable, adds
 authenticated child header and `nBits` storage, replaces the old composite

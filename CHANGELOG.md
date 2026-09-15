@@ -73,8 +73,11 @@ This changelog starts with the initial release.
   displaced event still carries valid Bitcoin-side evidence, and revoking it
   would silence that evidence everywhere. The columns are set and cleared
   together, a block is never displaced by itself, and Bitcoin-side aggregates
-  never read them. Nothing writes them yet; the producer rescan path and the
-  read-side projection follow in later changes.
+  never read them. The constraints are added `NOT VALID` so the migration's
+  exclusive lock is not held across a full-table scan, and
+  `0023_validate_child_displacement.sql` validates them under the weaker lock
+  in its own transaction. Nothing writes the columns yet; the producer rescan
+  path and the read-side projection follow in later changes.
 
 ## [0.7.13] - 2026-09-09
 
