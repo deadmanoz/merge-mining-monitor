@@ -24,11 +24,12 @@
 --
 -- The constraints are added NOT VALID. A validated CHECK scans every existing
 -- row while this file's single transaction holds ACCESS EXCLUSIVE on the
--- table, which blocks capture and API reads for the whole scan (about 5 s per
--- constraint on a 22M-row copy of the production table, and an inline CHECK on
--- ADD COLUMN scans too). NOT VALID constraints are enforced for every new and
--- updated row immediately; `0023_validate_child_displacement.sql` validates
--- them in its own transaction under the weaker SHARE UPDATE EXCLUSIVE lock.
+-- table, which blocks capture and API reads for the whole scan (5 s to 40 s per
+-- constraint on a 22M-row copy of the production table depending on cache
+-- state, and an inline CHECK on ADD COLUMN scans too). NOT VALID constraints
+-- are enforced for every new and updated row immediately;
+-- `0023_validate_child_displacement.sql` validates them in its own
+-- transaction under the weaker SHARE UPDATE EXCLUSIVE lock.
 -- Every existing row has both columns NULL, so validation cannot fail.
 --
 -- Nothing writes these columns yet. The producer write path and the read
@@ -36,23 +37,16 @@
 -- `idx_mme_source_height` already serves per-height lookups, so no new index.
 
 ALTER TABLE merge_mining_event
-    ADD COLUMN IF NOT EXISTS child_displaced_at BIGINT,
-    ADD COLUMN IF NOT EXISTS child_displaced_by BYTEA;
+    ADD COLUMN child_displaced_at BIGINT,
+    ADD COLUMN child_displaced_by BYTEA;
 
 ALTER TABLE merge_mining_event
-    DROP CONSTRAINT IF EXISTS chk_mme_child_displaced_by_len,
     ADD CONSTRAINT chk_mme_child_displaced_by_len
         CHECK (child_displaced_by IS NULL OR octet_length(child_displaced_by) = 32)
-        NOT VALID;
-
-ALTER TABLE merge_mining_event
-    DROP CONSTRAINT IF EXISTS chk_mme_child_displacement_pair,
+        NOT VALID,
     ADD CONSTRAINT chk_mme_child_displacement_pair
         CHECK ((child_displaced_at IS NULL) = (child_displaced_by IS NULL))
-        NOT VALID;
-
-ALTER TABLE merge_mining_event
-    DROP CONSTRAINT IF EXISTS chk_mme_child_displaced_by_other_block,
+        NOT VALID,
     ADD CONSTRAINT chk_mme_child_displaced_by_other_block
         CHECK (
             child_displaced_by IS NULL
