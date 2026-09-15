@@ -94,9 +94,10 @@ This changelog starts with the initial release.
 - Project child-side displacement on block event details: each
   `event_details[]` entry now carries `child_displaced_at` and
   `child_displaced_by` (the displacing block hash in the same display order
-  as `child_block_hash`), both `null` while the block is the child chain's
-  block at its height. Bitcoin-side fields are unchanged. The block fixtures,
-  their manifest and the fixture contract test carry the new pair.
+  as `child_block_hash`), set and cleared together. A null pair means no
+  displacement has been recorded for the event, not that it is the chain's
+  current block. Bitcoin-side fields are unchanged. The block fixtures, their
+  manifest and the fixture contract test carry the new pair.
 
 ## [0.7.13] - 2026-09-09
 

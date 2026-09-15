@@ -94,7 +94,7 @@
       "child_header_hex": null,
       "child_block_time": 1779778100,
       "child_nbits": null,
-      "child_displaced_at": 1779774400,
+      "child_displaced_at": 1779778400,
       "child_displaced_by": "2020202020202020202020202020202020202020202020202020202020202020",
       "btc_parent_header_hash": "1111111111111111111111111111111111111111111111111111111111111111",
       "event_parent_kind": "unknown",

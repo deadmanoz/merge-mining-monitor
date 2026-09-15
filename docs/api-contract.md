@@ -1221,11 +1221,14 @@ nulls last, then `id`.
 `child_displaced_at` and `child_displaced_by` are the child-side displacement
 pair: the epoch second a producer observed the child chain no longer carrying
 this event's block at `child_height`, and the hash of the block carried there
-instead, in the same display order as `child_block_hash`. Both are `null`
-while the block is the chain's block at that height, and they are always set
-or cleared together. Displacement is child-side only: a displaced event still
-contributes to every Bitcoin-side field (`block`, proofs, source summaries,
-source health) exactly as before, and is distinct from revocation
+instead, in the same display order as `child_block_hash`. They are always set
+or cleared together. A null pair means no displacement has been recorded for
+the event, not that the event is the chain's current block at that height:
+no producer records displacement yet, and an event written without a chain
+observation (a historical import for a live chain) stays null until the
+height is observed again. Displacement is child-side only: a displaced event
+still contributes to every Bitcoin-side field (`block`, proofs, source
+summaries, source health) exactly as before, and is distinct from revocation
 (`event_revoked_at`), which marks bad evidence.
 
 `event_details[].pool_attributions` is always present with `btc_parent` and
