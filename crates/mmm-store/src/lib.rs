@@ -54,8 +54,8 @@ pub use chains::rsk::{
     upsert_rsk_pool_identities_with_policy, write_rsk_capture_in_txn,
 };
 pub use child_displacement::{
-    ChildDisplacementOutcome, finish_child_chain_height_operation, lock_child_chain_height,
-    lock_child_chain_height_session, record_child_chain_block,
+    ChildDisplacementOutcome, CurrentBlockParent, finish_child_chain_height_operation,
+    lock_child_chain_height, lock_child_chain_height_session, record_child_chain_block,
     record_child_chain_block_in_own_transaction,
 };
 pub use event::{

@@ -15,6 +15,24 @@ use tokio_postgres::{Client, Transaction};
 /// from the source-health class in the same space.
 const CHILD_CHAIN_LOCK_CLASS: i32 = 0x4348; // 'CH' - child chain block at a height
 
+/// What the caller of [`record_child_chain_block`] knows about the current
+/// block's Bitcoin parent, which decides how hashless partial observations at
+/// the height are treated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CurrentBlockParent<'a> {
+    /// The block's proof verified and names this parent (internal byte order).
+    /// A hashless row with the same parent is the block; any other hashless
+    /// row is a different block and is displaced.
+    Known(&'a [u8]),
+    /// The block is known to carry no AuxPoW. No hashless AuxPoW observation
+    /// can be it, so every hashless row is displaced.
+    NoAuxpow,
+    /// The block's proof did not verify, so its parent is unknown. Hashless
+    /// rows are left untouched: one of them may be this very block, and
+    /// displacing it by itself would poison its later promotion.
+    Unknown,
+}
+
 /// What one `record_child_chain_block` call changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ChildDisplacementOutcome {
@@ -121,13 +139,13 @@ pub async fn lock_child_chain_height(
 /// displacement; when the chain carries a block with no AuxPoW there is no
 /// current event, and a later such block changes nothing the columns record.
 ///
-/// A hashless partial observation at the height is the current block when its
-/// Bitcoin parent is `current_parent_hash` (the identity partial promotion
-/// uses), and a different block when the parents differ. A caller with no
-/// parent to name, because the current block carries no AuxPoW or its proof
-/// did not verify, leaves hashless rows untouched: it cannot tell which block
-/// such a row observed, and displacing one by the block it may represent
-/// would poison its later promotion. Revoked events are treated the
+/// A hashless partial observation at the height is treated by what the caller
+/// knows about the current block's parent, see [`CurrentBlockParent`]: with a
+/// known parent the row with that parent is the block (the identity partial
+/// promotion uses) and any other hashless row is displaced; a block that
+/// carries no AuxPoW displaces every hashless row, since none can be it; a
+/// block whose proof did not verify leaves hashless rows untouched, since the
+/// caller cannot tell which block such a row observed. Revoked events are treated the
 /// same as active ones: displacement tracks the child chain and revocation
 /// tracks evidence validity, and neither reads the other.
 ///
@@ -156,7 +174,7 @@ pub async fn record_child_chain_block(
     source_id: i64,
     child_height: i32,
     current_block_hash: &[u8],
-    current_parent_hash: Option<&[u8]>,
+    current_parent: CurrentBlockParent<'_>,
     observed_at: i64,
 ) -> Result<ChildDisplacementOutcome> {
     ensure!(
@@ -165,6 +183,11 @@ pub async fn record_child_chain_block(
         current_block_hash.len()
     );
     lock_child_chain_height(txn, source_id, child_height).await?;
+    let (parent_hash, hashless_decidable) = match current_parent {
+        CurrentBlockParent::Known(parent) => (Some(parent), true),
+        CurrentBlockParent::NoAuxpow => (None, true),
+        CurrentBlockParent::Unknown => (None, false),
+    };
     let rows = txn
         .query(
             "WITH candidate AS ( \
@@ -175,10 +198,10 @@ pub async fn record_child_chain_block(
                              AND btc_parent_header_hash = $4::bytea)) AS is_current \
                  FROM merge_mining_event \
                  WHERE source_id = $1 AND child_height = $2 \
-                   AND NOT (child_block_hash IS NULL AND $4::bytea IS NULL) \
+                   AND NOT (child_block_hash IS NULL AND NOT $5::boolean) \
              ) \
              UPDATE merge_mining_event e \
-             SET child_displaced_at = CASE WHEN c.is_current THEN NULL ELSE $5::bigint END, \
+             SET child_displaced_at = CASE WHEN c.is_current THEN NULL ELSE $6::bigint END, \
                  child_displaced_by = CASE WHEN c.is_current THEN NULL ELSE $3::bytea END \
              FROM candidate c \
              WHERE e.id = c.id \
@@ -191,7 +214,8 @@ pub async fn record_child_chain_block(
                 &source_id,
                 &child_height,
                 &current_block_hash,
-                &current_parent_hash,
+                &parent_hash,
+                &hashless_decidable,
                 &observed_at,
             ],
         )
@@ -213,7 +237,7 @@ pub async fn record_child_chain_block_in_own_transaction(
     source_id: i64,
     child_height: i32,
     current_block_hash: &[u8],
-    current_parent_hash: Option<&[u8]>,
+    current_parent: CurrentBlockParent<'_>,
     observed_at: i64,
 ) -> Result<ChildDisplacementOutcome> {
     let txn = client
@@ -225,7 +249,7 @@ pub async fn record_child_chain_block_in_own_transaction(
         source_id,
         child_height,
         current_block_hash,
-        current_parent_hash,
+        current_parent,
         observed_at,
     )
     .await?;

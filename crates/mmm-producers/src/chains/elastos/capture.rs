@@ -57,8 +57,9 @@ use mmm_capture::source_registry::ELASTOS_SOURCE_CODE;
 use mmm_read_model::capture_in_txn;
 use mmm_read_model::revoke_merge_mining_event;
 use mmm_store::{
-    EventWriteOutcome, active_event_ids_for_child_block, finish_child_chain_height_operation,
-    load_pool_identities_by_namespace, lock_child_chain_height_session, record_child_chain_block,
+    CurrentBlockParent, EventWriteOutcome, active_event_ids_for_child_block,
+    finish_child_chain_height_operation, load_pool_identities_by_namespace,
+    lock_child_chain_height_session, record_child_chain_block,
     record_child_chain_block_in_own_transaction, retag_revocation_reason,
     write_elastos_capture_in_txn,
 };
@@ -303,7 +304,7 @@ async fn apply_elastos_evaluation(
             context.source_id(),
             height,
             block.hash.as_ref(),
-            Some(block.parent_hash.as_ref()),
+            CurrentBlockParent::Known(block.parent_hash.as_ref()),
             now_epoch_seconds()?,
         )
         .await?;
@@ -511,7 +512,7 @@ async fn upsert_and_record_block(
         source_id,
         child_height,
         child_block_hash,
-        Some(payload.btc_parent_header_hash.as_slice()),
+        CurrentBlockParent::Known(payload.btc_parent_header_hash.as_slice()),
         observed_at,
     )
     .await?;

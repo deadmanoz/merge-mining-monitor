@@ -123,8 +123,9 @@ This changelog starts with the initial release.
   apply to the block the verdict was reached on rather than to every event
   at the height, since a rescanned height can hold a displaced block's event;
   a block is its hash, or for a hashless historical row its height and
-  Bitcoin parent, and the displacement write uses the same identity; a record
-  with no parent to name leaves hashless rows untouched.
+  Bitcoin parent, and the displacement write uses the same identity: a block
+  known to carry no AuxPoW displaces hashless rows, a proof that did not
+  verify leaves them untouched.
   `ELASTOS_REORG_DEPTH` is now read like every other chain's rescan depth
   (default 0), and the forbidden-depth policy that rejected it is gone. The
   eventless record for a non-AuxPoW or malformed block now goes through one
