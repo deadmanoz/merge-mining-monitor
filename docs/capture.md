@@ -56,9 +56,12 @@ changed therefore marks the earlier event displaced rather than leaving two
 current blocks, and a flip back restores it. Poll and backfill share the
 per-height path, so a
 backfill over a reorged range repairs it the same way. See `docs/data-model.md`,
-"Child Displacement". Elastos records only a hash its reconstruction verified:
-a block that fails the hash guard, or a response for another height, is not
-recorded. Hathor does not record displacement yet.
+"Child Displacement". Elastos records only a proven block, one whose AuxPoW
+commitment verified and whose parent meets the child target, because its
+endpoint may be untrusted and a self-consistent but fabricated response must not
+displace real events; a non-merge-mined or malformed block at a rescanned
+height leaves the earlier record in place. Hathor does not record displacement
+yet.
 
 RSK replays may refine role and optional proof fields, but an existing sidecar's
 block identity, height, miner, merge-mining hash, proof format, and any two

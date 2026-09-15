@@ -115,15 +115,16 @@ This changelog starts with the initial release.
 - Record which block the child chain carries at every height the Elastos
   producer processes, the way the bitcoind-family runner does: a captured
   block inside its capture transaction, and a block that yields no event in a
-  transaction of its own, but only with a hash its reconstruction verified.
+  transaction of its own, but only when the block is proven: its AuxPoW
+  commitment verified and its parent meets the child target, since the
+  endpoint may be untrusted.
   The whole height runs under the session-level height lock. The non-BTC
   and classifier-conflict revocations still mark bad evidence, but they now
   apply to the block the verdict was reached on rather than to every event
   at the height, since a rescanned height can hold a displaced block's event;
   a block is its hash, or for a hashless historical row its height and
-  Bitcoin parent, and the displacement write uses the same identity. Promoting
-  a hashless row to an exact identity clears a self-displacement an earlier
-  parentless record may have left on it.
+  Bitcoin parent, and the displacement write uses the same identity; a record
+  with no parent to name leaves hashless rows untouched.
   `ELASTOS_REORG_DEPTH` is now read like every other chain's rescan depth
   (default 0), and the forbidden-depth policy that rejected it is gone. The
   eventless record for a non-AuxPoW or malformed block now goes through one

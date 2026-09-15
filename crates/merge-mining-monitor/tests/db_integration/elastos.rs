@@ -565,7 +565,7 @@ async fn advisory_locks_held(client: &Client) -> Result<i64> {
 }
 
 #[tokio::test]
-async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_one() -> Result<()> {
+async fn an_unproven_block_at_a_rescanned_height_leaves_the_record_alone() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let block_a = writable_elastos_block_without_identity();
         let height = block_a.height;
@@ -587,7 +587,6 @@ async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_on
         block_n.auxpow = None;
         rehash(&mut block_n)?;
         let hash_n = block_n.reconstruct()?.block_hash.to_byte_array().to_vec();
-        assert_ne!(hash_a, hash_n);
 
         // Tick 1: A is captured and is the chain's block.
         let rpc = FixtureElastosRpc {
@@ -601,18 +600,22 @@ async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_on
         );
         assert_eq!(advisory_locks_held(&client).await?, 0);
 
-        // Tick 2: the chain now carries N. No event is written for it, but its
-        // verified hash is recorded, so A is displaced by N and nothing is revoked.
+        // Tick 2: the endpoint now answers with N, a self-consistent block that
+        // carries no AuxPoW. Nothing backs N with work, and the endpoint may be
+        // untrusted, so N is not recorded as the chain's block: A stays current
+        // and nothing is revoked. (A proven eventless block does displace, see
+        // `core_cache_nbits_mismatch_revokes_an_existing_event`.)
         let rpc = FixtureElastosRpc { block: block_n };
         let outcome = process_elastos_height(&mut client, &rpc, &context, height).await?;
         assert_eq!(outcome, ElastosHeightOutcome::NonAuxpowSkipped);
         assert_eq!(
             displacement_at(&client, source_id, height).await?,
-            vec![(hash_a.clone(), Some(hash_n), None)]
+            vec![(hash_a.clone(), None, None)]
         );
+        assert_ne!(hash_a, hash_n);
         assert_eq!(advisory_locks_held(&client).await?, 0);
 
-        // Tick 3: the chain flips back to A, which is restored.
+        // Tick 3: A again; still current.
         let rpc = FixtureElastosRpc { block: block_a };
         let outcome = process_elastos_height(&mut client, &rpc, &context, height).await?;
         assert_eq!(outcome, ElastosHeightOutcome::AuxpowWritten);

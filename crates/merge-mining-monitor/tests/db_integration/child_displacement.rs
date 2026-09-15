@@ -156,10 +156,18 @@ async fn hashless_revoked_and_eventless_blocks_follow_the_chain() -> Result<()> 
 
         upsert_merge_mining_event(&client, source_id, &a).await?;
         upsert_merge_mining_event(&client, source_id, &hashless).await?;
+        let parent_a = a.btc_parent_header_hash.clone();
 
-        // A is current: the hashless row belongs to another block, so it is
+        // A is current: the hashless row's parent differs from A's, so it is
         // displaced by A.
-        let outcome = record(&mut client, source_id, &HASH_A, None, 3_001).await?;
+        let outcome = record(
+            &mut client,
+            source_id,
+            &HASH_A,
+            Some(parent_a.as_slice()),
+            3_001,
+        )
+        .await?;
         assert_eq!(outcome.displaced, 1);
         let rows = rows_at_height(&client, source_id).await?;
         assert_eq!(rows[0].0, None);
@@ -177,7 +185,14 @@ async fn hashless_revoked_and_eventless_blocks_follow_the_chain() -> Result<()> 
             )
             .await?;
         upsert_merge_mining_event(&client, source_id, &b).await?;
-        let outcome = record(&mut client, source_id, &HASH_B, None, 3_003).await?;
+        let outcome = record(
+            &mut client,
+            source_id,
+            &HASH_B,
+            Some(parent_a.as_slice()),
+            3_003,
+        )
+        .await?;
         assert_eq!(outcome.displaced, 1);
         let rows = rows_at_height(&client, source_id).await?;
         assert_eq!(rows[0].2, Some(HASH_A.to_vec()));
@@ -297,32 +312,30 @@ async fn concurrent_captures_at_one_height_serialize_on_the_lock_and_the_later_c
 }
 
 #[tokio::test]
-async fn promotion_clears_a_self_displacement_left_by_a_parentless_record() -> Result<()> {
+async fn a_parentless_record_leaves_a_hashless_row_alone() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         const HASH_X: [u8; 32] = [0x1f; 32];
-        // A hashless historical observation of block X, then an eventless
-        // record of X made before its proof was seen: with no parent to name,
-        // the record displaces the hashless row by X itself.
+        // A hashless historical observation, then a record of block X with no
+        // parent to name (X carries no AuxPoW, or its proof did not verify).
+        // The record cannot tell whether the hashless row observed X, so it
+        // leaves the row untouched rather than displacing it by X.
         let mut hashless = exact_at_height("500001-near-parent", HASH_X)?;
         hashless.child_block_hash = None;
         hashless.child_block_time = None;
         upsert_merge_mining_event(&client, source_id, &hashless).await?;
-        record(&mut client, source_id, &HASH_X, None, 3_001).await?;
-        let rows = rows_at_height(&client, source_id).await?;
-        assert_eq!(rows[0].0, None);
-        assert_eq!(rows[0].2, Some(HASH_X.to_vec()));
+        let outcome = record(&mut client, source_id, &HASH_X, None, 3_001).await?;
+        assert_eq!(outcome, ChildDisplacementOutcome::default());
+        assert_eq!(
+            rows_at_height(&client, source_id).await?,
+            vec![(None, None, None, None)]
+        );
 
-        // The proof arrives: the exact observation promotes the hashless row to
-        // X's identity, which clears the self-displacement instead of tripping
-        // the not-self constraint, and the row is current.
+        // The proof arrives and promotes the row to X's exact identity; it is
+        // current, and recording X with its parent changes nothing.
         let exact = exact_at_height("500001-near-parent", HASH_X)?;
         let outcome = upsert_merge_mining_event(&client, source_id, &exact).await?;
         assert_eq!(outcome.disposition, EventWriteDisposition::Promoted);
-        assert_eq!(
-            rows_at_height(&client, source_id).await?,
-            vec![(Some(HASH_X.to_vec()), None, None, None)]
-        );
         let outcome = record(
             &mut client,
             source_id,
@@ -332,6 +345,10 @@ async fn promotion_clears_a_self_displacement_left_by_a_parentless_record() -> R
         )
         .await?;
         assert_eq!(outcome, ChildDisplacementOutcome::default());
+        assert_eq!(
+            rows_at_height(&client, source_id).await?,
+            vec![(Some(HASH_X.to_vec()), None, None, None)]
+        );
         Ok::<_, anyhow::Error>(())
     })
 }

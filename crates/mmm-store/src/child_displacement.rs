@@ -123,9 +123,11 @@ pub async fn lock_child_chain_height(
 ///
 /// A hashless partial observation at the height is the current block when its
 /// Bitcoin parent is `current_parent_hash` (the identity partial promotion
-/// uses), and a different block otherwise. A caller with no parent to name,
-/// because the current block carries no AuxPoW, displaces every hashless
-/// row: a hashless AuxPoW observation cannot be that block. Revoked events are treated the
+/// uses), and a different block when the parents differ. A caller with no
+/// parent to name, because the current block carries no AuxPoW or its proof
+/// did not verify, leaves hashless rows untouched: it cannot tell which block
+/// such a row observed, and displacing one by the block it may represent
+/// would poison its later promotion. Revoked events are treated the
 /// same as active ones: displacement tracks the child chain and revocation
 /// tracks evidence validity, and neither reads the other.
 ///
@@ -173,6 +175,7 @@ pub async fn record_child_chain_block(
                              AND btc_parent_header_hash = $4::bytea)) AS is_current \
                  FROM merge_mining_event \
                  WHERE source_id = $1 AND child_height = $2 \
+                   AND NOT (child_block_hash IS NULL AND $4::bytea IS NULL) \
              ) \
              UPDATE merge_mining_event e \
              SET child_displaced_at = CASE WHEN c.is_current THEN NULL ELSE $5::bigint END, \

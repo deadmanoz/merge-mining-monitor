@@ -203,11 +203,10 @@ through revocation.
   chain that flips back) and marks every other event at the height that is
   not yet displaced as displaced by it. A hashless partial observation is
   the current block when its Bitcoin parent is the recorded block's parent,
-  the identity partial promotion uses, and a different block otherwise; a
-  record with no parent to name (the block carries no AuxPoW) displaces
-  every hashless row, and a later promotion of such a row to the block's
-  exact identity clears that self-displacement. An already-displaced event
-  keeps its first displacement record:
+  the identity partial promotion uses, and a different block when the
+  parents differ; a record with no parent to name (the block carries no
+  AuxPoW, or its proof did not verify) leaves hashless rows untouched. An
+  already-displaced event keeps its first displacement record:
   the columns say when a block first left the chain and what replaced it
   then, not which block is current now. The chain's current block at a
   height is the event with no displacement; when the chain carries a block
