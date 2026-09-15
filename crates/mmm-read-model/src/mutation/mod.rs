@@ -495,12 +495,15 @@ pub async fn rebuild_historical_source_health(client: &mut Client) -> Result<()>
 /// Capture one merge-mining event: the shared per-block transactional sequence
 /// for every producer.
 ///
-/// Run the bounded retry loop: begin a transaction, take the shared Core-view
-/// barrier, classify the parent (which may update `payload`), acquire the
-/// payload's read-model lock set plus the parent-hash lock, open the
-/// source-health bracket, perform the chain-specific `upsert`, reconcile the
-/// event in-transaction unless the parent is `near`, close the bracket, and
-/// commit. Dependents are cascaded after commit. Holding the shared barrier
+/// Run the bounded retry loop: begin a transaction, take the child-height lock
+/// when the payload names a child height (the first lock, so a producer's
+/// child-displacement record inside `upsert` is ordered before every parent
+/// lock and two captures at one child height serialize), take the shared
+/// Core-view barrier, classify the parent (which may update `payload`),
+/// acquire the payload's read-model lock set plus the parent-hash lock, open
+/// the source-health bracket, perform the chain-specific `upsert`, reconcile
+/// the event in-transaction unless the parent is `near`, close the bracket,
+/// and commit. Dependents are cascaded after commit. Holding the shared barrier
 /// from classification through commit prevents a suffix switch from landing
 /// between those two points.
 ///
@@ -532,6 +535,9 @@ where
             .transaction()
             .await
             .with_context(|| format!("begin {chain_label} capture transaction"))?;
+        if let Some(child_height) = payload.child_height {
+            mmm_store::lock_child_chain_height(&txn, source_id, child_height).await?;
+        }
         lock_core_classification_view_shared(&txn, None).await?;
         let preclassified = match &supplied_preclassification {
             Some(supplied) if classifier.is_enabled() => {

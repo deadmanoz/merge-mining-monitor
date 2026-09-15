@@ -9,6 +9,9 @@
 use mmm_capture::capture::MergeMiningEventPayload;
 use reqwest::StatusCode;
 
+#[cfg(any(test, feature = "db-integration"))]
+pub mod auxpow_family;
+#[cfg(not(any(test, feature = "db-integration")))]
 pub(crate) mod auxpow_family;
 pub(crate) mod backfill;
 pub(crate) mod bitcoind_rpc;
@@ -29,6 +32,12 @@ pub mod rsk;
 pub(crate) mod rsk;
 pub(crate) mod spec;
 
+#[cfg(any(test, feature = "db-integration"))]
+pub use auxpow_family::{
+    AuxpowCaptureContext, HeightOutcome as AuxpowHeightOutcome, process_auxpow_height,
+};
+#[cfg(any(test, feature = "db-integration"))]
+pub use bitcoind_rpc::BitcoindRpc;
 #[cfg(any(test, feature = "db-integration"))]
 pub use spec::{CHAINS, ChainId, ChainSpec, ReorgPolicy, by_id};
 

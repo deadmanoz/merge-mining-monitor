@@ -99,6 +99,17 @@ This changelog starts with the initial release.
   current block. Bitcoin-side fields are unchanged. The block fixtures, their
   manifest and the fixture contract test carry the new pair.
 
+- Record which block the child chain carries at every height the
+  bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit) processes. A
+  captured AuxPoW block is recorded inside its capture transaction, which
+  now takes the per-height lock before any parent lock; a block that yields
+  no event is recorded in a transaction of its own. A rescanned height whose
+  block changed marks the earlier event displaced instead of leaving two
+  current blocks, and a flip back restores it. Poll and backfill share the
+  path. The runner's RPC calls now go through a `BitcoindRpc` trait so a
+  fixture chain can drive the per-height path end to end in tests. Rescan
+  depths stay at zero until they are raised per chain.
+
 ## [0.7.13] - 2026-09-09
 
 - Refresh the Research publication pin to `e09f52b`, covering 1,283,863

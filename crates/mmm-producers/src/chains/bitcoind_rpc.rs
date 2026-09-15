@@ -35,6 +35,21 @@ pub(crate) struct BitcoindRpcConfig {
     pub request_timeout: Duration,
 }
 
+/// The Bitcoin Core-style calls the bitcoind-family capture path makes. The
+/// live client implements it over HTTP; tests implement it over fixtures so
+/// `process_auxpow_height` can be driven end to end (the `HathorRpc` pattern).
+#[allow(async_fn_in_trait)]
+pub trait BitcoindRpc {
+    /// Current chain height via `getblockcount`, the poller's tip bound.
+    async fn get_block_count(&self) -> Result<i32>;
+    /// Canonical block hash at `height` via `getblockhash`.
+    async fn get_block_hash(&self, height: i32) -> Result<BlockHash>;
+    /// Full raw block via `getblock <hash> 0`.
+    async fn get_block_raw(&self, hash: &BlockHash) -> Result<Vec<u8>>;
+    /// `[child header][CAuxPow]` bytes via `getblockheader <hash> false true`.
+    async fn get_header_with_auxpow(&self, hash: &BlockHash) -> Result<Vec<u8>>;
+}
+
 /// Thin JSON-RPC client over a shared reqwest transport. One instance serves
 /// any bitcoind-family chain; the chain `label` only colors error contexts.
 #[derive(Debug, Clone)]
@@ -55,43 +70,6 @@ impl BitcoindRpcClient {
             config,
             http,
         })
-    }
-
-    /// Current chain height via `getblockcount`, the poller's tip bound.
-    pub(crate) async fn get_block_count(&self) -> Result<i32> {
-        self.call("getblockcount", vec![]).await
-    }
-
-    /// Canonical block hash at `height` via `getblockhash`. Parses the RPC hex
-    /// through the rust-bitcoin newtype, which reverses display order back to
-    /// internal byte order on the way in.
-    pub(crate) async fn get_block_hash(&self, height: i32) -> Result<BlockHash> {
-        let hash: String = self.call("getblockhash", vec![json!(height)]).await?;
-        BlockHash::from_str(&hash).with_context(|| format!("parse {} block hash", self.label))
-    }
-
-    /// Fetch the full raw block via `getblock <hash> 0` (carries the CAuxPow
-    /// inline for Namecoin/Syscoin).
-    pub(crate) async fn get_block_raw(&self, hash: &BlockHash) -> Result<Vec<u8>> {
-        let raw_hex: String = self
-            .call("getblock", vec![json!(hash.to_string()), json!(0)])
-            .await?;
-        hex::decode(&raw_hex).with_context(|| format!("decode {} raw block hex", self.label))
-    }
-
-    /// Fetch the `[child header][CAuxPow]` bytes via `getblockheader <hash>
-    /// false true` (verbose=false returns hex; the trailing `true` includes the
-    /// AuxPoW tail). Fractal's `getblock 0` does NOT carry the CAuxPow, so this
-    /// is its merge-mining proof source.
-    pub(crate) async fn get_header_with_auxpow(&self, hash: &BlockHash) -> Result<Vec<u8>> {
-        let raw_hex: String = self
-            .call(
-                "getblockheader",
-                vec![json!(hash.to_string()), json!(false), json!(true)],
-            )
-            .await?;
-        hex::decode(&raw_hex)
-            .with_context(|| format!("decode {} getblockheader-auxpow hex", self.label))
     }
 
     /// Issue one JSON-RPC 1.0 call and deserialize the `result`. Layers error
@@ -116,5 +94,44 @@ impl BitcoindRpcClient {
         )
         .await?;
         rpc_http::decode_required_json_rpc_response(label, method, response).await
+    }
+}
+
+impl BitcoindRpc for BitcoindRpcClient {
+    /// Current chain height via `getblockcount`, the poller's tip bound.
+    async fn get_block_count(&self) -> Result<i32> {
+        self.call("getblockcount", vec![]).await
+    }
+
+    /// Canonical block hash at `height` via `getblockhash`. Parses the RPC hex
+    /// through the rust-bitcoin newtype, which reverses display order back to
+    /// internal byte order on the way in.
+    async fn get_block_hash(&self, height: i32) -> Result<BlockHash> {
+        let hash: String = self.call("getblockhash", vec![json!(height)]).await?;
+        BlockHash::from_str(&hash).with_context(|| format!("parse {} block hash", self.label))
+    }
+
+    /// Fetch the full raw block via `getblock <hash> 0` (carries the CAuxPow
+    /// inline for Namecoin/Syscoin).
+    async fn get_block_raw(&self, hash: &BlockHash) -> Result<Vec<u8>> {
+        let raw_hex: String = self
+            .call("getblock", vec![json!(hash.to_string()), json!(0)])
+            .await?;
+        hex::decode(&raw_hex).with_context(|| format!("decode {} raw block hex", self.label))
+    }
+
+    /// Fetch the `[child header][CAuxPow]` bytes via `getblockheader <hash>
+    /// false true` (verbose=false returns hex; the trailing `true` includes the
+    /// AuxPoW tail). Fractal's `getblock 0` does NOT carry the CAuxPow, so this
+    /// is its merge-mining proof source.
+    async fn get_header_with_auxpow(&self, hash: &BlockHash) -> Result<Vec<u8>> {
+        let raw_hex: String = self
+            .call(
+                "getblockheader",
+                vec![json!(hash.to_string()), json!(false), json!(true)],
+            )
+            .await?;
+        hex::decode(&raw_hex)
+            .with_context(|| format!("decode {} getblockheader-auxpow hex", self.label))
     }
 }

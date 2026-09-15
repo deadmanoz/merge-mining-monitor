@@ -2,6 +2,8 @@
 
 mod support;
 
+#[path = "db_integration/auxpow_family.rs"]
+mod auxpow_family;
 #[path = "db_integration/bitcoin_core_header.rs"]
 mod bitcoin_core_header;
 #[path = "db_integration/child_displacement.rs"]

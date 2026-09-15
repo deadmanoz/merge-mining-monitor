@@ -42,6 +42,17 @@ parents, not a separate parent kind, and it is gated by the operator-imported
 | RSK | Ethereum-style RSKj JSON-RPC for canonical blocks and uncles. | Stores RSK proof sidecar data and miner beneficiary identity. |
 | Hathor | Public REST API plus Hathor RFC 0006 merged-mining reconstruction. | No self-hosted mainnet node assumption; reward outputs are parsed from persisted funds graph data. |
 
+The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit) also records
+which block the child chain carries at every height it processes. A captured
+AuxPoW block is recorded inside its capture transaction, after the event
+upsert and under the per-height lock the capture transaction takes first; a
+block that yields no event (non-AuxPoW, or a malformed proof) is recorded in
+a transaction of its own. A rescanned height whose block changed therefore
+marks the earlier event displaced rather than leaving two current blocks, and
+a flip back restores it. Poll and backfill share the per-height path, so a
+backfill over a reorged range repairs it the same way. See `docs/data-model.md`,
+"Child Displacement". Hathor and Elastos do not record displacement yet.
+
 RSK replays may refine role and optional proof fields, but an existing sidecar's
 block identity, height, miner, merge-mining hash, proof format, and any two
 non-null optional proof values must remain compatible. A contradictory replay
