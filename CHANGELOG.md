@@ -79,6 +79,18 @@ This changelog starts with the initial release.
   in its own transaction. Nothing writes the columns yet; the producer rescan
   path and the read-side projection follow in later changes.
 
+- Add `mmm-store::record_child_chain_block`, the single write behind child
+  displacement: given the block the child chain now carries at a height, it
+  clears displacement on that block's event and marks every other event at
+  the height, hashless partial observations included, as displaced by it.
+  Already-displaced events keep their first displacement record. The write is
+  one UPDATE under a per-height advisory lock, so a failure never leaves a
+  height half-moved and concurrent callers serialize; producers take that
+  lock through `lock_child_chain_height` before upserting a captured block's
+  event so two captures at one height cannot deadlock on each other's row.
+  It is idempotent and touches only the two displacement columns, so it
+  needs no parent reconciliation. No producer calls it yet.
+
 ## [0.7.13] - 2026-09-09
 
 - Refresh the Research publication pin to `e09f52b`, covering 1,283,863
