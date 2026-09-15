@@ -8,10 +8,10 @@
 use std::env;
 use std::fs;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, bail};
 
 use crate::chains::bitcoind_rpc::BitcoindRpcConfig;
-use crate::chains::spec::{ChainSpec, ReorgPolicy, RpcAuth};
+use crate::chains::spec::{ChainSpec, RpcAuth};
 use crate::poller::PollerConfig;
 use mmm_rpc as rpc_http;
 use rpc_http::{DEFAULT_RPC_TIMEOUT_SECS, parse_timeout_secs_from_lookup};
@@ -33,33 +33,13 @@ pub(crate) fn poller_config(spec: &ChainSpec) -> Result<PollerConfig> {
 
 /// Pure variant of [`poller_config`] driven by an arbitrary lookup, so unit
 /// tests never mutate the global (and in Rust 2024 `unsafe`) process
-/// environment.
-///
-/// `ReorgPolicy::ForbiddenMonotonic` rejects ANY present
-/// `<PREFIX>_REORG_DEPTH` (any value), then forces `reorg_depth = 0` (not read
-/// from the generic per-prefix lookup) - the exact semantics the Elastos
-/// poller shipped with.
+/// environment. Every chain reads `<PREFIX>_REORG_DEPTH` the same way; the
+/// spec row supplies the default.
 pub(crate) fn poller_config_from_lookup<F>(spec: &ChainSpec, lookup: F) -> Result<PollerConfig>
 where
     F: Fn(&str) -> Option<String>,
 {
-    match spec.reorg_policy {
-        ReorgPolicy::EnvConfigurable => {
-            PollerConfig::from_lookup(spec.env_prefix, spec.poller, lookup)
-        }
-        ReorgPolicy::ForbiddenMonotonic => {
-            ensure!(
-                lookup(&format!("{}_REORG_DEPTH", spec.env_prefix)).is_none(),
-                "{}_REORG_DEPTH is not supported in this slice: {} is monotonic, and a \
-                 trailing rescan needs same-height reconciliation (a deferred follow-up)",
-                spec.env_prefix,
-                spec.display_name,
-            );
-            let mut config = PollerConfig::from_lookup(spec.env_prefix, spec.poller, lookup)?;
-            config.reorg_depth = 0;
-            Ok(config)
-        }
-    }
+    PollerConfig::from_lookup(spec.env_prefix, spec.poller, lookup)
 }
 
 /// Build the bitcoind-family RPC transport config for a chain from the
@@ -363,25 +343,17 @@ mod tests {
     }
 
     #[test]
-    fn elastos_from_lookup_forces_zero_reorg_and_rejects_override() -> Result<()> {
-        // Unset: reorg_depth is forced to 0 (monotonic), no start override.
+    fn elastos_reorg_depth_defaults_to_zero_and_honours_the_override() -> Result<()> {
         let empty: HashMap<String, String> = HashMap::new();
         let config =
             poller_config_from_lookup(by_id(ChainId::Elastos), |key| empty.get(key).cloned())?;
         assert_eq!(config.reorg_depth, 0);
         assert_eq!(config.start_height_override, None);
 
-        // ANY present ELASTOS_REORG_DEPTH (even 0) is rejected.
-        for value in ["1", "0", "64"] {
-            let map = lookup_from(&[("ELASTOS_REORG_DEPTH", value)]);
-            let err =
-                poller_config_from_lookup(by_id(ChainId::Elastos), |key| map.get(key).cloned())
-                    .unwrap_err();
-            assert!(
-                err.to_string().contains("ELASTOS_REORG_DEPTH"),
-                "unexpected error for value {value}: {err}"
-            );
-        }
+        let map = lookup_from(&[("ELASTOS_REORG_DEPTH", "3")]);
+        let config =
+            poller_config_from_lookup(by_id(ChainId::Elastos), |key| map.get(key).cloned())?;
+        assert_eq!(config.reorg_depth, 3);
         Ok(())
     }
 

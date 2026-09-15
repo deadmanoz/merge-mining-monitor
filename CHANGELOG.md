@@ -112,6 +112,17 @@ This changelog starts with the initial release.
   fixture chain can drive the per-height path end to end in tests. Rescan
   depths stay at zero until they are raised per chain.
 
+- Record which block the child chain carries at every height the Elastos
+  producer processes, the way the bitcoind-family runner does: a captured
+  block inside its capture transaction, and a block that yields no event in a
+  transaction of its own, but only with a hash its reconstruction verified.
+  The whole height runs under the session-level height lock. The non-BTC
+  and classifier-conflict revocations are unchanged: they mark bad evidence.
+  `ELASTOS_REORG_DEPTH` is now read like every other chain's rescan depth
+  (default 0), and the forbidden-depth policy that rejected it is gone. The
+  eventless record for a non-AuxPoW or malformed block now goes through one
+  store helper shared with the bitcoind-family runner.
+
 ## [0.7.13] - 2026-09-09
 
 - Refresh the Research publication pin to `e09f52b`, covering 1,283,863

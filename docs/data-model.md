@@ -228,10 +228,9 @@ through revocation.
 `NOT VALID`, and `0023_validate_child_displacement.sql` validates them under
 the weaker lock in its own transaction. The block detail API projects the
 pair on each event detail as `child_displaced_at` and `child_displaced_by`.
-The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit) calls the write
-for every height it processes. Hathor's capture path still revokes a
-superseded prior and Elastos never rescans a processed height; their
-producer changes follow separately.
+The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit) and the Elastos
+producer call the write for every height they process. Hathor's capture path
+still revokes a superseded prior; its producer change follows separately.
 
 ## Capture Errors
 

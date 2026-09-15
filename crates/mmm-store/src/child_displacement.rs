@@ -185,3 +185,30 @@ pub async fn record_child_chain_block(
         displaced: rows.len() as u64 - restored,
     })
 }
+
+/// [`record_child_chain_block`] in a transaction of its own, for a block that
+/// yields no event (no AuxPoW, or a proof that failed a gate): there is no
+/// event upsert to order it against, and the record takes the per-height lock
+/// itself.
+pub async fn record_child_chain_block_in_own_transaction(
+    client: &mut Client,
+    source_id: i64,
+    child_height: i32,
+    current_block_hash: &[u8],
+    observed_at: i64,
+) -> Result<ChildDisplacementOutcome> {
+    let txn = client
+        .transaction()
+        .await
+        .context("begin child block record")?;
+    let outcome = record_child_chain_block(
+        &txn,
+        source_id,
+        child_height,
+        current_block_hash,
+        observed_at,
+    )
+    .await?;
+    txn.commit().await.context("commit child block record")?;
+    Ok(outcome)
+}

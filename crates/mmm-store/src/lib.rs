@@ -56,6 +56,7 @@ pub use chains::rsk::{
 pub use child_displacement::{
     ChildDisplacementOutcome, finish_child_chain_height_operation, lock_child_chain_height,
     lock_child_chain_height_session, record_child_chain_block,
+    record_child_chain_block_in_own_transaction,
 };
 pub use event::{
     EventWriteDisposition, EventWriteOutcome, delete_event_pool_attributions_for_source,

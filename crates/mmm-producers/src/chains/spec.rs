@@ -3,7 +3,7 @@
 //! One `ChainSpec` row per live merge-mined producer chain. The row carries
 //! the declared, reviewable facts a chain contributes to the shared producer
 //! machinery: identity, env prefix, source code, activation floor, poller
-//! defaults, and reorg policy. Behavior lives in the shared implementations
+//! defaults. Behavior lives in the shared implementations
 //! that CONSUME the spec; adding a Namecoin-family chain means adding a row
 //! here (plus its `source_registry` entry), not cloning a module.
 
@@ -177,19 +177,6 @@ pub struct FamilySpec {
     pub malformed_policy: MalformedPolicy,
 }
 
-/// Whether `<PREFIX>_REORG_DEPTH` may configure a trailing rescan window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReorgPolicy {
-    /// `<PREFIX>_REORG_DEPTH` overrides the default depth.
-    EnvConfigurable,
-    /// The chain is monotonic by construction: `reorg_depth` is hardcoded to 0
-    /// and ANY present `<PREFIX>_REORG_DEPTH` (any value) is rejected, because
-    /// a trailing rescan would re-capture a replaced same-height block as a
-    /// NEW active row unless same-height reconciliation revokes the prior
-    /// (a deferred follow-up). Exact current Elastos semantics.
-    ForbiddenMonotonic,
-}
-
 /// One live producer chain, as declared data.
 #[derive(Debug, Clone, Copy)]
 pub struct ChainSpec {
@@ -213,9 +200,6 @@ pub struct ChainSpec {
     pub activation_floor: i32,
     /// Live-poll defaults; `<PREFIX>_*` env vars override each field.
     pub poller: PollerDefaults,
-    /// Whether `<PREFIX>_REORG_DEPTH` may configure a trailing rescan window
-    /// (see [`ReorgPolicy`]).
-    pub reorg_policy: ReorgPolicy,
     /// `Some` for bitcoind-family chains served by the shared
     /// `chains::auxpow_family` implementation; `None` for divergent chains.
     pub family: Option<FamilySpec>,
@@ -238,7 +222,6 @@ pub static CHAINS: [ChainSpec; 7] = [
             batch_size: 100,
             reorg_depth: 0,
         },
-        reorg_policy: ReorgPolicy::EnvConfigurable,
         family: Some(FamilySpec {
             label: "Namecoin",
             auth: RpcAuth::RequiredUserPass,
@@ -262,7 +245,6 @@ pub static CHAINS: [ChainSpec; 7] = [
             batch_size: 100,
             reorg_depth: 64,
         },
-        reorg_policy: ReorgPolicy::EnvConfigurable,
         family: None,
         backfill_range_cap: None,
     },
@@ -278,7 +260,6 @@ pub static CHAINS: [ChainSpec; 7] = [
             batch_size: 100,
             reorg_depth: 0,
         },
-        reorg_policy: ReorgPolicy::EnvConfigurable,
         family: Some(FamilySpec {
             label: "Syscoin",
             auth: RpcAuth::OptionalUserPassOrCookie,
@@ -304,7 +285,6 @@ pub static CHAINS: [ChainSpec; 7] = [
             batch_size: 100,
             reorg_depth: 0,
         },
-        reorg_policy: ReorgPolicy::EnvConfigurable,
         family: Some(FamilySpec {
             label: "Fractal",
             auth: RpcAuth::OptionalUserPassOrCookie,
@@ -332,7 +312,6 @@ pub static CHAINS: [ChainSpec; 7] = [
             batch_size: 100,
             reorg_depth: 20,
         },
-        reorg_policy: ReorgPolicy::EnvConfigurable,
         family: None,
         backfill_range_cap: Some(RangeCap {
             default_max: 5_000,
@@ -351,7 +330,6 @@ pub static CHAINS: [ChainSpec; 7] = [
             batch_size: 100,
             reorg_depth: 0,
         },
-        reorg_policy: ReorgPolicy::ForbiddenMonotonic,
         family: None,
         backfill_range_cap: Some(RangeCap {
             default_max: 50_000,
@@ -379,7 +357,6 @@ pub static CHAINS: [ChainSpec; 7] = [
             batch_size: 100,
             reorg_depth: 0,
         },
-        reorg_policy: ReorgPolicy::EnvConfigurable,
         family: Some(FamilySpec {
             label: "Qbit",
             auth: RpcAuth::OptionalUserPassOrCookie,

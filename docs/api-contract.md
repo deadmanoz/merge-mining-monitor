@@ -1224,8 +1224,8 @@ this event's block at `child_height`, and the hash of the block carried there
 instead, in the same display order as `child_block_hash`. They are always set
 or cleared together. A null pair means no displacement has been recorded for
 the event, not that the event is the chain's current block at that height.
-The Namecoin, Syscoin, Fractal and Qbit producers record it for every height
-they process; Hathor and Elastos do not record it yet, and an event written
+The Namecoin, Syscoin, Fractal, Qbit and Elastos producers record it for every
+height they process; Hathor does not record it yet, and an event written
 without a chain observation (a historical import for a live chain) stays
 null until the height is observed again. Displacement is child-side only: a
 displaced event

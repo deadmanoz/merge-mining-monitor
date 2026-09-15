@@ -1,4 +1,8 @@
 use anyhow::{Context, Result};
+use bitcoin::block::{Header, Version};
+use bitcoin::consensus::serialize;
+use bitcoin::hashes::{Hash as _, sha256d};
+use bitcoin::{BlockHash, CompactTarget};
 use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier, ParentClassification};
 use mmm_capture::auxpow::{parse_bip34_height, parse_elastos_auxpow};
 use mmm_capture::capture::{CHILD_PAYOUT_REGISTRY_SOURCE, ELASTOS_REVOKE_NON_BTC};
@@ -474,4 +478,116 @@ async fn insert_elastos_identity(
         )
         .await?
         .get(0))
+}
+
+/// Recompute the RPC-reported hash after a field change, using the same
+/// `sha256d(80-byte prefix || height LE)` rule reconstruction verifies, so the
+/// changed block still passes the hash guard.
+fn rehash(block: &mut ElastosBlock) -> Result<()> {
+    let prefix = Header {
+        version: Version::from_consensus(block.version),
+        prev_blockhash: block.previousblockhash.parse()?,
+        merkle_root: block.merkleroot.parse()?,
+        time: block.time,
+        bits: CompactTarget::from_consensus(block.bits),
+        nonce: block.nonce,
+    };
+    let mut bytes = serialize(&prefix);
+    bytes.extend_from_slice(&block.height.to_le_bytes());
+    block.hash =
+        BlockHash::from_byte_array(sha256d::Hash::hash(&bytes).to_byte_array()).to_string();
+    Ok(())
+}
+
+/// `(child_block_hash, child_displaced_by, revoked_at)` for every event at the
+/// height, ordered by hash.
+async fn displacement_at(
+    client: &Client,
+    source_id: i64,
+    height: i32,
+) -> Result<Vec<(Vec<u8>, Option<Vec<u8>>, Option<i64>)>> {
+    let rows = client
+        .query(
+            "SELECT child_block_hash, child_displaced_by, revoked_at \
+             FROM merge_mining_event \
+             WHERE source_id = $1 AND child_height = $2 \
+             ORDER BY child_block_hash",
+            &[&source_id, &height],
+        )
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2)))
+        .collect())
+}
+
+async fn advisory_locks_held(client: &Client) -> Result<i64> {
+    Ok(client
+        .query_one(
+            "SELECT count(*) FROM pg_locks \
+             WHERE locktype = 'advisory' AND pid = pg_backend_pid()",
+            &[],
+        )
+        .await?
+        .get(0))
+}
+
+#[tokio::test]
+async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_one() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let block_a = writable_elastos_block_without_identity();
+        let height = block_a.height;
+        seed_core_cache_for_elastos(&client, &block_a).await?;
+        let context = ElastosCaptureContext::new_with_classifier(
+            &client,
+            ConfiguredParentClassifier::Fake(
+                FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(955_609),
+            ),
+        )
+        .await?;
+        let source_id = context.source_id();
+        let hash_a = block_a.reconstruct()?.block_hash.to_byte_array().to_vec();
+
+        // A different block at the same height that carries no AuxPoW: a new
+        // nonce, re-hashed so it still passes reconstruction.
+        let mut block_n = block_a.clone();
+        block_n.nonce = block_n.nonce.wrapping_add(1);
+        block_n.auxpow = None;
+        rehash(&mut block_n)?;
+        let hash_n = block_n.reconstruct()?.block_hash.to_byte_array().to_vec();
+        assert_ne!(hash_a, hash_n);
+
+        // Tick 1: A is captured and is the chain's block.
+        let rpc = FixtureElastosRpc {
+            block: block_a.clone(),
+        };
+        let outcome = process_elastos_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(outcome, ElastosHeightOutcome::AuxpowWritten);
+        assert_eq!(
+            displacement_at(&client, source_id, height).await?,
+            vec![(hash_a.clone(), None, None)]
+        );
+        assert_eq!(advisory_locks_held(&client).await?, 0);
+
+        // Tick 2: the chain now carries N. No event is written for it, but its
+        // verified hash is recorded, so A is displaced by N and nothing is revoked.
+        let rpc = FixtureElastosRpc { block: block_n };
+        let outcome = process_elastos_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(outcome, ElastosHeightOutcome::NonAuxpowSkipped);
+        assert_eq!(
+            displacement_at(&client, source_id, height).await?,
+            vec![(hash_a.clone(), Some(hash_n), None)]
+        );
+        assert_eq!(advisory_locks_held(&client).await?, 0);
+
+        // Tick 3: the chain flips back to A, which is restored.
+        let rpc = FixtureElastosRpc { block: block_a };
+        let outcome = process_elastos_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(outcome, ElastosHeightOutcome::AuxpowWritten);
+        assert_eq!(
+            displacement_at(&client, source_id, height).await?,
+            vec![(hash_a, None, None)]
+        );
+        Ok(())
+    })
 }

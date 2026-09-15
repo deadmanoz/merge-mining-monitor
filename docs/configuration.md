@@ -16,7 +16,7 @@ Prefixes: `NAMECOIN`, `RSK`, `SYSCOIN`, `FRACTAL`, `HATHOR`, `ELASTOS`, `QBIT`.
 | `<PREFIX>_START_HEIGHT` | all | Explicit live cursor seed override. Use once for first deploy or controlled reset, then remove. |
 | `<PREFIX>_POLL_INTERVAL_SECONDS` | all | Live tick interval, default 30 seconds. |
 | `<PREFIX>_BATCH_SIZE` | all | Per-tick height budget, default 100. |
-| `<PREFIX>_REORG_DEPTH` | all but Elastos | Trailing rescan window. For the bitcoind-family chains a rescanned height whose block changed marks the earlier event displaced (see `docs/data-model.md`, Child Displacement). Elastos rejects this variable because the producer is monotonic. |
+| `<PREFIX>_REORG_DEPTH` | all | Trailing rescan window. For the bitcoind-family chains and Elastos a rescanned height whose block changed marks the earlier event displaced (see `docs/data-model.md`, Child Displacement). |
 | `<PREFIX>_MAX_BACKFILL_RANGE` | Hathor, Elastos | Backfill range cap. |
 | `<PREFIX>_ALLOW_LARGE_BACKFILL` | Hathor, Elastos | Exact `"1"` boolean to lift the range cap. |
 | `<PREFIX>_RPC_BACKFILL_DELAY_MS` | Hathor, Elastos | Per-height backfill delay. |
