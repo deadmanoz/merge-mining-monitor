@@ -17,7 +17,7 @@ use tokio_postgres::Client;
 use tracing::debug;
 
 use super::{AuxpowCaptureContext, AuxpowFetch, write_event_in_txn};
-use crate::chains::bitcoind_rpc::BitcoindRpcClient;
+use crate::chains::bitcoind_rpc::BitcoindRpc;
 use crate::chains::spec::{ChainSpec, FamilySpec, FetchStrategy};
 use mmm_capture::auxpow::{
     ParsedQbitAuxpow, ParsedQbitBlock, parse_qbit_extended_header, qbit_extended_header_prefix,
@@ -41,7 +41,7 @@ use mmm_capture::capture::{
 /// answers height 0 with a foreign genesis, is not a Qbit mainnet node and no
 /// height from it can be trusted.
 pub(super) async fn fetch_qbit_candidate(
-    rpc: &BitcoindRpcClient,
+    rpc: &impl BitcoindRpc,
     spec: &'static ChainSpec,
     family: &'static FamilySpec,
     block_hash: &BlockHash,
@@ -96,7 +96,7 @@ pub(super) async fn fetch_qbit_candidate(
 /// ID would pass every per-height check and be persisted as `auxpow:qbit`.
 /// A no-op for every other fetch strategy.
 pub(super) async fn ensure_qbit_mainnet_endpoint(
-    rpc: &BitcoindRpcClient,
+    rpc: &impl BitcoindRpc,
     family: &'static FamilySpec,
 ) -> Result<()> {
     let FetchStrategy::QbitExtendedHeader { genesis_block_hash } = family.fetch else {

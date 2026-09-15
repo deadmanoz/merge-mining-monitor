@@ -24,7 +24,7 @@ use tracing::{debug, error, info, warn};
 use crate::chains::backfill::{
     BackfillConfig, BackfillHeightEffect, BackfillSummary, run_delayed_backfill_range,
 };
-use crate::chains::bitcoind_rpc::BitcoindRpcClient;
+use crate::chains::bitcoind_rpc::{BitcoindRpc, BitcoindRpcClient};
 use crate::chains::child_payout_registry::seed_child_payout_identities_for;
 use crate::chains::spec::{ChainSpec, FamilySpec, FetchStrategy, MalformedPolicy, RepairScope};
 use crate::poller::{ChainPoller, ChainPollerState, HeightProgress, Poller};
@@ -42,8 +42,9 @@ use mmm_capture::child_payout::PoolIdentityLookup;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::capture_in_txn;
 use mmm_store::{
-    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error, load_pool_identities_by_namespace,
-    record_capture_error, upsert_merge_mining_event_with_attributions,
+    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error, finish_child_chain_height_operation,
+    load_pool_identities_by_namespace, lock_child_chain_height_session, record_capture_error,
+    record_child_chain_block, upsert_merge_mining_event_with_attributions,
 };
 use qbit::{ensure_qbit_mainnet_endpoint, fetch_qbit_candidate, write_qbit_event};
 
@@ -53,7 +54,7 @@ mod qbit;
 /// chain spec plus everything resolved once at bootstrap so the per-height loop
 /// does no repeat setup. Built per command, then borrowed across every height.
 #[derive(Debug)]
-pub(crate) struct AuxpowCaptureContext {
+pub struct AuxpowCaptureContext {
     spec: &'static ChainSpec,
     /// Pool snapshot resolver, loaded from the embedded default snapshot.
     resolver: PoolResolver,
@@ -69,7 +70,7 @@ impl AuxpowCaptureContext {
     /// pool snapshot, and (only for child-payout families) loads the reward
     /// identities for the family namespace. The classifier is moved in from the
     /// runtime so the live override stays decided at one place.
-    async fn new_with_classifier(
+    pub async fn new_with_classifier(
         client: &Client,
         spec: &'static ChainSpec,
         parent_classifier: ConfiguredParentClassifier,
@@ -132,7 +133,7 @@ pub(super) fn family_of(spec: &'static ChainSpec) -> &'static FamilySpec {
 /// and never demotes prior evidence. Which malformed variant a chain produces
 /// is `FamilySpec::malformed_policy`, not a property of the failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HeightOutcome {
+pub enum HeightOutcome {
     /// An AuxPoW event was upserted for this height.
     AuxpowWritten,
     /// The block carries no merge-mining proof (or fails the version gate);
@@ -183,9 +184,37 @@ fn is_merge_mined(blob: &[u8], exact_version: i32) -> Result<bool> {
 /// Capture a single height through the family's fetch strategy. Outcomes and
 /// write semantics are identical to the historical per-chain runners; the
 /// chain label in capture contexts comes from the spec.
-async fn process_auxpow_height(
+///
+/// Every processed height also records which block the child chain carries
+/// there (see `docs/data-model.md`, "Child Displacement"): a captured AuxPoW
+/// block is recorded inside its capture transaction, and a block that yields
+/// no event (non-AuxPoW, or a malformed proof) is recorded in a transaction of
+/// its own. A rescanned height whose block changed therefore marks the earlier
+/// event displaced instead of leaving two current blocks. Poll and backfill
+/// share this path, so a backfill over a reorged range repairs it the same way.
+///
+/// The whole height, from the `getblockhash` observation through the last
+/// write, runs under a session-level lock on `(source, height)`, so what a
+/// producer observed is what it records: a live poller and a bounded backfill
+/// overlapping on one height observe and write one after the other, and the
+/// later observation describes the chain.
+pub async fn process_auxpow_height(
     client: &mut Client,
-    rpc: &BitcoindRpcClient,
+    rpc: &impl BitcoindRpc,
+    context: &AuxpowCaptureContext,
+    height: i32,
+) -> Result<HeightOutcome> {
+    let source_id = context.source_id();
+    lock_child_chain_height_session(client, source_id, height).await?;
+    let result = process_locked_height(client, rpc, context, height).await;
+    finish_child_chain_height_operation(client, source_id, height, result).await
+}
+
+/// One height's observation and writes, under the session-level height lock
+/// [`process_auxpow_height`] holds around it.
+async fn process_locked_height(
+    client: &mut Client,
+    rpc: &impl BitcoindRpc,
     context: &AuxpowCaptureContext,
     height: i32,
 ) -> Result<HeightOutcome> {
@@ -209,9 +238,19 @@ async fn process_auxpow_height(
         }
         AuxpowFetch::NonAuxpow => HeightOutcome::NonAuxpowSkipped,
         AuxpowFetch::Malformed(detail) => {
-            return record_malformed_height(client, context, height, &block_hash, detail).await;
+            record_malformed_height(client, context, height, &block_hash, detail).await?
         }
     };
+
+    if outcome != HeightOutcome::AuxpowWritten {
+        record_eventless_block(client, context, height, &block_hash).await?;
+    }
+    if matches!(
+        outcome,
+        HeightOutcome::MalformedSkipped | HeightOutcome::MalformedHeld
+    ) {
+        return Ok(outcome);
+    }
 
     // This exact height was reprocessed successfully, which is the ONLY thing
     // that clears its durable capture error. A cursor advance elsewhere never
@@ -225,6 +264,27 @@ async fn process_auxpow_height(
         );
     }
     Ok(outcome)
+}
+
+/// Record that the child chain carries `block_hash` at `height` when that block
+/// produced no event (non-AuxPoW, or a malformed proof). The store write takes
+/// the per-height lock itself; there is no event upsert to order it against.
+async fn record_eventless_block(
+    client: &mut Client,
+    context: &AuxpowCaptureContext,
+    height: i32,
+    block_hash: &BlockHash,
+) -> Result<()> {
+    let now = now_epoch_seconds()?;
+    let txn = client
+        .transaction()
+        .await
+        .with_context(|| format!("begin {} child block record", context.family().label))?;
+    record_child_chain_block(&txn, context.source_id(), height, block_hash.as_ref(), now).await?;
+    txn.commit()
+        .await
+        .with_context(|| format!("commit {} child block record", context.family().label))?;
+    Ok(())
 }
 
 /// Apply the family's malformed-proof policy to one height. Under
@@ -299,12 +359,18 @@ async fn write_classic_event(
     write_event_in_txn(client, context, &mut payload).await
 }
 
-/// The shared Core-classified upsert for both proof formats.
+/// The shared Core-classified upsert for both proof formats, followed by the
+/// child-side record that this block is the chain's block at its height. The
+/// capture transaction takes the per-height lock before any parent lock, so
+/// the record is ordered correctly against a concurrent capture at the same
+/// height; the upsert closure may run more than once under the retry loop and
+/// the record is idempotent.
 pub(super) async fn write_event_in_txn(
     client: &mut Client,
     context: &AuxpowCaptureContext,
     payload: &mut MergeMiningEventPayload,
 ) -> Result<()> {
+    let observed_at = now_epoch_seconds()?;
     capture_in_txn(
         client,
         context.source_id(),
@@ -312,7 +378,18 @@ pub(super) async fn write_event_in_txn(
         payload,
         context.family().label,
         async |txn, source_id, payload| {
-            upsert_merge_mining_event_with_attributions(txn, source_id, payload).await
+            let outcome =
+                upsert_merge_mining_event_with_attributions(txn, source_id, payload).await?;
+            let child_height = payload
+                .child_height
+                .context("bitcoind-family event payload carries no child height")?;
+            let child_block_hash = payload
+                .child_block_hash
+                .as_deref()
+                .context("bitcoind-family event payload carries no child block hash")?;
+            record_child_chain_block(txn, source_id, child_height, child_block_hash, observed_at)
+                .await?;
+            Ok(outcome)
         },
     )
     .await?;
@@ -320,7 +397,7 @@ pub(super) async fn write_event_in_txn(
 }
 
 async fn fetch_auxpow_candidate(
-    rpc: &BitcoindRpcClient,
+    rpc: &impl BitcoindRpc,
     context: &AuxpowCaptureContext,
     block_hash: &BlockHash,
     height: i32,
@@ -342,7 +419,7 @@ async fn fetch_auxpow_candidate(
 }
 
 async fn fetch_raw_block_candidate(
-    rpc: &BitcoindRpcClient,
+    rpc: &impl BitcoindRpc,
     spec: &'static ChainSpec,
     family: &'static FamilySpec,
     block_hash: &BlockHash,
@@ -368,7 +445,7 @@ async fn fetch_raw_block_candidate(
 }
 
 async fn fetch_header_blob_candidate(
-    rpc: &BitcoindRpcClient,
+    rpc: &impl BitcoindRpc,
     spec: &'static ChainSpec,
     family: &'static FamilySpec,
     block_hash: &BlockHash,
@@ -408,7 +485,7 @@ fn parsed_candidate_or_malformed(parsed: Result<Box<ParsedAuxpowBlock>>) -> Resu
 }
 
 async fn attach_child_payout_if_needed(
-    rpc: &BitcoindRpcClient,
+    rpc: &impl BitcoindRpc,
     context: &AuxpowCaptureContext,
     block_hash: &BlockHash,
     parsed: &mut ParsedAuxpowBlock,
