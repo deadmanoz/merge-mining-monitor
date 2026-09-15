@@ -187,8 +187,8 @@ A child chain can replace the block it carries at a height. The event captured
 for the replaced block is still valid Bitcoin-side evidence: its parent header
 carries real proof of work and its coinbase committed to that child block.
 Neither fact changes when the child chain prefers a different block at the
-same height, so displacement is recorded on the event rather than by revoking
-it.
+same height, so the schema records displacement on the event rather than
+through revocation.
 
 - `child_displaced_at` is the epoch second a producer observed that the child
   chain no longer carries the block at `child_height`; `child_displaced_by` is
@@ -201,7 +201,9 @@ it.
 
 `0022_add_child_displacement.sql` adds the columns with their constraints
 `NOT VALID`, and `0023_validate_child_displacement.sql` validates them under
-the weaker lock in its own transaction. No producer writes them yet; the
+the weaker lock in its own transaction. No producer writes them yet and no
+projection reads them: Hathor's capture path still revokes a superseded
+prior, and the other live pollers never rescan a processed height. The
 producer and read-side changes follow separately.
 
 ## Capture Errors
@@ -253,9 +255,12 @@ a global rule; see `docs/capture.md`.
   or stale row.
 - Bad evidence is removed with explicit event revocation, then the read model
   recomputes the affected parent state.
-- A child-chain reorg is not bad evidence. The displaced event stays active
-  for Bitcoin-side state and carries `child_displaced_at` and
-  `child_displaced_by` instead of a revocation.
+- A child-chain reorg is not bad evidence. The schema records a displaced
+  child block with `child_displaced_at` and `child_displaced_by` so the
+  event can stay active for Bitcoin-side state. No producer writes those
+  columns yet: until the producer transition lands, Hathor's capture path
+  still revokes a superseded prior (`hathor_superseded`), and the other
+  live pollers never rescan a processed height.
 - Bitcoin Core backbone rows are written by `sync-bitcoin-core` and are required
   for tree windows the UI should browse.
 
