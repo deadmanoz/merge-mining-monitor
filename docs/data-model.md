@@ -201,8 +201,10 @@ through revocation.
 - `mmm-store::record_child_chain_block(txn, source, height, hash, observed_at)`
   is the one write. It clears displacement on the event for that hash (a
   chain that flips back) and marks every other event at the height that is
-  not yet displaced, hashless partial observations included, as displaced
-  by it. An already-displaced event keeps its first displacement record:
+  not yet displaced as displaced by it. A hashless partial observation is
+  the current block when its Bitcoin parent is the recorded block's parent,
+  the identity partial promotion uses, and a different block otherwise. An
+  already-displaced event keeps its first displacement record:
   the columns say when a block first left the chain and what replaced it
   then, not which block is current now. The chain's current block at a
   height is the event with no displacement; when the chain carries a block
@@ -288,7 +290,8 @@ a global rule; see `docs/capture.md`.
   Hathor's capture path still revokes a superseded prior (`hathor_superseded`)
   until its producer change lands. A verdict that revokes evidence (Elastos
   non-BTC or classifier conflict) is scoped to the block it was reached on,
-  never to every event at the height.
+  never to every event at the height; a block is its hash, or for a hashless
+  historical row its height and Bitcoin parent.
 - Bitcoin Core backbone rows are written by `sync-bitcoin-core` and are required
   for tree windows the UI should browse.
 

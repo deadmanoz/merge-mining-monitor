@@ -119,7 +119,9 @@ This changelog starts with the initial release.
   The whole height runs under the session-level height lock. The non-BTC
   and classifier-conflict revocations still mark bad evidence, but they now
   apply to the block the verdict was reached on rather than to every event
-  at the height, since a rescanned height can hold a displaced block's event.
+  at the height, since a rescanned height can hold a displaced block's event;
+  a block is its hash, or for a hashless historical row its height and
+  Bitcoin parent, and the displacement write uses the same identity.
   `ELASTOS_REORG_DEPTH` is now read like every other chain's rescan depth
   (default 0), and the forbidden-depth policy that rejected it is gone. The
   eventless record for a non-AuxPoW or malformed block now goes through one

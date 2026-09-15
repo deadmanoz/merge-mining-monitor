@@ -121,10 +121,11 @@ pub async fn lock_child_chain_height(
 /// displacement; when the chain carries a block with no AuxPoW there is no
 /// current event, and a later such block changes nothing the columns record.
 ///
-/// Hashless partial observations at the height are displaced too. A partial
-/// observation of the current block would have been promoted to its exact
-/// identity by the capture upsert that precedes this call, so a hashless row
-/// that remains belongs to a different block. Revoked events are treated the
+/// A hashless partial observation at the height is the current block when its
+/// Bitcoin parent is `current_parent_hash` (the identity partial promotion
+/// uses), and a different block otherwise. A caller with no parent to name,
+/// because the current block carries no AuxPoW, displaces every hashless
+/// row: a hashless AuxPoW observation cannot be that block. Revoked events are treated the
 /// same as active ones: displacement tracks the child chain and revocation
 /// tracks evidence validity, and neither reads the other.
 ///
@@ -153,6 +154,7 @@ pub async fn record_child_chain_block(
     source_id: i64,
     child_height: i32,
     current_block_hash: &[u8],
+    current_parent_hash: Option<&[u8]>,
     observed_at: i64,
 ) -> Result<ChildDisplacementOutcome> {
     ensure!(
@@ -163,19 +165,32 @@ pub async fn record_child_chain_block(
     lock_child_chain_height(txn, source_id, child_height).await?;
     let rows = txn
         .query(
-            "UPDATE merge_mining_event \
-             SET child_displaced_at = CASE WHEN child_block_hash = $3 THEN NULL ELSE $4::bigint END, \
-                 child_displaced_by = CASE WHEN child_block_hash = $3 THEN NULL ELSE $3::bytea END \
-             WHERE source_id = $1 AND child_height = $2 \
+            "WITH candidate AS ( \
+                 SELECT id, \
+                        (COALESCE(child_block_hash = $3, FALSE) \
+                         OR (child_block_hash IS NULL \
+                             AND $4::bytea IS NOT NULL \
+                             AND btc_parent_header_hash = $4::bytea)) AS is_current \
+                 FROM merge_mining_event \
+                 WHERE source_id = $1 AND child_height = $2 \
+             ) \
+             UPDATE merge_mining_event e \
+             SET child_displaced_at = CASE WHEN c.is_current THEN NULL ELSE $5::bigint END, \
+                 child_displaced_by = CASE WHEN c.is_current THEN NULL ELSE $3::bytea END \
+             FROM candidate c \
+             WHERE e.id = c.id \
                AND ( \
-                 (child_block_hash = $3 AND child_displaced_at IS NOT NULL) \
-                 OR ( \
-                   (child_block_hash IS NULL OR child_block_hash <> $3) \
-                   AND child_displaced_at IS NULL \
-                 ) \
+                 (c.is_current AND e.child_displaced_at IS NOT NULL) \
+                 OR (NOT c.is_current AND e.child_displaced_at IS NULL) \
                ) \
-             RETURNING child_displaced_at IS NULL AS restored",
-            &[&source_id, &child_height, &current_block_hash, &observed_at],
+             RETURNING e.child_displaced_at IS NULL AS restored",
+            &[
+                &source_id,
+                &child_height,
+                &current_block_hash,
+                &current_parent_hash,
+                &observed_at,
+            ],
         )
         .await
         .context("record the child chain's current block")?;
@@ -195,6 +210,7 @@ pub async fn record_child_chain_block_in_own_transaction(
     source_id: i64,
     child_height: i32,
     current_block_hash: &[u8],
+    current_parent_hash: Option<&[u8]>,
     observed_at: i64,
 ) -> Result<ChildDisplacementOutcome> {
     let txn = client
@@ -206,6 +222,7 @@ pub async fn record_child_chain_block_in_own_transaction(
         source_id,
         child_height,
         current_block_hash,
+        current_parent_hash,
         observed_at,
     )
     .await?;

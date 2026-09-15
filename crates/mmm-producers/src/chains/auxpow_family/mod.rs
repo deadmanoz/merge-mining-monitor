@@ -249,6 +249,7 @@ async fn process_locked_height(
             context.source_id(),
             height,
             block_hash.as_ref(),
+            None,
             now_epoch_seconds()?,
         )
         .await?;
@@ -374,8 +375,15 @@ pub(super) async fn write_event_in_txn(
                 .child_block_hash
                 .as_deref()
                 .context("bitcoind-family event payload carries no child block hash")?;
-            record_child_chain_block(txn, source_id, child_height, child_block_hash, observed_at)
-                .await?;
+            record_child_chain_block(
+                txn,
+                source_id,
+                child_height,
+                child_block_hash,
+                Some(payload.btc_parent_header_hash.as_slice()),
+                observed_at,
+            )
+            .await?;
             Ok(outcome)
         },
     )

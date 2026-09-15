@@ -97,11 +97,13 @@ async fn elastos_recapture_restores_reversible_but_keeps_conflict_sticky() -> Re
         // Reversible revoke -> retag sticky (the classifier-conflict path) -> a Valid
         // recapture must NOT reactivate it.
         revoke_event(&client, event_id, 1_800_000_002, ELASTOS_REVOKE_NON_BTC).await?;
+        let parent_hash = parsed.parent_header.hash();
         let retagged = retag_revocation_reason(
             &client,
             source_id,
             recon.height,
             recon.block_hash.as_ref(),
+            parent_hash.as_ref(),
             ELASTOS_REVOKE_NON_BTC,
             ELASTOS_REVOKE_CLASSIFIER_CONFLICT,
         )

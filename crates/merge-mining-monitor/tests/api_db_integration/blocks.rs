@@ -555,7 +555,7 @@ async fn block_projects_child_displacement_on_event_details() -> Result<()> {
             .await?;
         }
         let txn = client.transaction().await?;
-        record_child_chain_block(&txn, namecoin, 120, &current_child, ts + 60).await?;
+        record_child_chain_block(&txn, namecoin, 120, &current_child, None, ts + 60).await?;
         txn.commit().await?;
 
         let displaced = project_block(&client, &displaced_parent).await?;
