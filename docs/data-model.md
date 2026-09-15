@@ -198,13 +198,23 @@ through revocation.
   the parent projections) never read these columns. Only child-centric views,
   which block the child chain carries at a height, consult them.
 - Revocation keeps its one meaning: the evidence itself is bad.
+- `mmm-store::record_child_chain_block(source, height, hash, observed_at)` is
+  the one write. It clears displacement on the event for that hash (a chain
+  that flips back) and marks every other event at the height that is not
+  yet displaced, hashless partial observations included, as displaced by
+  it. An already-displaced event keeps its first displacement record, so
+  the chain's current block at a height is the event with no displacement.
+  It is idempotent, ignores revocation state, changes only the two columns,
+  and so needs no parent reconciliation or parent lock; producers call it
+  inside the capture transaction after upserting the current block's
+  event, or alone when the current block carries no AuxPoW.
 
 `0022_add_child_displacement.sql` adds the columns with their constraints
 `NOT VALID`, and `0023_validate_child_displacement.sql` validates them under
-the weaker lock in its own transaction. No producer writes them yet and no
-projection reads them: Hathor's capture path still revokes a superseded
-prior, and the other live pollers never rescan a processed height. The
-producer and read-side changes follow separately.
+the weaker lock in its own transaction. No producer calls the write yet and
+no projection reads the columns: Hathor's capture path still revokes a
+superseded prior, and the other live pollers never rescan a processed
+height. The producer and read-side changes follow separately.
 
 ## Capture Errors
 
