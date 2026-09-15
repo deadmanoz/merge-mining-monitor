@@ -73,6 +73,8 @@
       "child_header_hex": null,
       "child_block_time": 1779778050,
       "child_nbits": null,
+      "child_displaced_at": null,
+      "child_displaced_by": null,
       "btc_parent_header_hash": "abababababababababababababababababababababababababababababababab",
       "event_parent_kind": "stale",
       "btc_parent_coinbase_txid": null,

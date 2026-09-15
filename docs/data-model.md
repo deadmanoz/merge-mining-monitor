@@ -226,10 +226,11 @@ through revocation.
 
 `0022_add_child_displacement.sql` adds the columns with their constraints
 `NOT VALID`, and `0023_validate_child_displacement.sql` validates them under
-the weaker lock in its own transaction. No producer calls the write yet and
-no projection reads the columns: Hathor's capture path still revokes a
+the weaker lock in its own transaction. The block detail API projects the
+pair on each event detail as `child_displaced_at` and `child_displaced_by`.
+No producer calls the write yet: Hathor's capture path still revokes a
 superseded prior, and the other live pollers never rescan a processed
-height. The producer and read-side changes follow separately.
+height. The producer changes follow separately.
 
 ## Capture Errors
 

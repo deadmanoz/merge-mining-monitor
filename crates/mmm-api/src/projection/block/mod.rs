@@ -181,6 +181,14 @@ pub struct EventDetail {
     pub child_header_hex: Option<String>,
     pub child_block_time: Option<i64>,
     pub child_nbits: Option<String>,
+    /// When a producer observed the child chain no longer carrying this
+    /// event's block at `child_height`, and the hash of the block carried
+    /// there instead (same display order as `child_block_hash`). Set and
+    /// cleared together. A null pair means no displacement has been recorded,
+    /// not that this is the chain's current block. Child-side only: a
+    /// displaced event still counts for every Bitcoin-side field.
+    pub child_displaced_at: Option<i64>,
+    pub child_displaced_by: Option<String>,
     pub btc_parent_header_hash: String,
     pub event_parent_kind: &'static str,
     pub btc_parent_coinbase_txid: Option<String>,

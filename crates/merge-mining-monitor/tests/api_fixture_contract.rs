@@ -233,31 +233,56 @@ fn assert_block_fixture_contract(file: &str, fixture: &Value) {
         .as_array()
         .unwrap_or_else(|| panic!("{file} must carry an event_details array"));
     for event in events {
-        let object = event
-            .as_object()
-            .unwrap_or_else(|| panic!("{file} event detail must be an object"));
-        for field in ["child_header_hex", "child_nbits"] {
-            assert!(
-                object.contains_key(field),
-                "{file} event detail must include nullable {field}"
-            );
-        }
-        if let Some(header) = event["child_header_hex"].as_str() {
-            assert_lower_hex(header, 160, file, "child_header_hex");
-        } else {
-            assert!(
-                event["child_header_hex"].is_null(),
-                "{file} child_header_hex must be null or a string"
-            );
-        }
-        if let Some(nbits) = event["child_nbits"].as_str() {
-            assert_lower_hex(nbits, 8, file, "child_nbits");
-        } else {
-            assert!(
-                event["child_nbits"].is_null(),
-                "{file} child_nbits must be null or a string"
-            );
-        }
+        assert_event_detail_fixture_contract(file, event);
+    }
+}
+
+/// One `event_details[]` entry: the nullable child evidence fields and the
+/// child-side displacement pair.
+fn assert_event_detail_fixture_contract(file: &str, event: &Value) {
+    let object = event
+        .as_object()
+        .unwrap_or_else(|| panic!("{file} event detail must be an object"));
+    for field in ["child_header_hex", "child_nbits"] {
+        assert!(
+            object.contains_key(field),
+            "{file} event detail must include nullable {field}"
+        );
+    }
+    if let Some(header) = event["child_header_hex"].as_str() {
+        assert_lower_hex(header, 160, file, "child_header_hex");
+    } else {
+        assert!(
+            event["child_header_hex"].is_null(),
+            "{file} child_header_hex must be null or a string"
+        );
+    }
+    if let Some(nbits) = event["child_nbits"].as_str() {
+        assert_lower_hex(nbits, 8, file, "child_nbits");
+    } else {
+        assert!(
+            event["child_nbits"].is_null(),
+            "{file} child_nbits must be null or a string"
+        );
+    }
+    for field in ["child_displaced_at", "child_displaced_by"] {
+        assert!(
+            object.contains_key(field),
+            "{file} event detail must include nullable {field}"
+        );
+    }
+    // Child-side displacement is set and cleared as a pair: a time with
+    // the displacing block hash, or both null.
+    match (
+        event["child_displaced_at"].as_i64(),
+        event["child_displaced_by"].as_str(),
+    ) {
+        (Some(_), Some(hash)) => assert_lower_hex(hash, 64, file, "child_displaced_by"),
+        (None, None) => assert!(
+            event["child_displaced_at"].is_null() && event["child_displaced_by"].is_null(),
+            "{file} child_displaced_at and child_displaced_by must be null or an integer and a string"
+        ),
+        _ => panic!("{file} child_displaced_at and child_displaced_by must be set together"),
     }
 }
 
