@@ -283,10 +283,12 @@ a global rule; see `docs/capture.md`.
   recomputes the affected parent state.
 - A child-chain reorg is not bad evidence. The schema records a displaced
   child block with `child_displaced_at` and `child_displaced_by` so the
-  event can stay active for Bitcoin-side state. No producer writes those
-  columns yet: until the producer transition lands, Hathor's capture path
-  still revokes a superseded prior (`hathor_superseded`), and the other
-  live pollers never rescan a processed height.
+  event can stay active for Bitcoin-side state. The bitcoind-family and
+  Elastos producers write those columns for every height they process;
+  Hathor's capture path still revokes a superseded prior (`hathor_superseded`)
+  until its producer change lands. A verdict that revokes evidence (Elastos
+  non-BTC or classifier conflict) is scoped to the block it was reached on,
+  never to every event at the height.
 - Bitcoin Core backbone rows are written by `sync-bitcoin-core` and are required
   for tree windows the UI should browse.
 

@@ -110,6 +110,25 @@ async fn core_cache_nbits_mismatch_revokes_an_existing_event() -> Result<()> {
             process_elastos_height(&mut client, &rpc, &context, height).await?,
             ElastosHeightOutcome::AuxpowWritten
         );
+        // A second block's event at the same height (a rescan can leave one): a
+        // verdict on the block the chain carries must not touch its evidence.
+        let sibling_hash = hash_bytes(0x5a01);
+        insert_event(
+            &client,
+            EventSeed {
+                source_id: context.source_id(),
+                child_height: height,
+                child_hash: sibling_hash.clone(),
+                parent_hash: hash_bytes(0x5b01),
+                prev_hash: hash_bytes(0x5b00),
+                parent_time: 1_800_000_000,
+                kind: "near",
+                pow_validates_btc_target: false,
+                btc_height: None,
+                pool_id: None,
+            },
+        )
+        .await?;
 
         let reconstructed = block.reconstruct()?;
         let auxpow = reconstructed
@@ -146,17 +165,30 @@ async fn core_cache_nbits_mismatch_revokes_an_existing_event() -> Result<()> {
             .await?;
         assert_eq!(
             row.get::<_, i64>(0),
-            1,
+            2,
             "reprocess must not write a replacement row"
         );
         assert_eq!(
             row.get::<_, i64>(1),
-            0,
-            "mismatched Core nBits must revoke the event"
+            1,
+            "mismatched Core nBits must revoke this block's event and no other"
         );
         assert_eq!(
             row.get::<_, Option<String>>(2).as_deref(),
             Some(ELASTOS_REVOKE_NON_BTC)
+        );
+        let sibling = client
+            .query_one(
+                "SELECT revoked_at, child_displaced_by FROM merge_mining_event \
+                 WHERE source_id = $1 AND child_height = $2 AND child_block_hash = $3",
+                &[&context.source_id(), &height, &sibling_hash],
+            )
+            .await?;
+        assert_eq!(sibling.get::<_, Option<i64>>(0), None);
+        assert_eq!(
+            sibling.get::<_, Option<Vec<u8>>>(1),
+            Some(reconstructed.block_hash.to_byte_array().to_vec()),
+            "the sibling is displaced by the block the chain carries, not revoked"
         );
         Ok(())
     })

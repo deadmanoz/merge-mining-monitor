@@ -101,6 +101,7 @@ async fn elastos_recapture_restores_reversible_but_keeps_conflict_sticky() -> Re
             &client,
             source_id,
             recon.height,
+            recon.block_hash.as_ref(),
             ELASTOS_REVOKE_NON_BTC,
             ELASTOS_REVOKE_CLASSIFIER_CONFLICT,
         )

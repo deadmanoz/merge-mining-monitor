@@ -40,8 +40,8 @@ pub use capture_error::{
     CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error, record_capture_error,
 };
 pub use chains::elastos::{
-    ElastosIdentityReresolveRow, active_event_ids_at_height, load_elastos_identity_reresolve_batch,
-    write_elastos_capture_in_txn,
+    ElastosIdentityReresolveRow, active_event_ids_for_child_block,
+    load_elastos_identity_reresolve_batch, write_elastos_capture_in_txn,
 };
 pub use chains::hathor::{
     HathorEventRow, hathor_events_at_height, load_hathor_reward_replay_batch,
