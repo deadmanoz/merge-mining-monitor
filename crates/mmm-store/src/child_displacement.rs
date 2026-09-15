@@ -37,11 +37,15 @@ pub struct ChildDisplacementOutcome {
 /// same as active ones: displacement tracks the child chain and revocation
 /// tracks evidence validity, and neither reads the other.
 ///
-/// Idempotent: repeating the call for the same block changes nothing. Only
-/// the two displacement columns change, so no parent read-model
-/// reconciliation and no parent advisory lock are needed. Call it inside the
-/// capture transaction after the current block's event has been upserted, or
-/// on its own when the current block carries no AuxPoW and has no event.
+/// The transition is one UPDATE, so it is atomic under autocommit as well as
+/// inside a transaction: a failure can never leave the height half-moved, and
+/// two callers recording different blocks at the same height serialize on the
+/// row locks, with the later commit describing the chain. Idempotent: repeating
+/// the call for the same block changes nothing. Only the two displacement
+/// columns change, so no parent read-model reconciliation and no parent
+/// advisory lock are needed. Producers call it inside the capture transaction
+/// after the current block's event has been upserted, or on its own when the
+/// current block carries no AuxPoW and has no event.
 pub async fn record_child_chain_block<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -54,30 +58,27 @@ pub async fn record_child_chain_block<C: GenericClient>(
         "child block hash must be 32 bytes, got {}",
         current_block_hash.len()
     );
-    let restored = client
-        .execute(
+    let rows = client
+        .query(
             "UPDATE merge_mining_event \
-             SET child_displaced_at = NULL, child_displaced_by = NULL \
+             SET child_displaced_at = CASE WHEN child_block_hash = $3 THEN NULL ELSE $4::bigint END, \
+                 child_displaced_by = CASE WHEN child_block_hash = $3 THEN NULL ELSE $3::bytea END \
              WHERE source_id = $1 AND child_height = $2 \
-               AND child_block_hash = $3 \
-               AND child_displaced_at IS NOT NULL",
-            &[&source_id, &child_height, &current_block_hash],
-        )
-        .await
-        .context("restore the child chain's current block")?;
-    let displaced = client
-        .execute(
-            "UPDATE merge_mining_event \
-             SET child_displaced_at = $4, child_displaced_by = $3 \
-             WHERE source_id = $1 AND child_height = $2 \
-               AND child_displaced_at IS NULL \
-               AND (child_block_hash IS NULL OR child_block_hash <> $3)",
+               AND ( \
+                 (child_block_hash = $3 AND child_displaced_at IS NOT NULL) \
+                 OR ( \
+                   (child_block_hash IS NULL OR child_block_hash <> $3) \
+                   AND child_displaced_at IS NULL \
+                 ) \
+               ) \
+             RETURNING child_displaced_at IS NULL AS restored",
             &[&source_id, &child_height, &current_block_hash, &observed_at],
         )
         .await
-        .context("displace the child chain's replaced blocks")?;
+        .context("record the child chain's current block")?;
+    let restored = rows.iter().filter(|row| row.get::<_, bool>(0)).count() as u64;
     Ok(ChildDisplacementOutcome {
         restored,
-        displaced,
+        displaced: rows.len() as u64 - restored,
     })
 }
