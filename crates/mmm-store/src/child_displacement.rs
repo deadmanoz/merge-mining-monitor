@@ -15,6 +15,24 @@ use tokio_postgres::{Client, Transaction};
 /// from the source-health class in the same space.
 const CHILD_CHAIN_LOCK_CLASS: i32 = 0x4348; // 'CH' - child chain block at a height
 
+/// What the caller of [`record_child_chain_block`] knows about the current
+/// block's Bitcoin parent, which decides how hashless partial observations at
+/// the height are treated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CurrentBlockParent<'a> {
+    /// The block's proof verified and names this parent (internal byte order).
+    /// A hashless row with the same parent is the block; any other hashless
+    /// row is a different block and is displaced.
+    Known(&'a [u8]),
+    /// The block is known to carry no AuxPoW. No hashless AuxPoW observation
+    /// can be it, so every hashless row is displaced.
+    NoAuxpow,
+    /// The block's proof did not verify, so its parent is unknown. Hashless
+    /// rows are left untouched: one of them may be this very block, and
+    /// displacing it by itself would poison its later promotion.
+    Unknown,
+}
+
 /// What one `record_child_chain_block` call changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ChildDisplacementOutcome {
@@ -121,10 +139,13 @@ pub async fn lock_child_chain_height(
 /// displacement; when the chain carries a block with no AuxPoW there is no
 /// current event, and a later such block changes nothing the columns record.
 ///
-/// Hashless partial observations at the height are displaced too. A partial
-/// observation of the current block would have been promoted to its exact
-/// identity by the capture upsert that precedes this call, so a hashless row
-/// that remains belongs to a different block. Revoked events are treated the
+/// A hashless partial observation at the height is treated by what the caller
+/// knows about the current block's parent, see [`CurrentBlockParent`]: with a
+/// known parent the row with that parent is the block (the identity partial
+/// promotion uses) and any other hashless row is displaced; a block that
+/// carries no AuxPoW displaces every hashless row, since none can be it; a
+/// block whose proof did not verify leaves hashless rows untouched, since the
+/// caller cannot tell which block such a row observed. Revoked events are treated the
 /// same as active ones: displacement tracks the child chain and revocation
 /// tracks evidence validity, and neither reads the other.
 ///
@@ -153,6 +174,7 @@ pub async fn record_child_chain_block(
     source_id: i64,
     child_height: i32,
     current_block_hash: &[u8],
+    current_parent: CurrentBlockParent<'_>,
     observed_at: i64,
 ) -> Result<ChildDisplacementOutcome> {
     ensure!(
@@ -161,21 +183,41 @@ pub async fn record_child_chain_block(
         current_block_hash.len()
     );
     lock_child_chain_height(txn, source_id, child_height).await?;
+    let (parent_hash, hashless_decidable) = match current_parent {
+        CurrentBlockParent::Known(parent) => (Some(parent), true),
+        CurrentBlockParent::NoAuxpow => (None, true),
+        CurrentBlockParent::Unknown => (None, false),
+    };
     let rows = txn
         .query(
-            "UPDATE merge_mining_event \
-             SET child_displaced_at = CASE WHEN child_block_hash = $3 THEN NULL ELSE $4::bigint END, \
-                 child_displaced_by = CASE WHEN child_block_hash = $3 THEN NULL ELSE $3::bytea END \
-             WHERE source_id = $1 AND child_height = $2 \
+            "WITH candidate AS ( \
+                 SELECT id, \
+                        (COALESCE(child_block_hash = $3, FALSE) \
+                         OR (child_block_hash IS NULL \
+                             AND $4::bytea IS NOT NULL \
+                             AND btc_parent_header_hash = $4::bytea)) AS is_current \
+                 FROM merge_mining_event \
+                 WHERE source_id = $1 AND child_height = $2 \
+                   AND NOT (child_block_hash IS NULL AND NOT $5::boolean) \
+             ) \
+             UPDATE merge_mining_event e \
+             SET child_displaced_at = CASE WHEN c.is_current THEN NULL ELSE $6::bigint END, \
+                 child_displaced_by = CASE WHEN c.is_current THEN NULL ELSE $3::bytea END \
+             FROM candidate c \
+             WHERE e.id = c.id \
                AND ( \
-                 (child_block_hash = $3 AND child_displaced_at IS NOT NULL) \
-                 OR ( \
-                   (child_block_hash IS NULL OR child_block_hash <> $3) \
-                   AND child_displaced_at IS NULL \
-                 ) \
+                 (c.is_current AND e.child_displaced_at IS NOT NULL) \
+                 OR (NOT c.is_current AND e.child_displaced_at IS NULL) \
                ) \
-             RETURNING child_displaced_at IS NULL AS restored",
-            &[&source_id, &child_height, &current_block_hash, &observed_at],
+             RETURNING e.child_displaced_at IS NULL AS restored",
+            &[
+                &source_id,
+                &child_height,
+                &current_block_hash,
+                &parent_hash,
+                &hashless_decidable,
+                &observed_at,
+            ],
         )
         .await
         .context("record the child chain's current block")?;
@@ -184,4 +226,33 @@ pub async fn record_child_chain_block(
         restored,
         displaced: rows.len() as u64 - restored,
     })
+}
+
+/// [`record_child_chain_block`] in a transaction of its own, for a block that
+/// yields no event (no AuxPoW, or a proof that failed a gate): there is no
+/// event upsert to order it against, and the record takes the per-height lock
+/// itself.
+pub async fn record_child_chain_block_in_own_transaction(
+    client: &mut Client,
+    source_id: i64,
+    child_height: i32,
+    current_block_hash: &[u8],
+    current_parent: CurrentBlockParent<'_>,
+    observed_at: i64,
+) -> Result<ChildDisplacementOutcome> {
+    let txn = client
+        .transaction()
+        .await
+        .context("begin child block record")?;
+    let outcome = record_child_chain_block(
+        &txn,
+        source_id,
+        child_height,
+        current_block_hash,
+        current_parent,
+        observed_at,
+    )
+    .await?;
+    txn.commit().await.context("commit child block record")?;
+    Ok(outcome)
 }

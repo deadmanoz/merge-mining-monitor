@@ -34,22 +34,35 @@ pub async fn write_elastos_capture_in_txn<C: GenericClient>(
     Ok(outcome)
 }
 
-/// Active (non-revoked) event ids for a source at a child height. The Elastos
-/// capture uses this to revoke a pre-existing active row when a replay/backfill
-/// verdict flips to rejected (Contaminant / Indeterminate / classifier conflict).
-pub async fn active_event_ids_at_height(
+/// Ids of the active (non-revoked) Elastos events for one child block: the
+/// exact row for its hash, plus a hashless historical row at the height whose
+/// Bitcoin parent is the block's parent (the identity partial promotion uses).
+/// Scoped to the block rather than the height because a rescanned height may
+/// hold events for more than one block, and a verdict on one block says
+/// nothing about the evidence of another.
+pub async fn active_event_ids_for_child_block(
     client: &Client,
     source_id: i64,
     height: i32,
+    child_block_hash: &[u8],
+    btc_parent_header_hash: &[u8],
 ) -> Result<Vec<i64>> {
     let rows = client
         .query(
             "SELECT id FROM merge_mining_event \
-              WHERE source_id = $1 AND child_height = $2 AND revoked_at IS NULL",
-            &[&source_id, &height],
+              WHERE source_id = $1 AND child_height = $2 \
+                AND (child_block_hash = $3 \
+                     OR (child_block_hash IS NULL AND btc_parent_header_hash = $4)) \
+                AND revoked_at IS NULL",
+            &[
+                &source_id,
+                &height,
+                &child_block_hash,
+                &btc_parent_header_hash,
+            ],
         )
         .await
-        .context("query active events at height")?;
+        .context("query active events for child block")?;
     Ok(rows.iter().map(|row| row.get("id")).collect())
 }
 

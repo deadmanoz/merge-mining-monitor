@@ -198,11 +198,16 @@ through revocation.
   the parent projections) never read these columns. Only child-centric views,
   which block the child chain carries at a height, consult them.
 - Revocation keeps its one meaning: the evidence itself is bad.
-- `mmm-store::record_child_chain_block(txn, source, height, hash, observed_at)`
+- `mmm-store::record_child_chain_block(txn, source, height, hash, parent, observed_at)`
   is the one write. It clears displacement on the event for that hash (a
   chain that flips back) and marks every other event at the height that is
-  not yet displaced, hashless partial observations included, as displaced
-  by it. An already-displaced event keeps its first displacement record:
+  not yet displaced as displaced by it. A hashless partial observation is
+  the current block when its Bitcoin parent is the recorded block's parent,
+  the identity partial promotion uses, and a different block when the
+  parents differ; a block known to carry no AuxPoW displaces every hashless
+  row, since none can be it; a block whose proof did not verify leaves
+  hashless rows untouched. An already-displaced event keeps its first
+  displacement record:
   the columns say when a block first left the chain and what replaced it
   then, not which block is current now. The chain's current block at a
   height is the event with no displacement; when the chain carries a block
@@ -228,10 +233,9 @@ through revocation.
 `NOT VALID`, and `0023_validate_child_displacement.sql` validates them under
 the weaker lock in its own transaction. The block detail API projects the
 pair on each event detail as `child_displaced_at` and `child_displaced_by`.
-The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit) calls the write
-for every height it processes. Hathor's capture path still revokes a
-superseded prior and Elastos never rescans a processed height; their
-producer changes follow separately.
+The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit) and the Elastos
+producer call the write for every height they process. Hathor's capture path
+still revokes a superseded prior; its producer change follows separately.
 
 ## Capture Errors
 
@@ -284,10 +288,13 @@ a global rule; see `docs/capture.md`.
   recomputes the affected parent state.
 - A child-chain reorg is not bad evidence. The schema records a displaced
   child block with `child_displaced_at` and `child_displaced_by` so the
-  event can stay active for Bitcoin-side state. No producer writes those
-  columns yet: until the producer transition lands, Hathor's capture path
-  still revokes a superseded prior (`hathor_superseded`), and the other
-  live pollers never rescan a processed height.
+  event can stay active for Bitcoin-side state. The bitcoind-family and
+  Elastos producers write those columns for every height they process;
+  Hathor's capture path still revokes a superseded prior (`hathor_superseded`)
+  until its producer change lands. A verdict that revokes evidence (Elastos
+  non-BTC or classifier conflict) is scoped to the block it was reached on,
+  never to every event at the height; a block is its hash, or for a hashless
+  historical row its height and Bitcoin parent.
 - Bitcoin Core backbone rows are written by `sync-bitcoin-core` and are required
   for tree windows the UI should browse.
 

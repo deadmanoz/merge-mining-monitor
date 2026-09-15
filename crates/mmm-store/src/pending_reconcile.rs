@@ -3,7 +3,8 @@
 use anyhow::{Context, Result};
 use tokio_postgres::{Client, GenericClient};
 
-/// Retag a same-height row already revoked with `from_reason` to `to_reason`
+/// Retag one child block's row (by hash, or a hashless row by parent) already
+/// revoked with `from_reason` to `to_reason`
 /// WITHOUT changing its revoked status (so no read-model reconcile is needed) and
 /// without touching active rows, manual revokes, or already-`to_reason` rows. The
 /// Elastos classifier-conflict path uses this to make a previously reversible
@@ -13,15 +14,26 @@ pub async fn retag_revocation_reason(
     client: &Client,
     source_id: i64,
     height: i32,
+    child_block_hash: &[u8],
+    btc_parent_header_hash: &[u8],
     from_reason: &str,
     to_reason: &str,
 ) -> Result<u64> {
     client
         .execute(
-            "UPDATE merge_mining_event SET revocation_reason = $4 \
+            "UPDATE merge_mining_event SET revocation_reason = $6 \
               WHERE source_id = $1 AND child_height = $2 \
-                AND revoked_at IS NOT NULL AND revocation_reason = $3",
-            &[&source_id, &height, &from_reason, &to_reason],
+                AND (child_block_hash = $3 \
+                     OR (child_block_hash IS NULL AND btc_parent_header_hash = $4)) \
+                AND revoked_at IS NOT NULL AND revocation_reason = $5",
+            &[
+                &source_id,
+                &height,
+                &child_block_hash,
+                &btc_parent_header_hash,
+                &from_reason,
+                &to_reason,
+            ],
         )
         .await
         .context("retag revocation reason")

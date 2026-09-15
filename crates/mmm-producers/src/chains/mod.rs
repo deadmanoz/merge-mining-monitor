@@ -39,7 +39,7 @@ pub use auxpow_family::{
 #[cfg(any(test, feature = "db-integration"))]
 pub use bitcoind_rpc::BitcoindRpc;
 #[cfg(any(test, feature = "db-integration"))]
-pub use spec::{CHAINS, ChainId, ChainSpec, ReorgPolicy, by_id};
+pub use spec::{CHAINS, ChainId, ChainSpec, by_id};
 
 #[derive(Debug)]
 struct OfflineValidClassifierConflict;

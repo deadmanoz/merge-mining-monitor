@@ -40,8 +40,8 @@ pub use capture_error::{
     CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error, record_capture_error,
 };
 pub use chains::elastos::{
-    ElastosIdentityReresolveRow, active_event_ids_at_height, load_elastos_identity_reresolve_batch,
-    write_elastos_capture_in_txn,
+    ElastosIdentityReresolveRow, active_event_ids_for_child_block,
+    load_elastos_identity_reresolve_batch, write_elastos_capture_in_txn,
 };
 pub use chains::hathor::{
     HathorEventRow, hathor_events_at_height, load_hathor_reward_replay_batch,
@@ -54,8 +54,9 @@ pub use chains::rsk::{
     upsert_rsk_pool_identities_with_policy, write_rsk_capture_in_txn,
 };
 pub use child_displacement::{
-    ChildDisplacementOutcome, finish_child_chain_height_operation, lock_child_chain_height,
-    lock_child_chain_height_session, record_child_chain_block,
+    ChildDisplacementOutcome, CurrentBlockParent, finish_child_chain_height_operation,
+    lock_child_chain_height, lock_child_chain_height_session, record_child_chain_block,
+    record_child_chain_block_in_own_transaction,
 };
 pub use event::{
     EventWriteDisposition, EventWriteOutcome, delete_event_pool_attributions_for_source,

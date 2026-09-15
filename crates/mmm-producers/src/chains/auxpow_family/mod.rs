@@ -42,9 +42,10 @@ use mmm_capture::child_payout::PoolIdentityLookup;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::capture_in_txn;
 use mmm_store::{
-    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error, finish_child_chain_height_operation,
-    load_pool_identities_by_namespace, lock_child_chain_height_session, record_capture_error,
-    record_child_chain_block, upsert_merge_mining_event_with_attributions,
+    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, CurrentBlockParent, clear_capture_error,
+    finish_child_chain_height_operation, load_pool_identities_by_namespace,
+    lock_child_chain_height_session, record_capture_error, record_child_chain_block,
+    record_child_chain_block_in_own_transaction, upsert_merge_mining_event_with_attributions,
 };
 use qbit::{ensure_qbit_mainnet_endpoint, fetch_qbit_candidate, write_qbit_event};
 
@@ -242,8 +243,26 @@ async fn process_locked_height(
         }
     };
 
-    if outcome != HeightOutcome::AuxpowWritten {
-        record_eventless_block(client, context, height, &block_hash).await?;
+    // A block the node confirms carries no AuxPoW cannot be any hashless AuxPoW
+    // observation, so it displaces them; a proof that failed to parse leaves
+    // the block's parent unknown, so hashless rows are left alone.
+    let current_parent = match outcome {
+        HeightOutcome::AuxpowWritten => None,
+        HeightOutcome::NonAuxpowSkipped => Some(CurrentBlockParent::NoAuxpow),
+        HeightOutcome::MalformedSkipped | HeightOutcome::MalformedHeld => {
+            Some(CurrentBlockParent::Unknown)
+        }
+    };
+    if let Some(current_parent) = current_parent {
+        record_child_chain_block_in_own_transaction(
+            client,
+            context.source_id(),
+            height,
+            block_hash.as_ref(),
+            current_parent,
+            now_epoch_seconds()?,
+        )
+        .await?;
     }
     if matches!(
         outcome,
@@ -264,27 +283,6 @@ async fn process_locked_height(
         );
     }
     Ok(outcome)
-}
-
-/// Record that the child chain carries `block_hash` at `height` when that block
-/// produced no event (non-AuxPoW, or a malformed proof). The store write takes
-/// the per-height lock itself; there is no event upsert to order it against.
-async fn record_eventless_block(
-    client: &mut Client,
-    context: &AuxpowCaptureContext,
-    height: i32,
-    block_hash: &BlockHash,
-) -> Result<()> {
-    let now = now_epoch_seconds()?;
-    let txn = client
-        .transaction()
-        .await
-        .with_context(|| format!("begin {} child block record", context.family().label))?;
-    record_child_chain_block(&txn, context.source_id(), height, block_hash.as_ref(), now).await?;
-    txn.commit()
-        .await
-        .with_context(|| format!("commit {} child block record", context.family().label))?;
-    Ok(())
 }
 
 /// Apply the family's malformed-proof policy to one height. Under
@@ -387,8 +385,15 @@ pub(super) async fn write_event_in_txn(
                 .child_block_hash
                 .as_deref()
                 .context("bitcoind-family event payload carries no child block hash")?;
-            record_child_chain_block(txn, source_id, child_height, child_block_hash, observed_at)
-                .await?;
+            record_child_chain_block(
+                txn,
+                source_id,
+                child_height,
+                child_block_hash,
+                CurrentBlockParent::Known(payload.btc_parent_header_hash.as_slice()),
+                observed_at,
+            )
+            .await?;
             Ok(outcome)
         },
     )
