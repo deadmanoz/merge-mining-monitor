@@ -67,6 +67,15 @@ This changelog starts with the initial release.
   Bitcoin proof-of-work target. Rename missing-parent-header skip counters
   to describe the evidence shape instead of an upgrade era.
 
+- Add nullable `child_displaced_at` and `child_displaced_by` columns to
+  `merge_mining_event` (`0022_add_child_displacement.sql`), so a child-chain
+  reorg can be recorded on the replaced block's event without revoking it. A
+  displaced event still carries valid Bitcoin-side evidence, and revoking it
+  would silence that evidence everywhere. The columns are set and cleared
+  together, a block is never displaced by itself, and Bitcoin-side aggregates
+  never read them. Nothing writes them yet; the producer rescan path and the
+  read-side projection follow in later changes.
+
 ## [0.7.13] - 2026-09-09
 
 - Refresh the Research publication pin to `e09f52b`, covering 1,283,863

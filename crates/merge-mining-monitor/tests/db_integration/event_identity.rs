@@ -62,6 +62,84 @@ async fn migration_supports_nullable_child_evidence_columns() -> Result<()> {
 }
 
 #[tokio::test]
+async fn migration_pairs_child_displacement_and_rejects_self_displacement() -> Result<()> {
+    crate::run_db_test!(client, {
+        let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let payload = exact_payload(1_020, 2_020)?;
+        let event_id = upsert_merge_mining_event(&client, source_id, &payload)
+            .await?
+            .event_id;
+        let own_hash = payload
+            .child_block_hash
+            .as_ref()
+            .expect("fixture carries an exact child hash")
+            .clone();
+        let other_hash = vec![0x11u8; 32];
+
+        // The pair constraint: a time without a displacing hash is rejected.
+        let half_set = client
+            .execute(
+                "UPDATE merge_mining_event SET child_displaced_at = 3_000 WHERE id = $1",
+                &[&event_id],
+            )
+            .await
+            .expect_err("child_displaced_at without child_displaced_by must be rejected");
+        assert_eq!(
+            half_set.as_db_error().and_then(|error| error.constraint()),
+            Some("chk_mme_child_displacement_pair")
+        );
+
+        // A block is never displaced by itself.
+        let self_displaced = client
+            .execute(
+                "UPDATE merge_mining_event \
+                 SET child_displaced_at = 3_000, child_displaced_by = $2 \
+                 WHERE id = $1",
+                &[&event_id, &own_hash],
+            )
+            .await
+            .expect_err("a block displaced by its own hash must be rejected");
+        assert_eq!(
+            self_displaced
+                .as_db_error()
+                .and_then(|error| error.constraint()),
+            Some("chk_mme_child_displaced_by_other_block")
+        );
+
+        // A different 32-byte hash plus a time is the valid displaced state, and
+        // clearing both together returns the row to not displaced.
+        client
+            .execute(
+                "UPDATE merge_mining_event \
+                 SET child_displaced_at = 3_000, child_displaced_by = $2 \
+                 WHERE id = $1",
+                &[&event_id, &other_hash],
+            )
+            .await?;
+        let row = client
+            .query_one(
+                "SELECT child_displaced_at, child_displaced_by, revoked_at \
+                 FROM merge_mining_event WHERE id = $1",
+                &[&event_id],
+            )
+            .await?;
+        assert_eq!(row.get::<_, Option<i64>>(0), Some(3_000));
+        assert_eq!(row.get::<_, Option<Vec<u8>>>(1), Some(other_hash));
+        assert_eq!(row.get::<_, Option<i64>>(2), None);
+
+        client
+            .execute(
+                "UPDATE merge_mining_event \
+                 SET child_displaced_at = NULL, child_displaced_by = NULL \
+                 WHERE id = $1",
+                &[&event_id],
+            )
+            .await?;
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn migration_rejects_legacy_duplicate_exact_identities_before_altering_schema() -> Result<()>
 {
     let (client, schema) =

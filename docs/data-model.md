@@ -181,6 +181,27 @@ remain attached to the event. The text field preserves address, value/script,
 and raw scriptPubKey forms that cannot be represented as a value-complete
 `Vec<TxOut>`.
 
+## Child Displacement
+
+A child chain can replace the block it carries at a height. The event captured
+for the replaced block is still valid Bitcoin-side evidence: its parent header
+carries real proof of work and its coinbase committed to that child block.
+Neither fact changes when the child chain prefers a different block at the
+same height, so displacement is recorded on the event rather than by revoking
+it.
+
+- `child_displaced_at` is the epoch second a producer observed that the child
+  chain no longer carries the block at `child_height`; `child_displaced_by` is
+  the internal-order hash of the block now carried there. They are set and
+  cleared together, and a block is never displaced by itself.
+- Bitcoin-side aggregates (`block`, `attestation_proof`, `source_health`, and
+  the parent projections) never read these columns. Only child-centric views,
+  which block the child chain carries at a height, consult them.
+- Revocation keeps its one meaning: the evidence itself is bad.
+
+`0022_add_child_displacement.sql` adds the columns. No producer writes them
+yet; the producer and read-side changes follow separately.
+
 ## Capture Errors
 
 `capture_error` is the one producer-owned table that records a gap rather than
@@ -230,6 +251,9 @@ a global rule; see `docs/capture.md`.
   or stale row.
 - Bad evidence is removed with explicit event revocation, then the read model
   recomputes the affected parent state.
+- A child-chain reorg is not bad evidence. The displaced event stays active
+  for Bitcoin-side state and carries `child_displaced_at` and
+  `child_displaced_by` instead of a revocation.
 - Bitcoin Core backbone rows are written by `sync-bitcoin-core` and are required
   for tree windows the UI should browse.
 
@@ -245,6 +269,8 @@ Later schema changes are appended as new numbered forward migrations.
 `0020_add_qbit_source.sql` converges live source `auxpow:qbit` on permanent id
 36 for databases that applied an earlier `0002`, and
 `0021_add_capture_error.sql` adds the producer-owned `capture_error` table.
+`0022_add_child_displacement.sql` adds the nullable `child_displaced_at` and
+`child_displaced_by` columns to `merge_mining_event`.
 
 `0007_support_partial_child_evidence.sql` makes child evidence nullable, adds
 authenticated child header and `nBits` storage, replaces the old composite
