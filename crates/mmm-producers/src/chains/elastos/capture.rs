@@ -167,6 +167,9 @@ enum ElastosEvaluation {
     Skip {
         outcome: ElastosHeightOutcome,
         verified_hash: Option<BlockHash>,
+        /// The Bitcoin parent when the proof parsed before the skip, so a
+        /// hashless historical row for the same block is recognised as it.
+        parent_hash: Option<BlockHash>,
     },
     /// The persisted Core cache cannot classify the parent yet.
     TableHorizon {
@@ -242,7 +245,8 @@ async fn apply_elastos_evaluation(
         ElastosEvaluation::Skip {
             outcome,
             verified_hash,
-        } => (outcome, verified_hash.map(|hash| (hash, None))),
+            parent_hash,
+        } => (outcome, verified_hash.map(|hash| (hash, parent_hash))),
         ElastosEvaluation::TableHorizon {
             bip34_height,
             verified_hash,
@@ -394,6 +398,7 @@ fn evaluate_elastos_block(
         return ElastosEvaluation::Skip {
             outcome: ElastosHeightOutcome::MalformedSkipped,
             verified_hash: None,
+            parent_hash: None,
         };
     }
 
@@ -404,29 +409,31 @@ fn evaluate_elastos_block(
             return ElastosEvaluation::Skip {
                 outcome: ElastosHeightOutcome::MalformedSkipped,
                 verified_hash: None,
+                parent_hash: None,
             };
         }
     };
     let verified_hash = recon.block_hash;
-    let skip = |outcome| ElastosEvaluation::Skip {
+    let skip = |outcome, parent_hash| ElastosEvaluation::Skip {
         outcome,
         verified_hash: Some(verified_hash),
+        parent_hash,
     };
 
     let Some(auxpow_blob) = recon.auxpow.as_deref() else {
-        return skip(ElastosHeightOutcome::NonAuxpowSkipped);
+        return skip(ElastosHeightOutcome::NonAuxpowSkipped, None);
     };
 
     let parsed = match parse_elastos_auxpow(recon.prefix_header.clone(), auxpow_blob) {
         Ok(parsed) => parsed,
         Err(err) => {
             warn!(height = block.height, error = %err, "Elastos auxpow parse failed; skipping");
-            return skip(ElastosHeightOutcome::MalformedSkipped);
+            return skip(ElastosHeightOutcome::MalformedSkipped, None);
         }
     };
 
     if let Some(outcome) = auxpow_gate_skip(block.height, &parsed, &recon) {
-        return skip(outcome);
+        return skip(outcome, Some(parsed.parent_header.hash()));
     }
 
     classify_elastos_parent_nbits(parsed, recon, nbits_table)

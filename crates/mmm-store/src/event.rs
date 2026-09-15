@@ -227,6 +227,12 @@ async fn matching_exact_event_ids<C: GenericClient>(
     Ok(rows.into_iter().map(|row| row.get(0)).collect())
 }
 
+/// Promote a hashless partial observation to the exact identity `payload`
+/// carries. A child-side record made before the block's proof was seen may
+/// have marked the partial row displaced by this very block (a hashless row
+/// cannot be matched to a block with no known parent), so the promotion clears
+/// that self-displacement in the same statement; otherwise the not-self CHECK
+/// would reject the promotion for good.
 async fn promote_partial_event<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -237,6 +243,8 @@ async fn promote_partial_event<C: GenericClient>(
         .query_opt(
             "UPDATE merge_mining_event SET \
                 child_block_hash = $2, \
+                child_displaced_at = CASE WHEN child_displaced_by = $2 THEN NULL ELSE child_displaced_at END, \
+                child_displaced_by = CASE WHEN child_displaced_by = $2 THEN NULL ELSE child_displaced_by END, \
                 child_header_bytes = COALESCE(child_header_bytes, $3), \
                 child_block_time = COALESCE(child_block_time, $4), \
                 child_nbits = COALESCE(child_nbits, $5), \
