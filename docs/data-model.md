@@ -181,6 +181,31 @@ remain attached to the event. The text field preserves address, value/script,
 and raw scriptPubKey forms that cannot be represented as a value-complete
 `Vec<TxOut>`.
 
+## Child Displacement
+
+A child chain can replace the block it carries at a height. The event captured
+for the replaced block is still valid Bitcoin-side evidence: its parent header
+carries real proof of work and its coinbase committed to that child block.
+Neither fact changes when the child chain prefers a different block at the
+same height, so the schema records displacement on the event rather than
+through revocation.
+
+- `child_displaced_at` is the epoch second a producer observed that the child
+  chain no longer carries the block at `child_height`; `child_displaced_by` is
+  the internal-order hash of the block now carried there. They are set and
+  cleared together, and a block is never displaced by itself.
+- Bitcoin-side aggregates (`block`, `attestation_proof`, `source_health`, and
+  the parent projections) never read these columns. Only child-centric views,
+  which block the child chain carries at a height, consult them.
+- Revocation keeps its one meaning: the evidence itself is bad.
+
+`0022_add_child_displacement.sql` adds the columns with their constraints
+`NOT VALID`, and `0023_validate_child_displacement.sql` validates them under
+the weaker lock in its own transaction. No producer writes them yet and no
+projection reads them: Hathor's capture path still revokes a superseded
+prior, and the other live pollers never rescan a processed height. The
+producer and read-side changes follow separately.
+
 ## Capture Errors
 
 `capture_error` is the one producer-owned table that records a gap rather than
@@ -230,6 +255,12 @@ a global rule; see `docs/capture.md`.
   or stale row.
 - Bad evidence is removed with explicit event revocation, then the read model
   recomputes the affected parent state.
+- A child-chain reorg is not bad evidence. The schema records a displaced
+  child block with `child_displaced_at` and `child_displaced_by` so the
+  event can stay active for Bitcoin-side state. No producer writes those
+  columns yet: until the producer transition lands, Hathor's capture path
+  still revokes a superseded prior (`hathor_superseded`), and the other
+  live pollers never rescan a processed height.
 - Bitcoin Core backbone rows are written by `sync-bitcoin-core` and are required
   for tree windows the UI should browse.
 
@@ -245,6 +276,9 @@ Later schema changes are appended as new numbered forward migrations.
 `0020_add_qbit_source.sql` converges live source `auxpow:qbit` on permanent id
 36 for databases that applied an earlier `0002`, and
 `0021_add_capture_error.sql` adds the producer-owned `capture_error` table.
+`0022_add_child_displacement.sql` adds the nullable `child_displaced_at` and
+`child_displaced_by` columns to `merge_mining_event` with `NOT VALID`
+constraints, and `0023_validate_child_displacement.sql` validates them.
 
 `0007_support_partial_child_evidence.sql` makes child evidence nullable, adds
 authenticated child header and `nBits` storage, replaces the old composite
