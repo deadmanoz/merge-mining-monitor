@@ -6,7 +6,8 @@ use mmm_capture::capture::{
 };
 use mmm_capture::source_registry::NAMECOIN_SOURCE_CODE;
 use mmm_store::{
-    ChildDisplacementOutcome, get_source_id, record_child_chain_block, upsert_merge_mining_event,
+    ChildDisplacementOutcome, get_source_id, lock_child_chain_height, record_child_chain_block,
+    upsert_merge_mining_event,
 };
 use tokio_postgres::Client;
 
@@ -210,29 +211,30 @@ async fn hashless_revoked_and_eventless_blocks_follow_the_chain() -> Result<()> 
 }
 
 #[tokio::test]
-async fn concurrent_restores_at_one_height_serialize_and_the_later_commit_wins() -> Result<()> {
+async fn concurrent_captures_at_one_height_serialize_on_the_lock_and_the_later_commit_wins()
+-> Result<()> {
     crate::run_mut_db_test!(client, schema, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         let a = exact_at_height("500000-valid-parent", HASH_A)?;
         let mut b = a.clone();
         b.child_block_hash = Some(HASH_B.to_vec());
-        upsert_merge_mining_event(&client, source_id, &a).await?;
-        upsert_merge_mining_event(&client, source_id, &b).await?;
-        // An eventless block displaces both, so neither row is current and
-        // the two restores below touch different rows.
-        record(&mut client, source_id, &HASH_C, 3_001).await?;
 
-        // The first transaction restores A and holds the height lock open.
+        // The first capture follows the producer sequence (lock, upsert,
+        // record) and holds its transaction open.
         let first = client.transaction().await?;
-        record_child_chain_block(&first, source_id, HEIGHT, &HASH_A, 3_002).await?;
+        lock_child_chain_height(&first, source_id, HEIGHT).await?;
+        upsert_merge_mining_event(&first, source_id, &a).await?;
+        record_child_chain_block(&first, source_id, HEIGHT, &HASH_A, 3_001).await?;
 
-        // A second connection records B at the same height. Without the
-        // per-height lock it would restore B at once, leaving A and B both
-        // current; with it, it must wait for the first commit.
+        // A second capture of a different block at the same height contends on
+        // the height lock before it touches any event row, so it cannot
+        // deadlock against the first and must wait for its commit.
         let mut other = connect_to_schema(&schema).await?;
         let mut second = tokio::spawn(async move {
             let txn = other.transaction().await?;
-            let outcome = record_child_chain_block(&txn, source_id, HEIGHT, &HASH_B, 3_003).await?;
+            lock_child_chain_height(&txn, source_id, HEIGHT).await?;
+            upsert_merge_mining_event(&txn, source_id, &b).await?;
+            let outcome = record_child_chain_block(&txn, source_id, HEIGHT, &HASH_B, 3_002).await?;
             txn.commit().await?;
             Ok::<_, anyhow::Error>(outcome)
         });
@@ -240,7 +242,7 @@ async fn concurrent_restores_at_one_height_serialize_and_the_later_commit_wins()
             tokio::time::timeout(Duration::from_millis(500), &mut second)
                 .await
                 .is_err(),
-            "the second record must block on the height lock"
+            "the second capture must block on the height lock"
         );
 
         first.commit().await?;
@@ -248,7 +250,7 @@ async fn concurrent_restores_at_one_height_serialize_and_the_later_commit_wins()
         assert_eq!(
             outcome,
             ChildDisplacementOutcome {
-                restored: 1,
+                restored: 0,
                 displaced: 1
             }
         );
@@ -257,7 +259,7 @@ async fn concurrent_restores_at_one_height_serialize_and_the_later_commit_wins()
             vec![
                 (
                     Some(HASH_A.to_vec()),
-                    Some(3_003),
+                    Some(3_002),
                     Some(HASH_B.to_vec()),
                     None
                 ),

@@ -85,9 +85,11 @@ This changelog starts with the initial release.
   the height, hashless partial observations included, as displaced by it.
   Already-displaced events keep their first displacement record. The write is
   one UPDATE under a per-height advisory lock, so a failure never leaves a
-  height half-moved and concurrent callers serialize; it is idempotent and
-  touches only the two displacement columns, so it needs no parent
-  reconciliation. No producer calls it yet.
+  height half-moved and concurrent callers serialize; producers take that
+  lock through `lock_child_chain_height` before upserting a captured block's
+  event so two captures at one height cannot deadlock on each other's row.
+  It is idempotent and touches only the two displacement columns, so it
+  needs no parent reconciliation. No producer calls it yet.
 
 ## [0.7.13] - 2026-09-09
 

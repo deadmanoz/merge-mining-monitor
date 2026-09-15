@@ -25,6 +25,32 @@ pub struct ChildDisplacementOutcome {
     pub displaced: u64,
 }
 
+/// Take the transaction-scoped advisory lock that serializes every change to
+/// which block the child chain carries at `(source_id, child_height)`.
+///
+/// Producers take it before upserting a captured block's event, so that two
+/// captures of different blocks at one height contend here first rather than
+/// each holding its own event row while waiting for the other; the lock is
+/// re-entrant within the transaction, so the later [`record_child_chain_block`]
+/// call takes it again without blocking. Released at commit or rollback.
+pub async fn lock_child_chain_height(
+    txn: &Transaction<'_>,
+    source_id: i64,
+    child_height: i32,
+) -> Result<()> {
+    txn.execute(
+        "SELECT pg_advisory_xact_lock($1, hashint8(($2::bigint << 32) | $3::bigint))",
+        &[
+            &CHILD_CHAIN_LOCK_CLASS,
+            &source_id,
+            &i64::from(child_height),
+        ],
+    )
+    .await
+    .context("lock the child chain height")?;
+    Ok(())
+}
+
 /// Record that the child chain now carries `current_block_hash` at
 /// `(source_id, child_height)`.
 ///
@@ -45,16 +71,20 @@ pub struct ChildDisplacementOutcome {
 /// same as active ones: displacement tracks the child chain and revocation
 /// tracks evidence validity, and neither reads the other.
 ///
-/// The call runs inside the caller's transaction and first takes a
-/// transaction-scoped advisory lock on `(source_id, child_height)`, so two
-/// callers recording different blocks at one height serialize and the later
-/// commit describes the chain; the transition itself is one UPDATE, so a
-/// failure never leaves the height half-moved. It is idempotent, and it
-/// changes only the two displacement columns, so no parent read-model
-/// reconciliation and no parent advisory lock are needed. Producers call it
-/// inside the capture transaction after the current block's event has been
-/// upserted, or in a transaction of its own when the current block carries no
-/// AuxPoW and has no event.
+/// The call runs inside the caller's transaction under the per-height lock
+/// from [`lock_child_chain_height`], which it takes itself (re-entrant within
+/// the transaction), so two callers recording different blocks at one height
+/// serialize and the later commit describes the chain; the transition itself
+/// is one UPDATE, so a failure never leaves the height half-moved. It is
+/// idempotent, and it changes only the two displacement columns, so no parent
+/// read-model reconciliation and no parent advisory lock are needed.
+///
+/// The producer sequence for a captured block is: take the height lock, upsert
+/// the block's event, then call this. Taking the lock first matters: an
+/// upsert locks its own event row, and two captures of different blocks at
+/// one height that each held a row before contending for the height lock
+/// would deadlock. A current block that carries no AuxPoW has no event, so
+/// its producer calls this alone in a transaction of its own.
 ///
 /// Only an observation of the child chain can say which block is current. A
 /// write that inserts a new event at a height without one, such as a
@@ -73,16 +103,7 @@ pub async fn record_child_chain_block(
         "child block hash must be 32 bytes, got {}",
         current_block_hash.len()
     );
-    txn.execute(
-        "SELECT pg_advisory_xact_lock($1, hashint8(($2::bigint << 32) | $3::bigint))",
-        &[
-            &CHILD_CHAIN_LOCK_CLASS,
-            &source_id,
-            &i64::from(child_height),
-        ],
-    )
-    .await
-    .context("lock the child chain height")?;
+    lock_child_chain_height(txn, source_id, child_height).await?;
     let rows = txn
         .query(
             "UPDATE merge_mining_event \

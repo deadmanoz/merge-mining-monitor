@@ -211,9 +211,12 @@ through revocation.
   height so concurrent callers serialize and the later commit wins, is
   one UPDATE, is idempotent, ignores revocation state, and changes only
   the two columns, so it needs no parent reconciliation or parent lock.
-  Producers call it inside the capture transaction after upserting the
-  current block's event, or in a transaction of its own when the current
-  block carries no AuxPoW.
+  The producer sequence for a captured block is `lock_child_chain_height`,
+  then the event upsert, then this write, all in the capture transaction;
+  taking the height lock before the upsert is what stops two captures of
+  different blocks at one height deadlocking on each other's event row. A
+  current block with no AuxPoW has no event, so its producer calls the
+  write alone in a transaction of its own.
 - Only an observation of the child chain can say which block is current.
   A write that inserts a new event at a height without one, such as a
   historical publication import for a live chain, leaves that event

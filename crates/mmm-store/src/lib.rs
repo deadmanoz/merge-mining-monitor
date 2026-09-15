@@ -53,7 +53,9 @@ pub use chains::rsk::{
     late_fill_rsk_pool_identity_id, upsert_rsk_only_pools, upsert_rsk_pool_identities,
     upsert_rsk_pool_identities_with_policy, write_rsk_capture_in_txn,
 };
-pub use child_displacement::{ChildDisplacementOutcome, record_child_chain_block};
+pub use child_displacement::{
+    ChildDisplacementOutcome, lock_child_chain_height, record_child_chain_block,
+};
 pub use event::{
     EventWriteDisposition, EventWriteOutcome, delete_event_pool_attributions_for_source,
     fill_event_child_coinbase, upsert_event_pool_attributions,
