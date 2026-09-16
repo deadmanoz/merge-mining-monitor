@@ -90,6 +90,27 @@ the migration wrapper will not reschedule an already-recorded migration. After
 a binary rollback, repeat this stop/migrate/start acceptance when upgrading
 again; do not infer classifier completion from the migration receipt alone.
 
+### Hathor displacement repair (0024)
+
+Migration `0024` restores every Hathor event revoked as `hathor_superseded` or
+`hathor_voided` and records its displacement by the block that replaced it. A
+restored event changes its parent's read model, which the migration cannot
+reconcile itself. Apply it with the runtime stopped, as for any release, then,
+with the new release binary and the configured Core RPC, run:
+
+```bash
+just reconcile-read-model --all --source auxpow:hathor
+```
+
+```bash
+just rebuild-source-health
+```
+
+The migration prints the counts it found and changed as notices; keep them
+with the deployment record. Migration `0025` then drops the retired
+`supersede` marker columns of `poll_pending_reconcile`, which an older binary
+reads, so no older binary may run after it.
+
 Migration 0007 preserves existing event values while making child evidence
 nullable. Its publication cutover is a separate, explicit operation. Stop live
 pollers, back up, apply the migration, and run `just import-all`; authoritative

@@ -153,7 +153,7 @@ async fn hathor_recapture_restores_reversible_but_keeps_conflict_sticky() -> Res
     use bitcoin::hashes::Hash as _;
     use mmm_capture::capture::{
         ClassificationProof, HATHOR_PROOF_FORMAT_RFC0006, HATHOR_REVOKE_NBITS_CONFLICT,
-        HATHOR_REVOKE_VOIDED, HathorEvidencePayload, NormalizedEventEvidence,
+        HATHOR_REVOKE_NON_BTC, HathorEvidencePayload, NormalizedEventEvidence,
         ResolvedPoolAttributions, build_event_payload_from_evidence,
     };
     use mmm_producers::chains::hathor::reconstruct_from_blobs;
@@ -208,11 +208,11 @@ async fn hathor_recapture_restores_reversible_but_keeps_conflict_sticky() -> Res
             proof_format: HATHOR_PROOF_FORMAT_RFC0006,
         };
 
-        // Capture, void-revoke, then recapture with a CHANGED expected nBits.
+        // Capture, revoke as non-BTC, then recapture with a CHANGED expected nBits.
         let event_id = write_hathor_capture_in_txn(&client, source_id, &payload, &sidecar(111))
             .await?
             .event_id;
-        revoke_event(&client, event_id, 1_800_000_001, HATHOR_REVOKE_VOIDED).await?;
+        revoke_event(&client, event_id, 1_800_000_001, HATHOR_REVOKE_NON_BTC).await?;
         write_hathor_capture_in_txn(&client, source_id, &payload, &sidecar(222)).await?;
 
         assert_hathor_recapture_restored(&client, event_id).await?;
@@ -344,9 +344,8 @@ async fn assert_hathor_reward_capture(client: &Client, source_id: i64) -> Result
 }
 
 #[tokio::test]
-async fn hathor_state_machine_drives_capture_void_restore_and_hold() -> Result<()> {
+async fn hathor_state_machine_drives_capture_void_and_hold() -> Result<()> {
     use mmm_bitcoin_core::ConfiguredParentClassifier;
-    use mmm_capture::capture::HATHOR_REVOKE_VOIDED;
     use mmm_producers::chains::hathor::{
         HathorCaptureContext, HathorHeightOutcome, process_hathor_height,
     };
@@ -356,6 +355,17 @@ async fn hathor_state_machine_drives_capture_void_restore_and_hold() -> Result<(
         Ok(client
             .query_one(
                 "SELECT revoked_at IS NULL FROM merge_mining_event WHERE source_id=$1",
+                &[&source_id],
+            )
+            .await?
+            .get(0))
+    }
+
+    // Whether that event carries a displacement record.
+    async fn displaced(client: &Client, source_id: i64) -> Result<bool> {
+        Ok(client
+            .query_one(
+                "SELECT child_displaced_at IS NOT NULL FROM merge_mining_event WHERE source_id=$1",
                 &[&source_id],
             )
             .await?
@@ -391,25 +401,27 @@ async fn hathor_state_machine_drives_capture_void_restore_and_hold() -> Result<(
         assert!(active(&client, source_id).await?, "capture must be active");
         assert_hathor_reward_capture(&client, source_id).await?;
 
-        // 2) The same height now voided revokes the event with `hathor_voided`.
+        // 2) The same height now voided: the block is not the chain's block, but
+        // nothing names its replacement, so the event stays active and
+        // undisplaced (a child-DAG void is not bad evidence).
         mock.block = Some(hathor_fixture_block(&tx_id, true));
         let out = process_hathor_height(&mut client, &mock, &context, height).await?;
         assert_eq!(out, HathorHeightOutcome::VoidedSkipped);
-        let reason: Option<String> = client
-            .query_one(
-                "SELECT revocation_reason FROM merge_mining_event WHERE source_id=$1",
-                &[&source_id],
-            )
-            .await?
-            .get(0);
-        assert!(!active(&client, source_id).await?, "void must revoke");
-        assert_eq!(reason.as_deref(), Some(HATHOR_REVOKE_VOIDED));
+        assert!(active(&client, source_id).await?, "a void must not revoke");
+        assert!(
+            !displaced(&client, source_id).await?,
+            "a void names no replacement"
+        );
 
-        // 3) Reappearing non-voided: the reversible void revocation restores.
+        // 3) Reappearing non-voided: still the one active, current event.
         mock.block = Some(hathor_fixture_block(&tx_id, false));
         let out = process_hathor_height(&mut client, &mock, &context, height).await?;
         assert_eq!(out, HathorHeightOutcome::AuxpowWritten);
-        assert!(active(&client, source_id).await?, "recapture must restore");
+        assert!(
+            active(&client, source_id).await?,
+            "recapture keeps it active"
+        );
+        assert!(!displaced(&client, source_id).await?);
 
         // 4) An absent block holds without mutating the active event.
         mock.block = None;

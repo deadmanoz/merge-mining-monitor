@@ -116,6 +116,7 @@ fn hathor_backfill_effect(
         HathorHeightOutcome::AuxpowWritten => Ok(BackfillHeightEffect::AuxpowWritten),
         HathorHeightOutcome::NonAuxpowSkipped
         | HathorHeightOutcome::VoidedSkipped
+        | HathorHeightOutcome::NearSkipped
         | HathorHeightOutcome::NonBtcParentSkipped
         | HathorHeightOutcome::ConflictSkipped => Ok(BackfillHeightEffect::NonAuxpowSkipped),
         HathorHeightOutcome::MalformedSkipped => Ok(BackfillHeightEffect::MalformedSkipped),

@@ -131,6 +131,28 @@ This changelog starts with the initial release.
   eventless record for a non-AuxPoW or malformed block now goes through one
   store helper shared with the bitcoind-family runner.
 
+- Record which block the child chain carries at every height the Hathor
+  producer processes, and stop revoking a replaced or voided Hathor block. A
+  captured block is recorded inside its capture transaction; a block that
+  yields no event is recorded in a transaction of its own, but only when it is
+  proven: its RFC 0006 reconstruction identity holds and its hash meets its
+  own Hathor target, the work the block's consensus demands, since the REST
+  endpoint may be untrusted. A merge-mined block whose parent misses Bitcoin's
+  target, the common case, is now told apart from a malformed proof
+  (`NearSkipped`) and recorded. A voided block names no replacement and
+  records nothing; a non-merge-mined block carries no proof and is not
+  recorded. The `hathor_superseded` and `hathor_voided` revocation reasons,
+  the write-before-revoke supersession with its durable `supersede` marker,
+  and the drain branch that completed it are gone; the non-BTC and
+  classifier-conflict revocations apply to the block the verdict was reached
+  on. The whole height runs under the session-level height lock.
+  `0024_restore_hathor_displaced_events.sql` restores the events revoked for
+  those two reasons and records their displacement where the replacing block
+  can be named, printing before/after counts; run `reconcile-read-model --all
+  --source auxpow:hathor` and `rebuild-source-health` afterwards.
+  `0025_retire_pending_supersede.sql` drops the `supersede` kind of
+  `poll_pending_reconcile` and its payload columns.
+
 ## [0.7.13] - 2026-09-09
 
 - Refresh the Research publication pin to `e09f52b`, covering 1,283,863

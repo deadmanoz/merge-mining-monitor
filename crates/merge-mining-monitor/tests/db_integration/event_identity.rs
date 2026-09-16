@@ -5,10 +5,10 @@ use mmm_capture::capture::{
     ClassificationProof, HistoricalEventProvenance, MergeMiningEventPayload,
     ResolvedPoolAttributions, build_event_payload,
 };
-use mmm_capture::source_registry::{HATHOR_SOURCE_CODE, NAMECOIN_SOURCE_CODE};
+use mmm_capture::source_registry::NAMECOIN_SOURCE_CODE;
 use mmm_read_model::write_historical_base_in_transaction;
 use mmm_store::{
-    EventWriteDisposition, get_source_id, hathor_events_at_height, upsert_merge_mining_event,
+    EventWriteDisposition, get_source_id, upsert_merge_mining_event,
     upsert_merge_mining_event_with_attributions,
 };
 
@@ -385,22 +385,6 @@ async fn historical_projection_refresh_preserves_time_and_parent_read_model_stat
             changed.parent_read_model_changed,
             "a new parent classification must still enqueue reconciliation"
         );
-        Ok::<_, anyhow::Error>(())
-    })
-}
-
-#[tokio::test]
-async fn hathor_state_reads_tolerate_height_only_historical_events() -> Result<()> {
-    crate::run_db_test!(client, {
-        let source_id = get_source_id(&client, HATHOR_SOURCE_CODE).await?;
-        let payload = partial_payload(1_012, 2_012)?;
-        let outcome = upsert_merge_mining_event(&client, source_id, &payload).await?;
-
-        let events = hathor_events_at_height(&client, source_id, 1_012).await?;
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_id, outcome.event_id);
-        assert_eq!(events[0].child_block_hash, None);
-        assert!(events[0].is_active);
         Ok::<_, anyhow::Error>(())
     })
 }
