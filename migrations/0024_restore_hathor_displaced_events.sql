@@ -7,13 +7,18 @@
 -- state: every event revoked for one of the two reasons is restored, and its
 -- displacement is recorded where the replacing block can be named.
 --
--- The replacing block of a restored event is the block written at the same
--- height after it and no later than its revocation: the producer wrote the
--- replacement, then revoked the replaced event, so the newest such block is the
--- one that took its place, and a twice-replaced height keeps its first
--- displacement. A voided event with no such block is restored with no
--- displacement, since nothing can name the block that took its place. An event
--- that already carries a displacement keeps it.
+-- The replacing block of a restored event is the block the chain carried when
+-- the producer revoked it: a block at the same height first seen no later
+-- than that revocation and not itself revoked before it (an evidence
+-- revocation at the same moment counts: such a block was still the chain's).
+-- `discovered_at` is a row's first observation and never moves;
+-- `confirmed_at` advances on every re-observation and cannot order events.
+-- The producer wrote or restored the replacement, then revoked the replaced
+-- event, so this names the block that took its place at that moment, and a
+-- twice-replaced height keeps each event's first displacement. A voided event
+-- with no such block is restored with no displacement, since nothing can name
+-- the block that took its place. An event that already carries a displacement
+-- keeps it.
 --
 -- A supersession the old producer began but did not finish (a leftover
 -- `supersede` marker in poll_pending_reconcile) is completed the same way: the
@@ -58,7 +63,7 @@ BEGIN
 
     WITH completed_events AS (
         UPDATE merge_mining_event e
-           SET child_displaced_at = r.confirmed_at,
+           SET child_displaced_at = r.discovered_at,
                child_displaced_by = r.child_block_hash
           FROM poll_pending_reconcile q
           JOIN merge_mining_event r
@@ -85,9 +90,9 @@ BEGIN
                    AND r.id <> e.id
                    AND r.child_block_hash IS NOT NULL
                    AND r.child_block_hash IS DISTINCT FROM e.child_block_hash
-                   AND r.confirmed_at >= e.confirmed_at
-                   AND r.confirmed_at <= e.revoked_at
-                 ORDER BY r.confirmed_at DESC, r.id DESC
+                   AND r.discovered_at <= e.revoked_at
+                   AND (r.revoked_at IS NULL OR r.revoked_at >= e.revoked_at)
+                 ORDER BY r.discovered_at DESC, r.id DESC
                  LIMIT 1) AS replaced_by
           FROM merge_mining_event e
          WHERE e.source_id = v_hathor

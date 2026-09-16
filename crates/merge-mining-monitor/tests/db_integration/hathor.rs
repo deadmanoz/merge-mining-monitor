@@ -598,6 +598,14 @@ struct RepairScenario {
     stale_replacement: i64,
     /// Another source's event revoked with a Hathor reason by hand.
     other: i64,
+    /// A flip-back: `first` was captured, replaced by `second`, then restored
+    /// when the chain returned to it, so `second` is revoked and `first`, the
+    /// older row, is current.
+    first: i64,
+    second: i64,
+    /// `earlier` was replaced by `later`, which was then voided.
+    earlier: i64,
+    later: i64,
 }
 
 /// Seed the rows the old producer would have left behind, on a schema that
@@ -637,6 +645,14 @@ async fn seed_repair_scenario(client: &Client, source_id: i64) -> Result<RepairS
     let namecoin = get_source_id(client, NAMECOIN_SOURCE_CODE).await?;
     let other = insert_for(namecoin, 5_005, 0xb5, 100).await?;
     revoke(other, 300, "hathor_voided").await?;
+    // The chain's block is re-observed on every rescan, which advances its
+    // confirmed_at long past the revocations it caused.
+    client
+        .execute(
+            "UPDATE merge_mining_event SET confirmed_at = 9_000 WHERE id = $1",
+            &[&c],
+        )
+        .await?;
     let interrupted = insert(5_006, 0xd6, 100).await?;
     let stale_replacement = insert(5_006, 0xc6, 200).await?;
     revoke(stale_replacement, 250, "hathor_non_btc").await?;
@@ -656,6 +672,19 @@ async fn seed_repair_scenario(client: &Client, source_id: i64) -> Result<RepairS
             &[&source_id, &vec![0xa4u8; 32], &vec![p]],
         )
         .await?;
+    let first = insert(5_007, 0xf7, 100).await?;
+    let second = insert(5_007, 0xa7, 200).await?;
+    revoke(second, 500, "hathor_superseded").await?;
+    client
+        .execute(
+            "UPDATE merge_mining_event SET confirmed_at = 9_000 WHERE id = $1",
+            &[&first],
+        )
+        .await?;
+    let earlier = insert(5_008, 0xe8, 100).await?;
+    let later = insert(5_008, 0xa8, 150).await?;
+    revoke(earlier, 150, "hathor_superseded").await?;
+    revoke(later, 300, "hathor_voided").await?;
     Ok(RepairScenario {
         a,
         b,
@@ -667,6 +696,10 @@ async fn seed_repair_scenario(client: &Client, source_id: i64) -> Result<RepairS
         interrupted,
         stale_replacement,
         other,
+        first,
+        second,
+        earlier,
+        later,
     })
 }
 
@@ -692,7 +725,7 @@ async fn migration_0024_restores_replaced_hathor_events_as_displaced() -> Result
         assert_eq!(
             event_state(&client, rows.a).await?,
             (None, None, Some(200), Some(vec![0xb1; 32])),
-            "A is restored, displaced by B when B was written"
+            "A is restored, displaced by B when B was written, its first displacement"
         );
         assert_eq!(
             event_state(&client, rows.b).await?,
@@ -732,29 +765,53 @@ async fn migration_0024_restores_replaced_hathor_events_as_displaced() -> Result
             (Some(250), Some("hathor_non_btc".to_owned()), None, None)
         );
         assert_eq!(
+            event_state(&client, rows.second).await?,
+            (None, None, Some(500), Some(vec![0xf7; 32])),
+            "a flip-back names the older, restored block as the replacement"
+        );
+        assert_eq!(
+            event_state(&client, rows.first).await?,
+            (None, None, None, None)
+        );
+        assert_eq!(
+            event_state(&client, rows.earlier).await?,
+            (None, None, Some(150), Some(vec![0xa8; 32])),
+            "a block replaced by one later voided still names it"
+        );
+        assert_eq!(
+            event_state(&client, rows.later).await?,
+            (None, None, None, None),
+            "a voided block with no known replacement is restored undisplaced"
+        );
+        assert_eq!(
             event_state(&client, rows.other).await?,
             (Some(300), Some("hathor_voided".to_owned()), None, None),
             "another source's event is not touched"
         );
 
-        let pending: i64 = client
-            .query_one("SELECT count(*) FROM poll_pending_reconcile", &[])
-            .await?
-            .get(0);
-        assert_eq!(pending, 0, "the marker is gone");
-        let marker_columns: i64 = client
-            .query_one(
-                "SELECT count(*) FROM information_schema.columns \
-                 WHERE table_schema = current_schema() \
-                   AND table_name = 'poll_pending_reconcile' \
-                   AND column_name IN ('kind', 'new_child_block_hash', 'superseded_event_ids')",
-                &[],
-            )
-            .await?
-            .get(0);
-        assert_eq!(marker_columns, 0, "the marker columns are gone");
-        Ok(())
+        assert_markers_retired(&client).await
     }
     .await;
     crate::support::db::teardown_test_db(&client, &schema, result).await
+}
+
+/// After `0025`: no marker rows remain and the marker columns are gone.
+async fn assert_markers_retired(client: &Client) -> Result<()> {
+    let pending: i64 = client
+        .query_one("SELECT count(*) FROM poll_pending_reconcile", &[])
+        .await?
+        .get(0);
+    assert_eq!(pending, 0, "the marker is gone");
+    let marker_columns: i64 = client
+        .query_one(
+            "SELECT count(*) FROM information_schema.columns \
+             WHERE table_schema = current_schema() \
+               AND table_name = 'poll_pending_reconcile' \
+               AND column_name IN ('kind', 'new_child_block_hash', 'superseded_event_ids')",
+            &[],
+        )
+        .await?
+        .get(0);
+    assert_eq!(marker_columns, 0, "the marker columns are gone");
+    Ok(())
 }
