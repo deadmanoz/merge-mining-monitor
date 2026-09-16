@@ -269,3 +269,38 @@ pub fn unique_schema() -> String {
     let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("test_{}_{}_{}", std::process::id(), nanos, counter)
 }
+
+/// `(child_block_hash, child_displaced_by, revoked_at)` for every event at
+/// the height, ordered by hash: the child-side state a displacement test
+/// checks after each observation.
+pub async fn displacement_at(
+    client: &Client,
+    source_id: i64,
+    height: i32,
+) -> Result<Vec<(Vec<u8>, Option<Vec<u8>>, Option<i64>)>> {
+    let rows = client
+        .query(
+            "SELECT child_block_hash, child_displaced_by, revoked_at \
+             FROM merge_mining_event \
+             WHERE source_id = $1 AND child_height = $2 \
+             ORDER BY child_block_hash",
+            &[&source_id, &height],
+        )
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2)))
+        .collect())
+}
+
+/// Advisory locks this session still holds: zero after a processed height.
+pub async fn advisory_locks_held(client: &Client) -> Result<i64> {
+    Ok(client
+        .query_one(
+            "SELECT count(*) FROM pg_locks \
+             WHERE locktype = 'advisory' AND pid = pg_backend_pid()",
+            &[],
+        )
+        .await?
+        .get(0))
+}

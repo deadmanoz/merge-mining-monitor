@@ -430,8 +430,7 @@ async fn insert_legacy_mazacoin_state(client: &Client) -> Result<()> {
         .batch_execute(
             "INSERT INTO source_health (source_id) VALUES (32); \
              INSERT INTO poll_cursor (source_id, cursor_height) VALUES (32, 7); \
-             INSERT INTO poll_pending_reconcile (source_id, height, kind) \
-                 VALUES (32, 8, 'reconcile'); \
+             INSERT INTO poll_pending_reconcile (source_id, height) VALUES (32, 8); \
              INSERT INTO bitcoin_core_sync_state ( \
                  source_id, sync_mode, created_at, updated_at \
              ) VALUES (32, 'contiguous', 1, 1);",

@@ -21,9 +21,10 @@
 //! - CAPTURE-LEVEL (counted): rows that validate structurally but fail the capture
 //!   path's own reconstruct/guard checks return the ordinary observable
 //!   [`HathorHeightOutcome`] variants, exactly as a live REST response would.
-//!   The dominant expected bucket is `MalformedSkipped`: sub-BTC-target near
+//!   The dominant expected bucket is `NearSkipped`: sub-BTC-target near
 //!   shares (the normal case for ~all merge-mined blocks) return from
-//!   reconstruction before the nBits verdict.
+//!   reconstruction before the nBits verdict. The context replays an
+//!   archive, so no row records which block the chain carries.
 //!
 //! Heights with no archive row are counted as `absent_heights` by the runner
 //! itself (compact ranges in the skip ledger); the capture path is not driven
@@ -76,6 +77,7 @@ impl CacheRow {
         let meta = HathorBlockMeta {
             tx_id: self.hash.clone(),
             version: HATHOR_MERGE_MINED_VERSION,
+            height: self.height,
             is_voided: false,
         };
         let tx = HathorTransaction {
@@ -341,7 +343,7 @@ impl HathorCacheConfig {
 /// a clean run (any adapter-level corruption aborts instead):
 ///
 /// - rows: `rows_seen = auxpow_written + non_auxpow_skipped + voided_skipped +
-///   malformed_skipped + non_btc_parent_skipped + conflict_skipped +
+///   near_skipped + malformed_skipped + non_btc_parent_skipped + conflict_skipped +
 ///   table_horizon_hold` (and `rows_seen + rows_out_of_range` = archive data
 ///   rows read);
 /// - heights: `height_attempts() = rows_seen + absent_heights`.
@@ -353,6 +355,7 @@ pub struct HathorCacheSummary {
     pub auxpow_written: u64,
     pub non_auxpow_skipped: u64,
     pub voided_skipped: u64,
+    pub near_skipped: u64,
     pub malformed_skipped: u64,
     pub non_btc_parent_skipped: u64,
     pub conflict_skipped: u64,
@@ -374,6 +377,7 @@ impl HathorCacheSummary {
             HathorHeightOutcome::AuxpowWritten => self.auxpow_written += 1,
             HathorHeightOutcome::NonAuxpowSkipped => self.non_auxpow_skipped += 1,
             HathorHeightOutcome::VoidedSkipped => self.voided_skipped += 1,
+            HathorHeightOutcome::NearSkipped => self.near_skipped += 1,
             HathorHeightOutcome::MalformedSkipped => self.malformed_skipped += 1,
             HathorHeightOutcome::NonBtcParentSkipped => self.non_btc_parent_skipped += 1,
             HathorHeightOutcome::ConflictSkipped => self.conflict_skipped += 1,
@@ -420,6 +424,7 @@ async fn finish_cache_ingest(
         auxpow_written = summary.auxpow_written,
         non_auxpow_skipped = summary.non_auxpow_skipped,
         voided_skipped = summary.voided_skipped,
+        near_skipped = summary.near_skipped,
         malformed_skipped = summary.malformed_skipped,
         non_btc_parent_skipped = summary.non_btc_parent_skipped,
         conflict_skipped = summary.conflict_skipped,

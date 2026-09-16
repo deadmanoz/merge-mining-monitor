@@ -50,6 +50,9 @@ pub(crate) struct HathorRpcConfig {
 pub struct HathorBlockMeta {
     pub tx_id: String,
     pub version: i32,
+    /// The height the endpoint places the block at; the capture path holds it
+    /// to the height it asked for.
+    pub height: i32,
     #[serde(default)]
     pub is_voided: bool,
 }
@@ -363,7 +366,7 @@ mod tests {
     #[test]
     fn block_response_distinguishes_present_from_absent() {
         let present: BlockResponse = serde_json::from_str(
-            r#"{"success":true,"block":{"tx_id":"ab","version":3,"is_voided":false}}"#,
+            r#"{"success":true,"block":{"tx_id":"ab","version":3,"height":7,"is_voided":false}}"#,
         )
         .unwrap();
         assert!(present.success && present.block.is_some());

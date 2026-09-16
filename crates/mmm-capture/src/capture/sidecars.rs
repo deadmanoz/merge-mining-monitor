@@ -58,12 +58,10 @@ pub struct HathorEvidencePayload {
 /// split offset). Persisted literal in the hathor sidecar.
 pub const HATHOR_PROOF_FORMAT_RFC0006: &str = "hathor_rfc0006";
 
-/// Revocation reasons the Hathor producer applies automatically on a child-DAG
-/// reorg. A re-capture of the same `(source, height, hash)` auto-restores ONLY
-/// these reversible reasons; a `hathor_nbits_classifier_conflict` or any manual
-/// revoke is sticky.
-pub const HATHOR_REVOKE_VOIDED: &str = "hathor_voided";
-pub const HATHOR_REVOKE_SUPERSEDED: &str = "hathor_superseded";
+/// Sticky: the Core-cache nBits verdict was Valid but the classifier
+/// contradicted it; never auto-restored by a recapture. A child-DAG
+/// replacement or void is not a revocation reason: the producer records it as
+/// displacement (`child_displaced_at` / `child_displaced_by`).
 pub const HATHOR_REVOKE_NBITS_CONFLICT: &str = "hathor_nbits_classifier_conflict";
 /// Reversible: the current canonical block's parent classified as non-BTC under
 /// the Core-cache nBits verdict (BCH/indeterminate). If the persisted cache is

@@ -42,14 +42,15 @@ parents, not a separate parent kind, and it is gated by the operator-imported
 | RSK | Ethereum-style RSKj JSON-RPC for canonical blocks and uncles. | Stores RSK proof sidecar data and miner beneficiary identity. |
 | Hathor | Public REST API plus Hathor RFC 0006 merged-mining reconstruction. | No self-hosted mainnet node assumption; reward outputs are parsed from persisted funds graph data. |
 
-The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit) and the Elastos
-producer also record which block the child chain carries at every height they
-process. A captured
+The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit), the Elastos
+producer and the Hathor producer record which block the child chain carries at
+every height they process. A captured
 AuxPoW block is recorded inside its capture transaction, after the event
 upsert and under the per-height lock the capture transaction takes first; a
 block that yields no event (non-AuxPoW, or a malformed proof) is recorded in
-a transaction of its own. The whole height, from the `getblockhash`
-observation to the last write, runs under a session-level lock on the height,
+a transaction of its own. The whole height, from the block observation
+(`getblockhash`, or the REST fetch) to the last write, runs under a
+session-level lock on the height,
 so an overlapping poller and backfill observe and write one after the other
 and the later observation describes the chain. A rescanned height whose block
 changed therefore marks the earlier event displaced rather than leaving two
@@ -60,8 +61,25 @@ backfill over a reorged range repairs it the same way. See `docs/data-model.md`,
 commitment verified and whose parent meets the child target, because its
 endpoint may be untrusted and a self-consistent but fabricated response must not
 displace real events; a non-merge-mined or malformed block at a rescanned
-height leaves the earlier record in place. Hathor does not record displacement
-yet.
+height leaves the earlier record in place. Hathor records a block once its
+RFC 0006 reconstruction identity holds and its hash meets the target of the
+weight it declares; that weight is the endpoint's claim, so a block may
+displace a captured block at its height only when it declares at least that
+block's weight less what Hathor's difficulty adjustment could have moved
+across the fork between them: one step (0.25) each way when the two share a
+parent, the common one-deep reorg, and otherwise 0.25 per block on each
+branch across the configured rescan depth, itself bounded at 32 blocks. A
+height with no captured block to hold it against records nothing. A response for another height than
+the one requested holds the height for a retry rather than counting it as
+processed; the position itself stays the endpoint's assertion, as it is for
+every captured event. A merge-mined block whose parent misses
+Bitcoin's target, the common case, is recorded without an event; a voided
+block names no replacement and records nothing; a non-merge-mined block
+carries no proof the producer verifies and is not recorded; the archive cache
+ingest (`backfill-hathor-cache`) replays a snapshot of the chain as it was and
+records nothing. A replaced or voided Hathor block is never revoked. The only
+Hathor revocations are a non-BTC parent and a classifier conflict, applied to
+the block the verdict was reached on.
 
 RSK replays may refine role and optional proof fields, but an existing sidecar's
 block identity, height, miner, merge-mining hash, proof format, and any two
@@ -69,8 +87,8 @@ non-null optional proof values must remain compatible. A contradictory replay
 fails the whole event transaction, including historical provenance.
 
 Hathor live capture can promote a matching height-only historical observation
-to exact child-hash identity in place. Such a hashless row is not considered a
-superseded prior when its Bitcoin parent matches the validated live block.
+to exact child-hash identity in place. The displacement record treats such a
+hashless row as the live block when its Bitcoin parent matches it.
 | Elastos | JSON-RPC `getblockbyheight`. | Reconstructs the 84-byte child header and verifies the AuxPoW commitment. |
 | Qbit | Core-style raw block RPC: `getblock <hash> 0`, of which only the exact extended-header prefix is decoded. | Qbit's extended header is not a classic CAuxPoW and has no `hashBlock` field, so it uses the dedicated Qbit decoder and is projected straight into normalized evidence. |
 | Bitcoin Core | `sync-bitcoin-core`. | Writes canonical backbone headers and coinbase evidence for tree browsing; follow mode atomically repairs bounded near-tip or lagged-cursor reorg suffixes and retains the displaced side as stale evidence. |

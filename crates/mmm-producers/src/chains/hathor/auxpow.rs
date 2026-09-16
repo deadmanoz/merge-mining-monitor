@@ -177,40 +177,8 @@ fn reconstruct_btc_header(
     );
 
     for split in 2..funds_graph.len() {
-        // aux_block_hash = sha256d(sha256(funds) || sha256(graph)), embedded in
-        // display (byte-reversed) order.
-        let mut pair = Vec::with_capacity(64);
-        pair.extend_from_slice(&sha(&funds_graph[..split]));
-        pair.extend_from_slice(&sha(&funds_graph[split..]));
-        let mut abh = dsha(&pair);
-        abh.reverse();
-
-        let mut full_coinbase = Vec::with_capacity(aux.cb_head.len() + 32 + aux.cb_tail.len());
-        full_coinbase.extend_from_slice(&aux.cb_head);
-        full_coinbase.extend_from_slice(&abh);
-        full_coinbase.extend_from_slice(&aux.cb_tail);
-
-        // Fold the coinbase txid up the merkle path. The coinbase is index 0
-        // (always the left leaf); siblings are stored display-order, so reverse
-        // each before hashing.
-        let mut cur = dsha(&full_coinbase);
-        for sib in &aux.merkle_path {
-            let mut node = Vec::with_capacity(64);
-            node.extend_from_slice(&cur);
-            let mut rsib = *sib;
-            rsib.reverse();
-            node.extend_from_slice(&rsib);
-            cur = dsha(&node);
-        }
-
-        let mut header_bytes = Vec::with_capacity(80);
-        header_bytes.extend_from_slice(&aux.head_36);
-        header_bytes.extend_from_slice(&cur);
-        header_bytes.extend_from_slice(&aux.tail_12);
-
-        let header: Header = match deserialize(&header_bytes) {
-            Ok(h) => h,
-            Err(_) => continue,
+        let Some((header, full_coinbase)) = assemble_btc_header(aux, funds_graph, split) else {
+            continue;
         };
         if header.block_hash() == expected_block_hash {
             return Ok(HathorReconstruction {
@@ -223,6 +191,75 @@ fn reconstruct_btc_header(
     }
 
     bail!("no funds|graph split reconstructs to the expected Hathor block hash")
+}
+
+/// Assemble the BTC parent header and full coinbase for one funds|graph split:
+/// `aux_block_hash = sha256d(sha256(funds) || sha256(graph))` spliced into the
+/// coinbase, its txid folded up the merkle path, and the header reassembled
+/// around the resulting root. `None` when the bytes do not form a header.
+fn assemble_btc_header(
+    aux: &HathorAuxPow,
+    funds_graph: &[u8],
+    split: usize,
+) -> Option<(Header, Vec<u8>)> {
+    // aux_block_hash is embedded in display (byte-reversed) order.
+    let mut pair = Vec::with_capacity(64);
+    pair.extend_from_slice(&sha(&funds_graph[..split]));
+    pair.extend_from_slice(&sha(&funds_graph[split..]));
+    let mut abh = dsha(&pair);
+    abh.reverse();
+
+    let mut full_coinbase = Vec::with_capacity(aux.cb_head.len() + 32 + aux.cb_tail.len());
+    full_coinbase.extend_from_slice(&aux.cb_head);
+    full_coinbase.extend_from_slice(&abh);
+    full_coinbase.extend_from_slice(&aux.cb_tail);
+
+    // Fold the coinbase txid up the merkle path. The coinbase is index 0
+    // (always the left leaf); siblings are stored display-order, so reverse
+    // each before hashing.
+    let mut cur = dsha(&full_coinbase);
+    for sib in &aux.merkle_path {
+        let mut node = Vec::with_capacity(64);
+        node.extend_from_slice(&cur);
+        let mut rsib = *sib;
+        rsib.reverse();
+        node.extend_from_slice(&rsib);
+        cur = dsha(&node);
+    }
+
+    let mut header_bytes = Vec::with_capacity(80);
+    header_bytes.extend_from_slice(&aux.head_36);
+    header_bytes.extend_from_slice(&cur);
+    header_bytes.extend_from_slice(&aux.tail_12);
+    deserialize::<Header>(&header_bytes)
+        .ok()
+        .map(|header| (header, full_coinbase))
+}
+
+/// A self-consistent block that declares `weight` in place of the real one:
+/// the graph field is rewritten and the parent header reassembled, so the
+/// reconstruction identity still holds for the new hash. Test-only: it is
+/// what a fabricated response looks like, real block bytes with the work they
+/// claim taken away. Returns the forged `raw` bytes and their block hash.
+#[cfg(any(test, feature = "db-integration"))]
+pub fn forge_with_weight(
+    raw: &[u8],
+    aux_pow: &[u8],
+    funds_graph_split: usize,
+    weight: f64,
+) -> Result<(Vec<u8>, BlockHash)> {
+    let aux = parse_hathor_aux_pow(aux_pow)?;
+    let mut funds_graph = funds_graph_from_raw(raw, aux_pow)?.to_vec();
+    ensure!(
+        funds_graph.len() >= funds_graph_split + 8,
+        "the split leaves no room for a weight"
+    );
+    funds_graph[funds_graph_split..funds_graph_split + 8].copy_from_slice(&weight.to_be_bytes());
+    let (header, _coinbase) = assemble_btc_header(&aux, &funds_graph, funds_graph_split)
+        .context("the forged bytes do not assemble a header")?;
+    let hash = header.block_hash();
+    funds_graph.extend_from_slice(aux_pow);
+    Ok((funds_graph, hash))
 }
 
 /// Convenience entry point: parse `aux_pow`, derive the funds+graph prefix from

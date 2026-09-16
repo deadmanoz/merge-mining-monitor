@@ -1,15 +1,12 @@
 //! Hathor producer base-table SQL: the event + `hathor_merge_mining_evidence`
-//! sidecar capture writer, the per-height event read queries, and the DB-only
-//! reward-address replay loads / audit updates.
+//! sidecar capture writer and the DB-only reward-address replay loads / audit
+//! updates.
 
 use anyhow::{Context, Result};
+use tokio_postgres::GenericClient;
 use tokio_postgres::types::Json;
-use tokio_postgres::{Client, GenericClient};
 
-use mmm_capture::capture::{
-    HATHOR_REVOKE_NON_BTC, HATHOR_REVOKE_SUPERSEDED, HATHOR_REVOKE_VOIDED, HathorEvidencePayload,
-    MergeMiningEventPayload,
-};
+use mmm_capture::capture::{HATHOR_REVOKE_NON_BTC, HathorEvidencePayload, MergeMiningEventPayload};
 
 use crate::{EventWriteOutcome, upsert_merge_mining_event_with_attributions};
 
@@ -23,21 +20,18 @@ pub async fn write_hathor_capture_in_txn<C: GenericClient>(
     evidence: &HathorEvidencePayload,
 ) -> Result<EventWriteOutcome> {
     let outcome = upsert_merge_mining_event_with_attributions(client, source_id, payload).await?;
-    // RESTORE-AND-REFRESH, scoped by reason: a re-observation of a block that
-    // was auto-revoked for a child-DAG reorg (voided/superseded) clears the
-    // revocation; a hathor_nbits_classifier_conflict or any manual revoke stays
-    // sticky and is never re-activated by a recapture.
+    // RESTORE-AND-REFRESH, scoped by reason: a re-observation of a block whose
+    // parent was auto-revoked as non-BTC under an earlier Core-cache verdict
+    // clears that reversible revocation; a hathor_nbits_classifier_conflict or
+    // any manual revoke stays sticky and is never re-activated by a recapture.
+    // A child-DAG replacement is not a revocation: the caller records it as
+    // displacement (`record_child_chain_block`).
     client
         .execute(
             "UPDATE merge_mining_event \
                 SET revoked_at = NULL, revocation_reason = NULL \
-              WHERE id = $1 AND revocation_reason IN ($2, $3, $4)",
-            &[
-                &outcome.event_id,
-                &HATHOR_REVOKE_VOIDED,
-                &HATHOR_REVOKE_SUPERSEDED,
-                &HATHOR_REVOKE_NON_BTC,
-            ],
+              WHERE id = $1 AND revocation_reason = $2",
+            &[&outcome.event_id, &HATHOR_REVOKE_NON_BTC],
         )
         .await
         .context("clear reversible Hathor revocation on recapture")?;
@@ -87,41 +81,26 @@ async fn upsert_hathor_evidence<C: GenericClient>(
     Ok(())
 }
 
-/// One `merge_mining_event` row at a Hathor height, with its active flag. Used
-/// by the void/supersession state machine to reconcile prior captures.
-#[derive(Debug, Clone)]
-pub struct HathorEventRow {
-    pub event_id: i64,
-    pub child_block_hash: Option<Vec<u8>>,
-    pub btc_parent_header_hash: Vec<u8>,
-    pub is_active: bool,
-}
-
-/// All events (active and revoked) for a Hathor source at a child height.
-pub async fn hathor_events_at_height(
-    client: &Client,
+/// The first 45 bytes of each captured block's graph struct at a child height
+/// (weight, timestamp, parent count and parent block), revoked events
+/// included: what a block that would be recorded as the chain's block there
+/// is held against.
+pub async fn hathor_sidecar_graph_heads_at_height<C: GenericClient>(
+    client: &C,
     source_id: i64,
     height: i32,
-) -> Result<Vec<HathorEventRow>> {
+) -> Result<Vec<Vec<u8>>> {
     let rows = client
         .query(
-            "SELECT id, child_block_hash, btc_parent_header_hash, \
-                    (revoked_at IS NULL) AS is_active \
-               FROM merge_mining_event \
-              WHERE source_id = $1 AND child_height = $2",
+            "SELECT substr(h.funds_graph, h.funds_graph_split + 1, 45) \
+               FROM hathor_merge_mining_evidence h \
+               JOIN merge_mining_event e ON e.id = h.event_id \
+              WHERE e.source_id = $1 AND e.child_height = $2",
             &[&source_id, &height],
         )
         .await
-        .context("query Hathor events at height")?;
-    Ok(rows
-        .iter()
-        .map(|row| HathorEventRow {
-            event_id: row.get("id"),
-            child_block_hash: row.get("child_block_hash"),
-            btc_parent_header_hash: row.get("btc_parent_header_hash"),
-            is_active: row.get("is_active"),
-        })
-        .collect())
+        .context("load Hathor sidecar graph heads at height")?;
+    Ok(rows.iter().map(|row| row.get(0)).collect())
 }
 
 /// One active (non-revoked) Hathor sidecar row for DB-only reward-address replay:
