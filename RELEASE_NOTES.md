@@ -2,18 +2,20 @@
 
 ## [0.8.0] - 2026-09-16
 
-- Qbit is a live source: its merge-mined blocks are tracked continuously from
-  native height 80,986, where the imported historical publication ends.
+- Qbit is a live source. Once its historical publication is imported and the
+  poller is first started with `QBIT_START_HEIGHT` at or below 80,986, where
+  that publication ends, its merge-mined blocks are tracked continuously.
 - A child-chain reorg no longer revokes the replaced block's event. Every live
   producer except RSK records which block the child chain carries at each
   height; a displaced event keeps its Bitcoin-side evidence and shows
   `child_displaced_at` and `child_displaced_by` in block event details.
-  Hathor's superseded and voided revocations are retired, and existing rows
-  are restored and marked displaced by migration.
+  Hathor's superseded and voided revocations are retired: migration restores
+  those rows and records displacement only where the replacing block can be
+  identified.
 - The trailing rescan depth is a per-chain deployment setting; the compiled
   defaults are unchanged.
-- A proof that will not decode no longer counts a capture interval as
-  complete: the height is recorded in `capture_error` and surfaced on
+- For Qbit, a proof that will not decode no longer counts a capture interval
+  as complete: the height is recorded in `capture_error` and surfaced on
   `/api/v1/sources`.
 - Bounded RSK backfills below the 139,999 live acquisition floor capture
   complete Bitcoin parent-header evidence, evaluating each uncle independently
