@@ -154,11 +154,11 @@ This changelog starts with the initial release.
 
 - Document the trailing rescan depth (`<PREFIX>_REORG_DEPTH`) as a per-chain
   deployment setting now that every live producer except RSK records child
-  displacement: each tick re-processes that many heights below the
-  persisted cursor before it advances, becoming a trailing window below the
-  tip once the cursor has caught up, and a replaced block is marked
-  displaced rather than revoked. The compiled defaults are unchanged (0,
-  RSK 64, Hathor 20).
+  displacement: each tick re-processes that many heights ending at and
+  including the persisted cursor before it advances, ending at and
+  including the tip instead once the cursor has caught up, and a replaced
+  block is marked displaced rather than revoked. The compiled defaults are
+  unchanged (0, RSK 64, Hathor 20).
 
 ## [0.7.13] - 2026-09-09
 
