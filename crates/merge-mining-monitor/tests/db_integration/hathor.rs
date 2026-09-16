@@ -591,6 +591,11 @@ struct RepairScenario {
     /// superseded by `q`'s hash, and `p` was never revoked.
     p: i64,
     q: i64,
+    /// A supersession interrupted before its capture committed: the marker
+    /// names `interrupted` as superseded by a hash whose only row,
+    /// `stale_replacement`, is a revoked one from before.
+    interrupted: i64,
+    stale_replacement: i64,
     /// Another source's event revoked with a Hathor reason by hand.
     other: i64,
 }
@@ -632,6 +637,17 @@ async fn seed_repair_scenario(client: &Client, source_id: i64) -> Result<RepairS
     let namecoin = get_source_id(client, NAMECOIN_SOURCE_CODE).await?;
     let other = insert_for(namecoin, 5_005, 0xb5, 100).await?;
     revoke(other, 300, "hathor_voided").await?;
+    let interrupted = insert(5_006, 0xd6, 100).await?;
+    let stale_replacement = insert(5_006, 0xc6, 200).await?;
+    revoke(stale_replacement, 250, "hathor_non_btc").await?;
+    client
+        .execute(
+            "INSERT INTO poll_pending_reconcile \
+                 (source_id, height, kind, new_child_block_hash, superseded_event_ids, reason) \
+             VALUES ($1, 5006, 'supersede', $2, $3, 'hathor_superseded')",
+            &[&source_id, &vec![0xc6u8; 32], &vec![interrupted]],
+        )
+        .await?;
     client
         .execute(
             "INSERT INTO poll_pending_reconcile \
@@ -648,6 +664,8 @@ async fn seed_repair_scenario(client: &Client, source_id: i64) -> Result<RepairS
         e,
         p,
         q,
+        interrupted,
+        stale_replacement,
         other,
     })
 }
@@ -703,6 +721,15 @@ async fn migration_0024_restores_replaced_hathor_events_as_displaced() -> Result
         assert_eq!(
             event_state(&client, rows.q).await?,
             (None, None, None, None)
+        );
+        assert_eq!(
+            event_state(&client, rows.interrupted).await?,
+            (None, None, None, None),
+            "a marker whose replacement never became active completes nothing"
+        );
+        assert_eq!(
+            event_state(&client, rows.stale_replacement).await?,
+            (Some(250), Some("hathor_non_btc".to_owned()), None, None)
         );
         assert_eq!(
             event_state(&client, rows.other).await?,

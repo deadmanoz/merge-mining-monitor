@@ -17,8 +17,12 @@
 --
 -- A supersession the old producer began but did not finish (a leftover
 -- `supersede` marker in poll_pending_reconcile) is completed the same way: the
--- events it names are marked displaced by the replacement, if that
--- replacement's event exists. Migration 0025 then retires the markers.
+-- events it names are marked displaced by the replacement, but only if the
+-- replacement's event exists and is active, the rule the old drain applied.
+-- The marker was written before the capture; a marker whose replacement is
+-- absent or revoked is one whose capture never committed, and the events it
+-- names are still the chain's, so it is left for the next observation of the
+-- height. Migration 0025 then retires the markers.
 --
 -- Only the Hathor source is touched: revocation reasons are free text, and an
 -- event of another source revoked with one of these words by hand stays as it
@@ -61,6 +65,7 @@ BEGIN
             ON r.source_id = q.source_id
            AND r.child_height = q.height
            AND r.child_block_hash = q.new_child_block_hash
+           AND r.revoked_at IS NULL
          WHERE q.source_id = v_hathor
            AND q.kind = 'supersede'
            AND e.id = ANY (q.superseded_event_ids)
