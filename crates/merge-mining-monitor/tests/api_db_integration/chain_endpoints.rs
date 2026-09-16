@@ -274,10 +274,11 @@ fn hathor_tx_from_fixture(json: &str) -> (String, HathorTransaction) {
     )
 }
 
-fn hathor_fixture_block(tx_id: &str, voided: bool) -> HathorBlockMeta {
+fn hathor_fixture_block(tx_id: &str, height: i32, voided: bool) -> HathorBlockMeta {
     HathorBlockMeta {
         tx_id: tx_id.to_owned(),
         version: 3,
+        height,
         is_voided: voided,
     }
 }
@@ -393,7 +394,7 @@ async fn hathor_state_machine_drives_capture_void_and_hold() -> Result<()> {
 
         // 1) A live, non-voided v3 block writes an active event.
         let mut mock = MockHathorRpc::with_transactions(
-            Some(hathor_fixture_block(&tx_id, false)),
+            Some(hathor_fixture_block(&tx_id, height, false)),
             [(tx_id.clone(), tx)],
         );
         let out = process_hathor_height(&mut client, &mock, &context, height).await?;
@@ -404,7 +405,7 @@ async fn hathor_state_machine_drives_capture_void_and_hold() -> Result<()> {
         // 2) The same height now voided: the block is not the chain's block, but
         // nothing names its replacement, so the event stays active and
         // undisplaced (a child-DAG void is not bad evidence).
-        mock.block = Some(hathor_fixture_block(&tx_id, true));
+        mock.block = Some(hathor_fixture_block(&tx_id, height, true));
         let out = process_hathor_height(&mut client, &mock, &context, height).await?;
         assert_eq!(out, HathorHeightOutcome::VoidedSkipped);
         assert!(active(&client, source_id).await?, "a void must not revoke");
@@ -414,7 +415,7 @@ async fn hathor_state_machine_drives_capture_void_and_hold() -> Result<()> {
         );
 
         // 3) Reappearing non-voided: still the one active, current event.
-        mock.block = Some(hathor_fixture_block(&tx_id, false));
+        mock.block = Some(hathor_fixture_block(&tx_id, height, false));
         let out = process_hathor_height(&mut client, &mock, &context, height).await?;
         assert_eq!(out, HathorHeightOutcome::AuxpowWritten);
         assert!(
@@ -454,7 +455,8 @@ async fn hathor_cache_ingest_streams_counts_and_is_idempotent() -> Result<()> {
             &client,
             ConfiguredParentClassifier::Disabled,
         )
-        .await?;
+        .await?
+        .for_archive_replay();
         let source_id = context.source_id();
 
         let fx: serde_json::Value =

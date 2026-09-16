@@ -44,7 +44,8 @@ pub use chains::elastos::{
     load_elastos_identity_reresolve_batch, write_elastos_capture_in_txn,
 };
 pub use chains::hathor::{
-    load_hathor_reward_replay_batch, update_hathor_reward_audit, write_hathor_capture_in_txn,
+    hathor_sidecar_graphs_at_height, load_hathor_reward_replay_batch, update_hathor_reward_audit,
+    write_hathor_capture_in_txn,
 };
 #[cfg(any(test, feature = "db-integration"))]
 pub use chains::rsk::write_rsk_capture;

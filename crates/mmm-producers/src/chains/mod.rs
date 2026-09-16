@@ -166,11 +166,15 @@ where
     let mut pg_client = rt.pg_client;
     crate::producer_runtime::warn_if_empty_known_stale_membership(&pg_client, "hathor-cache")
         .await?;
+    // An archive is a snapshot of the chain as it was, not an observation of
+    // it as it is: it writes events but never moves the record of which block
+    // the chain carries at a height.
     let context = hathor::capture::HathorCaptureContext::new_with_classifier(
         &pg_client,
         rt.parent_classifier,
     )
-    .await?;
+    .await?
+    .for_archive_replay();
     let csv = std::fs::File::open(&config.csv_path).map(std::io::BufReader::new)?;
     let ledger_path = config.skip_ledger_path();
     let mut ledger = std::fs::OpenOptions::new()

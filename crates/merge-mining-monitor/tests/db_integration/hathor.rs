@@ -8,10 +8,10 @@ use mmm_capture::capture::{
     build_event_payload,
 };
 use mmm_capture::nbits_table::daa_epoch_start;
-use mmm_capture::source_registry::HATHOR_SOURCE_CODE;
+use mmm_capture::source_registry::{HATHOR_SOURCE_CODE, NAMECOIN_SOURCE_CODE};
 use mmm_producers::chains::hathor::{
     HathorBlockMeta, HathorCaptureContext, HathorHeightOutcome, HathorRpc, HathorTransaction,
-    process_hathor_height,
+    forge_with_weight, process_hathor_height, reconstruct_from_blobs,
 };
 use mmm_store::{get_source_id, upsert_merge_mining_event};
 use tokio_postgres::Client;
@@ -74,6 +74,7 @@ fn hathor_fixture(json: &str) -> (i32, FixtureHathorRpc) {
     let meta = HathorBlockMeta {
         tx_id: j["tx_id"].as_str().unwrap().to_owned(),
         version: j["version"].as_i64().unwrap() as i32,
+        height,
         is_voided: j["is_voided"].as_bool().unwrap_or(false),
     };
     let tx = HathorTransaction {
@@ -348,12 +349,15 @@ async fn advisory_locks_held(client: &Client) -> Result<i64> {
 async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let (height, rpc_a) = hathor_1971823_fixture();
-        // A real block from another height, served at this one: the chain's
-        // replacement for A.
-        let (_, rpc_b) = hathor_fixture(include_str!(concat!(
+        // A real block from another height, which the endpoint now places at
+        // this one: the chain's replacement for A. The proof cannot bind a
+        // block to a height; the position is the endpoint's assertion, as it is
+        // for every captured event.
+        let (_, mut rpc_b) = hathor_fixture(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../fixtures/hathor/2773476.json"
         )));
+        rpc_b.meta.height = height;
         let hash_a = internal_hash(&rpc_a.meta.tx_id);
         let hash_b = internal_hash(&rpc_b.meta.tx_id);
 
@@ -464,6 +468,65 @@ async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> 
     })
 }
 
+#[tokio::test]
+async fn a_block_declaring_trivial_work_does_not_displace_the_captured_block() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (height, rpc_a) = hathor_1971823_fixture();
+        let context = hathor_context(
+            &client,
+            ConfiguredParentClassifier::Fake(
+                FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(955_609),
+            ),
+        )
+        .await?;
+        let source_id = context.source_id();
+        let hash_a = internal_hash(&rpc_a.meta.tx_id);
+        assert_eq!(
+            process_hathor_height(&mut client, &rpc_a, &context, height).await?,
+            HathorHeightOutcome::AuxpowWritten
+        );
+
+        // A self-consistent response built from A's own bytes that declares
+        // almost no work: the reconstruction identity holds and the trivial
+        // target is met, but the block captured at the height declares about
+        // 2^68 hashes, and a block that far below it is not the chain's block.
+        let raw = hex::decode(&rpc_a.tx.raw)?;
+        let aux_pow = hex::decode(rpc_a.tx.aux_pow.as_deref().unwrap())?;
+        let (_aux, recon) = reconstruct_from_blobs(
+            &raw,
+            &aux_pow,
+            bitcoin::BlockHash::from_str(&rpc_a.meta.tx_id)?,
+        )?;
+        let (forged_raw, forged_hash) =
+            forge_with_weight(&raw, &aux_pow, recon.funds_graph_split, 1e-6)?;
+        let forged = FixtureHathorRpc {
+            meta: HathorBlockMeta {
+                tx_id: forged_hash.to_string(),
+                version: 3,
+                height,
+                is_voided: false,
+            },
+            tx: HathorTransaction {
+                raw: hex::encode(&forged_raw),
+                aux_pow: rpc_a.tx.aux_pow.clone(),
+                hash: forged_hash.to_string(),
+                timestamp: rpc_a.tx.timestamp,
+            },
+        };
+        assert_eq!(
+            process_hathor_height(&mut client, &forged, &context, height).await?,
+            HathorHeightOutcome::NearSkipped
+        );
+        assert_eq!(
+            displacement_at(&client, source_id, height).await?,
+            vec![(hash_a, None, None)],
+            "A stays the chain's block, undisplaced"
+        );
+        assert_eq!(advisory_locks_held(&client).await?, 0);
+        Ok(())
+    })
+}
+
 /// One exact Hathor-source observation at `height` with a synthetic child
 /// hash, observed at `confirmed_at`. The child header is dropped so the hash
 /// need not authenticate against it.
@@ -511,16 +574,21 @@ struct RepairScenario {
     /// superseded by `q`'s hash, and `p` was never revoked.
     p: i64,
     q: i64,
+    /// Another source's event revoked with a Hathor reason by hand.
+    other: i64,
 }
 
 /// Seed the rows the old producer would have left behind, on a schema that
 /// still carries the `supersede` marker columns.
 async fn seed_repair_scenario(client: &Client, source_id: i64) -> Result<RepairScenario> {
-    let insert = async |height: i32, hash: u8, confirmed_at: i64| -> Result<i64> {
+    let insert_for = async |source: i64, height: i32, hash: u8, confirmed_at: i64| -> Result<i64> {
         let payload = observation(height, hash, confirmed_at)?;
-        Ok(upsert_merge_mining_event(client, source_id, &payload)
+        Ok(upsert_merge_mining_event(client, source, &payload)
             .await?
             .event_id)
+    };
+    let insert = async |height: i32, hash: u8, confirmed_at: i64| -> Result<i64> {
+        insert_for(source_id, height, hash, confirmed_at).await
     };
     let revoke = async |id: i64, at: i64, reason: &str| -> Result<()> {
         client
@@ -544,6 +612,9 @@ async fn seed_repair_scenario(client: &Client, source_id: i64) -> Result<RepairS
     revoke(e, 300, "hathor_non_btc").await?;
     let p = insert(5_004, 0xf4, 100).await?;
     let q = insert(5_004, 0xa4, 200).await?;
+    let namecoin = get_source_id(client, NAMECOIN_SOURCE_CODE).await?;
+    let other = insert_for(namecoin, 5_005, 0xb5, 100).await?;
+    revoke(other, 300, "hathor_voided").await?;
     client
         .execute(
             "INSERT INTO poll_pending_reconcile \
@@ -560,6 +631,7 @@ async fn seed_repair_scenario(client: &Client, source_id: i64) -> Result<RepairS
         e,
         p,
         q,
+        other,
     })
 }
 
@@ -614,6 +686,11 @@ async fn migration_0024_restores_replaced_hathor_events_as_displaced() -> Result
         assert_eq!(
             event_state(&client, rows.q).await?,
             (None, None, None, None)
+        );
+        assert_eq!(
+            event_state(&client, rows.other).await?,
+            (Some(300), Some("hathor_voided".to_owned()), None, None),
+            "another source's event is not touched"
         );
 
         let pending: i64 = client

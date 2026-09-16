@@ -16,6 +16,8 @@ pub(crate) struct HathorReconstructedParent {
     pub(crate) raw: Vec<u8>,
     pub(crate) aux_pow: Vec<u8>,
     pub(crate) recon: HathorReconstruction,
+    /// The weight the block declares, see [`declared_weight`].
+    pub(crate) weight: f64,
 }
 
 /// What a version-3 block's proof establishes.
@@ -26,9 +28,9 @@ pub(crate) enum HathorParentReconstruction {
     BtcValid(HathorReconstructedParent),
     /// The identity holds and the hash meets the block's own target, but the
     /// parent misses BTC's target: a real Hathor block whose parent is a near
-    /// template. The common case for a merge-mined block; no event, but the
-    /// block is proven.
-    Near,
+    /// template. The common case for a merge-mined block; no event. Carries
+    /// the weight the block declares.
+    Near { weight: f64 },
     /// The proof is malformed or inconsistent, or the hash does not meet the
     /// block's own target: nothing trustworthy.
     Malformed,
@@ -41,9 +43,11 @@ struct HathorReconstructionInputs {
 }
 
 /// Decode + reconstruct the BTC parent from a version-3 transaction, then
-/// check the block's own proof of work. The identity alone costs nothing to
-/// fabricate over the untrusted REST API; the hash meeting the target the
-/// block's declared weight sets is what makes the block proven.
+/// check the block's own proof of work: the hash must meet the target the
+/// block's declared weight sets. The identity alone costs nothing to
+/// fabricate over the untrusted REST API, and so does the weight, which is
+/// why the caller holds a declared weight against the weight of the blocks
+/// captured at the height before it may displace them.
 pub(crate) fn reconstruct_or_skip(
     height: i32,
     tx: &HathorTransaction,
@@ -80,7 +84,7 @@ pub(crate) fn reconstruct_or_skip(
             height,
             "reconstructed Hathor parent fails its own PoW target; skipping (near)"
         );
-        return Ok(HathorParentReconstruction::Near);
+        return Ok(HathorParentReconstruction::Near { weight });
     }
 
     Ok(HathorParentReconstruction::BtcValid(
@@ -88,6 +92,7 @@ pub(crate) fn reconstruct_or_skip(
             raw: inputs.raw,
             aux_pow: inputs.aux_pow,
             recon,
+            weight,
         },
     ))
 }
@@ -118,7 +123,7 @@ fn decode_reconstruction_inputs(
 
 /// The block's declared weight: the first graph field, a big-endian IEEE-754
 /// double immediately after the funds|graph split.
-fn declared_weight(raw: &[u8], funds_graph_split: usize) -> Option<f64> {
+pub(crate) fn declared_weight(raw: &[u8], funds_graph_split: usize) -> Option<f64> {
     let bytes: [u8; 8] = raw
         .get(funds_graph_split..funds_graph_split + 8)?
         .try_into()
@@ -161,6 +166,7 @@ fn hathor_target(weight: f64) -> Option<Target> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chains::hathor::auxpow::forge_with_weight;
 
     fn fixture() -> (HathorTransaction, i32, f64) {
         let j: serde_json::Value = serde_json::from_str(include_str!(concat!(
@@ -218,6 +224,30 @@ mod tests {
         assert!(power_of_two(188) < half && half < power_of_two(189));
         for out_of_range in [0.0, -1.0, 256.0, 300.0, f64::NAN, f64::INFINITY] {
             assert_eq!(hathor_target(out_of_range), None, "{out_of_range}");
+        }
+    }
+
+    #[test]
+    fn a_forged_trivial_weight_reconstructs_as_near_with_the_weight_it_declares() {
+        let (tx, height, _) = fixture();
+        let raw = hex::decode(&tx.raw).unwrap();
+        let aux_pow = hex::decode(tx.aux_pow.as_deref().unwrap()).unwrap();
+        let expected = BlockHash::from_str(&tx.hash).unwrap();
+        let (_aux, recon) = reconstruct_from_blobs(&raw, &aux_pow, expected).unwrap();
+        let (forged_raw, forged_hash) =
+            forge_with_weight(&raw, &aux_pow, recon.funds_graph_split, 1e-6).unwrap();
+        assert_ne!(forged_hash, expected);
+        let forged = HathorTransaction {
+            raw: hex::encode(forged_raw),
+            aux_pow: tx.aux_pow.clone(),
+            hash: forged_hash.to_string(),
+            timestamp: tx.timestamp,
+        };
+        match reconstruct_or_skip(height, &forged).unwrap() {
+            HathorParentReconstruction::Near { weight } => {
+                assert!((weight - 1e-6).abs() < f64::EPSILON, "{weight}");
+            }
+            _ => panic!("a self-consistent block declaring trivial work reconstructs as near"),
         }
     }
 

@@ -81,6 +81,29 @@ async fn upsert_hathor_evidence<C: GenericClient>(
     Ok(())
 }
 
+/// The `(funds_graph, funds_graph_split)` of every Hathor sidecar at a child
+/// height, revoked events included: each captured block's declared weight is
+/// readable from its graph, and a block that would be recorded as the chain's
+/// block at the height is held to the weight the blocks captured there
+/// declare.
+pub async fn hathor_sidecar_graphs_at_height<C: GenericClient>(
+    client: &C,
+    source_id: i64,
+    height: i32,
+) -> Result<Vec<(Vec<u8>, i32)>> {
+    let rows = client
+        .query(
+            "SELECT h.funds_graph, h.funds_graph_split \
+               FROM hathor_merge_mining_evidence h \
+               JOIN merge_mining_event e ON e.id = h.event_id \
+              WHERE e.source_id = $1 AND e.child_height = $2",
+            &[&source_id, &height],
+        )
+        .await
+        .context("load Hathor sidecar graphs at height")?;
+    Ok(rows.iter().map(|row| (row.get(0), row.get(1))).collect())
+}
+
 /// One active (non-revoked) Hathor sidecar row for DB-only reward-address replay:
 /// carries the raw `funds_graph` blob to re-parse plus the pre-aggregated set of
 /// existing child-block reward attributions in this namespace, so the replay can

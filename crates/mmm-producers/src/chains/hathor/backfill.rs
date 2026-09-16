@@ -26,7 +26,7 @@ pub(crate) async fn poll(
     let context =
         HathorCaptureContext::new_with_classifier(&rt.pg_client, rt.parent_classifier).await?;
     let poller = crate::poller::Poller::new(
-        crate::chains::hathor::capture::HathorChainPoller::new(rt.pg_client, rpc, context),
+        crate::chains::hathor::poller::HathorChainPoller::new(rt.pg_client, rpc, context),
         poller_config,
     )
     .await?;

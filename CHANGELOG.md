@@ -134,14 +134,18 @@ This changelog starts with the initial release.
 - Record which block the child chain carries at every height the Hathor
   producer processes, and stop revoking a replaced or voided Hathor block. A
   captured block is recorded inside its capture transaction; a block that
-  yields no event is recorded in a transaction of its own, but only when it is
-  proven: its RFC 0006 reconstruction identity holds and its hash meets its
-  own Hathor target, the work the block's consensus demands, since the REST
-  endpoint may be untrusted. A merge-mined block whose parent misses Bitcoin's
-  target, the common case, is now told apart from a malformed proof
-  (`NearSkipped`) and recorded. A voided block names no replacement and
-  records nothing; a non-merge-mined block carries no proof and is not
-  recorded. The `hathor_superseded` and `hathor_voided` revocation reasons,
+  yields no event is recorded in a transaction of its own. The REST endpoint
+  may be untrusted, so a block is recorded only when its RFC 0006
+  reconstruction identity holds, its hash meets the target of the weight it
+  declares, and that weight is within 8 of the weight of the blocks captured
+  at the height (the most Hathor's difficulty adjustment could move it across
+  a fork 32 deep); the response must answer for the requested height. A
+  merge-mined block whose parent misses Bitcoin's target, the common case, is
+  now told apart from a malformed proof (`NearSkipped`) and recorded. A voided
+  block names no replacement and records nothing; a non-merge-mined block
+  carries no proof and is not recorded; the archive cache ingest replays a
+  snapshot and records nothing. The `hathor_superseded` and `hathor_voided`
+  revocation reasons,
   the write-before-revoke supersession with its durable `supersede` marker,
   and the drain branch that completed it are gone; the non-BTC and
   classifier-conflict revocations apply to the block the verdict was reached

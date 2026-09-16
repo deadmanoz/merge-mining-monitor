@@ -76,6 +76,7 @@ impl CacheRow {
         let meta = HathorBlockMeta {
             tx_id: self.hash.clone(),
             version: HATHOR_MERGE_MINED_VERSION,
+            height: self.height,
             is_voided: false,
         };
         let tx = HathorTransaction {

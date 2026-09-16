@@ -61,15 +61,22 @@ backfill over a reorged range repairs it the same way. See `docs/data-model.md`,
 commitment verified and whose parent meets the child target, because its
 endpoint may be untrusted and a self-consistent but fabricated response must not
 displace real events; a non-merge-mined or malformed block at a rescanned
-height leaves the earlier record in place. Hathor records a block on the same
-rule once its RFC 0006 reconstruction identity holds and its hash meets its
-own Hathor target, the work the block's consensus demands: a merge-mined block
-whose parent misses Bitcoin's target, the common case, is recorded without an
-event; a voided block names no replacement and records nothing; a
-non-merge-mined block carries no proof the producer verifies and is not
-recorded. A replaced or voided Hathor block is never revoked. The only Hathor
-revocations are a non-BTC parent and a classifier conflict, applied to the
-block the verdict was reached on.
+height leaves the earlier record in place. Hathor records a block once its
+RFC 0006 reconstruction identity holds and its hash meets the target of the
+weight it declares; that weight is the endpoint's claim, so a block may
+displace a captured block at its height only when it declares at least that
+block's weight less 8, the most Hathor's difficulty adjustment (0.25 per
+block) could move it across a fork 32 deep, and a height with no captured
+block to hold it against records nothing. The response must answer for the
+requested height; the position itself stays the endpoint's assertion, as it
+is for every captured event. A merge-mined block whose parent misses
+Bitcoin's target, the common case, is recorded without an event; a voided
+block names no replacement and records nothing; a non-merge-mined block
+carries no proof the producer verifies and is not recorded; the archive cache
+ingest (`backfill-hathor-cache`) replays a snapshot of the chain as it was and
+records nothing. A replaced or voided Hathor block is never revoked. The only
+Hathor revocations are a non-BTC parent and a classifier conflict, applied to
+the block the verdict was reached on.
 
 RSK replays may refine role and optional proof fields, but an existing sidecar's
 block identity, height, miner, merge-mining hash, proof format, and any two

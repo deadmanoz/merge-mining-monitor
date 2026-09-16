@@ -13,24 +13,26 @@
 //! block's event is still valid Bitcoin-side evidence, so the state machine
 //! never revokes it for that reason: every processed height records which
 //! block the child chain carries there (see `docs/data-model.md`, "Child
-//! Displacement"), and the earlier event is marked displaced. Only a proven
-//! block, one whose reconstruction identity holds and whose hash meets its
-//! own Hathor target, is ever recorded, because the endpoint may be untrusted.
-//! Revocation keeps its one meaning, a non-BTC parent or a classifier
-//! conflict, applied to the block the verdict was reached on.
+//! Displacement"), and the earlier event is marked displaced. Because the
+//! endpoint may be untrusted, a block is recorded only when its
+//! reconstruction identity holds, its hash meets the target of the weight it
+//! declares, and that weight is held to the weight of the blocks captured at
+//! the height (see [`HATHOR_DECLARED_WEIGHT_SLACK`]). Revocation keeps its
+//! one meaning, a non-BTC parent or a classifier conflict, applied to the
+//! block the verdict was reached on.
 
 use anyhow::{Context, Result};
 use bitcoin::Transaction;
 use bitcoin::consensus::{deserialize, serialize};
 use bitcoin::hashes::Hash as _;
-use tokio_postgres::Client;
-use tracing::{error, warn};
+use tokio_postgres::{Client, GenericClient};
+use tracing::{debug, error, warn};
 
 use crate::chains::hathor::auxpow::HathorReconstruction;
 use crate::chains::hathor::convert::{block_hash_internal, derive_output_addresses};
 use crate::chains::hathor::identity::upsert_hathor_reward_pool_identities;
 use crate::chains::hathor::reconstruct::{
-    HathorParentReconstruction, HathorReconstructedParent, reconstruct_or_skip,
+    HathorParentReconstruction, HathorReconstructedParent, declared_weight, reconstruct_or_skip,
 };
 use crate::chains::hathor::reward::{HATHOR_REWARD_ADDRESS_NAMESPACE, parse_hathor_reward_outputs};
 use crate::chains::hathor::rpc::{HathorBlockMeta, HathorRpc, HathorTransaction};
@@ -55,10 +57,21 @@ use mmm_read_model::capture_in_txn;
 use mmm_read_model::revoke_merge_mining_event;
 use mmm_store::{
     CurrentBlockParent, active_event_ids_for_child_block, finish_child_chain_height_operation,
-    load_pool_identities_by_namespace, lock_child_chain_height_session, record_child_chain_block,
-    record_child_chain_block_in_own_transaction, upsert_pending_reconcile,
-    write_hathor_capture_in_txn,
+    hathor_sidecar_graphs_at_height, load_pool_identities_by_namespace,
+    lock_child_chain_height_session, record_child_chain_block,
+    record_child_chain_block_in_own_transaction, write_hathor_capture_in_txn,
 };
+
+/// How far below the weight of a block captured at a height another block
+/// may declare its own weight and still be recorded as the chain's block
+/// there. Hathor's difficulty adjustment moves a block's weight by at most
+/// 0.25 from its parent's, so two blocks at one height differ by at most that
+/// times the depth of the fork beneath them: 8 covers a fork 32 blocks deep,
+/// well past the rescan window, while still demanding 1/256 of the captured
+/// block's work. The weight a response declares is the endpoint's claim, and
+/// the target it sets is met by whatever work the response carries; this
+/// floor is what a fabricated replacement cannot clear.
+const HATHOR_DECLARED_WEIGHT_SLACK: f64 = 8.0;
 
 /// Per-source capture state shared across every height in a poll/backfill run:
 /// the pool resolver, the bootstrapped [`ProducerContext`] (source id +
@@ -72,6 +85,11 @@ pub struct HathorCaptureContext {
     /// [`HATHOR_REWARD_ADDRESS_NAMESPACE`], resolved once for child-reward
     /// attribution.
     reward_identities: PoolIdentityLookup,
+    /// Whether captures through this context observe the live child chain,
+    /// and so record which block it carries at a height. An archive replay is
+    /// a snapshot of the chain as it was, not an observation of it as it is,
+    /// and must not move that record; see [`Self::for_archive_replay`].
+    observes_chain: bool,
 }
 
 impl HathorCaptureContext {
@@ -98,7 +116,20 @@ impl HathorCaptureContext {
             resolver,
             base,
             reward_identities,
+            observes_chain: true,
         })
+    }
+
+    /// Mark the context as replaying an archive: events are written, but no
+    /// height records which block the chain carries, so an old snapshot can
+    /// never restore a block the live chain has since replaced.
+    pub fn for_archive_replay(mut self) -> Self {
+        self.observes_chain = false;
+        self
+    }
+
+    fn observes_chain(&self) -> bool {
+        self.observes_chain
     }
 
     /// The `merge_mining_event.source_id` every Hathor write is tagged with.
@@ -112,7 +143,7 @@ impl HathorCaptureContext {
         self.base.parent_classifier()
     }
 
-    async fn refresh_core_header_cache(&self, client: &mut Client) -> Result<()> {
+    pub(super) async fn refresh_core_header_cache(&self, client: &mut Client) -> Result<()> {
         self.base.refresh_core_header_cache(client).await
     }
 }
@@ -176,13 +207,18 @@ type HathorBlockLoad = std::result::Result<HathorBlockDecision, HathorHeightOutc
 ///
 /// Every processed height also records which block the child chain carries
 /// there (see `docs/data-model.md`, "Child Displacement"): a captured block is
-/// recorded inside its capture transaction, and a proven block that yields no
-/// event is recorded in a transaction of its own. A block is proven when its
-/// RFC 0006 reconstruction identity holds and its hash meets its own Hathor
-/// target, so real work commits to it; the endpoint may be untrusted, and a
-/// self-consistent but unbacked response must not displace real events. A
-/// voided block and a non-merge-mined block are never recorded: the first
-/// names no replacement, the second carries no proof this producer verifies.
+/// recorded inside its capture transaction, and a block that yields no event
+/// is recorded in a transaction of its own. The endpoint may be untrusted, so
+/// a block is recorded only when its RFC 0006 reconstruction identity holds,
+/// its hash meets the target of the weight it declares, and that weight is
+/// within [`HATHOR_DECLARED_WEIGHT_SLACK`] of the weight of the blocks
+/// captured at the height; a height with no captured block to hold it
+/// against records nothing. The response must answer for the height asked
+/// for; the position itself stays the endpoint's assertion, as it is for
+/// every captured event's child height. A voided block and a non-merge-mined
+/// block are never recorded: the first names no replacement, the second
+/// carries no proof this producer verifies. An archive replay records
+/// nothing, see [`HathorCaptureContext::for_archive_replay`].
 /// The whole height, from the REST fetch through the last write, runs under a
 /// session-level lock on `(source, height)`, so what was observed is what is
 /// recorded even when a poller and a backfill overlap on the height.
@@ -263,6 +299,18 @@ async fn classify_hathor_block(
     height: i32,
     block: HathorBlockMeta,
 ) -> Result<HathorBlockLoad> {
+    // Untrusted-endpoint guard: the response must answer for the height asked
+    // for, or a stale or misrouted response would write, revoke or record at
+    // the WRONG child height while the poller advances past this one.
+    if block.height != height {
+        warn!(
+            requested = height,
+            returned = block.height,
+            "Hathor /block_at_height answered for a different height; skipping"
+        );
+        return Ok(Err(HathorHeightOutcome::MalformedSkipped));
+    }
+
     // A voided block is a definitive child-DAG signal that this block is not
     // the chain's block at the height, but it names no replacement: nothing is
     // written, and nothing is recorded until the replacement is observed. The
@@ -331,9 +379,9 @@ async fn fetch_validated_hathor_transaction(
 
 /// Reconstruct, build and apply a version-3 block. A captured block is
 /// recorded as the chain's block inside its capture transaction; every other
-/// outcome of a proven block records it here, in a transaction of its own,
-/// whatever the parent's verdict: a near, non-BTC, held or conflicting parent
-/// is still the parent of the block the chain carries.
+/// outcome of a reconstructed block records it here, in a transaction of its
+/// own, whatever the parent's verdict: a near, non-BTC, held or conflicting
+/// parent is still the parent of the block the chain carries.
 async fn process_validated_hathor_auxpow(
     client: &mut Client,
     context: &HathorCaptureContext,
@@ -346,10 +394,11 @@ async fn process_validated_hathor_auxpow(
         raw,
         aux_pow,
         recon,
+        weight,
     } = match reconstruct_or_skip(height, &tx)? {
         HathorParentReconstruction::BtcValid(reconstruction) => reconstruction,
-        HathorParentReconstruction::Near => {
-            record_current_block(client, context, height, current_hash).await?;
+        HathorParentReconstruction::Near { weight } => {
+            record_current_block(client, context, height, current_hash, weight).await?;
             return Ok(HathorHeightOutcome::NearSkipped);
         }
         HathorParentReconstruction::Malformed => return Ok(HathorHeightOutcome::MalformedSkipped),
@@ -367,27 +416,86 @@ async fn process_validated_hathor_auxpow(
         nbits_table,
     )? {
         Some(built) => {
-            apply_hathor_verdict(client, context, height, current_hash, built, nbits_table).await?
+            apply_hathor_verdict(
+                client,
+                context,
+                height,
+                current_hash,
+                weight,
+                built,
+                nbits_table,
+            )
+            .await?
         }
-        // The block is proven; only its reconstructed coinbase is unusable.
+        // The block reconstructed; only its reconstructed coinbase is unusable.
         None => HathorHeightOutcome::MalformedSkipped,
     };
     if outcome != HathorHeightOutcome::AuxpowWritten {
-        record_current_block(client, context, height, current_hash).await?;
+        record_current_block(client, context, height, current_hash, weight).await?;
     }
     Ok(outcome)
 }
 
-/// Record a proven block that yielded no event as the chain's block at the
-/// height, in a transaction of its own. A merge-mined Hathor block's hash is
-/// its BTC parent header's hash, so the same bytes name the block and the
-/// parent a hashless historical row at the height is matched by.
+/// Whether a block declaring `declared` may be recorded as the chain's block
+/// at the height: `None` when no block captured there has a sidecar to hold
+/// it against, else whether it is within [`HATHOR_DECLARED_WEIGHT_SLACK`] of
+/// the greatest weight declared by the blocks captured there.
+async fn declared_weight_holds<C: GenericClient>(
+    client: &C,
+    source_id: i64,
+    height: i32,
+    declared: f64,
+) -> Result<Option<bool>> {
+    let graphs = hathor_sidecar_graphs_at_height(client, source_id, height).await?;
+    let reference = graphs
+        .iter()
+        .filter_map(|(graph, split)| declared_weight(graph, *split as usize))
+        .fold(None, |best: Option<f64>, weight| {
+            Some(best.map_or(weight, |best| best.max(weight)))
+        });
+    Ok(reference.map(|reference| {
+        let holds = declared + HATHOR_DECLARED_WEIGHT_SLACK >= reference;
+        if !holds {
+            warn!(
+                height,
+                declared,
+                reference,
+                "Hathor block declares far less work than a block captured at this height; \
+                 not recorded as the chain's block"
+            );
+        }
+        holds
+    }))
+}
+
+/// Record a reconstructed block that yielded no event as the chain's block at
+/// the height, in a transaction of its own, once its declared weight holds
+/// against the blocks captured there; with none to hold it against nothing
+/// is recorded, since nothing there could be displaced. A merge-mined Hathor
+/// block's hash is its BTC parent header's hash, so the same bytes name the
+/// block and the parent a hashless historical row at the height is matched by.
 async fn record_current_block(
     client: &mut Client,
     context: &HathorCaptureContext,
     height: i32,
     hash: &[u8],
+    declared_weight: f64,
 ) -> Result<()> {
+    if !context.observes_chain() {
+        return Ok(());
+    }
+    match declared_weight_holds(&*client, context.source_id(), height, declared_weight).await? {
+        Some(true) => {}
+        Some(false) => return Ok(()),
+        None => {
+            debug!(
+                height,
+                "no captured Hathor block at the height to hold the declared weight against; \
+                 not recorded"
+            );
+            return Ok(());
+        }
+    }
     record_child_chain_block_in_own_transaction(
         client,
         context.source_id(),
@@ -405,6 +513,7 @@ async fn apply_hathor_verdict(
     context: &HathorCaptureContext,
     height: i32,
     current_hash: &[u8],
+    weight: f64,
     built: BuiltCapture,
     nbits_table: &NbitsTable,
 ) -> Result<HathorHeightOutcome> {
@@ -471,18 +580,20 @@ async fn apply_hathor_verdict(
                     }
                     HorizonGate::Hold => Ok(HathorHeightOutcome::TableHorizonHold),
                     HorizonGate::WithinTip => {
-                        write_valid_capture(client, context, height, current_hash, built).await
+                        write_valid_capture(client, context, height, current_hash, weight, built)
+                            .await
                     }
                 }
             } else {
-                write_valid_capture(client, context, height, current_hash, built).await
+                write_valid_capture(client, context, height, current_hash, weight, built).await
             }
         }
     }
 }
 
-/// Write a Valid BTC-parent capture: the event and sidecar, then the record
-/// that this block is the chain's block at the height, all in the capture
+/// Write a Valid BTC-parent capture: the event and sidecar, then, if the
+/// block's declared weight holds against the blocks captured at the height,
+/// the record that this block is the chain's block there, all in the capture
 /// transaction under the per-height lock it takes first. Nothing remains to
 /// complete after the commit.
 async fn write_valid_capture(
@@ -490,6 +601,7 @@ async fn write_valid_capture(
     context: &HathorCaptureContext,
     height: i32,
     current_hash: &[u8],
+    weight: f64,
     built: BuiltCapture,
 ) -> Result<HathorHeightOutcome> {
     let now = now_epoch_seconds()?;
@@ -513,15 +625,21 @@ async fn write_valid_capture(
             // offline verdict; abort rather than store the contradiction.
             ensure_offline_valid_not_classifier_conflict(payload)?;
             let outcome = write_hathor_capture_in_txn(txn, source_id, payload, &sidecar).await?;
-            record_child_chain_block(
-                txn,
-                source_id,
-                height,
-                current_hash,
-                CurrentBlockParent::Known(current_hash),
-                now,
-            )
-            .await?;
+            // The block's own sidecar is among those held against, so a first
+            // capture at a height always records.
+            if context.observes_chain()
+                && declared_weight_holds(txn, source_id, height, weight).await? != Some(false)
+            {
+                record_child_chain_block(
+                    txn,
+                    source_id,
+                    height,
+                    current_hash,
+                    CurrentBlockParent::Known(current_hash),
+                    now,
+                )
+                .await?;
+            }
             Ok(outcome)
         },
     )
@@ -700,109 +818,6 @@ fn build_hathor_capture(
     }))
 }
 
-use crate::chains::hathor::rpc::HathorRpcClient;
-use crate::chains::spec::{ChainId, by_id};
-use crate::poller::{ChainPoller, ChainPollerState, HeightProgress};
-
-/// Hathor live capture chain. Maps the rich [`HathorHeightOutcome`] to the
-/// driver's [`HeightProgress`]: the table-horizon hold is cursor-blocking
-/// (`Abort`); best-effort holds enqueue a durable reconcile row and `Hold`.
-pub(crate) struct HathorChainPoller {
-    state: ChainPollerState,
-    rpc: HathorRpcClient,
-    context: HathorCaptureContext,
-}
-
-impl HathorChainPoller {
-    /// Bundle the owned DB client, REST client, and capture context the poller
-    /// driver borrows each tick.
-    pub(crate) fn new(client: Client, rpc: HathorRpcClient, context: HathorCaptureContext) -> Self {
-        Self {
-            state: ChainPollerState::new(by_id(ChainId::Hathor), context.source_id(), client),
-            rpc,
-            context,
-        }
-    }
-}
-
-impl ChainPoller for HathorChainPoller {
-    fn poller_state(&self) -> &ChainPollerState {
-        &self.state
-    }
-
-    fn client_mut(&mut self) -> &mut Client {
-        &mut self.state.client
-    }
-
-    async fn chain_tip(&self) -> Result<i32> {
-        self.rpc.get_chain_tip().await
-    }
-
-    async fn refresh_core_cache(&mut self) -> Result<()> {
-        self.context
-            .refresh_core_header_cache(&mut self.state.client)
-            .await?;
-        Ok(())
-    }
-
-    async fn process_height(&mut self, height: i32) -> Result<HeightProgress> {
-        let mut outcome =
-            process_hathor_height(&mut self.state.client, &self.rpc, &self.context, height).await?;
-        if matches!(outcome, HathorHeightOutcome::TableHorizonHold) {
-            match self
-                .context
-                .refresh_core_header_cache(&mut self.state.client)
-                .await
-            {
-                Ok(()) => {
-                    outcome = process_hathor_height(
-                        &mut self.state.client,
-                        &self.rpc,
-                        &self.context,
-                        height,
-                    )
-                    .await?;
-                }
-                Err(error) => warn!(
-                    height,
-                    error = %error,
-                    "failed to refresh the Core header cache after a Hathor horizon hold"
-                ),
-            }
-        }
-        Ok(match outcome {
-            HathorHeightOutcome::TableHorizonHold => HeightProgress::Abort,
-            HathorHeightOutcome::AbsentHold | HathorHeightOutcome::TransientHold => {
-                // Best-effort hold: enqueue a durable reconcile row so a replay
-                // hold (dropped by the replay sub-range) is still retried via the
-                // drain, regardless of which sub-range surfaced it. For a new-tip
-                // height the cursor is gated by the new sub-range's break on Hold
-                // and the row re-enqueues each tick until the height resolves, so
-                // the queue's aging-out is what matters mainly for replay holds,
-                // which the replay range otherwise drops without blocking.
-                upsert_pending_reconcile(
-                    &self.state.client,
-                    self.context.source_id(),
-                    height,
-                    Some("hathor_hold"),
-                )
-                .await?;
-                HeightProgress::Hold
-            }
-            _ => HeightProgress::Advance,
-        })
-    }
-
-    async fn drain_pending(&mut self) -> Result<()> {
-        crate::chains::hathor::drain::drain_pending(
-            &mut self.state.client,
-            &self.rpc,
-            &self.context,
-        )
-        .await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -814,6 +829,7 @@ mod tests {
         let context = HathorCaptureContext {
             resolver: PoolResolver::from_default_snapshot().unwrap(),
             reward_identities: std::collections::HashMap::new(),
+            observes_chain: true,
             base: crate::producer_runtime::ProducerContext::from_parts(
                 std::collections::HashMap::new(),
                 1,

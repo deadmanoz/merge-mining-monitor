@@ -20,6 +20,10 @@
 -- events it names are marked displaced by the replacement, if that
 -- replacement's event exists. Migration 0025 then retires the markers.
 --
+-- Only the Hathor source is touched: revocation reasons are free text, and an
+-- event of another source revoked with one of these words by hand stays as it
+-- is.
+--
 -- Restoring an event changes its parent's read model. After this migration,
 -- with the new release binary, run
 --   just reconcile-read-model --all --source auxpow:hathor
@@ -28,6 +32,7 @@
 
 DO $$
 DECLARE
+    v_hathor BIGINT;
     v_superseded_before BIGINT;
     v_voided_before BIGINT;
     v_markers BIGINT;
@@ -36,12 +41,16 @@ DECLARE
     v_displaced BIGINT;
     v_remaining BIGINT;
 BEGIN
+    SELECT id INTO v_hathor FROM source WHERE code = 'auxpow:hathor';
+
     SELECT count(*) INTO v_superseded_before
-      FROM merge_mining_event WHERE revocation_reason = 'hathor_superseded';
+      FROM merge_mining_event
+     WHERE source_id = v_hathor AND revocation_reason = 'hathor_superseded';
     SELECT count(*) INTO v_voided_before
-      FROM merge_mining_event WHERE revocation_reason = 'hathor_voided';
+      FROM merge_mining_event
+     WHERE source_id = v_hathor AND revocation_reason = 'hathor_voided';
     SELECT count(*) INTO v_markers
-      FROM poll_pending_reconcile WHERE kind = 'supersede';
+      FROM poll_pending_reconcile WHERE source_id = v_hathor AND kind = 'supersede';
 
     WITH completed_events AS (
         UPDATE merge_mining_event e
@@ -52,7 +61,8 @@ BEGIN
             ON r.source_id = q.source_id
            AND r.child_height = q.height
            AND r.child_block_hash = q.new_child_block_hash
-         WHERE q.kind = 'supersede'
+         WHERE q.source_id = v_hathor
+           AND q.kind = 'supersede'
            AND e.id = ANY (q.superseded_event_ids)
            AND e.child_displaced_at IS NULL
            AND e.child_block_hash IS DISTINCT FROM r.child_block_hash
@@ -75,7 +85,8 @@ BEGIN
                  ORDER BY r.confirmed_at DESC, r.id DESC
                  LIMIT 1) AS replaced_by
           FROM merge_mining_event e
-         WHERE e.revocation_reason IN ('hathor_superseded', 'hathor_voided')
+         WHERE e.source_id = v_hathor
+           AND e.revocation_reason IN ('hathor_superseded', 'hathor_voided')
     ),
     restored_events AS (
         UPDATE merge_mining_event e
@@ -100,7 +111,8 @@ BEGIN
 
     SELECT count(*) INTO v_remaining
       FROM merge_mining_event
-     WHERE revocation_reason IN ('hathor_superseded', 'hathor_voided');
+     WHERE source_id = v_hathor
+       AND revocation_reason IN ('hathor_superseded', 'hathor_voided');
 
     RAISE NOTICE '0024 before: hathor_superseded=% hathor_voided=% supersede markers=%',
         v_superseded_before, v_voided_before, v_markers;
