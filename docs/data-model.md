@@ -289,12 +289,13 @@ a global rule; see `docs/capture.md`.
   recomputes the affected parent state.
 - A child-chain reorg is not bad evidence. The schema records a displaced
   child block with `child_displaced_at` and `child_displaced_by` so the
-  event can stay active for Bitcoin-side state. Every live producer writes
-  those columns for the heights it processes. A verdict that revokes
-  evidence (a non-BTC parent or a classifier conflict) is scoped to the block
-  it was reached on,
-  never to every event at the height; a block is its hash, or for a hashless
-  historical row its height and Bitcoin parent.
+  event can stay active for Bitcoin-side state. Every live producer except
+  RSK writes those columns for the heights it processes; RSK's heights hold
+  several blocks by design and it keeps its own rescan. A verdict that
+  revokes evidence (a non-BTC parent or a classifier conflict) is scoped to
+  the block it was reached on, never to every event at the height; a block
+  is its hash, or for a hashless historical row its height and Bitcoin
+  parent.
 - Bitcoin Core backbone rows are written by `sync-bitcoin-core` and are required
   for tree windows the UI should browse.
 
