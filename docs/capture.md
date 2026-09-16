@@ -120,6 +120,11 @@ default for every chain except RSK and Hathor; with every live producer
 except RSK recording child displacement, a chain's depth can be raised
 without leaving two current blocks or revoking a replaced one.
 
+For Hathor, the displacement work floor is bounded at a 32-block fork
+(`HATHOR_MAX_DISPLACEMENT_FORK_DEPTH`), so a depth above 32 still rescans
+that far, but a replacement across a deeper fork may be captured without
+being recorded as the chain's block.
+
 Backfills are bounded, idempotent over event identity, and do not move the live
 cursor. Use the `just poll-CHAIN` and `just backfill-CHAIN START END` recipes
 for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, `elastos`, and `qbit`.
