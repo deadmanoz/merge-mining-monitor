@@ -17,9 +17,11 @@
 -- event, so this names the block that took its place at that moment, and a
 -- twice-replaced height keeps each event's first displacement; two
 -- replacements first seen in the same second are told apart by insertion
--- order, the earlier being the one that caused the revocation. A voided event
--- with no such block is restored with no displacement, since nothing can name
--- the block that took its place. An event that already carries a displacement
+-- order, the earlier being the one that caused the revocation. Only a
+-- superseded event names a replacement. A voided event is restored with no
+-- displacement: the void named no replacement, and the old producer voided
+-- every event at the height at once, so inferring one from the others would
+-- pair them with each other. An event that already carries a displacement
 -- keeps it.
 --
 -- A supersession the old producer began but did not finish (a leftover
@@ -91,7 +93,8 @@ BEGIN
                e.revoked_at,
                (SELECT r.child_block_hash
                   FROM merge_mining_event r
-                 WHERE r.source_id = e.source_id
+                 WHERE e.revocation_reason = 'hathor_superseded'
+                   AND r.source_id = e.source_id
                    AND r.child_height = e.child_height
                    AND r.id <> e.id
                    AND r.child_block_hash IS NOT NULL
