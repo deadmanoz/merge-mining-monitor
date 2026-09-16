@@ -15,7 +15,9 @@
 -- `confirmed_at` advances on every re-observation and cannot order events.
 -- The producer wrote or restored the replacement, then revoked the replaced
 -- event, so this names the block that took its place at that moment, and a
--- twice-replaced height keeps each event's first displacement. A voided event
+-- twice-replaced height keeps each event's first displacement; two
+-- replacements first seen in the same second are told apart by insertion
+-- order, the earlier being the one that caused the revocation. A voided event
 -- with no such block is restored with no displacement, since nothing can name
 -- the block that took its place. An event that already carries a displacement
 -- keeps it.
@@ -96,7 +98,7 @@ BEGIN
                    AND r.child_block_hash IS DISTINCT FROM e.child_block_hash
                    AND r.discovered_at <= e.revoked_at
                    AND (r.revoked_at IS NULL OR r.revoked_at >= e.revoked_at)
-                 ORDER BY r.discovered_at DESC, r.id DESC
+                 ORDER BY r.discovered_at DESC, r.id ASC
                  LIMIT 1) AS replaced_by
           FROM merge_mining_event e
          WHERE e.source_id = v_hathor

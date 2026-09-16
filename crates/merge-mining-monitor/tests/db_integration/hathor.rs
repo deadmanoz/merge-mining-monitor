@@ -611,6 +611,11 @@ struct RepairScenario {
     /// marker naming `replaced` as superseded by it was written.
     returned: i64,
     replaced: i64,
+    /// Two replacements within one second: `quick` replaced `slow`, then
+    /// `quicker` replaced `quick`, all stamped with the same second.
+    slow: i64,
+    quick: i64,
+    quicker: i64,
 }
 
 /// The old producer's durable `supersede` marker: `superseded` is about to be
@@ -702,6 +707,11 @@ async fn seed_repair_scenario(client: &Client, source_id: i64) -> Result<RepairS
     let replaced = insert(5_009, 0xb9, 200).await?;
     reobserve(client, returned, 500).await?;
     leave_marker(client, source_id, 5_009, 0xa9, replaced).await?;
+    let slow = insert(5_010, 0xaa, 100).await?;
+    let quick = insert(5_010, 0xbb, 300).await?;
+    let quicker = insert(5_010, 0xcc, 300).await?;
+    revoke(slow, 300, "hathor_superseded").await?;
+    revoke(quick, 300, "hathor_superseded").await?;
     Ok(RepairScenario {
         a,
         b,
@@ -719,6 +729,9 @@ async fn seed_repair_scenario(client: &Client, source_id: i64) -> Result<RepairS
         later,
         returned,
         replaced,
+        slow,
+        quick,
+        quicker,
     })
 }
 
@@ -741,86 +754,99 @@ async fn migration_0024_restores_replaced_hathor_events_as_displaced() -> Result
             ))
             .await?;
 
-        assert_eq!(
-            event_state(&client, rows.a).await?,
-            (None, None, Some(200), Some(vec![0xb1; 32])),
-            "A is restored, displaced by B when B was written, its first displacement"
-        );
-        assert_eq!(
-            event_state(&client, rows.b).await?,
-            (None, None, Some(400), Some(vec![0xc1; 32])),
-            "B is restored, displaced by C"
-        );
-        assert_eq!(
-            event_state(&client, rows.c).await?,
-            (None, None, None, None)
-        );
-        assert_eq!(
-            event_state(&client, rows.d).await?,
-            (None, None, None, None),
-            "a voided block nothing replaced is restored without a displacement"
-        );
-        assert_eq!(
-            event_state(&client, rows.e).await?,
-            (Some(300), Some("hathor_non_btc".to_owned()), None, None),
-            "an evidence revocation is untouched"
-        );
-        assert_eq!(
-            event_state(&client, rows.p).await?,
-            (None, None, Some(200), Some(vec![0xa4; 32])),
-            "an unfinished supersession is completed as displacement"
-        );
-        assert_eq!(
-            event_state(&client, rows.q).await?,
-            (None, None, None, None)
-        );
-        assert_eq!(
-            event_state(&client, rows.interrupted).await?,
-            (None, None, None, None),
-            "a marker whose replacement never became active completes nothing"
-        );
-        assert_eq!(
-            event_state(&client, rows.stale_replacement).await?,
-            (Some(250), Some("hathor_non_btc".to_owned()), None, None)
-        );
-        assert_eq!(
-            event_state(&client, rows.second).await?,
-            (None, None, Some(500), Some(vec![0xf7; 32])),
-            "a flip-back names the older, restored block as the replacement"
-        );
-        assert_eq!(
-            event_state(&client, rows.first).await?,
-            (None, None, None, None)
-        );
-        assert_eq!(
-            event_state(&client, rows.earlier).await?,
-            (None, None, Some(150), Some(vec![0xa8; 32])),
-            "a block replaced by one later voided still names it"
-        );
-        assert_eq!(
-            event_state(&client, rows.later).await?,
-            (None, None, None, None),
-            "a voided block with no known replacement is restored undisplaced"
-        );
-        assert_eq!(
-            event_state(&client, rows.replaced).await?,
-            (None, None, Some(500), Some(vec![0xa9; 32])),
-            "an unfinished flip-back is stamped at the returned block's re-observation"
-        );
-        assert_eq!(
-            event_state(&client, rows.returned).await?,
-            (None, None, None, None)
-        );
-        assert_eq!(
-            event_state(&client, rows.other).await?,
-            (Some(300), Some("hathor_voided".to_owned()), None, None),
-            "another source's event is not touched"
-        );
-
+        assert_repaired(&client, &rows).await?;
         assert_markers_retired(&client).await
     }
     .await;
     crate::support::db::teardown_test_db(&client, &schema, result).await
+}
+
+/// Every seeded row is in the state `0024` documents for it.
+async fn assert_repaired(client: &Client, rows: &RepairScenario) -> Result<()> {
+    assert_eq!(
+        event_state(client, rows.a).await?,
+        (None, None, Some(200), Some(vec![0xb1; 32])),
+        "A is restored, displaced by B when B was written, its first displacement"
+    );
+    assert_eq!(
+        event_state(client, rows.b).await?,
+        (None, None, Some(400), Some(vec![0xc1; 32])),
+        "B is restored, displaced by C"
+    );
+    assert_eq!(event_state(client, rows.c).await?, (None, None, None, None));
+    assert_eq!(
+        event_state(client, rows.d).await?,
+        (None, None, None, None),
+        "a voided block nothing replaced is restored without a displacement"
+    );
+    assert_eq!(
+        event_state(client, rows.e).await?,
+        (Some(300), Some("hathor_non_btc".to_owned()), None, None),
+        "an evidence revocation is untouched"
+    );
+    assert_eq!(
+        event_state(client, rows.p).await?,
+        (None, None, Some(200), Some(vec![0xa4; 32])),
+        "an unfinished supersession is completed as displacement"
+    );
+    assert_eq!(event_state(client, rows.q).await?, (None, None, None, None));
+    assert_eq!(
+        event_state(client, rows.interrupted).await?,
+        (None, None, None, None),
+        "a marker whose replacement never became active completes nothing"
+    );
+    assert_eq!(
+        event_state(client, rows.stale_replacement).await?,
+        (Some(250), Some("hathor_non_btc".to_owned()), None, None)
+    );
+    assert_eq!(
+        event_state(client, rows.second).await?,
+        (None, None, Some(500), Some(vec![0xf7; 32])),
+        "a flip-back names the older, restored block as the replacement"
+    );
+    assert_eq!(
+        event_state(client, rows.first).await?,
+        (None, None, None, None)
+    );
+    assert_eq!(
+        event_state(client, rows.earlier).await?,
+        (None, None, Some(150), Some(vec![0xa8; 32])),
+        "a block replaced by one later voided still names it"
+    );
+    assert_eq!(
+        event_state(client, rows.later).await?,
+        (None, None, None, None),
+        "a voided block with no known replacement is restored undisplaced"
+    );
+    assert_eq!(
+        event_state(client, rows.replaced).await?,
+        (None, None, Some(500), Some(vec![0xa9; 32])),
+        "an unfinished flip-back is stamped at the returned block's re-observation"
+    );
+    assert_eq!(
+        event_state(client, rows.returned).await?,
+        (None, None, None, None)
+    );
+    assert_eq!(
+        event_state(client, rows.other).await?,
+        (Some(300), Some("hathor_voided".to_owned()), None, None),
+        "another source's event is not touched"
+    );
+
+    assert_eq!(
+        event_state(client, rows.slow).await?,
+        (None, None, Some(300), Some(vec![0xbb; 32])),
+        "two replacements in one second: the earlier inserted caused the revocation"
+    );
+    assert_eq!(
+        event_state(client, rows.quick).await?,
+        (None, None, Some(300), Some(vec![0xcc; 32]))
+    );
+    assert_eq!(
+        event_state(client, rows.quicker).await?,
+        (None, None, None, None)
+    );
+    Ok(())
 }
 
 /// After `0025`: no marker rows remain and the marker columns are gone.
