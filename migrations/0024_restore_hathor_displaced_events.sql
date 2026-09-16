@@ -27,7 +27,11 @@
 -- The marker was written before the capture; a marker whose replacement is
 -- absent or revoked is one whose capture never committed, and the events it
 -- names are still the chain's, so it is left for the next observation of the
--- height. Migration 0025 then retires the markers.
+-- height. The displacement time is the replacement's latest observation
+-- (`confirmed_at`): the marker names the replacement, so no ordering is
+-- needed, and for a flip-back to a block seen long before, its first
+-- observation would predate the displacement. Migration 0025 then retires the
+-- markers.
 --
 -- Only the Hathor source is touched: revocation reasons are free text, and an
 -- event of another source revoked with one of these words by hand stays as it
@@ -63,7 +67,7 @@ BEGIN
 
     WITH completed_events AS (
         UPDATE merge_mining_event e
-           SET child_displaced_at = r.discovered_at,
+           SET child_displaced_at = r.confirmed_at,
                child_displaced_by = r.child_block_hash
           FROM poll_pending_reconcile q
           JOIN merge_mining_event r

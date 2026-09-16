@@ -606,6 +606,11 @@ struct RepairScenario {
     /// `earlier` was replaced by `later`, which was then voided.
     earlier: i64,
     later: i64,
+    /// An unfinished flip-back: `returned` was seen first, replaced by
+    /// `replaced`, and had come back (restored and re-observed) when the
+    /// marker naming `replaced` as superseded by it was written.
+    returned: i64,
+    replaced: i64,
 }
 
 /// Seed the rows the old producer would have left behind, on a schema that
@@ -685,6 +690,22 @@ async fn seed_repair_scenario(client: &Client, source_id: i64) -> Result<RepairS
     let later = insert(5_008, 0xa8, 150).await?;
     revoke(earlier, 150, "hathor_superseded").await?;
     revoke(later, 300, "hathor_voided").await?;
+    let returned = insert(5_009, 0xa9, 100).await?;
+    let replaced = insert(5_009, 0xb9, 200).await?;
+    client
+        .execute(
+            "UPDATE merge_mining_event SET confirmed_at = 500 WHERE id = $1",
+            &[&returned],
+        )
+        .await?;
+    client
+        .execute(
+            "INSERT INTO poll_pending_reconcile \
+                 (source_id, height, kind, new_child_block_hash, superseded_event_ids, reason) \
+             VALUES ($1, 5009, 'supersede', $2, $3, 'hathor_superseded')",
+            &[&source_id, &vec![0xa9u8; 32], &vec![replaced]],
+        )
+        .await?;
     Ok(RepairScenario {
         a,
         b,
@@ -700,6 +721,8 @@ async fn seed_repair_scenario(client: &Client, source_id: i64) -> Result<RepairS
         second,
         earlier,
         later,
+        returned,
+        replaced,
     })
 }
 
@@ -782,6 +805,15 @@ async fn migration_0024_restores_replaced_hathor_events_as_displaced() -> Result
             event_state(&client, rows.later).await?,
             (None, None, None, None),
             "a voided block with no known replacement is restored undisplaced"
+        );
+        assert_eq!(
+            event_state(&client, rows.replaced).await?,
+            (None, None, Some(500), Some(vec![0xa9; 32])),
+            "an unfinished flip-back is stamped at the returned block's re-observation"
+        );
+        assert_eq!(
+            event_state(&client, rows.returned).await?,
+            (None, None, None, None)
         );
         assert_eq!(
             event_state(&client, rows.other).await?,
