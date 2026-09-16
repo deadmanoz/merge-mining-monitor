@@ -22,8 +22,8 @@ use {
         auxpow::parse_bip34_height,
         btc_orphan::{BtcOrphanVerdict, classify_btc_orphan_with},
         capture::{
-            ClassificationProof, MergeMiningEventPayload, ParentKind, build_event_payload,
-            resolve_event_pools,
+            ClassificationProof, MergeMiningEventPayload, ParentKind, ResolvedPoolAttributions,
+            build_event_payload, resolve_event_pools,
         },
         pool_resolver::PoolResolver,
         source_registry::NAMECOIN_SOURCE_CODE,
@@ -272,4 +272,29 @@ pub fn classified_proof(parent_kind: ParentKind, parent_height: i32) -> Classifi
         parent_height: Some(parent_height),
         difficulty_epoch_ok: Some(true),
     }
+}
+
+/// An exact observation of a synthetic child block at `height`, built from a
+/// committed AuxPoW fixture's parent and observed at `observed_at`. The child
+/// header is dropped so the hash need not authenticate against it.
+#[cfg(feature = "db-integration")]
+pub fn exact_observation(
+    fixture: &str,
+    height: i32,
+    hash: [u8; 32],
+    observed_at: i64,
+) -> Result<MergeMiningEventPayload> {
+    let parsed = parse_auxpow_fixture(fixture)?;
+    let mut payload = build_event_payload(
+        &parsed,
+        Some(height),
+        ResolvedPoolAttributions::default(),
+        ClassificationProof::default(),
+        observed_at,
+    )?;
+    payload.child_block_hash = Some(hash.to_vec());
+    payload.child_header_bytes = None;
+    payload.child_nbits = None;
+    payload.pow_validates_child_target = None;
+    Ok(payload)
 }

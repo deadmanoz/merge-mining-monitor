@@ -17,6 +17,8 @@ use mmm_producers::{ReclassifyPoolsConfig, run_reclassify_pools};
 use mmm_store::get_source_id;
 use tokio_postgres::Client;
 
+use crate::support::db::{advisory_locks_held, displacement_at};
+
 use crate::support::default_pool_snapshot;
 use crate::support::seed::{EventSeed, hash_bytes, insert_event, pool_id_for_slug};
 
@@ -529,39 +531,6 @@ fn rehash(block: &mut ElastosBlock) -> Result<()> {
     block.hash =
         BlockHash::from_byte_array(sha256d::Hash::hash(&bytes).to_byte_array()).to_string();
     Ok(())
-}
-
-/// `(child_block_hash, child_displaced_by, revoked_at)` for every event at the
-/// height, ordered by hash.
-async fn displacement_at(
-    client: &Client,
-    source_id: i64,
-    height: i32,
-) -> Result<Vec<(Vec<u8>, Option<Vec<u8>>, Option<i64>)>> {
-    let rows = client
-        .query(
-            "SELECT child_block_hash, child_displaced_by, revoked_at \
-             FROM merge_mining_event \
-             WHERE source_id = $1 AND child_height = $2 \
-             ORDER BY child_block_hash",
-            &[&source_id, &height],
-        )
-        .await?;
-    Ok(rows
-        .iter()
-        .map(|row| (row.get(0), row.get(1), row.get(2)))
-        .collect())
-}
-
-async fn advisory_locks_held(client: &Client) -> Result<i64> {
-    Ok(client
-        .query_one(
-            "SELECT count(*) FROM pg_locks \
-             WHERE locktype = 'advisory' AND pid = pg_backend_pid()",
-            &[],
-        )
-        .await?
-        .get(0))
 }
 
 #[tokio::test]

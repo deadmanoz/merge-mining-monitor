@@ -890,3 +890,35 @@ pub async fn fill_event_child_coinbase<C: GenericClient>(
         .with_context(|| format!("fill child coinbase fields for event {event_id}"))?;
     Ok(changed > 0)
 }
+
+/// Ids of the active (non-revoked) events for one child block: the exact row
+/// for its hash, plus a hashless historical row at the height whose Bitcoin
+/// parent is the block's parent (the identity partial promotion uses). Scoped
+/// to the block rather than the height because a rescanned height may hold
+/// events for more than one block, and a verdict on one block says nothing
+/// about the evidence of another.
+pub async fn active_event_ids_for_child_block<C: GenericClient>(
+    client: &C,
+    source_id: i64,
+    height: i32,
+    child_block_hash: &[u8],
+    btc_parent_header_hash: &[u8],
+) -> Result<Vec<i64>> {
+    let rows = client
+        .query(
+            "SELECT id FROM merge_mining_event \
+              WHERE source_id = $1 AND child_height = $2 \
+                AND (child_block_hash = $3 \
+                     OR (child_block_hash IS NULL AND btc_parent_header_hash = $4)) \
+                AND revoked_at IS NULL",
+            &[
+                &source_id,
+                &height,
+                &child_block_hash,
+                &btc_parent_header_hash,
+            ],
+        )
+        .await
+        .context("query active events for child block")?;
+    Ok(rows.iter().map(|row| row.get("id")).collect())
+}

@@ -22,7 +22,9 @@ pub use auxpow::{forge_with_weight, reconstruct_from_blobs};
 #[cfg(any(test, feature = "db-integration"))]
 pub use cache::{CACHE_CSV_HEADER, HathorCacheConfig, HathorCacheSummary, run_hathor_cache_ingest};
 #[cfg(any(test, feature = "db-integration"))]
-pub use capture::{HathorCaptureContext, HathorHeightOutcome, process_hathor_height};
+pub use capture::{
+    ChainObservation, HathorCaptureContext, HathorHeightOutcome, process_hathor_height,
+};
 #[cfg(any(test, feature = "db-integration"))]
 pub use reward::{HATHOR_REWARD_ADDRESS_NAMESPACE, parse_hathor_reward_outputs};
 #[cfg(any(test, feature = "db-integration"))]

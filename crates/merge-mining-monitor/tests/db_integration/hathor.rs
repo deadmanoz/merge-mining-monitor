@@ -3,20 +3,18 @@ use std::str::FromStr;
 use anyhow::Result;
 use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier, ParentClassification};
-use mmm_capture::capture::{
-    ClassificationProof, HATHOR_REVOKE_NON_BTC, MergeMiningEventPayload, ResolvedPoolAttributions,
-    build_event_payload,
-};
+use mmm_capture::capture::{HATHOR_REVOKE_NON_BTC, MergeMiningEventPayload};
 use mmm_capture::nbits_table::daa_epoch_start;
 use mmm_capture::source_registry::{HATHOR_SOURCE_CODE, NAMECOIN_SOURCE_CODE};
 use mmm_producers::chains::hathor::{
-    HathorBlockMeta, HathorCaptureContext, HathorHeightOutcome, HathorRpc, HathorTransaction,
-    forge_with_weight, process_hathor_height, reconstruct_from_blobs,
+    ChainObservation, HathorBlockMeta, HathorCaptureContext, HathorHeightOutcome, HathorRpc,
+    HathorTransaction, forge_with_weight, process_hathor_height, reconstruct_from_blobs,
 };
 use mmm_store::{get_source_id, upsert_merge_mining_event};
 use tokio_postgres::Client;
 
-use crate::support::parse_auxpow_fixture;
+use crate::support::db::{advisory_locks_held, displacement_at};
+use crate::support::exact_observation;
 
 /// A `HathorRpc` that always returns one fixed block + transaction, so a committed
 /// Hathor block fixture can drive `process_hathor_height` end to end.
@@ -44,6 +42,26 @@ fn unknown_genesis_parent() -> ParentClassification {
     )
 }
 
+/// A fake Core classifier whose fresh mainnet tip is `tip`.
+fn fake_classifier_synced_to(tip: i32) -> ConfiguredParentClassifier {
+    ConfiguredParentClassifier::Fake(
+        FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(tip),
+    )
+}
+
+/// A live context over the default 20-block rescan window.
+async fn live_context(
+    client: &Client,
+    classifier: ConfiguredParentClassifier,
+) -> Result<HathorCaptureContext> {
+    HathorCaptureContext::new_with_classifier(
+        client,
+        classifier,
+        ChainObservation::Live { fork_window: 20 },
+    )
+    .await
+}
+
 async fn hathor_context(
     client: &Client,
     classifier: ConfiguredParentClassifier,
@@ -55,7 +73,7 @@ async fn hathor_context(
         0x170c_69ea,
     )
     .await?;
-    HathorCaptureContext::new_with_classifier(client, classifier).await
+    live_context(client, classifier).await
 }
 
 fn hathor_1971823_fixture() -> (i32, FixtureHathorRpc) {
@@ -119,13 +137,7 @@ async fn hathor_in_table_valid_far_future_height_is_revoked_against_fresh_tip() 
     crate::run_mut_db_test!(client, {
         let (height, rpc) = hathor_1971823_fixture();
 
-        let write_context = hathor_context(
-            &client,
-            ConfiguredParentClassifier::Fake(
-                FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(955_609),
-            ),
-        )
-        .await?;
+        let write_context = hathor_context(&client, fake_classifier_synced_to(955_609)).await?;
         assert_eq!(
             process_hathor_height(&mut client, &rpc, &write_context, height).await?,
             HathorHeightOutcome::AuxpowWritten
@@ -146,13 +158,7 @@ async fn hathor_in_table_valid_far_future_height_is_revoked_against_fresh_tip() 
         // BTC parent height 710,969 is in-table Valid, but a fresh Core tip far
         // below it proves the claimed height fabricated; the production Valid arm
         // must revoke the active event.
-        let revoke_context = hathor_context(
-            &client,
-            ConfiguredParentClassifier::Fake(
-                FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(500_000),
-            ),
-        )
-        .await?;
+        let revoke_context = hathor_context(&client, fake_classifier_synced_to(500_000)).await?;
         assert_eq!(revoke_context.source_id(), write_context.source_id());
         assert_eq!(
             process_hathor_height(&mut client, &rpc, &revoke_context, height).await?,
@@ -167,13 +173,7 @@ async fn hathor_in_table_valid_far_future_height_is_revoked_against_fresh_tip() 
 async fn core_cache_nbits_mismatch_revokes_an_existing_event() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let (height, rpc) = hathor_1971823_fixture();
-        let context = hathor_context(
-            &client,
-            ConfiguredParentClassifier::Fake(
-                FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(955_609),
-            ),
-        )
-        .await?;
+        let context = hathor_context(&client, fake_classifier_synced_to(955_609)).await?;
         assert_eq!(
             process_hathor_height(&mut client, &rpc, &context, height).await?,
             HathorHeightOutcome::AuxpowWritten
@@ -203,13 +203,7 @@ async fn in_table_valid_writes_the_event_end_to_end() -> Result<()> {
         // the same Hathor write the above-horizon Valid arm dispatches to (which has
         // no real above-horizon Hathor block to exercise it directly yet).
         let (height, rpc) = hathor_1971823_fixture();
-        let context = hathor_context(
-            &client,
-            ConfiguredParentClassifier::Fake(
-                FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(955_609),
-            ),
-        )
-        .await?;
+        let context = hathor_context(&client, fake_classifier_synced_to(955_609)).await?;
         let outcome = process_hathor_height(&mut client, &rpc, &context, height).await?;
         assert_eq!(outcome, HathorHeightOutcome::AuxpowWritten);
         let active: i64 = client
@@ -232,13 +226,7 @@ async fn in_table_valid_writes_the_event_end_to_end() -> Result<()> {
 async fn live_capture_promotes_a_hashless_historical_row_without_revoking_it() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let (height, rpc) = hathor_1971823_fixture();
-        let context = hathor_context(
-            &client,
-            ConfiguredParentClassifier::Fake(
-                FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(955_609),
-            ),
-        )
-        .await?;
+        let context = hathor_context(&client, fake_classifier_synced_to(955_609)).await?;
         assert_eq!(
             process_hathor_height(&mut client, &rpc, &context, height).await?,
             HathorHeightOutcome::AuxpowWritten
@@ -313,38 +301,6 @@ fn internal_hash(tx_id: &str) -> Vec<u8> {
 /// `(child_block_hash, child_displaced_by, revoked_at)` of one event.
 type DisplacementRow = (Vec<u8>, Option<Vec<u8>>, Option<i64>);
 
-/// Every event at the height, ordered by hash.
-async fn displacement_at(
-    client: &Client,
-    source_id: i64,
-    height: i32,
-) -> Result<Vec<DisplacementRow>> {
-    let rows = client
-        .query(
-            "SELECT child_block_hash, child_displaced_by, revoked_at \
-             FROM merge_mining_event \
-             WHERE source_id = $1 AND child_height = $2 \
-             ORDER BY child_block_hash",
-            &[&source_id, &height],
-        )
-        .await?;
-    Ok(rows
-        .iter()
-        .map(|row| (row.get(0), row.get(1), row.get(2)))
-        .collect())
-}
-
-async fn advisory_locks_held(client: &Client) -> Result<i64> {
-    Ok(client
-        .query_one(
-            "SELECT count(*) FROM pg_locks \
-             WHERE locktype = 'advisory' AND pid = pg_backend_pid()",
-            &[],
-        )
-        .await?
-        .get(0))
-}
-
 /// Seed the Core cache so the parents of both fixtures classify Valid: the
 /// cache reaches B's parent (751,763) with B's nBits, and A's epoch keeps A's.
 async fn seed_core_cache_for_both_fixtures(client: &Client) -> Result<()> {
@@ -393,13 +349,7 @@ async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> 
         let hash_b = internal_hash(&rpc_b.meta.tx_id);
 
         seed_core_cache_for_both_fixtures(&client).await?;
-        let context = HathorCaptureContext::new_with_classifier(
-            &client,
-            ConfiguredParentClassifier::Fake(
-                FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(955_609),
-            ),
-        )
-        .await?;
+        let context = live_context(&client, fake_classifier_synced_to(955_609)).await?;
         let source_id = context.source_id();
         let sorted = |mut rows: Vec<DisplacementRow>| {
             rows.sort();
@@ -489,13 +439,7 @@ async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> 
 async fn a_block_declaring_trivial_work_does_not_displace_the_captured_block() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let (height, rpc_a) = hathor_1971823_fixture();
-        let context = hathor_context(
-            &client,
-            ConfiguredParentClassifier::Fake(
-                FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(955_609),
-            ),
-        )
-        .await?;
+        let context = hathor_context(&client, fake_classifier_synced_to(955_609)).await?;
         let source_id = context.source_id();
         let hash_a = internal_hash(&rpc_a.meta.tx_id);
         assert_eq!(
@@ -516,20 +460,11 @@ async fn a_block_declaring_trivial_work_does_not_displace_the_captured_block() -
         )?;
         let (forged_raw, forged_hash) =
             forge_with_weight(&raw, &aux_pow, recon.funds_graph_split, 1e-6)?;
-        let forged = FixtureHathorRpc {
-            meta: HathorBlockMeta {
-                tx_id: forged_hash.to_string(),
-                version: 3,
-                height,
-                is_voided: false,
-            },
-            tx: HathorTransaction {
-                raw: hex::encode(&forged_raw),
-                aux_pow: rpc_a.tx.aux_pow.clone(),
-                hash: forged_hash.to_string(),
-                timestamp: rpc_a.tx.timestamp,
-            },
-        };
+        let forged = variant_of(&rpc_a, |meta, tx| {
+            meta.tx_id = forged_hash.to_string();
+            tx.raw = hex::encode(&forged_raw);
+            tx.hash = forged_hash.to_string();
+        });
         assert_eq!(
             process_hathor_height(&mut client, &forged, &context, height).await?,
             HathorHeightOutcome::NearSkipped
@@ -545,22 +480,9 @@ async fn a_block_declaring_trivial_work_does_not_displace_the_captured_block() -
 }
 
 /// One exact Hathor-source observation at `height` with a synthetic child
-/// hash, observed at `confirmed_at`. The child header is dropped so the hash
-/// need not authenticate against it.
-fn observation(height: i32, hash: u8, confirmed_at: i64) -> Result<MergeMiningEventPayload> {
-    let parsed = parse_auxpow_fixture("500000-valid-parent")?;
-    let mut payload = build_event_payload(
-        &parsed,
-        Some(height),
-        ResolvedPoolAttributions::default(),
-        ClassificationProof::default(),
-        confirmed_at,
-    )?;
-    payload.child_block_hash = Some(vec![hash; 32]);
-    payload.child_header_bytes = None;
-    payload.child_nbits = None;
-    payload.pow_validates_child_target = None;
-    Ok(payload)
+/// hash byte, observed at `observed_at`.
+fn observation(height: i32, hash: u8, observed_at: i64) -> Result<MergeMiningEventPayload> {
+    exact_observation("500000-valid-parent", height, [hash; 32], observed_at)
 }
 
 /// `(revoked_at, revocation_reason, child_displaced_at, child_displaced_by)`.
@@ -577,93 +499,55 @@ async fn event_state(client: &Client, id: i64) -> Result<EventState> {
     Ok((row.get(0), row.get(1), row.get(2), row.get(3)))
 }
 
-/// The event ids of the pre-`0024` state the repair is checked against.
-struct RepairScenario {
-    /// A twice-replaced height: `a` replaced by `b`, then `b` by `c`.
-    a: i64,
-    b: i64,
-    c: i64,
-    /// A voided block nothing replaced.
-    d: i64,
-    /// An evidence (`hathor_non_btc`) revocation.
-    e: i64,
-    /// A supersession begun but not finished: the marker names `p` as
-    /// superseded by `q`'s hash, and `p` was never revoked.
-    p: i64,
-    q: i64,
-    /// A supersession interrupted before its capture committed: the marker
-    /// names `interrupted` as superseded by a hash whose only row,
-    /// `stale_replacement`, is a revoked one from before.
-    interrupted: i64,
-    stale_replacement: i64,
-    /// Another source's event revoked with a Hathor reason by hand.
-    other: i64,
-    /// A flip-back: `first` was captured, replaced by `second`, then restored
-    /// when the chain returned to it, so `second` is revoked and `first`, the
-    /// older row, is current.
-    first: i64,
-    second: i64,
-    /// `earlier` was replaced by `later`, which was then voided.
-    earlier: i64,
-    later: i64,
-    /// An unfinished flip-back: `returned` was seen first, replaced by
-    /// `replaced`, and had come back (restored and re-observed) when the
-    /// marker naming `replaced` as superseded by it was written.
-    returned: i64,
-    replaced: i64,
-    /// Two replacements within one second: `quick` replaced `slow`, then
-    /// `quicker` replaced `quick`, all stamped with the same second.
-    slow: i64,
-    quick: i64,
-    quicker: i64,
+fn active() -> EventState {
+    (None, None, None, None)
 }
 
-/// The old producer's durable `supersede` marker: `superseded` is about to be
-/// revoked in favour of the block with hash byte `new_hash`.
-async fn leave_marker(
-    client: &Client,
+fn displaced(at: i64, by: u8) -> EventState {
+    (None, None, Some(at), Some(vec![by; 32]))
+}
+
+fn revoked(at: i64, reason: &str) -> EventState {
+    (Some(at), Some(reason.to_owned()), None, None)
+}
+
+/// A row the old producer left behind and the state `0024` must leave it in.
+struct Expectation {
+    id: i64,
+    after: EventState,
+    label: &'static str,
+}
+
+/// Seeds the rows the old producer would have left behind, on a schema that
+/// still carries the `supersede` marker columns. Inserting the same
+/// `(height, hash)` again with a later time re-observes it: the upsert
+/// advances `confirmed_at`, as every rescan does, and leaves `discovered_at`.
+struct Seeder<'a> {
+    client: &'a Client,
     source_id: i64,
-    height: i32,
-    new_hash: u8,
-    superseded: i64,
-) -> Result<()> {
-    client
-        .execute(
-            "INSERT INTO poll_pending_reconcile \
-                 (source_id, height, kind, new_child_block_hash, superseded_event_ids, reason) \
-             VALUES ($1, $2, 'supersede', $3, $4, 'hathor_superseded')",
-            &[&source_id, &height, &vec![new_hash; 32], &vec![superseded]],
-        )
-        .await?;
-    Ok(())
 }
 
-/// A later observation of an existing event advances its `confirmed_at`, as
-/// the upsert does on every rescan; `discovered_at` never moves.
-async fn reobserve(client: &Client, id: i64, at: i64) -> Result<()> {
-    client
-        .execute(
-            "UPDATE merge_mining_event SET confirmed_at = $2 WHERE id = $1",
-            &[&id, &at],
-        )
-        .await?;
-    Ok(())
-}
+impl Seeder<'_> {
+    async fn insert(&self, height: i32, hash: u8, observed_at: i64) -> Result<i64> {
+        self.insert_for(self.source_id, height, hash, observed_at)
+            .await
+    }
 
-/// Seed the rows the old producer would have left behind, on a schema that
-/// still carries the `supersede` marker columns.
-async fn seed_repair_scenario(client: &Client, source_id: i64) -> Result<RepairScenario> {
-    let insert_for = async |source: i64, height: i32, hash: u8, confirmed_at: i64| -> Result<i64> {
-        let payload = observation(height, hash, confirmed_at)?;
-        Ok(upsert_merge_mining_event(client, source, &payload)
+    async fn insert_for(
+        &self,
+        source: i64,
+        height: i32,
+        hash: u8,
+        observed_at: i64,
+    ) -> Result<i64> {
+        let payload = observation(height, hash, observed_at)?;
+        Ok(upsert_merge_mining_event(self.client, source, &payload)
             .await?
             .event_id)
-    };
-    let insert = async |height: i32, hash: u8, confirmed_at: i64| -> Result<i64> {
-        insert_for(source_id, height, hash, confirmed_at).await
-    };
-    let revoke = async |id: i64, at: i64, reason: &str| -> Result<()> {
-        client
+    }
+
+    async fn revoke(&self, id: i64, at: i64, reason: &str) -> Result<()> {
+        self.client
             .execute(
                 "UPDATE merge_mining_event SET revoked_at = $2, revocation_reason = $3 \
                  WHERE id = $1",
@@ -671,68 +555,201 @@ async fn seed_repair_scenario(client: &Client, source_id: i64) -> Result<RepairS
             )
             .await?;
         Ok(())
-    };
+    }
 
-    let a = insert(5_001, 0xa1, 100).await?;
-    let b = insert(5_001, 0xb1, 150).await?;
-    let c = insert(5_001, 0xc1, 350).await?;
-    revoke(a, 200, "hathor_superseded").await?;
-    revoke(b, 400, "hathor_superseded").await?;
-    let d = insert(5_002, 0xd2, 100).await?;
-    revoke(d, 300, "hathor_voided").await?;
-    let e = insert(5_003, 0xe3, 100).await?;
-    revoke(e, 300, "hathor_non_btc").await?;
-    let p = insert(5_004, 0xf4, 100).await?;
-    let q = insert(5_004, 0xa4, 200).await?;
-    let namecoin = get_source_id(client, NAMECOIN_SOURCE_CODE).await?;
-    let other = insert_for(namecoin, 5_005, 0xb5, 100).await?;
-    revoke(other, 300, "hathor_voided").await?;
-    // The chain's block is re-observed on every rescan, which advances its
-    // confirmed_at long past the revocations it caused.
-    reobserve(client, c, 9_000).await?;
-    let interrupted = insert(5_006, 0xd6, 100).await?;
-    let stale_replacement = insert(5_006, 0xc6, 200).await?;
-    revoke(stale_replacement, 250, "hathor_non_btc").await?;
-    leave_marker(client, source_id, 5_006, 0xc6, interrupted).await?;
-    leave_marker(client, source_id, 5_004, 0xa4, p).await?;
-    let first = insert(5_007, 0xf7, 100).await?;
-    let second = insert(5_007, 0xa7, 200).await?;
-    revoke(second, 500, "hathor_superseded").await?;
-    reobserve(client, first, 9_000).await?;
-    let earlier = insert(5_008, 0xe8, 100).await?;
-    let later = insert(5_008, 0xa8, 150).await?;
-    revoke(earlier, 150, "hathor_superseded").await?;
-    revoke(later, 300, "hathor_voided").await?;
-    let returned = insert(5_009, 0xa9, 100).await?;
-    let replaced = insert(5_009, 0xb9, 200).await?;
-    reobserve(client, returned, 500).await?;
-    leave_marker(client, source_id, 5_009, 0xa9, replaced).await?;
-    let slow = insert(5_010, 0xaa, 100).await?;
-    let quick = insert(5_010, 0xbb, 300).await?;
-    let quicker = insert(5_010, 0xcc, 300).await?;
-    revoke(slow, 300, "hathor_superseded").await?;
-    revoke(quick, 300, "hathor_superseded").await?;
-    Ok(RepairScenario {
-        a,
-        b,
-        c,
-        d,
-        e,
-        p,
-        q,
-        interrupted,
-        stale_replacement,
-        other,
-        first,
-        second,
-        earlier,
-        later,
-        returned,
-        replaced,
-        slow,
-        quick,
-        quicker,
-    })
+    /// The old producer's durable `supersede` marker: `superseded` is about
+    /// to be revoked in favour of the block with hash byte `new_hash`.
+    async fn leave_marker(&self, height: i32, new_hash: u8, superseded: i64) -> Result<()> {
+        self.client
+            .execute(
+                "INSERT INTO poll_pending_reconcile \
+                     (source_id, height, kind, new_child_block_hash, superseded_event_ids, reason) \
+                 VALUES ($1, $2, 'supersede', $3, $4, 'hathor_superseded')",
+                &[
+                    &self.source_id,
+                    &height,
+                    &vec![new_hash; 32],
+                    &vec![superseded],
+                ],
+            )
+            .await?;
+        Ok(())
+    }
+}
+
+/// Heights the old supersede path replaced.
+async fn seed_replacements(seed: &Seeder<'_>) -> Result<Vec<Expectation>> {
+    let mut rows = Vec::new();
+    // A twice-replaced height: A replaced by B, then B by C. C, the chain's
+    // block, is re-observed on every rescan, long past the revocations.
+    let a = seed.insert(5_001, 0xa1, 100).await?;
+    let b = seed.insert(5_001, 0xb1, 150).await?;
+    let c = seed.insert(5_001, 0xc1, 350).await?;
+    seed.revoke(a, 200, "hathor_superseded").await?;
+    seed.revoke(b, 400, "hathor_superseded").await?;
+    seed.insert(5_001, 0xc1, 9_000).await?;
+    rows.push(Expectation {
+        id: a,
+        after: displaced(200, 0xb1),
+        label: "A: restored, displaced by B when B was written, its first displacement",
+    });
+    rows.push(Expectation {
+        id: b,
+        after: displaced(400, 0xc1),
+        label: "B: restored, displaced by C",
+    });
+    rows.push(Expectation {
+        id: c,
+        after: active(),
+        label: "C: the current block is untouched",
+    });
+    // A flip-back: the first block was replaced, then restored and
+    // re-observed when the chain returned to it.
+    let first = seed.insert(5_007, 0xf7, 100).await?;
+    let second = seed.insert(5_007, 0xa7, 200).await?;
+    seed.revoke(second, 500, "hathor_superseded").await?;
+    seed.insert(5_007, 0xf7, 9_000).await?;
+    rows.push(Expectation {
+        id: second,
+        after: displaced(500, 0xf7),
+        label: "a flip-back names the older, restored block",
+    });
+    rows.push(Expectation {
+        id: first,
+        after: active(),
+        label: "the block the chain returned to is untouched",
+    });
+    // A block replaced by one that was itself voided later.
+    let earlier = seed.insert(5_008, 0xe8, 100).await?;
+    let later = seed.insert(5_008, 0xa8, 150).await?;
+    seed.revoke(earlier, 150, "hathor_superseded").await?;
+    seed.revoke(later, 300, "hathor_voided").await?;
+    rows.push(Expectation {
+        id: earlier,
+        after: displaced(150, 0xa8),
+        label: "a block replaced by one later voided still names it",
+    });
+    rows.push(Expectation {
+        id: later,
+        after: active(),
+        label: "a voided block with no known replacement is restored undisplaced",
+    });
+    // Two replacements within one second.
+    let slow = seed.insert(5_010, 0xaa, 100).await?;
+    let quick = seed.insert(5_010, 0xbb, 300).await?;
+    let quicker = seed.insert(5_010, 0xcc, 300).await?;
+    seed.revoke(slow, 300, "hathor_superseded").await?;
+    seed.revoke(quick, 300, "hathor_superseded").await?;
+    rows.push(Expectation {
+        id: slow,
+        after: displaced(300, 0xcc),
+        label: "a chain of replacements within one second names the block the second ended with",
+    });
+    rows.push(Expectation {
+        id: quick,
+        after: displaced(300, 0xcc),
+        label: "quick: displaced by the block the second ended with",
+    });
+    rows.push(Expectation {
+        id: quicker,
+        after: active(),
+        label: "quicker: untouched",
+    });
+    Ok(rows)
+}
+
+/// Rows the repair must leave alone, and markers it must complete or not.
+async fn seed_markers_and_siblings(seed: &Seeder<'_>) -> Result<Vec<Expectation>> {
+    let mut rows = Vec::new();
+    let d = seed.insert(5_002, 0xd2, 100).await?;
+    seed.revoke(d, 300, "hathor_voided").await?;
+    rows.push(Expectation {
+        id: d,
+        after: active(),
+        label: "a voided block nothing replaced is restored without a displacement",
+    });
+    let e = seed.insert(5_003, 0xe3, 100).await?;
+    seed.revoke(e, 300, "hathor_non_btc").await?;
+    rows.push(Expectation {
+        id: e,
+        after: revoked(300, "hathor_non_btc"),
+        label: "an evidence revocation is untouched",
+    });
+    // A supersession begun but not finished: the marker names P as
+    // superseded by Q's hash, and P was never revoked.
+    let p = seed.insert(5_004, 0xf4, 100).await?;
+    let q = seed.insert(5_004, 0xa4, 200).await?;
+    seed.leave_marker(5_004, 0xa4, p).await?;
+    rows.push(Expectation {
+        id: p,
+        after: displaced(200, 0xa4),
+        label: "an unfinished supersession is completed as displacement",
+    });
+    rows.push(Expectation {
+        id: q,
+        after: active(),
+        label: "its replacement is untouched",
+    });
+    let namecoin = get_source_id(seed.client, NAMECOIN_SOURCE_CODE).await?;
+    let other = seed.insert_for(namecoin, 5_005, 0xb5, 100).await?;
+    seed.revoke(other, 300, "hathor_voided").await?;
+    rows.push(Expectation {
+        id: other,
+        after: revoked(300, "hathor_voided"),
+        label: "another source's event revoked with a Hathor reason by hand is not touched",
+    });
+    // A supersession interrupted before its capture committed: the marker's
+    // replacement hash has only a revoked row from before.
+    let interrupted = seed.insert(5_006, 0xd6, 100).await?;
+    let stale = seed.insert(5_006, 0xc6, 200).await?;
+    seed.revoke(stale, 250, "hathor_non_btc").await?;
+    seed.leave_marker(5_006, 0xc6, interrupted).await?;
+    rows.push(Expectation {
+        id: interrupted,
+        after: active(),
+        label: "a marker whose replacement never became active completes nothing",
+    });
+    rows.push(Expectation {
+        id: stale,
+        after: revoked(250, "hathor_non_btc"),
+        label: "the stale replacement stays revoked",
+    });
+    // An unfinished flip-back: the returned block was seen first, replaced,
+    // then back and re-observed when the marker naming its rival was written.
+    let returned = seed.insert(5_009, 0xa9, 100).await?;
+    let replaced = seed.insert(5_009, 0xb9, 200).await?;
+    seed.insert(5_009, 0xa9, 500).await?;
+    seed.leave_marker(5_009, 0xa9, replaced).await?;
+    rows.push(Expectation {
+        id: replaced,
+        after: displaced(500, 0xa9),
+        label: "an unfinished flip-back is stamped at the returned block's re-observation",
+    });
+    rows.push(Expectation {
+        id: returned,
+        after: active(),
+        label: "the returned block is untouched",
+    });
+    // Events active together at one height (an additive import beside a
+    // capture) that the old void path, or the old non-AuxPoW supersede
+    // branch, revoked together without writing a replacement.
+    for (height, hashes, reason) in [
+        (5_011, (0xdd, 0xee), "hathor_voided"),
+        (5_012, (0xab, 0xcd), "hathor_superseded"),
+    ] {
+        let one = seed.insert(height, hashes.0, 100).await?;
+        let two = seed.insert(height, hashes.1, 200).await?;
+        seed.revoke(one, 300, reason).await?;
+        seed.revoke(two, 300, reason).await?;
+        for id in [one, two] {
+            rows.push(Expectation {
+                id,
+                after: active(),
+                label: "events revoked together are restored and never name each other",
+            });
+        }
+    }
+    Ok(rows)
 }
 
 #[tokio::test]
@@ -740,8 +757,12 @@ async fn migration_0024_restores_replaced_hathor_events_as_displaced() -> Result
     let (client, schema) =
         crate::support::db::new_test_db_through("0023_validate_child_displacement").await?;
     let result = async {
-        let source_id = get_source_id(&client, HATHOR_SOURCE_CODE).await?;
-        let rows = seed_repair_scenario(&client, source_id).await?;
+        let seed = Seeder {
+            client: &client,
+            source_id: get_source_id(&client, HATHOR_SOURCE_CODE).await?,
+        };
+        let mut rows = seed_replacements(&seed).await?;
+        rows.extend(seed_markers_and_siblings(&seed).await?);
 
         client
             .batch_execute(include_str!(
@@ -754,99 +775,18 @@ async fn migration_0024_restores_replaced_hathor_events_as_displaced() -> Result
             ))
             .await?;
 
-        assert_repaired(&client, &rows).await?;
+        for row in &rows {
+            assert_eq!(
+                event_state(&client, row.id).await?,
+                row.after,
+                "{}",
+                row.label
+            );
+        }
         assert_markers_retired(&client).await
     }
     .await;
     crate::support::db::teardown_test_db(&client, &schema, result).await
-}
-
-/// Every seeded row is in the state `0024` documents for it.
-async fn assert_repaired(client: &Client, rows: &RepairScenario) -> Result<()> {
-    assert_eq!(
-        event_state(client, rows.a).await?,
-        (None, None, Some(200), Some(vec![0xb1; 32])),
-        "A is restored, displaced by B when B was written, its first displacement"
-    );
-    assert_eq!(
-        event_state(client, rows.b).await?,
-        (None, None, Some(400), Some(vec![0xc1; 32])),
-        "B is restored, displaced by C"
-    );
-    assert_eq!(event_state(client, rows.c).await?, (None, None, None, None));
-    assert_eq!(
-        event_state(client, rows.d).await?,
-        (None, None, None, None),
-        "a voided block nothing replaced is restored without a displacement"
-    );
-    assert_eq!(
-        event_state(client, rows.e).await?,
-        (Some(300), Some("hathor_non_btc".to_owned()), None, None),
-        "an evidence revocation is untouched"
-    );
-    assert_eq!(
-        event_state(client, rows.p).await?,
-        (None, None, Some(200), Some(vec![0xa4; 32])),
-        "an unfinished supersession is completed as displacement"
-    );
-    assert_eq!(event_state(client, rows.q).await?, (None, None, None, None));
-    assert_eq!(
-        event_state(client, rows.interrupted).await?,
-        (None, None, None, None),
-        "a marker whose replacement never became active completes nothing"
-    );
-    assert_eq!(
-        event_state(client, rows.stale_replacement).await?,
-        (Some(250), Some("hathor_non_btc".to_owned()), None, None)
-    );
-    assert_eq!(
-        event_state(client, rows.second).await?,
-        (None, None, Some(500), Some(vec![0xf7; 32])),
-        "a flip-back names the older, restored block as the replacement"
-    );
-    assert_eq!(
-        event_state(client, rows.first).await?,
-        (None, None, None, None)
-    );
-    assert_eq!(
-        event_state(client, rows.earlier).await?,
-        (None, None, Some(150), Some(vec![0xa8; 32])),
-        "a block replaced by one later voided still names it"
-    );
-    assert_eq!(
-        event_state(client, rows.later).await?,
-        (None, None, None, None),
-        "a voided block with no known replacement is restored undisplaced"
-    );
-    assert_eq!(
-        event_state(client, rows.replaced).await?,
-        (None, None, Some(500), Some(vec![0xa9; 32])),
-        "an unfinished flip-back is stamped at the returned block's re-observation"
-    );
-    assert_eq!(
-        event_state(client, rows.returned).await?,
-        (None, None, None, None)
-    );
-    assert_eq!(
-        event_state(client, rows.other).await?,
-        (Some(300), Some("hathor_voided".to_owned()), None, None),
-        "another source's event is not touched"
-    );
-
-    assert_eq!(
-        event_state(client, rows.slow).await?,
-        (None, None, Some(300), Some(vec![0xbb; 32])),
-        "two replacements in one second: the earlier inserted caused the revocation"
-    );
-    assert_eq!(
-        event_state(client, rows.quick).await?,
-        (None, None, Some(300), Some(vec![0xcc; 32]))
-    );
-    assert_eq!(
-        event_state(client, rows.quicker).await?,
-        (None, None, None, None)
-    );
-    Ok(())
 }
 
 /// After `0025`: no marker rows remain and the marker columns are gone.

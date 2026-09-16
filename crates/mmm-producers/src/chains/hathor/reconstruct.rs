@@ -21,12 +21,23 @@ pub(crate) struct HathorReconstructedParent {
 
 /// What a block says about its own work: the weight its hash was checked
 /// against, and the block it builds on, both read from the graph struct.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct DeclaredWork {
     /// See [`declared_weight`].
     pub(crate) weight: f64,
     /// See [`declared_parent_block`].
     pub(crate) parent_block: Option<[u8; 32]>,
+}
+
+impl DeclaredWork {
+    /// Read the declared work from the graph struct that starts at
+    /// `graph_at` in `bytes`; `None` when no weight is readable there.
+    pub(crate) fn read(bytes: &[u8], graph_at: usize) -> Option<Self> {
+        Some(Self {
+            weight: declared_weight(bytes, graph_at)?,
+            parent_block: declared_parent_block(bytes, graph_at),
+        })
+    }
 }
 
 /// What a version-3 block's proof establishes.
@@ -72,21 +83,20 @@ pub(crate) fn reconstruct_or_skip(
         }
     };
 
-    let Some(weight) = declared_weight(&inputs.raw, recon.funds_graph_split) else {
+    let Some(work) = DeclaredWork::read(&inputs.raw, recon.funds_graph_split) else {
         error!(height, "Hathor block declares no readable weight; skipping");
         return Ok(HathorParentReconstruction::Malformed);
     };
-    if !meets_hathor_target(recon.header.block_hash(), weight) {
+    // The reconstruction identity already proved the header hashes to the
+    // block hash the response named.
+    if !meets_hathor_target(inputs.expected, work.weight) {
         error!(
             height,
-            weight, "Hathor block hash does not meet its declared target; skipping"
+            weight = work.weight,
+            "Hathor block hash does not meet its declared target; skipping"
         );
         return Ok(HathorParentReconstruction::Malformed);
     }
-    let work = DeclaredWork {
-        weight,
-        parent_block: declared_parent_block(&inputs.raw, recon.funds_graph_split),
-    };
 
     if !pow_validates_target(&recon.header) {
         // The common case: the embedded BTC header only met Hathor's (easier)
@@ -136,7 +146,7 @@ fn decode_reconstruction_inputs(
 
 /// The block's declared weight: the first graph field, a big-endian IEEE-754
 /// double immediately after the funds|graph split.
-pub(crate) fn declared_weight(raw: &[u8], funds_graph_split: usize) -> Option<f64> {
+fn declared_weight(raw: &[u8], funds_graph_split: usize) -> Option<f64> {
     let bytes: [u8; 8] = raw
         .get(funds_graph_split..funds_graph_split + 8)?
         .try_into()
@@ -147,7 +157,7 @@ pub(crate) fn declared_weight(raw: &[u8], funds_graph_split: usize) -> Option<f6
 /// The block the block builds on: the first of the parents listed after the
 /// weight and timestamp in the graph struct (a block's first parent is its
 /// parent block). `None` when the graph lists no parent.
-pub(crate) fn declared_parent_block(raw: &[u8], funds_graph_split: usize) -> Option<[u8; 32]> {
+fn declared_parent_block(raw: &[u8], funds_graph_split: usize) -> Option<[u8; 32]> {
     let count_at = funds_graph_split + 8 + 4;
     if *raw.get(count_at)? == 0 {
         return None;

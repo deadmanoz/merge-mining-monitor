@@ -52,6 +52,43 @@ impl std::fmt::Display for OfflineValidClassifierConflict {
 
 impl std::error::Error for OfflineValidClassifierConflict {}
 
+/// Revoke the active events for one child block, the block a verdict was
+/// reached on: the exact row for its hash, plus a hashless historical row at
+/// the height whose Bitcoin parent is `parent_hash` (the identity partial
+/// promotion uses). Never another block's event at the height: a rescanned
+/// height can hold a displaced block's event beside the current one, and
+/// that event is still valid Bitcoin-side evidence. Reuses the public revoke
+/// path (event mutation + parent reconcile in one transaction).
+pub(crate) async fn revoke_active_block(
+    client: &mut tokio_postgres::Client,
+    context: &crate::producer_runtime::ProducerContext,
+    height: i32,
+    block_hash: &[u8],
+    parent_hash: &[u8],
+    reason: &str,
+) -> anyhow::Result<()> {
+    use anyhow::Context as _;
+    let event_ids = mmm_store::active_event_ids_for_child_block(
+        &*client,
+        context.source_id(),
+        height,
+        block_hash,
+        parent_hash,
+    )
+    .await?;
+    for event_id in event_ids {
+        mmm_read_model::revoke_merge_mining_event(
+            client,
+            event_id,
+            reason,
+            context.parent_classifier(),
+        )
+        .await
+        .with_context(|| format!("revoke event {event_id} ({reason})"))?;
+    }
+    Ok(())
+}
+
 fn ensure_offline_valid_not_classifier_conflict(
     payload: &MergeMiningEventPayload,
 ) -> anyhow::Result<()> {
@@ -172,9 +209,9 @@ where
     let context = hathor::capture::HathorCaptureContext::new_with_classifier(
         &pg_client,
         rt.parent_classifier,
+        hathor::capture::ChainObservation::ArchiveReplay,
     )
-    .await?
-    .for_archive_replay();
+    .await?;
     let csv = std::fs::File::open(&config.csv_path).map(std::io::BufReader::new)?;
     let ledger_path = config.skip_ledger_path();
     let mut ledger = std::fs::OpenOptions::new()

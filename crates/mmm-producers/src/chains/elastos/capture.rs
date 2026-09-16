@@ -36,6 +36,7 @@ use crate::chains::elastos::rpc::{ElastosBlock, ElastosRpc, ReconstructedBlock};
 use crate::chains::nbits_horizon::{HorizonGate, cached_horizon_gate};
 use crate::chains::{
     ensure_offline_valid_not_classifier_conflict, is_offline_valid_classifier_conflict,
+    revoke_active_block,
 };
 use crate::producer_runtime::ProducerContext;
 use bitcoin::BlockHash;
@@ -55,11 +56,9 @@ use mmm_capture::nbits_table::{NbitsTable, NbitsVerdict};
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_capture::source_registry::ELASTOS_SOURCE_CODE;
 use mmm_read_model::capture_in_txn;
-use mmm_read_model::revoke_merge_mining_event;
 use mmm_store::{
-    CurrentBlockParent, EventWriteOutcome, active_event_ids_for_child_block,
-    finish_child_chain_height_operation, load_pool_identities_by_namespace,
-    lock_child_chain_height_session, record_child_chain_block,
+    CurrentBlockParent, EventWriteOutcome, finish_child_chain_height_operation,
+    load_pool_identities_by_namespace, lock_child_chain_height_session, record_child_chain_block,
     record_child_chain_block_in_own_transaction, retag_revocation_reason,
     write_elastos_capture_in_txn,
 };
@@ -259,8 +258,15 @@ async fn apply_elastos_evaluation(
             .await
             {
                 HorizonGate::FarFuture => {
-                    revoke_active_block(client, context, height, &block, ELASTOS_REVOKE_NON_BTC)
-                        .await?;
+                    revoke_active_block(
+                        client,
+                        &context.base,
+                        height,
+                        block.hash.as_ref(),
+                        block.parent_hash.as_ref(),
+                        ELASTOS_REVOKE_NON_BTC,
+                    )
+                    .await?;
                     ElastosHeightOutcome::NonBtcParentSkipped
                 }
                 HorizonGate::Hold | HorizonGate::WithinTip => {
@@ -270,7 +276,15 @@ async fn apply_elastos_evaluation(
             (outcome, Some(block))
         }
         ElastosEvaluation::RevokeNonBtc { block } => {
-            revoke_active_block(client, context, height, &block, ELASTOS_REVOKE_NON_BTC).await?;
+            revoke_active_block(
+                client,
+                &context.base,
+                height,
+                block.hash.as_ref(),
+                block.parent_hash.as_ref(),
+                ELASTOS_REVOKE_NON_BTC,
+            )
+            .await?;
             (ElastosHeightOutcome::NonBtcParentSkipped, Some(block))
         }
         ElastosEvaluation::Write { parsed, recon } => {
@@ -341,7 +355,15 @@ async fn write_behind_horizon_gate(
     .await
     {
         HorizonGate::FarFuture => {
-            revoke_active_block(client, context, height, &proven, ELASTOS_REVOKE_NON_BTC).await?;
+            revoke_active_block(
+                client,
+                &context.base,
+                height,
+                proven.hash.as_ref(),
+                proven.parent_hash.as_ref(),
+                ELASTOS_REVOKE_NON_BTC,
+            )
+            .await?;
             Ok(ElastosHeightOutcome::NonBtcParentSkipped)
         }
         HorizonGate::Hold => Ok(ElastosHeightOutcome::TableHorizonHold),
@@ -596,9 +618,10 @@ async fn write_valid_capture(
             // Sticky reason: a later Valid recapture does NOT auto-restore it.
             revoke_active_block(
                 client,
-                context,
+                &context.base,
                 height,
-                &proven,
+                proven.hash.as_ref(),
+                proven.parent_hash.as_ref(),
                 ELASTOS_REVOKE_CLASSIFIER_CONFLICT,
             )
             .await?;
@@ -619,37 +642,6 @@ async fn write_valid_capture(
         }
         Err(err) => Err(err).with_context(|| format!("Elastos capture at height {height}")),
     }
-}
-
-/// Revoke the active Elastos event for one child block (a replay verdict-flip
-/// to rejected), reusing the public revoke path (event mutation + parent
-/// reconcile in one transaction). Scoped to the block (its hash, or a hashless
-/// historical row by its parent), not the height: a
-/// rescanned height may hold events for more than one block, and a verdict on
-/// the block the chain carries now says nothing about the evidence of a block
-/// it displaced. `ELASTOS_REVOKE_NON_BTC` is reversible (auto-restored on a
-/// later Valid recapture); `ELASTOS_REVOKE_CLASSIFIER_CONFLICT` is sticky.
-async fn revoke_active_block(
-    client: &mut Client,
-    context: &ElastosCaptureContext,
-    height: i32,
-    block: &ProvenBlock,
-    reason: &str,
-) -> Result<()> {
-    let event_ids = active_event_ids_for_child_block(
-        client,
-        context.source_id(),
-        height,
-        block.hash.as_ref(),
-        block.parent_hash.as_ref(),
-    )
-    .await?;
-    for event_id in event_ids {
-        revoke_merge_mining_event(client, event_id, reason, context.parent_classifier())
-            .await
-            .with_context(|| format!("revoke Elastos event {event_id} ({reason})"))?;
-    }
-    Ok(())
 }
 
 use crate::chains::elastos::rpc::ElastosRpcClient;

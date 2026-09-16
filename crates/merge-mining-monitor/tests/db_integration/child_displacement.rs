@@ -1,9 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use mmm_capture::capture::{
-    ClassificationProof, MergeMiningEventPayload, ResolvedPoolAttributions, build_event_payload,
-};
+use mmm_capture::capture::MergeMiningEventPayload;
 use mmm_capture::source_registry::NAMECOIN_SOURCE_CODE;
 use mmm_store::{
     ChildDisplacementOutcome, CurrentBlockParent, EventWriteDisposition, get_source_id,
@@ -12,29 +10,16 @@ use mmm_store::{
 use tokio_postgres::Client;
 
 use crate::support::db::connect_to_schema;
-use crate::support::parse_auxpow_fixture;
+use crate::support::exact_observation;
 
 const HEIGHT: i32 = 1_030;
 const HASH_A: [u8; 32] = [0x0a; 32];
 const HASH_B: [u8; 32] = [0x0b; 32];
 const HASH_C: [u8; 32] = [0x0c; 32];
 
-/// An exact observation at `HEIGHT` with a synthetic child hash. The child
-/// header is dropped so the hash need not authenticate against it.
+/// An exact observation at `HEIGHT` with a synthetic child hash.
 fn exact_at_height(fixture: &str, hash: [u8; 32]) -> Result<MergeMiningEventPayload> {
-    let parsed = parse_auxpow_fixture(fixture)?;
-    let mut payload = build_event_payload(
-        &parsed,
-        Some(HEIGHT),
-        ResolvedPoolAttributions::default(),
-        ClassificationProof::default(),
-        2_030,
-    )?;
-    payload.child_block_hash = Some(hash.to_vec());
-    payload.child_header_bytes = None;
-    payload.child_nbits = None;
-    payload.pow_validates_child_target = None;
-    Ok(payload)
+    exact_observation(fixture, HEIGHT, hash, 2_030)
 }
 
 /// Record the chain's block in its own committed transaction, as a producer

@@ -14,6 +14,8 @@ use mmm_producers::chains::{
 use mmm_store::get_source_id;
 use tokio_postgres::Client;
 
+use crate::support::db::advisory_locks_held;
+
 const HEIGHT: i32 = 700;
 
 /// A `BitcoindRpc` serving one scripted block per height, so the runner's
@@ -77,19 +79,6 @@ fn non_auxpow_block() -> Vec<u8> {
     raw.extend_from_slice(&7u32.to_le_bytes());
     raw.push(0);
     raw
-}
-
-/// Advisory locks this session still holds. The session-level height lock
-/// must be released once a height is processed, whatever its outcome.
-async fn advisory_locks_held(client: &Client) -> Result<i64> {
-    Ok(client
-        .query_one(
-            "SELECT count(*) FROM pg_locks \
-             WHERE locktype = 'advisory' AND pid = pg_backend_pid()",
-            &[],
-        )
-        .await?
-        .get(0))
 }
 
 /// `(child_block_hash, child_displaced_by, revoked_at)` for every event at

@@ -348,7 +348,7 @@ async fn assert_hathor_reward_capture(client: &Client, source_id: i64) -> Result
 async fn hathor_state_machine_drives_capture_void_and_hold() -> Result<()> {
     use mmm_bitcoin_core::ConfiguredParentClassifier;
     use mmm_producers::chains::hathor::{
-        HathorCaptureContext, HathorHeightOutcome, process_hathor_height,
+        ChainObservation, HathorCaptureContext, HathorHeightOutcome, process_hathor_height,
     };
 
     // The single event for the seeded Hathor source: NULL revoked_at means active.
@@ -384,6 +384,7 @@ async fn hathor_state_machine_drives_capture_void_and_hold() -> Result<()> {
         let context = HathorCaptureContext::new_with_classifier(
             &client,
             ConfiguredParentClassifier::Disabled,
+            ChainObservation::Live { fork_window: 20 },
         )
         .await?;
         let source_id = context.source_id();
@@ -440,7 +441,8 @@ async fn hathor_state_machine_drives_capture_void_and_hold() -> Result<()> {
 async fn hathor_cache_ingest_streams_counts_and_is_idempotent() -> Result<()> {
     use mmm_bitcoin_core::ConfiguredParentClassifier;
     use mmm_producers::chains::hathor::{
-        CACHE_CSV_HEADER, HathorCacheConfig, HathorCaptureContext, run_hathor_cache_ingest,
+        CACHE_CSV_HEADER, ChainObservation, HathorCacheConfig, HathorCaptureContext,
+        run_hathor_cache_ingest,
     };
 
     crate::run_mut_db_test!(client, {
@@ -454,9 +456,9 @@ async fn hathor_cache_ingest_streams_counts_and_is_idempotent() -> Result<()> {
         let context = HathorCaptureContext::new_with_classifier(
             &client,
             ConfiguredParentClassifier::Disabled,
+            ChainObservation::ArchiveReplay,
         )
-        .await?
-        .for_archive_replay();
+        .await?;
         let source_id = context.source_id();
 
         let fx: serde_json::Value =
