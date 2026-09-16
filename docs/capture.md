@@ -110,6 +110,21 @@ Cursor seeding order is:
 2. persisted cursor
 3. `tip - reorg_depth`
 
+Each tick re-processes the `reorg_depth` heights ending at and including the
+persisted cursor, then advances the cursor by up to the batch size; only
+once the cursor has caught up with the tip does that window end at and
+include the tip instead, and a poller catching up after an outage rescans
+behind its cursor and does not see near-tip replacements until it gets
+there. The depth is a deployment setting (`<PREFIX>_REORG_DEPTH`), zero by
+default for every chain except RSK and Hathor; with every live producer
+except RSK recording child displacement, a chain's depth can be raised
+without leaving two current blocks or revoking a replaced one.
+
+For Hathor, the displacement work floor is bounded at a 32-block fork
+(`HATHOR_MAX_DISPLACEMENT_FORK_DEPTH`), so a depth above 32 still rescans
+that far, but a replacement across a deeper fork may be captured without
+being recorded as the chain's block.
+
 Backfills are bounded, idempotent over event identity, and do not move the live
 cursor. Use the `just poll-CHAIN` and `just backfill-CHAIN START END` recipes
 for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, `elastos`, and `qbit`.
