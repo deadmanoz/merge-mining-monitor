@@ -613,6 +613,38 @@ struct RepairScenario {
     replaced: i64,
 }
 
+/// The old producer's durable `supersede` marker: `superseded` is about to be
+/// revoked in favour of the block with hash byte `new_hash`.
+async fn leave_marker(
+    client: &Client,
+    source_id: i64,
+    height: i32,
+    new_hash: u8,
+    superseded: i64,
+) -> Result<()> {
+    client
+        .execute(
+            "INSERT INTO poll_pending_reconcile \
+                 (source_id, height, kind, new_child_block_hash, superseded_event_ids, reason) \
+             VALUES ($1, $2, 'supersede', $3, $4, 'hathor_superseded')",
+            &[&source_id, &height, &vec![new_hash; 32], &vec![superseded]],
+        )
+        .await?;
+    Ok(())
+}
+
+/// A later observation of an existing event advances its `confirmed_at`, as
+/// the upsert does on every rescan; `discovered_at` never moves.
+async fn reobserve(client: &Client, id: i64, at: i64) -> Result<()> {
+    client
+        .execute(
+            "UPDATE merge_mining_event SET confirmed_at = $2 WHERE id = $1",
+            &[&id, &at],
+        )
+        .await?;
+    Ok(())
+}
+
 /// Seed the rows the old producer would have left behind, on a schema that
 /// still carries the `supersede` marker columns.
 async fn seed_repair_scenario(client: &Client, source_id: i64) -> Result<RepairScenario> {
@@ -652,60 +684,24 @@ async fn seed_repair_scenario(client: &Client, source_id: i64) -> Result<RepairS
     revoke(other, 300, "hathor_voided").await?;
     // The chain's block is re-observed on every rescan, which advances its
     // confirmed_at long past the revocations it caused.
-    client
-        .execute(
-            "UPDATE merge_mining_event SET confirmed_at = 9_000 WHERE id = $1",
-            &[&c],
-        )
-        .await?;
+    reobserve(client, c, 9_000).await?;
     let interrupted = insert(5_006, 0xd6, 100).await?;
     let stale_replacement = insert(5_006, 0xc6, 200).await?;
     revoke(stale_replacement, 250, "hathor_non_btc").await?;
-    client
-        .execute(
-            "INSERT INTO poll_pending_reconcile \
-                 (source_id, height, kind, new_child_block_hash, superseded_event_ids, reason) \
-             VALUES ($1, 5006, 'supersede', $2, $3, 'hathor_superseded')",
-            &[&source_id, &vec![0xc6u8; 32], &vec![interrupted]],
-        )
-        .await?;
-    client
-        .execute(
-            "INSERT INTO poll_pending_reconcile \
-                 (source_id, height, kind, new_child_block_hash, superseded_event_ids, reason) \
-             VALUES ($1, 5004, 'supersede', $2, $3, 'hathor_superseded')",
-            &[&source_id, &vec![0xa4u8; 32], &vec![p]],
-        )
-        .await?;
+    leave_marker(client, source_id, 5_006, 0xc6, interrupted).await?;
+    leave_marker(client, source_id, 5_004, 0xa4, p).await?;
     let first = insert(5_007, 0xf7, 100).await?;
     let second = insert(5_007, 0xa7, 200).await?;
     revoke(second, 500, "hathor_superseded").await?;
-    client
-        .execute(
-            "UPDATE merge_mining_event SET confirmed_at = 9_000 WHERE id = $1",
-            &[&first],
-        )
-        .await?;
+    reobserve(client, first, 9_000).await?;
     let earlier = insert(5_008, 0xe8, 100).await?;
     let later = insert(5_008, 0xa8, 150).await?;
     revoke(earlier, 150, "hathor_superseded").await?;
     revoke(later, 300, "hathor_voided").await?;
     let returned = insert(5_009, 0xa9, 100).await?;
     let replaced = insert(5_009, 0xb9, 200).await?;
-    client
-        .execute(
-            "UPDATE merge_mining_event SET confirmed_at = 500 WHERE id = $1",
-            &[&returned],
-        )
-        .await?;
-    client
-        .execute(
-            "INSERT INTO poll_pending_reconcile \
-                 (source_id, height, kind, new_child_block_hash, superseded_event_ids, reason) \
-             VALUES ($1, 5009, 'supersede', $2, $3, 'hathor_superseded')",
-            &[&source_id, &vec![0xa9u8; 32], &vec![replaced]],
-        )
-        .await?;
+    reobserve(client, returned, 500).await?;
+    leave_marker(client, source_id, 5_009, 0xa9, replaced).await?;
     Ok(RepairScenario {
         a,
         b,
