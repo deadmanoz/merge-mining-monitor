@@ -21,9 +21,10 @@
 //! - CAPTURE-LEVEL (counted): rows that validate structurally but fail the capture
 //!   path's own reconstruct/guard checks return the ordinary observable
 //!   [`HathorHeightOutcome`] variants, exactly as a live REST response would.
-//!   The dominant expected bucket is `MalformedSkipped`: sub-BTC-target near
+//!   The dominant expected bucket is `NearSkipped`: sub-BTC-target near
 //!   shares (the normal case for ~all merge-mined blocks) return from
-//!   reconstruction before the nBits verdict.
+//!   reconstruction before the nBits verdict. The context replays an
+//!   archive, so no row records which block the chain carries.
 //!
 //! Heights with no archive row are counted as `absent_heights` by the runner
 //! itself (compact ranges in the skip ledger); the capture path is not driven

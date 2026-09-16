@@ -345,6 +345,37 @@ async fn advisory_locks_held(client: &Client) -> Result<i64> {
         .get(0))
 }
 
+/// Seed the Core cache so the parents of both fixtures classify Valid: the
+/// cache reaches B's parent (751,763) with B's nBits, and A's epoch keeps A's.
+async fn seed_core_cache_for_both_fixtures(client: &Client) -> Result<()> {
+    crate::support::db::seed_bitcoin_core_header_cache_through(
+        client,
+        751_763,
+        i64::MAX,
+        0x1709_ed88,
+    )
+    .await?;
+    client
+        .execute(
+            "UPDATE bitcoin_core_header SET bits = $1 WHERE height = $2",
+            &[&i64::from(0x170c_69ea_u32), &daa_epoch_start(710_969)],
+        )
+        .await?;
+    Ok(())
+}
+
+/// A copy of a fixture RPC with its response edited: what the endpoint would
+/// answer if it misplaced, voided or corrupted that block.
+fn variant_of(
+    rpc: &FixtureHathorRpc,
+    edit: impl FnOnce(&mut HathorBlockMeta, &mut HathorTransaction),
+) -> FixtureHathorRpc {
+    let mut meta = rpc.meta.clone();
+    let mut tx = rpc.tx.clone();
+    edit(&mut meta, &mut tx);
+    FixtureHathorRpc { meta, tx }
+}
+
 #[tokio::test]
 async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> Result<()> {
     crate::run_mut_db_test!(client, {
@@ -361,21 +392,7 @@ async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> 
         let hash_a = internal_hash(&rpc_a.meta.tx_id);
         let hash_b = internal_hash(&rpc_b.meta.tx_id);
 
-        // Both parents classify Valid: the cache reaches B's parent (751,763)
-        // with B's nBits, and A's epoch keeps A's.
-        crate::support::db::seed_bitcoin_core_header_cache_through(
-            &client,
-            751_763,
-            i64::MAX,
-            0x1709_ed88,
-        )
-        .await?;
-        client
-            .execute(
-                "UPDATE bitcoin_core_header SET bits = $1 WHERE height = $2",
-                &[&i64::from(0x170c_69ea_u32), &daa_epoch_start(710_969)],
-            )
-            .await?;
+        seed_core_cache_for_both_fixtures(&client).await?;
         let context = HathorCaptureContext::new_with_classifier(
             &client,
             ConfiguredParentClassifier::Fake(
@@ -412,37 +429,37 @@ async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> 
         ]);
         assert_eq!(displacement_at(&client, source_id, height).await?, after_b);
 
-        // Tick 3: a response whose reconstruction identity is broken proves
+        // Tick 3: B answered for its own height rather than the one asked for
+        // holds the height for a retry; nothing changes.
+        let misrouted = variant_of(&rpc_b, |meta, _| meta.height = 2_773_476);
+        assert_eq!(
+            process_hathor_height(&mut client, &misrouted, &context, height).await?,
+            HathorHeightOutcome::TransientHold
+        );
+        assert_eq!(displacement_at(&client, source_id, height).await?, after_b);
+
+        // Tick 4: a response whose reconstruction identity is broken proves
         // nothing, so it changes nothing.
-        let mut tampered_tx = rpc_b.tx.clone();
-        let last = tampered_tx.raw.pop().unwrap();
-        tampered_tx.raw.push(if last == '0' { '1' } else { '0' });
-        let tampered = FixtureHathorRpc {
-            meta: rpc_b.meta.clone(),
-            tx: tampered_tx,
-        };
+        let tampered = variant_of(&rpc_b, |_, tx| {
+            let last = tx.raw.pop().unwrap();
+            tx.raw.push(if last == '0' { '1' } else { '0' });
+        });
         assert_eq!(
             process_hathor_height(&mut client, &tampered, &context, height).await?,
             HathorHeightOutcome::MalformedSkipped
         );
         assert_eq!(displacement_at(&client, source_id, height).await?, after_b);
 
-        // Tick 4: B reported voided names no replacement: nothing changes and
+        // Tick 5: B reported voided names no replacement: nothing changes and
         // nothing is revoked.
-        let voided = FixtureHathorRpc {
-            meta: HathorBlockMeta {
-                is_voided: true,
-                ..rpc_b.meta.clone()
-            },
-            tx: rpc_b.tx.clone(),
-        };
+        let voided = variant_of(&rpc_b, |meta, _| meta.is_voided = true);
         assert_eq!(
             process_hathor_height(&mut client, &voided, &context, height).await?,
             HathorHeightOutcome::VoidedSkipped
         );
         assert_eq!(displacement_at(&client, source_id, height).await?, after_b);
 
-        // Tick 5: A again. A is restored and B displaced by it; nothing was
+        // Tick 6: A again. A is restored and B displaced by it; nothing was
         // revoked, and no lock or held height is left behind.
         assert_eq!(
             process_hathor_height(&mut client, &rpc_a, &context, height).await?,

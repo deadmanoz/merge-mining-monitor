@@ -23,8 +23,9 @@ pub(crate) async fn poll(
     let rpc_config = crate::chains::config::hathor_rpc_config()?;
     let rpc = HathorRpcClient::new(rpc_config)?;
     let poller_config = crate::chains::config::poller_config(spec)?;
-    let context =
-        HathorCaptureContext::new_with_classifier(&rt.pg_client, rt.parent_classifier).await?;
+    let context = HathorCaptureContext::new_with_classifier(&rt.pg_client, rt.parent_classifier)
+        .await?
+        .with_fork_window(poller_config.reorg_depth);
     let poller = crate::poller::Poller::new(
         crate::chains::hathor::poller::HathorChainPoller::new(rt.pg_client, rpc, context),
         poller_config,
@@ -72,7 +73,10 @@ pub(crate) async fn run_hathor_backfill(
     let delay_ms: u64 = crate::chains::config::hathor_backfill_delay_ms();
     let skip_holds = crate::chains::config::hathor_backfill_skip_holds();
 
-    let context = HathorCaptureContext::new_with_classifier(&client, parent_classifier).await?;
+    // A bounded backfill reconciles a fork as deep as its range.
+    let context = HathorCaptureContext::new_with_classifier(&client, parent_classifier)
+        .await?
+        .with_fork_window(config.end_height - config.start_height + 1);
     info!(
         start_height = config.start_height,
         end_height = config.end_height,

@@ -17,9 +17,9 @@
 //! endpoint may be untrusted, a block is recorded only when its
 //! reconstruction identity holds, its hash meets the target of the weight it
 //! declares, and that weight is held to the weight of the blocks captured at
-//! the height (see [`HATHOR_DECLARED_WEIGHT_SLACK`]). Revocation keeps its
-//! one meaning, a non-BTC parent or a classifier conflict, applied to the
-//! block the verdict was reached on.
+//! the height (see [`HathorCaptureContext::declared_weight_slack`]).
+//! Revocation keeps its one meaning, a non-BTC parent or a classifier
+//! conflict, applied to the block the verdict was reached on.
 
 use anyhow::{Context, Result};
 use bitcoin::Transaction;
@@ -37,6 +37,7 @@ use crate::chains::hathor::reconstruct::{
 use crate::chains::hathor::reward::{HATHOR_REWARD_ADDRESS_NAMESPACE, parse_hathor_reward_outputs};
 use crate::chains::hathor::rpc::{HathorBlockMeta, HathorRpc, HathorTransaction};
 use crate::chains::nbits_horizon::{HorizonGate, cached_horizon_gate};
+use crate::chains::spec::{ChainId, by_id};
 use crate::chains::{
     ensure_offline_valid_not_classifier_conflict, is_offline_valid_classifier_conflict,
 };
@@ -62,16 +63,11 @@ use mmm_store::{
     record_child_chain_block_in_own_transaction, write_hathor_capture_in_txn,
 };
 
-/// How far below the weight of a block captured at a height another block
-/// may declare its own weight and still be recorded as the chain's block
-/// there. Hathor's difficulty adjustment moves a block's weight by at most
-/// 0.25 from its parent's, so two blocks at one height differ by at most that
-/// times the depth of the fork beneath them: 8 covers a fork 32 blocks deep,
-/// well past the rescan window, while still demanding 1/256 of the captured
-/// block's work. The weight a response declares is the endpoint's claim, and
-/// the target it sets is met by whatever work the response carries; this
-/// floor is what a fabricated replacement cannot clear.
-const HATHOR_DECLARED_WEIGHT_SLACK: f64 = 8.0;
+/// The most Hathor's difficulty adjustment moves a block's weight from its
+/// parent's (hathor-core `BLOCK_DIFFICULTY_MAX_DW`). Two blocks at one height
+/// on branches that diverged `d` blocks below them therefore differ by at
+/// most `2 * 0.25 * d`, each branch moving its own way.
+const HATHOR_MAX_WEIGHT_STEP: f64 = 0.25;
 
 /// Per-source capture state shared across every height in a poll/backfill run:
 /// the pool resolver, the bootstrapped [`ProducerContext`] (source id +
@@ -90,6 +86,11 @@ pub struct HathorCaptureContext {
     /// a snapshot of the chain as it was, not an observation of it as it is,
     /// and must not move that record; see [`Self::for_archive_replay`].
     observes_chain: bool,
+    /// The deepest fork this run reconciles by displacement, in blocks: the
+    /// rescan window for the poller, the range for a bounded backfill. It
+    /// sets how far below a captured block's weight a replacement may declare
+    /// its own and still be recorded, see [`Self::declared_weight_slack`].
+    fork_window: i32,
 }
 
 impl HathorCaptureContext {
@@ -117,7 +118,26 @@ impl HathorCaptureContext {
             base,
             reward_identities,
             observes_chain: true,
+            fork_window: by_id(ChainId::Hathor).poller.reorg_depth,
         })
+    }
+
+    /// Set the deepest fork this run reconciles by displacement: the poller's
+    /// rescan window, or a bounded backfill's range.
+    pub fn with_fork_window(mut self, fork_window: i32) -> Self {
+        self.fork_window = fork_window.max(1);
+        self
+    }
+
+    /// How far below the weight of a block captured at a height another block
+    /// may declare its own weight and still be recorded as the chain's block
+    /// there: the most the two branches of a fork as deep as this run's window
+    /// can drift apart. The weight a response declares is the endpoint's
+    /// claim, and the target it sets is met by whatever work the response
+    /// carries; this floor, a fixed fraction of the captured block's work, is
+    /// what a fabricated replacement cannot clear. A deeper window lowers it.
+    fn declared_weight_slack(&self) -> f64 {
+        2.0 * HATHOR_MAX_WEIGHT_STEP * f64::from(self.fork_window)
     }
 
     /// Mark the context as replaying an archive: events are written, but no
@@ -172,7 +192,8 @@ pub enum HathorHeightOutcome {
     ConflictSkipped,
     /// The block was definitively absent (best-effort hold).
     AbsentHold,
-    /// A transient REST failure (best-effort hold).
+    /// A transient REST failure, or a response for another height than the
+    /// one asked for (best-effort hold: retried, never counted as processed).
     TransientHold,
     /// The parent BIP34 height is beyond the Core-cache horizon (cursor-blocking).
     TableHorizonHold,
@@ -211,11 +232,12 @@ type HathorBlockLoad = std::result::Result<HathorBlockDecision, HathorHeightOutc
 /// is recorded in a transaction of its own. The endpoint may be untrusted, so
 /// a block is recorded only when its RFC 0006 reconstruction identity holds,
 /// its hash meets the target of the weight it declares, and that weight is
-/// within [`HATHOR_DECLARED_WEIGHT_SLACK`] of the weight of the blocks
-/// captured at the height; a height with no captured block to hold it
-/// against records nothing. The response must answer for the height asked
-/// for; the position itself stays the endpoint's assertion, as it is for
-/// every captured event's child height. A voided block and a non-merge-mined
+/// within the run's [`HathorCaptureContext::declared_weight_slack`] of the
+/// weight of the blocks captured at the height; a height with no captured
+/// block to hold it against records nothing. A response for another height
+/// than the one asked for holds the height, so it is retried rather than
+/// counted as processed; the position itself stays the endpoint's assertion,
+/// as it is for every captured event's child height. A voided block and a non-merge-mined
 /// block are never recorded: the first names no replacement, the second
 /// carries no proof this producer verifies. An archive replay records
 /// nothing, see [`HathorCaptureContext::for_archive_replay`].
@@ -301,14 +323,15 @@ async fn classify_hathor_block(
 ) -> Result<HathorBlockLoad> {
     // Untrusted-endpoint guard: the response must answer for the height asked
     // for, or a stale or misrouted response would write, revoke or record at
-    // the WRONG child height while the poller advances past this one.
+    // the WRONG child height. A hold, not a skip: the height is not processed,
+    // so the poller queues a durable retry and a backfill does not count it.
     if block.height != height {
         warn!(
             requested = height,
             returned = block.height,
-            "Hathor /block_at_height answered for a different height; skipping"
+            "Hathor /block_at_height answered for a different height; holding"
         );
-        return Ok(Err(HathorHeightOutcome::MalformedSkipped));
+        return Ok(Err(HathorHeightOutcome::TransientHold));
     }
 
     // A voided block is a definitive child-DAG signal that this block is not
@@ -438,15 +461,15 @@ async fn process_validated_hathor_auxpow(
 
 /// Whether a block declaring `declared` may be recorded as the chain's block
 /// at the height: `None` when no block captured there has a sidecar to hold
-/// it against, else whether it is within [`HATHOR_DECLARED_WEIGHT_SLACK`] of
-/// the greatest weight declared by the blocks captured there.
+/// it against, else whether it is within the run's slack of the greatest
+/// weight declared by the blocks captured there.
 async fn declared_weight_holds<C: GenericClient>(
     client: &C,
-    source_id: i64,
+    context: &HathorCaptureContext,
     height: i32,
     declared: f64,
 ) -> Result<Option<bool>> {
-    let graphs = hathor_sidecar_graphs_at_height(client, source_id, height).await?;
+    let graphs = hathor_sidecar_graphs_at_height(client, context.source_id(), height).await?;
     let reference = graphs
         .iter()
         .filter_map(|(graph, split)| declared_weight(graph, *split as usize))
@@ -454,12 +477,14 @@ async fn declared_weight_holds<C: GenericClient>(
             Some(best.map_or(weight, |best| best.max(weight)))
         });
     Ok(reference.map(|reference| {
-        let holds = declared + HATHOR_DECLARED_WEIGHT_SLACK >= reference;
+        let slack = context.declared_weight_slack();
+        let holds = declared + slack >= reference;
         if !holds {
             warn!(
                 height,
                 declared,
                 reference,
+                slack,
                 "Hathor block declares far less work than a block captured at this height; \
                  not recorded as the chain's block"
             );
@@ -484,7 +509,7 @@ async fn record_current_block(
     if !context.observes_chain() {
         return Ok(());
     }
-    match declared_weight_holds(&*client, context.source_id(), height, declared_weight).await? {
+    match declared_weight_holds(&*client, context, height, declared_weight).await? {
         Some(true) => {}
         Some(false) => return Ok(()),
         None => {
@@ -628,7 +653,7 @@ async fn write_valid_capture(
             // The block's own sidecar is among those held against, so a first
             // capture at a height always records.
             if context.observes_chain()
-                && declared_weight_holds(txn, source_id, height, weight).await? != Some(false)
+                && declared_weight_holds(txn, context, height, weight).await? != Some(false)
             {
                 record_child_chain_block(
                     txn,
@@ -830,6 +855,7 @@ mod tests {
             resolver: PoolResolver::from_default_snapshot().unwrap(),
             reward_identities: std::collections::HashMap::new(),
             observes_chain: true,
+            fork_window: 20,
             base: crate::producer_runtime::ProducerContext::from_parts(
                 std::collections::HashMap::new(),
                 1,
