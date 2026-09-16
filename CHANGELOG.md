@@ -152,6 +152,12 @@ This changelog starts with the initial release.
   drops the `supersede` kind of `poll_pending_reconcile` and its payload
   columns.
 
+- Document the trailing rescan depth (`<PREFIX>_REORG_DEPTH`) as a per-chain
+  deployment setting now that every live producer records child
+  displacement: each tick re-processes that many heights below the tip, and
+  a replaced block is marked displaced rather than revoked. The compiled
+  defaults are unchanged (0, RSK 64, Hathor 20).
+
 ## [0.7.13] - 2026-09-09
 
 - Refresh the Research publication pin to `e09f52b`, covering 1,283,863
