@@ -15,10 +15,13 @@
 -- `confirmed_at` advances on every re-observation and cannot order events.
 -- The producer wrote or restored the replacement, then revoked the replaced
 -- event, so this names the block that took its place at that moment, and a
--- twice-replaced height keeps each event's first displacement; two
--- replacements first seen in the same second are told apart by insertion
--- order, the earlier being the one that caused the revocation. Only a
--- superseded event names a replacement. A voided event is restored with no
+-- twice-replaced height keeps each event's first displacement. A row revoked
+-- in the same second for a replacement or void is never named: the old
+-- producer revoked every prior at a height at once, so such a row is a
+-- sibling revoked alongside, not a successor, and two siblings must not name
+-- each other. A chain of replacements within one second therefore names its
+-- last replacement, the one the second ended with. Only a superseded event
+-- names a replacement. A voided event is restored with no
 -- displacement: the void named no replacement, and the old producer voided
 -- every event at the height at once, so inferring one from the others would
 -- pair them with each other. An event that already carries a displacement
@@ -100,7 +103,10 @@ BEGIN
                    AND r.child_block_hash IS NOT NULL
                    AND r.child_block_hash IS DISTINCT FROM e.child_block_hash
                    AND r.discovered_at <= e.revoked_at
-                   AND (r.revoked_at IS NULL OR r.revoked_at >= e.revoked_at)
+                   AND (r.revoked_at IS NULL
+                        OR r.revoked_at > e.revoked_at
+                        OR (r.revoked_at = e.revoked_at
+                            AND r.revocation_reason NOT IN ('hathor_superseded', 'hathor_voided')))
                  ORDER BY r.discovered_at DESC, r.id ASC
                  LIMIT 1) AS replaced_by
           FROM merge_mining_event e
