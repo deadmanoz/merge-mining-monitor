@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-16
+
 - Register Qbit as live source id 36 and wire its producer through the shared
   bitcoind-family path: a `ChainSpec` row with `QBIT_*` settings, `poll-qbit`
   and `backfill-qbit`, and the regenerated `0002` seed plus
