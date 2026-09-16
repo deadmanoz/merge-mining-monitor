@@ -44,8 +44,8 @@ pub use chains::elastos::{
     load_elastos_identity_reresolve_batch, write_elastos_capture_in_txn,
 };
 pub use chains::hathor::{
-    HathorEventRow, hathor_events_at_height, load_hathor_reward_replay_batch,
-    update_hathor_reward_audit, write_hathor_capture_in_txn,
+    hathor_sidecar_graphs_at_height, load_hathor_reward_replay_batch, update_hathor_reward_audit,
+    write_hathor_capture_in_txn,
 };
 #[cfg(any(test, feature = "db-integration"))]
 pub use chains::rsk::write_rsk_capture;
@@ -71,9 +71,8 @@ pub use historical_import::{
 };
 pub use known_stale::{count_known_stale_blocks, is_known_stale_hash, upsert_known_stale_block};
 pub use pending_reconcile::{
-    PendingReconcileRow, bump_pending_attempts, delete_pending_reconcile,
-    delete_pending_reconcile_at, list_pending_reconcile, retag_revocation_reason,
-    upsert_pending_reconcile,
+    PendingReconcileRow, bump_pending_attempts, delete_pending_reconcile, list_pending_reconcile,
+    retag_revocation_reason, upsert_pending_reconcile,
 };
 pub use poll_cursor::{get_source_id, load_poll_cursor, upsert_poll_cursor_with_target};
 pub use pool::{

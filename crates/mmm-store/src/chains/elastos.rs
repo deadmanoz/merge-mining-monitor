@@ -34,12 +34,13 @@ pub async fn write_elastos_capture_in_txn<C: GenericClient>(
     Ok(outcome)
 }
 
-/// Ids of the active (non-revoked) Elastos events for one child block: the
-/// exact row for its hash, plus a hashless historical row at the height whose
-/// Bitcoin parent is the block's parent (the identity partial promotion uses).
-/// Scoped to the block rather than the height because a rescanned height may
-/// hold events for more than one block, and a verdict on one block says
-/// nothing about the evidence of another.
+/// Ids of the active (non-revoked) events for one child block: the exact row
+/// for its hash, plus a hashless historical row at the height whose Bitcoin
+/// parent is the block's parent (the identity partial promotion uses). Scoped
+/// to the block rather than the height because a rescanned height may hold
+/// events for more than one block, and a verdict on one block says nothing
+/// about the evidence of another. The Elastos and Hathor producers revoke
+/// through it.
 pub async fn active_event_ids_for_child_block(
     client: &Client,
     source_id: i64,

@@ -23,10 +23,11 @@ pub(crate) async fn poll(
     let rpc_config = crate::chains::config::hathor_rpc_config()?;
     let rpc = HathorRpcClient::new(rpc_config)?;
     let poller_config = crate::chains::config::poller_config(spec)?;
-    let context =
-        HathorCaptureContext::new_with_classifier(&rt.pg_client, rt.parent_classifier).await?;
+    let context = HathorCaptureContext::new_with_classifier(&rt.pg_client, rt.parent_classifier)
+        .await?
+        .with_fork_window(poller_config.reorg_depth);
     let poller = crate::poller::Poller::new(
-        crate::chains::hathor::capture::HathorChainPoller::new(rt.pg_client, rpc, context),
+        crate::chains::hathor::poller::HathorChainPoller::new(rt.pg_client, rpc, context),
         poller_config,
     )
     .await?;
@@ -72,7 +73,15 @@ pub(crate) async fn run_hathor_backfill(
     let delay_ms: u64 = crate::chains::config::hathor_backfill_delay_ms();
     let skip_holds = crate::chains::config::hathor_backfill_skip_holds();
 
-    let context = HathorCaptureContext::new_with_classifier(&client, parent_classifier).await?;
+    // The range of a backfill is not a bound on fork depth; like the poller,
+    // it reconciles forks as deep as the configured rescan depth.
+    let fork_window = crate::chains::config::poller_config(crate::chains::spec::by_id(
+        crate::chains::spec::ChainId::Hathor,
+    ))?
+    .reorg_depth;
+    let context = HathorCaptureContext::new_with_classifier(&client, parent_classifier)
+        .await?
+        .with_fork_window(fork_window);
     info!(
         start_height = config.start_height,
         end_height = config.end_height,
@@ -116,6 +125,7 @@ fn hathor_backfill_effect(
         HathorHeightOutcome::AuxpowWritten => Ok(BackfillHeightEffect::AuxpowWritten),
         HathorHeightOutcome::NonAuxpowSkipped
         | HathorHeightOutcome::VoidedSkipped
+        | HathorHeightOutcome::NearSkipped
         | HathorHeightOutcome::NonBtcParentSkipped
         | HathorHeightOutcome::ConflictSkipped => Ok(BackfillHeightEffect::NonAuxpowSkipped),
         HathorHeightOutcome::MalformedSkipped => Ok(BackfillHeightEffect::MalformedSkipped),

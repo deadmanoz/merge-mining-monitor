@@ -233,9 +233,10 @@ through revocation.
 `NOT VALID`, and `0023_validate_child_displacement.sql` validates them under
 the weaker lock in its own transaction. The block detail API projects the
 pair on each event detail as `child_displaced_at` and `child_displaced_by`.
-The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit) and the Elastos
-producer call the write for every height they process. Hathor's capture path
-still revokes a superseded prior; its producer change follows separately.
+The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit), the Elastos
+producer and the Hathor producer call the write for every height they
+process. `0024_restore_hathor_displaced_events.sql` brings the events Hathor
+had revoked as `hathor_superseded` or `hathor_voided` to this model.
 
 ## Capture Errors
 
@@ -288,11 +289,10 @@ a global rule; see `docs/capture.md`.
   recomputes the affected parent state.
 - A child-chain reorg is not bad evidence. The schema records a displaced
   child block with `child_displaced_at` and `child_displaced_by` so the
-  event can stay active for Bitcoin-side state. The bitcoind-family and
-  Elastos producers write those columns for every height they process;
-  Hathor's capture path still revokes a superseded prior (`hathor_superseded`)
-  until its producer change lands. A verdict that revokes evidence (Elastos
-  non-BTC or classifier conflict) is scoped to the block it was reached on,
+  event can stay active for Bitcoin-side state. Every live producer writes
+  those columns for the heights it processes. A verdict that revokes
+  evidence (a non-BTC parent or a classifier conflict) is scoped to the block
+  it was reached on,
   never to every event at the height; a block is its hash, or for a hashless
   historical row its height and Bitcoin parent.
 - Bitcoin Core backbone rows are written by `sync-bitcoin-core` and are required
@@ -313,6 +313,10 @@ Later schema changes are appended as new numbered forward migrations.
 `0022_add_child_displacement.sql` adds the nullable `child_displaced_at` and
 `child_displaced_by` columns to `merge_mining_event` with `NOT VALID`
 constraints, and `0023_validate_child_displacement.sql` validates them.
+`0024_restore_hathor_displaced_events.sql` restores the events Hathor had
+revoked for a child-DAG replacement or void and records their displacement,
+and `0025_retire_pending_supersede.sql` drops the `supersede` kind of
+`poll_pending_reconcile` with its payload columns.
 
 `0007_support_partial_child_evidence.sql` makes child evidence nullable, adds
 authenticated child header and `nBits` storage, replaces the old composite
