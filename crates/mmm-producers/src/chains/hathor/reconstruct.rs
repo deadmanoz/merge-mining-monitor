@@ -16,8 +16,17 @@ pub(crate) struct HathorReconstructedParent {
     pub(crate) raw: Vec<u8>,
     pub(crate) aux_pow: Vec<u8>,
     pub(crate) recon: HathorReconstruction,
-    /// The weight the block declares, see [`declared_weight`].
+    pub(crate) work: DeclaredWork,
+}
+
+/// What a block says about its own work: the weight its hash was checked
+/// against, and the block it builds on, both read from the graph struct.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DeclaredWork {
+    /// See [`declared_weight`].
     pub(crate) weight: f64,
+    /// See [`declared_parent_block`].
+    pub(crate) parent_block: Option<[u8; 32]>,
 }
 
 /// What a version-3 block's proof establishes.
@@ -29,8 +38,8 @@ pub(crate) enum HathorParentReconstruction {
     /// The identity holds and the hash meets the block's own target, but the
     /// parent misses BTC's target: a real Hathor block whose parent is a near
     /// template. The common case for a merge-mined block; no event. Carries
-    /// the weight the block declares.
-    Near { weight: f64 },
+    /// the work the block declares.
+    Near(DeclaredWork),
     /// The proof is malformed or inconsistent, or the hash does not meet the
     /// block's own target: nothing trustworthy.
     Malformed,
@@ -74,6 +83,10 @@ pub(crate) fn reconstruct_or_skip(
         );
         return Ok(HathorParentReconstruction::Malformed);
     }
+    let work = DeclaredWork {
+        weight,
+        parent_block: declared_parent_block(&inputs.raw, recon.funds_graph_split),
+    };
 
     if !pow_validates_target(&recon.header) {
         // The common case: the embedded BTC header only met Hathor's (easier)
@@ -84,7 +97,7 @@ pub(crate) fn reconstruct_or_skip(
             height,
             "reconstructed Hathor parent fails its own PoW target; skipping (near)"
         );
-        return Ok(HathorParentReconstruction::Near { weight });
+        return Ok(HathorParentReconstruction::Near(work));
     }
 
     Ok(HathorParentReconstruction::BtcValid(
@@ -92,7 +105,7 @@ pub(crate) fn reconstruct_or_skip(
             raw: inputs.raw,
             aux_pow: inputs.aux_pow,
             recon,
-            weight,
+            work,
         },
     ))
 }
@@ -129,6 +142,17 @@ pub(crate) fn declared_weight(raw: &[u8], funds_graph_split: usize) -> Option<f6
         .try_into()
         .ok()?;
     Some(f64::from_be_bytes(bytes))
+}
+
+/// The block the block builds on: the first of the parents listed after the
+/// weight and timestamp in the graph struct (a block's first parent is its
+/// parent block). `None` when the graph lists no parent.
+pub(crate) fn declared_parent_block(raw: &[u8], funds_graph_split: usize) -> Option<[u8; 32]> {
+    let count_at = funds_graph_split + 8 + 4;
+    if *raw.get(count_at)? == 0 {
+        return None;
+    }
+    raw.get(count_at + 1..count_at + 1 + 32)?.try_into().ok()
 }
 
 /// Hathor's proof-of-work rule: the hash, read as a 256-bit number, is below
@@ -205,6 +229,10 @@ mod tests {
             (declared - weight).abs() < 1e-9,
             "declared {declared}, fixture {weight}"
         );
+        // The parent block follows the weight, the timestamp and the parent
+        // count; a mainnet block hash starts with many zero bytes.
+        let parent = declared_parent_block(&raw, recon.funds_graph_split).unwrap();
+        assert_eq!(parent[..8], [0u8; 8], "{}", hex::encode(parent));
         assert!(meets_hathor_target(expected, declared));
         // A weight far above the work the hash carries is not met.
         assert!(!meets_hathor_target(expected, 200.0));
@@ -244,8 +272,12 @@ mod tests {
             timestamp: tx.timestamp,
         };
         match reconstruct_or_skip(height, &forged).unwrap() {
-            HathorParentReconstruction::Near { weight } => {
-                assert!((weight - 1e-6).abs() < f64::EPSILON, "{weight}");
+            HathorParentReconstruction::Near(work) => {
+                assert!((work.weight - 1e-6).abs() < f64::EPSILON, "{}", work.weight);
+                assert_eq!(
+                    work.parent_block,
+                    declared_parent_block(&raw, recon.funds_graph_split)
+                );
             }
             _ => panic!("a self-consistent block declaring trivial work reconstructs as near"),
         }

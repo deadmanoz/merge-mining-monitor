@@ -137,11 +137,11 @@ This changelog starts with the initial release.
   yields no event is recorded in a transaction of its own. The REST endpoint
   may be untrusted, so a block is recorded only when its RFC 0006
   reconstruction identity holds, its hash meets the target of the weight it
-  declares, and that weight is within the drift of a fork as deep as the run's
-  window (0.25 per block on each branch; the rescan window for the poller,
-  the range for a backfill) of the weight of the blocks captured at the
-  height; a response for another height than the one requested holds the
-  height for a retry. A
+  declares, and that weight clears the floor of every block captured at the
+  height: its weight less one difficulty step (0.25) each way when the two
+  share a parent, and less 0.25 per block on each branch across the
+  configured rescan depth (bounded at 32 blocks) otherwise; a response for
+  another height than the one requested holds the height for a retry. A
   merge-mined block whose parent misses Bitcoin's target, the common case, is
   now told apart from a malformed proof (`NearSkipped`) and recorded. A voided
   block names no replacement and records nothing; a non-merge-mined block

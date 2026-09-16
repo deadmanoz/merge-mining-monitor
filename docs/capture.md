@@ -65,10 +65,11 @@ height leaves the earlier record in place. Hathor records a block once its
 RFC 0006 reconstruction identity holds and its hash meets the target of the
 weight it declares; that weight is the endpoint's claim, so a block may
 displace a captured block at its height only when it declares at least that
-block's weight less the most two fork branches as deep as the run's window
-could drift apart (0.25 per block on each branch, the rescan window for the
-poller and the range for a bounded backfill), and a height with no captured
-block to hold it against records nothing. A response for another height than
+block's weight less what Hathor's difficulty adjustment could have moved
+across the fork between them: one step (0.25) each way when the two share a
+parent, the common one-deep reorg, and otherwise 0.25 per block on each
+branch across the configured rescan depth, itself bounded at 32 blocks. A
+height with no captured block to hold it against records nothing. A response for another height than
 the one requested holds the height for a retry rather than counting it as
 processed; the position itself stays the endpoint's assertion, as it is for
 every captured event. A merge-mined block whose parent misses

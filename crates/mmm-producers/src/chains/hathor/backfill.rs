@@ -73,10 +73,15 @@ pub(crate) async fn run_hathor_backfill(
     let delay_ms: u64 = crate::chains::config::hathor_backfill_delay_ms();
     let skip_holds = crate::chains::config::hathor_backfill_skip_holds();
 
-    // A bounded backfill reconciles a fork as deep as its range.
+    // The range of a backfill is not a bound on fork depth; like the poller,
+    // it reconciles forks as deep as the configured rescan depth.
+    let fork_window = crate::chains::config::poller_config(crate::chains::spec::by_id(
+        crate::chains::spec::ChainId::Hathor,
+    ))?
+    .reorg_depth;
     let context = HathorCaptureContext::new_with_classifier(&client, parent_classifier)
         .await?
-        .with_fork_window(config.end_height - config.start_height + 1);
+        .with_fork_window(fork_window);
     info!(
         start_height = config.start_height,
         end_height = config.end_height,
