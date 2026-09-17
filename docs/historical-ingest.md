@@ -20,10 +20,9 @@ Materialize Research's event-file LFS payloads before running this command. The
 manifest generator verifies their pinned size and checksum, then measures each
 artifact's parent-only rows. The combined command stages the manifest, error
 catalogue, and body-invalid mirror together and publishes them only after all
-three generators succeed. It
-also takes the error-observation chain inventory from Research's
-`observation_chain_counts` field. The combined command does not accept `--out`.
-Run it again with `--check` before importing or releasing.
+three generators succeed. It also takes the error-observation chain inventory
+from Research's `observation_chain_counts` field. The combined command does
+not accept `--out`. Run it again with `--check` before importing or releasing.
 
 Routine repository gates use `--check --allow-missing-repo`; that mode reuses
 the committed parent-only counts while still checking the Git publication
