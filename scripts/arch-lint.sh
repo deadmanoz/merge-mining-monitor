@@ -13,7 +13,8 @@
 # The structural clippy lints (too_many_lines, self_named_module_files) are
 # denied workspace-wide via [workspace.lints.clippy] in Cargo.toml, so every
 # clippy run enforces them; this script needs no Rust toolchain and adds the
-# size + duplication gates. It runs inside `just lint` (and stays
+# size + duplication gates. Duplication uses the lockfile-pinned jscpd from
+# package.json (run npm ci first). It runs inside `just lint` (and stays
 # independently invokable as `just arch-lint`). There is no grandfathering
 # and there will be none: red means refactor, never allowlist.
 
@@ -29,8 +30,21 @@ MAX_WWW_CSS_LINES="${ARCH_LINT_MAX_WWW_CSS_LINES:-400}"
 MAX_WWW_HTML_LINES="${ARCH_LINT_MAX_WWW_HTML_LINES:-450}"
 JSCPD_CONFIG="${ARCH_LINT_JSCPD_CONFIG:-$ROOT/.jscpd.json}"
 JSCPD_WWW_CONFIG="${ARCH_LINT_JSCPD_WWW_CONFIG:-$ROOT/.jscpd.www.json}"
+# Lockfile-pinned local binary. Never fall back to `npx --yes jscpd` (floats).
+JSCPD_BIN="${ARCH_LINT_JSCPD_BIN:-$ROOT/node_modules/.bin/jscpd}"
 
 fail=0
+
+# Invoke the pinned jscpd. Fail closed when the local install is missing so
+# CI/local runs cannot silently resolve latest from the registry.
+run_jscpd() {
+    if [ ! -x "$JSCPD_BIN" ]; then
+        echo "FAIL: pinned jscpd is not installed at ${JSCPD_BIN}."
+        echo "Run npm ci to install the version pinned in package.json / package-lock.json."
+        return 127
+    fi
+    "$JSCPD_BIN" "$@"
+}
 
 src_paths=()
 test_paths=()
@@ -100,7 +114,7 @@ fi
 
 echo
 echo "== arch-lint: duplication gate (jscpd, threshold from .jscpd.json) =="
-if npx --yes jscpd --config "$JSCPD_CONFIG" "${src_paths[@]}" "${test_paths[@]}"; then
+if run_jscpd --config "$JSCPD_CONFIG" "${src_paths[@]}" "${test_paths[@]}"; then
     echo "OK: duplication under threshold."
 else
     echo "FAIL: duplication over threshold (clones listed above)."
@@ -111,7 +125,7 @@ echo
 echo "== arch-lint: frontend duplication gate (jscpd, threshold from .jscpd.www.json) =="
 if [ ! -d www/js ]; then
     echo "OK: no www/js tree."
-elif npx --yes jscpd --config "$JSCPD_WWW_CONFIG" www/js; then
+elif run_jscpd --config "$JSCPD_WWW_CONFIG" www/js; then
     echo "OK: frontend duplication under threshold."
 else
     echo "FAIL: frontend duplication over threshold (clones listed above)."
