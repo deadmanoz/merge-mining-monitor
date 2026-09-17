@@ -41,10 +41,6 @@ label:has(input[type="checkbox"]) {
   align-items: center;
 }
 
-.secondary-button {
-  grid-column: 1 / -1;
-}
-
 .tree-lookup-form {
   gap: 8px;
 }

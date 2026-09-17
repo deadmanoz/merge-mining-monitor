@@ -107,7 +107,7 @@ function dispatchAnchor(button) {
 }
 
 /// One rail filter group. Checkboxes start checked; unchecking adds the value
-/// to the exclusion list. Kept out of the URL in this slice.
+/// to the exclusion list.
 function filterGroup(legend, entries, hidden) {
   const rows = Object.entries(entries)
     .map(([value, meta]) => {

@@ -130,7 +130,7 @@
 }
 
 /* Consolidated tree navigator: a "Go to" target picker (Tip / Latest stale /
-   Latest branch / Latest unknown) plus << < > >> step buttons and one adaptive
+   Latest branch) plus << < > >> step buttons and one adaptive
    readout. */
 .tree-nav {
   display: flex;

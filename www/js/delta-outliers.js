@@ -28,7 +28,7 @@ function renderOutliers(binning, { all, visible }) {
   const hidden = selectionNotice(all, visible);
   $("#delta-outlier-body").innerHTML = outside.length
     ? hidden
-      + `<p class="drawer-note sort-note">Sorted by magnitude${outside.length > shown.length
+      + `<p class="drawer-note">Sorted by magnitude${outside.length > shown.length
         ? `; showing the ${fmtInt(shown.length - (capped ? 1 : 0))} largest of ${fmtInt(outside.length)}`
           + `${capped ? ", plus the selected competition" : ""}`
         : ""}.</p>`

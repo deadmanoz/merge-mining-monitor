@@ -30,7 +30,6 @@ export function blockExplorer(chain, block = {}) {
 
   const url = explorer.blockUrl({
     hash: normaliseHash(block.hash),
-    height: block.height,
   });
   if (!url) return null;
 

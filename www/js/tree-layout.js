@@ -1,6 +1,5 @@
-// Pure layout for the Bitcoin header tree. D3 rendering stays in app.js; this
-// module only assigns stable x/y coordinates so the geometry is testable without
-// a browser DOM.
+// Pure layout for the Bitcoin header tree. This module only assigns stable x/y
+// coordinates so the geometry is testable without a browser DOM.
 
 export const DEFAULT_TREE_LAYOUT = {
   minWidth: 520,
