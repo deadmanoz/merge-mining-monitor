@@ -635,12 +635,12 @@ cmd_self_check() {
     assert_eq "$(target_var rsk)" "RSK_TARGET_TIP" "rsk target var"
     assert_eq "$(target_var syscoin)" "SYSCOIN_TARGET_TIP" "syscoin target var"
 
-    if grep -q 'BITCOIN_RPC_URL= cargo' "${BASH_SOURCE[0]}"; then
-        die "self-check failed: live-test must not clear BITCOIN_RPC_URL"
-    fi
-    if grep -qE 'BITCOIN_RPC_URL disabled|DB-only backfill' "${BASH_SOURCE[0]}"; then
-        die "self-check failed: journal must not claim DB-only backfill"
-    fi
+    local backfill_fn
+    backfill_fn="$(awk '/^run_backfill_range\(/,/^}/' "${BASH_SOURCE[0]}")"
+    case "${backfill_fn}" in
+        *"BITCOIN_RPC_URL="*) die "self-check failed: live-test must not clear BITCOIN_RPC_URL" ;;
+        *"disabled"*|*"DB-only"*) die "self-check failed: journal must not claim DB-only backfill" ;;
+    esac
     (
         BITCOIN_RPC_URL="http://127.0.0.1:8332"
         require_bitcoin_rpc_url
