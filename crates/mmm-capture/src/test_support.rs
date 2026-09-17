@@ -61,35 +61,6 @@ pub fn header_meeting_bits_with_prev(
     }
 }
 
-/// Build a BTC header that fails `bits` by grinding the nonce. Header
-/// construction matches [`header_meeting_bits`]; only the loop predicate is
-/// inverted.
-pub fn header_failing_bits(bits: u32, time: u32, merkle_seed: u32) -> Header {
-    let target = Target::from_compact(CompactTarget::from_consensus(bits));
-    let mut merkle = [0u8; 32];
-    merkle[..4].copy_from_slice(&merkle_seed.to_le_bytes());
-    let mut header = Header {
-        version: Version::ONE,
-        prev_blockhash: BlockHash::all_zeros(),
-        merkle_root: TxMerkleNode::from_byte_array(merkle),
-        time,
-        bits: CompactTarget::from_consensus(bits),
-        nonce: 0,
-    };
-    loop {
-        if !target.is_met_by(header.block_hash()) {
-            return header;
-        }
-        header.nonce = match header.nonce.checked_add(1) {
-            Some(next) => next,
-            None => panic!(
-                "header_failing_bits exhausted the u32 nonce space for bits \
-                 {bits:#010x} (time={time}, merkle_seed={merkle_seed})"
-            ),
-        };
-    }
-}
-
 // ─── Shared integration-test fixture helpers (folded in from the old
 //     tests/support/mod.rs at the workspace split) ─────────────────────────
 

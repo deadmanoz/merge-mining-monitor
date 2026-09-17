@@ -41,12 +41,6 @@ pub fn lookup(hash: &[u8]) -> Option<ErrorBlock> {
     ERROR_BLOCKS.get(&hash).copied()
 }
 
-/// Number of pinned catalogue entries, primarily for invariant tests and
-/// operator-facing diagnostics.
-pub fn len() -> usize {
-    ERROR_BLOCKS.len()
-}
-
 /// Iterate every stored-order parent hash in the pinned catalogue.
 pub fn hashes() -> impl Iterator<Item = [u8; 32]> {
     ERROR_BLOCKS.keys().copied()
@@ -105,7 +99,7 @@ mod tests {
         let hash =
             BlockHash::from_str("00000000000000000000c3d95a4bdc068dfe0c6d1e7ad13045c6f570e58d9ed7")
                 .unwrap();
-        assert_eq!(hashes().count(), len());
+        assert_eq!(hashes().count(), ERROR_BLOCKS.len());
         assert_eq!(
             lookup(&hash.to_byte_array()),
             Some(ErrorBlock {

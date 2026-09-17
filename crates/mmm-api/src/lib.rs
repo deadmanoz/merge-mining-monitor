@@ -72,14 +72,11 @@ pub struct ServeConfig {
     pub bind_addr: SocketAddr,
     pub www_dir: PathBuf,
     pub db_pool_size: usize,
-    pub bitcoin_rpc_url: Option<String>,
 }
 
 impl ServeConfig {
-    /// Read the serve configuration from the environment. Empty-or-whitespace
-    /// `BITCOIN_RPC_URL` is treated as unset when empty or whitespace (not as a
-    /// literal empty value); `SERVE_DB_POOL_SIZE` defaults to 8, `SERVE_BIND_ADDR`
-    /// to 127.0.0.1:8080.
+    /// Read the serve configuration from the environment.
+    /// `SERVE_DB_POOL_SIZE` defaults to 8, `SERVE_BIND_ADDR` to 127.0.0.1:8080.
     pub fn from_env() -> Result<Self> {
         let bind_addr =
             std::env::var("SERVE_BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".to_owned());
@@ -95,17 +92,11 @@ impl ServeConfig {
             })
             .transpose()?
             .unwrap_or(8);
-        let bitcoin_rpc_url = match std::env::var("BITCOIN_RPC_URL") {
-            Ok(url) if !url.trim().is_empty() => Some(url),
-            Ok(_) | Err(std::env::VarError::NotPresent) => None,
-            Err(err) => return Err(err).context("read BITCOIN_RPC_URL"),
-        };
         Ok(Self {
             pg: PgConfig::from_env()?,
             bind_addr,
             www_dir: PathBuf::from(www_dir),
             db_pool_size,
-            bitcoin_rpc_url,
         })
     }
 }
@@ -190,7 +181,7 @@ fn api_cache_control() -> &'static str {
 /// bind, and serve until ctrl-c.
 pub async fn serve(cfg: ServeConfig) -> Result<()> {
     let pool = build_pool(&cfg.pg, cfg.db_pool_size)?;
-    if cfg.bitcoin_rpc_url.is_some() {
+    if matches!(std::env::var("BITCOIN_RPC_URL"), Ok(url) if !url.trim().is_empty()) {
         warn!(
             "BITCOIN_RPC_URL is ignored by serve; run sync-bitcoin-core to populate tree backbone rows"
         );
@@ -200,7 +191,7 @@ pub async fn serve(cfg: ServeConfig) -> Result<()> {
     if !cfg.www_dir.is_dir() {
         warn!(
             www_dir = %cfg.www_dir.display(),
-            "SERVE_WWW_DIR does not exist; static requests will 404 (the UI lands in SP5)"
+            "SERVE_WWW_DIR does not exist; static requests will 404"
         );
     }
 
