@@ -6,8 +6,9 @@
 #         frontend budgets (plain find/git-ls-files + wc, offenders printed).
 # Gate 2: duplication - jscpd over src/ + tests/ (Rust, .jscpd.json) and over
 #         www/js (JavaScript, .jscpd.www.json), each with its own threshold.
-# Gate 3: attribution-replay clone tripwire - a grep guard against the per-chain
+# Gate 3: attribution-replay clone tripwire - an rg guard against the per-chain
 #         Existing*Attribution family regrowing (jscpd misses copy-with-rename).
+#         Requires rg on PATH and fails closed on a missing binary or rg error.
 #
 # The structural clippy lints (too_many_lines, self_named_module_files) are
 # denied workspace-wide via [workspace.lints.clippy] in Cargo.toml, so every
@@ -128,17 +129,32 @@ fi
 echo
 echo "== arch-lint: attribution-replay clone tripwire =="
 EXISTING_ATTR_BUDGET="${ARCH_LINT_EXISTING_ATTR_MAX:-2}"
-existing_attr_count="$(
-    rg -c --no-filename 'struct Existing\w*Attribution\b' "${src_paths[@]}" 2>/dev/null |
-        awk '{ sum += $1 } END { print sum + 0 }'
-)"
-if [ "$existing_attr_count" -gt "$EXISTING_ATTR_BUDGET" ]; then
-    echo "FAIL: ${existing_attr_count} Existing*Attribution structs (budget ${EXISTING_ATTR_BUDGET}):"
-    rg -n 'struct Existing\w*Attribution\b' "${src_paths[@]}"
-    echo "Extend mmm_capture::attribution_policy::ExistingAttributionSet; do not clone a per-chain struct."
+if ! command -v rg >/dev/null 2>&1; then
+    echo "FAIL: rg (ripgrep) is required for the attribution-replay tripwire and was not found on PATH."
     fail=1
 else
-    echo "OK: attribution-replay family within budget (${existing_attr_count}/${EXISTING_ATTR_BUDGET})."
+    # rg exits 0 on matches, 1 on no matches, and 2+ on a real error. Do not
+    # fold a missing binary or rg failure into a zero count.
+    existing_attr_rg_status=0
+    existing_attr_counts="$(
+        rg -c --no-filename 'struct Existing\w*Attribution\b' "${src_paths[@]}"
+    )" || existing_attr_rg_status=$?
+    if [ "$existing_attr_rg_status" -gt 1 ]; then
+        echo "FAIL: rg failed while counting Existing*Attribution structs (exit ${existing_attr_rg_status})."
+        fail=1
+    else
+        existing_attr_count="$(
+            printf '%s\n' "$existing_attr_counts" | awk '{ sum += $1 } END { print sum + 0 }'
+        )"
+        if [ "$existing_attr_count" -gt "$EXISTING_ATTR_BUDGET" ]; then
+            echo "FAIL: ${existing_attr_count} Existing*Attribution structs (budget ${EXISTING_ATTR_BUDGET}):"
+            rg -n 'struct Existing\w*Attribution\b' "${src_paths[@]}"
+            echo "Extend mmm_capture::attribution_policy::ExistingAttributionSet; do not clone a per-chain struct."
+            fail=1
+        else
+            echo "OK: attribution-replay family within budget (${existing_attr_count}/${EXISTING_ATTR_BUDGET})."
+        fi
+    fi
 fi
 
 echo
