@@ -30,12 +30,12 @@ use crate::pool_resolver::{MatchKind, PoolMatch, PoolResolver};
 /// paired with the raw coinbase-tag bytes matched by
 /// `PoolResolver::resolve_coinbase_script`. Consumed only inside this module
 /// by `from_btc_pool_match`; producers never reference it directly.
-pub const BTC_COINBASE_TAG_NAMESPACE: &str = "btc_coinbase_tag";
+pub(crate) const BTC_COINBASE_TAG_NAMESPACE: &str = "btc_coinbase_tag";
 /// Attribution namespace for a BTC parent payout-address pool match: the
 /// `namespace` half of the `(namespace, matched_value)` key, paired with the
 /// address string matched by `PoolResolver::resolve_payout_addresses`.
 /// Internal to this module's `from_btc_pool_match`; not consumed cross-crate.
-pub const BTC_PAYOUT_ADDRESS_NAMESPACE: &str = "btc_payout_address";
+pub(crate) const BTC_PAYOUT_ADDRESS_NAMESPACE: &str = "btc_payout_address";
 /// Source label written into `pool_attribution.source` for a BTC parent pool
 /// match resolved from the embedded pool snapshot (coinbase tag or payout
 /// address). Part of the persisted attribution contract: `mmm-store`, the

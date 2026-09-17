@@ -167,19 +167,12 @@ struct JsonRpcError {
     message: String,
 }
 
-/// Parse `<name>` from the process environment as a positive request-timeout in
-/// seconds, falling back to `default_secs`. A thin wrapper over
-/// [`parse_timeout_secs_from_lookup`]; the pure variant carries the validation
-/// and is what the unit tests drive (so they never mutate the global, and in
-/// Rust 2024 `unsafe`, process environment).
-pub fn parse_timeout_secs(name: &str, default_secs: u64) -> Result<Duration> {
-    parse_timeout_secs_from_lookup(name, default_secs, |key| std::env::var(key).ok())
-}
-
 /// Pure timeout parser driven by an arbitrary lookup. Returns the default when
 /// the key is unset; otherwise parses the value as `u64` seconds and requires it
 /// to be `> 0` (a zero/blank timeout would mean "no timeout", which defeats the
-/// purpose of setting one).
+/// purpose of setting one). Callers that read the process environment pass
+/// `|key| std::env::var(key).ok()`; unit tests drive a map so they never mutate
+/// the global (and in Rust 2024 `unsafe`) process environment.
 pub fn parse_timeout_secs_from_lookup<F>(
     name: &str,
     default_secs: u64,

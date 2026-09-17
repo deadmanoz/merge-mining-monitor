@@ -17,7 +17,7 @@ mod source_health_sql;
 mod unknown_reclassify;
 
 pub use classify::{load_proven_parent_classification, resolve_parent_classification};
-pub use cli_args::{ArgCursor, drive_args, require_positive};
+pub use cli_args::{drive_args, require_positive};
 pub use known_stale_reclassify::{
     KnownStaleReclassifySummary, ReclassifyKnownStalesConfig,
     reclassify_known_stale_hashes_in_transaction, run_reclassify_known_stales,
