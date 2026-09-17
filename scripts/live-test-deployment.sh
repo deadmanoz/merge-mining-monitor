@@ -399,6 +399,10 @@ UNION ALL SELECT 'rsk_merge_mining_evidence', count(*) FROM rsk_merge_mining_evi
     printf '%s\n' "${out_dir}"
 }
 
+require_bitcoin_rpc_url() {
+    [ -n "${BITCOIN_RPC_URL:-}" ] || die "BITCOIN_RPC_URL is required for capture/backfill"
+}
+
 run_backfill_range() {
     local chain="$1"
     local start="$2"
@@ -406,12 +410,13 @@ run_backfill_range() {
     local cmd
     cmd="$(chain_backfill_cmd "${chain}")"
     local started finished logfile status
+    require_bitcoin_rpc_url
     started="$(timestamp)"
     logfile="${LOG_DIR}/${cmd}-${start}-${end}-$(date -u +%Y%m%dT%H%M%SZ).log"
-    append_journal "Starting ${cmd} ${start} ${end} with BITCOIN_RPC_URL disabled. Log: ${logfile}"
+    append_journal "Starting ${cmd} ${start} ${end}. Log: ${logfile}"
 
     set +e
-    BITCOIN_RPC_URL= cargo run -- "${cmd}" "${start}" "${end}" 2>&1 | tee -a "${logfile}"
+    cargo run -- "${cmd}" "${start}" "${end}" 2>&1 | tee -a "${logfile}"
     status="${PIPESTATUS[0]}"
     set -e
 
@@ -629,6 +634,29 @@ cmd_self_check() {
     assert_eq "$(target_var namecoin)" "NAMECOIN_TARGET_TIP" "namecoin target var"
     assert_eq "$(target_var rsk)" "RSK_TARGET_TIP" "rsk target var"
     assert_eq "$(target_var syscoin)" "SYSCOIN_TARGET_TIP" "syscoin target var"
+
+    local backfill_fn
+    backfill_fn="$(awk '/^run_backfill_range\(/,/^}/' "${BASH_SOURCE[0]}")"
+    case "${backfill_fn}" in
+        *"BITCOIN_RPC_URL="*) die "self-check failed: live-test must not clear BITCOIN_RPC_URL" ;;
+        *"disabled"*|*"DB-only"*) die "self-check failed: journal must not claim DB-only backfill" ;;
+    esac
+    (
+        BITCOIN_RPC_URL="http://127.0.0.1:8332"
+        require_bitcoin_rpc_url
+    ) || die "self-check failed: set BITCOIN_RPC_URL must be accepted"
+    if (
+        unset BITCOIN_RPC_URL
+        require_bitcoin_rpc_url
+    ) 2>/dev/null; then
+        die "self-check failed: unset BITCOIN_RPC_URL must fail closed"
+    fi
+    if (
+        BITCOIN_RPC_URL=
+        require_bitcoin_rpc_url
+    ) 2>/dev/null; then
+        die "self-check failed: empty BITCOIN_RPC_URL must fail closed"
+    fi
 
     rm -rf "${tmpdir}"
     printf 'live-test self-check passed\n'
