@@ -25,8 +25,8 @@ Use `just` targets, not raw commands, when a target exists:
   membership import and retroactive demotion.
 - `just import-all` / `just import-dataset CHAIN` - pinned normalized
   historical publication import.
-- `just gen-research-publication-pins` - refresh both Research pins from one
-  committed revision, manifest first.
+- `just gen-research-publication-pins` - refresh the three Research pins from
+  one committed revision, manifest first.
 - `just reclassify-unknown-parents`, `just reclassify-pools`,
   `just reconcile-read-model` - repair and enrichment commands.
 
@@ -44,9 +44,9 @@ concurrent tasks inside each locking test.
 - `data/consensus/error_blocks.csv` is a pinned compact mirror of the research
   catalogue. A proof-of-work-valid match is an `error_block`, never stale or
   orphan evidence; reconciliation persists its catalogue height and rejection
-  reason in the derived `block` row. Refresh it and the historical manifest
-  together via `just gen-research-publication-pins`; the manifest consumes
-  Research's canonical observation-chain inventory.
+  reason in the derived `block` row. Refresh it with the historical manifest
+  and body-invalid mirror via `just gen-research-publication-pins`; the
+  manifest consumes Research's canonical observation-chain inventory.
 - Producers write only `merge_mining_event` plus 1:1 chain sidecars,
   attribution rows, and the producer-owned `capture_error` operational state
   (one row per height a producer could not capture; written before the failing
@@ -71,9 +71,10 @@ concurrent tasks inside each locking test.
   the shared source registry, not in per-chain schema branches.
 - The current Research pin is generated from committed revision `e3dc6d6` and
   covers 29 event artifacts plus the stale-descendant and error-observation
-  aggregates, 31 artifacts and 1,286,512 rows in total. Refresh the manifest
-  and catalogue together with `just gen-research-publication-pins`; a refreshed
-  pin documents import readiness, not a completed database import or deploy.
+  aggregates, 31 artifacts and 1,286,512 rows in total. Refresh the three pins
+  (manifest, error catalogue, and body-invalid mirror) with
+  `just gen-research-publication-pins`; a refreshed pin documents import
+  readiness, not a completed database import or deploy.
 - Historical describes the recovered dataset, not whether its native chain is
   still active. ROD has no live Monitor producer. The registry's
   `ChildTargetLocation` also owns the target contract: Xaya and ROD use

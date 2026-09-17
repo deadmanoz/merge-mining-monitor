@@ -1,7 +1,7 @@
 # merge-mining-monitor justfile
 #
-# Project automation targets, see README.md for phase status. Quality gates
-# assume a working Rust toolchain (stable, ≥1.88) on PATH.
+# Project automation targets. Quality gates assume a working Rust toolchain
+# (stable, ≥1.88) on PATH.
 
 set shell := ["bash", "-uc"]
 set dotenv-load := true
@@ -125,13 +125,13 @@ gen-pool-snapshot *args="":
 
 # Regenerate (or --check) the curated-data artifacts: the source-seed SQL
 # (migrations/0002_seed_sources.sql) and frontend metadata
-# (www/js/source-registry.generated.js) from src/source_registry, and the
+# (www/js/source-registry.generated.js) from crates/mmm-capture/src/source_registry, and the
 # frontend findings corpus (www/js/findings.generated.js) from data/findings/.
 # `--check` is the drift gate (also run by `cargo test`).
 gen-source-artifacts *args="":
     cargo run --quiet --features artifact-generation --bin gen_source_artifacts -- {{args}}
 
-# Refresh both Research pins from one commit, manifest first.
+# Refresh the three Research pins from one commit, manifest first.
 gen-research-publication-pins *args="":
     ./scripts/gen-research-publication-pins.sh {{args}}
 

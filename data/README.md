@@ -17,8 +17,8 @@ directories.
   full-proof-of-work invalid header as `error_block`, never as stale or an
   orphan. The catalogue header pin must match
   `historical/historical-source-manifest.json` `source_repo_commit`; the
-  generator refuses a `--source-commit` that disagrees. Refresh both pins with
-  `just gen-research-publication-pins --source-commit <research-sha>`.
+  generator refuses a `--source-commit` that disagrees. Refresh the three pins
+  with `just gen-research-publication-pins --source-commit <research-sha>`.
 - `consensus/body_invalid_stales.csv` - compact mirror of the pinned
   research body-invalid stales overlay: stale blocks whose complete body is
   known consensus-invalid from external full-block evidence. A display
@@ -31,8 +31,8 @@ directories.
   finding (filename matches the slug). Compiled into
   `www/js/findings.generated.js` by `just gen-source-artifacts`.
 - `historical/historical-source-manifest.json` - generated provenance manifest
-  for historical stale-block CSV inputs. Regenerate both Research pins with
-  `just gen-research-publication-pins`.
+  for historical stale-block CSV inputs. Regenerate the three Research pins
+  with `just gen-research-publication-pins`.
 - `historical/historical-source-manifest.sha256` - checksum of the committed
   historical manifest.
 
