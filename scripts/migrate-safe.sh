@@ -2,8 +2,9 @@
 # migrate-safe.sh - apply Postgres migrations with an automatic backup so a
 # failed migration can be rolled back without manual archaeology.
 #
-# Required by the global database-safety.md rule. ALL migration runs must go
-# through this script — never invoke a raw migration tool against a real DB.
+# Required by migrations/README.md and docs/data-model.md. ALL migration runs
+# against a real database must go through this script — never invoke a raw
+# migration tool against a real DB.
 #
 # Modes:
 #   dev          backup -> migrate -> on failure, auto-restore from backup

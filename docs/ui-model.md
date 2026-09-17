@@ -254,6 +254,7 @@ Source (live section):
 - Fractal Bitcoin
 - Hathor
 - Elastos
+- Qbit
 
 Recovered datasets, recovered subsets, recovered surveys, and catalogued chains
 join the rail in their own collapsible sections, described below.

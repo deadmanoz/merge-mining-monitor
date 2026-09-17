@@ -18,6 +18,7 @@ tree view from that evidence.
 | `event_pool_attribution` | Attribution rows connecting an event to a pool with source/provenance details. |
 | `poll_cursor` | Live poll progress. Backfills never move the cursor. |
 | `capture_error` | Producer-owned operational state: one row per `(source_id, height)` a producer could not capture, with the failure kind, a diagnostic detail, and first/last seen times. Written and cleared only by capture; `/api/v1/sources` reads the earliest unresolved height per source. |
+| `known_stale_block` | Operator-imported known-stale membership loaded by `import-known-stales` from the upstream `bitcoin-data/stale-blocks` dataset. Consulted as an orphan-classification exclusion gate: a catalogued stale is `excluded`, never labelled strict/weak. |
 | `block` | Derived Bitcoin parent block state: canonical, stale, consensus-invalid error block, or unknown. |
 | `body_invalid_stale` | Operator-imported annotation of stale blocks whose complete body is known consensus-invalid from external full-block evidence (the research body-invalid stales overlay, mirrored in `data/consensus/body_invalid_stales.csv`). Display annotation joined at API projection only; loaded by `import-body-invalid-stales`. |
 | `attestation_proof` | Derived proof rows supporting a block. |

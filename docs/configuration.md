@@ -36,6 +36,9 @@ Chain-specific extras:
 | `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` | Postgres connection. |
 | `BITCOIN_RPC_URL` / `BITCOIN_RPC_USER` / `BITCOIN_RPC_PASSWORD` | Required Bitcoin **mainnet** Core classifier and header source for capture, import, and reconciliation commands, including database-only maintenance modes. Each command refreshes the persisted Core-header cache through the synced tip before work begins. |
 | `BITCOIN_RPC_TIMEOUT_SECS` / `BITCOIN_RPC_MAX_CONCURRENCY` | Bitcoin Core client controls. Transient transport failures and brief Bitcoin Core warmup responses use five attempts with capped exponential backoff; node readiness remains a deployment prerequisite. Other RPC, authentication, decoding, and integrity errors are not retried. |
+| `BITCOIN_CORE_SYNC_FOLLOW_INTERVAL_SECS` | Follow-mode poll interval in seconds for `sync-bitcoin-core --follow`. Default 60; must be greater than 0. |
+| `BITCOIN_CORE_SYNC_LIVE_WINDOW_HEIGHTS` | Near-tip reorg repair window in follow mode. Default 64; must be at least 16 (the tree's default live-tip window). Also the maximum automatically repaired reorg depth. |
+| `BITCOIN_CORE_SYNC_DELAY_MS` | Optional per-height RPC throttle during Core sync, in milliseconds. Default 0. |
 | `SERVE_BIND_ADDR` / `SERVE_DB_POOL_SIZE` / `SERVE_WWW_DIR` | Read API and static frontend serving. |
 | `MMM_POOLS_DIR` | Optional local `bitcoin-data/mining-pools/pools` checkout used by `just gen-pool-snapshot` when no path argument is provided. |
 | `MERGE_MINING_RESEARCH_DIR` | Local `merge-mining-research` checkout at the pinned publication commit, used by `import-all`, `import-dataset`, and manifest generation. |

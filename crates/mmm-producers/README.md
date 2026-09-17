@@ -60,8 +60,9 @@ Per-chain divergent modules under `chains/`:
 | `chains::hathor` | Public-REST capture with reconstructed coinbase and nBits-horizon hold semantics, the cache-backed historical ingest, and the reward-address replay (`reward_replay`). |
 | `chains::elastos` | Dual-endpoint self-verifying capture with RPC-observed reward and minerinfo identities. |
 
-Cross-chain repair code stays at the crate root: `reclassify_pools` and
-`reclassify_child_payout`.
+Cross-chain pool repair stays at the crate root as `reclassify_pools`. Parent
+reclassification (`reclassify-parent`, `reclassify-unknown-parents`,
+`reclassify-known-stales`) is owned by `mmm-read-model`.
 
 ## See also
 
