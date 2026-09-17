@@ -1,8 +1,4 @@
 [workspace]
-# Pinned explicitly: a VIRTUAL workspace (the final state of the crate split)
-# cannot infer the resolver from a root package edition, and an unpinned
-# virtual root falls back to resolver 1. Pinning while the root is still a
-# package makes the finale flip a non-event.
 resolver = "3"
 members = ["crates/*"]
 default-members = ["crates/merge-mining-monitor"]
@@ -72,9 +68,6 @@ self_named_module_files = "deny"
 # lint and its metric churns across toolchain releases, so denying it would
 # make the gate toolchain-dependent. It runs as an advisory -W in
 # `just arch-lint` instead, with the threshold pinned in clippy.toml.
-
-# Ergonomics ONLY (cargo run -- <subcommand>, cargo run --bin gen_*).
-# Quality gates NEVER rely on this: justfile + CI pass --workspace explicitly.
 
 # Profiles are only honored at the workspace root.
 [profile.release]

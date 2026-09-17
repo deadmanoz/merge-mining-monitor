@@ -31,15 +31,8 @@ JSCPD_WWW_CONFIG="${ARCH_LINT_JSCPD_WWW_CONFIG:-$ROOT/.jscpd.www.json}"
 
 fail=0
 
-# Workspace-aware path sets, built from directories that EXIST: the root
-# src/ and tests/ trees (present until the workspace finale empties them)
-# plus every crates/*/src and crates/*/tests. Literal paths would make find
-# and jscpd error once the root trees are gone - and silently skip crate
-# sources before that.
 src_paths=()
 test_paths=()
-[ -d src ] && src_paths+=(src)
-[ -d tests ] && test_paths+=(tests)
 for d in crates/*/src; do [ -d "$d" ] && src_paths+=("$d"); done
 for d in crates/*/tests; do [ -d "$d" ] && test_paths+=("$d"); done
 
