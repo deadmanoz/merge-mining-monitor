@@ -40,26 +40,6 @@ const KIND_HELP = {
       "Error blocks are shown separately and never contribute to stale branches, orphan classification, or competition statistics.",
     ],
   },
-  unknown: {
-    name: "Unknown",
-    meta: "Bitcoin-valid, not placed yet",
-    criteria: "The embedded parent header passes the Bitcoin target, but the monitor does not yet have Bitcoin-chain proof that classifies it as canonical or stale.",
-    interpretation: "Unknown is the holding state for Bitcoin-PoW-valid evidence before chain placement is known. It deserves attention because it may later become canonical or stale when classification catches up.",
-    notes: [
-      "Unknown parents usually have no Bitcoin height in this UI, so they live on the unheighted/time axis rather than the height spine.",
-      "A later classifier or repair pass can promote unknown evidence into canonical or stale context.",
-    ],
-  },
-  near: {
-    name: "Near",
-    meta: "Fails Bitcoin target",
-    criteria: "The child-chain evidence embeds a Bitcoin-shaped parent header, but that header does not satisfy Bitcoin's own proof-of-work target.",
-    interpretation: "Near rows can still be legitimate child-chain evidence, but they are not Bitcoin-valid blocks. They are useful for near-miss analysis, miner attribution clues, and checking producer behavior.",
-    notes: [
-      "Near is separated from unknown so Bitcoin-PoW-valid evidence is not mixed with parent headers that fail the Bitcoin target.",
-      "Child-chain acceptance rules can differ from Bitcoin's parent target, so near does not automatically mean the child block was invalid.",
-    ],
-  },
   strict_btc_orphan: {
     name: "Strict orphan",
     meta: "BIP34 height and nBits agree",
@@ -330,7 +310,7 @@ const state = {
   // The findings corpus (from the generated module). Null until the findings
   // view first activates; the registry uses that to decide whether to seed.
   findings: null,
-  // Findings-local UI state, deliberately not URL-persisted in this slice:
+  // Findings-local UI state, deliberately not URL-persisted:
   // category/status filter exclusions and the feed scroll position the
   // article state restores on back.
   findingsUi: { hideCategories: [], hideStatuses: [], feedScroll: 0 },

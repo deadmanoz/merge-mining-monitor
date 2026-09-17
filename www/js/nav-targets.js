@@ -204,13 +204,11 @@ export function applyNavigatorPayload(state, targetId, payload, item) {
     slot.anchor = selected ? {
       btc_height: selected.position?.max,
       hash: selected.primary_hash,
-      cursor: selected.cursor,
     } : null;
   } else if (targetId === "orphan") {
     slot.anchor = selected ? {
       btc_header_time: selected.position?.max,
       hash: selected.primary_hash,
-      cursor: selected.cursor,
     } : null;
     slot.counts = payload?.facets?.orphan_classes ?? slot.counts;
   }

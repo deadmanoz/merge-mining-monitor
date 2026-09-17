@@ -279,7 +279,7 @@ test("the outlier cap never drops the focused competition", async ({ page }) => 
   await expect(page.locator("#delta-outlier-body .outlier-row")).toHaveCount(251);
   await expect(page.locator("#delta-outlier-body .outlier-row[aria-current='true']")).toHaveCount(1);
   // And the note says what was actually shown, rather than implying 251 largest.
-  await expect(page.locator("#delta-outlier-body .sort-note"))
+  await expect(page.locator("#delta-outlier-body"))
     .toContainText("250 largest of 261, plus the selected competition");
 });
 

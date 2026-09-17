@@ -262,7 +262,7 @@ function treeNodeTitle(node, chains) {
   return `${base} | ${label}`;
 }
 
-// One uniform block: kind carried by fill color plus a kind label, the height
+// One uniform block: kind carried by fill color, the height
 // inside, the Bitcoin miner below, and corner count badges for distinct child chains and
 // distinct sources (fork.observer-style).
 function drawTreeBlock(group, node) {
