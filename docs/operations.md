@@ -350,7 +350,7 @@ child-height bounds:
 just reconcile-read-model --all --batch-size 1000 --max-iterations 100000
 ```
 
-The 1,283,863-row publication plus live-producer rows exceeds the default
+The 1,286,403-row publication plus live-producer rows exceeds the default
 budget, so this uses the deployment smoke test's full-scan ceiling. It revisits
 captured headers, records catalogue matches as `error_block`, and rebuilds
 source health. Error blocks are neither stale nor orphan evidence, so no orphan
@@ -391,8 +391,8 @@ just import-all
 just reclassify-pools
 ```
 
-`import-all` verifies all 30 publication artifacts before the first database
-mutation: 28 per-chain event files, the stale-descendant aggregate, and the
+`import-all` verifies all 31 publication artifacts before the first database
+mutation: 29 per-chain event files, the stale-descendant aggregate, and the
 error-observation file. It then compares normalized publication-owned fields
 with stored non-operator provenance and base events across research pins. Matching files
 skip classification, writes, and authoritative reconciliation before the

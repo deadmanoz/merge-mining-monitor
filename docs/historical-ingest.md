@@ -8,7 +8,7 @@ The compact catalogue header in `data/consensus/error_blocks.csv` must name
 that same commit; `just gen-error-blocks-catalogue` refuses a
 `--source-commit` that disagrees.
 
-Refresh both pins from one committed Research publication:
+Refresh the three Research pins from one committed Research publication:
 
 ```bash
 just gen-research-publication-pins \
@@ -18,8 +18,9 @@ just gen-research-publication-pins \
 
 Materialize Research's event-file LFS payloads before running this command. The
 manifest generator verifies their pinned size and checksum, then measures each
-artifact's parent-only rows. The combined command stages the manifest and
-catalogue together and publishes them only after both generators succeed. It
+artifact's parent-only rows. The combined command stages the manifest, error
+catalogue, and body-invalid mirror together and publishes them only after all
+three generators succeed. It
 also takes the error-observation chain inventory from Research's
 `observation_chain_counts` field. The combined command does not accept `--out`.
 Run it again with `--check` before importing or releasing.
@@ -29,12 +30,12 @@ the committed parent-only counts while still checking the Git publication
 metadata. The explicit release check above omits that flag and rescans the
 materialized payloads.
 
-`import-all` verifies the source revision, manifest, and all 30 artifacts once,
+`import-all` verifies the source revision, manifest, and all 31 artifacts once,
 before database mutation, then imports the verified readers in chain order.
 
 ## Publication Contract
 
-The publication contains 1,283,863 event rows across 28 uniform per-chain files:
+The publication contains 1,286,403 event rows across 29 uniform per-chain files:
 
 ```text
 results/monitor-evidence/<chain>_monitor_evidence.csv
