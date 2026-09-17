@@ -36,11 +36,10 @@ function clearGeneratedWindowState() {
   state.query.treeTargetHeight = "";
 }
 
-function activateHeightLookup(height, { context = "compact" } = {}) {
+function activateHeightLookup(height) {
   state.treeDirty = true;
   state.query.treeHeight = String(height);
   state.query.treeTime = "";
-  state.query.treeLookupContext = context;
   state.query.unheightedAnchor = "";
   clearGeneratedWindowState();
 }
@@ -50,7 +49,6 @@ function activateAnchorView(hash) {
   state.query.unheightedAnchor = hash;
   state.query.treeHeight = "";
   state.query.treeTime = "";
-  state.query.treeLookupContext = "compact";
   clearGeneratedWindowState();
 }
 
@@ -62,7 +60,6 @@ function activateGeneratedWindow({ treeFrom, treeTo, targetHeight } = {}) {
   state.query.treeTargetHeight = targetHeight == null ? "" : String(targetHeight);
   state.query.treeHeight = "";
   state.query.treeTime = "";
-  state.query.treeLookupContext = "compact";
   state.query.unheightedAnchor = "";
 }
 
@@ -70,7 +67,6 @@ function clearTreeViewModes() {
   state.treeDirty = true;
   state.query.treeHeight = "";
   state.query.treeTime = "";
-  state.query.treeLookupContext = "compact";
   state.query.unheightedAnchor = "";
   clearGeneratedWindowState();
 }
@@ -130,16 +126,12 @@ function treePath(view) {
     base.to_height = v.treeTo;
   } else if (v.treeHeight != null && v.treeHeight !== "") {
     base.at_height = v.treeHeight;
-    if (v.treeLookupContext !== "exact") {
-      base.context = "compact";
-      base.classification = classificationParam();
-    }
+    base.context = "compact";
+    base.classification = classificationParam();
   } else if (v.treeTime != null && v.treeTime !== "") {
     base.at_time = v.treeTime;
-    if (v.treeLookupContext !== "exact") {
-      base.context = "compact";
-      base.classification = classificationParam();
-    }
+    base.context = "compact";
+    base.classification = classificationParam();
   }
   return `${API_BASE}/tree?${paramsFor(base)}`;
 }

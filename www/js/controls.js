@@ -260,7 +260,7 @@ function renderSourceControlRows(entries) {
     const disabled = groupKey === "catalogued" || groupKey === "surveyed";
     const checked = state.query.sources.includes(source.code) ? "checked" : "";
     const name = sourceDisplayName(source);
-    const status = typeof renderSourceRailStatus === "function" ? renderSourceRailStatus(source) : "";
+    const status = renderSourceRailStatus(source);
     return `<div class="source-option${disabled ? " source-option-disabled" : ""}">
     <label class="source-choice">
       <input type="checkbox" name="source" value="${esc(source.code)}" ${checked}${disabled ? " disabled" : ""} />

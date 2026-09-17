@@ -404,7 +404,7 @@ async function jumpToNavigatorItem(target, item, payload) {
   // and center on the target.
   applyNavigatorPayload(state, target, payload, item);
   if (jump.mode === "height" && commitView?.treeHeight) {
-    activateHeightLookup(commitView.treeHeight, { context: commitView.treeLookupContext });
+    activateHeightLookup(commitView.treeHeight);
   } else if (jump.mode === "anchor" && commitView?.unheightedAnchor) {
     activateAnchorView(commitView.unheightedAnchor);
   } else if (jump.mode === "window" && commitView?.treeWindow === "generated") {

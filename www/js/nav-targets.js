@@ -262,7 +262,6 @@ export function navigatorItemView(item) {
         treeHeight: String(item.position.max),
         treeTime: "",
         unheightedAnchor: "",
-        treeLookupContext: "compact",
       },
       centerHash: item.primary_hash,
     };

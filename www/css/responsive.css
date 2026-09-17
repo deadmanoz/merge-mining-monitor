@@ -67,10 +67,6 @@
       "tree";
   }
 
-  .grid-form {
-    grid-template-columns: 1fr;
-  }
-
   .tree-card {
     min-height: 360px;
   }
