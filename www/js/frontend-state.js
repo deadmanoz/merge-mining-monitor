@@ -290,7 +290,6 @@ const DEFAULTS = {
   finding: "",
   treeHeight: "",
   treeTime: "",
-  treeLookupContext: "compact",
   treeWindow: "",
   treeFrom: "",
   treeTo: "",
@@ -518,7 +517,6 @@ function readForm({ source = "form" } = {}) {
     Object.assign(state.query, {
       treeHeight,
       treeTime,
-      treeLookupContext: "compact",
     });
   }
   // readForm runs on every filter change, including the client-side source and
@@ -564,14 +562,12 @@ function hydrateFormFromUrl() {
       : "";
     state.query.treeHeight = "";
     state.query.treeTime = "";
-    state.query.treeLookupContext = "compact";
     state.query.unheightedAnchor = "";
   } else if (params.has("tree_height")) {
     const height = params.get("tree_height");
     if (/^\d+$/.test(height)) {
       state.query.treeHeight = height;
       state.query.treeTime = "";
-      state.query.treeLookupContext = "compact";
       state.query.unheightedAnchor = "";
       state.query.treeWindow = "";
       state.query.treeFrom = "";
@@ -582,7 +578,6 @@ function hydrateFormFromUrl() {
     const time = inputDateTimeToUtc(params.get("tree_time"));
     if (time) {
       state.query.treeTime = time;
-      state.query.treeLookupContext = "compact";
       state.query.treeHeight = "";
       state.query.unheightedAnchor = "";
       state.query.treeWindow = "";
@@ -624,7 +619,6 @@ function hydrateFormFromUrl() {
     state.query.unheightedAnchor = params.get("unheighted_anchor");
     state.query.treeHeight = "";
     state.query.treeTime = "";
-    state.query.treeLookupContext = "compact";
     state.query.treeWindow = "";
     state.query.treeFrom = "";
     state.query.treeTo = "";

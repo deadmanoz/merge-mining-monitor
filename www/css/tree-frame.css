@@ -107,7 +107,6 @@
   color: var(--stale);
 }
 
-.badge,
 .state-pill {
   display: inline-flex;
   align-items: center;
@@ -126,15 +125,9 @@
 .kind-error_block { color: var(--error_block); }
 .kind-near { color: var(--near); }
 .kind-unknown { color: var(--unknown); }
-.kind-context { color: var(--context); }
 
 .fill-canonical { background: var(--canonical); }
 .fill-stale { background: var(--stale); }
 .fill-error_block { background: var(--error_block); }
-.fill-near { background: var(--near); }
-.fill-unknown { background: var(--unknown); }
-.fill-context { background: var(--context); }
 .fill-strict_btc_orphan { background: var(--orphan-strict); }
 .fill-weak_btc_orphan { background: var(--orphan-weak); }
-.fill-excluded { background: var(--orphan-excluded); }
-.fill-pending { background: var(--orphan-pending); }

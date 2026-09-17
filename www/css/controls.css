@@ -41,32 +41,12 @@ label:has(input[type="checkbox"]) {
   align-items: center;
 }
 
-.grid-form {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.grid-form legend {
-  grid-column: 1 / -1;
-}
-
 .secondary-button {
-  grid-column: 1 / -1;
-}
-
-.grid-form label:last-child:nth-child(even) {
   grid-column: 1 / -1;
 }
 
 .tree-lookup-form {
   gap: 8px;
-}
-
-.nested {
-  margin-left: 18px;
-}
-
-.disabled-control {
-  color: var(--faint);
 }
 
 .stack-sm {

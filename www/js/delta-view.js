@@ -13,7 +13,7 @@
 
 import { loadBlock, loadCompetitions } from "./api-client.js?v=0.8.0";
 import { clearSelection, updateSourceGroupSelectedMarkers } from "./controls.js?v=0.8.0";
-import { hideTip, renderContext, renderCoverage, renderHistogram } from "./delta-chart.js?v=0.8.0";
+import { renderContext, renderCoverage, renderHistogram } from "./delta-chart.js?v=0.8.0";
 import { applyOutliersOpen, forgetScroll, renderOutliers, revealFocusedRow } from "./delta-outliers.js?v=0.8.0";
 import {
   binKeyFor,
@@ -639,4 +639,4 @@ function prepareFocus() {
   forgetScroll();
 }
 
-export { mount, prepareFocus, registerDeltaView, render, view };
+export { prepareFocus, registerDeltaView };

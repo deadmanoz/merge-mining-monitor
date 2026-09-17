@@ -569,4 +569,4 @@ function startDrag(svg, event, onMove) {
   window.addEventListener("pointerup", up);
 }
 
-export { hideTip, renderContext, renderCoverage, renderHistogram };
+export { renderContext, renderCoverage, renderHistogram };

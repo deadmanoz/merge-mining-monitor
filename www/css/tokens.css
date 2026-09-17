@@ -125,7 +125,6 @@ p {
   margin: 0;
 }
 
-code,
-.mono {
+code {
   font-family: var(--mono);
 }
