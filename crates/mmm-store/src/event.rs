@@ -860,37 +860,6 @@ pub async fn delete_event_pool_attributions_for_source<C: GenericClient>(
     Ok(())
 }
 
-/// One-way fill for child coinbase bytes recovered after the original event
-/// capture. Existing non-NULL fields always win.
-pub async fn fill_event_child_coinbase<C: GenericClient>(
-    client: &C,
-    event_id: i64,
-    child_coinbase_txid: &[u8],
-    child_coinbase_script: &[u8],
-    child_coinbase_outputs: &[u8],
-) -> Result<bool> {
-    let changed = client
-        .execute(
-            "UPDATE merge_mining_event \
-                SET child_coinbase_txid = COALESCE(child_coinbase_txid, $2), \
-                    child_coinbase_script = COALESCE(child_coinbase_script, $3), \
-                    child_coinbase_outputs = COALESCE(child_coinbase_outputs, $4) \
-              WHERE id = $1 \
-                AND (child_coinbase_txid IS NULL \
-                     OR child_coinbase_script IS NULL \
-                     OR child_coinbase_outputs IS NULL)",
-            &[
-                &event_id,
-                &child_coinbase_txid,
-                &child_coinbase_script,
-                &child_coinbase_outputs,
-            ],
-        )
-        .await
-        .with_context(|| format!("fill child coinbase fields for event {event_id}"))?;
-    Ok(changed > 0)
-}
-
 /// Ids of the active (non-revoked) events for one child block: the exact row
 /// for its hash, plus a hashless historical row at the height whose Bitcoin
 /// parent is the block's parent (the identity partial promotion uses). Scoped

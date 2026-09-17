@@ -66,13 +66,3 @@ pub async fn delete_body_invalid_stales_not_in<C: GenericClient>(
         .context("prune body_invalid_stale")?;
     Ok(rows)
 }
-
-/// The number of rows in `body_invalid_stale`. Used by the importer to refuse
-/// recording an empty annotation set and by diagnostics.
-pub async fn count_body_invalid_stales<C: GenericClient>(client: &C) -> Result<i64> {
-    let row = client
-        .query_one("SELECT count(*)::bigint FROM body_invalid_stale", &[])
-        .await
-        .context("count body_invalid_stale")?;
-    Ok(row.get(0))
-}

@@ -33,9 +33,7 @@ pub use bitcoin_core_header::{
     lock_bitcoin_core_header_cache_shared, lock_bitcoin_core_header_cache_shared_in_transaction,
     record_bitcoin_core_header, replace_bitcoin_core_header_cache,
 };
-pub use body_invalid::{
-    count_body_invalid_stales, delete_body_invalid_stales_not_in, upsert_body_invalid_stale,
-};
+pub use body_invalid::{delete_body_invalid_stales_not_in, upsert_body_invalid_stale};
 pub use capture_error::{
     CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error, record_capture_error,
 };
@@ -60,9 +58,9 @@ pub use child_displacement::{
 };
 pub use event::{
     EventWriteDisposition, EventWriteOutcome, active_event_ids_for_child_block,
-    delete_event_pool_attributions_for_source, fill_event_child_coinbase,
-    upsert_event_pool_attributions, upsert_event_pool_attributions_without_stale_cleanup,
-    upsert_merge_mining_event, upsert_merge_mining_event_with_attributions,
+    delete_event_pool_attributions_for_source, upsert_event_pool_attributions,
+    upsert_event_pool_attributions_without_stale_cleanup, upsert_merge_mining_event,
+    upsert_merge_mining_event_with_attributions,
 };
 pub use historical_import::{
     HistoricalBaseEventRow, HistoricalFinalizationState, HistoricalPublicationStateRow,
@@ -77,5 +75,5 @@ pub use pending_reconcile::{
 pub use poll_cursor::{get_source_id, load_poll_cursor, upsert_poll_cursor_with_target};
 pub use pool::{
     PoolIdentitySeed, load_pool_identities_by_namespace, upsert_identity_registry,
-    upsert_pool_identities_for_namespace, upsert_pool_snapshot, upsert_registry_only_pools,
+    upsert_pool_snapshot, upsert_registry_only_pools,
 };
