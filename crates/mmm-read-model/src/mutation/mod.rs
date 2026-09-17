@@ -113,17 +113,6 @@ pub(crate) async fn lock_core_canonical_view_exclusive<C: GenericClient>(client:
     Ok(())
 }
 
-/// Internal capture knob for an optional pre-decided parent classification.
-/// `Some` is the preclassified path
-/// (`capture_preclassified_in_txn`), where the caller already ran the Core
-/// verdict to gate the write; an enabled classifier re-resolves it under the
-/// shared barrier. `None` lets `capture_event` classify the parent itself (the
-/// ordinary live-producer path via `capture_in_txn`).
-#[derive(Default)]
-struct CaptureEventOptions {
-    parent_classification: Option<ParentClassification>,
-}
-
 /// Proof token that a mutation wrapper snapshotted the primary parent's
 /// source-health contribution BEFORE its base-evidence mutation ran.
 ///
@@ -296,51 +285,8 @@ pub async fn capture_in_txn<F>(
 where
     F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
 {
-    let outcome = capture_event(
-        client,
-        source_id,
-        classifier,
-        payload,
-        chain_label,
-        upsert,
-        CaptureEventOptions::default(),
-    )
-    .await?;
-    Ok(outcome.event_id)
-}
-
-/// [`capture_in_txn`] variant for callers that already had to classify the
-/// parent before deciding whether a write is allowed.
-///
-/// When the classifier is enabled, the supplied gating decision is re-resolved
-/// after the shared Core-view barrier is held and rejected if it changed. A
-/// disabled classifier accepts the caller's offline verdict directly. It is
-/// intentionally narrow; ordinary live producers should keep using
-/// [`capture_in_txn`] so the mutation module owns their classification.
-pub async fn capture_preclassified_in_txn<F>(
-    client: &mut Client,
-    source_id: i64,
-    classifier: &ConfiguredParentClassifier,
-    payload: &mut MergeMiningEventPayload,
-    parent_classification: ParentClassification,
-    chain_label: &str,
-    upsert: F,
-) -> Result<i64>
-where
-    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
-{
-    let outcome = capture_event(
-        client,
-        source_id,
-        classifier,
-        payload,
-        chain_label,
-        upsert,
-        CaptureEventOptions {
-            parent_classification: Some(parent_classification),
-        },
-    )
-    .await?;
+    let outcome =
+        capture_event(client, source_id, classifier, payload, chain_label, upsert).await?;
     Ok(outcome.event_id)
 }
 
@@ -523,12 +469,10 @@ async fn capture_event<F>(
     payload: &mut MergeMiningEventPayload,
     chain_label: &str,
     upsert: F,
-    options: CaptureEventOptions,
 ) -> Result<EventWriteOutcome>
 where
     F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
 {
-    let supplied_preclassification = options.parent_classification;
     let mut attempts = 0;
     let (outcome, changed_hashes) = loop {
         let txn = client
@@ -539,22 +483,7 @@ where
             mmm_store::lock_child_chain_height(&txn, source_id, child_height).await?;
         }
         lock_core_classification_view_shared(&txn, None).await?;
-        let preclassified = match &supplied_preclassification {
-            Some(supplied) if classifier.is_enabled() => {
-                let current = classify_payload_parent(&txn, payload, classifier).await?;
-                if current.as_ref() != Some(supplied) {
-                    bail!(
-                        "preclassified parent verdict changed before {chain_label} capture acquired the Core-view barrier"
-                    );
-                }
-                current
-            }
-            Some(supplied) => {
-                apply_classification_proof(payload, supplied.to_proof())?;
-                Some(supplied.clone())
-            }
-            None => classify_payload_parent(&txn, payload, classifier).await?,
-        };
+        let preclassified = classify_payload_parent(&txn, payload, classifier).await?;
         lock_payload_parent_read_model_in_txn(&txn, payload, preclassified.as_ref()).await?;
         // Ensure the parent is locked even for near / target-failing payloads (the
         // helper above no-ops for those), then open the source-health bracket

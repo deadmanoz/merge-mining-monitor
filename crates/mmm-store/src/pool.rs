@@ -95,28 +95,6 @@ pub async fn upsert_registry_only_pools(
     Ok(())
 }
 
-/// Upsert one `pool_identity` row per seed in `namespace`, defaulting to the
-/// non-remapping policy: an identity already mapped to a different pool is a hard
-/// error (never silently rewritten). Returns the identifier -> pool_identity.id
-/// map. The generic (non-RSK) namespace helper, used by the Hathor reward-registry
-/// seed path; the RSK path uses `upsert_rsk_pool_identities`.
-pub async fn upsert_pool_identities_for_namespace(
-    client: &Client,
-    namespace: &str,
-    seeds: &[PoolIdentitySeed],
-    pool_ids_by_slug: &HashMap<String, i64>,
-) -> Result<HashMap<String, i64>> {
-    upsert_pool_identities_for_namespace_with_policy(
-        client,
-        namespace,
-        seeds,
-        pool_ids_by_slug,
-        false,
-        "refusing to remap automatically",
-    )
-    .await
-}
-
 pub(crate) async fn upsert_pool_identities_for_namespace_with_policy(
     client: &Client,
     namespace: &str,
