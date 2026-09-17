@@ -14,9 +14,7 @@ API and frontend.
 
 The diagram shows the same ownership model as the text below: producers capture
 base evidence, the read-model reconciler is the only writer of derived tables,
-and the API serves those derived projections without writing capture state. It
-predates the Qbit producer and the producer-owned `capture_error` table; the
-text flow below is current.
+and the API serves those derived projections without writing capture state.
 
 ```text
 1. CAPTURE          producers parse source evidence into base tables
@@ -35,6 +33,8 @@ text flow below is current.
                                                 historical_reconcile_queue
 
    operator import (import-known-stales) ──────> known_stale_block
+   operator import (import-body-invalid-stales) ─> body_invalid_stale
+                                                   (API display annotation only)
 
 2. RECONCILE        read-model rebuilds derived tables from base evidence
 ──────────────────────────────────────────────────────────────────────
@@ -47,7 +47,8 @@ text flow below is current.
 3. SERVE            the API projects derived tables to the frontend
 ──────────────────────────────────────────────────────────────────────
    derived tables ──────┬─> axum API (`serve`) ──> static frontend in www/
-   capture_error ───────┘   (source capture-error state)
+   capture_error ───────┤   (source capture-error state)
+   body_invalid_stale ──┘   (stale-only display annotation)
 ```
 
 The key design choice is that producers write base evidence only (stage 1).
@@ -55,7 +56,9 @@ Two base tables retain operator-imported provenance:
 `historical_event_provenance` attaches normalized publication claims to events,
 and `known_stale_block` holds known-stale membership loaded by
 `import-known-stales`. The reconciler consults both as orphan-classification
-exclusion evidence.
+exclusion evidence. A third operator-imported base table,
+`body_invalid_stale`, is a display annotation joined only at API projection;
+reconciliation never consults it.
 Historical import also writes `historical_reconcile_queue` in the base
 transaction. After commit, the read-model bulk-rebuilds bounded batches whose
 canonical classification is already proven by the Core-backed `block` row.
@@ -129,7 +132,8 @@ migrations/        # squashed schema baseline (0001_) plus generated source seed
 fixtures/          # shared JSON API fixtures and per-chain parser samples
 www/               # static frontend served by the read API (index.html, css/, js/, vendor/, assets/)
 docs/              # this documentation set
-scripts/           # migrate-safe wrapper and historical-source manifest tooling
+scripts/           # migrate-safe, research-pin and catalogue generators,
+                   # historical-source manifest checks, arch-lint, live-test helper
 compose.yaml       # Postgres 16 (docker compose v2)
 justfile           # db, build, test, lint, serve, sync, poll, and backfill targets
 ```

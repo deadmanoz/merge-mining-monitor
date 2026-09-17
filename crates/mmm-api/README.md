@@ -10,19 +10,20 @@ It runs read-only `SELECT`s and writes nothing.
 
 ## The invariants
 
-`mmm-api` is an I/O leaf that depends on NO writer crate. Its dependency list is
-`mmm-capture` + `mmm-pg` plus the transport libraries
+`mmm-api` is an I/O leaf that writes nothing. Its dependency list is
+`mmm-capture` + `mmm-pg` + `mmm-store` plus the transport libraries
 (`axum`/`deadpool-postgres`/`tokio-postgres`/`tower`/`tower-http`/`serde`/
-`serde_urlencoded`/`time`/`bitcoin`/`hex`). It never links `mmm-store`,
-`mmm-read-model`, `mmm-producers`, `mmm-bitcoin-core`, or `mmm-rpc`: it reaches the
-database through a `tokio_postgres::GenericClient` and reaches no other crate's
+`serde_urlencoded`/`time`/`bitcoin`/`hex`). It never links `mmm-read-model`,
+`mmm-producers`, `mmm-bitcoin-core`, or `mmm-rpc`: it reaches the database
+through a `tokio_postgres::GenericClient` and reads the persisted Core-header
+cache through `mmm-store`. It never calls Core RPC and never imports producer
 internals. The only sanctioned cross-crate decode edge is
 `mmm_capture::auxpow::evidence` (re-parsing stored AuxPoW/coinbase blobs on the
 block-detail path) plus `mmm_capture::source_registry` (the source-code
 vocabulary). One declared duplication follows from this: `projection/shared/`'s
 `load_strict_bip34_height` is a deliberate API-local copy of `mmm-read-model`'s
 strict-BIP34 SQL shell, kept here precisely so the api need not depend on the
-writer crate.
+read-model writer crate.
 
 The HTTP/JSON wire contract, not the Rust API, defines compatibility. The
 endpoint set (`/api/v1/tree`, `/block/:hash`, `/navigator/{target}`,

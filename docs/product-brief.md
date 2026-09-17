@@ -115,5 +115,7 @@ block is merge-mined:
 ## Out Of Scope
 
 The product does not define CSV export, RSS or SSE feeds, or runtime node
-operations. Bitcoin Core integration currently covers backbone sync and parent
-classification; a continuously-following live stale observer is future work.
+operations. Bitcoin Core integration covers backbone sync, parent
+classification, and `sync-bitcoin-core --follow`, which keeps a contiguous
+local cursor and repairs bounded near-tip or lagged-cursor reorg suffixes
+while retaining the displaced side as stale evidence.

@@ -239,8 +239,8 @@ where
 /// always shown them.
 const NON_PRODUCER_COMMANDS: &str = "import-dataset, import-all, import-known-stales, \
                                      import-body-invalid-stales, reclassify-known-stales, \
-                                     reclassify-unknown-parents, reclassify-pools, \
-                                     sync-bitcoin-core, reconcile-read-model, \
+                                     reclassify-unknown-parents, reclassify-parent, \
+                                     reclassify-pools, sync-bitcoin-core, reconcile-read-model, \
                                      revoke-merge-mining-event, restore-merge-mining-event, or serve";
 
 /// The unknown-command error, generated from the spec table so it cannot
@@ -347,7 +347,7 @@ mod tests {
     /// Captured byte-for-byte from the pre-consolidation binary
     /// (src/main.rs Some(other) arm), with each later chain appended in `CHAINS`
     /// order. The generator must never drift from it.
-    const GOLDEN_UNKNOWN: &str = "unknown command \"bogus\"; expected poll-namecoin, poll-rsk, poll-syscoin, poll-fractal, poll-hathor, poll-elastos, poll-qbit, backfill-namecoin, backfill-rsk, backfill-syscoin, backfill-fractal, backfill-hathor, backfill-hathor-cache, backfill-elastos, backfill-qbit, import-dataset, import-all, import-known-stales, import-body-invalid-stales, reclassify-known-stales, reclassify-unknown-parents, reclassify-pools, sync-bitcoin-core, reconcile-read-model, revoke-merge-mining-event, restore-merge-mining-event, or serve";
+    const GOLDEN_UNKNOWN: &str = "unknown command \"bogus\"; expected poll-namecoin, poll-rsk, poll-syscoin, poll-fractal, poll-hathor, poll-elastos, poll-qbit, backfill-namecoin, backfill-rsk, backfill-syscoin, backfill-fractal, backfill-hathor, backfill-hathor-cache, backfill-elastos, backfill-qbit, import-dataset, import-all, import-known-stales, import-body-invalid-stales, reclassify-known-stales, reclassify-unknown-parents, reclassify-parent, reclassify-pools, sync-bitcoin-core, reconcile-read-model, revoke-merge-mining-event, restore-merge-mining-event, or serve";
 
     /// Captured byte-for-byte from the pre-consolidation binary
     /// (src/main.rs None arm), with each later chain appended in `CHAINS` order.
