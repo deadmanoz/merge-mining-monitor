@@ -31,6 +31,9 @@ const HEIGHT: i32 = 700;
 /// drives the Hathor path. Each tick of a test builds a new chain state.
 struct FixtureBitcoindRpc {
     blocks: HashMap<i32, Vec<u8>>,
+    /// The hash `getblockhash` reports for a height whose block does not
+    /// start with a plain 80-byte header (a Qbit extended header).
+    hashes: HashMap<i32, BlockHash>,
     /// `getblockhash` and `getblock` calls served, so a test can pin what a
     /// rescan costs at the node: one hash lookup for an unchanged height.
     hash_calls: AtomicUsize,
@@ -41,9 +44,23 @@ impl FixtureBitcoindRpc {
     fn carrying(height: i32, raw: Vec<u8>) -> Self {
         Self {
             blocks: HashMap::from([(height, raw)]),
+            hashes: HashMap::new(),
             hash_calls: AtomicUsize::new(0),
             block_calls: AtomicUsize::new(0),
         }
+    }
+
+    fn carrying_with_hash(height: i32, raw: Vec<u8>, hash: BlockHash) -> Self {
+        let mut fixture = Self::carrying(height, raw);
+        fixture.hashes.insert(height, hash);
+        fixture
+    }
+
+    fn hash_at(&self, height: i32, raw: &[u8]) -> BlockHash {
+        self.hashes
+            .get(&height)
+            .copied()
+            .unwrap_or_else(|| block_hash_of(raw))
     }
 
     /// `(getblockhash calls, getblock calls)` served so far.
@@ -66,15 +83,15 @@ impl BitcoindRpc for FixtureBitcoindRpc {
             .blocks
             .get(&height)
             .with_context(|| format!("fixture chain has no block at {height}"))?;
-        Ok(block_hash_of(raw))
+        Ok(self.hash_at(height, raw))
     }
 
     async fn get_block_raw(&self, hash: &BlockHash) -> Result<Vec<u8>> {
         self.block_calls.fetch_add(1, Ordering::SeqCst);
         self.blocks
-            .values()
-            .find(|raw| block_hash_of(raw) == *hash)
-            .cloned()
+            .iter()
+            .find(|(height, raw)| self.hash_at(**height, raw) == *hash)
+            .map(|(_, raw)| raw.clone())
             .with_context(|| format!("fixture chain has no block {hash}"))
     }
 
@@ -89,6 +106,31 @@ fn block_hash_of(raw: &[u8]) -> BlockHash {
     deserialize::<Header>(&raw[..80])
         .expect("fixture block starts with an 80-byte header")
         .block_hash()
+}
+
+/// The mainnet Qbit control whose merged proof parses (Qbit 78,058): its
+/// height, the raw extended header the node serves, and the block hash the
+/// explorer and `getblockhash` report for it.
+fn qbit_positive_control() -> (i32, Vec<u8>, BlockHash) {
+    let controls: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/qbit/qbit_controls.json"
+    )))
+    .expect("parse qbit controls fixture");
+    let control = controls["controls"]
+        .as_array()
+        .expect("controls array")
+        .iter()
+        .find(|control| control["parent_self_pow"].as_bool() == Some(true))
+        .expect("positive control present");
+    let height = i32::try_from(control["height"].as_u64().expect("height")).expect("height fits");
+    let raw = hex::decode(control["header_hex"].as_str().expect("header hex")).expect("hex");
+    let hash: BlockHash = control["hash"]
+        .as_str()
+        .expect("hash")
+        .parse()
+        .expect("block hash");
+    (height, raw, hash)
 }
 
 /// A raw block whose header version lacks the AuxPoW bit, so the runner
@@ -399,7 +441,7 @@ async fn a_classification_cut_short_by_core_leaves_the_height_to_be_retried() ->
 }
 
 #[tokio::test]
-async fn an_unchanged_rescan_finishes_a_capture_error_cleanup_a_crash_left_behind() -> Result<()> {
+async fn an_open_capture_error_takes_the_full_capture_despite_a_final_head() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let source_id = get_source_id(&client, QBIT_SOURCE_CODE).await?;
         let context = AuxpowCaptureContext::new_with_classifier(
@@ -408,16 +450,21 @@ async fn an_unchanged_rescan_finishes_a_capture_error_cleanup_a_crash_left_behin
             ConfiguredParentClassifier::Disabled,
         )
         .await?;
-        // The state a process leaves when it stops between committing a final
-        // head for a recovered height and clearing that height's error row.
-        let block = non_auxpow_block();
-        let hash = block_hash_of(&block).to_byte_array().to_vec();
+        // The state a process leaves when it records a capture error and stops
+        // before replacing the height's final head, or between committing a
+        // final head for a recovered height and clearing its error row. Either
+        // way the error says the height was not reprocessed successfully, so
+        // the rescan fetches and validates the block again; the normal path
+        // then clears the error. The block is the mainnet Qbit control whose
+        // proof parses, served under the hash its extended header carries.
+        let (height, raw, hash) = qbit_positive_control();
+        let hash_bytes = hash.to_byte_array().to_vec();
         record_child_chain_block_in_own_transaction(
             &mut client,
             source_id,
-            HEIGHT,
+            height,
             ChildChainHeadRecord {
-                block_hash: &hash,
+                block_hash: &hash_bytes,
                 parent: CurrentBlockParent::NoAuxpow,
                 outcome: ChildChainHeadOutcome::NoAuxpow,
                 evidence: EvidenceMarker::None,
@@ -428,26 +475,37 @@ async fn an_unchanged_rescan_finishes_a_capture_error_cleanup_a_crash_left_behin
         record_capture_error(
             &client,
             source_id,
-            HEIGHT,
-            Some(&hash),
+            height,
+            Some(&hash_bytes),
             CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF,
             None,
             1_000,
         )
         .await?;
 
-        let rpc = FixtureBitcoindRpc::carrying(HEIGHT, block);
-        let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
-        assert_eq!(outcome, RescanOutcome::Unchanged);
-        assert_eq!(rpc.calls(), (1, 0));
+        let rpc = FixtureBitcoindRpc::carrying_with_hash(height, raw, hash);
+        let outcome = rescan_auxpow_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(
+            outcome,
+            RescanOutcome::Captured(AuxpowHeightOutcome::AuxpowWritten)
+        );
+        assert_eq!(rpc.calls(), (1, 1));
         let errors: i64 = client
             .query_one(
                 "SELECT count(*) FROM capture_error WHERE source_id = $1 AND height = $2",
-                &[&source_id, &HEIGHT],
+                &[&source_id, &height],
             )
             .await?
             .get(0);
-        assert_eq!(errors, 0, "the fast path clears the resolved capture error");
+        assert_eq!(
+            errors, 0,
+            "a successful reprocessing clears the capture error"
+        );
+
+        // With the error cleared the next rescan takes the fast path.
+        let outcome = rescan_auxpow_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(outcome, RescanOutcome::Unchanged);
+        assert_eq!(rpc.calls(), (2, 1));
         Ok::<_, anyhow::Error>(())
     })
 }

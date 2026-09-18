@@ -37,7 +37,8 @@ pub use bitcoin_core_header::{
 };
 pub use body_invalid::{delete_body_invalid_stales_not_in, upsert_body_invalid_stale};
 pub use capture_error::{
-    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error, record_capture_error,
+    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error, has_capture_error,
+    record_capture_error,
 };
 pub use chains::elastos::{
     ElastosIdentityReresolveRow, load_elastos_identity_reresolve_batch,

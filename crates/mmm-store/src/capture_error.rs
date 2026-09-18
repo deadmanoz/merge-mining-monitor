@@ -49,6 +49,20 @@ pub async fn record_capture_error(
     Ok(())
 }
 
+/// Whether a capture error is open at one height: the last processing of the
+/// height did not succeed, so a record of the block there is not to be trusted
+/// until the height is reprocessed.
+pub async fn has_capture_error(client: &Client, source_id: i64, height: i32) -> Result<bool> {
+    let row = client
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM capture_error WHERE source_id = $1 AND height = $2)",
+            &[&source_id, &height],
+        )
+        .await
+        .with_context(|| format!("check capture error for source {source_id} height {height}"))?;
+    Ok(row.get(0))
+}
+
 /// Clear the capture error at one height. Returns true when a row was removed,
 /// so the caller can log the recovery rather than every clean height.
 pub async fn clear_capture_error(client: &Client, source_id: i64, height: i32) -> Result<bool> {

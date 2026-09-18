@@ -44,9 +44,10 @@ use mmm_read_model::capture_in_txn;
 use mmm_store::{
     CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, ChildChainHeadOutcome, ChildChainHeadRecord,
     CurrentBlockParent, EvidenceMarker, clear_capture_error, finish_child_chain_height_operation,
-    load_child_chain_head, load_pool_identities_by_namespace, lock_child_chain_height_session,
-    record_capture_error, record_child_chain_block, record_child_chain_block_in_own_transaction,
-    reobserve_child_chain_block_in_own_transaction, upsert_merge_mining_event_with_attributions,
+    has_capture_error, load_child_chain_head, load_pool_identities_by_namespace,
+    lock_child_chain_height_session, record_capture_error, record_child_chain_block,
+    record_child_chain_block_in_own_transaction, reobserve_child_chain_block_in_own_transaction,
+    upsert_merge_mining_event_with_attributions,
 };
 use qbit::{ensure_qbit_mainnet_endpoint, fetch_qbit_candidate, write_qbit_event};
 
@@ -258,9 +259,17 @@ pub async fn rescan_auxpow_height(
     let result = async {
         let block_hash = observe_block_hash(rpc, context, height).await?;
         let head = load_child_chain_head(&*client, source_id, height, EvidenceMarker::None).await?;
+        // An open capture error says the last processing of the height did
+        // not succeed, whatever the head row records (a capture that recorded
+        // the error and stopped before replacing the head leaves a final head
+        // behind): only a successful reprocessing may clear it, so the height
+        // takes the full capture.
+        let error_open = context.family().malformed_policy == MalformedPolicy::HoldInterval
+            && has_capture_error(client, source_id, height).await?;
         match head {
             Some(head)
-                if head.is_final()
+                if !error_open
+                    && head.is_final()
                     && head.block_hash.as_slice() == block_hash.as_ref() as &[u8] =>
             {
                 reobserve_child_chain_block_in_own_transaction(
@@ -272,18 +281,6 @@ pub async fn rescan_auxpow_height(
                     now_epoch_seconds()?,
                 )
                 .await?;
-                // A final head is committed in the capture transaction before
-                // the capture's own error row is cleared, so a process that
-                // stopped between the two leaves a resolved error behind; the
-                // fast path finishes that cleanup instead of skipping past it.
-                if context.family().malformed_policy == MalformedPolicy::HoldInterval
-                    && clear_capture_error(client, source_id, height).await?
-                {
-                    info!(
-                        chain = context.spec.slug,
-                        height, "capture error resolved; height recorded as unchanged"
-                    );
-                }
                 Ok(RescanOutcome::Unchanged)
             }
             _ => process_locked_height(client, rpc, context, height, block_hash)
