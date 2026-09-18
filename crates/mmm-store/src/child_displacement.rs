@@ -56,11 +56,13 @@ pub enum ChildChainHeadOutcome {
 
 impl ChildChainHeadOutcome {
     /// The outcome of a capture that wrote an event: final unless the
-    /// parent's live classification was cut short by a tolerated Core lookup
-    /// failure, in which case the height is re-observed so the verdict is
-    /// retried whatever orphan class the parent already carries.
-    pub fn captured(classification_incomplete: bool) -> Self {
-        if classification_incomplete {
+    /// parent's verdict is provisional (a tolerated Core lookup failure cut
+    /// the classification short, or Core attested the parent absent, which a
+    /// header it learns later changes), in which case the height is
+    /// re-observed so the verdict is retried whatever orphan class the parent
+    /// already carries.
+    pub fn captured(classification_provisional: bool) -> Self {
+        if classification_provisional {
             Self::Unverified
         } else {
             Self::Captured

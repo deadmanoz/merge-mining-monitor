@@ -578,6 +578,26 @@ async fn a_coinbase_the_node_cannot_serve_is_final_but_a_failed_fetch_is_not() {
 }
 
 #[test]
+fn the_proof_is_provisional_for_a_cut_short_or_core_absent_verdict() {
+    let header = test_header(40, 0x207f_ffff);
+    assert!(
+        !ParentClassification::unknown(&header)
+            .to_proof()
+            .provisional
+    );
+    assert!(
+        ParentClassification::incomplete_unknown(&header)
+            .to_proof()
+            .provisional
+    );
+    let absent = ParentClassification {
+        core_absence_attested: true,
+        ..ParentClassification::unknown(&header)
+    };
+    assert!(absent.to_proof().provisional);
+}
+
+#[test]
 fn a_competitor_without_its_coinbase_keeps_the_verdict_but_marks_it_provisional() {
     // Coinbase enrichment is optional, so the competitor header still gives
     // the stale verdict; the failed fetch makes it provisional so the height

@@ -551,7 +551,7 @@ async fn upsert_and_record_block(
         ChildChainHeadRecord {
             block_hash: child_block_hash,
             parent: CurrentBlockParent::Known(payload.btc_parent_header_hash.as_slice()),
-            outcome: ChildChainHeadOutcome::captured(payload.classification_incomplete),
+            outcome: ChildChainHeadOutcome::captured(payload.classification_provisional),
             evidence: EvidenceMarker::None,
             observed_at,
         },

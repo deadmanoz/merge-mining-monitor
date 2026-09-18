@@ -733,7 +733,9 @@ async fn write_valid_capture(
                     ChildChainHeadRecord {
                         block_hash: current_hash,
                         parent: CurrentBlockParent::Known(current_hash),
-                        outcome: ChildChainHeadOutcome::captured(payload.classification_incomplete),
+                        outcome: ChildChainHeadOutcome::captured(
+                            payload.classification_provisional,
+                        ),
                         evidence: EvidenceMarker::HathorSidecars,
                         observed_at: now,
                     },

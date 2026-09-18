@@ -16,8 +16,9 @@
 -- proof verified and its verdict is settled, but it yields no event, such as
 -- a parent that misses Bitcoin's target), `non_auxpow` (the block carries no
 -- AuxPoW), `unverified` (its proof did not parse, its verdict still depends
--- on the Bitcoin Core cache and may change on re-observation, or a tolerated
--- Core lookup failure cut its parent's classification short), or
+-- on the Bitcoin Core cache and may change on re-observation, a tolerated
+-- Core lookup failure cut its parent's classification short, or Core
+-- attested its parent absent, which a header Core learns later changes), or
 -- `held` (the producer holds the cursor at it). Only the first three are
 -- final: a rescan that finds the same hash with a final outcome skips the
 -- proof fetch; any other outcome, a different hash, or no row at all runs the

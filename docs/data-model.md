@@ -258,9 +258,13 @@ no row, or a non-final outcome captures the height again, as does, for
 Hathor, a sidecar captured, imported or rewritten at the height since the
 row was written, because Hathor records a block only after holding its
 declared work against every block captured there and that check must see
-the evidence now. A capture whose parent classification a tolerated Core lookup failure
-cut short records `unverified`, so the height is re-observed and the verdict
-retried whatever orphan class the parent already carries. Migration `0026`
+the evidence now. A capture whose parent verdict is provisional records
+`unverified`, so the height is re-observed and the verdict retried whatever
+orphan class the parent already carries: a tolerated Core lookup failure cut
+the classification short, or Core attested the parent absent, which is a
+point-in-time observation (a live capture can reach Core before Core has the
+block at that height, and a stale header may arrive later still) that the
+routine rechecks would otherwise never revisit. Migration `0026`
 adds the table with no backfill; the first rescan window after it fills the
 rows.
 

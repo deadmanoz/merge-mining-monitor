@@ -17,10 +17,11 @@ This changelog starts with the initial release.
   producer-defined evidence marker, so Hathor, which records a block only
   after holding its declared work against every captured block's sidecar at
   the height, takes the full capture again once an import, capture or replay
-  has added or rewritten a sidecar there. A capture whose parent classification a
-  tolerated Core lookup failure cut short records a non-final head, so the
-  height is re-observed and the verdict retried whatever orphan class the
-  parent already carries. Because a skipped
+  has added or rewritten a sidecar there. A capture whose parent verdict is
+  provisional (a tolerated Core lookup failure cut the classification short,
+  or Core attested the parent absent, which a header Core learns later
+  changes) records a non-final head, so the height is re-observed and the
+  verdict retried whatever orphan class the parent already carries. Because a skipped
   rescan no longer re-runs classification, the lenient live classifier no
   longer attests Core absence when a predecessor or competitor lookup fails
   after the candidate was found absent: the verdict stays a pending unknown

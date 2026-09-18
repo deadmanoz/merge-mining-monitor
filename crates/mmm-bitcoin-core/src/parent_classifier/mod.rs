@@ -152,14 +152,17 @@ pub struct ParentClassification {
     /// than a never-checked (Disabled) or transient-RPC-error unknown. It is set
     /// only on candidate-absent paths that did not stop at an incomplete or
     /// unavailable live consensus check; the read-model reconciler gates
-    /// strict/weak orphan classification on it.
+    /// strict/weak orphan classification on it. Absence is a point-in-time
+    /// observation (a live capture can reach Core before Core has the block
+    /// at that height), so [`Self::to_proof`] marks the verdict provisional.
     pub core_absence_attested: bool,
     /// True when a Core lookup the lenient live policy tolerated cut the
     /// classification short (a predecessor, competitor or ancestor lookup, or
-    /// the coinbase fetch of an indexed block), so this verdict is
-    /// provisional: a capture that stores it must stay eligible for a retry
-    /// (a non-final child-chain head) whatever orphan class the parent
-    /// already carries, because the routine rechecks skip classified rows.
+    /// the coinbase fetch of an indexed block). With `core_absence_attested`
+    /// this makes the verdict provisional: a capture that stores it must stay
+    /// eligible for a retry (a non-final child-chain head) whatever orphan
+    /// class the parent already carries, because the routine rechecks skip
+    /// classified rows.
     pub incomplete: bool,
 }
 
@@ -225,7 +228,7 @@ impl ParentClassification {
             parent_kind: Some(self.kind),
             parent_height: self.height,
             difficulty_epoch_ok: self.difficulty_epoch_ok,
-            incomplete: self.incomplete,
+            provisional: self.incomplete || self.core_absence_attested,
         }
     }
 }

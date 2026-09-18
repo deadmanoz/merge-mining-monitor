@@ -39,7 +39,7 @@ fn classification_proof_updates_payload_height_from_proof_only() {
         pow_validates_btc_target: true,
         pow_validates_child_target: Some(true),
         difficulty_epoch_ok: None,
-        classification_incomplete: false,
+        classification_provisional: false,
         btc_parent_coinbase_txid: None,
         btc_parent_coinbase_script: None,
         btc_parent_coinbase_outputs: None,
@@ -63,7 +63,7 @@ fn classification_proof_updates_payload_height_from_proof_only() {
             parent_kind: Some(ParentKind::Canonical),
             parent_height: Some(840_000),
             difficulty_epoch_ok: Some(true),
-            incomplete: false,
+            provisional: false,
         },
     )
     .unwrap();
@@ -95,7 +95,7 @@ fn catalogued_error_block_overrides_external_proof() {
         pow_validates_btc_target: true,
         pow_validates_child_target: Some(true),
         difficulty_epoch_ok: None,
-        classification_incomplete: false,
+        classification_provisional: false,
         btc_parent_coinbase_txid: None,
         btc_parent_coinbase_script: None,
         btc_parent_coinbase_outputs: None,
@@ -119,7 +119,7 @@ fn catalogued_error_block_overrides_external_proof() {
             parent_kind: Some(ParentKind::Canonical),
             parent_height: Some(946_213),
             difficulty_epoch_ok: Some(true),
-            incomplete: false,
+            provisional: false,
         },
     )
     .unwrap();

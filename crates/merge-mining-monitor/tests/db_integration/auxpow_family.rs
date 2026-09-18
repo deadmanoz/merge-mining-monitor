@@ -395,16 +395,22 @@ async fn rescan_of_a_non_final_record_captures_the_height_again() -> Result<()> 
 }
 
 #[tokio::test]
-async fn a_classification_cut_short_by_core_leaves_the_height_to_be_retried() -> Result<()> {
+async fn a_provisional_classification_leaves_the_height_to_be_retried() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let (_, _, source_id, parsed) = namecoin_fixture(&client).await?;
         let header = parsed.parent_header.header;
-        // The first capture's Core lookup is cut short by a tolerated failure:
-        // the verdict is provisional, so the record is not final and the next
-        // rescan captures the height again, whatever orphan class the parent
-        // carries; the retried classification completes and the record is.
+        // The first capture's Core lookup is cut short by a tolerated failure
+        // and the retry finds Core without the block at the height (the
+        // poller can reach Core before Core has the Bitcoin block the child
+        // names): both verdicts are provisional, so the record is not final
+        // and the next rescan captures the height again, whatever orphan
+        // class the parent carries; once the verdict settles the record is.
         let fake = FakeParentClassifier::new_sequence([
             ParentClassification::incomplete_unknown(&header),
+            ParentClassification {
+                core_absence_attested: true,
+                ..ParentClassification::unknown(&header)
+            },
             ParentClassification::unknown(&header),
         ]);
         let context = AuxpowCaptureContext::new_with_classifier(
@@ -431,11 +437,23 @@ async fn a_classification_cut_short_by_core_leaves_the_height_to_be_retried() ->
         assert_eq!(fake.call_count().await, 2);
         assert_eq!(
             head_at_height(&client, source_id).await?.map(|head| head.0),
+            Some("unverified".to_owned())
+        );
+
+        let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
+        assert_eq!(
+            outcome,
+            RescanOutcome::Captured(AuxpowHeightOutcome::AuxpowWritten)
+        );
+        assert_eq!(rpc.calls(), (3, 3));
+        assert_eq!(fake.call_count().await, 3);
+        assert_eq!(
+            head_at_height(&client, source_id).await?.map(|head| head.0),
             Some("captured".to_owned())
         );
         let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
         assert_eq!(outcome, RescanOutcome::Unchanged);
-        assert_eq!(rpc.calls(), (3, 2));
+        assert_eq!(rpc.calls(), (4, 3));
         Ok::<_, anyhow::Error>(())
     })
 }
