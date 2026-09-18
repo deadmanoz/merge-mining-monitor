@@ -541,6 +541,36 @@ async fn bitcoin_core_classifier_uses_verbose_canonical_and_stale_paths() {
 }
 
 #[tokio::test]
+async fn a_core_indexed_stale_without_its_competitor_is_provisional() {
+    // Core indexes the candidate as stale, but the competitor lookup fails
+    // and the lenient policy tolerates it: no verdict, and the classification
+    // is marked incomplete so the capture stays eligible for a retry.
+    let stale_header = test_header(21, 0x207f_ffff);
+    let source = Arc::new(MockCoreHeaderSource::default());
+    source.set_verbose(
+        stale_header.block_hash(),
+        MockResult::Ok(CoreHeaderStatus {
+            confirmations: -1,
+            height: 720_001,
+        }),
+    );
+    source.set_block_hash(720_001, MockResult::Error);
+    let provisional = BitcoinCoreParentClassifier::from_source(source.clone())
+        .classify_parent(&stale_header, ParentPreflight { known_prev: None })
+        .await
+        .unwrap();
+    assert_eq!(provisional.kind, ParentKind::Unknown);
+    assert!(provisional.incomplete);
+    assert!(!provisional.core_absence_attested);
+
+    // The strict policy surfaces the failure instead.
+    BitcoinCoreParentClassifier::from_source(source)
+        .classify_parent_strict(&stale_header, ParentPreflight { known_prev: None })
+        .await
+        .unwrap_err();
+}
+
+#[tokio::test]
 async fn bitcoin_core_classifier_loads_preflight_only_after_candidate_absence() {
     let canonical_header = test_header(23, 0x207f_ffff);
     let canonical_source = Arc::new(MockCoreHeaderSource::default());

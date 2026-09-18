@@ -176,13 +176,16 @@ impl BitcoinCoreParentClassifier {
             return Ok(classify_core_canonical_header(header, height, coinbase));
         }
 
+        let competitor = match self.fetch_competitor(height, fail_on_rpc_error).await? {
+            Competitor::Found(competitor) => Some(*competitor),
+            Competitor::Absent => None,
+            // Core indexes the candidate as stale, but without its competitor
+            // the verdict cannot be given; a tolerated failure leaves it
+            // provisional so the height is retried.
+            Competitor::Unavailable => return Ok(ParentClassification::incomplete_unknown(header)),
+        };
         Ok(classify_core_stale_header(
-            header,
-            height,
-            self.fetch_competitor(height, fail_on_rpc_error)
-                .await?
-                .found(),
-            coinbase,
+            header, height, competitor, coinbase,
         ))
     }
 
@@ -641,15 +644,6 @@ enum Competitor {
     /// The lookup failed and the lenient policy tolerated it: nothing about
     /// Core's chain at that height was observed.
     Unavailable,
-}
-
-impl Competitor {
-    fn found(self) -> Option<ClassifiedHeader> {
-        match self {
-            Self::Found(header) => Some(*header),
-            Self::Absent | Self::Unavailable => None,
-        }
-    }
 }
 
 /// An `unknown` for a candidate Core proved absent, once every further
