@@ -4,8 +4,8 @@ use anyhow::Result;
 use mmm_capture::capture::MergeMiningEventPayload;
 use mmm_capture::source_registry::NAMECOIN_SOURCE_CODE;
 use mmm_store::{
-    ChildDisplacementOutcome, CurrentBlockParent, EventWriteDisposition, get_source_id,
-    lock_child_chain_height, record_child_chain_block, upsert_merge_mining_event,
+    ChildChainHeadOutcome, ChildDisplacementOutcome, CurrentBlockParent, EventWriteDisposition,
+    get_source_id, lock_child_chain_height, record_child_chain_block, upsert_merge_mining_event,
 };
 use tokio_postgres::Client;
 
@@ -32,8 +32,16 @@ async fn record(
     observed_at: i64,
 ) -> Result<ChildDisplacementOutcome> {
     let txn = client.transaction().await?;
-    let outcome =
-        record_child_chain_block(&txn, source_id, HEIGHT, hash, parent, observed_at).await?;
+    let outcome = record_child_chain_block(
+        &txn,
+        source_id,
+        HEIGHT,
+        hash,
+        parent,
+        ChildChainHeadOutcome::Captured,
+        observed_at,
+    )
+    .await?;
     txn.commit().await?;
     Ok(outcome)
 }
@@ -320,6 +328,7 @@ async fn concurrent_captures_at_one_height_serialize_on_the_lock_and_the_later_c
             HEIGHT,
             &HASH_A,
             CurrentBlockParent::Unknown,
+            ChildChainHeadOutcome::Unverified,
             3_001,
         )
         .await?;
@@ -338,6 +347,7 @@ async fn concurrent_captures_at_one_height_serialize_on_the_lock_and_the_later_c
                 HEIGHT,
                 &HASH_B,
                 CurrentBlockParent::Unknown,
+                ChildChainHeadOutcome::Unverified,
                 3_002,
             )
             .await?;

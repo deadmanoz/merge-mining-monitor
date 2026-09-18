@@ -110,8 +110,14 @@ Cursor seeding order is:
 2. persisted cursor
 3. `tip - reorg_depth`
 
-Each tick re-processes the `reorg_depth` heights ending at and including the
-persisted cursor, then advances the cursor by up to the batch size; only
+Each tick re-observes the `reorg_depth` heights ending at and including the
+persisted cursor, then advances the cursor by up to the batch size. A
+re-observed height costs one block-hash lookup at the node when the chain
+still carries the block recorded in `child_chain_head` with a final outcome
+(the bitcoind family and Hathor, whose block metadata names the block);
+only a changed hash, a missing record, or a record whose verdict may still
+change captures the height again. Elastos fetches its whole block in one
+call either way, and RSK re-captures its window in full. Only
 once the cursor has caught up with the tip does that window end at and
 include the tip instead, and a poller catching up after an outage rescans
 behind its cursor and does not see near-tip replacements until it gets

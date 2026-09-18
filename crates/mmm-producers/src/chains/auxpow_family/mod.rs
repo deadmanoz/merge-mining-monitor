@@ -42,10 +42,11 @@ use mmm_capture::child_payout::PoolIdentityLookup;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::capture_in_txn;
 use mmm_store::{
-    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, CurrentBlockParent, clear_capture_error,
-    finish_child_chain_height_operation, load_pool_identities_by_namespace,
-    lock_child_chain_height_session, record_capture_error, record_child_chain_block,
-    record_child_chain_block_in_own_transaction, upsert_merge_mining_event_with_attributions,
+    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, ChildChainHeadOutcome, CurrentBlockParent,
+    clear_capture_error, finish_child_chain_height_operation, load_child_chain_head,
+    load_pool_identities_by_namespace, lock_child_chain_height_session, record_capture_error,
+    record_child_chain_block, record_child_chain_block_in_own_transaction,
+    upsert_merge_mining_event_with_attributions,
 };
 use qbit::{ensure_qbit_mainnet_endpoint, fetch_qbit_candidate, write_qbit_event};
 
@@ -207,25 +208,100 @@ pub async fn process_auxpow_height(
 ) -> Result<HeightOutcome> {
     let source_id = context.source_id();
     lock_child_chain_height_session(client, source_id, height).await?;
-    let result = process_locked_height(client, rpc, context, height).await;
+    let result = async {
+        let block_hash = observe_block_hash(rpc, context, height).await?;
+        process_locked_height(client, rpc, context, height, block_hash).await
+    }
+    .await;
     finish_child_chain_height_operation(client, source_id, height, result).await
 }
 
-/// One height's observation and writes, under the session-level height lock
-/// [`process_auxpow_height`] holds around it.
+/// The chain's block hash at `height`: the one observation every processed
+/// height makes, whether it goes on to capture or not.
+async fn observe_block_hash(
+    rpc: &impl BitcoindRpc,
+    context: &AuxpowCaptureContext,
+    height: i32,
+) -> Result<BlockHash> {
+    let label = context.family().label;
+    rpc.get_block_hash(height)
+        .await
+        .with_context(|| format!("get {label} block hash at height {height}"))
+}
+
+/// Re-observe an already-processed height inside the trailing rescan window.
+///
+/// One `getblockhash` decides whether anything changed: when the chain still
+/// carries the block the `child_chain_head` row recorded and that record is
+/// final (see [`ChildChainHeadOutcome::is_final`]), the height is not
+/// captured again. Displacement maintenance still runs under the height
+/// lock, with the parent the original capture recorded, because a write that
+/// bypasses observation (a historical publication import for a live chain)
+/// can leave an undisplaced sibling at the height that only the next
+/// observation repairs. A different hash, no row, or a non-final record runs
+/// the full capture through [`process_auxpow_height`]'s locked path.
+///
+/// From the production host every remote call costs about 340 ms, so this is
+/// the difference between a rescan window of 20 heights costing one round
+/// trip each and costing three plus the capture.
+pub async fn rescan_auxpow_height(
+    client: &mut Client,
+    rpc: &impl BitcoindRpc,
+    context: &AuxpowCaptureContext,
+    height: i32,
+) -> Result<RescanOutcome> {
+    let source_id = context.source_id();
+    lock_child_chain_height_session(client, source_id, height).await?;
+    let result = async {
+        let block_hash = observe_block_hash(rpc, context, height).await?;
+        let head = load_child_chain_head(&*client, source_id, height).await?;
+        match head {
+            Some(head)
+                if head.outcome.is_final()
+                    && head.block_hash.as_slice() == block_hash.as_ref() as &[u8] =>
+            {
+                record_child_chain_block_in_own_transaction(
+                    client,
+                    source_id,
+                    height,
+                    block_hash.as_ref(),
+                    head.current_parent(),
+                    head.outcome,
+                    now_epoch_seconds()?,
+                )
+                .await?;
+                Ok(RescanOutcome::Unchanged)
+            }
+            _ => process_locked_height(client, rpc, context, height, block_hash)
+                .await
+                .map(RescanOutcome::Captured),
+        }
+    }
+    .await;
+    finish_child_chain_height_operation(client, source_id, height, result).await
+}
+
+/// What a rescan of one height did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RescanOutcome {
+    /// The chain still carries the recorded block; nothing was fetched or
+    /// written beyond the block hash and the displacement maintenance.
+    Unchanged,
+    /// The height was captured again, with this outcome.
+    Captured(HeightOutcome),
+}
+
+/// One height's capture and writes for the block the caller observed at it,
+/// under the session-level height lock [`process_auxpow_height`] and
+/// [`rescan_auxpow_height`] hold around it.
 async fn process_locked_height(
     client: &mut Client,
     rpc: &impl BitcoindRpc,
     context: &AuxpowCaptureContext,
     height: i32,
+    block_hash: BlockHash,
 ) -> Result<HeightOutcome> {
     let family = context.family();
-    let label = family.label;
-
-    let block_hash = rpc
-        .get_block_hash(height)
-        .await
-        .with_context(|| format!("get {label} block hash at height {height}"))?;
 
     let outcome = match fetch_auxpow_candidate(rpc, context, &block_hash, height).await? {
         AuxpowFetch::Classic(mut parsed) => {
@@ -246,20 +322,28 @@ async fn process_locked_height(
     // A block the node confirms carries no AuxPoW cannot be any hashless AuxPoW
     // observation, so it displaces them; a proof that failed to parse leaves
     // the block's parent unknown, so hashless rows are left alone.
-    let current_parent = match outcome {
+    let eventless_record = match outcome {
         HeightOutcome::AuxpowWritten => None,
-        HeightOutcome::NonAuxpowSkipped => Some(CurrentBlockParent::NoAuxpow),
-        HeightOutcome::MalformedSkipped | HeightOutcome::MalformedHeld => {
-            Some(CurrentBlockParent::Unknown)
+        HeightOutcome::NonAuxpowSkipped => Some((
+            CurrentBlockParent::NoAuxpow,
+            ChildChainHeadOutcome::NoAuxpow,
+        )),
+        HeightOutcome::MalformedSkipped => Some((
+            CurrentBlockParent::Unknown,
+            ChildChainHeadOutcome::Unverified,
+        )),
+        HeightOutcome::MalformedHeld => {
+            Some((CurrentBlockParent::Unknown, ChildChainHeadOutcome::Held))
         }
     };
-    if let Some(current_parent) = current_parent {
+    if let Some((current_parent, head_outcome)) = eventless_record {
         record_child_chain_block_in_own_transaction(
             client,
             context.source_id(),
             height,
             block_hash.as_ref(),
             current_parent,
+            head_outcome,
             now_epoch_seconds()?,
         )
         .await?;
@@ -391,6 +475,7 @@ pub(super) async fn write_event_in_txn(
                 child_height,
                 child_block_hash,
                 CurrentBlockParent::Known(payload.btc_parent_header_hash.as_slice()),
+                ChildChainHeadOutcome::Captured,
                 observed_at,
             )
             .await?;
@@ -572,6 +657,15 @@ impl ChainPoller for AuxpowFamilyPoller {
         let outcome =
             process_auxpow_height(&mut self.state.client, &self.rpc, &self.context, height).await?;
         Ok(height_progress_for(outcome))
+    }
+
+    async fn rescan_height(&mut self, height: i32) -> Result<HeightProgress> {
+        let outcome =
+            rescan_auxpow_height(&mut self.state.client, &self.rpc, &self.context, height).await?;
+        Ok(match outcome {
+            RescanOutcome::Unchanged => HeightProgress::Advance,
+            RescanOutcome::Captured(outcome) => height_progress_for(outcome),
+        })
     }
 }
 

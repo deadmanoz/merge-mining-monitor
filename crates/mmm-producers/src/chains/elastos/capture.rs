@@ -57,8 +57,9 @@ use mmm_capture::pool_resolver::PoolResolver;
 use mmm_capture::source_registry::ELASTOS_SOURCE_CODE;
 use mmm_read_model::capture_in_txn;
 use mmm_store::{
-    CurrentBlockParent, EventWriteOutcome, finish_child_chain_height_operation,
-    load_pool_identities_by_namespace, lock_child_chain_height_session, record_child_chain_block,
+    ChildChainHeadOutcome, CurrentBlockParent, EventWriteOutcome,
+    finish_child_chain_height_operation, load_pool_identities_by_namespace,
+    lock_child_chain_height_session, record_child_chain_block,
     record_child_chain_block_in_own_transaction, retag_revocation_reason,
     write_elastos_capture_in_txn,
 };
@@ -313,12 +314,23 @@ async fn apply_elastos_evaluation(
     if outcome != ElastosHeightOutcome::AuxpowWritten
         && let Some(block) = proven
     {
+        // A near or child-target verdict is a settled proof-of-work
+        // comparison; a non-BTC or conflicting verdict follows the Core cache
+        // and a hold is retried, so neither is final for a rescan.
+        let head_outcome = match outcome {
+            ElastosHeightOutcome::NearSkipped | ElastosHeightOutcome::ChildTargetSkipped => {
+                ChildChainHeadOutcome::Recorded
+            }
+            ElastosHeightOutcome::TableHorizonHold => ChildChainHeadOutcome::Held,
+            _ => ChildChainHeadOutcome::Unverified,
+        };
         record_child_chain_block_in_own_transaction(
             client,
             context.source_id(),
             height,
             block.hash.as_ref(),
             CurrentBlockParent::Known(block.parent_hash.as_ref()),
+            head_outcome,
             now_epoch_seconds()?,
         )
         .await?;
@@ -535,6 +547,7 @@ async fn upsert_and_record_block(
         child_height,
         child_block_hash,
         CurrentBlockParent::Known(payload.btc_parent_header_hash.as_slice()),
+        ChildChainHeadOutcome::Captured,
         observed_at,
     )
     .await?;

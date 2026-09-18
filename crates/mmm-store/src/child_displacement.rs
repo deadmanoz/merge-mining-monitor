@@ -7,7 +7,7 @@
 //! Displacement".
 
 use anyhow::{Context, Result, ensure};
-use tokio_postgres::{Client, Transaction};
+use tokio_postgres::{Client, GenericClient, Transaction};
 
 /// Two-int advisory-lock class for serializing the per-height transition. The
 /// two-int `pg_advisory_xact_lock(int4, int4)` space is disjoint from the
@@ -31,6 +31,107 @@ pub enum CurrentBlockParent<'a> {
     /// rows are left untouched: one of them may be this very block, and
     /// displacing it by itself would poison its later promotion.
     Unknown,
+}
+
+/// What the producer made of the block it recorded at a height. Stored on
+/// the `child_chain_head` row so a later rescan can tell from one block-hash
+/// lookup whether the height needs capturing again: only the final outcomes
+/// let a rescan that finds the same hash skip the capture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChildChainHeadOutcome {
+    /// An event was written for the block.
+    Captured,
+    /// The block's proof verified and its verdict is settled, but it yields
+    /// no event (a parent that misses Bitcoin's target, for instance).
+    Recorded,
+    /// The block carries no AuxPoW and yields no event.
+    NoAuxpow,
+    /// The block's proof did not parse, or its verdict still depends on the
+    /// Bitcoin Core cache and may change when the height is observed again.
+    Unverified,
+    /// The producer holds the cursor at the block; the next observation
+    /// captures it again.
+    Held,
+}
+
+impl ChildChainHeadOutcome {
+    /// Whether a rescan that finds the same block hash may skip the capture.
+    pub fn is_final(self) -> bool {
+        matches!(self, Self::Captured | Self::Recorded | Self::NoAuxpow)
+    }
+
+    fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Captured => "captured",
+            Self::Recorded => "recorded",
+            Self::NoAuxpow => "non_auxpow",
+            Self::Unverified => "unverified",
+            Self::Held => "held",
+        }
+    }
+
+    fn from_db_str(value: &str) -> Result<Self> {
+        Ok(match value {
+            "captured" => Self::Captured,
+            "recorded" => Self::Recorded,
+            "non_auxpow" => Self::NoAuxpow,
+            "unverified" => Self::Unverified,
+            "held" => Self::Held,
+            other => anyhow::bail!("unknown child_chain_head outcome {other:?}"),
+        })
+    }
+}
+
+/// The block a child chain last carried at a height, as its producer recorded
+/// it: the `child_chain_head` row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChildChainHead {
+    pub block_hash: Vec<u8>,
+    /// The parent the block's proof named, `None` when the block yielded no
+    /// verified proof. Lets displacement maintenance on a skipped rescan treat
+    /// hashless observations the way the original capture did.
+    pub btc_parent_header_hash: Option<Vec<u8>>,
+    pub outcome: ChildChainHeadOutcome,
+    pub observed_at: i64,
+}
+
+impl ChildChainHead {
+    /// The [`CurrentBlockParent`] the original capture recorded with.
+    pub fn current_parent(&self) -> CurrentBlockParent<'_> {
+        match (&self.btc_parent_header_hash, self.outcome) {
+            (Some(parent), _) => CurrentBlockParent::Known(parent.as_slice()),
+            (None, ChildChainHeadOutcome::NoAuxpow) => CurrentBlockParent::NoAuxpow,
+            (None, _) => CurrentBlockParent::Unknown,
+        }
+    }
+}
+
+/// Load the block the child chain last carried at `(source_id, child_height)`,
+/// or `None` when no producer has processed the height since the row was
+/// introduced.
+pub async fn load_child_chain_head<C: GenericClient>(
+    client: &C,
+    source_id: i64,
+    child_height: i32,
+) -> Result<Option<ChildChainHead>> {
+    let row = client
+        .query_opt(
+            "SELECT block_hash, btc_parent_header_hash, outcome, observed_at \
+               FROM child_chain_head \
+              WHERE source_id = $1 AND child_height = $2",
+            &[&source_id, &child_height],
+        )
+        .await
+        .context("load the child chain head")?;
+    row.map(|row| {
+        Ok(ChildChainHead {
+            block_hash: row.get(0),
+            btc_parent_header_hash: row.get(1),
+            outcome: ChildChainHeadOutcome::from_db_str(row.get::<_, &str>(2))?,
+            observed_at: row.get(3),
+        })
+    })
+    .transpose()
 }
 
 /// What one `record_child_chain_block` call changed.
@@ -157,6 +258,11 @@ pub async fn lock_child_chain_height(
 /// idempotent, and it changes only the two displacement columns, so no parent
 /// read-model reconciliation and no parent advisory lock are needed.
 ///
+/// The call also upserts the `child_chain_head` row for the height (block
+/// hash, the parent the proof named, `outcome`, `observed_at`), the durable
+/// record a trailing rescan compares one block-hash lookup against; see
+/// [`load_child_chain_head`].
+///
 /// The producer sequence for a captured block is: take the height lock, upsert
 /// the block's event, then call this. Taking the lock first matters: an
 /// upsert locks its own event row, and two captures of different blocks at
@@ -175,6 +281,7 @@ pub async fn record_child_chain_block(
     child_height: i32,
     current_block_hash: &[u8],
     current_parent: CurrentBlockParent<'_>,
+    outcome: ChildChainHeadOutcome,
     observed_at: i64,
 ) -> Result<ChildDisplacementOutcome> {
     ensure!(
@@ -188,6 +295,26 @@ pub async fn record_child_chain_block(
         CurrentBlockParent::NoAuxpow => (None, true),
         CurrentBlockParent::Unknown => (None, false),
     };
+    txn.execute(
+        "INSERT INTO child_chain_head \
+             (source_id, child_height, block_hash, btc_parent_header_hash, outcome, observed_at) \
+         VALUES ($1, $2, $3, $4, $5, $6) \
+         ON CONFLICT (source_id, child_height) DO UPDATE SET \
+             block_hash = EXCLUDED.block_hash, \
+             btc_parent_header_hash = EXCLUDED.btc_parent_header_hash, \
+             outcome = EXCLUDED.outcome, \
+             observed_at = EXCLUDED.observed_at",
+        &[
+            &source_id,
+            &child_height,
+            &current_block_hash,
+            &parent_hash,
+            &outcome.as_db_str(),
+            &observed_at,
+        ],
+    )
+    .await
+    .context("record the child chain head")?;
     let rows = txn
         .query(
             "WITH candidate AS ( \
@@ -238,6 +365,7 @@ pub async fn record_child_chain_block_in_own_transaction(
     child_height: i32,
     current_block_hash: &[u8],
     current_parent: CurrentBlockParent<'_>,
+    head_outcome: ChildChainHeadOutcome,
     observed_at: i64,
 ) -> Result<ChildDisplacementOutcome> {
     let txn = client
@@ -250,6 +378,7 @@ pub async fn record_child_chain_block_in_own_transaction(
         child_height,
         current_block_hash,
         current_parent,
+        head_outcome,
         observed_at,
     )
     .await?;

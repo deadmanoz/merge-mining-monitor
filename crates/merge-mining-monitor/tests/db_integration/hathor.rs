@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Result;
 use bitcoin::hashes::Hash as _;
@@ -7,8 +8,9 @@ use mmm_capture::capture::{HATHOR_REVOKE_NON_BTC, MergeMiningEventPayload};
 use mmm_capture::nbits_table::daa_epoch_start;
 use mmm_capture::source_registry::{HATHOR_SOURCE_CODE, NAMECOIN_SOURCE_CODE};
 use mmm_producers::chains::hathor::{
-    ChainObservation, HathorBlockMeta, HathorCaptureContext, HathorHeightOutcome, HathorRpc,
-    HathorTransaction, forge_with_weight, process_hathor_height, reconstruct_from_blobs,
+    ChainObservation, HathorBlockMeta, HathorCaptureContext, HathorHeightOutcome,
+    HathorRescanOutcome, HathorRpc, HathorTransaction, forge_with_weight, process_hathor_height,
+    reconstruct_from_blobs, rescan_hathor_height,
 };
 use mmm_store::{get_source_id, upsert_merge_mining_event};
 use tokio_postgres::Client;
@@ -21,6 +23,9 @@ use crate::support::exact_observation;
 struct FixtureHathorRpc {
     meta: HathorBlockMeta,
     tx: HathorTransaction,
+    /// `/transaction` fetches served: the call a rescan of an unchanged
+    /// height must not make.
+    tx_calls: AtomicUsize,
 }
 
 impl HathorRpc for FixtureHathorRpc {
@@ -29,6 +34,7 @@ impl HathorRpc for FixtureHathorRpc {
     }
 
     async fn get_transaction(&self, _tx_id: &str) -> Result<Option<HathorTransaction>> {
+        self.tx_calls.fetch_add(1, Ordering::SeqCst);
         Ok(Some(self.tx.clone()))
     }
 }
@@ -101,7 +107,14 @@ fn hathor_fixture(json: &str) -> (i32, FixtureHathorRpc) {
         hash: j["tx_id"].as_str().unwrap().to_owned(),
         timestamp: j["timestamp"].as_i64().unwrap(),
     };
-    (height, FixtureHathorRpc { meta, tx })
+    (
+        height,
+        FixtureHathorRpc {
+            meta,
+            tx,
+            tx_calls: AtomicUsize::new(0),
+        },
+    )
 }
 
 async fn assert_revoked_hathor_event(client: &Client, source_id: i64, height: i32) -> Result<()> {
@@ -223,6 +236,36 @@ async fn in_table_valid_writes_the_event_end_to_end() -> Result<()> {
 }
 
 #[tokio::test]
+async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (height, rpc) = hathor_1971823_fixture();
+        let context = hathor_context(&client, fake_classifier_synced_to(955_609)).await?;
+        let outcome = process_hathor_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(outcome, HathorHeightOutcome::AuxpowWritten);
+        let fetched = rpc.tx_calls.load(Ordering::SeqCst);
+        assert!(fetched >= 1);
+
+        // The chain still carries the captured block: the block metadata is
+        // enough to know that, so the transaction is not fetched again and
+        // the event is left as it is.
+        let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(outcome, HathorRescanOutcome::Unchanged);
+        assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched);
+        let active: i64 = client
+            .query_one(
+                "SELECT count(*) FROM merge_mining_event \
+                 WHERE source_id = $1 AND child_height = $2 AND revoked_at IS NULL",
+                &[&context.source_id(), &height],
+            )
+            .await?
+            .get(0);
+        assert_eq!(active, 1);
+        assert_eq!(advisory_locks_held(&client).await?, 0);
+        Ok(())
+    })
+}
+
+#[tokio::test]
 async fn live_capture_promotes_a_hashless_historical_row_without_revoking_it() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let (height, rpc) = hathor_1971823_fixture();
@@ -329,7 +372,11 @@ fn variant_of(
     let mut meta = rpc.meta.clone();
     let mut tx = rpc.tx.clone();
     edit(&mut meta, &mut tx);
-    FixtureHathorRpc { meta, tx }
+    FixtureHathorRpc {
+        meta,
+        tx,
+        tx_calls: AtomicUsize::new(0),
+    }
 }
 
 #[tokio::test]

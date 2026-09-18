@@ -54,8 +54,9 @@ use mmm_capture::pool_resolver::PoolResolver;
 use mmm_capture::source_registry::HATHOR_SOURCE_CODE;
 use mmm_read_model::capture_in_txn;
 use mmm_store::{
-    CurrentBlockParent, finish_child_chain_height_operation, hathor_sidecar_graph_heads_at_height,
-    load_pool_identities_by_namespace, lock_child_chain_height_session, record_child_chain_block,
+    ChildChainHeadOutcome, CurrentBlockParent, finish_child_chain_height_operation,
+    hathor_sidecar_graph_heads_at_height, load_child_chain_head, load_pool_identities_by_namespace,
+    lock_child_chain_height_session, record_child_chain_block,
     record_child_chain_block_in_own_transaction, write_hathor_capture_in_txn,
 };
 
@@ -235,6 +236,66 @@ pub async fn process_hathor_height(
     finish_child_chain_height_operation(client, source_id, height, result).await
 }
 
+/// Re-observe an already-processed height inside the trailing rescan window.
+///
+/// The `/block_at_height` metadata alone names the block, so when the chain
+/// still carries the block the `child_chain_head` row recorded with a final
+/// outcome, the `/transaction` fetch, the reconstruction and the write path
+/// are skipped; displacement maintenance still runs under the height lock,
+/// with the record the original capture made. Any other case runs the full
+/// capture on the metadata already fetched. Voided, absent, misrouted and
+/// non-merge-mined blocks behave exactly as in [`process_hathor_height`].
+pub async fn rescan_hathor_height(
+    client: &mut Client,
+    rpc: &impl HathorRpc,
+    context: &HathorCaptureContext,
+    height: i32,
+) -> Result<HathorRescanOutcome> {
+    let source_id = context.source_id();
+    lock_child_chain_height_session(client, source_id, height).await?;
+    let result = async {
+        let block = match fetch_hathor_block_meta(rpc, height).await? {
+            Ok(block) => block,
+            Err(outcome) => return Ok(HathorRescanOutcome::Captured(outcome)),
+        };
+        if block.height == height
+            && !block.is_voided
+            && block.version == 3
+            && let Ok(current_hash) = block_hash_internal(&block.tx_id)
+            && let Some(head) = load_child_chain_head(&*client, source_id, height).await?
+            && head.outcome.is_final()
+            && head.block_hash == current_hash
+        {
+            record_child_chain_block_in_own_transaction(
+                client,
+                source_id,
+                height,
+                &current_hash,
+                head.current_parent(),
+                head.outcome,
+                now_epoch_seconds()?,
+            )
+            .await?;
+            return Ok(HathorRescanOutcome::Unchanged);
+        }
+        process_locked_block(client, rpc, context, height, block)
+            .await
+            .map(HathorRescanOutcome::Captured)
+    }
+    .await;
+    finish_child_chain_height_operation(client, source_id, height, result).await
+}
+
+/// What a rescan of one height did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HathorRescanOutcome {
+    /// The chain still carries the recorded block; only the block metadata
+    /// was fetched and the displacement maintenance run.
+    Unchanged,
+    /// The height was captured again, with this outcome.
+    Captured(HathorHeightOutcome),
+}
+
 /// One height's fetch, gates and writes, under the session-level height lock
 /// [`process_hathor_height`] holds around it.
 async fn process_locked_height(
@@ -243,7 +304,22 @@ async fn process_locked_height(
     context: &HathorCaptureContext,
     height: i32,
 ) -> Result<HathorHeightOutcome> {
-    let block = match load_hathor_block_decision(rpc, height).await? {
+    let block = match fetch_hathor_block_meta(rpc, height).await? {
+        Ok(block) => block,
+        Err(outcome) => return Ok(outcome),
+    };
+    process_locked_block(client, rpc, context, height, block).await
+}
+
+/// The gates and writes for block metadata already fetched at `height`.
+async fn process_locked_block(
+    client: &mut Client,
+    rpc: &impl HathorRpc,
+    context: &HathorCaptureContext,
+    height: i32,
+    block: HathorBlockMeta,
+) -> Result<HathorHeightOutcome> {
+    let block = match classify_hathor_block(rpc, height, block).await? {
         Ok(block) => block,
         Err(outcome) => return Ok(outcome),
     };
@@ -276,25 +352,25 @@ async fn process_locked_height(
         && let Some(work) = work
         && may_record_current_block(&*client, context, height, work).await?
     {
+        // A near parent is a settled proof-of-work comparison; a non-BTC or
+        // conflicting verdict follows the Core cache and may change when the
+        // height is observed again, so it is not final for a rescan.
+        let head_outcome = match outcome {
+            HathorHeightOutcome::NearSkipped => ChildChainHeadOutcome::Recorded,
+            _ => ChildChainHeadOutcome::Unverified,
+        };
         record_child_chain_block_in_own_transaction(
             client,
             context.source_id(),
             height,
             &current_hash,
             CurrentBlockParent::Known(&current_hash),
+            head_outcome,
             now_epoch_seconds()?,
         )
         .await?;
     }
     Ok(outcome)
-}
-
-async fn load_hathor_block_decision(rpc: &impl HathorRpc, height: i32) -> Result<HathorBlockLoad> {
-    let block = match fetch_hathor_block_meta(rpc, height).await? {
-        Ok(block) => block,
-        Err(outcome) => return Ok(Err(outcome)),
-    };
-    classify_hathor_block(rpc, height, block).await
 }
 
 async fn fetch_hathor_block_meta(
@@ -638,6 +714,7 @@ async fn write_valid_capture(
                     height,
                     current_hash,
                     CurrentBlockParent::Known(current_hash),
+                    ChildChainHeadOutcome::Captured,
                     now,
                 )
                 .await?;

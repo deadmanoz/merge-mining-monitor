@@ -7,7 +7,9 @@ use mmm_bitcoin_core::BitcoinCoreBlockCoinbase;
 use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, RSK_SOURCE_CODE};
 use mmm_read_model::{CoreCanonicalWrite, write_core_canonical};
-use mmm_store::{CurrentBlockParent, get_source_id, record_child_chain_block};
+use mmm_store::{
+    ChildChainHeadOutcome, CurrentBlockParent, get_source_id, record_child_chain_block,
+};
 use serde_json::json;
 use time::Month;
 use tokio_postgres::Client;
@@ -561,6 +563,7 @@ async fn block_projects_child_displacement_on_event_details() -> Result<()> {
             120,
             &current_child,
             CurrentBlockParent::Known(&current_parent),
+            ChildChainHeadOutcome::Captured,
             ts + 60,
         )
         .await?;

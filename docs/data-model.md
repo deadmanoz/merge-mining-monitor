@@ -199,7 +199,7 @@ through revocation.
   the parent projections) never read these columns. Only child-centric views,
   which block the child chain carries at a height, consult them.
 - Revocation keeps its one meaning: the evidence itself is bad.
-- `mmm-store::record_child_chain_block(txn, source, height, hash, parent, observed_at)`
+- `mmm-store::record_child_chain_block(txn, source, height, hash, parent, outcome, observed_at)`
   is the one write. It clears displacement on the event for that hash (a
   chain that flips back) and marks every other event at the height that is
   not yet displaced as displaced by it. A hashless partial observation is
@@ -238,6 +238,19 @@ The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit), the Elastos
 producer and the Hathor producer call the write for every height they
 process. `0024_restore_hathor_displaced_events.sql` brings the events Hathor
 had revoked as `hathor_superseded` or `hathor_voided` to this model.
+
+The same write keeps `child_chain_head`, one row per `(source_id,
+child_height)`: the block hash the producer last observed there, the parent
+its proof named (NULL when no proof verified), an `outcome` (`captured`,
+`recorded`, `non_auxpow`, `unverified`, `held`) and `observed_at`. It is the
+durable answer to "what did the chain carry here when we last looked", which
+the event rows cannot give for a block that yields no event. A trailing
+rescan compares one block-hash lookup against it: the same hash with a final
+outcome (`captured`, `recorded`, `non_auxpow`) skips the proof fetch and the
+capture, and runs only the displacement maintenance above; a different hash,
+no row, or a non-final outcome captures the height again. Migration `0026`
+adds the table with no backfill; the first rescan window after it fills the
+rows.
 
 ## Capture Errors
 

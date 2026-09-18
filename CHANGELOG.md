@@ -6,6 +6,15 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Rescan a trailing-window height with one block-hash lookup: migration
+  `0026` adds `child_chain_head`, the block a producer last observed at each
+  height with its outcome, and the bitcoind-family and Hathor pollers skip
+  the proof fetch and the capture when the chain still carries a block whose
+  outcome is final, running only the displacement maintenance. From the
+  production host every remote call costs about 340 ms, and a rescan window
+  of 20 heights was costing three calls and a full capture each per tick.
+  `record_child_chain_block` takes the outcome it records.
+
 ## [0.8.0] - 2026-09-16
 
 - Register Qbit as live source id 36 and wire its producer through the shared

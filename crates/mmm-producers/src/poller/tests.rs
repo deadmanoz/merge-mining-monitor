@@ -249,7 +249,7 @@ async fn tick_policy_advances_through_new_heights() -> Result<()> {
             rescan_start: 5,
             end: 7,
         },
-        async |height| {
+        async |height, _kind| {
             seen.push(height);
             Ok(HeightProgress::Advance)
         },
@@ -271,7 +271,7 @@ async fn tick_policy_preserves_partial_progress_on_new_height_error() -> Result<
             rescan_start: 5,
             end: 9,
         },
-        async |height| {
+        async |height, _kind| {
             seen.push(height);
             if height == 7 {
                 anyhow::bail!("boom at {height}");
@@ -298,7 +298,7 @@ async fn tick_policy_replay_failure_does_not_starve_tip() -> Result<()> {
             rescan_start: 3,
             end: 7,
         },
-        async |height| {
+        async |height, _kind| {
             seen.push(height);
             if height == 4 {
                 // A replayed (already-processed) height fails.
@@ -326,7 +326,7 @@ async fn tick_policy_hold_stops_without_advancing() -> Result<()> {
             rescan_start: 5,
             end: 8,
         },
-        async |height| {
+        async |height, _kind| {
             seen.push(height);
             if height == 6 {
                 Ok(HeightProgress::Hold)
@@ -358,7 +358,7 @@ async fn tick_policy_replay_hold_continues_without_lowering_the_cursor() -> Resu
             rescan_start: 4,
             end: 8,
         },
-        async |height| {
+        async |height, _kind| {
             seen.push(height);
             if height == 5 {
                 Ok(HeightProgress::Hold)
@@ -388,7 +388,7 @@ async fn tick_policy_new_height_abort_bails() -> Result<()> {
             rescan_start: 5,
             end: 8,
         },
-        async |height| {
+        async |height, _kind| {
             seen.push(height);
             if height == 6 {
                 Ok(HeightProgress::Abort)
@@ -417,7 +417,7 @@ async fn tick_policy_replay_abort_bails() -> Result<()> {
             rescan_start: 3,
             end: 7,
         },
-        async |height| {
+        async |height, _kind| {
             seen.push(height);
             if height == 4 {
                 Ok(HeightProgress::Abort)
@@ -446,7 +446,7 @@ async fn tick_policy_cursor_ahead_of_tip_only_replays() -> Result<()> {
             rescan_start: 978,
             end: 980,
         },
-        async |height| {
+        async |height, _kind| {
             seen.push(height);
             Ok(HeightProgress::Advance)
         },
