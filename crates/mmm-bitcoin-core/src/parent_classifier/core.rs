@@ -481,13 +481,24 @@ impl CoreRpcHeaderSource {
         self.client.get_block_hash(height).await
     }
 
+    /// A predecessor or competitor header with its coinbase. A body Core will
+    /// never hold (not found, pruned) leaves the coinbase absent; any other
+    /// coinbase failure is the lookup's failure, so the lenient caller marks
+    /// its verdict incomplete and the strict caller fails, rather than a final
+    /// verdict silently missing the competitor's attribution.
     async fn get_header_impl(&self, hash: BlockHash, height: i32) -> Result<ClassifiedHeader> {
         let header = self.client.get_block_header(hash).await?;
         let coinbase = match self.client.get_block_coinbase(hash).await {
             Ok(coinbase) => Some(coinbase),
-            Err(err) => {
-                warn!(hash = %hash, error = %err, "Bitcoin Core coinbase fetch failed");
+            Err(err)
+                if bitcoin_rpc::is_not_found(&err) || bitcoin_rpc::is_block_body_pruned(&err) =>
+            {
+                warn!(hash = %hash, error = %err, "Bitcoin Core does not hold the block body; no coinbase");
                 None
+            }
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("Bitcoin Core coinbase fetch failed for {hash}"));
             }
         };
         Ok(ClassifiedHeader {
