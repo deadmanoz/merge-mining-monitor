@@ -350,6 +350,14 @@ pub(crate) fn is_not_found(err: &anyhow::Error) -> bool {
         .is_some_and(|code| code == -5)
 }
 
+/// A block body Core no longer serves: the node pruned it (`-1`, "Block not
+/// available (pruned data)"). Permanent, unlike a transport failure.
+pub(crate) fn is_block_body_unavailable(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<CoreError>()
+        .and_then(core_rpc_error_code)
+        .is_some_and(|code| code == -1)
+}
+
 pub(crate) fn is_block_height_out_of_range(err: &anyhow::Error) -> bool {
     err.downcast_ref::<CoreError>()
         .and_then(core_rpc_error_code)

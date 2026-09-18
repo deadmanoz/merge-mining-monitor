@@ -541,6 +541,39 @@ async fn bitcoin_core_classifier_uses_verbose_canonical_and_stale_paths() {
 }
 
 #[tokio::test]
+async fn a_coinbase_the_node_cannot_serve_is_final_but_a_failed_fetch_is_not() {
+    // A canonical parent whose block body the node no longer holds: the
+    // verdict is complete with no coinbase. A fetch that failed for a reason
+    // a retry may clear leaves the verdict incomplete instead.
+    let header = test_header(30, 0x207f_ffff);
+    let status = CoreHeaderStatus {
+        confirmations: 3,
+        height: 720_010,
+    };
+    let pruned = Arc::new(MockCoreHeaderSource::default());
+    pruned.set_verbose(header.block_hash(), MockResult::Ok(status));
+    pruned.set_coinbase(header.block_hash(), MockResult::NotFound);
+    let verdict = BitcoinCoreParentClassifier::from_source(pruned)
+        .classify_parent(&header, ParentPreflight { known_prev: None })
+        .await
+        .unwrap();
+    assert_eq!(verdict.kind, ParentKind::Canonical);
+    assert!(verdict.coinbase.is_none());
+    assert!(!verdict.incomplete);
+
+    let failing = Arc::new(MockCoreHeaderSource::default());
+    failing.set_verbose(header.block_hash(), MockResult::Ok(status));
+    failing.set_coinbase(header.block_hash(), MockResult::Error);
+    let verdict = BitcoinCoreParentClassifier::from_source(failing)
+        .classify_parent(&header, ParentPreflight { known_prev: None })
+        .await
+        .unwrap();
+    assert_eq!(verdict.kind, ParentKind::Canonical);
+    assert!(verdict.coinbase.is_none());
+    assert!(verdict.incomplete);
+}
+
+#[tokio::test]
 async fn a_core_indexed_stale_without_its_competitor_is_provisional() {
     // Core indexes the candidate as stale, but the competitor lookup fails
     // and the lenient policy tolerates it: no verdict, and the classification
