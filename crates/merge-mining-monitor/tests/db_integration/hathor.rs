@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Result;
 use bitcoin::hashes::Hash as _;
@@ -6,9 +7,11 @@ use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier, ParentC
 use mmm_capture::capture::{HATHOR_REVOKE_NON_BTC, MergeMiningEventPayload};
 use mmm_capture::nbits_table::daa_epoch_start;
 use mmm_capture::source_registry::{HATHOR_SOURCE_CODE, NAMECOIN_SOURCE_CODE};
+use mmm_producers::RescanOutcome;
 use mmm_producers::chains::hathor::{
     ChainObservation, HathorBlockMeta, HathorCaptureContext, HathorHeightOutcome, HathorRpc,
     HathorTransaction, forge_with_weight, process_hathor_height, reconstruct_from_blobs,
+    rescan_hathor_height,
 };
 use mmm_store::{get_source_id, upsert_merge_mining_event};
 use tokio_postgres::Client;
@@ -21,6 +24,9 @@ use crate::support::exact_observation;
 struct FixtureHathorRpc {
     meta: HathorBlockMeta,
     tx: HathorTransaction,
+    /// `/transaction` fetches served: the call a rescan of an unchanged
+    /// height must not make.
+    tx_calls: AtomicUsize,
 }
 
 impl HathorRpc for FixtureHathorRpc {
@@ -29,6 +35,7 @@ impl HathorRpc for FixtureHathorRpc {
     }
 
     async fn get_transaction(&self, _tx_id: &str) -> Result<Option<HathorTransaction>> {
+        self.tx_calls.fetch_add(1, Ordering::SeqCst);
         Ok(Some(self.tx.clone()))
     }
 }
@@ -101,7 +108,14 @@ fn hathor_fixture(json: &str) -> (i32, FixtureHathorRpc) {
         hash: j["tx_id"].as_str().unwrap().to_owned(),
         timestamp: j["timestamp"].as_i64().unwrap(),
     };
-    (height, FixtureHathorRpc { meta, tx })
+    (
+        height,
+        FixtureHathorRpc {
+            meta,
+            tx,
+            tx_calls: AtomicUsize::new(0),
+        },
+    )
 }
 
 async fn assert_revoked_hathor_event(client: &Client, source_id: i64, height: i32) -> Result<()> {
@@ -223,6 +237,123 @@ async fn in_table_valid_writes_the_event_end_to_end() -> Result<()> {
 }
 
 #[tokio::test]
+async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (height, rpc) = hathor_1971823_fixture();
+        let context = hathor_context(&client, fake_classifier_synced_to(955_609)).await?;
+        let outcome = process_hathor_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(outcome, HathorHeightOutcome::AuxpowWritten);
+        let fetched = rpc.tx_calls.load(Ordering::SeqCst);
+        assert!(fetched >= 1);
+
+        // The chain still carries the captured block: the block metadata is
+        // enough to know that, so the transaction is not fetched again and
+        // the event is left as it is.
+        let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(outcome, RescanOutcome::Unchanged);
+        assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched);
+        let active: i64 = client
+            .query_one(
+                "SELECT count(*) FROM merge_mining_event \
+                 WHERE source_id = $1 AND child_height = $2 AND revoked_at IS NULL",
+                &[&context.source_id(), &height],
+            )
+            .await?
+            .get(0);
+        assert_eq!(active, 1);
+        assert_eq!(advisory_locks_held(&client).await?, 0);
+
+        // A sidecar added at the height since the record (a historical import,
+        // or the cache ingest enriching an imported event) changes the
+        // evidence the block's work was held against: the rescan takes the
+        // full capture, which re-runs the work-floor check, and records the
+        // block again against the evidence now, after which the fast path
+        // applies again. An event without a sidecar is not part of that
+        // evidence.
+        let imported = exact_observation("500001-near-parent", height, [0x5b; 32], 2_030)?;
+        let imported_id = upsert_merge_mining_event(&client, context.source_id(), &imported)
+            .await?
+            .event_id;
+        let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(outcome, RescanOutcome::Unchanged);
+        assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched);
+        client
+            .execute(
+                "INSERT INTO hathor_merge_mining_evidence \
+                     (event_id, hathor_block_hash, hathor_height, aux_pow, funds_graph, \
+                      funds_graph_split, expected_btc_nbits, proof_format) \
+                 SELECT $1, hathor_block_hash, hathor_height, aux_pow, funds_graph, \
+                        funds_graph_split, expected_btc_nbits, proof_format \
+                   FROM hathor_merge_mining_evidence h \
+                   JOIN merge_mining_event e ON e.id = h.event_id \
+                  WHERE e.source_id = $2 AND e.child_height = $3 AND e.id <> $1",
+                &[&imported_id, &context.source_id(), &height],
+            )
+            .await?;
+        let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(
+            outcome,
+            RescanOutcome::Captured(HathorHeightOutcome::AuxpowWritten)
+        );
+        let fetched = fetched + 1;
+        assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched);
+        let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(outcome, RescanOutcome::Unchanged);
+        assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched);
+
+        // A replay that rewrites the sidecar's graph head (the bytes the
+        // work floor reads) changes the evidence just as a new sidecar does.
+        client
+            .execute(
+                "UPDATE hathor_merge_mining_evidence SET funds_graph = \
+                     overlay(funds_graph PLACING '\\x00'::bytea FROM funds_graph_split + 1) \
+                 WHERE event_id = $1",
+                &[&imported_id],
+            )
+            .await?;
+        let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(
+            outcome,
+            RescanOutcome::Captured(HathorHeightOutcome::AuxpowWritten)
+        );
+        let fetched = fetched + 1;
+        assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched);
+        client
+            .execute(
+                "DELETE FROM merge_mining_event WHERE child_block_hash = $1",
+                &[&[0x5b_u8; 32].as_slice()],
+            )
+            .await?;
+
+        // A verdict came from the Core header cache. When the cache replaces a
+        // boundary that can change verdicts (its generation moves) the head is
+        // no longer final: the rescan captures the height again, and with the
+        // epoch's nBits changed underneath it the event is revoked.
+        client
+            .execute(
+                "UPDATE bitcoin_core_header SET bits = $1 WHERE height = $2",
+                &[&i64::from(0x170c_69ea_u32 ^ 1), &daa_epoch_start(710_969)],
+            )
+            .await?;
+        client
+            .execute(
+                "UPDATE bitcoin_core_header_cache_state \
+                 SET core_cache_generation = core_cache_generation + 1 WHERE singleton",
+                &[],
+            )
+            .await?;
+        let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(
+            outcome,
+            RescanOutcome::Captured(HathorHeightOutcome::NonBtcParentSkipped)
+        );
+        assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched + 1);
+        assert_revoked_hathor_event(&client, context.source_id(), height).await?;
+        Ok(())
+    })
+}
+
+#[tokio::test]
 async fn live_capture_promotes_a_hashless_historical_row_without_revoking_it() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let (height, rpc) = hathor_1971823_fixture();
@@ -329,7 +460,11 @@ fn variant_of(
     let mut meta = rpc.meta.clone();
     let mut tx = rpc.tx.clone();
     edit(&mut meta, &mut tx);
-    FixtureHathorRpc { meta, tx }
+    FixtureHathorRpc {
+        meta,
+        tx,
+        tx_calls: AtomicUsize::new(0),
+    }
 }
 
 #[tokio::test]

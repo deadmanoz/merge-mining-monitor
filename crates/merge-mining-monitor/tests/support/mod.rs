@@ -271,6 +271,7 @@ pub fn classified_proof(parent_kind: ParentKind, parent_height: i32) -> Classifi
         parent_kind: Some(parent_kind),
         parent_height: Some(parent_height),
         difficulty_epoch_ok: Some(true),
+        provisional: false,
     }
 }
 

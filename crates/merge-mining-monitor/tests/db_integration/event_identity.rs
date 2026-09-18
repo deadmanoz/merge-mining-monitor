@@ -378,6 +378,7 @@ async fn historical_projection_refresh_preserves_time_and_parent_read_model_stat
                 parent_kind: Some(mmm_capture::capture::ParentKind::Canonical),
                 parent_height: Some(500_000),
                 difficulty_epoch_ok: Some(true),
+                provisional: false,
             },
         )?;
         let changed = upsert_merge_mining_event(&client, source_id, &reclassified).await?;

@@ -95,6 +95,7 @@ fn parses_raw_namecoin_auxpow_fixtures() {
                 parent_kind: None,
                 parent_height: None,
                 difficulty_epoch_ok: expected.expected_difficulty_epoch_ok,
+                provisional: false,
             },
             1_700_000_000,
         )

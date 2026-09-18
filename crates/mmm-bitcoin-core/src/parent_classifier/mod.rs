@@ -124,6 +124,10 @@ pub struct ClassifiedHeader {
     pub header: Header,
     pub height: i32,
     pub coinbase: Option<BitcoinCoreBlockCoinbase>,
+    /// The coinbase fetch failed for a reason a retry may clear (not a body
+    /// Core will never hold). Enrichment is optional, so the header is still
+    /// usable; a verdict built on it is marked incomplete.
+    pub coinbase_unavailable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,8 +152,18 @@ pub struct ParentClassification {
     /// than a never-checked (Disabled) or transient-RPC-error unknown. It is set
     /// only on candidate-absent paths that did not stop at an incomplete or
     /// unavailable live consensus check; the read-model reconciler gates
-    /// strict/weak orphan classification on it.
+    /// strict/weak orphan classification on it. Absence is a point-in-time
+    /// observation (a live capture can reach Core before Core has the block
+    /// at that height), so [`Self::to_proof`] marks the verdict provisional.
     pub core_absence_attested: bool,
+    /// True when a Core lookup the lenient live policy tolerated cut the
+    /// classification short (a predecessor, competitor or ancestor lookup, or
+    /// the coinbase fetch of an indexed block). With `core_absence_attested`
+    /// this makes the verdict provisional: a capture that stores it must stay
+    /// eligible for a retry (a non-final child-chain head) whatever orphan
+    /// class the parent already carries, because the routine rechecks skip
+    /// classified rows.
+    pub incomplete: bool,
 }
 
 impl ParentClassification {
@@ -168,6 +182,16 @@ impl ParentClassification {
             live_observed: false,
             core_attested: false,
             core_absence_attested: false,
+            incomplete: false,
+        }
+    }
+
+    /// An `unknown` a tolerated Core lookup failure cut short: provisional,
+    /// so the capture that stores it stays eligible for a retry.
+    pub fn incomplete_unknown(header: &Header) -> Self {
+        Self {
+            incomplete: true,
+            ..Self::unknown(header)
         }
     }
 
@@ -195,6 +219,7 @@ impl ParentClassification {
             live_observed: false,
             core_attested: false,
             core_absence_attested: false,
+            incomplete: false,
         }
     }
 
@@ -203,6 +228,7 @@ impl ParentClassification {
             parent_kind: Some(self.kind),
             parent_height: self.height,
             difficulty_epoch_ok: self.difficulty_epoch_ok,
+            provisional: self.incomplete || self.core_absence_attested,
         }
     }
 }

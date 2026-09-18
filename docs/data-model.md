@@ -44,7 +44,10 @@ tree view from that evidence.
 Orphan status is not a `btc_parent_kind`. It is the derived
 `block.btc_orphan_class` (`strict_btc_orphan`, `weak_btc_orphan`, or
 `excluded`; NULL while pending), set only after a Core-absence-attested verdict
-and the Core-cache-backed strict/weak orphan classifier. Before the strict/weak
+and the Core-cache-backed strict/weak orphan classifier. A verdict attests
+absence only when the candidate was found absent and every further consensus
+lookup completed or found nothing; a lookup the lenient live policy tolerated
+leaves the row pending for the next recheck. Before the strict/weak
 resolution runs, the classifier consults the operator-imported
 `known_stale_block` membership (loaded by `import-known-stales` from the
 upstream `bitcoin-data/stale-blocks` dataset): a catalogued stale is `excluded`
@@ -199,7 +202,7 @@ through revocation.
   the parent projections) never read these columns. Only child-centric views,
   which block the child chain carries at a height, consult them.
 - Revocation keeps its one meaning: the evidence itself is bad.
-- `mmm-store::record_child_chain_block(txn, source, height, hash, parent, observed_at)`
+- `mmm-store::record_child_chain_block(txn, source, height, record)`, where the record names the block hash, its parent, the outcome, the evidence marker and the observation time,
   is the one write. It clears displacement on the event for that hash (a
   chain that flips back) and marks every other event at the height that is
   not yet displaced as displaced by it. A hashless partial observation is
@@ -238,6 +241,32 @@ The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit), the Elastos
 producer and the Hathor producer call the write for every height they
 process. `0024_restore_hathor_displaced_events.sql` brings the events Hathor
 had revoked as `hathor_superseded` or `hathor_voided` to this model.
+
+The same write keeps `child_chain_head`, one row per `(source_id,
+child_height)`: the block hash the producer last observed there, the parent
+its proof named (NULL when no proof verified), an `outcome` (`captured`,
+`recorded`, `non_auxpow`, `unverified`, `held`), a producer-defined
+`evidence_marker` (Hathor: a digest of every sidecar's graph head at the
+height, the bytes its work floor reads; NULL for a producer that records on
+its own proof alone) and `observed_at`. It is the
+durable answer to "what did the chain carry here when we last looked", which
+the event rows cannot give for a block that yields no event. A trailing
+rescan compares one block-hash lookup against it: the same hash with a final
+outcome (`captured`, `recorded`, `non_auxpow`) skips the proof fetch and the
+capture, and runs only the displacement maintenance above; a different hash,
+no row, or a non-final outcome captures the height again, as does, for
+Hathor, a sidecar captured, imported or rewritten at the height since the
+row was written, because Hathor records a block only after holding its
+declared work against every block captured there and that check must see
+the evidence now. A capture whose parent verdict is provisional records
+`unverified`, so the height is re-observed and the verdict retried whatever
+orphan class the parent already carries: a tolerated Core lookup failure cut
+the classification short, or Core attested the parent absent, which is a
+point-in-time observation (a live capture can reach Core before Core has the
+block at that height, and a stale header may arrive later still) that the
+routine rechecks would otherwise never revisit. Migration `0026`
+adds the table with no backfill; the first rescan window after it fills the
+rows.
 
 ## Capture Errors
 

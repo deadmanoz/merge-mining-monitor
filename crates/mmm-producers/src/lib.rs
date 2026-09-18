@@ -50,6 +50,8 @@ pub use known_stale_import::{
     KnownStaleImportConfig, KnownStaleImportSummary, run_import_known_stales,
 };
 #[cfg(any(test, feature = "db-integration"))]
-pub use poller::{ChainPoller, ChainPollerState, HeightProgress, Poller, PollerConfig};
+pub use poller::{
+    ChainPoller, ChainPollerState, HeightProgress, Poller, PollerConfig, RescanOutcome,
+};
 pub use producer_runtime::{connect_core_required_from_env, connect_from_env};
 pub use reclassify_pools::{ReclassifyPoolsConfig, ReclassifyPoolsStats, run_reclassify_pools};

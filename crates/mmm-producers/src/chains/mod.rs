@@ -35,6 +35,7 @@ pub(crate) mod spec;
 #[cfg(any(test, feature = "db-integration"))]
 pub use auxpow_family::{
     AuxpowCaptureContext, HeightOutcome as AuxpowHeightOutcome, process_auxpow_height,
+    rescan_auxpow_height,
 };
 #[cfg(any(test, feature = "db-integration"))]
 pub use bitcoind_rpc::BitcoindRpc;

@@ -350,6 +350,19 @@ pub(crate) fn is_not_found(err: &anyhow::Error) -> bool {
         .is_some_and(|code| code == -5)
 }
 
+/// A block body Core no longer serves because the node pruned it: RPC error
+/// `-1` with the pruned-data message. Permanent, unlike a transport failure
+/// or the other `-1` bodies Core reports while a block is still downloading
+/// or missing on disk, which a retry may find.
+pub(crate) fn is_block_body_pruned(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<CoreError>()
+        .and_then(|err| match err {
+            CoreError::JsonRpc(jsonrpc::error::Error::Rpc(rpc)) => Some(rpc),
+            _ => None,
+        })
+        .is_some_and(|rpc| rpc.code == -1 && rpc.message.contains("pruned data"))
+}
+
 pub(crate) fn is_block_height_out_of_range(err: &anyhow::Error) -> bool {
     err.downcast_ref::<CoreError>()
         .and_then(core_rpc_error_code)
@@ -361,6 +374,17 @@ fn core_rpc_error_code(err: &CoreError) -> Option<i32> {
         CoreError::JsonRpc(jsonrpc::error::Error::Rpc(rpc)) => Some(rpc.code),
         _ => None,
     }
+}
+
+#[cfg(test)]
+pub(crate) fn test_pruned_error() -> anyhow::Error {
+    anyhow::Error::new(CoreError::JsonRpc(jsonrpc::error::Error::Rpc(
+        jsonrpc::error::RpcError {
+            code: -1,
+            message: "Block not available (pruned data)".to_owned(),
+            data: None,
+        },
+    )))
 }
 
 #[cfg(test)]

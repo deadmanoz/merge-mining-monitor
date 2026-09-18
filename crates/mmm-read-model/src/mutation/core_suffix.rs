@@ -474,6 +474,7 @@ async fn demote_displaced_parent<C: GenericClient>(
             live_observed: true,
             core_attested: true,
             core_absence_attested: false,
+            incomplete: false,
         };
         reconcile_one_event_in_txn(
             client,
@@ -523,6 +524,7 @@ async fn reconcile_replacement_parent<C: GenericClient>(
         live_observed: true,
         core_attested: true,
         core_absence_attested: false,
+        incomplete: false,
     };
     reconcile_one_event_in_txn(
         client,

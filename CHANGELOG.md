@@ -6,6 +6,28 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Rescan a trailing-window height with one block-hash lookup: migration
+  `0026` adds `child_chain_head`, the block a producer last observed at each
+  height with its outcome, and the bitcoind-family and Hathor pollers skip
+  the proof fetch and the capture when the chain still carries a block whose
+  outcome is final, running only the displacement maintenance. From the
+  production host every remote call costs about 340 ms, and a rescan window
+  of 20 heights was costing three calls and a full capture each per tick.
+  `record_child_chain_block` takes the outcome it records and a
+  producer-defined evidence marker, so Hathor, which records a block only
+  after holding its declared work against every captured block's sidecar at
+  the height, takes the full capture again once an import, capture or replay
+  has added or rewritten a sidecar there. A capture whose parent verdict is
+  provisional (a tolerated Core lookup failure cut the classification short,
+  or Core attested the parent absent, which a header Core learns later
+  changes) records a non-final head, so the height is re-observed and the
+  verdict retried whatever orphan class the parent already carries. Because a skipped
+  rescan no longer re-runs classification, the lenient live classifier no
+  longer attests Core absence when a predecessor or competitor lookup fails
+  after the candidate was found absent: the verdict stays a pending unknown
+  for the next recheck instead of an orphan class a recovered lookup could
+  have promoted to an inferred stale.
+
 ## [0.8.0] - 2026-09-16
 
 - Register Qbit as live source id 36 and wire its producer through the shared

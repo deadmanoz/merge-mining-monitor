@@ -38,6 +38,7 @@ fn catalogued_error_block_header_is_pow_valid_and_classified() {
             parent_kind: Some(ParentKind::Canonical),
             parent_height: Some(946_213),
             difficulty_epoch_ok: Some(true),
+            provisional: false,
         },
         10,
     )

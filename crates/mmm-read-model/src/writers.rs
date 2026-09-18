@@ -103,6 +103,7 @@ pub(crate) async fn upsert_core_canonical_header_with_coinbase<C: GenericClient>
         header: *header,
         height,
         coinbase,
+        coinbase_unavailable: false,
     };
     upsert_synthesized_canonical(client, &classified).await
 }

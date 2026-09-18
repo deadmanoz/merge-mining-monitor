@@ -39,6 +39,7 @@ use crate::chains::{
     ensure_offline_valid_not_classifier_conflict, is_offline_valid_classifier_conflict,
     revoke_active_block,
 };
+use crate::poller::RescanOutcome;
 use crate::producer_runtime::ProducerContext;
 use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::auxpow::parse_bip34_height;
@@ -54,9 +55,11 @@ use mmm_capture::pool_resolver::PoolResolver;
 use mmm_capture::source_registry::HATHOR_SOURCE_CODE;
 use mmm_read_model::capture_in_txn;
 use mmm_store::{
-    CurrentBlockParent, finish_child_chain_height_operation, hathor_sidecar_graph_heads_at_height,
-    load_pool_identities_by_namespace, lock_child_chain_height_session, record_child_chain_block,
-    record_child_chain_block_in_own_transaction, write_hathor_capture_in_txn,
+    ChildChainHeadOutcome, ChildChainHeadRecord, CurrentBlockParent, EvidenceMarker,
+    finish_child_chain_height_operation, hathor_sidecar_graph_heads_at_height,
+    load_child_chain_head, load_pool_identities_by_namespace, lock_child_chain_height_session,
+    record_child_chain_block, record_child_chain_block_in_own_transaction,
+    reobserve_child_chain_block_in_own_transaction, write_hathor_capture_in_txn,
 };
 
 /// The most Hathor's difficulty adjustment moves a block's weight from its
@@ -235,6 +238,58 @@ pub async fn process_hathor_height(
     finish_child_chain_height_operation(client, source_id, height, result).await
 }
 
+/// Re-observe an already-processed height inside the trailing rescan window.
+///
+/// The `/block_at_height` metadata alone names the block, so when the chain
+/// still carries the block the `child_chain_head` row recorded with a final
+/// outcome, and no event has been captured or imported at the height since
+/// (the record was decided under [`may_record_current_block`] against the
+/// evidence then), the `/transaction` fetch, the reconstruction and the write
+/// path are skipped; displacement maintenance still runs under the height
+/// lock, with the record the original capture made. Any other case runs the
+/// full capture on the metadata already fetched, which holds the block
+/// against the evidence now. Voided, absent, misrouted and non-merge-mined
+/// blocks behave exactly as in [`process_hathor_height`].
+pub async fn rescan_hathor_height(
+    client: &mut Client,
+    rpc: &impl HathorRpc,
+    context: &HathorCaptureContext,
+    height: i32,
+) -> Result<RescanOutcome<HathorHeightOutcome>> {
+    let source_id = context.source_id();
+    lock_child_chain_height_session(client, source_id, height).await?;
+    let result = async {
+        let block = match fetch_hathor_block_meta(rpc, height).await? {
+            Ok(block) => block,
+            Err(outcome) => return Ok(RescanOutcome::Captured(outcome)),
+        };
+        if let Some(current_hash) = merge_mined_block_at(height, &block)
+            && let Some(head) =
+                load_child_chain_head(&*client, source_id, height, EvidenceMarker::HathorSidecars)
+                    .await?
+            && head.is_final()
+            && !head.evidence_changed
+            && head.block_hash == current_hash
+        {
+            reobserve_child_chain_block_in_own_transaction(
+                client,
+                source_id,
+                height,
+                &current_hash,
+                head.current_parent(),
+                now_epoch_seconds()?,
+            )
+            .await?;
+            return Ok(RescanOutcome::Unchanged);
+        }
+        process_locked_block(client, rpc, context, height, block)
+            .await
+            .map(RescanOutcome::Captured)
+    }
+    .await;
+    finish_child_chain_height_operation(client, source_id, height, result).await
+}
+
 /// One height's fetch, gates and writes, under the session-level height lock
 /// [`process_hathor_height`] holds around it.
 async fn process_locked_height(
@@ -243,7 +298,22 @@ async fn process_locked_height(
     context: &HathorCaptureContext,
     height: i32,
 ) -> Result<HathorHeightOutcome> {
-    let block = match load_hathor_block_decision(rpc, height).await? {
+    let block = match fetch_hathor_block_meta(rpc, height).await? {
+        Ok(block) => block,
+        Err(outcome) => return Ok(outcome),
+    };
+    process_locked_block(client, rpc, context, height, block).await
+}
+
+/// The gates and writes for block metadata already fetched at `height`.
+async fn process_locked_block(
+    client: &mut Client,
+    rpc: &impl HathorRpc,
+    context: &HathorCaptureContext,
+    height: i32,
+    block: HathorBlockMeta,
+) -> Result<HathorHeightOutcome> {
+    let block = match classify_hathor_block(rpc, height, block).await? {
         Ok(block) => block,
         Err(outcome) => return Ok(outcome),
     };
@@ -276,25 +346,28 @@ async fn process_locked_height(
         && let Some(work) = work
         && may_record_current_block(&*client, context, height, work).await?
     {
+        // A near parent is a settled proof-of-work comparison; a non-BTC or
+        // conflicting verdict follows the Core cache and may change when the
+        // height is observed again, so it is not final for a rescan.
+        let head_outcome = match outcome {
+            HathorHeightOutcome::NearSkipped => ChildChainHeadOutcome::Recorded,
+            _ => ChildChainHeadOutcome::Unverified,
+        };
         record_child_chain_block_in_own_transaction(
             client,
             context.source_id(),
             height,
-            &current_hash,
-            CurrentBlockParent::Known(&current_hash),
-            now_epoch_seconds()?,
+            ChildChainHeadRecord {
+                block_hash: &current_hash,
+                parent: CurrentBlockParent::Known(&current_hash),
+                outcome: head_outcome,
+                evidence: EvidenceMarker::HathorSidecars,
+                observed_at: now_epoch_seconds()?,
+            },
         )
         .await?;
     }
     Ok(outcome)
-}
-
-async fn load_hathor_block_decision(rpc: &impl HathorRpc, height: i32) -> Result<HathorBlockLoad> {
-    let block = match fetch_hathor_block_meta(rpc, height).await? {
-        Ok(block) => block,
-        Err(outcome) => return Ok(Err(outcome)),
-    };
-    classify_hathor_block(rpc, height, block).await
 }
 
 async fn fetch_hathor_block_meta(
@@ -318,6 +391,33 @@ async fn classify_hathor_block(
     height: i32,
     block: HathorBlockMeta,
 ) -> Result<HathorBlockLoad> {
+    let current_hash = match gate_hathor_block_meta(height, &block)? {
+        Ok(Some(hash)) => hash,
+        Ok(None) => return Ok(Ok(HathorBlockDecision::Voided)),
+        Err(outcome) => return Ok(Err(outcome)),
+    };
+
+    // A non-merge-mined (version != 3) block carries no proof this producer
+    // verifies (no /transaction needed): no event, and not recorded as the
+    // chain's block either, since the endpoint may be untrusted.
+    if block.version != 3 {
+        return Ok(Ok(HathorBlockDecision::NonAuxpow));
+    }
+
+    let tx = match fetch_validated_hathor_transaction(rpc, height, &block.tx_id).await? {
+        Ok(tx) => tx,
+        Err(outcome) => return Ok(Err(outcome)),
+    };
+    Ok(Ok(HathorBlockDecision::Auxpow { current_hash, tx }))
+}
+
+/// The local gates on `/block_at_height` metadata, before any further fetch:
+/// the block hash when the response names a block at `height`, `None` for a
+/// voided block, or the hold or skip the response earns.
+fn gate_hathor_block_meta(
+    height: i32,
+    block: &HathorBlockMeta,
+) -> Result<std::result::Result<Option<Vec<u8>>, HathorHeightOutcome>> {
     // Untrusted-endpoint guard: the response must answer for the height asked
     // for, or a stale or misrouted response would write, revoke or record at
     // the WRONG child height. A hold, not a skip: the height is not processed,
@@ -336,26 +436,20 @@ async fn classify_hathor_block(
     // written, and nothing is recorded until the replacement is observed. The
     // block hash is not needed on this path.
     if block.is_voided {
-        return Ok(Ok(HathorBlockDecision::Voided));
+        return Ok(Ok(None));
     }
 
-    let current_hash = match hathor_block_hash_or_skip(height, &block.tx_id)? {
-        Ok(hash) => hash,
-        Err(outcome) => return Ok(Err(outcome)),
-    };
+    Ok(hathor_block_hash_or_skip(height, &block.tx_id)?.map(Some))
+}
 
-    // A non-merge-mined (version != 3) block carries no proof this producer
-    // verifies (no /transaction needed): no event, and not recorded as the
-    // chain's block either, since the endpoint may be untrusted.
-    if block.version != 3 {
-        return Ok(Ok(HathorBlockDecision::NonAuxpow));
+/// The block hash when the metadata names a merge-mined block at `height`:
+/// the same gates [`classify_hathor_block`] applies, collapsed to the one
+/// question a rescan asks before it compares against the recorded head.
+fn merge_mined_block_at(height: i32, block: &HathorBlockMeta) -> Option<Vec<u8>> {
+    match gate_hathor_block_meta(height, block) {
+        Ok(Ok(Some(hash))) if block.version == 3 => Some(hash),
+        _ => None,
     }
-
-    let tx = match fetch_validated_hathor_transaction(rpc, height, &block.tx_id).await? {
-        Ok(tx) => tx,
-        Err(outcome) => return Ok(Err(outcome)),
-    };
-    Ok(Ok(HathorBlockDecision::Auxpow { current_hash, tx }))
 }
 
 fn hathor_block_hash_or_skip(
@@ -636,9 +730,15 @@ async fn write_valid_capture(
                     txn,
                     source_id,
                     height,
-                    current_hash,
-                    CurrentBlockParent::Known(current_hash),
-                    now,
+                    ChildChainHeadRecord {
+                        block_hash: current_hash,
+                        parent: CurrentBlockParent::Known(current_hash),
+                        outcome: ChildChainHeadOutcome::captured(
+                            payload.classification_provisional,
+                        ),
+                        evidence: EvidenceMarker::HathorSidecars,
+                        observed_at: now,
+                    },
                 )
                 .await?;
             }
@@ -798,111 +898,5 @@ fn build_hathor_capture(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Valid reconstructed coinbase bytes are retained, while malformed or
-    /// non-coinbase transactions skip without pinning the live poller.
-    #[test]
-    fn reconstructed_coinbase_validation_preserves_valid_and_skips_invalid() {
-        let context = HathorCaptureContext {
-            resolver: PoolResolver::from_default_snapshot().unwrap(),
-            reward_identities: std::collections::HashMap::new(),
-            observation: ChainObservation::Live { fork_window: 20 },
-            base: crate::producer_runtime::ProducerContext::from_parts(
-                std::collections::HashMap::new(),
-                1,
-                ConfiguredParentClassifier::Disabled,
-            ),
-        };
-        let (tx, height) = fixture_tx(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/hathor/1971823.json"
-        )));
-        let HathorParentReconstruction::BtcValid(reconstructed) =
-            reconstruct_or_skip(height, &tx).unwrap()
-        else {
-            panic!("the fixture must reconstruct as a BTC-valid parent");
-        };
-        let raw = reconstructed.raw;
-        let aux_pow = reconstructed.aux_pow;
-        let mut recon = reconstructed.recon;
-        let funds_graph = &raw[..recon.funds_graph_len];
-        let nbits_table = NbitsTable::from_bitcoin_core_headers(&[
-            mmm_capture::nbits_table::BitcoinEpochHeader {
-                height: 0,
-                block_time: 1,
-                bits: 0x1d00_ffff,
-            },
-        ])
-        .expect("the minimal test Core header cache is valid");
-
-        let intact = build_hathor_capture(
-            &context,
-            &tx,
-            height,
-            &aux_pow,
-            &recon,
-            funds_graph,
-            &nbits_table,
-        )
-        .unwrap()
-        .expect("fixture coinbase must build");
-        assert_eq!(
-            intact.evidence.btc_parent_coinbase_tx_bytes.as_deref(),
-            Some(recon.full_coinbase.as_slice()),
-            "validated reconstructed coinbase bytes must be retained"
-        );
-
-        let pristine_coinbase = recon.full_coinbase.clone();
-        recon.full_coinbase.push(0x00);
-        let corrupted = build_hathor_capture(
-            &context,
-            &tx,
-            height,
-            &aux_pow,
-            &recon,
-            funds_graph,
-            &nbits_table,
-        )
-        .unwrap();
-        assert!(
-            corrupted.is_none(),
-            "trailing-byte coinbase must skip, not error"
-        );
-
-        let mut non_coinbase: Transaction = deserialize(&pristine_coinbase).unwrap();
-        non_coinbase.input[0].previous_output =
-            bitcoin::OutPoint::new(bitcoin::Txid::from_byte_array([1; 32]), 0);
-        assert!(!non_coinbase.is_coinbase());
-        recon.full_coinbase = serialize(&non_coinbase);
-
-        let built = build_hathor_capture(
-            &context,
-            &tx,
-            height,
-            &aux_pow,
-            &recon,
-            funds_graph,
-            &nbits_table,
-        )
-        .unwrap();
-        assert!(
-            built.is_none(),
-            "well-formed non-coinbase transaction must skip"
-        );
-    }
-
-    fn fixture_tx(json: &str) -> (HathorTransaction, i32) {
-        let j: serde_json::Value = serde_json::from_str(json).unwrap();
-        (
-            HathorTransaction {
-                raw: j["raw_hex"].as_str().unwrap().to_owned(),
-                aux_pow: Some(j["aux_pow_hex"].as_str().unwrap().to_owned()),
-                hash: j["tx_id"].as_str().unwrap().to_owned(),
-                timestamp: j["timestamp"].as_i64().unwrap_or(0),
-            },
-            j["hathor_height"].as_i64().unwrap() as i32,
-        )
-    }
-}
+#[path = "capture_tests.rs"]
+mod tests;

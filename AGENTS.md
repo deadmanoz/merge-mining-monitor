@@ -48,11 +48,15 @@ concurrent tasks inside each locking test.
   and body-invalid mirror via `just gen-research-publication-pins`; the
   manifest consumes Research's canonical observation-chain inventory.
 - Producers write only `merge_mining_event` plus 1:1 chain sidecars,
-  attribution rows, and the producer-owned `capture_error` operational state
-  (one row per height a producer could not capture; written before the failing
-  height returns, cleared only when that same height is reprocessed
-  successfully, and projected by `/api/v1/sources` as the earliest unresolved
-  height). Historical ingest also attaches
+  attribution rows, and their own operational state through `mmm-store`:
+  `poll_cursor`, `poll_pending_reconcile`, `capture_error` (one row per height
+  a producer could not capture; written before the failing height returns,
+  cleared only when that same height is reprocessed successfully, and
+  projected by `/api/v1/sources` as the earliest unresolved height), and
+  `child_chain_head` (the block a chain last carried at each processed
+  height, written in the capture transaction, read only by the producer's own
+  trailing rescan, never by the read model or the API). Historical ingest
+  also attaches
   `historical_event_provenance`. The further base tables,
   `known_stale_block` and `body_invalid_stale`, are operator-imported via
   `import-known-stales` / `import-body-invalid-stales`

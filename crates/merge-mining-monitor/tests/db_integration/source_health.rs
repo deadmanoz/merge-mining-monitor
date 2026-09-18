@@ -210,6 +210,7 @@ fn canonical_at(prev_hash: Vec<u8>, height: i32) -> ParentClassification {
         live_observed: true,
         core_attested: true,
         core_absence_attested: false,
+        incomplete: false,
     }
 }
 

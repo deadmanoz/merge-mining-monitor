@@ -220,6 +220,13 @@ pub trait ChainPoller {
     async fn chain_tip(&self) -> Result<i32>;
     /// Capture a single height. Returns whether the cursor may advance past it.
     async fn process_height(&mut self, height: i32) -> Result<HeightProgress>;
+    /// Re-observe an already-processed height inside the trailing rescan
+    /// window. A chain that can tell from a cheap lookup that the height is
+    /// unchanged overrides this to skip the capture; the default captures the
+    /// height again exactly as [`ChainPoller::process_height`] does.
+    async fn rescan_height(&mut self, height: i32) -> Result<HeightProgress> {
+        self.process_height(height).await
+    }
     /// Advance the required Core-backed nBits cache before this child-chain
     /// poll tick. Most test pollers do not own that cache, so the default is a
     /// no-op.
@@ -430,8 +437,9 @@ impl<C: ChainPoller> Poller<C> {
         // `cursor` is a local so its `&mut` borrow does not alias the
         // `&mut self.chain` captured by the processor closure.
         let mut cursor = self.cursor;
-        let result = run_tick_policy(&mut cursor, window, async |height| {
-            self.chain.process_height(height).await
+        let result = run_tick_policy(&mut cursor, window, async |height, kind| match kind {
+            TickHeight::Rescan => self.chain.rescan_height(height).await,
+            TickHeight::New => self.chain.process_height(height).await,
         })
         .await;
 
@@ -632,14 +640,34 @@ fn compute_tick_window(
     }
 }
 
+/// What a rescan of one height did: the chain still carries the block the
+/// `child_chain_head` row recorded with a final outcome, so nothing was
+/// fetched or written beyond the block's identity and the displacement
+/// maintenance, or the height was captured again with the chain's own outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RescanOutcome<T> {
+    Unchanged,
+    Captured(T),
+}
+
+/// Whether a tick height is a re-observation of one the cursor already
+/// passed, or a new height beyond it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TickHeight {
+    Rescan,
+    New,
+}
+
 /// Apply the per-tick failure policy over `window`, advancing `cursor`. The
 /// processor is a closure so this is unit-testable without a live `Client`.
 ///
-/// Replay sub-range (`<= cursor`) is best-effort (failures logged and skipped);
-/// the new sub-range (`> cursor`) is fail-fast and only advances on `Advance`.
+/// Replay sub-range (`<= cursor`) is best-effort (failures logged and skipped)
+/// and is handed to the processor as [`TickHeight::Rescan`]; the new sub-range
+/// (`> cursor`) is fail-fast, only advances on `Advance`, and is handed over as
+/// [`TickHeight::New`].
 async fn run_tick_policy<F>(cursor: &mut i32, window: TickWindow, mut process: F) -> Result<usize>
 where
-    F: AsyncFnMut(i32) -> Result<HeightProgress>,
+    F: AsyncFnMut(i32, TickHeight) -> Result<HeightProgress>,
 {
     let mut processed = 0usize;
 
@@ -648,7 +676,7 @@ where
     // above the tip.
     let replay_end = (*cursor).min(window.end);
     for height in window.rescan_start..=replay_end {
-        match process(height).await {
+        match process(height, TickHeight::Rescan).await {
             Ok(HeightProgress::Abort) => {
                 bail!("cursor-blocking hold at replay height {height}; aborting tick")
             }
@@ -664,7 +692,7 @@ where
     // New sub-range: the ordered chain tail.
     if window.end > *cursor {
         for height in (*cursor + 1)..=window.end {
-            match process(height).await {
+            match process(height, TickHeight::New).await {
                 Ok(HeightProgress::Advance) => {
                     *cursor = (*cursor).max(height);
                     processed += 1;

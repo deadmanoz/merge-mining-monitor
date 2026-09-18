@@ -16,6 +16,7 @@ fn assert_send<T: Send>(_: T) {}
 enum MockResult<T> {
     Ok(T),
     NotFound,
+    Pruned,
     Error,
 }
 
@@ -24,6 +25,7 @@ impl<T> MockResult<T> {
         match self {
             Self::Ok(value) => Ok(value),
             Self::NotFound => Err(bitcoin_rpc::test_not_found_error()),
+            Self::Pruned => Err(bitcoin_rpc::test_pruned_error()),
             Self::Error => Err(anyhow::anyhow!("mock transient rpc error")),
         }
     }
@@ -174,6 +176,7 @@ fn classified_header(header: Header, height: i32) -> ClassifiedHeader {
         header,
         height,
         coinbase: None,
+        coinbase_unavailable: false,
     }
 }
 
@@ -541,6 +544,112 @@ async fn bitcoin_core_classifier_uses_verbose_canonical_and_stale_paths() {
 }
 
 #[tokio::test]
+async fn a_coinbase_the_node_cannot_serve_is_final_but_a_failed_fetch_is_not() {
+    // A canonical parent whose block body the node pruned: the verdict is
+    // complete with no coinbase. A fetch that failed for a reason a retry may
+    // clear (a transport failure, a body still downloading) leaves the
+    // verdict incomplete instead.
+    let header = test_header(30, 0x207f_ffff);
+    let status = CoreHeaderStatus {
+        confirmations: 3,
+        height: 720_010,
+    };
+    let pruned = Arc::new(MockCoreHeaderSource::default());
+    pruned.set_verbose(header.block_hash(), MockResult::Ok(status));
+    pruned.set_coinbase(header.block_hash(), MockResult::Pruned);
+    let verdict = BitcoinCoreParentClassifier::from_source(pruned)
+        .classify_parent(&header, ParentPreflight { known_prev: None })
+        .await
+        .unwrap();
+    assert_eq!(verdict.kind, ParentKind::Canonical);
+    assert!(verdict.coinbase.is_none());
+    assert!(!verdict.incomplete);
+
+    let failing = Arc::new(MockCoreHeaderSource::default());
+    failing.set_verbose(header.block_hash(), MockResult::Ok(status));
+    failing.set_coinbase(header.block_hash(), MockResult::Error);
+    let verdict = BitcoinCoreParentClassifier::from_source(failing)
+        .classify_parent(&header, ParentPreflight { known_prev: None })
+        .await
+        .unwrap();
+    assert_eq!(verdict.kind, ParentKind::Canonical);
+    assert!(verdict.coinbase.is_none());
+    assert!(verdict.incomplete);
+}
+
+#[test]
+fn the_proof_is_provisional_for_a_cut_short_or_core_absent_verdict() {
+    let header = test_header(40, 0x207f_ffff);
+    assert!(
+        !ParentClassification::unknown(&header)
+            .to_proof()
+            .provisional
+    );
+    assert!(
+        ParentClassification::incomplete_unknown(&header)
+            .to_proof()
+            .provisional
+    );
+    let absent = ParentClassification {
+        core_absence_attested: true,
+        ..ParentClassification::unknown(&header)
+    };
+    assert!(absent.to_proof().provisional);
+}
+
+#[test]
+fn a_competitor_without_its_coinbase_keeps_the_verdict_but_marks_it_provisional() {
+    // Coinbase enrichment is optional, so the competitor header still gives
+    // the stale verdict; the failed fetch makes it provisional so the height
+    // is retried and the coinbase fetched again.
+    let header = test_header(40, 0x207f_ffff);
+    let mut competitor = classified_header(test_header(41, 0x207f_ffff), 720_001);
+    competitor.coinbase_unavailable = true;
+    let inferred = classify_inferred_stale_with_competitor(
+        &header,
+        720_001,
+        None,
+        BlockKind::Canonical,
+        Some(competitor.clone()),
+    );
+    assert_eq!(inferred.kind, ParentKind::Stale);
+    assert!(inferred.incomplete);
+    let indexed = classify_core_stale_header(&header, 720_001, Some(competitor), None);
+    assert_eq!(indexed.kind, ParentKind::Stale);
+    assert!(indexed.incomplete);
+}
+
+#[tokio::test]
+async fn a_core_indexed_stale_without_its_competitor_is_provisional() {
+    // Core indexes the candidate as stale, but the competitor lookup fails
+    // and the lenient policy tolerates it: no verdict, and the classification
+    // is marked incomplete so the capture stays eligible for a retry.
+    let stale_header = test_header(21, 0x207f_ffff);
+    let source = Arc::new(MockCoreHeaderSource::default());
+    source.set_verbose(
+        stale_header.block_hash(),
+        MockResult::Ok(CoreHeaderStatus {
+            confirmations: -1,
+            height: 720_001,
+        }),
+    );
+    source.set_block_hash(720_001, MockResult::Error);
+    let provisional = BitcoinCoreParentClassifier::from_source(source.clone())
+        .classify_parent(&stale_header, ParentPreflight { known_prev: None })
+        .await
+        .unwrap();
+    assert_eq!(provisional.kind, ParentKind::Unknown);
+    assert!(provisional.incomplete);
+    assert!(!provisional.core_absence_attested);
+
+    // The strict policy surfaces the failure instead.
+    BitcoinCoreParentClassifier::from_source(source)
+        .classify_parent_strict(&stale_header, ParentPreflight { known_prev: None })
+        .await
+        .unwrap_err();
+}
+
+#[tokio::test]
 async fn bitcoin_core_classifier_loads_preflight_only_after_candidate_absence() {
     let canonical_header = test_header(23, 0x207f_ffff);
     let canonical_source = Arc::new(MockCoreHeaderSource::default());
@@ -711,6 +820,7 @@ async fn core_absence_attested_only_on_candidate_not_found() {
         .unwrap();
     assert_eq!(transient.kind, ParentKind::Unknown);
     assert!(!transient.core_absence_attested);
+    assert!(transient.incomplete);
 
     // Historical import uses the strict policy and surfaces the same failure.
     let transient_error = BitcoinCoreParentClassifier::from_source(transient_source)
@@ -731,9 +841,12 @@ async fn core_absence_attested_only_on_candidate_not_found() {
             .unwrap();
     assert_eq!(absent.kind, ParentKind::Unknown);
     assert!(absent.core_absence_attested);
+    assert!(!absent.incomplete);
 
-    // Candidate not-found + predecessor transient error: still attested,
-    // because the candidate itself was proven absent.
+    // Candidate not-found + predecessor transient error: the candidate was
+    // proven absent, but the inferred-stale check stopped at a tolerated
+    // failure, so the verdict is not attested. The row stays pending and the
+    // next recheck, with the lookup recovered, can still promote it.
     let prev_err_source = Arc::new(MockCoreHeaderSource::default());
     prev_err_source.set_verbose(header.prev_blockhash, MockResult::Error);
     let prev_err = BitcoinCoreParentClassifier::from_source(prev_err_source)
@@ -741,7 +854,8 @@ async fn core_absence_attested_only_on_candidate_not_found() {
         .await
         .unwrap();
     assert_eq!(prev_err.kind, ParentKind::Unknown);
-    assert!(prev_err.core_absence_attested);
+    assert!(!prev_err.core_absence_attested);
+    assert!(prev_err.incomplete);
 
     let strict_prev_err_source = Arc::new(MockCoreHeaderSource::default());
     strict_prev_err_source.set_verbose(header.prev_blockhash, MockResult::Error);
@@ -754,9 +868,16 @@ async fn core_absence_attested_only_on_candidate_not_found() {
             .to_string()
             .contains("Bitcoin Core predecessor lookup failed")
     );
+}
+
+#[tokio::test]
+async fn core_absence_attested_only_when_the_competitor_lookup_completes() {
+    let header = test_header(40, 0x207f_ffff);
 
     // Candidate not-found + inferred-stale path returns unknown for a missing
-    // competitor: attested (the candidate was absent).
+    // competitor: attested (the candidate was absent and Core has no block at
+    // the height). A competitor lookup that fails is not a missing competitor:
+    // unattested.
     let canonical_prev = || KnownBlockContext {
         kind: BlockKind::Canonical,
         btc_height: Some(720_000),
@@ -776,6 +897,7 @@ async fn core_absence_attested_only_on_candidate_not_found() {
             .unwrap();
     assert_eq!(missing_comp.kind, ParentKind::Unknown);
     assert!(missing_comp.core_absence_attested);
+    assert!(!missing_comp.incomplete);
 
     let strict_missing_comp =
         BitcoinCoreParentClassifier::from_source(Arc::new(MockCoreHeaderSource::default()))
@@ -789,6 +911,21 @@ async fn core_absence_attested_only_on_candidate_not_found() {
             .unwrap();
     assert_eq!(strict_missing_comp.kind, ParentKind::Unknown);
     assert!(strict_missing_comp.core_absence_attested);
+
+    let comp_err_source = Arc::new(MockCoreHeaderSource::default());
+    comp_err_source.set_block_hash(720_001, MockResult::Error);
+    let comp_err = BitcoinCoreParentClassifier::from_source(comp_err_source)
+        .classify_parent(
+            &header,
+            ParentPreflight {
+                known_prev: Some(canonical_prev()),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(comp_err.kind, ParentKind::Unknown);
+    assert!(!comp_err.core_absence_attested);
+    assert!(comp_err.incomplete);
 
     // Candidate not-found + inferred-stale path returns unknown for a
     // competitor whose nBits mismatches: attested.

@@ -24,6 +24,7 @@ pub use cache::{CACHE_CSV_HEADER, HathorCacheConfig, HathorCacheSummary, run_hat
 #[cfg(any(test, feature = "db-integration"))]
 pub use capture::{
     ChainObservation, HathorCaptureContext, HathorHeightOutcome, process_hathor_height,
+    rescan_hathor_height,
 };
 #[cfg(any(test, feature = "db-integration"))]
 pub use reward::{HATHOR_REWARD_ADDRESS_NAMESPACE, parse_hathor_reward_outputs};

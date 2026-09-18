@@ -8,11 +8,11 @@ use tokio_postgres::Client;
 use tracing::warn;
 
 use crate::chains::hathor::capture::{
-    HathorCaptureContext, HathorHeightOutcome, process_hathor_height,
+    HathorCaptureContext, HathorHeightOutcome, process_hathor_height, rescan_hathor_height,
 };
 use crate::chains::hathor::rpc::HathorRpcClient;
 use crate::chains::spec::{ChainId, by_id};
-use crate::poller::{ChainPoller, ChainPollerState, HeightProgress};
+use crate::poller::{ChainPoller, ChainPollerState, HeightProgress, RescanOutcome};
 use mmm_store::upsert_pending_reconcile;
 
 /// Hathor live capture chain. Maps the rich [`HathorHeightOutcome`] to the
@@ -57,8 +57,39 @@ impl ChainPoller for HathorChainPoller {
     }
 
     async fn process_height(&mut self, height: i32) -> Result<HeightProgress> {
-        let mut outcome =
+        let outcome =
             process_hathor_height(&mut self.state.client, &self.rpc, &self.context, height).await?;
+        self.progress_for(height, outcome).await
+    }
+
+    async fn rescan_height(&mut self, height: i32) -> Result<HeightProgress> {
+        let outcome =
+            rescan_hathor_height(&mut self.state.client, &self.rpc, &self.context, height).await?;
+        match outcome {
+            RescanOutcome::Unchanged => Ok(HeightProgress::Advance),
+            RescanOutcome::Captured(outcome) => self.progress_for(height, outcome).await,
+        }
+    }
+
+    async fn drain_pending(&mut self) -> Result<()> {
+        crate::chains::hathor::drain::drain_pending(
+            &mut self.state.client,
+            &self.rpc,
+            &self.context,
+        )
+        .await
+    }
+}
+
+impl HathorChainPoller {
+    /// Map a capture outcome to the driver's progress, retrying once behind a
+    /// refreshed Core header cache on a horizon hold and queueing a durable
+    /// retry for the best-effort holds.
+    async fn progress_for(
+        &mut self,
+        height: i32,
+        mut outcome: HathorHeightOutcome,
+    ) -> Result<HeightProgress> {
         if matches!(outcome, HathorHeightOutcome::TableHorizonHold) {
             match self
                 .context
@@ -102,14 +133,5 @@ impl ChainPoller for HathorChainPoller {
             }
             _ => HeightProgress::Advance,
         })
-    }
-
-    async fn drain_pending(&mut self) -> Result<()> {
-        crate::chains::hathor::drain::drain_pending(
-            &mut self.state.client,
-            &self.rpc,
-            &self.context,
-        )
-        .await
     }
 }

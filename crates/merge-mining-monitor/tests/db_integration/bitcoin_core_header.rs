@@ -134,6 +134,13 @@ async fn migration_0019_schedules_a_full_orphan_recheck_until_successful_refresh
                 "../../../../migrations/0019_recheck_orphans_after_hathor_bip34.sql"
             ))
             .await?;
+        // The current store writes the cache generation 0026 introduced; the
+        // migrations between 0019 and it do not touch this table.
+        client
+            .batch_execute(include_str!(
+                "../../../../migrations/0026_add_child_chain_head.sql"
+            ))
+            .await?;
 
         let state = client
             .query_one(
@@ -290,6 +297,13 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
         .await?;
         assert!(!settled.reclassification_needed);
 
+        let generation_before: i64 = client
+            .query_one(
+                "SELECT core_cache_generation FROM bitcoin_core_header_cache_state WHERE singleton",
+                &[],
+            )
+            .await?
+            .get(0);
         let boundary_overlaps_existing_coverage = replace_bitcoin_core_header_cache(
             &mut client,
             2016,
@@ -303,6 +317,21 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
             boundary_overlaps_existing_coverage.recheck_orphans,
             "a new retarget boundary inside prior timestamp coverage can change existing verdicts"
         );
+        // Such a replacement also moves the cache generation, so child-chain
+        // heads recorded before it stop being final; the plain horizon
+        // advances above left it alone.
+        let generation_after: i64 = client
+            .query_one(
+                "SELECT core_cache_generation FROM bitcoin_core_header_cache_state WHERE singleton",
+                &[],
+            )
+            .await?
+            .get(0);
+        assert_eq!(
+            generation_before, 0,
+            "populating an empty cache and plain horizon advances change no given verdict"
+        );
+        assert_eq!(generation_after, 1);
         Ok(())
     })
 }

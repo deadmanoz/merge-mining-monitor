@@ -27,7 +27,7 @@ use crate::chains::backfill::{
 use crate::chains::bitcoind_rpc::{BitcoindRpc, BitcoindRpcClient};
 use crate::chains::child_payout_registry::seed_child_payout_identities_for;
 use crate::chains::spec::{ChainSpec, FamilySpec, FetchStrategy, MalformedPolicy, RepairScope};
-use crate::poller::{ChainPoller, ChainPollerState, HeightProgress, Poller};
+use crate::poller::{ChainPoller, ChainPollerState, HeightProgress, Poller, RescanOutcome};
 use crate::producer_runtime::{ProducerContext, ProducerRuntime, run_post_backfill_repair};
 use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::auxpow::{
@@ -42,14 +42,19 @@ use mmm_capture::child_payout::PoolIdentityLookup;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::capture_in_txn;
 use mmm_store::{
-    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, CurrentBlockParent, clear_capture_error,
-    finish_child_chain_height_operation, load_pool_identities_by_namespace,
+    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, ChildChainHeadOutcome, ChildChainHeadRecord,
+    CurrentBlockParent, EvidenceMarker, clear_capture_error, finish_child_chain_height_operation,
+    has_capture_error, load_child_chain_head, load_pool_identities_by_namespace,
     lock_child_chain_height_session, record_capture_error, record_child_chain_block,
-    record_child_chain_block_in_own_transaction, upsert_merge_mining_event_with_attributions,
+    record_child_chain_block_in_own_transaction, reobserve_child_chain_block_in_own_transaction,
+    upsert_merge_mining_event_with_attributions,
 };
 use qbit::{ensure_qbit_mainnet_endpoint, fetch_qbit_candidate, write_qbit_event};
 
+mod backfill;
 mod qbit;
+
+pub(crate) use self::backfill::backfill;
 
 /// Shared per-chain capture context for the bitcoind family: the immutable
 /// chain spec plus everything resolved once at bootstrap so the per-height loop
@@ -207,25 +212,97 @@ pub async fn process_auxpow_height(
 ) -> Result<HeightOutcome> {
     let source_id = context.source_id();
     lock_child_chain_height_session(client, source_id, height).await?;
-    let result = process_locked_height(client, rpc, context, height).await;
+    let result = async {
+        let block_hash = observe_block_hash(rpc, context, height).await?;
+        process_locked_height(client, rpc, context, height, block_hash).await
+    }
+    .await;
     finish_child_chain_height_operation(client, source_id, height, result).await
 }
 
-/// One height's observation and writes, under the session-level height lock
-/// [`process_auxpow_height`] holds around it.
+/// The chain's block hash at `height`: the one observation every processed
+/// height makes, whether it goes on to capture or not.
+async fn observe_block_hash(
+    rpc: &impl BitcoindRpc,
+    context: &AuxpowCaptureContext,
+    height: i32,
+) -> Result<BlockHash> {
+    let label = context.family().label;
+    rpc.get_block_hash(height)
+        .await
+        .with_context(|| format!("get {label} block hash at height {height}"))
+}
+
+/// Re-observe an already-processed height inside the trailing rescan window.
+///
+/// One `getblockhash` decides whether anything changed: when the chain still
+/// carries the block the `child_chain_head` row recorded and that record is
+/// final (see [`ChildChainHeadOutcome::is_final`]), the height is not
+/// captured again. Displacement maintenance still runs under the height
+/// lock, with the parent the original capture recorded, because a write that
+/// bypasses observation (a historical publication import for a live chain)
+/// can leave an undisplaced sibling at the height that only the next
+/// observation repairs. A different hash, no row, or a non-final record runs
+/// the full capture through [`process_auxpow_height`]'s locked path.
+///
+/// From the production host every remote call costs about 340 ms, so this is
+/// the difference between a rescan window of 20 heights costing one round
+/// trip each and costing three plus the capture.
+pub async fn rescan_auxpow_height(
+    client: &mut Client,
+    rpc: &impl BitcoindRpc,
+    context: &AuxpowCaptureContext,
+    height: i32,
+) -> Result<RescanOutcome<HeightOutcome>> {
+    let source_id = context.source_id();
+    lock_child_chain_height_session(client, source_id, height).await?;
+    let result = async {
+        let block_hash = observe_block_hash(rpc, context, height).await?;
+        let head = load_child_chain_head(&*client, source_id, height, EvidenceMarker::None).await?;
+        // An open capture error says the last processing of the height did
+        // not succeed, whatever the head row records (a capture that recorded
+        // the error and stopped before replacing the head leaves a final head
+        // behind): only a successful reprocessing may clear it, so the height
+        // takes the full capture.
+        let error_open = context.family().malformed_policy == MalformedPolicy::HoldInterval
+            && has_capture_error(client, source_id, height).await?;
+        match head {
+            Some(head)
+                if !error_open
+                    && head.is_final()
+                    && head.block_hash.as_slice() == block_hash.as_ref() as &[u8] =>
+            {
+                reobserve_child_chain_block_in_own_transaction(
+                    client,
+                    source_id,
+                    height,
+                    block_hash.as_ref(),
+                    head.current_parent(),
+                    now_epoch_seconds()?,
+                )
+                .await?;
+                Ok(RescanOutcome::Unchanged)
+            }
+            _ => process_locked_height(client, rpc, context, height, block_hash)
+                .await
+                .map(RescanOutcome::Captured),
+        }
+    }
+    .await;
+    finish_child_chain_height_operation(client, source_id, height, result).await
+}
+
+/// One height's capture and writes for the block the caller observed at it,
+/// under the session-level height lock [`process_auxpow_height`] and
+/// [`rescan_auxpow_height`] hold around it.
 async fn process_locked_height(
     client: &mut Client,
     rpc: &impl BitcoindRpc,
     context: &AuxpowCaptureContext,
     height: i32,
+    block_hash: BlockHash,
 ) -> Result<HeightOutcome> {
     let family = context.family();
-    let label = family.label;
-
-    let block_hash = rpc
-        .get_block_hash(height)
-        .await
-        .with_context(|| format!("get {label} block hash at height {height}"))?;
 
     let outcome = match fetch_auxpow_candidate(rpc, context, &block_hash, height).await? {
         AuxpowFetch::Classic(mut parsed) => {
@@ -246,21 +323,32 @@ async fn process_locked_height(
     // A block the node confirms carries no AuxPoW cannot be any hashless AuxPoW
     // observation, so it displaces them; a proof that failed to parse leaves
     // the block's parent unknown, so hashless rows are left alone.
-    let current_parent = match outcome {
+    let eventless_record = match outcome {
         HeightOutcome::AuxpowWritten => None,
-        HeightOutcome::NonAuxpowSkipped => Some(CurrentBlockParent::NoAuxpow),
-        HeightOutcome::MalformedSkipped | HeightOutcome::MalformedHeld => {
-            Some(CurrentBlockParent::Unknown)
+        HeightOutcome::NonAuxpowSkipped => Some((
+            CurrentBlockParent::NoAuxpow,
+            ChildChainHeadOutcome::NoAuxpow,
+        )),
+        HeightOutcome::MalformedSkipped => Some((
+            CurrentBlockParent::Unknown,
+            ChildChainHeadOutcome::Unverified,
+        )),
+        HeightOutcome::MalformedHeld => {
+            Some((CurrentBlockParent::Unknown, ChildChainHeadOutcome::Held))
         }
     };
-    if let Some(current_parent) = current_parent {
+    if let Some((current_parent, head_outcome)) = eventless_record {
         record_child_chain_block_in_own_transaction(
             client,
             context.source_id(),
             height,
-            block_hash.as_ref(),
-            current_parent,
-            now_epoch_seconds()?,
+            ChildChainHeadRecord {
+                block_hash: block_hash.as_ref(),
+                parent: current_parent,
+                outcome: head_outcome,
+                evidence: EvidenceMarker::None,
+                observed_at: now_epoch_seconds()?,
+            },
         )
         .await?;
     }
@@ -389,9 +477,13 @@ pub(super) async fn write_event_in_txn(
                 txn,
                 source_id,
                 child_height,
-                child_block_hash,
-                CurrentBlockParent::Known(payload.btc_parent_header_hash.as_slice()),
-                observed_at,
+                ChildChainHeadRecord {
+                    block_hash: child_block_hash,
+                    parent: CurrentBlockParent::Known(payload.btc_parent_header_hash.as_slice()),
+                    outcome: ChildChainHeadOutcome::captured(payload.classification_provisional),
+                    evidence: EvidenceMarker::None,
+                    observed_at,
+                },
             )
             .await?;
             Ok(outcome)
@@ -573,6 +665,15 @@ impl ChainPoller for AuxpowFamilyPoller {
             process_auxpow_height(&mut self.state.client, &self.rpc, &self.context, height).await?;
         Ok(height_progress_for(outcome))
     }
+
+    async fn rescan_height(&mut self, height: i32) -> Result<HeightProgress> {
+        let outcome =
+            rescan_auxpow_height(&mut self.state.client, &self.rpc, &self.context, height).await?;
+        Ok(match outcome {
+            RescanOutcome::Unchanged => HeightProgress::Advance,
+            RescanOutcome::Captured(outcome) => height_progress_for(outcome),
+        })
+    }
 }
 
 /// Whether the live cursor may move past a captured height. Only a held
@@ -602,132 +703,6 @@ pub(crate) async fn poll(spec: &'static ChainSpec, rt: ProducerRuntime) -> Resul
     )
     .await?;
     poller.run_forever().await
-}
-
-/// Registry-dispatched backfill entry point for bitcoind-family chains.
-pub(crate) async fn backfill(rt: ProducerRuntime, config: BackfillConfig) -> Result<()> {
-    let spec = config.spec;
-    let rpc_config = crate::chains::config::bitcoind_rpc_config(spec)?;
-    let rpc = BitcoindRpcClient::new(family_of(spec).label, rpc_config)?;
-    run_auxpow_backfill(rt, rpc, config).await
-}
-
-/// Run a bounded backfill for a bitcoind-family chain: tip validation, the
-/// spec-driven below-floor warning, classifier warning, the per-height capture
-/// loop, and post-backfill repair under the spec's scope.
-pub(crate) async fn run_auxpow_backfill(
-    rt: ProducerRuntime,
-    rpc: BitcoindRpcClient,
-    config: BackfillConfig,
-) -> Result<()> {
-    let ProducerRuntime {
-        pg_client: mut client,
-        parent_classifier,
-    } = rt;
-    let spec = config.spec;
-    let family = family_of(spec);
-    ensure_qbit_mainnet_endpoint(&rpc, family).await?;
-
-    let chain_tip = rpc
-        .get_block_count()
-        .await
-        .with_context(|| format!("get {} tip before backfill", spec.display_name))?;
-    config.validate_against_tip(chain_tip)?;
-
-    if let Some(message) = family.floor_warning
-        && config.start_height < spec.activation_floor
-    {
-        warn!(
-            start_height = config.start_height,
-            first_auxpow_height = spec.activation_floor,
-            "{message}"
-        );
-    }
-
-    let context =
-        AuxpowCaptureContext::new_with_classifier(&client, spec, parent_classifier).await?;
-    info!(
-        chain = spec.slug,
-        start_height = config.start_height,
-        end_height = config.end_height,
-        chain_tip,
-        "starting bounded AuxPoW backfill"
-    );
-
-    let summary = run_delayed_backfill_range(&config, 0, async |height| {
-        let outcome = process_auxpow_height(&mut client, &rpc, &context, height).await?;
-        Ok(auxpow_backfill_effect(outcome))
-    })
-    .await?;
-
-    if summary.malformed_held > 0 {
-        warn!(
-            chain = spec.slug,
-            processed = summary.processed,
-            auxpow_written = summary.auxpow_written,
-            non_auxpow_skipped = summary.non_auxpow_skipped,
-            malformed_skipped = summary.malformed_skipped,
-            malformed_held = summary.malformed_held,
-            "bounded AuxPoW backfill left unresolved capture errors"
-        );
-    } else {
-        info!(
-            chain = spec.slug,
-            processed = summary.processed,
-            auxpow_written = summary.auxpow_written,
-            non_auxpow_skipped = summary.non_auxpow_skipped,
-            malformed_skipped = summary.malformed_skipped,
-            "completed bounded AuxPoW backfill"
-        );
-    }
-
-    let repair_scope = match family.repair_scope {
-        RepairScope::Global => None,
-        RepairScope::SourceScoped => Some(spec.source_code),
-    };
-    run_post_backfill_repair(
-        &mut client,
-        context.parent_classifier(),
-        repair_scope,
-        config.start_height,
-        config.end_height,
-        &format!("{} backfill", spec.display_name),
-    )
-    .await?;
-
-    // Everything captured in the range is written and reconciled; the run
-    // itself is still not a success. Reporting completion over a hole is the
-    // failure this policy exists to prevent.
-    ensure_backfill_complete(spec, &config, &summary)
-}
-
-/// The bounded-backfill completion verdict. A range that left any held
-/// malformed proof is incomplete and must exit non-zero, whatever else it
-/// captured; the operator re-runs the range once the capture errors clear.
-fn ensure_backfill_complete(
-    spec: &ChainSpec,
-    config: &BackfillConfig,
-    summary: &BackfillSummary,
-) -> Result<()> {
-    ensure!(
-        summary.malformed_held == 0,
-        "{} backfill {}..{} is incomplete: {} height(s) hold an unresolved capture error; \
-         resolve them and re-run the range",
-        spec.display_name,
-        config.start_height,
-        config.end_height,
-        summary.malformed_held,
-    );
-    Ok(())
-}
-
-fn auxpow_backfill_effect(outcome: HeightOutcome) -> BackfillHeightEffect {
-    match outcome {
-        HeightOutcome::AuxpowWritten => BackfillHeightEffect::AuxpowWritten,
-        HeightOutcome::NonAuxpowSkipped => BackfillHeightEffect::NonAuxpowSkipped,
-        HeightOutcome::MalformedSkipped => BackfillHeightEffect::MalformedSkipped,
-        HeightOutcome::MalformedHeld => BackfillHeightEffect::MalformedHeld,
-    }
 }
 
 #[cfg(test)]
@@ -840,49 +815,5 @@ mod tests {
         ] {
             assert_eq!(height_progress_for(advancing), HeightProgress::Advance);
         }
-    }
-
-    /// A bounded backfill over a range containing a held malformed proof must
-    /// fail the run, naming the range, rather than logging completion.
-    #[test]
-    fn backfill_over_a_held_height_is_reported_incomplete() {
-        let spec = by_id(ChainId::Qbit);
-        let config = BackfillConfig::from_args(spec, ["78050", "78060"]).expect("parse range");
-
-        let clean = BackfillSummary {
-            processed: 2,
-            auxpow_written: 1,
-            non_auxpow_skipped: 1,
-            ..BackfillSummary::default()
-        };
-        ensure_backfill_complete(spec, &config, &clean)
-            .expect("a clean range completes successfully");
-
-        let held = BackfillSummary {
-            processed: 3,
-            malformed_held: 1,
-            ..clean
-        };
-        let err = ensure_backfill_complete(spec, &config, &held)
-            .expect_err("a held height must fail the run");
-        assert_eq!(
-            err.to_string(),
-            "Qbit backfill 78050..78060 is incomplete: 1 height(s) hold an unresolved \
-             capture error; resolve them and re-run the range"
-        );
-    }
-
-    /// The malformed-outcome to backfill-counter mapping keeps the two policies
-    /// in separate columns, so a held height can never be tallied as a skip.
-    #[test]
-    fn backfill_effects_keep_held_and_skipped_separate() {
-        assert_eq!(
-            auxpow_backfill_effect(HeightOutcome::MalformedHeld),
-            BackfillHeightEffect::MalformedHeld
-        );
-        assert_eq!(
-            auxpow_backfill_effect(HeightOutcome::MalformedSkipped),
-            BackfillHeightEffect::MalformedSkipped
-        );
     }
 }

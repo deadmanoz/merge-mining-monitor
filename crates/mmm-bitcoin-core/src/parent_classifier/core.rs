@@ -155,7 +155,7 @@ impl BitcoinCoreParentClassifier {
                     });
                 }
                 warn!(error = %err, hash = %candidate_hash, "Bitcoin Core parent-header lookup failed");
-                return Ok(ParentClassification::unknown(header));
+                return Ok(ParentClassification::incomplete_unknown(header));
             }
         };
 
@@ -170,18 +170,32 @@ impl BitcoinCoreParentClassifier {
             }
         };
 
-        let coinbase = self.fetch_coinbase(candidate_hash).await;
+        let (coinbase, coinbase_unavailable) = match self.fetch_coinbase(candidate_hash).await {
+            CoinbaseFetch::Found(coinbase) => (Some(coinbase), false),
+            CoinbaseFetch::Missing => (None, false),
+            CoinbaseFetch::Unavailable => (None, true),
+        };
 
         if verbose.confirmations >= 0 {
-            return Ok(classify_core_canonical_header(header, height, coinbase));
+            return Ok(ParentClassification {
+                incomplete: coinbase_unavailable,
+                ..classify_core_canonical_header(header, height, coinbase)
+            });
         }
 
-        Ok(classify_core_stale_header(
-            header,
-            height,
-            self.fetch_competitor(height, fail_on_rpc_error).await?,
-            coinbase,
-        ))
+        let competitor = match self.fetch_competitor(height, fail_on_rpc_error).await? {
+            Competitor::Found(competitor) => Some(*competitor),
+            Competitor::Absent => None,
+            // Core indexes the candidate as stale, but without its competitor
+            // the verdict cannot be given; a tolerated failure leaves it
+            // provisional so the height is retried.
+            Competitor::Unavailable => return Ok(ParentClassification::incomplete_unknown(header)),
+        };
+        let verdict = classify_core_stale_header(header, height, competitor, coinbase);
+        Ok(ParentClassification {
+            incomplete: verdict.incomplete || coinbase_unavailable,
+            ..verdict
+        })
     }
 
     pub fn max_concurrency(&self) -> usize {
@@ -260,7 +274,7 @@ impl BitcoinCoreParentClassifier {
                     });
                 }
                 warn!(error = %err, prev_hash = %header.prev_blockhash, "Bitcoin Core predecessor lookup failed");
-                return Ok(core_absence_unknown(header));
+                return Ok(ParentClassification::incomplete_unknown(header));
             }
         };
         let prev_height: i32 = match core_height_to_i32(prev_verbose.height) {
@@ -283,7 +297,7 @@ impl BitcoinCoreParentClassifier {
                     });
                 }
                 warn!(error = %err, prev_hash = %header.prev_blockhash, "Bitcoin Core predecessor header fetch failed");
-                return Ok(core_absence_unknown(header));
+                return Ok(ParentClassification::incomplete_unknown(header));
             }
         };
         self.classify_inferred_stale(
@@ -308,8 +322,10 @@ impl BitcoinCoreParentClassifier {
             Some(height) => height,
             None => return Ok(core_absence_unknown(header)),
         };
-        let Some(competitor) = self.fetch_competitor(height, fail_on_rpc_error).await? else {
-            return Ok(core_absence_unknown(header));
+        let competitor = match self.fetch_competitor(height, fail_on_rpc_error).await? {
+            Competitor::Found(competitor) => *competitor,
+            Competitor::Absent => return Ok(core_absence_unknown(header)),
+            Competitor::Unavailable => return Ok(ParentClassification::incomplete_unknown(header)),
         };
         if !bits_match_expected(header, competitor.header.bits) {
             return Ok(ParentClassification {
@@ -322,14 +338,14 @@ impl BitcoinCoreParentClassifier {
             .median_time_past_passes(header, fail_on_rpc_error)
             .await?
         {
-            Some(true) => Ok(classify_inferred_stale_with_competitor(
+            MtpCheck::Passes(true) => Ok(classify_inferred_stale_with_competitor(
                 header,
                 height,
                 predecessor,
                 prev_kind,
                 Some(competitor),
             )),
-            Some(false) => Ok(ParentClassification::error_block(
+            MtpCheck::Passes(false) => Ok(ParentClassification::error_block(
                 header,
                 height,
                 inferred_height_source(prev_kind),
@@ -339,7 +355,8 @@ impl BitcoinCoreParentClassifier {
             // Without all eleven linked headers we do not know whether the
             // candidate is stale or consensus-invalid, and must not promote it
             // to an orphan merely because Core lacks the candidate itself.
-            None => Ok(ParentClassification::unknown(header)),
+            MtpCheck::AncestorMissing => Ok(ParentClassification::unknown(header)),
+            MtpCheck::Unavailable => Ok(ParentClassification::incomplete_unknown(header)),
         }
     }
 
@@ -351,7 +368,7 @@ impl BitcoinCoreParentClassifier {
         &self,
         candidate: &Header,
         fail_on_rpc_error: bool,
-    ) -> Result<Option<bool>> {
+    ) -> Result<MtpCheck> {
         let mut expected_hash = candidate.prev_blockhash;
         let mut times = [0_u32; MTP_WINDOW];
         for (depth, time) in times.iter_mut().enumerate() {
@@ -365,7 +382,7 @@ impl BitcoinCoreParentClassifier {
                     );
                 }
                 Err(err) if bitcoin_rpc::is_not_found(&err) => {
-                    return Ok(None);
+                    return Ok(MtpCheck::AncestorMissing);
                 }
                 Err(err) => {
                     if fail_on_rpc_error {
@@ -381,7 +398,7 @@ impl BitcoinCoreParentClassifier {
                         hash = %expected_hash,
                         "Bitcoin Core MTP ancestor fetch failed"
                     );
-                    return Ok(None);
+                    return Ok(MtpCheck::Unavailable);
                 }
             };
             *time = ancestor.time;
@@ -389,17 +406,17 @@ impl BitcoinCoreParentClassifier {
         }
 
         times.sort_unstable();
-        Ok(Some(candidate.time > times[MTP_WINDOW / 2]))
+        Ok(MtpCheck::Passes(candidate.time > times[MTP_WINDOW / 2]))
     }
 
-    async fn fetch_competitor(
-        &self,
-        height: i32,
-        fail_on_rpc_error: bool,
-    ) -> Result<Option<ClassifiedHeader>> {
+    /// Core's canonical block at `height`, the candidate's same-height
+    /// competitor. Under the lenient policy a failed lookup is reported as
+    /// unavailable rather than absent, so the caller never attests an absence
+    /// it did not observe.
+    async fn fetch_competitor(&self, height: i32, fail_on_rpc_error: bool) -> Result<Competitor> {
         let height_u64 = match height.try_into() {
             Ok(height) => height,
-            Err(_) => return Ok(None),
+            Err(_) => return Ok(Competitor::Absent),
         };
         let hash = match self.source.get_block_hash(height_u64).await {
             Ok(hash) => hash,
@@ -407,7 +424,7 @@ impl BitcoinCoreParentClassifier {
                 if bitcoin_rpc::is_block_height_out_of_range(&err)
                     || bitcoin_rpc::is_not_found(&err) =>
             {
-                return Ok(None);
+                return Ok(Competitor::Absent);
             }
             Err(err) => {
                 if fail_on_rpc_error {
@@ -416,12 +433,12 @@ impl BitcoinCoreParentClassifier {
                     });
                 }
                 warn!(height, error = %err, "Bitcoin Core same-height competitor hash fetch failed");
-                return Ok(None);
+                return Ok(Competitor::Unavailable);
             }
         };
         match self.source.get_header(hash, height).await {
-            Ok(header) => Ok(Some(header)),
-            Err(err) if bitcoin_rpc::is_not_found(&err) => Ok(None),
+            Ok(header) => Ok(Competitor::Found(Box::new(header))),
+            Err(err) if bitcoin_rpc::is_not_found(&err) => Ok(Competitor::Absent),
             Err(err) => {
                 if fail_on_rpc_error {
                     return Err(err).with_context(|| {
@@ -429,19 +446,18 @@ impl BitcoinCoreParentClassifier {
                     });
                 }
                 warn!(height, hash = %hash, error = %err, "Bitcoin Core same-height competitor header fetch failed");
-                Ok(None)
+                Ok(Competitor::Unavailable)
             }
         }
     }
 
-    async fn fetch_coinbase(&self, hash: BlockHash) -> Option<BitcoinCoreBlockCoinbase> {
-        match self.source.get_block_coinbase(hash).await {
-            Ok(coinbase) => Some(coinbase),
-            Err(err) => {
-                warn!(hash = %hash, error = %err, "Bitcoin Core coinbase fetch failed");
-                None
-            }
-        }
+    /// The coinbase of a Core-indexed block, which enriches attribution. A
+    /// body Core will never hold (not found, pruned) is permanently missing;
+    /// any other failure, a transport hiccup or a body still downloading, is
+    /// one the verdict is marked incomplete for, so the capture is retried
+    /// and the coinbase fetched again.
+    async fn fetch_coinbase(&self, hash: BlockHash) -> CoinbaseFetch {
+        coinbase_fetch(self.source.get_block_coinbase(hash).await, hash)
     }
 }
 
@@ -454,21 +470,27 @@ impl CoreRpcHeaderSource {
         self.client.get_block_hash(height).await
     }
 
+    /// A predecessor or competitor header with its coinbase. Coinbase
+    /// enrichment is optional, so the header is returned whatever the coinbase
+    /// fetch did: a body Core will never hold (not found, pruned) leaves it
+    /// absent, and any other failure marks it unavailable, so the verdict
+    /// built on the header is provisional and the coinbase fetched again on
+    /// the retry rather than missing for good behind a final head.
     async fn get_header_impl(&self, hash: BlockHash, height: i32) -> Result<ClassifiedHeader> {
         let header = self.client.get_block_header(hash).await?;
-        let coinbase = match self.client.get_block_coinbase(hash).await {
-            Ok(coinbase) => Some(coinbase),
-            Err(err) => {
-                warn!(hash = %hash, error = %err, "Bitcoin Core coinbase fetch failed");
-                None
-            }
-        };
+        let (coinbase, coinbase_unavailable) =
+            match coinbase_fetch(self.client.get_block_coinbase(hash).await, hash) {
+                CoinbaseFetch::Found(coinbase) => (Some(coinbase), false),
+                CoinbaseFetch::Missing => (None, false),
+                CoinbaseFetch::Unavailable => (None, true),
+            };
         Ok(ClassifiedHeader {
             hash: hash.to_byte_array().to_vec(),
             prev_hash: header.prev_blockhash.to_byte_array().to_vec(),
             header,
             height,
             coinbase,
+            coinbase_unavailable,
         })
     }
 
@@ -536,6 +558,7 @@ pub(crate) fn classify_core_canonical_header(
         live_observed: true,
         core_attested: true,
         core_absence_attested: false,
+        incomplete: false,
     }
 }
 
@@ -561,6 +584,7 @@ pub(crate) fn classify_core_stale_header(
         prev_hash: header.prev_blockhash.to_byte_array().to_vec(),
         canonical_predecessor_header: None,
         canonical_competitor_hash: Some(competitor.hash.clone()),
+        incomplete: competitor.coinbase_unavailable,
         canonical_competitor_header: Some(competitor),
         coinbase,
         difficulty_epoch_ok: Some(true),
@@ -588,6 +612,12 @@ pub(crate) fn classify_inferred_stale_with_competitor(
         };
     }
 
+    // The siblings are persisted with the verdict; a coinbase one of them
+    // could not fetch is retried with the height rather than lost for good.
+    let incomplete = competitor.coinbase_unavailable
+        || predecessor
+            .as_ref()
+            .is_some_and(|predecessor| predecessor.coinbase_unavailable);
     ParentClassification {
         kind: ParentKind::Stale,
         height: Some(height),
@@ -602,6 +632,7 @@ pub(crate) fn classify_inferred_stale_with_competitor(
         live_observed: false,
         core_attested: false,
         core_absence_attested: false,
+        incomplete,
     }
 }
 
@@ -616,6 +647,56 @@ fn inferred_height_source(prev_kind: BlockKind) -> HeightSource {
     }
 }
 
+/// Sort a coinbase fetch result: a body Core will never hold (not found,
+/// pruned) is permanently missing; any other failure may clear on a retry.
+fn coinbase_fetch(result: Result<BitcoinCoreBlockCoinbase>, hash: BlockHash) -> CoinbaseFetch {
+    match result {
+        Ok(coinbase) => CoinbaseFetch::Found(coinbase),
+        Err(err) if bitcoin_rpc::is_not_found(&err) || bitcoin_rpc::is_block_body_pruned(&err) => {
+            warn!(hash = %hash, error = %err, "Bitcoin Core does not hold the block body; no coinbase");
+            CoinbaseFetch::Missing
+        }
+        Err(err) => {
+            warn!(hash = %hash, error = %err, "Bitcoin Core coinbase fetch failed");
+            CoinbaseFetch::Unavailable
+        }
+    }
+}
+
+/// The outcome of a coinbase fetch for a Core-indexed block.
+enum CoinbaseFetch {
+    Found(BitcoinCoreBlockCoinbase),
+    /// Core does not hold the block body.
+    Missing,
+    /// The fetch failed for a reason a retry may clear.
+    Unavailable,
+}
+
+/// The outcome of the eleven-header median-time-past check.
+enum MtpCheck {
+    Passes(bool),
+    /// Core lacks one of the linked ancestors.
+    AncestorMissing,
+    /// A fetch failed and the lenient policy tolerated it.
+    Unavailable,
+}
+
+/// The outcome of a same-height competitor lookup.
+enum Competitor {
+    Found(Box<ClassifiedHeader>),
+    /// Core has no block at that height.
+    Absent,
+    /// The lookup failed and the lenient policy tolerated it: nothing about
+    /// Core's chain at that height was observed.
+    Unavailable,
+}
+
+/// An `unknown` for a candidate Core proved absent, once every further
+/// consensus check either completed or found nothing: the read model may
+/// classify it as a BTC-orphan candidate. A check that stopped at a tolerated
+/// RPC failure returns the plain, unattested `unknown` instead, so the row
+/// stays pending for the next recheck rather than carrying a verdict that a
+/// recovered lookup could have promoted to an inferred stale.
 fn core_absence_unknown(header: &Header) -> ParentClassification {
     ParentClassification {
         core_absence_attested: true,
