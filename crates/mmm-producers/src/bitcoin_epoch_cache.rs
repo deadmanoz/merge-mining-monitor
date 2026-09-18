@@ -6,6 +6,7 @@ use mmm_bitcoin_core::{ConfiguredParentClassifier, CoreHeader, SyncedTip};
 use mmm_capture::nbits_table::{DAA_EPOCH_INTERVAL, NbitsTable, daa_epoch_start};
 use mmm_capture::source_registry::BITCOIN_SOURCE_CODE;
 use tokio_postgres::Client;
+use tracing::info;
 
 /// A retarget boundary is re-read from Core until it is this far behind a fresh
 /// tip. After that, the boundary's hash, time, and nBits are final cache
@@ -18,44 +19,66 @@ const CORE_HEADER_SNAPSHOT_ATTEMPTS: usize = 3;
 
 /// Bring the sparse Core-header cache through the current synced Core tip and
 /// return the classification table for this command.
+///
+/// Every producer calls this at startup and before each tick, so it holds the
+/// exclusive cache lock only for bounded work. A committed Core suffix
+/// cascade must finish before the cache is read or replaced, so each lock
+/// hold drains one batch of it: when the queue is not empty afterwards the
+/// lock is released and the loop tries again, letting pollers waiting on the
+/// shared lock interleave; when it is empty, the cache replacement happens in
+/// that same hold, because a concurrent suffix replacement could commit and
+/// queue a new cascade in any gap between the check and the replacement.
+///
+/// Reclassification of unknown parents is not done here. A replacement that
+/// changes what verdicts can be given schedules a recheck on the cache state
+/// (a generation the scheduled job `reclassify-unknown-parents --scheduled`
+/// consumes one page per lock hold); this only reports that work is pending.
 pub async fn refresh_bitcoin_core_header_cache(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
 ) -> Result<NbitsTable> {
-    mmm_store::lock_bitcoin_core_header_cache(client).await?;
-    let result = async {
-        drain_pending_core_reconcile_before_cache_refresh(client, classifier).await?;
-        let (table, update) = refresh_bitcoin_core_header_cache_locked(client, classifier).await?;
-        if update.reclassification_needed {
-            mmm_read_model::run_reclassify_unknown_parents_strict(
+    let bitcoin_source_id = mmm_store::get_source_id(client, BITCOIN_SOURCE_CODE).await?;
+    let mut recovery_batches = 0_usize;
+    loop {
+        mmm_store::lock_bitcoin_core_header_cache(client).await?;
+        let result = async {
+            let queue_empty = mmm_read_model::drain_core_reconcile_queue_batch(
                 client,
+                bitcoin_source_id,
                 classifier,
-                mmm_read_model::ReclassifyUnknownParentsConfig {
-                    recheck_orphans: update.recheck_orphans,
-                    ..Default::default()
-                },
+                mmm_read_model::CORE_RECOVERY_BATCH,
             )
             .await
-            .context("reclassify orphan placements after Core-cache coverage change")?;
-            mmm_store::complete_bitcoin_core_header_cache_reclassification(client).await?;
+            .context("drain pending Bitcoin Core suffix reconciliation before cache refresh")?;
+            if !queue_empty {
+                return Ok(None);
+            }
+            let (table, update) =
+                refresh_bitcoin_core_header_cache_locked(client, classifier).await?;
+            if update.scheduled {
+                info!(
+                    orphans = update.pending_orphans,
+                    "Core header cache change scheduled an unknown-parent recheck; run reclassify-unknown-parents --scheduled"
+                );
+            } else if update.pending {
+                info!("an unknown-parent recheck is pending; run reclassify-unknown-parents --scheduled");
+            }
+            Ok(Some(table))
         }
-        Ok(table)
+        .await;
+        match mmm_store::finish_bitcoin_core_header_cache_operation(client, result).await? {
+            Some(table) => return Ok(table),
+            None => {
+                recovery_batches += 1;
+                if recovery_batches.is_multiple_of(10) {
+                    info!(
+                        recovery_batches,
+                        "still draining the committed Bitcoin Core suffix cascade before the cache refresh"
+                    );
+                }
+            }
+        }
     }
-    .await;
-    mmm_store::finish_bitcoin_core_header_cache_operation(client, result).await
-}
-
-/// Finish any committed canonical-suffix cascade before cache replacement can
-/// reclassify rows against that local Core view. An empty queue is a no-op even
-/// before the first contiguous sync-state row exists.
-async fn drain_pending_core_reconcile_before_cache_refresh(
-    client: &mut Client,
-    classifier: &ConfiguredParentClassifier,
-) -> Result<()> {
-    let source_id = mmm_store::get_source_id(client, BITCOIN_SOURCE_CODE).await?;
-    mmm_read_model::drain_core_reconcile_queue(client, source_id, classifier)
-        .await
-        .context("drain pending Bitcoin Core suffix reconciliation before cache refresh")
 }
 
 async fn refresh_bitcoin_core_header_cache_locked(

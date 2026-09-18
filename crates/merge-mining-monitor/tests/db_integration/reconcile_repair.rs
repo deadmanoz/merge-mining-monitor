@@ -171,6 +171,7 @@ async fn reclassify_unknown_parents_pages_past_stuck_headers() -> Result<()> {
             ReclassifyUnknownParentsConfig {
                 batch_size: 1,
                 recheck_orphans: false,
+                scheduled: false,
             },
         )
         .await?;

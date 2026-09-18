@@ -49,6 +49,32 @@ This changelog starts with the initial release.
   canonical parent, five for a stale competitor, eighteen for an unknown
   parent whose median-time-past walk fetches eleven ancestors one at a time.
   No retry, timeout, lock or ordering behaviour changes.
+- Consume scheduled unknown-parent rechecks in a resumable job instead of
+  inside every producer's cache refresh: migration `0027` replaces the two
+  retry booleans on the Core-header cache state with a pending generation and
+  scope, an acknowledged generation, and a bound pass with its cursor;
+  `reclassify-unknown-parents --scheduled` processes one page per cache-lock
+  hold, resumes after a kill, starts over only when a trigger that can change
+  verdicts already given (a shallow reorg, a boundary inside coverage, a
+  migration) clears the pass in flight and folds its scope back into the
+  pending scope, keeps its cursor across the horizon advances live producers
+  record on every Bitcoin block, and runs those as a follow-up pass after
+  acknowledging the generation it processed. Each page
+  is handed to `bitcoin_core_reconcile_queue` as durable strict primaries in
+  the transaction that advances the cursor, so an interruption between a
+  promoted parent's commit and its descendants' reconciliation leaves the
+  remaining cascade in the queue, and a strict primary reconcile settles its
+  queue row and persists expansion seeds for the canonical siblings it
+  changes in its own transaction. Migration `0028` adds `expand_unchanged`
+  to the queue so a cascade stops at the first unchanged descendant, as the
+  in-memory sweep did, while a suffix replacement's seeds and a row queued
+  again while waiting for expansion still expand once; durable expansion no
+  longer requires the
+  Core sync-state row, which a fresh database lacks until its first sync. The
+  refresh drains the committed Core suffix cascade one batch per lock hold
+  and replaces the cache only in the hold that found the queue empty. On the
+  production host the old in-refresh pass held live capture on every chain for
+  fifteen hours.
 
 ## [0.8.0] - 2026-09-16
 

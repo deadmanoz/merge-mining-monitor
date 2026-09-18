@@ -211,11 +211,18 @@ a complete parent header.
   `sync-bitcoin-core --follow` refresh the cache on every tick, verifying that
   Core's horizon did not move while the sparse snapshot was read, and that an
   advancing tip still descends from the prior shallow horizon. A changed shallow
-  suffix reclassifies existing and pending orphan rows; expanded coverage revisits
-  pending rows unless a new retarget boundary falls within existing timestamp
-  coverage, in which case it also rechecks existing orphans. The cache records
-  that work durably; cache-driven rechecks require fresh Core evidence, so a
-  Core RPC failure leaves the marker for the next refresh. Its
+  suffix schedules a recheck of existing and pending orphan rows; expanded
+  coverage schedules a recheck of pending rows unless a new retarget boundary
+  falls within existing timestamp coverage, in which case existing orphans are
+  in scope too. The cache records that work durably as a pending generation
+  and the scheduled job `reclassify-unknown-parents --scheduled` consumes it
+  one page per lock hold (`docs/operations.md`); no refresh does it. Only the
+  changes that can alter verdicts already given (a changed shallow suffix, a
+  boundary inside coverage, an empty cache) restart a pass the job has in
+  flight; an ordinary horizon advance accumulates for a follow-up pass. Before a
+  refresh reads or replaces the cache it drains the committed Core suffix
+  cascade one batch per lock hold, releasing the lock between batches, and
+  replaces the cache only in the hold that found the queue empty. Its
   timestamp coverage does
   not regress when a valid newer Core header has an older timestamp. Historical
   imports retain that lock across candidate validation and

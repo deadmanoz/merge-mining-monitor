@@ -55,27 +55,270 @@ pub struct BitcoinCoreHeader {
     pub bits: u32,
 }
 
-/// The meaningful effect of replacing the mutable cache suffix.
+/// The meaningful effect of replacing the mutable cache suffix: whether the
+/// replacement scheduled unknown-parent reclassification work, and what is
+/// pending afterwards.
 ///
-/// A changed shallow header can alter previously derived orphan placement, so
-/// callers must reclassify existing orphan rows before releasing the cache
-/// refresh lock.
+/// A changed shallow header can alter previously derived orphan placement,
+/// and a horizon advance can settle rows that had no verdict. Neither is
+/// done inside the refresh: the refresh increments the pending generation
+/// and the scheduled recheck job (`reclassify-unknown-parents --scheduled`)
+/// consumes it one page per cache-lock hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BitcoinCoreHeaderCacheUpdate {
-    /// Pending rows must be reconsidered against the new persisted Core
-    /// coverage before the cache lock is released.
-    pub reclassification_needed: bool,
-    /// Existing orphan verdicts may have changed because Core replaced the
-    /// shallow suffix or added an epoch boundary inside existing timestamp
-    /// coverage, so the retry must revisit them as well as pending rows.
-    pub recheck_orphans: bool,
+    /// This replacement scheduled a recheck (the pending generation moved).
+    pub scheduled: bool,
+    /// The pending scope revisits already classified orphans, not only rows
+    /// with no orphan class yet.
+    pub pending_orphans: bool,
+    /// Work is pending: the pending generation exceeds the acknowledged one.
+    pub pending: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct BitcoinCoreHeaderCacheState {
     horizon_time: i64,
-    reclassification_needed: bool,
-    orphan_recheck_needed: bool,
+    pending_generation: i64,
+    pending_orphans: bool,
+    pending_sources: Option<Vec<String>>,
+    acknowledged_generation: i64,
+}
+
+/// What a scheduled recheck must cover: whether already classified orphans
+/// are revisited, and which witness sources' events are candidates (`None`
+/// is every source; an empty list is none, the state a bind leaves behind).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecheckScope {
+    pub orphans: bool,
+    pub sources: Option<Vec<String>>,
+}
+
+impl RecheckScope {
+    /// Every source, orphans included: what an invalidating cache change
+    /// schedules.
+    pub fn everything() -> Self {
+        Self {
+            orphans: true,
+            sources: None,
+        }
+    }
+
+    /// Every source, rows without a verdict only: what a horizon advance
+    /// schedules.
+    pub fn pending_rows() -> Self {
+        Self {
+            orphans: false,
+            sources: None,
+        }
+    }
+
+    /// Nothing: the pending scope right after a bind consumed it.
+    fn nothing() -> Self {
+        Self {
+            orphans: false,
+            sources: Some(Vec::new()),
+        }
+    }
+
+    /// Widen this scope by another: orphans by OR, sources by union where
+    /// `None` (every source) absorbs any list.
+    fn union(&self, other: &RecheckScope) -> RecheckScope {
+        let sources = match (&self.sources, &other.sources) {
+            (Some(mine), Some(theirs)) => {
+                let mut all = mine.clone();
+                all.extend(theirs.iter().filter(|s| !mine.contains(s)).cloned());
+                Some(all)
+            }
+            _ => None,
+        };
+        RecheckScope {
+            orphans: self.orphans || other.orphans,
+            sources,
+        }
+    }
+}
+
+/// The pass a scheduled recheck job has bound to a generation, with the
+/// keyset cursor of the last completed page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecheckPass {
+    pub generation: i64,
+    pub scope: RecheckScope,
+    pub cursor: Option<(i64, i64)>,
+}
+
+/// The scheduled-recheck state of the Core-header cache.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduledRecheck {
+    pub pending_generation: i64,
+    /// What has been scheduled since the last bind, including the scope of a
+    /// pass an invalidating trigger folded back in.
+    pub pending_scope: RecheckScope,
+    pub acknowledged_generation: i64,
+    /// The pass in flight, which continues from its cursor: an invalidating
+    /// trigger clears it, an additive one (a horizon advance) leaves it.
+    pub pass: Option<RecheckPass>,
+}
+
+impl ScheduledRecheck {
+    /// Work is pending while the pending generation exceeds the acknowledged
+    /// one.
+    pub fn is_pending(&self) -> bool {
+        self.pending_generation > self.acknowledged_generation
+    }
+}
+
+/// Read the scheduled-recheck state. Callers that go on to bind or advance a
+/// pass hold the exclusive cache lock, which serializes them against the
+/// refresh that schedules work.
+pub async fn load_scheduled_recheck<C: GenericClient>(client: &C) -> Result<ScheduledRecheck> {
+    let row = client
+        .query_one(
+            "SELECT recheck_pending_generation, recheck_pending_orphans, \
+                    recheck_pending_sources, recheck_acknowledged_generation, \
+                    recheck_pass_generation, recheck_pass_orphans, recheck_pass_sources, \
+                    recheck_cursor_height, recheck_cursor_id \
+             FROM bitcoin_core_header_cache_state WHERE singleton",
+            &[],
+        )
+        .await
+        .context("load scheduled Core-cache recheck state")?;
+    let pass_generation: Option<i64> = row.get(4);
+    let cursor_height: Option<i64> = row.get(7);
+    let cursor_id: Option<i64> = row.get(8);
+    Ok(ScheduledRecheck {
+        pending_generation: row.get(0),
+        pending_scope: RecheckScope {
+            orphans: row.get(1),
+            sources: row.get(2),
+        },
+        acknowledged_generation: row.get(3),
+        pass: pass_generation.map(|generation| RecheckPass {
+            generation,
+            scope: RecheckScope {
+                orphans: row.get::<_, Option<bool>>(5).unwrap_or(false),
+                sources: row.get(6),
+            },
+            cursor: cursor_height.zip(cursor_id),
+        }),
+    })
+}
+
+/// Bind a pass to the pending generation with a fresh cursor, consuming the
+/// pending scope `scope` (what was scheduled since the last bind, as the
+/// caller just loaded it under the exclusive cache lock); triggers that
+/// arrive later accumulate for the follow-up pass.
+pub async fn bind_recheck_pass<C: GenericClient>(
+    client: &C,
+    scope: RecheckScope,
+) -> Result<RecheckPass> {
+    let nothing = RecheckScope::nothing();
+    let row = client
+        .query_one(
+            "UPDATE bitcoin_core_header_cache_state \
+                SET recheck_pass_generation = recheck_pending_generation, \
+                    recheck_pass_orphans = $1, recheck_pass_sources = $2, \
+                    recheck_pending_orphans = $3, recheck_pending_sources = $4, \
+                    recheck_cursor_height = NULL, recheck_cursor_id = NULL \
+              WHERE singleton \
+          RETURNING recheck_pass_generation",
+            &[
+                &scope.orphans,
+                &scope.sources,
+                &nothing.orphans,
+                &nothing.sources,
+            ],
+        )
+        .await
+        .context("bind the scheduled Core-cache recheck pass")?;
+    Ok(RecheckPass {
+        generation: row.get(0),
+        scope,
+        cursor: None,
+    })
+}
+
+/// Persist the keyset cursor of the last completed page of the bound pass.
+pub async fn persist_recheck_cursor<C: GenericClient>(
+    client: &C,
+    generation: i64,
+    cursor: (i64, i64),
+) -> Result<()> {
+    let updated = client
+        .execute(
+            "UPDATE bitcoin_core_header_cache_state \
+                SET recheck_cursor_height = $2, recheck_cursor_id = $3 \
+              WHERE singleton AND recheck_pass_generation = $1",
+            &[&generation, &cursor.0, &cursor.1],
+        )
+        .await
+        .context("persist the scheduled Core-cache recheck cursor")?;
+    ensure_bitcoin_core_header_cache_integrity(
+        updated == 1,
+        "the scheduled recheck pass is no longer bound to its generation",
+    )
+}
+
+/// Acknowledge the bound pass as complete: its generation becomes the
+/// acknowledged one and the pass is cleared. Additive triggers that arrived
+/// during the pass keep the pending generation ahead, and the caller binds a
+/// follow-up pass over the scope accumulated since. Fails closed when no
+/// pass is bound to that generation.
+pub async fn acknowledge_recheck_pass<C: GenericClient>(client: &C, generation: i64) -> Result<()> {
+    let updated = client
+        .execute(
+            "UPDATE bitcoin_core_header_cache_state \
+                SET recheck_acknowledged_generation = $1, \
+                    recheck_pass_generation = NULL, recheck_pass_orphans = NULL, \
+                    recheck_pass_sources = NULL, \
+                    recheck_cursor_height = NULL, recheck_cursor_id = NULL \
+              WHERE singleton AND recheck_pass_generation = $1",
+            &[&generation],
+        )
+        .await
+        .context("acknowledge the scheduled Core-cache recheck pass")?;
+    ensure_bitcoin_core_header_cache_integrity(
+        updated == 1,
+        "the scheduled recheck pass is no longer bound to its generation",
+    )
+}
+
+/// Schedule a recheck by hand (a repair or a test): increments the pending
+/// generation and widens the pending scope by `scope`. `invalidating` says
+/// verdicts already given may change: a pass in flight is cleared and its
+/// scope folded back into the pending scope, so the next bind starts over
+/// with the merged scope. Migrations do the same in SQL.
+pub async fn schedule_core_recheck<C: GenericClient>(
+    client: &C,
+    scope: &RecheckScope,
+    invalidating: bool,
+) -> Result<i64> {
+    let row = client
+        .query_one(
+            "UPDATE bitcoin_core_header_cache_state \
+                SET recheck_pending_generation = recheck_pending_generation + 1, \
+                    recheck_pending_orphans = recheck_pending_orphans OR $1 \
+                        OR ($3 AND COALESCE(recheck_pass_orphans, FALSE)), \
+                    recheck_pending_sources = CASE \
+                        WHEN recheck_pending_sources IS NULL OR $2::text[] IS NULL \
+                             OR ($3 AND recheck_pass_generation IS NOT NULL \
+                                 AND recheck_pass_sources IS NULL) THEN NULL \
+                        ELSE (SELECT COALESCE(array_agg(DISTINCT s), '{}') \
+                                FROM unnest(recheck_pending_sources || $2::text[] \
+                                            || CASE WHEN $3 THEN COALESCE(recheck_pass_sources, '{}') \
+                                                    ELSE '{}' END) AS s) END, \
+                    recheck_pass_generation = CASE WHEN $3 THEN NULL ELSE recheck_pass_generation END, \
+                    recheck_pass_orphans = CASE WHEN $3 THEN NULL ELSE recheck_pass_orphans END, \
+                    recheck_pass_sources = CASE WHEN $3 THEN NULL ELSE recheck_pass_sources END, \
+                    recheck_cursor_height = CASE WHEN $3 THEN NULL ELSE recheck_cursor_height END, \
+                    recheck_cursor_id = CASE WHEN $3 THEN NULL ELSE recheck_cursor_id END \
+              WHERE singleton \
+          RETURNING recheck_pending_generation",
+            &[&scope.orphans, &scope.sources, &invalidating],
+        )
+        .await
+        .context("schedule a Core-cache recheck")?;
+    Ok(row.get(0))
 }
 
 /// Serialize a Core observation and its cache replacement on this connection.
@@ -454,7 +697,8 @@ async fn lock_bitcoin_core_header_cache_state(
         .context("initialize Core-header-cache state")?;
     let row = transaction
         .query_one(
-            "SELECT horizon_time, reclassification_needed, orphan_recheck_needed \
+            "SELECT horizon_time, recheck_pending_generation, recheck_pending_orphans, \
+                    recheck_pending_sources, recheck_acknowledged_generation \
              FROM bitcoin_core_header_cache_state WHERE singleton FOR UPDATE",
             &[],
         )
@@ -462,8 +706,10 @@ async fn lock_bitcoin_core_header_cache_state(
         .context("lock Core-header-cache state")?;
     Ok(BitcoinCoreHeaderCacheState {
         horizon_time: row.get(0),
-        reclassification_needed: row.get(1),
-        orphan_recheck_needed: row.get(2),
+        pending_generation: row.get(1),
+        pending_orphans: row.get(2),
+        pending_sources: row.get(3),
+        acknowledged_generation: row.get(4),
     })
 }
 
@@ -487,55 +733,61 @@ async fn update_bitcoin_core_header_cache_state(
     } else {
         previous.horizon_time.max(current_observed_time)
     };
-    let recheck_orphans = previous.orphan_recheck_needed
-        || shallow_reorged
-        || epoch_coverage_overlaps_prior_horizon
-        || cache_was_empty;
-    let reclassification_needed = previous.reclassification_needed
-        || recheck_orphans
-        || horizon_advanced
-        || horizon_time > previous.horizon_time;
+    // A shallow reorg, a boundary inside existing coverage, or an empty cache
+    // can change verdicts already given: that clears a pass in flight (its
+    // scope is covered by the everything the trigger schedules) and revisits
+    // classified orphans. A plain horizon advance only lets rows without a
+    // verdict be decided: additive, so a pass in flight continues.
+    let invalidating = shallow_reorged || epoch_coverage_overlaps_prior_horizon || cache_was_empty;
+    let schedule = invalidating || horizon_advanced || horizon_time > previous.horizon_time;
     // A replaced shallow boundary or a boundary inside existing coverage can
     // change verdicts already given, so every child-chain head recorded under
     // the previous cache generation stops being final for a rescan.
     let verdicts_may_change = shallow_reorged || epoch_coverage_overlaps_prior_horizon;
+    let accumulated = RecheckScope {
+        orphans: previous.pending_orphans,
+        sources: previous.pending_sources.clone(),
+    };
+    let pending_scope = if schedule && invalidating {
+        accumulated.union(&RecheckScope::everything())
+    } else if schedule {
+        accumulated.union(&RecheckScope::pending_rows())
+    } else {
+        accumulated
+    };
+    let pending_generation = if schedule {
+        previous.pending_generation + 1
+    } else {
+        previous.pending_generation
+    };
     transaction
         .execute(
             "UPDATE bitcoin_core_header_cache_state \
-             SET horizon_time = $1, reclassification_needed = $2, orphan_recheck_needed = $3, \
-                 core_cache_generation = core_cache_generation + CASE WHEN $4 THEN 1 ELSE 0 END \
+             SET horizon_time = $1, recheck_pending_generation = $2, \
+                 recheck_pending_orphans = $3, recheck_pending_sources = $4, \
+                 recheck_pass_generation = CASE WHEN $5 THEN NULL ELSE recheck_pass_generation END, \
+                 recheck_pass_orphans = CASE WHEN $5 THEN NULL ELSE recheck_pass_orphans END, \
+                 recheck_pass_sources = CASE WHEN $5 THEN NULL ELSE recheck_pass_sources END, \
+                 recheck_cursor_height = CASE WHEN $5 THEN NULL ELSE recheck_cursor_height END, \
+                 recheck_cursor_id = CASE WHEN $5 THEN NULL ELSE recheck_cursor_id END, \
+                 core_cache_generation = core_cache_generation + CASE WHEN $6 THEN 1 ELSE 0 END \
              WHERE singleton",
             &[
                 &horizon_time,
-                &reclassification_needed,
-                &recheck_orphans,
+                &pending_generation,
+                &pending_scope.orphans,
+                &pending_scope.sources,
+                &invalidating,
                 &verdicts_may_change,
             ],
         )
         .await
         .context("update Core-header-cache state")?;
     Ok(BitcoinCoreHeaderCacheUpdate {
-        reclassification_needed,
-        recheck_orphans,
+        scheduled: schedule,
+        pending_orphans: pending_scope.orphans,
+        pending: pending_generation > previous.acknowledged_generation,
     })
-}
-
-/// Acknowledge a successful cache reclassification while holding the cache
-/// advisory lock. A failed pass leaves both durable retry markers set.
-pub async fn complete_bitcoin_core_header_cache_reclassification<C: GenericClient>(
-    client: &C,
-) -> Result<()> {
-    let updated = client
-        .execute(
-            "UPDATE bitcoin_core_header_cache_state \
-             SET reclassification_needed = FALSE, orphan_recheck_needed = FALSE \
-             WHERE singleton",
-            &[],
-        )
-        .await
-        .context("mark Core-header-cache reclassification complete")?;
-    ensure_bitcoin_core_header_cache_integrity(updated == 1, "Core-header-cache state is missing")?;
-    Ok(())
 }
 
 /// Load the cache when it has been initialized by a Core-backed command.

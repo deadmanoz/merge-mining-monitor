@@ -1,6 +1,6 @@
 //! Sync-status ownership for the durable Bitcoin Core suffix queue.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use bitcoin::BlockHash;
 use bitcoin::hashes::Hash as _;
 use serde_json::{Value, json};
@@ -168,14 +168,14 @@ pub(super) async fn mark_replacement_pending<C: GenericClient>(
     Ok(())
 }
 
-pub(super) async fn lock_sync_state<C: GenericClient>(client: &C, source_id: i64) -> Result<()> {
-    if !try_lock_sync_state(client, source_id).await? {
-        bail!("Bitcoin Core contiguous sync state is missing");
-    }
-    Ok(())
-}
-
-async fn try_lock_sync_state<C: GenericClient>(client: &C, source_id: i64) -> Result<bool> {
+/// Lock the contiguous sync-state row when it exists, so queue work
+/// serializes with a suffix replacement in flight. Before the first Core sync
+/// has written the row (a fresh database running the scheduled recheck) no
+/// replacement can be in flight and there is nothing to serialize with.
+pub(super) async fn try_lock_sync_state<C: GenericClient>(
+    client: &C,
+    source_id: i64,
+) -> Result<bool> {
     Ok(client
         .query_opt(
             "SELECT 1 FROM bitcoin_core_sync_state \

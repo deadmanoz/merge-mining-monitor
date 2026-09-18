@@ -27,13 +27,14 @@ mod pool;
 
 pub use bitcoin_core_header::{
     BitcoinCoreHeader, BitcoinCoreHeaderCacheIntegrityError, BitcoinCoreHeaderCacheUpdate,
-    bitcoin_core_header_cache_integrity_error, complete_bitcoin_core_header_cache_reclassification,
-    finish_bitcoin_core_header_cache_operation, finish_bitcoin_core_header_cache_shared_operation,
-    highest_final_bitcoin_core_epoch, is_bitcoin_core_header_cache_integrity_error,
-    load_bitcoin_core_header_cache_horizon, load_bitcoin_core_nbits_table,
-    load_bitcoin_core_nbits_table_if_present, lock_bitcoin_core_header_cache,
-    lock_bitcoin_core_header_cache_shared, lock_bitcoin_core_header_cache_shared_in_transaction,
-    record_bitcoin_core_header, replace_bitcoin_core_header_cache,
+    RecheckPass, RecheckScope, ScheduledRecheck, acknowledge_recheck_pass, bind_recheck_pass,
+    bitcoin_core_header_cache_integrity_error, finish_bitcoin_core_header_cache_operation,
+    finish_bitcoin_core_header_cache_shared_operation, highest_final_bitcoin_core_epoch,
+    is_bitcoin_core_header_cache_integrity_error, load_bitcoin_core_header_cache_horizon,
+    load_bitcoin_core_nbits_table, load_bitcoin_core_nbits_table_if_present,
+    load_scheduled_recheck, lock_bitcoin_core_header_cache, lock_bitcoin_core_header_cache_shared,
+    lock_bitcoin_core_header_cache_shared_in_transaction, persist_recheck_cursor,
+    record_bitcoin_core_header, replace_bitcoin_core_header_cache, schedule_core_recheck,
 };
 pub use body_invalid::{delete_body_invalid_stales_not_in, upsert_body_invalid_stale};
 pub use capture_error::{

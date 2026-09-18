@@ -1,10 +1,12 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use bitcoin::block::{Header, Version};
 use bitcoin::hashes::Hash as _;
 use bitcoin::{BlockHash, CompactTarget, TxMerkleNode};
 use mmm_bitcoin_core::{
     BitcoinCoreBlockCoinbase, ConfiguredParentClassifier, CoreHeader, FakeParentClassifier,
-    ParentClassification,
+    FakeParentClassifierGate, ParentClassification,
 };
 use mmm_capture::auxpow::parse_bip34_height;
 use mmm_capture::capture::ClassificationProof;
@@ -12,23 +14,28 @@ use mmm_capture::nbits_table::NbitsLookup;
 use mmm_capture::source_registry::BITCOIN_SOURCE_CODE;
 use mmm_producers::refresh_bitcoin_core_header_cache;
 use mmm_read_model::{
-    CoreCanonicalReplacement, ExpectedCoreCanonicalRow, lock_block_hash, rebuild_source_health,
-    reconcile_from_merge_mining_event, replace_core_canonical_suffix, revoke_merge_mining_event,
-    run_exclusive_core_canonical_view_transaction,
+    CORE_RECOVERY_BATCH, CoreCanonicalReplacement, ExpectedCoreCanonicalRow, lock_block_hash,
+    rebuild_source_health, reconcile_from_merge_mining_event, replace_core_canonical_suffix,
+    revoke_merge_mining_event, run_exclusive_core_canonical_view_transaction,
+    run_scheduled_recheck,
 };
 use mmm_store::{
-    BitcoinCoreHeader, complete_bitcoin_core_header_cache_reclassification,
-    finish_bitcoin_core_header_cache_operation, get_source_id,
+    BitcoinCoreHeader, BitcoinCoreHeaderCacheUpdate, RecheckScope, acknowledge_recheck_pass,
+    bind_recheck_pass, finish_bitcoin_core_header_cache_operation,
+    finish_bitcoin_core_header_cache_shared_operation, get_source_id,
     is_bitcoin_core_header_cache_integrity_error, load_bitcoin_core_nbits_table,
-    load_bitcoin_core_nbits_table_if_present, lock_bitcoin_core_header_cache,
+    load_bitcoin_core_nbits_table_if_present, load_scheduled_recheck,
+    lock_bitcoin_core_header_cache, lock_bitcoin_core_header_cache_shared,
     lock_bitcoin_core_header_cache_shared_in_transaction, record_bitcoin_core_header,
-    replace_bitcoin_core_header_cache, upsert_merge_mining_event,
+    replace_bitcoin_core_header_cache, schedule_core_recheck, upsert_merge_mining_event,
 };
+
+use tokio_postgres::Client;
 
 use crate::support::db::connect_to_schema;
 use crate::support::scenario::orphan_candidate_verdict;
 use crate::support::seed::{insert_block, test_header_chain};
-use crate::support::{namecoin_event_payload, namecoin_fixture};
+use crate::support::{NamecoinEventFixture, namecoin_event_payload, namecoin_fixture};
 
 fn header(height: i32, hash_byte: u8, block_time: i64, bits: u32) -> BitcoinCoreHeader {
     BitcoinCoreHeader {
@@ -116,7 +123,7 @@ async fn seed_replaceable_core_suffix(
 }
 
 #[tokio::test]
-async fn migration_0019_schedules_a_full_orphan_recheck_until_successful_refresh() -> Result<()> {
+async fn migration_0019_schedules_a_generation_the_job_acknowledges() -> Result<()> {
     let (mut client, schema) =
         crate::support::db::new_test_db_through("0018_add_rod_source").await?;
     let result = async {
@@ -128,30 +135,38 @@ async fn migration_0019_schedules_a_full_orphan_recheck_until_successful_refresh
                 &[],
             )
             .await?;
-
         client
             .batch_execute(include_str!(
                 "../../../../migrations/0019_recheck_orphans_after_hathor_bip34.sql"
             ))
             .await?;
-        // The current store writes the cache generation 0026 introduced; the
-        // migrations between 0019 and it do not touch this table.
+        // The migrations between 0019 and the current store: 0026 adds the
+        // cache generation, 0027 converts the booleans 0019 set into pending
+        // generation 1 with the orphan scope, 0028 the queue's expansion flag;
+        // the sparse-cache migrations between them do not touch this table.
         client
             .batch_execute(include_str!(
                 "../../../../migrations/0026_add_child_chain_head.sql"
             ))
             .await?;
-
-        let state = client
-            .query_one(
-                "SELECT reclassification_needed, orphan_recheck_needed \
-                 FROM bitcoin_core_header_cache_state WHERE singleton",
-                &[],
-            )
+        client
+            .batch_execute(include_str!(
+                "../../../../migrations/0027_schedule_core_rechecks_by_generation.sql"
+            ))
             .await?;
-        assert!(state.get::<_, bool>(0));
-        assert!(state.get::<_, bool>(1));
+        client
+            .batch_execute(include_str!(
+                "../../../../migrations/0028_add_reconcile_queue_expand_unchanged.sql"
+            ))
+            .await?;
+        let state = load_scheduled_recheck(&client).await?;
+        assert_eq!(state.pending_generation, 1);
+        assert!(state.pending_scope.orphans);
+        assert_eq!(state.pending_scope.sources, None);
+        assert!(state.is_pending());
 
+        // A refresh no longer consumes the work: it reports it pending and
+        // leaves the generation for the job.
         let classifier = ConfiguredParentClassifier::Fake(
             FakeParentClassifier::new(ParentClassification::unknown(
                 &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
@@ -162,15 +177,18 @@ async fn migration_0019_schedules_a_full_orphan_recheck_until_successful_refresh
             .with_canonical_header(core_header(2030, 2, 3, 0x1c00_ffff)),
         );
         refresh_bitcoin_core_header_cache(&mut client, &classifier).await?;
-        let completed = client
-            .query_one(
-                "SELECT reclassification_needed, orphan_recheck_needed \
-                 FROM bitcoin_core_header_cache_state WHERE singleton",
-                &[],
-            )
-            .await?;
-        assert!(!completed.get::<_, bool>(0));
-        assert!(!completed.get::<_, bool>(1));
+        let after_refresh = load_scheduled_recheck(&client).await?;
+        assert!(after_refresh.is_pending());
+        assert!(after_refresh.pending_scope.orphans);
+
+        // The job, with nothing to reclassify here, acknowledges the generation
+        // the refresh left (the refresh scheduled a generation of its own for
+        // the empty cache it populated).
+        let report = run_scheduled_recheck(&mut client, &classifier, 100).await?;
+        assert_eq!(report.acknowledged, Some(after_refresh.pending_generation));
+        let done = load_scheduled_recheck(&client).await?;
+        assert!(!done.is_pending());
+        assert_eq!(done.pass, None);
         Ok::<_, anyhow::Error>(())
     }
     .await;
@@ -234,8 +252,7 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
             .await?;
         client
             .execute(
-                "UPDATE bitcoin_core_header_cache_state \
-                 SET horizon_time = 0, reclassification_needed = FALSE",
+                "UPDATE bitcoin_core_header_cache_state SET horizon_time = 0",
                 &[],
             )
             .await?;
@@ -248,62 +265,51 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
             false,
         )
         .await?;
-        assert!(first.reclassification_needed);
+        assert!(first.scheduled);
         assert!(
-            first.recheck_orphans,
+            first.pending_orphans,
             "initial Core-cache population revisits classifications made before the cache existed"
         );
-        complete_bitcoin_core_header_cache_reclassification(&client).await?;
+        // A pass bound to the pending generation, left in flight.
+        let populated = load_scheduled_recheck(&client).await?;
+        let pass = bind_recheck_pass(&client, populated.pending_scope).await?;
 
-        let advanced_with_an_older_timestamp = replace_bitcoin_core_header_cache(
-            &mut client,
-            0,
-            &[],
-            None,
-            &header(101, 2, 99, 0x1d00_ffff),
-            false,
-        )
-        .await?;
-        assert!(advanced_with_an_older_timestamp.reclassification_needed);
+        let advanced_with_an_older_timestamp = advance_to_101(&mut client).await?;
+        assert!(advanced_with_an_older_timestamp.scheduled);
         assert!(
-            !advanced_with_an_older_timestamp.recheck_orphans,
+            !advanced_with_an_older_timestamp.pending_orphans,
             "ordinary horizon advances do not revisit already classified orphans"
         );
+        let advanced = load_scheduled_recheck(&client).await?;
+        assert_eq!(
+            advanced.pass.as_ref().map(|pass| pass.generation),
+            Some(pass.generation),
+            "an ordinary horizon advance is additive: it leaves a pass in flight bound"
+        );
+        acknowledge_recheck_pass(&client, pass.generation).await?;
         assert_eq!(
             load_bitcoin_core_nbits_table(&client).await?.horizon_time(),
             100
         );
 
-        let retry = replace_bitcoin_core_header_cache(
-            &mut client,
-            0,
-            &[],
-            None,
-            &header(101, 2, 99, 0x1d00_ffff),
-            false,
-        )
-        .await?;
-        assert!(retry.reclassification_needed);
-        complete_bitcoin_core_header_cache_reclassification(&client).await?;
+        let retry = advance_to_101(&mut client).await?;
+        assert!(
+            !retry.scheduled,
+            "an unchanged horizon schedules nothing new"
+        );
+        assert!(
+            retry.pending,
+            "but the unacknowledged generation stays pending"
+        );
+        let pending = load_scheduled_recheck(&client).await?;
+        let pass = bind_recheck_pass(&client, pending.pending_scope).await?;
+        acknowledge_recheck_pass(&client, pass.generation).await?;
 
-        let settled = replace_bitcoin_core_header_cache(
-            &mut client,
-            0,
-            &[],
-            None,
-            &header(101, 2, 99, 0x1d00_ffff),
-            false,
-        )
-        .await?;
-        assert!(!settled.reclassification_needed);
+        let settled = advance_to_101(&mut client).await?;
+        assert!(!settled.scheduled);
+        assert!(!settled.pending);
 
-        let generation_before: i64 = client
-            .query_one(
-                "SELECT core_cache_generation FROM bitcoin_core_header_cache_state WHERE singleton",
-                &[],
-            )
-            .await?
-            .get(0);
+        let generation_before = core_cache_generation(&client).await?;
         let boundary_overlaps_existing_coverage = replace_bitcoin_core_header_cache(
             &mut client,
             2016,
@@ -314,26 +320,45 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
         )
         .await?;
         assert!(
-            boundary_overlaps_existing_coverage.recheck_orphans,
+            boundary_overlaps_existing_coverage.pending_orphans,
             "a new retarget boundary inside prior timestamp coverage can change existing verdicts"
         );
         // Such a replacement also moves the cache generation, so child-chain
         // heads recorded before it stop being final; the plain horizon
         // advances above left it alone.
-        let generation_after: i64 = client
-            .query_one(
-                "SELECT core_cache_generation FROM bitcoin_core_header_cache_state WHERE singleton",
-                &[],
-            )
-            .await?
-            .get(0);
         assert_eq!(
             generation_before, 0,
             "populating an empty cache and plain horizon advances change no given verdict"
         );
-        assert_eq!(generation_after, 1);
+        assert_eq!(core_cache_generation(&client).await?, 1);
         Ok(())
     })
+}
+
+/// A refresh whose horizon is height 101 with a timestamp older than the
+/// coverage already recorded: an ordinary advance the first time, unchanged
+/// after.
+async fn advance_to_101(client: &mut Client) -> Result<BitcoinCoreHeaderCacheUpdate> {
+    replace_bitcoin_core_header_cache(
+        client,
+        0,
+        &[],
+        None,
+        &header(101, 2, 99, 0x1d00_ffff),
+        false,
+    )
+    .await
+}
+
+/// The cache generation child-chain heads are pinned to.
+async fn core_cache_generation(client: &Client) -> Result<i64> {
+    Ok(client
+        .query_one(
+            "SELECT core_cache_generation FROM bitcoin_core_header_cache_state WHERE singleton",
+            &[],
+        )
+        .await?
+        .get(0))
 }
 
 #[tokio::test]
@@ -442,6 +467,207 @@ async fn refresh_drains_pending_core_reconcile_before_reading_core_snapshot() ->
             pending_error.get::<_, serde_json::Value>(2),
             serde_json::json!({})
         );
+        Ok(())
+    })
+}
+
+/// The Namecoin fixture's unknown parent captured as an event, with the Core
+/// cache seeded through its height: the starting point for the tests that
+/// drive a cache change past an existing classification.
+struct SeededParent {
+    source_id: i64,
+    event_id: i64,
+    parent_height: i32,
+    parent_header: Header,
+    parent_hash: Vec<u8>,
+}
+
+async fn seed_unknown_parent(client: &Client) -> Result<SeededParent> {
+    let fixture = NamecoinEventFixture::new(client).await?;
+    let parent_height = parse_bip34_height(&fixture.parsed.parent_coinbase_script)
+        .expect("Namecoin fixture carries a BIP34 parent height");
+    let parent_header = fixture.parsed.parent_header.header;
+    crate::support::db::seed_bitcoin_core_header_cache_through(
+        client,
+        parent_height,
+        i64::from(parent_header.time),
+        parent_header.bits.to_consensus(),
+    )
+    .await?;
+    let inserted = fixture
+        .insert_event(client, 500_000, ClassificationProof::default(), 1_000)
+        .await?;
+    Ok(SeededParent {
+        source_id: fixture.source_id,
+        event_id: inserted.id,
+        parent_height,
+        parent_header,
+        parent_hash: inserted.parent_hash,
+    })
+}
+
+/// A fake Core view 100 blocks past the seeded parent whose prior horizon
+/// header differs from the cached one: a shallow reorg at the parent's
+/// height, the way the shallow-reorg tests exercise it.
+fn reorged_core_view(seeded: &SeededParent) -> FakeParentClassifier {
+    let parent_header = seeded.parent_header;
+    let core_tip = seeded.parent_height + 100;
+    FakeParentClassifier::new(orphan_candidate_verdict(&parent_header))
+        .with_synced_tip_height(core_tip)
+        .with_canonical_header(core_header(
+            mmm_capture::nbits_table::daa_epoch_start(seeded.parent_height),
+            9,
+            i64::from(parent_header.time) - 1,
+            parent_header.bits.to_consensus(),
+        ))
+        .with_canonical_header(core_header(
+            seeded.parent_height,
+            7,
+            i64::from(parent_header.time) + 1,
+            parent_header.bits.to_consensus(),
+        ))
+        .with_canonical_header(core_header(
+            core_tip,
+            8,
+            i64::from(parent_header.time) + 1,
+            parent_header.bits.to_consensus(),
+        ))
+}
+
+#[tokio::test]
+async fn refresh_releases_the_lock_between_recovery_batches_and_replaces_on_an_empty_queue()
+-> Result<()> {
+    crate::run_db_test!(client, schema, {
+        let seeded = seed_unknown_parent(&client).await?;
+        let bitcoin = get_source_id(&client, BITCOIN_SOURCE_CODE).await?;
+        seed_recovery_queue(&client, bitcoin, &seeded.parent_hash).await?;
+
+        let gate = FakeParentClassifierGate::new();
+        let fake = reorged_core_view(&seeded).with_first_call_gate(Arc::clone(&gate));
+        let classifier = ConfiguredParentClassifier::Fake(fake.clone());
+        let order = Arc::new(std::sync::Mutex::new(Vec::<&'static str>::new()));
+
+        // The refresh takes the lock and stops at the gate inside its first
+        // recovery batch, whose first primary is the fixture's parent.
+        let refresh_client = connect_to_schema(&schema).await?;
+        let refresh_order = Arc::clone(&order);
+        let refresh = tokio::spawn(async move {
+            let mut refresh_client = refresh_client;
+            let table = refresh_bitcoin_core_header_cache(&mut refresh_client, &classifier).await;
+            refresh_order.lock().unwrap().push("refresh finished");
+            table
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), gate.wait_started())
+            .await
+            .expect("the first recovery batch did not reach the gated classification");
+
+        // A suffix replacement contends for the shared lock while the refresh
+        // holds it through its first batch. Once the refresh releases the lock
+        // with work still queued, the replacement commits one more cascade
+        // primary, as a real replacement enqueues its dependents.
+        let suffix_client = connect_to_schema(&schema).await?;
+        let suffix_order = Arc::clone(&order);
+        let mut suffix = tokio::spawn(async move {
+            lock_bitcoin_core_header_cache_shared(&suffix_client).await?;
+            let late = [0xee_u8; 32];
+            let result = suffix_client
+                .execute(
+                    "INSERT INTO bitcoin_core_reconcile_queue (source_id, btc_parent_header_hash) \
+                     VALUES ($1, $2)",
+                    &[&bitcoin, &late.as_slice()],
+                )
+                .await
+                .map(|_| suffix_order.lock().unwrap().push("late primary committed"))
+                .map_err(anyhow::Error::from);
+            finish_bitcoin_core_header_cache_shared_operation(&suffix_client, result).await
+        });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), &mut suffix)
+                .await
+                .is_err(),
+            "the suffix replacement must wait while the refresh holds the lock"
+        );
+        gate.proceed();
+        tokio::time::timeout(std::time::Duration::from_secs(10), &mut suffix)
+            .await
+            .expect("the refresh must release the lock between recovery batches")??;
+        let table = tokio::time::timeout(std::time::Duration::from_secs(10), refresh)
+            .await
+            .expect("the refresh must finish once the queue drains")??;
+        assert_eq!(table.horizon_height(), seeded.parent_height + 100);
+
+        // The late primary was committed before the refresh finished, and the
+        // refresh drained it before replacing the cache: the queue is empty.
+        assert_eq!(
+            order.lock().unwrap().as_slice(),
+            ["late primary committed", "refresh finished"]
+        );
+        let queue_count: i64 = client
+            .query_one(
+                "SELECT count(*)::bigint FROM bitcoin_core_reconcile_queue WHERE source_id = $1",
+                &[&bitcoin],
+            )
+            .await?
+            .get(0);
+        assert_eq!(queue_count, 0);
+        Ok(())
+    })
+}
+
+/// A committed cascade of one more primary than a recovery batch holds, so a
+/// refresh must release the lock once before the queue can be empty. Explicit
+/// enqueue times put `first_hash` first, the way the drain orders its work.
+async fn seed_recovery_queue(client: &Client, bitcoin: i64, first_hash: &[u8]) -> Result<()> {
+    client
+        .execute(
+            "INSERT INTO bitcoin_core_sync_state ( \
+                source_id, sync_mode, contiguous_complete_height, \
+                last_error_code, last_error, last_error_details, created_at, updated_at \
+             ) VALUES ($1, 'contiguous', -1, \
+                       'backbone_reorg_reconcile_pending', 'pending cascade', \
+                       jsonb_build_object('queued', 1), 1, 1)",
+            &[&bitcoin],
+        )
+        .await?;
+    client
+        .execute(
+            "INSERT INTO bitcoin_core_reconcile_queue \
+                 (source_id, btc_parent_header_hash, enqueued_at) \
+             VALUES ($1, $2, 1)",
+            &[&bitcoin, &first_hash.to_vec()],
+        )
+        .await?;
+    for index in 1..=CORE_RECOVERY_BATCH {
+        let filler = [u8::try_from(index).expect("small index"); 32];
+        client
+            .execute(
+                "INSERT INTO bitcoin_core_reconcile_queue \
+                     (source_id, btc_parent_header_hash, enqueued_at) \
+                 VALUES ($1, $2, 2)",
+                &[&bitcoin, &filler.as_slice()],
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn refresh_with_a_pending_generation_completes_without_scanning() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let seeded = seed_unknown_parent(&client).await?;
+        let generation = schedule_core_recheck(&client, &RecheckScope::everything(), true).await?;
+
+        // A producer's startup refresh with a full recheck pending: the fake
+        // classifies nothing, because the refresh leaves the candidates to
+        // the job, and the generation is still pending afterwards.
+        let fake = reorged_core_view(&seeded);
+        let classifier = ConfiguredParentClassifier::Fake(fake.clone());
+        refresh_bitcoin_core_header_cache(&mut client, &classifier).await?;
+        assert_eq!(fake.call_count().await, 0);
+        let state = load_scheduled_recheck(&client).await?;
+        assert!(state.is_pending());
+        assert!(state.pending_generation >= generation);
+        assert_eq!(state.pass, None);
         Ok(())
     })
 }
@@ -948,19 +1174,16 @@ async fn refresh_rejects_a_horizon_below_an_existing_final_epoch() -> Result<()>
 }
 
 #[tokio::test]
-async fn shallow_cache_reorg_reclassifies_existing_orphans_and_source_health() -> Result<()> {
+async fn shallow_cache_reorg_schedules_a_recheck_the_job_applies() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        let (resolver, pool_ids_by_slug, source_id, parsed) = namecoin_fixture(&client).await?;
-        let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
-            .expect("Namecoin fixture carries a BIP34 parent height");
-        let parent_header = parsed.parent_header.header;
-        crate::support::db::seed_bitcoin_core_header_cache_through(
-            &client,
+        let seeded = seed_unknown_parent(&client).await?;
+        let SeededParent {
+            source_id,
+            event_id,
             parent_height,
-            i64::from(parent_header.time),
-            parent_header.bits.to_consensus(),
-        )
-        .await?;
+            parent_header,
+            parent_hash,
+        } = seeded;
         let epoch = mmm_capture::nbits_table::daa_epoch_start(parent_height);
         client
             .execute(
@@ -968,17 +1191,6 @@ async fn shallow_cache_reorg_reclassifies_existing_orphans_and_source_health() -
                 &[&epoch],
             )
             .await?;
-        let payload = namecoin_event_payload(
-            &parsed,
-            &resolver,
-            &pool_ids_by_slug,
-            500_000,
-            ClassificationProof::default(),
-            1_000,
-        )?;
-        let event_id = upsert_merge_mining_event(&client, source_id, &payload)
-            .await?
-            .event_id;
         // The fixture writer intentionally bypasses incremental maintenance;
         // establish its derived baseline before testing a cache-driven update.
         rebuild_source_health(&mut client).await?;
@@ -986,7 +1198,6 @@ async fn shallow_cache_reorg_reclassifies_existing_orphans_and_source_health() -
             orphan_candidate_verdict(&parent_header),
         ));
         reconcile_from_merge_mining_event(&mut client, event_id, &absent, None).await?;
-        let parent_hash = parsed.parent_header.hash().to_byte_array().to_vec();
         let before: Option<String> = client
             .query_one(
                 "SELECT btc_orphan_class FROM block WHERE btc_header_hash = $1",
@@ -1021,6 +1232,24 @@ async fn shallow_cache_reorg_reclassifies_existing_orphans_and_source_health() -
         );
         refresh_bitcoin_core_header_cache(&mut client, &reorged).await?;
 
+        // The refresh only schedules: the verdict is untouched and a recheck
+        // covering already classified orphans is pending.
+        let after_refresh: Option<String> = client
+            .query_one(
+                "SELECT btc_orphan_class FROM block WHERE btc_header_hash = $1",
+                &[&parent_hash],
+            )
+            .await?
+            .get(0);
+        assert_eq!(after_refresh.as_deref(), Some("strict_btc_orphan"));
+        let scheduled = load_scheduled_recheck(&client).await?;
+        assert!(scheduled.is_pending());
+        assert!(scheduled.pending_scope.orphans);
+
+        // The job applies the new verdict and maintains source health.
+        let report = run_scheduled_recheck(&mut client, &reorged, 100).await?;
+        assert_eq!(report.changed, 1);
+        assert_eq!(report.acknowledged, Some(scheduled.pending_generation));
         let after: Option<String> = client
             .query_one(
                 "SELECT btc_orphan_class FROM block WHERE btc_header_hash = $1",
@@ -1043,43 +1272,14 @@ async fn shallow_cache_reorg_reclassifies_existing_orphans_and_source_health() -
 }
 
 #[tokio::test]
-async fn strict_cache_reclassification_error_at_barrier_keeps_retry_markers_and_verdict()
--> Result<()> {
+async fn a_strict_classification_error_keeps_the_pass_and_the_verdict() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        let (resolver, pool_ids_by_slug, source_id, parsed) = namecoin_fixture(&client).await?;
-        let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
-            .expect("Namecoin fixture carries a BIP34 parent height");
-        let parent_header = parsed.parent_header.header;
-        crate::support::db::seed_bitcoin_core_header_cache_through(
-            &client,
-            parent_height,
-            i64::from(parent_header.time),
-            parent_header.bits.to_consensus(),
-        )
-        .await?;
-        let epoch = mmm_capture::nbits_table::daa_epoch_start(parent_height);
-        client
-            .execute(
-                "UPDATE bitcoin_core_header SET is_final = FALSE WHERE height = $1",
-                &[&epoch],
-            )
-            .await?;
-        let payload = namecoin_event_payload(
-            &parsed,
-            &resolver,
-            &pool_ids_by_slug,
-            500_000,
-            ClassificationProof::default(),
-            1_000,
-        )?;
-        let event_id = upsert_merge_mining_event(&client, source_id, &payload)
-            .await?
-            .event_id;
+        let seeded = seed_unknown_parent(&client).await?;
         let baseline = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
-            orphan_candidate_verdict(&parent_header),
+            orphan_candidate_verdict(&seeded.parent_header),
         ));
-        reconcile_from_merge_mining_event(&mut client, event_id, &baseline, None).await?;
-        let parent_hash = parsed.parent_header.hash().to_byte_array().to_vec();
+        reconcile_from_merge_mining_event(&mut client, seeded.event_id, &baseline, None).await?;
+        let parent_hash = seeded.parent_hash.clone();
         let before: (String, Option<String>) = client
             .query_one(
                 "SELECT kind, btc_orphan_class FROM block WHERE btc_header_hash = $1",
@@ -1092,48 +1292,48 @@ async fn strict_cache_reclassification_error_at_barrier_keeps_retry_markers_and_
             ("unknown".to_owned(), Some("strict_btc_orphan".to_owned()))
         );
 
-        let core_tip = parent_height + 100;
-        let fake = FakeParentClassifier::new(orphan_candidate_verdict(&parent_header))
-            .with_classification_error_on_call(2)
-            .with_synced_tip_height(core_tip)
-            .with_canonical_header(core_header(
-                epoch,
-                9,
-                i64::from(epoch) + 1,
-                parent_header.bits.to_consensus() ^ 1,
-            ))
-            .with_canonical_header(core_header(
-                parent_height,
-                7,
-                i64::from(parent_header.time) + 1,
-                parent_header.bits.to_consensus(),
-            ))
-            .with_canonical_header(core_header(
-                core_tip,
-                8,
-                i64::from(parent_header.time) + 1,
-                parent_header.bits.to_consensus(),
-            ));
+        let fake = reorged_core_view(&seeded).with_classification_error_on_call(1);
         let classifier = ConfiguredParentClassifier::Fake(fake.clone());
-        let error = refresh_bitcoin_core_header_cache(&mut client, &classifier)
+        // The refresh classifies nothing itself, so the injected error on the
+        // first classification is never reached by it.
+        refresh_bitcoin_core_header_cache(&mut client, &classifier).await?;
+        assert_eq!(fake.call_count().await, 0);
+        let scheduled = load_scheduled_recheck(&client).await?;
+        assert!(scheduled.is_pending());
+
+        // The job's strict classification hits it: the run fails, the pass
+        // stays bound with its cursor past the queued page, the generation
+        // stays pending, and the verdict is untouched, so a later run repeats
+        // the candidate from the durable queue.
+        let error = run_scheduled_recheck(&mut client, &classifier, 100)
             .await
-            .expect_err("barrier-time strict classification failure must abort refresh");
+            .expect_err("a strict classification failure must fail the scheduled run");
         let error_detail = format!("{error:#}");
         assert!(
-            error_detail.contains("injected classification error on call 2"),
+            error_detail.contains("injected classification error on call 1"),
             "unexpected error: {error_detail}"
         );
-        assert_eq!(fake.call_count().await, 2);
-
-        let retry_state = client
+        assert_eq!(fake.call_count().await, 1);
+        let retry_state = load_scheduled_recheck(&client).await?;
+        assert!(retry_state.is_pending());
+        assert_eq!(
+            retry_state.pass.as_ref().map(|pass| pass.generation),
+            Some(scheduled.pending_generation)
+        );
+        assert!(
+            retry_state
+                .pass
+                .as_ref()
+                .is_some_and(|pass| pass.cursor.is_some())
+        );
+        let queued: i64 = client
             .query_one(
-                "SELECT reclassification_needed, orphan_recheck_needed \
-                 FROM bitcoin_core_header_cache_state WHERE singleton",
+                "SELECT count(*) FROM bitcoin_core_reconcile_queue WHERE primary_pending",
                 &[],
             )
-            .await?;
-        assert!(retry_state.get::<_, bool>(0));
-        assert!(retry_state.get::<_, bool>(1));
+            .await?
+            .get(0);
+        assert_eq!(queued, 1);
         let after: (String, Option<String>) = client
             .query_one(
                 "SELECT kind, btc_orphan_class FROM block WHERE btc_header_hash = $1",
