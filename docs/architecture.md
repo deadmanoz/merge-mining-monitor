@@ -99,7 +99,11 @@ producer could not capture. It is operational state, not evidence: it is written
 before the failing height returns, cleared only when that same height is
 reprocessed successfully, and read directly by `/api/v1/sources`. It exists
 because the monotonic `poll_cursor` has no way to express a gap and
-`source_health` is derived state this crate does not write.
+`source_health` is derived state this crate does not write. `child_chain_head`
+is operational state of the same kind: the block a chain last carried at each
+processed height, written in the capture transaction so a trailing rescan can
+tell from one block-hash lookup whether the height changed. Only the
+producer's own rescan reads it; the read model and the API never do.
 Derived state (`block`, `attestation_proof`, `source_health`) is rebuilt from
 that evidence by the read-model reconciler (stage 2), so a bad event can be
 revoked and the affected parent block recomputed. Bitcoin Core feeds the
