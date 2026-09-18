@@ -146,6 +146,17 @@ pub async fn load_child_chain_head<C: GenericClient>(
     .transpose()
 }
 
+impl CurrentBlockParent<'_> {
+    /// The parent hash the head row records, `None` when the proof did not
+    /// name one.
+    fn parent_hash(&self) -> Option<&[u8]> {
+        match self {
+            CurrentBlockParent::Known(parent) => Some(parent),
+            CurrentBlockParent::NoAuxpow | CurrentBlockParent::Unknown => None,
+        }
+    }
+}
+
 /// What one `record_child_chain_block` call changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ChildDisplacementOutcome {
@@ -302,11 +313,7 @@ pub async fn record_child_chain_block(
         current_block_hash.len()
     );
     lock_child_chain_height(txn, source_id, child_height).await?;
-    let (parent_hash, hashless_decidable) = match current_parent {
-        CurrentBlockParent::Known(parent) => (Some(parent), true),
-        CurrentBlockParent::NoAuxpow => (None, true),
-        CurrentBlockParent::Unknown => (None, false),
-    };
+    let parent_hash = current_parent.parent_hash();
     txn.execute(
         "INSERT INTO child_chain_head \
              (source_id, child_height, block_hash, btc_parent_header_hash, outcome, \
@@ -330,6 +337,87 @@ pub async fn record_child_chain_block(
     )
     .await
     .context("record the child chain head")?;
+    apply_child_displacement(
+        txn,
+        source_id,
+        child_height,
+        current_block_hash,
+        current_parent,
+        observed_at,
+    )
+    .await
+}
+
+/// A rescan found the chain still carrying the block the head records:
+/// run the displacement maintenance [`record_child_chain_block`] runs (a
+/// write that bypassed observation may have left an undisplaced sibling)
+/// and refresh the head's observation time, but leave its outcome and the
+/// Core cache generation it was derived under untouched. Stamping the
+/// current generation here would erase a verdict-changing cache replacement
+/// that a concurrent refresh committed between the head check and this
+/// write, and the height would never be captured again.
+pub async fn reobserve_child_chain_block_in_own_transaction(
+    client: &mut Client,
+    source_id: i64,
+    child_height: i32,
+    current_block_hash: &[u8],
+    current_parent: CurrentBlockParent<'_>,
+    observed_at: i64,
+) -> Result<ChildDisplacementOutcome> {
+    ensure!(
+        current_block_hash.len() == 32,
+        "child block hash must be 32 bytes, got {}",
+        current_block_hash.len()
+    );
+    let txn = client
+        .transaction()
+        .await
+        .context("begin child block re-observation")?;
+    lock_child_chain_height(&txn, source_id, child_height).await?;
+    let updated = txn
+        .execute(
+            "UPDATE child_chain_head SET observed_at = $4 \
+              WHERE source_id = $1 AND child_height = $2 AND block_hash = $3",
+            &[&source_id, &child_height, &current_block_hash, &observed_at],
+        )
+        .await
+        .context("refresh the child chain head observation")?;
+    ensure!(
+        updated == 1,
+        "the child chain head at height {child_height} no longer records the re-observed block"
+    );
+    let outcome = apply_child_displacement(
+        &txn,
+        source_id,
+        child_height,
+        current_block_hash,
+        current_parent,
+        observed_at,
+    )
+    .await?;
+    txn.commit()
+        .await
+        .context("commit child block re-observation")?;
+    Ok(outcome)
+}
+
+/// The one displacement transition, under the per-height lock the caller
+/// holds: clear displacement on the current block's event, mark every other
+/// event at the height displaced by it, and decide hashless observations by
+/// what is known of the current block's parent.
+async fn apply_child_displacement(
+    txn: &Transaction<'_>,
+    source_id: i64,
+    child_height: i32,
+    current_block_hash: &[u8],
+    current_parent: CurrentBlockParent<'_>,
+    observed_at: i64,
+) -> Result<ChildDisplacementOutcome> {
+    let (parent_hash, hashless_decidable) = match current_parent {
+        CurrentBlockParent::Known(parent) => (Some(parent), true),
+        CurrentBlockParent::NoAuxpow => (None, true),
+        CurrentBlockParent::Unknown => (None, false),
+    };
     let rows = txn
         .query(
             "WITH candidate AS ( \

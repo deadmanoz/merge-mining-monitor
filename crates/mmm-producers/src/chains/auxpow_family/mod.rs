@@ -46,7 +46,7 @@ use mmm_store::{
     clear_capture_error, finish_child_chain_height_operation, load_child_chain_head,
     load_pool_identities_by_namespace, lock_child_chain_height_session, record_capture_error,
     record_child_chain_block, record_child_chain_block_in_own_transaction,
-    upsert_merge_mining_event_with_attributions,
+    reobserve_child_chain_block_in_own_transaction, upsert_merge_mining_event_with_attributions,
 };
 use qbit::{ensure_qbit_mainnet_endpoint, fetch_qbit_candidate, write_qbit_event};
 
@@ -260,13 +260,12 @@ pub async fn rescan_auxpow_height(
                 if head.is_final()
                     && head.block_hash.as_slice() == block_hash.as_ref() as &[u8] =>
             {
-                record_child_chain_block_in_own_transaction(
+                reobserve_child_chain_block_in_own_transaction(
                     client,
                     source_id,
                     height,
                     block_hash.as_ref(),
                     head.current_parent(),
-                    head.outcome,
                     now_epoch_seconds()?,
                 )
                 .await?;

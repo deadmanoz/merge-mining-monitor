@@ -234,6 +234,23 @@ async fn rescan_of_an_unchanged_height_costs_one_hash_lookup() -> Result<()> {
         );
         assert_eq!(advisory_locks_held(&client).await?, 0);
 
+        // The unchanged path keeps the generation the capture was derived
+        // under: a verdict-changing cache replacement committed between the
+        // head check and the write must still make the next rescan capture.
+        client
+            .execute(
+                "UPDATE bitcoin_core_header_cache_state \
+                 SET core_cache_generation = core_cache_generation + 1 WHERE singleton",
+                &[],
+            )
+            .await?;
+        let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
+        assert_eq!(
+            outcome,
+            AuxpowRescanOutcome::Captured(AuxpowHeightOutcome::AuxpowWritten)
+        );
+        assert_eq!(rpc.calls(), (3, 2));
+
         // A block with no AuxPoW leaves no event row, but its head row makes
         // the next rescan just as cheap.
         let rpc = FixtureBitcoindRpc::carrying(HEIGHT, non_auxpow_block());

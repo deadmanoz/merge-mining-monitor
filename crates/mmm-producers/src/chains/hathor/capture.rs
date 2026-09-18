@@ -57,7 +57,8 @@ use mmm_store::{
     ChildChainHeadOutcome, CurrentBlockParent, finish_child_chain_height_operation,
     hathor_sidecar_graph_heads_at_height, load_child_chain_head, load_pool_identities_by_namespace,
     lock_child_chain_height_session, record_child_chain_block,
-    record_child_chain_block_in_own_transaction, write_hathor_capture_in_txn,
+    record_child_chain_block_in_own_transaction, reobserve_child_chain_block_in_own_transaction,
+    write_hathor_capture_in_txn,
 };
 
 /// The most Hathor's difficulty adjustment moves a block's weight from its
@@ -266,13 +267,12 @@ pub async fn rescan_hathor_height(
             && head.is_final()
             && head.block_hash == current_hash
         {
-            record_child_chain_block_in_own_transaction(
+            reobserve_child_chain_block_in_own_transaction(
                 client,
                 source_id,
                 height,
                 &current_hash,
                 head.current_parent(),
-                head.outcome,
                 now_epoch_seconds()?,
             )
             .await?;
