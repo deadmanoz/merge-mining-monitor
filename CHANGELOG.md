@@ -76,6 +76,17 @@ This changelog starts with the initial release.
   production host the old in-refresh pass held live capture on every chain for
   fifteen hours.
 
+- Codify the remote round-trip rule in `AGENTS.md` and `docs/testing.md`:
+  every loop over rows, heights or candidates that performs a remote call
+  states its round-trip budget in the PR, batches or reads locally instead
+  of calling once per item, is bounded or resumable from a persisted
+  cursor, never runs unbounded work inside producer startup or a tick, holds
+  no global advisory lock across more than one batch, reports through
+  `ProgressReporter` and `RpcMetrics`, pins its per-item remote-call count
+  at the transport boundary, and is timed at production latency before it
+  ships. Production sits about 340 ms from every node it reads, and three
+  incidents shared that one-call-per-row shape.
+
 ## [0.8.0] - 2026-09-16
 
 - Register Qbit as live source id 36 and wire its producer through the shared

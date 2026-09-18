@@ -55,6 +55,34 @@ PostgreSQL advisory locks are database-wide, so separate schemas do not isolate
 the Core-cache barrier or its timing assertions. Concurrent tasks inside each
 test still exercise the production locking behavior.
 
+## Round-Trip Budgets
+
+Every remote client (the Bitcoin Core client in `mmm-bitcoin-core` and the
+child-chain clients over the `mmm-rpc` transport) owns an `RpcMetrics`
+handle that counts dispatched HTTP attempts, JSON-RPC elements, retries,
+failures, and latency at the transport boundary, readable in tests through
+the client's `metrics().snapshot()`. An attempt is one dispatched request,
+counted at dispatch and timed through its interpreted response (or until
+the caller abandons it), and a window's mean latency is over the attempts
+that completed in it; a retry and a failure belong to the client's retry
+loop, and a failure is a call that gave up. The scripted Core RPC fixture
+(`crates/mmm-bitcoin-core/src/parent_classifier/core_fixture.rs`) serves
+`getblockhash`, `getblockheader`, and `getblock` from a canned header chain
+so the production classifier can be exercised, and counted, for the
+canonical, stale-competitor, and median-time-past cases. Tests that pin a
+remote-call count per item use these counters; `FakeParentClassifier`'s call
+count measures how often the classifier is invoked, not how many requests it
+makes, and is kept for that purpose only.
+
+Batch operations log progress through `ProgressReporter` and end, finished
+or aborted, with a `job ended` summary and one line per RPC client. Before a
+change to a batch operation ships, it is timed at the production round-trip
+time: the development VM with that latency injected on traffic to Core and
+the child nodes, against the production-copy database (the rehearsal target
+that automates this is planned for the next release; until it lands, the
+timing is taken by hand on that VM). The receipt (items, round trips, wall
+time) goes in the PR beside its `Round-trip budget:` line.
+
 ## Frontend Tests
 
 Playwright tests exercise the static frontend against stubbed or live API
