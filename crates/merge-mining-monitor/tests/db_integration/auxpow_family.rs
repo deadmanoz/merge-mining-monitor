@@ -9,9 +9,10 @@ use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, QBIT_SOURCE_CODE};
 use mmm_capture::test_support::load_raw_namecoin_fixture;
+use mmm_producers::RescanOutcome;
 use mmm_producers::chains::{
-    AuxpowCaptureContext, AuxpowHeightOutcome, AuxpowRescanOutcome, BitcoindRpc, ChainId, by_id,
-    process_auxpow_height, rescan_auxpow_height,
+    AuxpowCaptureContext, AuxpowHeightOutcome, BitcoindRpc, ChainId, by_id, process_auxpow_height,
+    rescan_auxpow_height,
 };
 use mmm_store::{
     CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, ChildChainHeadOutcome, CurrentBlockParent, get_source_id,
@@ -226,7 +227,7 @@ async fn rescan_of_an_unchanged_height_costs_one_hash_lookup() -> Result<()> {
         assert_eq!(head.as_ref().map(|head| head.0.as_str()), Some("captured"));
 
         let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
-        assert_eq!(outcome, AuxpowRescanOutcome::Unchanged);
+        assert_eq!(outcome, RescanOutcome::Unchanged);
         assert_eq!(rpc.calls(), (2, 1));
         assert_eq!(
             rows_at_height(&client, source_id).await?,
@@ -247,7 +248,7 @@ async fn rescan_of_an_unchanged_height_costs_one_hash_lookup() -> Result<()> {
         let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
         assert_eq!(
             outcome,
-            AuxpowRescanOutcome::Captured(AuxpowHeightOutcome::AuxpowWritten)
+            RescanOutcome::Captured(AuxpowHeightOutcome::AuxpowWritten)
         );
         assert_eq!(rpc.calls(), (3, 2));
 
@@ -257,7 +258,7 @@ async fn rescan_of_an_unchanged_height_costs_one_hash_lookup() -> Result<()> {
         let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
         assert_eq!(
             outcome,
-            AuxpowRescanOutcome::Captured(AuxpowHeightOutcome::NonAuxpowSkipped)
+            RescanOutcome::Captured(AuxpowHeightOutcome::NonAuxpowSkipped)
         );
         assert_eq!(rpc.calls(), (1, 1));
         let head = head_at_height(&client, source_id).await?;
@@ -267,7 +268,7 @@ async fn rescan_of_an_unchanged_height_costs_one_hash_lookup() -> Result<()> {
         );
 
         let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
-        assert_eq!(outcome, AuxpowRescanOutcome::Unchanged);
+        assert_eq!(outcome, RescanOutcome::Unchanged);
         assert_eq!(rpc.calls(), (2, 1));
         assert_eq!(advisory_locks_held(&client).await?, 0);
         Ok::<_, anyhow::Error>(())
@@ -305,7 +306,7 @@ async fn rescan_with_a_matching_hash_still_displaces_an_imported_sibling() -> Re
         // The chain still carries A, so the rescan skips the capture, and the
         // displacement maintenance it keeps marks the sibling displaced by A.
         let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
-        assert_eq!(outcome, AuxpowRescanOutcome::Unchanged);
+        assert_eq!(outcome, RescanOutcome::Unchanged);
         assert_eq!(rpc.calls(), (2, 1));
         let mut expected = vec![
             (hash_a.clone(), None, None),
@@ -342,7 +343,7 @@ async fn rescan_of_a_non_final_record_captures_the_height_again() -> Result<()> 
         let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
         assert_eq!(
             outcome,
-            AuxpowRescanOutcome::Captured(AuxpowHeightOutcome::MalformedSkipped)
+            RescanOutcome::Captured(AuxpowHeightOutcome::MalformedSkipped)
         );
         assert_eq!(rpc.calls(), (2, 2));
         assert_eq!(advisory_locks_held(&client).await?, 0);
@@ -387,7 +388,7 @@ async fn an_unchanged_rescan_finishes_a_capture_error_cleanup_a_crash_left_behin
 
         let rpc = FixtureBitcoindRpc::carrying(HEIGHT, block);
         let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
-        assert_eq!(outcome, AuxpowRescanOutcome::Unchanged);
+        assert_eq!(outcome, RescanOutcome::Unchanged);
         assert_eq!(rpc.calls(), (1, 0));
         let errors: i64 = client
             .query_one(

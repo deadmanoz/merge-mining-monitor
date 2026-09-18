@@ -640,6 +640,16 @@ fn compute_tick_window(
     }
 }
 
+/// What a rescan of one height did: the chain still carries the block the
+/// `child_chain_head` row recorded with a final outcome, so nothing was
+/// fetched or written beyond the block's identity and the displacement
+/// maintenance, or the height was captured again with the chain's own outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RescanOutcome<T> {
+    Unchanged,
+    Captured(T),
+}
+
 /// Whether a tick height is a re-observation of one the cursor already
 /// passed, or a new height beyond it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

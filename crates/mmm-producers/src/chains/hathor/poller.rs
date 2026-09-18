@@ -8,12 +8,11 @@ use tokio_postgres::Client;
 use tracing::warn;
 
 use crate::chains::hathor::capture::{
-    HathorCaptureContext, HathorHeightOutcome, HathorRescanOutcome, process_hathor_height,
-    rescan_hathor_height,
+    HathorCaptureContext, HathorHeightOutcome, process_hathor_height, rescan_hathor_height,
 };
 use crate::chains::hathor::rpc::HathorRpcClient;
 use crate::chains::spec::{ChainId, by_id};
-use crate::poller::{ChainPoller, ChainPollerState, HeightProgress};
+use crate::poller::{ChainPoller, ChainPollerState, HeightProgress, RescanOutcome};
 use mmm_store::upsert_pending_reconcile;
 
 /// Hathor live capture chain. Maps the rich [`HathorHeightOutcome`] to the
@@ -67,8 +66,8 @@ impl ChainPoller for HathorChainPoller {
         let outcome =
             rescan_hathor_height(&mut self.state.client, &self.rpc, &self.context, height).await?;
         match outcome {
-            HathorRescanOutcome::Unchanged => Ok(HeightProgress::Advance),
-            HathorRescanOutcome::Captured(outcome) => self.progress_for(height, outcome).await,
+            RescanOutcome::Unchanged => Ok(HeightProgress::Advance),
+            RescanOutcome::Captured(outcome) => self.progress_for(height, outcome).await,
         }
     }
 

@@ -7,10 +7,11 @@ use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier, ParentC
 use mmm_capture::capture::{HATHOR_REVOKE_NON_BTC, MergeMiningEventPayload};
 use mmm_capture::nbits_table::daa_epoch_start;
 use mmm_capture::source_registry::{HATHOR_SOURCE_CODE, NAMECOIN_SOURCE_CODE};
+use mmm_producers::RescanOutcome;
 use mmm_producers::chains::hathor::{
-    ChainObservation, HathorBlockMeta, HathorCaptureContext, HathorHeightOutcome,
-    HathorRescanOutcome, HathorRpc, HathorTransaction, forge_with_weight, process_hathor_height,
-    reconstruct_from_blobs, rescan_hathor_height,
+    ChainObservation, HathorBlockMeta, HathorCaptureContext, HathorHeightOutcome, HathorRpc,
+    HathorTransaction, forge_with_weight, process_hathor_height, reconstruct_from_blobs,
+    rescan_hathor_height,
 };
 use mmm_store::{get_source_id, upsert_merge_mining_event};
 use tokio_postgres::Client;
@@ -249,7 +250,7 @@ async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> R
         // enough to know that, so the transaction is not fetched again and
         // the event is left as it is.
         let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
-        assert_eq!(outcome, HathorRescanOutcome::Unchanged);
+        assert_eq!(outcome, RescanOutcome::Unchanged);
         assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched);
         let active: i64 = client
             .query_one(
@@ -282,7 +283,7 @@ async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> R
         let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
         assert_eq!(
             outcome,
-            HathorRescanOutcome::Captured(HathorHeightOutcome::NonBtcParentSkipped)
+            RescanOutcome::Captured(HathorHeightOutcome::NonBtcParentSkipped)
         );
         assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched + 1);
         assert_revoked_hathor_event(&client, context.source_id(), height).await?;

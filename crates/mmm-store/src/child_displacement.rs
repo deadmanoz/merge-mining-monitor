@@ -413,11 +413,8 @@ async fn apply_child_displacement(
     current_parent: CurrentBlockParent<'_>,
     observed_at: i64,
 ) -> Result<ChildDisplacementOutcome> {
-    let (parent_hash, hashless_decidable) = match current_parent {
-        CurrentBlockParent::Known(parent) => (Some(parent), true),
-        CurrentBlockParent::NoAuxpow => (None, true),
-        CurrentBlockParent::Unknown => (None, false),
-    };
+    let parent_hash = current_parent.parent_hash();
+    let hashless_decidable = !matches!(current_parent, CurrentBlockParent::Unknown);
     let rows = txn
         .query(
             "WITH candidate AS ( \

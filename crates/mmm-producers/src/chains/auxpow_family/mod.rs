@@ -27,7 +27,7 @@ use crate::chains::backfill::{
 use crate::chains::bitcoind_rpc::{BitcoindRpc, BitcoindRpcClient};
 use crate::chains::child_payout_registry::seed_child_payout_identities_for;
 use crate::chains::spec::{ChainSpec, FamilySpec, FetchStrategy, MalformedPolicy, RepairScope};
-use crate::poller::{ChainPoller, ChainPollerState, HeightProgress, Poller};
+use crate::poller::{ChainPoller, ChainPollerState, HeightProgress, Poller, RescanOutcome};
 use crate::producer_runtime::{ProducerContext, ProducerRuntime, run_post_backfill_repair};
 use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::auxpow::{
@@ -249,7 +249,7 @@ pub async fn rescan_auxpow_height(
     rpc: &impl BitcoindRpc,
     context: &AuxpowCaptureContext,
     height: i32,
-) -> Result<RescanOutcome> {
+) -> Result<RescanOutcome<HeightOutcome>> {
     let source_id = context.source_id();
     lock_child_chain_height_session(client, source_id, height).await?;
     let result = async {
@@ -290,16 +290,6 @@ pub async fn rescan_auxpow_height(
     }
     .await;
     finish_child_chain_height_operation(client, source_id, height, result).await
-}
-
-/// What a rescan of one height did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RescanOutcome {
-    /// The chain still carries the recorded block; nothing was fetched or
-    /// written beyond the block hash and the displacement maintenance.
-    Unchanged,
-    /// The height was captured again, with this outcome.
-    Captured(HeightOutcome),
 }
 
 /// One height's capture and writes for the block the caller observed at it,
