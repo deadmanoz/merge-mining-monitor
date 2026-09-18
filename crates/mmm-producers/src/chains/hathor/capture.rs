@@ -263,7 +263,7 @@ pub async fn rescan_hathor_height(
             && block.version == 3
             && let Ok(current_hash) = block_hash_internal(&block.tx_id)
             && let Some(head) = load_child_chain_head(&*client, source_id, height).await?
-            && head.outcome.is_final()
+            && head.is_final()
             && head.block_hash == current_hash
         {
             record_child_chain_block_in_own_transaction(

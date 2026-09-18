@@ -7,13 +7,16 @@ use bitcoin::block::Header;
 use bitcoin::consensus::deserialize;
 use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::ConfiguredParentClassifier;
-use mmm_capture::source_registry::NAMECOIN_SOURCE_CODE;
+use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, QBIT_SOURCE_CODE};
 use mmm_capture::test_support::load_raw_namecoin_fixture;
 use mmm_producers::chains::{
     AuxpowCaptureContext, AuxpowHeightOutcome, AuxpowRescanOutcome, BitcoindRpc, ChainId, by_id,
     process_auxpow_height, rescan_auxpow_height,
 };
-use mmm_store::{get_source_id, upsert_merge_mining_event};
+use mmm_store::{
+    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, ChildChainHeadOutcome, CurrentBlockParent, get_source_id,
+    record_capture_error, record_child_chain_block_in_own_transaction, upsert_merge_mining_event,
+};
 use tokio_postgres::Client;
 
 use crate::support::db::advisory_locks_held;
@@ -326,6 +329,57 @@ async fn rescan_of_a_non_final_record_captures_the_height_again() -> Result<()> 
         );
         assert_eq!(rpc.calls(), (2, 2));
         assert_eq!(advisory_locks_held(&client).await?, 0);
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn an_unchanged_rescan_finishes_a_capture_error_cleanup_a_crash_left_behind() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let source_id = get_source_id(&client, QBIT_SOURCE_CODE).await?;
+        let context = AuxpowCaptureContext::new_with_classifier(
+            &client,
+            by_id(ChainId::Qbit),
+            ConfiguredParentClassifier::Disabled,
+        )
+        .await?;
+        // The state a process leaves when it stops between committing a final
+        // head for a recovered height and clearing that height's error row.
+        let block = non_auxpow_block();
+        let hash = block_hash_of(&block).to_byte_array().to_vec();
+        record_child_chain_block_in_own_transaction(
+            &mut client,
+            source_id,
+            HEIGHT,
+            &hash,
+            CurrentBlockParent::NoAuxpow,
+            ChildChainHeadOutcome::NoAuxpow,
+            1_000,
+        )
+        .await?;
+        record_capture_error(
+            &client,
+            source_id,
+            HEIGHT,
+            Some(&hash),
+            CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF,
+            None,
+            1_000,
+        )
+        .await?;
+
+        let rpc = FixtureBitcoindRpc::carrying(HEIGHT, block);
+        let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
+        assert_eq!(outcome, AuxpowRescanOutcome::Unchanged);
+        assert_eq!(rpc.calls(), (1, 0));
+        let errors: i64 = client
+            .query_one(
+                "SELECT count(*) FROM capture_error WHERE source_id = $1 AND height = $2",
+                &[&source_id, &HEIGHT],
+            )
+            .await?
+            .get(0);
+        assert_eq!(errors, 0, "the fast path clears the resolved capture error");
         Ok::<_, anyhow::Error>(())
     })
 }

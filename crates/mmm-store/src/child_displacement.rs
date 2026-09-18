@@ -92,10 +92,20 @@ pub struct ChildChainHead {
     /// hashless observations the way the original capture did.
     pub btc_parent_header_hash: Option<Vec<u8>>,
     pub outcome: ChildChainHeadOutcome,
+    /// The Bitcoin Core header cache has replaced a boundary that can change
+    /// verdicts since this row was written, so its outcome is not final.
+    pub core_cache_changed: bool,
     pub observed_at: i64,
 }
 
 impl ChildChainHead {
+    /// Whether a rescan that finds the same block hash may skip the capture:
+    /// the outcome is final and the Core cache it was derived under has not
+    /// replaced a verdict-changing boundary since.
+    pub fn is_final(&self) -> bool {
+        self.outcome.is_final() && !self.core_cache_changed
+    }
+
     /// The [`CurrentBlockParent`] the original capture recorded with.
     pub fn current_parent(&self) -> CurrentBlockParent<'_> {
         match (&self.btc_parent_header_hash, self.outcome) {
@@ -116,9 +126,10 @@ pub async fn load_child_chain_head<C: GenericClient>(
 ) -> Result<Option<ChildChainHead>> {
     let row = client
         .query_opt(
-            "SELECT block_hash, btc_parent_header_hash, outcome, observed_at \
-               FROM child_chain_head \
-              WHERE source_id = $1 AND child_height = $2",
+            "SELECT h.block_hash, h.btc_parent_header_hash, h.outcome, \
+                    h.core_cache_generation < s.core_cache_generation, h.observed_at \
+               FROM child_chain_head h, bitcoin_core_header_cache_state s \
+              WHERE h.source_id = $1 AND h.child_height = $2 AND s.singleton",
             &[&source_id, &child_height],
         )
         .await
@@ -128,7 +139,8 @@ pub async fn load_child_chain_head<C: GenericClient>(
             block_hash: row.get(0),
             btc_parent_header_hash: row.get(1),
             outcome: ChildChainHeadOutcome::from_db_str(row.get::<_, &str>(2))?,
-            observed_at: row.get(3),
+            core_cache_changed: row.get(3),
+            observed_at: row.get(4),
         })
     })
     .transpose()
@@ -297,12 +309,15 @@ pub async fn record_child_chain_block(
     };
     txn.execute(
         "INSERT INTO child_chain_head \
-             (source_id, child_height, block_hash, btc_parent_header_hash, outcome, observed_at) \
-         VALUES ($1, $2, $3, $4, $5, $6) \
+             (source_id, child_height, block_hash, btc_parent_header_hash, outcome, \
+              core_cache_generation, observed_at) \
+         SELECT $1, $2, $3, $4, $5, s.core_cache_generation, $6 \
+           FROM bitcoin_core_header_cache_state s WHERE s.singleton \
          ON CONFLICT (source_id, child_height) DO UPDATE SET \
              block_hash = EXCLUDED.block_hash, \
              btc_parent_header_hash = EXCLUDED.btc_parent_header_hash, \
              outcome = EXCLUDED.outcome, \
+             core_cache_generation = EXCLUDED.core_cache_generation, \
              observed_at = EXCLUDED.observed_at",
         &[
             &source_id,

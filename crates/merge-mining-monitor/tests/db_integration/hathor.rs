@@ -261,6 +261,31 @@ async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> R
             .get(0);
         assert_eq!(active, 1);
         assert_eq!(advisory_locks_held(&client).await?, 0);
+
+        // A verdict came from the Core header cache. When the cache replaces a
+        // boundary that can change verdicts (its generation moves) the head is
+        // no longer final: the rescan captures the height again, and with the
+        // epoch's nBits changed underneath it the event is revoked.
+        client
+            .execute(
+                "UPDATE bitcoin_core_header SET bits = $1 WHERE height = $2",
+                &[&i64::from(0x170c_69ea_u32 ^ 1), &daa_epoch_start(710_969)],
+            )
+            .await?;
+        client
+            .execute(
+                "UPDATE bitcoin_core_header_cache_state \
+                 SET core_cache_generation = core_cache_generation + 1 WHERE singleton",
+                &[],
+            )
+            .await?;
+        let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(
+            outcome,
+            HathorRescanOutcome::Captured(HathorHeightOutcome::NonBtcParentSkipped)
+        );
+        assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched + 1);
+        assert_revoked_hathor_event(&client, context.source_id(), height).await?;
         Ok(())
     })
 }

@@ -25,9 +25,24 @@
 -- decide hashless observations the same way the original capture did; it is
 -- NULL when the block yielded no verified proof.
 --
+-- A verdict that came from the Bitcoin Core header cache (Hathor and Elastos
+-- take the parent's nBits from it) can change when the cache replaces a
+-- shallow boundary or gains a boundary inside existing coverage, and today
+-- that is caught by re-observing the height. `core_cache_generation` on the
+-- cache state counts those replacements; the head row records the generation
+-- it was written under, and a rescan treats a row from an older generation
+-- as not final, so the height is captured again and its verdict re-derived.
+--
 -- No backfill: the first rescan after this migration fills the window, and a
 -- missing row is the same as a changed hash. `source_id` follows the source
 -- registry's identity, not its retirement, so no ON DELETE clause.
+
+ALTER TABLE bitcoin_core_header_cache_state
+    ADD COLUMN core_cache_generation BIGINT NOT NULL DEFAULT 0
+        CHECK (core_cache_generation >= 0);
+
+COMMENT ON COLUMN bitcoin_core_header_cache_state.core_cache_generation IS
+  'Incremented by every cache replacement that can change a verdict already given (a replaced shallow boundary, or a boundary inside existing coverage); child_chain_head rows from an older generation are not final for a rescan.';
 
 CREATE TABLE child_chain_head (
     source_id BIGINT NOT NULL REFERENCES source(id),
@@ -37,6 +52,7 @@ CREATE TABLE child_chain_head (
     outcome TEXT NOT NULL CHECK (
         outcome IN ('captured', 'recorded', 'non_auxpow', 'unverified', 'held')
     ),
+    core_cache_generation BIGINT NOT NULL,
     observed_at BIGINT NOT NULL,
     PRIMARY KEY (source_id, child_height)
 );

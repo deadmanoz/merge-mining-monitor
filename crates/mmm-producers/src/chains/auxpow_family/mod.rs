@@ -257,7 +257,7 @@ pub async fn rescan_auxpow_height(
         let head = load_child_chain_head(&*client, source_id, height).await?;
         match head {
             Some(head)
-                if head.outcome.is_final()
+                if head.is_final()
                     && head.block_hash.as_slice() == block_hash.as_ref() as &[u8] =>
             {
                 record_child_chain_block_in_own_transaction(
@@ -270,6 +270,18 @@ pub async fn rescan_auxpow_height(
                     now_epoch_seconds()?,
                 )
                 .await?;
+                // A final head is committed in the capture transaction before
+                // the capture's own error row is cleared, so a process that
+                // stopped between the two leaves a resolved error behind; the
+                // fast path finishes that cleanup instead of skipping past it.
+                if context.family().malformed_policy == MalformedPolicy::HoldInterval
+                    && clear_capture_error(client, source_id, height).await?
+                {
+                    info!(
+                        chain = context.spec.slug,
+                        height, "capture error resolved; height recorded as unchanged"
+                    );
+                }
                 Ok(RescanOutcome::Unchanged)
             }
             _ => process_locked_height(client, rpc, context, height, block_hash)

@@ -495,12 +495,22 @@ async fn update_bitcoin_core_header_cache_state(
         || recheck_orphans
         || horizon_advanced
         || horizon_time > previous.horizon_time;
+    // A replaced shallow boundary or a boundary inside existing coverage can
+    // change verdicts already given, so every child-chain head recorded under
+    // the previous cache generation stops being final for a rescan.
+    let verdicts_may_change = shallow_reorged || epoch_coverage_overlaps_prior_horizon;
     transaction
         .execute(
             "UPDATE bitcoin_core_header_cache_state \
-             SET horizon_time = $1, reclassification_needed = $2, orphan_recheck_needed = $3 \
+             SET horizon_time = $1, reclassification_needed = $2, orphan_recheck_needed = $3, \
+                 core_cache_generation = core_cache_generation + CASE WHEN $4 THEN 1 ELSE 0 END \
              WHERE singleton",
-            &[&horizon_time, &reclassification_needed, &recheck_orphans],
+            &[
+                &horizon_time,
+                &reclassification_needed,
+                &recheck_orphans,
+                &verdicts_may_change,
+            ],
         )
         .await
         .context("update Core-header-cache state")?;
