@@ -732,8 +732,10 @@ async fn core_absence_attested_only_on_candidate_not_found() {
     assert_eq!(absent.kind, ParentKind::Unknown);
     assert!(absent.core_absence_attested);
 
-    // Candidate not-found + predecessor transient error: still attested,
-    // because the candidate itself was proven absent.
+    // Candidate not-found + predecessor transient error: the candidate was
+    // proven absent, but the inferred-stale check stopped at a tolerated
+    // failure, so the verdict is not attested. The row stays pending and the
+    // next recheck, with the lookup recovered, can still promote it.
     let prev_err_source = Arc::new(MockCoreHeaderSource::default());
     prev_err_source.set_verbose(header.prev_blockhash, MockResult::Error);
     let prev_err = BitcoinCoreParentClassifier::from_source(prev_err_source)
@@ -741,7 +743,7 @@ async fn core_absence_attested_only_on_candidate_not_found() {
         .await
         .unwrap();
     assert_eq!(prev_err.kind, ParentKind::Unknown);
-    assert!(prev_err.core_absence_attested);
+    assert!(!prev_err.core_absence_attested);
 
     let strict_prev_err_source = Arc::new(MockCoreHeaderSource::default());
     strict_prev_err_source.set_verbose(header.prev_blockhash, MockResult::Error);
@@ -754,9 +756,16 @@ async fn core_absence_attested_only_on_candidate_not_found() {
             .to_string()
             .contains("Bitcoin Core predecessor lookup failed")
     );
+}
+
+#[tokio::test]
+async fn core_absence_attested_only_when_the_competitor_lookup_completes() {
+    let header = test_header(40, 0x207f_ffff);
 
     // Candidate not-found + inferred-stale path returns unknown for a missing
-    // competitor: attested (the candidate was absent).
+    // competitor: attested (the candidate was absent and Core has no block at
+    // the height). A competitor lookup that fails is not a missing competitor:
+    // unattested.
     let canonical_prev = || KnownBlockContext {
         kind: BlockKind::Canonical,
         btc_height: Some(720_000),
@@ -789,6 +798,20 @@ async fn core_absence_attested_only_on_candidate_not_found() {
             .unwrap();
     assert_eq!(strict_missing_comp.kind, ParentKind::Unknown);
     assert!(strict_missing_comp.core_absence_attested);
+
+    let comp_err_source = Arc::new(MockCoreHeaderSource::default());
+    comp_err_source.set_block_hash(720_001, MockResult::Error);
+    let comp_err = BitcoinCoreParentClassifier::from_source(comp_err_source)
+        .classify_parent(
+            &header,
+            ParentPreflight {
+                known_prev: Some(canonical_prev()),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(comp_err.kind, ParentKind::Unknown);
+    assert!(!comp_err.core_absence_attested);
 
     // Candidate not-found + inferred-stale path returns unknown for a
     // competitor whose nBits mismatches: attested.

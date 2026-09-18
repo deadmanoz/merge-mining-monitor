@@ -44,7 +44,10 @@ tree view from that evidence.
 Orphan status is not a `btc_parent_kind`. It is the derived
 `block.btc_orphan_class` (`strict_btc_orphan`, `weak_btc_orphan`, or
 `excluded`; NULL while pending), set only after a Core-absence-attested verdict
-and the Core-cache-backed strict/weak orphan classifier. Before the strict/weak
+and the Core-cache-backed strict/weak orphan classifier. A verdict attests
+absence only when the candidate was found absent and every further consensus
+lookup completed or found nothing; a lookup the lenient live policy tolerated
+leaves the row pending for the next recheck. Before the strict/weak
 resolution runs, the classifier consults the operator-imported
 `known_stale_block` membership (loaded by `import-known-stales` from the
 upstream `bitcoin-data/stale-blocks` dataset): a catalogued stale is `excluded`

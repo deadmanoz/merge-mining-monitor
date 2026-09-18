@@ -13,7 +13,12 @@ This changelog starts with the initial release.
   outcome is final, running only the displacement maintenance. From the
   production host every remote call costs about 340 ms, and a rescan window
   of 20 heights was costing three calls and a full capture each per tick.
-  `record_child_chain_block` takes the outcome it records.
+  `record_child_chain_block` takes the outcome it records. Because a skipped
+  rescan no longer re-runs classification, the lenient live classifier no
+  longer attests Core absence when a predecessor or competitor lookup fails
+  after the candidate was found absent: the verdict stays a pending unknown
+  for the next recheck instead of an orphan class a recovered lookup could
+  have promoted to an inferred stale.
 
 ## [0.8.0] - 2026-09-16
 
