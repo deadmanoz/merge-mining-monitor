@@ -72,6 +72,7 @@ pub fn stale_verdict_with_competitor_header(
         header: competitor_header,
         height,
         coinbase: None,
+        coinbase_unavailable: false,
     };
     ParentClassification {
         canonical_competitor_header: Some(competitor),

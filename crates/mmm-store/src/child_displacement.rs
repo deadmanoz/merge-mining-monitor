@@ -103,8 +103,9 @@ pub enum EvidenceMarker {
     /// The producer records a block on its own proof alone.
     None,
     /// Hathor holds a block's declared work against every captured block's
-    /// sidecar at the height: the newest sidecar row there, which a new
-    /// capture and a sidecar added to an imported event both move.
+    /// sidecar at the height: a digest of every sidecar's graph head there
+    /// (the bytes the floor reads), which a new capture, a sidecar added to
+    /// an imported event and a replay rewriting a sidecar all move.
     HathorSidecars,
 }
 
@@ -117,9 +118,15 @@ impl EvidenceMarker {
     ) -> Result<Option<i64>> {
         match self {
             Self::None => Ok(None),
+            // The first 64 bits of an MD5 over every sidecar's graph head at
+            // the height, in row order, as a BIGINT; NULL when there is none.
             Self::HathorSidecars => Ok(client
                 .query_one(
-                    "SELECT max(h.id) FROM hathor_merge_mining_evidence h \
+                    "SELECT ('x' || left(md5(string_agg( \
+                                h.id::text || ':' || \
+                                md5(substr(h.funds_graph, h.funds_graph_split + 1, 45)), \
+                                ',' ORDER BY h.id)), 16))::bit(64)::bigint \
+                       FROM hathor_merge_mining_evidence h \
                        JOIN merge_mining_event e ON e.id = h.event_id \
                       WHERE e.source_id = $1 AND e.child_height = $2",
                     &[&source_id, &child_height],

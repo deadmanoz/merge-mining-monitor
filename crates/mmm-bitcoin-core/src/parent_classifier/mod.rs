@@ -124,6 +124,10 @@ pub struct ClassifiedHeader {
     pub header: Header,
     pub height: i32,
     pub coinbase: Option<BitcoinCoreBlockCoinbase>,
+    /// The coinbase fetch failed for a reason a retry may clear (not a body
+    /// Core will never hold). Enrichment is optional, so the header is still
+    /// usable; a verdict built on it is marked incomplete.
+    pub coinbase_unavailable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -191,9 +191,10 @@ impl BitcoinCoreParentClassifier {
             // provisional so the height is retried.
             Competitor::Unavailable => return Ok(ParentClassification::incomplete_unknown(header)),
         };
+        let verdict = classify_core_stale_header(header, height, competitor, coinbase);
         Ok(ParentClassification {
-            incomplete: coinbase_unavailable,
-            ..classify_core_stale_header(header, height, competitor, coinbase)
+            incomplete: verdict.incomplete || coinbase_unavailable,
+            ..verdict
         })
     }
 
@@ -456,19 +457,7 @@ impl BitcoinCoreParentClassifier {
     /// one the verdict is marked incomplete for, so the capture is retried
     /// and the coinbase fetched again.
     async fn fetch_coinbase(&self, hash: BlockHash) -> CoinbaseFetch {
-        match self.source.get_block_coinbase(hash).await {
-            Ok(coinbase) => CoinbaseFetch::Found(coinbase),
-            Err(err)
-                if bitcoin_rpc::is_not_found(&err) || bitcoin_rpc::is_block_body_pruned(&err) =>
-            {
-                warn!(hash = %hash, error = %err, "Bitcoin Core does not hold the block body; no coinbase");
-                CoinbaseFetch::Missing
-            }
-            Err(err) => {
-                warn!(hash = %hash, error = %err, "Bitcoin Core coinbase fetch failed");
-                CoinbaseFetch::Unavailable
-            }
-        }
+        coinbase_fetch(self.source.get_block_coinbase(hash).await, hash)
     }
 }
 
@@ -481,32 +470,27 @@ impl CoreRpcHeaderSource {
         self.client.get_block_hash(height).await
     }
 
-    /// A predecessor or competitor header with its coinbase. A body Core will
-    /// never hold (not found, pruned) leaves the coinbase absent; any other
-    /// coinbase failure is the lookup's failure, so the lenient caller marks
-    /// its verdict incomplete and the strict caller fails, rather than a final
-    /// verdict silently missing the competitor's attribution.
+    /// A predecessor or competitor header with its coinbase. Coinbase
+    /// enrichment is optional, so the header is returned whatever the coinbase
+    /// fetch did: a body Core will never hold (not found, pruned) leaves it
+    /// absent, and any other failure marks it unavailable, so the verdict
+    /// built on the header is provisional and the coinbase fetched again on
+    /// the retry rather than missing for good behind a final head.
     async fn get_header_impl(&self, hash: BlockHash, height: i32) -> Result<ClassifiedHeader> {
         let header = self.client.get_block_header(hash).await?;
-        let coinbase = match self.client.get_block_coinbase(hash).await {
-            Ok(coinbase) => Some(coinbase),
-            Err(err)
-                if bitcoin_rpc::is_not_found(&err) || bitcoin_rpc::is_block_body_pruned(&err) =>
-            {
-                warn!(hash = %hash, error = %err, "Bitcoin Core does not hold the block body; no coinbase");
-                None
-            }
-            Err(err) => {
-                return Err(err)
-                    .with_context(|| format!("Bitcoin Core coinbase fetch failed for {hash}"));
-            }
-        };
+        let (coinbase, coinbase_unavailable) =
+            match coinbase_fetch(self.client.get_block_coinbase(hash).await, hash) {
+                CoinbaseFetch::Found(coinbase) => (Some(coinbase), false),
+                CoinbaseFetch::Missing => (None, false),
+                CoinbaseFetch::Unavailable => (None, true),
+            };
         Ok(ClassifiedHeader {
             hash: hash.to_byte_array().to_vec(),
             prev_hash: header.prev_blockhash.to_byte_array().to_vec(),
             header,
             height,
             coinbase,
+            coinbase_unavailable,
         })
     }
 
@@ -600,6 +584,7 @@ pub(crate) fn classify_core_stale_header(
         prev_hash: header.prev_blockhash.to_byte_array().to_vec(),
         canonical_predecessor_header: None,
         canonical_competitor_hash: Some(competitor.hash.clone()),
+        incomplete: competitor.coinbase_unavailable,
         canonical_competitor_header: Some(competitor),
         coinbase,
         difficulty_epoch_ok: Some(true),
@@ -607,7 +592,6 @@ pub(crate) fn classify_core_stale_header(
         live_observed: true,
         core_attested: true,
         core_absence_attested: false,
-        incomplete: false,
     }
 }
 
@@ -628,6 +612,12 @@ pub(crate) fn classify_inferred_stale_with_competitor(
         };
     }
 
+    // The siblings are persisted with the verdict; a coinbase one of them
+    // could not fetch is retried with the height rather than lost for good.
+    let incomplete = competitor.coinbase_unavailable
+        || predecessor
+            .as_ref()
+            .is_some_and(|predecessor| predecessor.coinbase_unavailable);
     ParentClassification {
         kind: ParentKind::Stale,
         height: Some(height),
@@ -642,7 +632,7 @@ pub(crate) fn classify_inferred_stale_with_competitor(
         live_observed: false,
         core_attested: false,
         core_absence_attested: false,
-        incomplete: false,
+        incomplete,
     }
 }
 
@@ -654,6 +644,22 @@ fn inferred_height_source(prev_kind: BlockKind) -> HeightSource {
             unreachable!("error-block predecessor is not eligible for stale inference")
         }
         BlockKind::Unknown => unreachable!("unknown predecessor kind is not classified"),
+    }
+}
+
+/// Sort a coinbase fetch result: a body Core will never hold (not found,
+/// pruned) is permanently missing; any other failure may clear on a retry.
+fn coinbase_fetch(result: Result<BitcoinCoreBlockCoinbase>, hash: BlockHash) -> CoinbaseFetch {
+    match result {
+        Ok(coinbase) => CoinbaseFetch::Found(coinbase),
+        Err(err) if bitcoin_rpc::is_not_found(&err) || bitcoin_rpc::is_block_body_pruned(&err) => {
+            warn!(hash = %hash, error = %err, "Bitcoin Core does not hold the block body; no coinbase");
+            CoinbaseFetch::Missing
+        }
+        Err(err) => {
+            warn!(hash = %hash, error = %err, "Bitcoin Core coinbase fetch failed");
+            CoinbaseFetch::Unavailable
+        }
     }
 }
 

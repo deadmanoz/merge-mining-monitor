@@ -119,7 +119,7 @@ only a changed hash, a missing record, a record whose verdict may still
 change (a proof that did not parse, a verdict that follows the Core cache,
 or a parent classification a tolerated Core lookup failure cut short), an
 open `capture_error` at the height (only a successful reprocessing may clear
-it, whatever the record says), or, for Hathor, a sidecar added at the height
+it, whatever the record says), or, for Hathor, a sidecar added or rewritten at the height
 since the record (its work-floor check must be held against the evidence
 now) captures the height again. Elastos fetches its whole block in one
 call either way, and RSK re-captures its window in full. Only

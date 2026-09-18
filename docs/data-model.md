@@ -246,18 +246,19 @@ The same write keeps `child_chain_head`, one row per `(source_id,
 child_height)`: the block hash the producer last observed there, the parent
 its proof named (NULL when no proof verified), an `outcome` (`captured`,
 `recorded`, `non_auxpow`, `unverified`, `held`), a producer-defined
-`evidence_marker` (Hathor: the newest sidecar row at the height; NULL for a
-producer that records on its own proof alone) and `observed_at`. It is the
+`evidence_marker` (Hathor: a digest of every sidecar's graph head at the
+height, the bytes its work floor reads; NULL for a producer that records on
+its own proof alone) and `observed_at`. It is the
 durable answer to "what did the chain carry here when we last looked", which
 the event rows cannot give for a block that yields no event. A trailing
 rescan compares one block-hash lookup against it: the same hash with a final
 outcome (`captured`, `recorded`, `non_auxpow`) skips the proof fetch and the
 capture, and runs only the displacement maintenance above; a different hash,
 no row, or a non-final outcome captures the height again, as does, for
-Hathor, a sidecar captured or imported at the height since the row was
-written, because Hathor records a block only after holding its declared work
-against every block captured there and that check must see the evidence
-now. A capture whose parent classification a tolerated Core lookup failure
+Hathor, a sidecar captured, imported or rewritten at the height since the
+row was written, because Hathor records a block only after holding its
+declared work against every block captured there and that check must see
+the evidence now. A capture whose parent classification a tolerated Core lookup failure
 cut short records `unverified`, so the height is re-observed and the verdict
 retried whatever orphan class the parent already carries. Migration `0026`
 adds the table with no backfill; the first rescan window after it fills the

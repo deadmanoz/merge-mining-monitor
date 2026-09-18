@@ -300,6 +300,24 @@ async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> R
         let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
         assert_eq!(outcome, RescanOutcome::Unchanged);
         assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched);
+
+        // A replay that rewrites the sidecar's graph head (the bytes the
+        // work floor reads) changes the evidence just as a new sidecar does.
+        client
+            .execute(
+                "UPDATE hathor_merge_mining_evidence SET funds_graph = \
+                     overlay(funds_graph PLACING '\\x00'::bytea FROM funds_graph_split + 1) \
+                 WHERE event_id = $1",
+                &[&imported_id],
+            )
+            .await?;
+        let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(
+            outcome,
+            RescanOutcome::Captured(HathorHeightOutcome::AuxpowWritten)
+        );
+        let fetched = fetched + 1;
+        assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched);
         client
             .execute(
                 "DELETE FROM merge_mining_event WHERE child_block_hash = $1",

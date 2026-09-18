@@ -176,6 +176,7 @@ fn classified_header(header: Header, height: i32) -> ClassifiedHeader {
         header,
         height,
         coinbase: None,
+        coinbase_unavailable: false,
     }
 }
 
@@ -574,6 +575,28 @@ async fn a_coinbase_the_node_cannot_serve_is_final_but_a_failed_fetch_is_not() {
     assert_eq!(verdict.kind, ParentKind::Canonical);
     assert!(verdict.coinbase.is_none());
     assert!(verdict.incomplete);
+}
+
+#[test]
+fn a_competitor_without_its_coinbase_keeps_the_verdict_but_marks_it_provisional() {
+    // Coinbase enrichment is optional, so the competitor header still gives
+    // the stale verdict; the failed fetch makes it provisional so the height
+    // is retried and the coinbase fetched again.
+    let header = test_header(40, 0x207f_ffff);
+    let mut competitor = classified_header(test_header(41, 0x207f_ffff), 720_001);
+    competitor.coinbase_unavailable = true;
+    let inferred = classify_inferred_stale_with_competitor(
+        &header,
+        720_001,
+        None,
+        BlockKind::Canonical,
+        Some(competitor.clone()),
+    );
+    assert_eq!(inferred.kind, ParentKind::Stale);
+    assert!(inferred.incomplete);
+    let indexed = classify_core_stale_header(&header, 720_001, Some(competitor), None);
+    assert_eq!(indexed.kind, ParentKind::Stale);
+    assert!(indexed.incomplete);
 }
 
 #[tokio::test]

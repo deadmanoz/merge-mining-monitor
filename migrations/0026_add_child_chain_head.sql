@@ -37,10 +37,10 @@
 -- `evidence_marker` fingerprints the evidence at the height a producer's
 -- decision to record depends on, as the producer defines it (Hathor holds a
 -- block's declared work against every captured block's sidecar there, so it
--- records the newest sidecar row at the height; a producer that records on
--- its own proof alone records NULL), so a rescan can tell that an import or
--- capture since has changed that evidence and take the full capture, which
--- re-runs the check.
+-- records a digest of every sidecar's graph head at the height; a producer
+-- that records on its own proof alone records NULL), so a rescan can tell
+-- that an import, capture or replay since has changed that evidence and take
+-- the full capture, which re-runs the check.
 --
 -- No backfill: the first rescan after this migration fills the window, and a
 -- missing row is the same as a changed hash. `source_id` follows the source
@@ -68,4 +68,4 @@ CREATE TABLE child_chain_head (
 );
 
 COMMENT ON COLUMN child_chain_head.evidence_marker IS
-  'A producer-defined fingerprint of the evidence at this height its recording depended on (Hathor: the newest sidecar row there; NULL when the producer records on its own proof alone); evidence added since makes a rescan take the full capture.';
+  'A producer-defined fingerprint of the evidence at this height its recording depended on (Hathor: a digest of every sidecar''s graph head there; NULL when the producer records on its own proof alone); evidence added or rewritten since makes a rescan take the full capture.';

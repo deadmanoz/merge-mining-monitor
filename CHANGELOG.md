@@ -16,8 +16,8 @@ This changelog starts with the initial release.
   `record_child_chain_block` takes the outcome it records and a
   producer-defined evidence marker, so Hathor, which records a block only
   after holding its declared work against every captured block's sidecar at
-  the height, takes the full capture again once an import, capture or cache
-  ingest has added a sidecar there. A capture whose parent classification a
+  the height, takes the full capture again once an import, capture or replay
+  has added or rewritten a sidecar there. A capture whose parent classification a
   tolerated Core lookup failure cut short records a non-final head, so the
   height is re-observed and the verdict retried whatever orphan class the
   parent already carries. Because a skipped
