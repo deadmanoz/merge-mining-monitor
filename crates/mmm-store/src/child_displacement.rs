@@ -95,6 +95,10 @@ pub struct ChildChainHead {
     /// The Bitcoin Core header cache has replaced a boundary that can change
     /// verdicts since this row was written, so its outcome is not final.
     pub core_cache_changed: bool,
+    /// An event was captured or imported at the height since this row was
+    /// written. A producer whose recording depends on the other evidence at
+    /// the height (Hathor's work floor) must re-run that check.
+    pub evidence_changed: bool,
     pub observed_at: i64,
 }
 
@@ -127,7 +131,11 @@ pub async fn load_child_chain_head<C: GenericClient>(
     let row = client
         .query_opt(
             "SELECT h.block_hash, h.btc_parent_header_hash, h.outcome, \
-                    h.core_cache_generation < s.core_cache_generation, h.observed_at \
+                    h.core_cache_generation < s.core_cache_generation, \
+                    h.evidence_marker IS DISTINCT FROM ( \
+                        SELECT max(e.id) FROM merge_mining_event e \
+                         WHERE e.source_id = $1 AND e.child_height = $2), \
+                    h.observed_at \
                FROM child_chain_head h, bitcoin_core_header_cache_state s \
               WHERE h.source_id = $1 AND h.child_height = $2 AND s.singleton",
             &[&source_id, &child_height],
@@ -140,7 +148,8 @@ pub async fn load_child_chain_head<C: GenericClient>(
             btc_parent_header_hash: row.get(1),
             outcome: ChildChainHeadOutcome::from_db_str(row.get::<_, &str>(2))?,
             core_cache_changed: row.get(3),
-            observed_at: row.get(4),
+            evidence_changed: row.get(4),
+            observed_at: row.get(5),
         })
     })
     .transpose()
@@ -317,14 +326,18 @@ pub async fn record_child_chain_block(
     txn.execute(
         "INSERT INTO child_chain_head \
              (source_id, child_height, block_hash, btc_parent_header_hash, outcome, \
-              core_cache_generation, observed_at) \
-         SELECT $1, $2, $3, $4, $5, s.core_cache_generation, $6 \
+              core_cache_generation, evidence_marker, observed_at) \
+         SELECT $1, $2, $3, $4, $5, s.core_cache_generation, \
+                (SELECT max(e.id) FROM merge_mining_event e \
+                  WHERE e.source_id = $1 AND e.child_height = $2), \
+                $6 \
            FROM bitcoin_core_header_cache_state s WHERE s.singleton \
          ON CONFLICT (source_id, child_height) DO UPDATE SET \
              block_hash = EXCLUDED.block_hash, \
              btc_parent_header_hash = EXCLUDED.btc_parent_header_hash, \
              outcome = EXCLUDED.outcome, \
              core_cache_generation = EXCLUDED.core_cache_generation, \
+             evidence_marker = EXCLUDED.evidence_marker, \
              observed_at = EXCLUDED.observed_at",
         &[
             &source_id,

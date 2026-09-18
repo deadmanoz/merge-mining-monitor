@@ -13,7 +13,11 @@ This changelog starts with the initial release.
   outcome is final, running only the displacement maintenance. From the
   production host every remote call costs about 340 ms, and a rescan window
   of 20 heights was costing three calls and a full capture each per tick.
-  `record_child_chain_block` takes the outcome it records. Because a skipped
+  `record_child_chain_block` takes the outcome it records, with the newest
+  event at the height as an evidence marker, so Hathor, which records a block
+  only after holding its declared work against every block captured there,
+  takes the full capture again once an import or capture has changed that
+  evidence. Because a skipped
   rescan no longer re-runs classification, the lenient live classifier no
   longer attests Core absence when a predecessor or competitor lookup fails
   after the candidate was found absent: the verdict stays a pending unknown

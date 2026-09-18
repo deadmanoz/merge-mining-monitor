@@ -33,6 +33,12 @@
 -- it was written under, and a rescan treats a row from an older generation
 -- as not final, so the height is captured again and its verdict re-derived.
 --
+-- `evidence_marker` is the newest event at the height when the row was
+-- written, so a producer whose decision to record depends on the other
+-- evidence at the height (Hathor holds a block's declared work against every
+-- captured block there) can tell that an import or capture since has changed
+-- that evidence and take the full capture, which re-runs the check.
+--
 -- No backfill: the first rescan after this migration fills the window, and a
 -- missing row is the same as a changed hash. `source_id` follows the source
 -- registry's identity, not its retirement, so no ON DELETE clause.
@@ -53,6 +59,10 @@ CREATE TABLE child_chain_head (
         outcome IN ('captured', 'recorded', 'non_auxpow', 'unverified', 'held')
     ),
     core_cache_generation BIGINT NOT NULL,
+    evidence_marker BIGINT,
     observed_at BIGINT NOT NULL,
     PRIMARY KEY (source_id, child_height)
 );
+
+COMMENT ON COLUMN child_chain_head.evidence_marker IS
+  'The newest merge_mining_event id at this height when the row was written (NULL when none); evidence added since changes the inputs of a producer''s recording guard, so a rescan then takes the full capture.';

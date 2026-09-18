@@ -263,6 +263,30 @@ async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> R
         assert_eq!(active, 1);
         assert_eq!(advisory_locks_held(&client).await?, 0);
 
+        // An event captured or imported at the height since the record (a
+        // historical publication import) changes the evidence the block was
+        // held against: the rescan takes the full capture, which re-runs the
+        // work-floor check, and records the block again against the evidence
+        // now, after which the fast path applies again.
+        let imported = exact_observation("500001-near-parent", height, [0x5b; 32], 2_030)?;
+        upsert_merge_mining_event(&client, context.source_id(), &imported).await?;
+        let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(
+            outcome,
+            RescanOutcome::Captured(HathorHeightOutcome::AuxpowWritten)
+        );
+        let fetched = fetched + 1;
+        assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched);
+        let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(outcome, RescanOutcome::Unchanged);
+        assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched);
+        client
+            .execute(
+                "DELETE FROM merge_mining_event WHERE child_block_hash = $1",
+                &[&[0x5b_u8; 32].as_slice()],
+            )
+            .await?;
+
         // A verdict came from the Core header cache. When the cache replaces a
         // boundary that can change verdicts (its generation moves) the head is
         // no longer final: the rescan captures the height again, and with the

@@ -242,11 +242,14 @@ pub async fn process_hathor_height(
 ///
 /// The `/block_at_height` metadata alone names the block, so when the chain
 /// still carries the block the `child_chain_head` row recorded with a final
-/// outcome, the `/transaction` fetch, the reconstruction and the write path
-/// are skipped; displacement maintenance still runs under the height lock,
-/// with the record the original capture made. Any other case runs the full
-/// capture on the metadata already fetched. Voided, absent, misrouted and
-/// non-merge-mined blocks behave exactly as in [`process_hathor_height`].
+/// outcome, and no event has been captured or imported at the height since
+/// (the record was decided under [`may_record_current_block`] against the
+/// evidence then), the `/transaction` fetch, the reconstruction and the write
+/// path are skipped; displacement maintenance still runs under the height
+/// lock, with the record the original capture made. Any other case runs the
+/// full capture on the metadata already fetched, which holds the block
+/// against the evidence now. Voided, absent, misrouted and non-merge-mined
+/// blocks behave exactly as in [`process_hathor_height`].
 pub async fn rescan_hathor_height(
     client: &mut Client,
     rpc: &impl HathorRpc,
@@ -263,6 +266,7 @@ pub async fn rescan_hathor_height(
         if let Some(current_hash) = merge_mined_block_at(height, &block)
             && let Some(head) = load_child_chain_head(&*client, source_id, height).await?
             && head.is_final()
+            && !head.evidence_changed
             && head.block_hash == current_hash
         {
             reobserve_child_chain_block_in_own_transaction(

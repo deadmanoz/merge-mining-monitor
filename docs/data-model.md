@@ -245,13 +245,18 @@ had revoked as `hathor_superseded` or `hathor_voided` to this model.
 The same write keeps `child_chain_head`, one row per `(source_id,
 child_height)`: the block hash the producer last observed there, the parent
 its proof named (NULL when no proof verified), an `outcome` (`captured`,
-`recorded`, `non_auxpow`, `unverified`, `held`) and `observed_at`. It is the
+`recorded`, `non_auxpow`, `unverified`, `held`), the newest event at the
+height when the row was written (`evidence_marker`) and `observed_at`. It is the
 durable answer to "what did the chain carry here when we last looked", which
 the event rows cannot give for a block that yields no event. A trailing
 rescan compares one block-hash lookup against it: the same hash with a final
 outcome (`captured`, `recorded`, `non_auxpow`) skips the proof fetch and the
 capture, and runs only the displacement maintenance above; a different hash,
-no row, or a non-final outcome captures the height again. Migration `0026`
+no row, or a non-final outcome captures the height again, as does, for
+Hathor, an event captured or imported at the height since the row was
+written, because Hathor records a block only after holding its declared work
+against every block captured there and that check must see the evidence
+now. Migration `0026`
 adds the table with no backfill; the first rescan window after it fills the
 rows.
 
