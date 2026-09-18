@@ -41,7 +41,7 @@
 //! (`effective_seed_cursor` still clamps any seed up to `effective_start - 1`).
 
 use std::future::Future;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
 use tokio::time::sleep;
@@ -53,6 +53,7 @@ use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_read_model::{
     ReconcileReadModelConfig, is_reconcile_budget_exhausted, run_reconcile_read_model,
 };
+use mmm_rpc::{RpcMetrics, RpcMetricsSnapshot};
 use mmm_store::{load_poll_cursor, upsert_poll_cursor_with_target};
 
 use crate::live_loop::{LiveProducer, TickOutcome, run_live_loop};
@@ -238,6 +239,46 @@ pub trait ChainPoller {
     async fn drain_pending(&mut self) -> Result<()> {
         Ok(())
     }
+    /// The chain client's transport counters, when the poller owns a metered
+    /// client; test pollers do not.
+    fn chain_rpc_metrics(&self) -> Option<RpcMetrics> {
+        None
+    }
+    /// The parent classifier the poller captures against, when it owns one.
+    fn parent_classifier(&self) -> Option<&ConfiguredParentClassifier> {
+        None
+    }
+    /// The transport counters the tick summary reports as deltas: the chain
+    /// client's, plus the Core classifier's when it is Core-backed.
+    fn rpc_metrics(&self) -> Vec<RpcMetrics> {
+        let mut metrics = Vec::from_iter(self.chain_rpc_metrics());
+        metrics.extend(self.parent_classifier().and_then(|c| c.metrics()));
+        metrics
+    }
+}
+
+/// What one tick did, for its summary line: filled in as the tick proceeds,
+/// so a failed tick still reports the tip it fetched and the heights it
+/// completed before the failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct TickSummary {
+    tip: Option<i32>,
+    processed: usize,
+    rescanned: usize,
+    new: i32,
+    /// A height answered with a hold (a replay hold, a new height not yet
+    /// capturable, or a cursor-blocking abort), as the policy observed it; a
+    /// tick that failed on an error is not held.
+    held: bool,
+}
+
+/// What the tick policy counted while it ran, kept by the caller so a tick
+/// that fails part-way still reports the heights it completed and the holds
+/// it met.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct TickProgress {
+    processed: usize,
+    held: bool,
 }
 
 /// The chain-agnostic live poller driver.
@@ -321,20 +362,49 @@ impl<C: ChainPoller> Poller<C> {
         run_live_loop(self).await
     }
 
-    /// One tick: drain pending work, fetch the tip, compute the trailing-rescan
-    /// window, and run the per-height policy. The cursor is persisted with the
-    /// fetched tip as `target_height` so progress lag is observable even on an
-    /// empty tick; if the policy advances the cursor mid-window before erroring,
-    /// the partial progress is persisted before the error propagates so completed
-    /// heights are not reprocessed. Returns the count of heights processed.
+    /// One tick: refresh the Core cache, drain pending work, fetch the tip,
+    /// compute the trailing-rescan window, and run the per-height policy. The
+    /// cursor is persisted with the fetched tip as `target_height` so progress
+    /// lag is observable even on an empty tick; if the policy advances the
+    /// cursor mid-window before erroring, the partial progress is persisted
+    /// before the error propagates so completed heights are not reprocessed.
+    /// Returns the count of heights processed.
+    ///
+    /// The whole tick, every step above included, is timed and summarized in
+    /// one `poll tick` line whether it processed a window, found none, or
+    /// failed, with each RPC client's counters as deltas over the tick, so a
+    /// slow tick is attributable to the calls it made.
     pub async fn poll_tick(&mut self) -> Result<usize> {
+        let tick_start = Instant::now();
+        let metrics = self.chain.rpc_metrics();
+        let before = metrics.iter().map(RpcMetrics::snapshot).collect::<Vec<_>>();
+        let mut summary = TickSummary::default();
+        let result = self.poll_tick_steps(&mut summary).await;
+        info!(
+            chain = self.chain.name(),
+            cursor = self.cursor,
+            tip = summary.tip,
+            rescanned = summary.rescanned,
+            new = summary.new,
+            held = summary.held,
+            failed = result.is_err(),
+            tick_ms = tick_start.elapsed().as_millis(),
+            rpc = rpc_deltas(&metrics, &before),
+            "poll tick"
+        );
+        result.map(|()| summary.processed)
+    }
+
+    async fn poll_tick_steps(&mut self, summary: &mut TickSummary) -> Result<()> {
         self.chain.refresh_core_cache().await?;
         self.drain_pending_best_effort().await;
         let tip = self.fetch_tip_and_persist_target().await?;
+        summary.tip = Some(tip);
         let Some(window) = self.tick_window(tip) else {
-            return Ok(0);
+            return Ok(());
         };
-        self.run_window_and_persist_progress(window, tip).await
+        self.run_window_and_persist_progress(window, tip, summary)
+            .await
     }
 
     fn log_starting(&self) {
@@ -433,21 +503,39 @@ impl<C: ChainPoller> Poller<C> {
         &mut self,
         window: TickWindow,
         tip: i32,
-    ) -> Result<usize> {
-        // `cursor` is a local so its `&mut` borrow does not alias the
-        // `&mut self.chain` captured by the processor closure.
+        summary: &mut TickSummary,
+    ) -> Result<()> {
+        // `cursor` and `processed` are locals so their `&mut` borrows do not
+        // alias the `&mut self.chain` captured by the processor closure.
+        let old_cursor = self.cursor;
         let mut cursor = self.cursor;
-        let result = run_tick_policy(&mut cursor, window, async |height, kind| match kind {
-            TickHeight::Rescan => self.chain.rescan_height(height).await,
-            TickHeight::New => self.chain.process_height(height).await,
-        })
-        .await;
+        let mut progress = TickProgress::default();
+        let result =
+            run_tick_policy_counting(&mut cursor, &mut progress, window, async |height, kind| {
+                match kind {
+                    TickHeight::Rescan => self.chain.rescan_height(height).await,
+                    TickHeight::New => self.chain.process_height(height).await,
+                }
+            })
+            .await;
 
-        // `run_tick_policy` advances `cursor` height-by-height and can still
-        // return an error on a later new height, so persist any progress before
+        // The policy advances `cursor` height-by-height and can still return
+        // an error on a later new height, so persist any progress before
         // propagating; otherwise the completed heights replay next tick/restart.
         self.persist_progress_if_advanced(cursor, tip).await;
 
+        // Only the new sub-range moves `cursor` (replay is best-effort and never
+        // touches it), so `cursor - old_cursor` is exactly the count of new
+        // heights advanced; the rest of the `processed` count is replay heights
+        // re-scanned. The summary is filled whether or not the tick failed, so
+        // the failed line still names the work done.
+        let new = cursor - old_cursor;
+        summary.processed = progress.processed;
+        summary.rescanned = progress
+            .processed
+            .saturating_sub(usize::try_from(new).unwrap_or(0));
+        summary.new = new;
+        summary.held = progress.held;
         result
     }
 
@@ -472,6 +560,16 @@ impl<C: ChainPoller> Poller<C> {
             );
         }
     }
+}
+
+/// One line of per-client deltas since `before`, for the tick summary.
+fn rpc_deltas(metrics: &[RpcMetrics], before: &[RpcMetricsSnapshot]) -> String {
+    metrics
+        .iter()
+        .zip(before)
+        .map(|(metrics, before)| metrics.snapshot().since(before).to_string())
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 impl<C: ChainPoller> LiveProducer for Poller<C> {
@@ -658,19 +756,37 @@ pub enum TickHeight {
     New,
 }
 
-/// Apply the per-tick failure policy over `window`, advancing `cursor`. The
-/// processor is a closure so this is unit-testable without a live `Client`.
+/// [`run_tick_policy_counting`] returning the count of heights processed, the
+/// shape the policy's unit tests assert on.
+#[cfg(test)]
+async fn run_tick_policy<F>(cursor: &mut i32, window: TickWindow, process: F) -> Result<usize>
+where
+    F: AsyncFnMut(i32, TickHeight) -> Result<HeightProgress>,
+{
+    let mut progress = TickProgress::default();
+    run_tick_policy_counting(cursor, &mut progress, window, process)
+        .await
+        .map(|()| progress.processed)
+}
+
+/// Apply the per-tick failure policy over `window`, advancing `cursor` and
+/// counting into `progress` as it goes, so a tick that fails part-way still
+/// reports the heights it completed and the holds it met. The processor is a
+/// closure so this is unit-testable without a live `Client`.
 ///
 /// Replay sub-range (`<= cursor`) is best-effort (failures logged and skipped)
 /// and is handed to the processor as [`TickHeight::Rescan`]; the new sub-range
 /// (`> cursor`) is fail-fast, only advances on `Advance`, and is handed over as
 /// [`TickHeight::New`].
-async fn run_tick_policy<F>(cursor: &mut i32, window: TickWindow, mut process: F) -> Result<usize>
+async fn run_tick_policy_counting<F>(
+    cursor: &mut i32,
+    progress: &mut TickProgress,
+    window: TickWindow,
+    mut process: F,
+) -> Result<()>
 where
     F: AsyncFnMut(i32, TickHeight) -> Result<HeightProgress>,
 {
-    let mut processed = 0usize;
-
     // Replay sub-range: already-processed heights, re-scanned for reorgs.
     // Capped at `end` so a cursor ahead of the node tip never requests heights
     // above the tip.
@@ -678,9 +794,14 @@ where
     for height in window.rescan_start..=replay_end {
         match process(height, TickHeight::Rescan).await {
             Ok(HeightProgress::Abort) => {
+                progress.held = true;
                 bail!("cursor-blocking hold at replay height {height}; aborting tick")
             }
-            Ok(_) => processed += 1,
+            Ok(HeightProgress::Hold) => {
+                progress.held = true;
+                progress.processed += 1;
+            }
+            Ok(HeightProgress::Advance) => progress.processed += 1,
             Err(err) => warn!(
                 height,
                 error = %err,
@@ -695,9 +816,10 @@ where
             match process(height, TickHeight::New).await {
                 Ok(HeightProgress::Advance) => {
                     *cursor = (*cursor).max(height);
-                    processed += 1;
+                    progress.processed += 1;
                 }
                 Ok(HeightProgress::Hold) => {
+                    progress.held = true;
                     debug!(
                         height,
                         "new height not yet captured (hold); retry next tick"
@@ -705,6 +827,7 @@ where
                     break;
                 }
                 Ok(HeightProgress::Abort) => {
+                    progress.held = true;
                     bail!("cursor-blocking hold at new height {height}; aborting tick")
                 }
                 Err(err) => return Err(err),
@@ -712,7 +835,7 @@ where
         }
     }
 
-    Ok(processed)
+    Ok(())
 }
 
 /// Parse a `FromStr` env value, returning `default` when the key is unset. A

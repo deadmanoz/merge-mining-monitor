@@ -70,6 +70,7 @@ use mmm_capture::capture::{MergeMiningEventPayload, ParentKind, apply_classifica
 use mmm_capture::core_coinbase::resolve_btc_pool_from_coinbase;
 use mmm_capture::nbits_table::NbitsTable;
 use mmm_capture::pool_resolver::PoolResolver;
+use mmm_capture::progress::ProgressReporter;
 use mmm_store::get_source_id;
 
 use mutation::PrimaryDiff;
@@ -575,10 +576,12 @@ async fn run_reconcile_missing_read_model(
     nbits_table: Option<&NbitsTable>,
 ) -> Result<usize> {
     let mut repaired = 0;
+    let progress = classifier_progress("reconcile-read-model-missing", None, classifier);
     for iteration in 0..config.max_iterations {
         let candidates = load_reconcile_candidates(client, config, classifier.is_enabled()).await?;
         if candidates.is_empty() {
             debug!(iteration, repaired, "read-model reconciliation converged");
+            progress.finish();
             return Ok(repaired);
         }
 
@@ -605,9 +608,26 @@ async fn run_reconcile_missing_read_model(
                 }
             }
             repaired += 1;
+            progress.advance(1);
         }
     }
     Err(reconcile_budget_exhausted(config))
+}
+
+/// A progress reporter for a batch job that classifies against Core, with the
+/// classifier's transport metrics in its final summary when it is Core-backed.
+/// The reporter takes a rendering closure rather than the handle, so
+/// `mmm-capture` never depends on `mmm-rpc`.
+pub(crate) fn classifier_progress(
+    job: &'static str,
+    total: Option<u64>,
+    classifier: &ConfiguredParentClassifier,
+) -> ProgressReporter {
+    let progress = ProgressReporter::new(job, total);
+    match classifier.metrics() {
+        Some(metrics) => progress.with_summary(metrics.summary()),
+        None => progress,
+    }
 }
 
 /// `--all` mode: bounded full rescan of every non-`near` event in the optional
@@ -628,6 +648,7 @@ async fn run_reconcile_all_read_model(
     };
     let mut repaired = 0;
     let mut cursor: Option<(i64, i64)> = None;
+    let progress = classifier_progress("reconcile-read-model-all", None, classifier);
 
     for iteration in 0..config.max_iterations {
         let cursor_height = cursor.map(|(child_height, _)| child_height);
@@ -659,6 +680,7 @@ async fn run_reconcile_all_read_model(
                 iteration,
                 repaired, "full read-model reconciliation completed"
             );
+            progress.finish();
             return Ok(repaired);
         }
 
@@ -675,6 +697,7 @@ async fn run_reconcile_all_read_model(
             )
             .await?;
             repaired += 1;
+            progress.advance(1);
         }
     }
 

@@ -1082,8 +1082,11 @@ dependencies = [
  "anyhow",
  "bitcoin",
  "corepc-client",
+ "hex",
  "jsonrpc",
  "mmm-capture",
+ "mmm-rpc",
+ "serde_json",
  "tokio",
  "tracing",
 ]

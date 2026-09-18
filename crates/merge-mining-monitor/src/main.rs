@@ -61,6 +61,7 @@ async fn cmd_import_all(args: std::env::Args) -> Result<()> {
     let summary =
         mmm_producers::run_historical_import_all(&mut pg_client, &classifier, &config).await?;
     summary.print();
+    log_core_rpc_metrics("import-all", &classifier);
     Ok(())
 }
 
@@ -70,6 +71,7 @@ async fn cmd_import_dataset(args: std::env::Args) -> Result<()> {
     let summary =
         mmm_producers::run_historical_import(&mut pg_client, &classifier, &config).await?;
     summary.print();
+    log_core_rpc_metrics("import-dataset", &classifier);
 
     Ok(())
 }
@@ -172,6 +174,7 @@ async fn cmd_sync_bitcoin_core(args: std::env::Args) -> Result<()> {
             coinbase_failed = stats.coinbase_failed,
             "synced Bitcoin Core backbone"
         );
+        info!(job = "sync-bitcoin-core", metrics = %rpc.metrics().snapshot(), "Bitcoin Core RPC metrics");
     }
 
     Ok(())
@@ -226,6 +229,18 @@ async fn cmd_restore_merge_mining_event(mut args: std::env::Args) -> Result<()> 
     info!(event_id, "restored merge_mining_event");
 
     Ok(())
+}
+
+/// Log the Bitcoin Core classifier's RPC transport metrics as the batch job's
+/// final line, when the classifier is Core-backed (always true for the
+/// commands that call this: they connect via `connect_core_required_from_env`).
+fn log_core_rpc_metrics(
+    job: &'static str,
+    classifier: &mmm_bitcoin_core::ConfiguredParentClassifier,
+) {
+    if let Some(metrics) = classifier.metrics() {
+        info!(job, metrics = %metrics.snapshot(), "Bitcoin Core RPC metrics");
+    }
 }
 
 fn bitcoin_core_rpc_for_command(command: &str) -> Result<mmm_bitcoin_core::BitcoinCoreRpcClient> {

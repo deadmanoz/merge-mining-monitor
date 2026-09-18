@@ -7,7 +7,9 @@
 use anyhow::{Context, Result, bail};
 use tracing::{info, warn};
 
-use crate::chains::backfill::{BackfillConfig, BackfillHeightEffect, run_delayed_backfill_range};
+use crate::chains::backfill::{
+    BackfillConfig, BackfillHeightEffect, backfill_progress, run_delayed_backfill_range,
+};
 use crate::chains::hathor::capture::{
     ChainObservation, HathorCaptureContext, HathorHeightOutcome, process_hathor_height,
 };
@@ -94,7 +96,12 @@ pub(crate) async fn run_hathor_backfill(
         "starting bounded Hathor backfill via public REST"
     );
 
-    let summary = run_delayed_backfill_range(&config, delay_ms, async |height| {
+    let progress = backfill_progress(
+        "chain-backfill",
+        &config,
+        crate::chains::rpc_metrics_for_reporting(rpc.metrics(), context.parent_classifier()),
+    );
+    let summary = run_delayed_backfill_range(&config, delay_ms, &progress, async |height| {
         let outcome = process_hathor_height(&mut client, &rpc, &context, height).await?;
         hathor_backfill_effect(height, outcome, skip_holds)
     })
@@ -107,7 +114,6 @@ pub(crate) async fn run_hathor_backfill(
         malformed_skipped = summary.malformed_skipped,
         "completed bounded Hathor backfill"
     );
-
     run_post_backfill_repair(
         &mut client,
         context.parent_classifier(),
@@ -117,6 +123,7 @@ pub(crate) async fn run_hathor_backfill(
         "Hathor backfill",
     )
     .await?;
+    progress.finish();
 
     Ok(())
 }

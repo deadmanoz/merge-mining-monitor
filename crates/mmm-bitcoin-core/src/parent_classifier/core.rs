@@ -49,6 +49,7 @@ fn now_unix_secs() -> i64 {
 pub struct BitcoinCoreParentClassifier {
     source: Arc<dyn CoreHeaderSource>,
     max_concurrency: usize,
+    metrics: mmm_rpc::RpcMetrics,
 }
 
 pub(crate) struct CoreRpcHeaderSource {
@@ -71,9 +72,11 @@ impl BitcoinCoreParentClassifier {
     pub fn from_env_url(url: &str) -> Result<Self> {
         let client = BitcoinCoreRpcClient::from_env_url(url)?;
         let max_concurrency = client.max_concurrency();
+        let metrics = client.metrics();
         Ok(Self {
             source: Arc::new(CoreRpcHeaderSource { client }),
             max_concurrency,
+            metrics,
         })
     }
 
@@ -82,7 +85,15 @@ impl BitcoinCoreParentClassifier {
         Self {
             source,
             max_concurrency: 1,
+            metrics: mmm_rpc::RpcMetrics::new("core"),
         }
+    }
+
+    /// Bitcoin Core RPC transport counters (attempts, retries, failures,
+    /// latency), read through the classifier so callers that only hold a
+    /// [`ConfiguredParentClassifier`] can report them.
+    pub fn metrics(&self) -> mmm_rpc::RpcMetrics {
+        self.metrics.clone()
     }
 
     pub async fn classify_parent(

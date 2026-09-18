@@ -20,7 +20,7 @@ use tracing::warn;
 
 use crate::chains::is_transient_http_status;
 use mmm_rpc as rpc_http;
-use rpc_http::build_rpc_client;
+use rpc_http::{RpcMetrics, build_rpc_client};
 
 /// Default primary endpoint: the Foundation's public mainnet node 1.
 pub(crate) const DEFAULT_API_URL: &str = "https://node1.mainnet.hathor.network/v1a";
@@ -77,6 +77,7 @@ pub struct HathorTransaction {
 pub(crate) struct HathorRpcClient {
     config: HathorRpcConfig,
     http: Client,
+    metrics: RpcMetrics,
 }
 
 impl HathorRpcClient {
@@ -84,7 +85,17 @@ impl HathorRpcClient {
     /// configured `request_timeout` applies to every request.
     pub(crate) fn new(config: HathorRpcConfig) -> Result<Self> {
         let http = build_rpc_client(config.request_timeout)?;
-        Ok(Self { config, http })
+        Ok(Self {
+            config,
+            http,
+            metrics: RpcMetrics::new("hathor"),
+        })
+    }
+
+    /// Transport counters for this client, including retries this client's own
+    /// retry/fallback loop issues.
+    pub(crate) fn metrics(&self) -> RpcMetrics {
+        self.metrics.clone()
     }
 
     /// Current chain tip: the max height across the DAG best-block tips.
@@ -154,57 +165,114 @@ impl HathorRpcClient {
                 // The final attempt on the final endpoint falls straight through to
                 // the error below, so there is no point sleeping after it.
                 let is_final = url_idx == last_url_idx && attempt + 1 == self.config.max_retries;
-                match self
-                    .http
-                    .get(format!("{base_url}{path}"))
-                    .query(query)
-                    .send()
-                    .await
-                {
-                    Ok(response) => {
-                        let status = response.status();
-                        if is_transient_http_status(status) {
-                            // Record the status so a persistent transient (e.g. a
-                            // sustained 429) surfaces a diagnosable error instead of
-                            // the generic "exhausted retries" message below.
-                            last_err = Some(anyhow::anyhow!(
-                                "Hathor REST {path} returned transient status {status} (attempt {})",
-                                attempt + 1
-                            ));
-                            if is_final {
-                                break;
-                            }
-                            let wait = retry_after(response.headers())
-                                .unwrap_or_else(|| backoff_delay(attempt));
+                // Every attempt is timed through its consumed body and recorded,
+                // a cancelled one included; the loop records the retry it
+                // issues and the failure it gives up with.
+                let outcome = {
+                    let _attempt = self.metrics.attempt(1);
+                    self.try_get::<T>(base_url, path, query).await
+                };
+                let retry_after = match outcome {
+                    GetOutcome::Ok(value) => return Ok(value),
+                    GetOutcome::Failed(err) => {
+                        self.metrics.record_failure();
+                        return Err(err);
+                    }
+                    GetOutcome::Transient {
+                        err,
+                        status,
+                        retry_after,
+                    } => {
+                        if let Some(status) = status
+                            && !is_final
+                        {
                             warn!(%base_url, path, %status, "Hathor REST transient status; retrying");
-                            tokio::time::sleep(wait).await;
-                            continue;
                         }
-                        let response = response.error_for_status().with_context(|| {
-                            format!("Hathor REST {path} returned status {status}")
-                        })?;
-                        return response
-                            .json::<T>()
-                            .await
-                            .with_context(|| format!("decode Hathor REST response for {path}"));
+                        last_err = Some(err.context(format!("attempt {}", attempt + 1)));
+                        retry_after
                     }
-                    Err(err) => {
-                        last_err = Some(anyhow::Error::new(err).context(format!(
-                            "send Hathor REST request {path} (attempt {})",
-                            attempt + 1
-                        )));
-                        if is_final {
-                            break;
-                        }
-                        tokio::time::sleep(backoff_delay(attempt)).await;
-                    }
+                };
+                if is_final {
+                    break;
                 }
+                self.metrics.record_retry();
+                tokio::time::sleep(retry_after.unwrap_or_else(|| backoff_delay(attempt))).await;
             }
         }
+        self.metrics.record_failure();
         Err(last_err.unwrap_or_else(|| {
             anyhow::anyhow!("Hathor REST {path} exhausted retries on all endpoints")
         }))
     }
+
+    /// One HTTP attempt: send, check the status, decode the body. A transport
+    /// error or a transient status (429, 5xx) is worth a retry, carrying the
+    /// endpoint's `Retry-After` when it sent one; any other status or an
+    /// undecodable body is a terminal failure.
+    async fn try_get<T>(
+        &self,
+        base_url: &str,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> GetOutcome<T>
+    where
+        T: DeserializeOwned,
+    {
+        let response = match self
+            .http
+            .get(format!("{base_url}{path}"))
+            .query(query)
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                return GetOutcome::Transient {
+                    err: anyhow::Error::new(err)
+                        .context(format!("send Hathor REST request {path}")),
+                    status: None,
+                    retry_after: None,
+                };
+            }
+        };
+        let status = response.status();
+        if is_transient_http_status(status) {
+            // The status names the transient, so a persistent one (a sustained
+            // 429) surfaces a diagnosable error instead of the generic
+            // "exhausted retries" message.
+            return GetOutcome::Transient {
+                err: anyhow::anyhow!("Hathor REST {path} returned transient status {status}"),
+                status: Some(status),
+                retry_after: retry_after(response.headers()),
+            };
+        }
+        let decoded = async {
+            response
+                .error_for_status()
+                .with_context(|| format!("Hathor REST {path} returned status {status}"))?
+                .json::<T>()
+                .await
+                .with_context(|| format!("decode Hathor REST response for {path}"))
+        }
+        .await;
+        match decoded {
+            Ok(value) => GetOutcome::Ok(value),
+            Err(err) => GetOutcome::Failed(err),
+        }
+    }
+}
+
+/// What one Hathor REST attempt produced.
+enum GetOutcome<T> {
+    Ok(T),
+    /// Worth a retry: a transport error (no status) or a transient status,
+    /// with the endpoint's own delay when it sent a `Retry-After`.
+    Transient {
+        err: anyhow::Error,
+        status: Option<reqwest::StatusCode>,
+        retry_after: Option<Duration>,
+    },
+    Failed(anyhow::Error),
 }
 
 /// The RPC trait the Hathor capture state machine depends on, abstracted as a
@@ -336,8 +404,13 @@ mod tests {
             http_429(),
             http_200_json(r#"{"dag":{"best_block_tips":[{"height":42}]}}"#),
         ]);
-        let tip = test_client(addr, 3).get_chain_tip().await.unwrap();
+        let client = test_client(addr, 3);
+        let tip = client.get_chain_tip().await.unwrap();
         assert_eq!(tip, 42);
+        let snapshot = client.metrics().snapshot();
+        assert_eq!(snapshot.http_attempts, 2);
+        assert_eq!(snapshot.retries, 1);
+        assert_eq!(snapshot.failures, 0);
     }
 
     #[tokio::test]
@@ -345,12 +418,19 @@ mod tests {
         // Every attempt on the only endpoint returns 429: the error must name the
         // transient status, not the generic "exhausted retries on all endpoints".
         let addr = spawn_http_mock(vec![http_429(), http_429()]);
-        let err = test_client(addr, 2).get_chain_tip().await.unwrap_err();
+        let client = test_client(addr, 2);
+        let err = client.get_chain_tip().await.unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("429") || msg.to_lowercase().contains("transient status"),
             "error should name the transient status, got: {msg}"
         );
+        // Two attempts, one retry between them, and the exhausted call is the
+        // one failure.
+        let snapshot = client.metrics().snapshot();
+        assert_eq!(snapshot.http_attempts, 2);
+        assert_eq!(snapshot.retries, 1);
+        assert_eq!(snapshot.failures, 1);
     }
 
     #[test]

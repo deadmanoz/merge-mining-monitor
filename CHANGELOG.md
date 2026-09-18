@@ -28,6 +28,24 @@ This changelog starts with the initial release.
   for the next recheck instead of an orphan class a recovered lookup could
   have promoted to an inferred stale.
 
+- Count remote calls at the transport boundary. Every RPC client (Bitcoin
+  Core, the bitcoind family, RSK, Elastos, Hathor) owns an `RpcMetrics`
+  handle from `mmm-rpc`: an attempt is one dispatched HTTP request, timed
+  from dispatch to the consumed response body, and retries and failures are
+  the retry loop's own, so an exhausted budget counts as one failed call and
+  an iteration that timed out waiting for a local slot counts as nothing.
+  Every poll tick, empty or failed ones included, logs one line with cursor,
+  tip, rescanned, new, held, the whole tick's duration and each client's
+  counters as deltas over the tick; batch jobs (the recheck, both reconcile
+  modes, the backfills and the queue drains) log done, total, rate and ETA
+  at most every thirty seconds through a shared `ProgressReporter`, and end,
+  finished or aborted, with the child-chain and Core transport lines. A
+  scripted Core RPC fixture runs the production
+  classifier in tests and pins its call pattern: two requests for a
+  canonical parent, five for a stale competitor, eighteen for an unknown
+  parent whose median-time-past walk fetches eleven ancestors one at a time.
+  No retry, timeout, lock or ordering behaviour changes.
+
 ## [0.8.0] - 2026-09-16
 
 - Register Qbit as live source id 36 and wire its producer through the shared

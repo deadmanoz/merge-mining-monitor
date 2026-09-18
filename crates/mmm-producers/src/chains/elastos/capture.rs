@@ -704,6 +704,12 @@ impl ChainPoller for ElastosChainPoller {
     async fn chain_tip(&self) -> Result<i32> {
         self.rpc.get_current_height().await
     }
+    fn chain_rpc_metrics(&self) -> Option<mmm_rpc::RpcMetrics> {
+        Some(self.rpc.metrics())
+    }
+    fn parent_classifier(&self) -> Option<&ConfiguredParentClassifier> {
+        Some(self.context.parent_classifier())
+    }
 
     async fn refresh_core_cache(&mut self) -> Result<()> {
         self.context

@@ -36,6 +36,10 @@ publication-artifact script checks. That workspace test includes the
 - `fixtures/rod/` - pinned ROD publication sample for the same PowData
   target contract.
 - `fixtures/api/` - shared API examples listed in `fixtures/api/manifest.json`.
+- `crates/mmm-bitcoin-core/src/parent_classifier/core_fixture.rs` - a
+  scripted Bitcoin Core JSON-RPC server built from a canned header chain, so
+  the production classifier runs in unit tests and its request pattern is
+  pinned through the client's `RpcMetrics` snapshot.
 
 API fixtures are contract examples, not exhaustive endpoint tests. Endpoint and
 route tests cover behavior; fixture tests keep examples parseable and

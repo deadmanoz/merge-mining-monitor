@@ -106,6 +106,7 @@ async fn run_reclassify_unknown_parents_with_policy(
     }
     let mut changed = 0;
     let mut cursor: Option<(i64, i64)> = None;
+    let progress = crate::classifier_progress("reclassify-unknown-parents", None, classifier);
     loop {
         let cursor_height = cursor.map(|(child_height, _)| child_height);
         let cursor_id = cursor.map(|(_, id)| id);
@@ -193,7 +194,9 @@ async fn run_reclassify_unknown_parents_with_policy(
             if kind != ParentKind::Unknown.as_db_str() || orphan_class != before_class {
                 changed += 1;
             }
+            progress.advance(1);
         }
     }
+    progress.finish();
     Ok(changed)
 }

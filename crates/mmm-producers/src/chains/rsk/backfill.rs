@@ -120,6 +120,11 @@ pub(crate) async fn run_rsk_backfill(
     // failed chunk.
     let started = Instant::now();
     let mut summary = RskBackfillSummary::default();
+    let progress = crate::chains::backfill::backfill_progress(
+        "rsk-backfill",
+        &config,
+        crate::chains::rpc_metrics_for_reporting(rpc.metrics(), context.parent_classifier()),
+    );
     let mut fetches = futures::stream::iter(config.start_height..=config.end_height)
         .map(|height| fetch_rsk_height_bundle(rpc.clone(), i64::from(height)))
         .buffered(fetch_concurrency);
@@ -127,6 +132,7 @@ pub(crate) async fn run_rsk_backfill(
     while let Some(bundle) = fetches.next().await {
         let outcome = write_rsk_bundle(&mut client, &context, bundle?, &now_epoch_seconds).await?;
         accumulate_rsk_summary(&mut summary, outcome);
+        progress.advance(1);
     }
 
     let elapsed = started.elapsed();
@@ -159,6 +165,7 @@ pub(crate) async fn run_rsk_backfill(
         "RSK backfill",
     )
     .await?;
+    progress.finish();
 
     Ok(())
 }

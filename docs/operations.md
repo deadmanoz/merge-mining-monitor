@@ -198,6 +198,23 @@ node's current tip, and every height between the publication boundary and
 that tip is never captured, although `/api/v1/sources` still reports the
 source as live. The same applies after any controlled cursor reset.
 
+Every poll tick, whether it processed a window, found none, or failed, logs
+one `poll tick` line with the cursor, tip, the heights rescanned and new (as
+far as a failed tick got), whether any height answered with a hold, the
+duration of the whole tick (Core-cache refresh, pending work, tip
+fetch, capture and cursor persistence), and each RPC client's counters as
+deltas over that tick, the child chain's and Bitcoin Core's, for example
+`rpc="namecoin: attempts=53 elements=53 retries=0 failures=0 latency_avg_ms=341; core: attempts=4 ..."`.
+Every batch job (a backfill, a reconcile, the scheduled recheck, a queue
+drain) logs progress with done, total, rate and ETA at most every thirty
+seconds and ends, whether it finished or aborted on an error, with a
+`job ended` line and one cumulative line per client, which adds
+`latency_max_ms`. An attempt is one dispatched HTTP request timed through its
+interpreted response; retries and failures are the client's retry loop's own,
+and a failure is a call that gave up. From the production host every remote
+call costs about 340 ms, so `attempts` per tick or per height is the first
+number to read when a job is slower than expected.
+
 A Qbit backfill exits non-zero when any height in the range holds an unresolved
 capture error. The written evidence and the read-model repair still complete;
 the non-zero exit says the range is not fully covered. Inspect the open heights

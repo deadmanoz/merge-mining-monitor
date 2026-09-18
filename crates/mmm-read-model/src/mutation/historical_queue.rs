@@ -82,6 +82,7 @@ async fn drain_historical_reconcile_queue_with_budget(
     cascade_budget: usize,
     nbits_table: Option<&NbitsTable>,
 ) -> Result<()> {
+    let progress = crate::classifier_progress("historical-reconcile-queue-drain", None, classifier);
     loop {
         let bulk_reconciled =
             reconcile_proven_canonical_batch(client, CANONICAL_BULK_RECONCILE_BATCH_SIZE).await?;
@@ -90,6 +91,7 @@ async fn drain_historical_reconcile_queue_with_budget(
                 parents_reconciled = bulk_reconciled,
                 "bulk-reconciled proven canonical historical parents"
             );
+            progress.advance(bulk_reconciled);
             continue;
         }
 
@@ -104,6 +106,7 @@ async fn drain_historical_reconcile_queue_with_budget(
             .await
             .context("load historical reconcile work")?
         else {
+            progress.finish();
             return Ok(());
         };
         let parent_hash: Vec<u8> = row.get(0);
@@ -121,6 +124,7 @@ async fn drain_historical_reconcile_queue_with_budget(
                 nbits_table,
             )
             .await?;
+            progress.advance(1);
             continue;
         }
 
@@ -149,6 +153,7 @@ async fn drain_historical_reconcile_queue_with_budget(
             )
             .await
             .context("complete historical reconcile work")?;
+        progress.advance(1);
     }
 }
 
