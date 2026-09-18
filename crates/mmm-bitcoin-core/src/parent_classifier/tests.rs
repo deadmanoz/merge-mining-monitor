@@ -16,6 +16,7 @@ fn assert_send<T: Send>(_: T) {}
 enum MockResult<T> {
     Ok(T),
     NotFound,
+    Pruned,
     Error,
 }
 
@@ -24,6 +25,7 @@ impl<T> MockResult<T> {
         match self {
             Self::Ok(value) => Ok(value),
             Self::NotFound => Err(bitcoin_rpc::test_not_found_error()),
+            Self::Pruned => Err(bitcoin_rpc::test_pruned_error()),
             Self::Error => Err(anyhow::anyhow!("mock transient rpc error")),
         }
     }
@@ -542,9 +544,10 @@ async fn bitcoin_core_classifier_uses_verbose_canonical_and_stale_paths() {
 
 #[tokio::test]
 async fn a_coinbase_the_node_cannot_serve_is_final_but_a_failed_fetch_is_not() {
-    // A canonical parent whose block body the node no longer holds: the
-    // verdict is complete with no coinbase. A fetch that failed for a reason
-    // a retry may clear leaves the verdict incomplete instead.
+    // A canonical parent whose block body the node pruned: the verdict is
+    // complete with no coinbase. A fetch that failed for a reason a retry may
+    // clear (a transport failure, a body still downloading) leaves the
+    // verdict incomplete instead.
     let header = test_header(30, 0x207f_ffff);
     let status = CoreHeaderStatus {
         confirmations: 3,
@@ -552,7 +555,7 @@ async fn a_coinbase_the_node_cannot_serve_is_final_but_a_failed_fetch_is_not() {
     };
     let pruned = Arc::new(MockCoreHeaderSource::default());
     pruned.set_verbose(header.block_hash(), MockResult::Ok(status));
-    pruned.set_coinbase(header.block_hash(), MockResult::NotFound);
+    pruned.set_coinbase(header.block_hash(), MockResult::Pruned);
     let verdict = BitcoinCoreParentClassifier::from_source(pruned)
         .classify_parent(&header, ParentPreflight { known_prev: None })
         .await

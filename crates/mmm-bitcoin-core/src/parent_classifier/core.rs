@@ -451,15 +451,15 @@ impl BitcoinCoreParentClassifier {
     }
 
     /// The coinbase of a Core-indexed block, which enriches attribution. A
-    /// body Core does not hold (not found, pruned) is permanently missing; any
-    /// other failure is a transport hiccup the verdict is marked incomplete
-    /// for, so the capture is retried and the coinbase fetched again.
+    /// body Core will never hold (not found, pruned) is permanently missing;
+    /// any other failure, a transport hiccup or a body still downloading, is
+    /// one the verdict is marked incomplete for, so the capture is retried
+    /// and the coinbase fetched again.
     async fn fetch_coinbase(&self, hash: BlockHash) -> CoinbaseFetch {
         match self.source.get_block_coinbase(hash).await {
             Ok(coinbase) => CoinbaseFetch::Found(coinbase),
             Err(err)
-                if bitcoin_rpc::is_not_found(&err)
-                    || bitcoin_rpc::is_block_body_unavailable(&err) =>
+                if bitcoin_rpc::is_not_found(&err) || bitcoin_rpc::is_block_body_pruned(&err) =>
             {
                 warn!(hash = %hash, error = %err, "Bitcoin Core does not hold the block body; no coinbase");
                 CoinbaseFetch::Missing
