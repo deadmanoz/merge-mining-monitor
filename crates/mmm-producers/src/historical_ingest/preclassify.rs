@@ -463,6 +463,7 @@ mod tests {
             live_observed: true,
             core_attested,
             core_absence_attested: false,
+            incomplete: false,
         }
     }
 

@@ -57,8 +57,8 @@ use mmm_capture::pool_resolver::PoolResolver;
 use mmm_capture::source_registry::ELASTOS_SOURCE_CODE;
 use mmm_read_model::capture_in_txn;
 use mmm_store::{
-    ChildChainHeadOutcome, CurrentBlockParent, EventWriteOutcome,
-    finish_child_chain_height_operation, load_pool_identities_by_namespace,
+    ChildChainHeadOutcome, ChildChainHeadRecord, CurrentBlockParent, EventWriteOutcome,
+    EvidenceMarker, finish_child_chain_height_operation, load_pool_identities_by_namespace,
     lock_child_chain_height_session, record_child_chain_block,
     record_child_chain_block_in_own_transaction, retag_revocation_reason,
     write_elastos_capture_in_txn,
@@ -328,10 +328,13 @@ async fn apply_elastos_evaluation(
             client,
             context.source_id(),
             height,
-            block.hash.as_ref(),
-            CurrentBlockParent::Known(block.parent_hash.as_ref()),
-            head_outcome,
-            now_epoch_seconds()?,
+            ChildChainHeadRecord {
+                block_hash: block.hash.as_ref(),
+                parent: CurrentBlockParent::Known(block.parent_hash.as_ref()),
+                outcome: head_outcome,
+                evidence: EvidenceMarker::None,
+                observed_at: now_epoch_seconds()?,
+            },
         )
         .await?;
     }
@@ -545,10 +548,13 @@ async fn upsert_and_record_block(
         txn,
         source_id,
         child_height,
-        child_block_hash,
-        CurrentBlockParent::Known(payload.btc_parent_header_hash.as_slice()),
-        ChildChainHeadOutcome::Captured,
-        observed_at,
+        ChildChainHeadRecord {
+            block_hash: child_block_hash,
+            parent: CurrentBlockParent::Known(payload.btc_parent_header_hash.as_slice()),
+            outcome: ChildChainHeadOutcome::captured(payload.classification_incomplete),
+            evidence: EvidenceMarker::None,
+            observed_at,
+        },
     )
     .await?;
     Ok(outcome)

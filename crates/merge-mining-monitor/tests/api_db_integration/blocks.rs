@@ -8,7 +8,8 @@ use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, RSK_SOURCE_CODE};
 use mmm_read_model::{CoreCanonicalWrite, write_core_canonical};
 use mmm_store::{
-    ChildChainHeadOutcome, CurrentBlockParent, get_source_id, record_child_chain_block,
+    ChildChainHeadOutcome, ChildChainHeadRecord, CurrentBlockParent, EvidenceMarker, get_source_id,
+    record_child_chain_block,
 };
 use serde_json::json;
 use time::Month;
@@ -561,10 +562,13 @@ async fn block_projects_child_displacement_on_event_details() -> Result<()> {
             &txn,
             namecoin,
             120,
-            &current_child,
-            CurrentBlockParent::Known(&current_parent),
-            ChildChainHeadOutcome::Captured,
-            ts + 60,
+            ChildChainHeadRecord {
+                block_hash: &current_child,
+                parent: CurrentBlockParent::Known(&current_parent),
+                outcome: ChildChainHeadOutcome::Captured,
+                evidence: EvidenceMarker::None,
+                observed_at: ts + 60,
+            },
         )
         .await?;
         txn.commit().await?;

@@ -437,6 +437,7 @@ pub(crate) fn classification_from_event(
         live_observed: false,
         core_attested: false,
         core_absence_attested: false,
+        incomplete: false,
     })
 }
 
@@ -538,6 +539,7 @@ async fn persisted_classification_from_hash<C: GenericClient>(
         live_observed: persisted.core_attested,
         core_attested: persisted.core_attested,
         core_absence_attested: false,
+        incomplete: false,
     }))
 }
 
@@ -626,6 +628,7 @@ mod tests {
                 live_observed: false,
                 core_attested: false,
                 core_absence_attested: false,
+                incomplete: false,
             };
 
             assert!(resolve_parent_classification(&header, Some(live)).is_err());

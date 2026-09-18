@@ -55,11 +55,11 @@ use mmm_capture::pool_resolver::PoolResolver;
 use mmm_capture::source_registry::HATHOR_SOURCE_CODE;
 use mmm_read_model::capture_in_txn;
 use mmm_store::{
-    ChildChainHeadOutcome, CurrentBlockParent, finish_child_chain_height_operation,
-    hathor_sidecar_graph_heads_at_height, load_child_chain_head, load_pool_identities_by_namespace,
-    lock_child_chain_height_session, record_child_chain_block,
-    record_child_chain_block_in_own_transaction, reobserve_child_chain_block_in_own_transaction,
-    write_hathor_capture_in_txn,
+    ChildChainHeadOutcome, ChildChainHeadRecord, CurrentBlockParent, EvidenceMarker,
+    finish_child_chain_height_operation, hathor_sidecar_graph_heads_at_height,
+    load_child_chain_head, load_pool_identities_by_namespace, lock_child_chain_height_session,
+    record_child_chain_block, record_child_chain_block_in_own_transaction,
+    reobserve_child_chain_block_in_own_transaction, write_hathor_capture_in_txn,
 };
 
 /// The most Hathor's difficulty adjustment moves a block's weight from its
@@ -264,7 +264,9 @@ pub async fn rescan_hathor_height(
             Err(outcome) => return Ok(RescanOutcome::Captured(outcome)),
         };
         if let Some(current_hash) = merge_mined_block_at(height, &block)
-            && let Some(head) = load_child_chain_head(&*client, source_id, height).await?
+            && let Some(head) =
+                load_child_chain_head(&*client, source_id, height, EvidenceMarker::HathorSidecars)
+                    .await?
             && head.is_final()
             && !head.evidence_changed
             && head.block_hash == current_hash
@@ -355,10 +357,13 @@ async fn process_locked_block(
             client,
             context.source_id(),
             height,
-            &current_hash,
-            CurrentBlockParent::Known(&current_hash),
-            head_outcome,
-            now_epoch_seconds()?,
+            ChildChainHeadRecord {
+                block_hash: &current_hash,
+                parent: CurrentBlockParent::Known(&current_hash),
+                outcome: head_outcome,
+                evidence: EvidenceMarker::HathorSidecars,
+                observed_at: now_epoch_seconds()?,
+            },
         )
         .await?;
     }
@@ -725,10 +730,13 @@ async fn write_valid_capture(
                     txn,
                     source_id,
                     height,
-                    current_hash,
-                    CurrentBlockParent::Known(current_hash),
-                    ChildChainHeadOutcome::Captured,
-                    now,
+                    ChildChainHeadRecord {
+                        block_hash: current_hash,
+                        parent: CurrentBlockParent::Known(current_hash),
+                        outcome: ChildChainHeadOutcome::captured(payload.classification_incomplete),
+                        evidence: EvidenceMarker::HathorSidecars,
+                        observed_at: now,
+                    },
                 )
                 .await?;
             }

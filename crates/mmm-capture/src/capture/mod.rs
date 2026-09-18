@@ -144,6 +144,10 @@ pub struct ClassificationProof {
     pub parent_kind: Option<ParentKind>,
     pub parent_height: Option<i32>,
     pub difficulty_epoch_ok: Option<bool>,
+    /// A tolerated Core lookup failure cut the classification short, so the
+    /// verdict is provisional and the capture storing it must stay eligible
+    /// for a retry.
+    pub incomplete: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,6 +166,11 @@ pub struct MergeMiningEventPayload {
     pub pow_validates_btc_target: bool,
     pub pow_validates_child_target: Option<bool>,
     pub difficulty_epoch_ok: Option<bool>,
+    /// Not persisted: the parent's live classification was cut short by a
+    /// tolerated Core lookup failure, so the producer records the capture as
+    /// not final and re-observes the height. Set by
+    /// [`apply_classification_proof`].
+    pub classification_incomplete: bool,
     pub btc_parent_coinbase_txid: Option<Vec<u8>>,
     pub btc_parent_coinbase_script: Option<Vec<u8>>,
     pub btc_parent_coinbase_outputs: Option<Vec<u8>>,
@@ -477,6 +486,7 @@ pub fn build_event_payload_from_evidence(
         pow_validates_btc_target,
         pow_validates_child_target: evidence.pow_validates_child_target,
         difficulty_epoch_ok: proof.difficulty_epoch_ok,
+        classification_incomplete: false,
         btc_parent_coinbase_txid: evidence.btc_parent_coinbase_txid,
         btc_parent_coinbase_script: evidence.btc_parent_coinbase_script,
         btc_parent_coinbase_outputs: evidence.btc_parent_coinbase_outputs,
@@ -518,6 +528,7 @@ pub fn apply_classification_proof(
     )?;
     payload.btc_parent_height = btc_parent_height;
     payload.difficulty_epoch_ok = proof.difficulty_epoch_ok;
+    payload.classification_incomplete = proof.incomplete;
     Ok(())
 }
 
@@ -887,6 +898,7 @@ mod tests {
             pow_validates_btc_target: true,
             pow_validates_child_target: Some(true),
             difficulty_epoch_ok: None,
+            classification_incomplete: false,
             btc_parent_coinbase_txid: None,
             btc_parent_coinbase_script: None,
             btc_parent_coinbase_outputs: None,
@@ -910,6 +922,7 @@ mod tests {
                 parent_kind: Some(ParentKind::Canonical),
                 parent_height: Some(840_000),
                 difficulty_epoch_ok: Some(true),
+                incomplete: false,
             },
         )
         .unwrap();
@@ -941,6 +954,7 @@ mod tests {
             pow_validates_btc_target: true,
             pow_validates_child_target: Some(true),
             difficulty_epoch_ok: None,
+            classification_incomplete: false,
             btc_parent_coinbase_txid: None,
             btc_parent_coinbase_script: None,
             btc_parent_coinbase_outputs: None,
@@ -964,6 +978,7 @@ mod tests {
                 parent_kind: Some(ParentKind::Canonical),
                 parent_height: Some(946_213),
                 difficulty_epoch_ok: Some(true),
+                incomplete: false,
             },
         )
         .unwrap();

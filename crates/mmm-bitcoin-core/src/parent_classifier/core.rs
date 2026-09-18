@@ -155,7 +155,7 @@ impl BitcoinCoreParentClassifier {
                     });
                 }
                 warn!(error = %err, hash = %candidate_hash, "Bitcoin Core parent-header lookup failed");
-                return Ok(ParentClassification::unknown(header));
+                return Ok(ParentClassification::incomplete_unknown(header));
             }
         };
 
@@ -262,7 +262,7 @@ impl BitcoinCoreParentClassifier {
                     });
                 }
                 warn!(error = %err, prev_hash = %header.prev_blockhash, "Bitcoin Core predecessor lookup failed");
-                return Ok(ParentClassification::unknown(header));
+                return Ok(ParentClassification::incomplete_unknown(header));
             }
         };
         let prev_height: i32 = match core_height_to_i32(prev_verbose.height) {
@@ -285,7 +285,7 @@ impl BitcoinCoreParentClassifier {
                     });
                 }
                 warn!(error = %err, prev_hash = %header.prev_blockhash, "Bitcoin Core predecessor header fetch failed");
-                return Ok(ParentClassification::unknown(header));
+                return Ok(ParentClassification::incomplete_unknown(header));
             }
         };
         self.classify_inferred_stale(
@@ -313,7 +313,7 @@ impl BitcoinCoreParentClassifier {
         let competitor = match self.fetch_competitor(height, fail_on_rpc_error).await? {
             Competitor::Found(competitor) => *competitor,
             Competitor::Absent => return Ok(core_absence_unknown(header)),
-            Competitor::Unavailable => return Ok(ParentClassification::unknown(header)),
+            Competitor::Unavailable => return Ok(ParentClassification::incomplete_unknown(header)),
         };
         if !bits_match_expected(header, competitor.header.bits) {
             return Ok(ParentClassification {
@@ -326,14 +326,14 @@ impl BitcoinCoreParentClassifier {
             .median_time_past_passes(header, fail_on_rpc_error)
             .await?
         {
-            Some(true) => Ok(classify_inferred_stale_with_competitor(
+            MtpCheck::Passes(true) => Ok(classify_inferred_stale_with_competitor(
                 header,
                 height,
                 predecessor,
                 prev_kind,
                 Some(competitor),
             )),
-            Some(false) => Ok(ParentClassification::error_block(
+            MtpCheck::Passes(false) => Ok(ParentClassification::error_block(
                 header,
                 height,
                 inferred_height_source(prev_kind),
@@ -343,7 +343,8 @@ impl BitcoinCoreParentClassifier {
             // Without all eleven linked headers we do not know whether the
             // candidate is stale or consensus-invalid, and must not promote it
             // to an orphan merely because Core lacks the candidate itself.
-            None => Ok(ParentClassification::unknown(header)),
+            MtpCheck::AncestorMissing => Ok(ParentClassification::unknown(header)),
+            MtpCheck::Unavailable => Ok(ParentClassification::incomplete_unknown(header)),
         }
     }
 
@@ -355,7 +356,7 @@ impl BitcoinCoreParentClassifier {
         &self,
         candidate: &Header,
         fail_on_rpc_error: bool,
-    ) -> Result<Option<bool>> {
+    ) -> Result<MtpCheck> {
         let mut expected_hash = candidate.prev_blockhash;
         let mut times = [0_u32; MTP_WINDOW];
         for (depth, time) in times.iter_mut().enumerate() {
@@ -369,7 +370,7 @@ impl BitcoinCoreParentClassifier {
                     );
                 }
                 Err(err) if bitcoin_rpc::is_not_found(&err) => {
-                    return Ok(None);
+                    return Ok(MtpCheck::AncestorMissing);
                 }
                 Err(err) => {
                     if fail_on_rpc_error {
@@ -385,7 +386,7 @@ impl BitcoinCoreParentClassifier {
                         hash = %expected_hash,
                         "Bitcoin Core MTP ancestor fetch failed"
                     );
-                    return Ok(None);
+                    return Ok(MtpCheck::Unavailable);
                 }
             };
             *time = ancestor.time;
@@ -393,7 +394,7 @@ impl BitcoinCoreParentClassifier {
         }
 
         times.sort_unstable();
-        Ok(Some(candidate.time > times[MTP_WINDOW / 2]))
+        Ok(MtpCheck::Passes(candidate.time > times[MTP_WINDOW / 2]))
     }
 
     /// Core's canonical block at `height`, the candidate's same-height
@@ -540,6 +541,7 @@ pub(crate) fn classify_core_canonical_header(
         live_observed: true,
         core_attested: true,
         core_absence_attested: false,
+        incomplete: false,
     }
 }
 
@@ -572,6 +574,7 @@ pub(crate) fn classify_core_stale_header(
         live_observed: true,
         core_attested: true,
         core_absence_attested: false,
+        incomplete: false,
     }
 }
 
@@ -606,6 +609,7 @@ pub(crate) fn classify_inferred_stale_with_competitor(
         live_observed: false,
         core_attested: false,
         core_absence_attested: false,
+        incomplete: false,
     }
 }
 
@@ -618,6 +622,15 @@ fn inferred_height_source(prev_kind: BlockKind) -> HeightSource {
         }
         BlockKind::Unknown => unreachable!("unknown predecessor kind is not classified"),
     }
+}
+
+/// The outcome of the eleven-header median-time-past check.
+enum MtpCheck {
+    Passes(bool),
+    /// Core lacks one of the linked ancestors.
+    AncestorMissing,
+    /// A fetch failed and the lenient policy tolerated it.
+    Unavailable,
 }
 
 /// The outcome of a same-height competitor lookup.

@@ -263,13 +263,33 @@ async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> R
         assert_eq!(active, 1);
         assert_eq!(advisory_locks_held(&client).await?, 0);
 
-        // An event captured or imported at the height since the record (a
-        // historical publication import) changes the evidence the block was
-        // held against: the rescan takes the full capture, which re-runs the
-        // work-floor check, and records the block again against the evidence
-        // now, after which the fast path applies again.
+        // A sidecar added at the height since the record (a historical import,
+        // or the cache ingest enriching an imported event) changes the
+        // evidence the block's work was held against: the rescan takes the
+        // full capture, which re-runs the work-floor check, and records the
+        // block again against the evidence now, after which the fast path
+        // applies again. An event without a sidecar is not part of that
+        // evidence.
         let imported = exact_observation("500001-near-parent", height, [0x5b; 32], 2_030)?;
-        upsert_merge_mining_event(&client, context.source_id(), &imported).await?;
+        let imported_id = upsert_merge_mining_event(&client, context.source_id(), &imported)
+            .await?
+            .event_id;
+        let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(outcome, RescanOutcome::Unchanged);
+        assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched);
+        client
+            .execute(
+                "INSERT INTO hathor_merge_mining_evidence \
+                     (event_id, hathor_block_hash, hathor_height, aux_pow, funds_graph, \
+                      funds_graph_split, expected_btc_nbits, proof_format) \
+                 SELECT $1, hathor_block_hash, hathor_height, aux_pow, funds_graph, \
+                        funds_graph_split, expected_btc_nbits, proof_format \
+                   FROM hathor_merge_mining_evidence h \
+                   JOIN merge_mining_event e ON e.id = h.event_id \
+                  WHERE e.source_id = $2 AND e.child_height = $3 AND e.id <> $1",
+                &[&imported_id, &context.source_id(), &height],
+            )
+            .await?;
         let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
         assert_eq!(
             outcome,

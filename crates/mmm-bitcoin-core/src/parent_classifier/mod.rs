@@ -150,6 +150,12 @@ pub struct ParentClassification {
     /// unavailable live consensus check; the read-model reconciler gates
     /// strict/weak orphan classification on it.
     pub core_absence_attested: bool,
+    /// True when a Core lookup the lenient live policy tolerated cut the
+    /// classification short, so this verdict is provisional: a capture that
+    /// stores it must stay eligible for a retry (a non-final child-chain
+    /// head) whatever orphan class the parent already carries, because the
+    /// routine rechecks skip classified rows.
+    pub incomplete: bool,
 }
 
 impl ParentClassification {
@@ -168,6 +174,16 @@ impl ParentClassification {
             live_observed: false,
             core_attested: false,
             core_absence_attested: false,
+            incomplete: false,
+        }
+    }
+
+    /// An `unknown` a tolerated Core lookup failure cut short: provisional,
+    /// so the capture that stores it stays eligible for a retry.
+    pub fn incomplete_unknown(header: &Header) -> Self {
+        Self {
+            incomplete: true,
+            ..Self::unknown(header)
         }
     }
 
@@ -195,6 +211,7 @@ impl ParentClassification {
             live_observed: false,
             core_attested: false,
             core_absence_attested: false,
+            incomplete: false,
         }
     }
 
@@ -203,6 +220,7 @@ impl ParentClassification {
             parent_kind: Some(self.kind),
             parent_height: self.height,
             difficulty_epoch_ok: self.difficulty_epoch_ok,
+            incomplete: self.incomplete,
         }
     }
 }

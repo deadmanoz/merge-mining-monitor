@@ -42,10 +42,10 @@ use mmm_capture::child_payout::PoolIdentityLookup;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::capture_in_txn;
 use mmm_store::{
-    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, ChildChainHeadOutcome, CurrentBlockParent,
-    clear_capture_error, finish_child_chain_height_operation, load_child_chain_head,
-    load_pool_identities_by_namespace, lock_child_chain_height_session, record_capture_error,
-    record_child_chain_block, record_child_chain_block_in_own_transaction,
+    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, ChildChainHeadOutcome, ChildChainHeadRecord,
+    CurrentBlockParent, EvidenceMarker, clear_capture_error, finish_child_chain_height_operation,
+    load_child_chain_head, load_pool_identities_by_namespace, lock_child_chain_height_session,
+    record_capture_error, record_child_chain_block, record_child_chain_block_in_own_transaction,
     reobserve_child_chain_block_in_own_transaction, upsert_merge_mining_event_with_attributions,
 };
 use qbit::{ensure_qbit_mainnet_endpoint, fetch_qbit_candidate, write_qbit_event};
@@ -254,7 +254,7 @@ pub async fn rescan_auxpow_height(
     lock_child_chain_height_session(client, source_id, height).await?;
     let result = async {
         let block_hash = observe_block_hash(rpc, context, height).await?;
-        let head = load_child_chain_head(&*client, source_id, height).await?;
+        let head = load_child_chain_head(&*client, source_id, height, EvidenceMarker::None).await?;
         match head {
             Some(head)
                 if head.is_final()
@@ -342,10 +342,13 @@ async fn process_locked_height(
             client,
             context.source_id(),
             height,
-            block_hash.as_ref(),
-            current_parent,
-            head_outcome,
-            now_epoch_seconds()?,
+            ChildChainHeadRecord {
+                block_hash: block_hash.as_ref(),
+                parent: current_parent,
+                outcome: head_outcome,
+                evidence: EvidenceMarker::None,
+                observed_at: now_epoch_seconds()?,
+            },
         )
         .await?;
     }
@@ -474,10 +477,13 @@ pub(super) async fn write_event_in_txn(
                 txn,
                 source_id,
                 child_height,
-                child_block_hash,
-                CurrentBlockParent::Known(payload.btc_parent_header_hash.as_slice()),
-                ChildChainHeadOutcome::Captured,
-                observed_at,
+                ChildChainHeadRecord {
+                    block_hash: child_block_hash,
+                    parent: CurrentBlockParent::Known(payload.btc_parent_header_hash.as_slice()),
+                    outcome: ChildChainHeadOutcome::captured(payload.classification_incomplete),
+                    evidence: EvidenceMarker::None,
+                    observed_at,
+                },
             )
             .await?;
             Ok(outcome)

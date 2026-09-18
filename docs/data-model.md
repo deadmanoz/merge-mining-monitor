@@ -202,7 +202,7 @@ through revocation.
   the parent projections) never read these columns. Only child-centric views,
   which block the child chain carries at a height, consult them.
 - Revocation keeps its one meaning: the evidence itself is bad.
-- `mmm-store::record_child_chain_block(txn, source, height, hash, parent, outcome, observed_at)`
+- `mmm-store::record_child_chain_block(txn, source, height, record)`, where the record names the block hash, its parent, the outcome, the evidence marker and the observation time,
   is the one write. It clears displacement on the event for that hash (a
   chain that flips back) and marks every other event at the height that is
   not yet displaced as displaced by it. A hashless partial observation is
@@ -245,18 +245,21 @@ had revoked as `hathor_superseded` or `hathor_voided` to this model.
 The same write keeps `child_chain_head`, one row per `(source_id,
 child_height)`: the block hash the producer last observed there, the parent
 its proof named (NULL when no proof verified), an `outcome` (`captured`,
-`recorded`, `non_auxpow`, `unverified`, `held`), the newest event at the
-height when the row was written (`evidence_marker`) and `observed_at`. It is the
+`recorded`, `non_auxpow`, `unverified`, `held`), a producer-defined
+`evidence_marker` (Hathor: the newest sidecar row at the height; NULL for a
+producer that records on its own proof alone) and `observed_at`. It is the
 durable answer to "what did the chain carry here when we last looked", which
 the event rows cannot give for a block that yields no event. A trailing
 rescan compares one block-hash lookup against it: the same hash with a final
 outcome (`captured`, `recorded`, `non_auxpow`) skips the proof fetch and the
 capture, and runs only the displacement maintenance above; a different hash,
 no row, or a non-final outcome captures the height again, as does, for
-Hathor, an event captured or imported at the height since the row was
+Hathor, a sidecar captured or imported at the height since the row was
 written, because Hathor records a block only after holding its declared work
 against every block captured there and that check must see the evidence
-now. Migration `0026`
+now. A capture whose parent classification a tolerated Core lookup failure
+cut short records `unverified`, so the height is re-observed and the verdict
+retried whatever orphan class the parent already carries. Migration `0026`
 adds the table with no backfill; the first rescan window after it fills the
 rows.
 

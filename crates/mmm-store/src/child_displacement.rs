@@ -55,6 +55,18 @@ pub enum ChildChainHeadOutcome {
 }
 
 impl ChildChainHeadOutcome {
+    /// The outcome of a capture that wrote an event: final unless the
+    /// parent's live classification was cut short by a tolerated Core lookup
+    /// failure, in which case the height is re-observed so the verdict is
+    /// retried whatever orphan class the parent already carries.
+    pub fn captured(classification_incomplete: bool) -> Self {
+        if classification_incomplete {
+            Self::Unverified
+        } else {
+            Self::Captured
+        }
+    }
+
     /// Whether a rescan that finds the same block hash may skip the capture.
     pub fn is_final(self) -> bool {
         matches!(self, Self::Captured | Self::Recorded | Self::NoAuxpow)
@@ -82,6 +94,53 @@ impl ChildChainHeadOutcome {
     }
 }
 
+/// The evidence at a height a producer's decision to record a block there
+/// depends on, fingerprinted on the head row so a rescan can tell that an
+/// import or capture since has changed it and take the full capture, which
+/// re-runs the producer's check against the evidence now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvidenceMarker {
+    /// The producer records a block on its own proof alone.
+    None,
+    /// Hathor holds a block's declared work against every captured block's
+    /// sidecar at the height: the newest sidecar row there, which a new
+    /// capture and a sidecar added to an imported event both move.
+    HathorSidecars,
+}
+
+impl EvidenceMarker {
+    async fn current<C: GenericClient>(
+        self,
+        client: &C,
+        source_id: i64,
+        child_height: i32,
+    ) -> Result<Option<i64>> {
+        match self {
+            Self::None => Ok(None),
+            Self::HathorSidecars => Ok(client
+                .query_one(
+                    "SELECT max(h.id) FROM hathor_merge_mining_evidence h \
+                       JOIN merge_mining_event e ON e.id = h.event_id \
+                      WHERE e.source_id = $1 AND e.child_height = $2",
+                    &[&source_id, &child_height],
+                )
+                .await
+                .context("load the Hathor evidence marker")?
+                .get(0)),
+        }
+    }
+}
+
+/// What a producer records for the block a child chain carries at a height.
+#[derive(Debug, Clone, Copy)]
+pub struct ChildChainHeadRecord<'a> {
+    pub block_hash: &'a [u8],
+    pub parent: CurrentBlockParent<'a>,
+    pub outcome: ChildChainHeadOutcome,
+    pub evidence: EvidenceMarker,
+    pub observed_at: i64,
+}
+
 /// The block a child chain last carried at a height, as its producer recorded
 /// it: the `child_chain_head` row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,9 +154,9 @@ pub struct ChildChainHead {
     /// The Bitcoin Core header cache has replaced a boundary that can change
     /// verdicts since this row was written, so its outcome is not final.
     pub core_cache_changed: bool,
-    /// An event was captured or imported at the height since this row was
-    /// written. A producer whose recording depends on the other evidence at
-    /// the height (Hathor's work floor) must re-run that check.
+    /// The evidence the producer's recording depends on has changed since
+    /// this row was written (see [`EvidenceMarker`]), so the producer must
+    /// re-run its check before treating the block as recorded.
     pub evidence_changed: bool,
     pub observed_at: i64,
 }
@@ -127,32 +186,33 @@ pub async fn load_child_chain_head<C: GenericClient>(
     client: &C,
     source_id: i64,
     child_height: i32,
+    evidence: EvidenceMarker,
 ) -> Result<Option<ChildChainHead>> {
     let row = client
         .query_opt(
             "SELECT h.block_hash, h.btc_parent_header_hash, h.outcome, \
                     h.core_cache_generation < s.core_cache_generation, \
-                    h.evidence_marker IS DISTINCT FROM ( \
-                        SELECT max(e.id) FROM merge_mining_event e \
-                         WHERE e.source_id = $1 AND e.child_height = $2), \
-                    h.observed_at \
+                    h.evidence_marker, h.observed_at \
                FROM child_chain_head h, bitcoin_core_header_cache_state s \
               WHERE h.source_id = $1 AND h.child_height = $2 AND s.singleton",
             &[&source_id, &child_height],
         )
         .await
         .context("load the child chain head")?;
-    row.map(|row| {
-        Ok(ChildChainHead {
-            block_hash: row.get(0),
-            btc_parent_header_hash: row.get(1),
-            outcome: ChildChainHeadOutcome::from_db_str(row.get::<_, &str>(2))?,
-            core_cache_changed: row.get(3),
-            evidence_changed: row.get(4),
-            observed_at: row.get(5),
-        })
-    })
-    .transpose()
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let recorded_marker: Option<i64> = row.get(4);
+    let evidence_changed =
+        recorded_marker != evidence.current(client, source_id, child_height).await?;
+    Ok(Some(ChildChainHead {
+        block_hash: row.get(0),
+        btc_parent_header_hash: row.get(1),
+        outcome: ChildChainHeadOutcome::from_db_str(row.get::<_, &str>(2))?,
+        core_cache_changed: row.get(3),
+        evidence_changed,
+        observed_at: row.get(5),
+    }))
 }
 
 impl CurrentBlockParent<'_> {
@@ -311,11 +371,15 @@ pub async fn record_child_chain_block(
     txn: &Transaction<'_>,
     source_id: i64,
     child_height: i32,
-    current_block_hash: &[u8],
-    current_parent: CurrentBlockParent<'_>,
-    outcome: ChildChainHeadOutcome,
-    observed_at: i64,
+    record: ChildChainHeadRecord<'_>,
 ) -> Result<ChildDisplacementOutcome> {
+    let ChildChainHeadRecord {
+        block_hash: current_block_hash,
+        parent: current_parent,
+        outcome,
+        evidence,
+        observed_at,
+    } = record;
     ensure!(
         current_block_hash.len() == 32,
         "child block hash must be 32 bytes, got {}",
@@ -323,14 +387,12 @@ pub async fn record_child_chain_block(
     );
     lock_child_chain_height(txn, source_id, child_height).await?;
     let parent_hash = current_parent.parent_hash();
+    let evidence_marker = evidence.current(txn, source_id, child_height).await?;
     txn.execute(
         "INSERT INTO child_chain_head \
              (source_id, child_height, block_hash, btc_parent_header_hash, outcome, \
               core_cache_generation, evidence_marker, observed_at) \
-         SELECT $1, $2, $3, $4, $5, s.core_cache_generation, \
-                (SELECT max(e.id) FROM merge_mining_event e \
-                  WHERE e.source_id = $1 AND e.child_height = $2), \
-                $6 \
+         SELECT $1, $2, $3, $4, $5, s.core_cache_generation, $7, $6 \
            FROM bitcoin_core_header_cache_state s WHERE s.singleton \
          ON CONFLICT (source_id, child_height) DO UPDATE SET \
              block_hash = EXCLUDED.block_hash, \
@@ -346,6 +408,7 @@ pub async fn record_child_chain_block(
             &parent_hash,
             &outcome.as_db_str(),
             &observed_at,
+            &evidence_marker,
         ],
     )
     .await
@@ -476,25 +539,13 @@ pub async fn record_child_chain_block_in_own_transaction(
     client: &mut Client,
     source_id: i64,
     child_height: i32,
-    current_block_hash: &[u8],
-    current_parent: CurrentBlockParent<'_>,
-    head_outcome: ChildChainHeadOutcome,
-    observed_at: i64,
+    record: ChildChainHeadRecord<'_>,
 ) -> Result<ChildDisplacementOutcome> {
     let txn = client
         .transaction()
         .await
         .context("begin child block record")?;
-    let outcome = record_child_chain_block(
-        &txn,
-        source_id,
-        child_height,
-        current_block_hash,
-        current_parent,
-        head_outcome,
-        observed_at,
-    )
-    .await?;
+    let outcome = record_child_chain_block(&txn, source_id, child_height, record).await?;
     txn.commit().await.context("commit child block record")?;
     Ok(outcome)
 }

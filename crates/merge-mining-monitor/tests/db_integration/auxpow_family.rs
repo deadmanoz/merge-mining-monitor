@@ -6,7 +6,7 @@ use bitcoin::BlockHash;
 use bitcoin::block::Header;
 use bitcoin::consensus::deserialize;
 use bitcoin::hashes::Hash as _;
-use mmm_bitcoin_core::ConfiguredParentClassifier;
+use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier, ParentClassification};
 use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, QBIT_SOURCE_CODE};
 use mmm_capture::test_support::load_raw_namecoin_fixture;
 use mmm_producers::RescanOutcome;
@@ -15,13 +15,14 @@ use mmm_producers::chains::{
     rescan_auxpow_height,
 };
 use mmm_store::{
-    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, ChildChainHeadOutcome, CurrentBlockParent, get_source_id,
-    record_capture_error, record_child_chain_block_in_own_transaction, upsert_merge_mining_event,
+    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, ChildChainHeadOutcome, ChildChainHeadRecord,
+    CurrentBlockParent, EvidenceMarker, get_source_id, record_capture_error,
+    record_child_chain_block_in_own_transaction, upsert_merge_mining_event,
 };
 use tokio_postgres::Client;
 
 use crate::support::db::advisory_locks_held;
-use crate::support::exact_observation;
+use crate::support::{exact_observation, namecoin_fixture};
 
 const HEIGHT: i32 = 700;
 
@@ -352,6 +353,52 @@ async fn rescan_of_a_non_final_record_captures_the_height_again() -> Result<()> 
 }
 
 #[tokio::test]
+async fn a_classification_cut_short_by_core_leaves_the_height_to_be_retried() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (_, _, source_id, parsed) = namecoin_fixture(&client).await?;
+        let header = parsed.parent_header.header;
+        // The first capture's Core lookup is cut short by a tolerated failure:
+        // the verdict is provisional, so the record is not final and the next
+        // rescan captures the height again, whatever orphan class the parent
+        // carries; the retried classification completes and the record is.
+        let fake = FakeParentClassifier::new_sequence([
+            ParentClassification::incomplete_unknown(&header),
+            ParentClassification::unknown(&header),
+        ]);
+        let context = AuxpowCaptureContext::new_with_classifier(
+            &client,
+            by_id(ChainId::Namecoin),
+            ConfiguredParentClassifier::Fake(fake.clone()),
+        )
+        .await?;
+        let rpc =
+            FixtureBitcoindRpc::carrying(HEIGHT, load_raw_namecoin_fixture("500000-valid-parent"));
+        let outcome = process_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
+        assert_eq!(outcome, AuxpowHeightOutcome::AuxpowWritten);
+        assert_eq!(
+            head_at_height(&client, source_id).await?.map(|head| head.0),
+            Some("unverified".to_owned())
+        );
+
+        let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
+        assert_eq!(
+            outcome,
+            RescanOutcome::Captured(AuxpowHeightOutcome::AuxpowWritten)
+        );
+        assert_eq!(rpc.calls(), (2, 2));
+        assert_eq!(fake.call_count().await, 2);
+        assert_eq!(
+            head_at_height(&client, source_id).await?.map(|head| head.0),
+            Some("captured".to_owned())
+        );
+        let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
+        assert_eq!(outcome, RescanOutcome::Unchanged);
+        assert_eq!(rpc.calls(), (3, 2));
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn an_unchanged_rescan_finishes_a_capture_error_cleanup_a_crash_left_behind() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let source_id = get_source_id(&client, QBIT_SOURCE_CODE).await?;
@@ -369,10 +416,13 @@ async fn an_unchanged_rescan_finishes_a_capture_error_cleanup_a_crash_left_behin
             &mut client,
             source_id,
             HEIGHT,
-            &hash,
-            CurrentBlockParent::NoAuxpow,
-            ChildChainHeadOutcome::NoAuxpow,
-            1_000,
+            ChildChainHeadRecord {
+                block_hash: &hash,
+                parent: CurrentBlockParent::NoAuxpow,
+                outcome: ChildChainHeadOutcome::NoAuxpow,
+                evidence: EvidenceMarker::None,
+                observed_at: 1_000,
+            },
         )
         .await?;
         record_capture_error(

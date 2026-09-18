@@ -711,6 +711,7 @@ async fn core_absence_attested_only_on_candidate_not_found() {
         .unwrap();
     assert_eq!(transient.kind, ParentKind::Unknown);
     assert!(!transient.core_absence_attested);
+    assert!(transient.incomplete);
 
     // Historical import uses the strict policy and surfaces the same failure.
     let transient_error = BitcoinCoreParentClassifier::from_source(transient_source)
@@ -731,6 +732,7 @@ async fn core_absence_attested_only_on_candidate_not_found() {
             .unwrap();
     assert_eq!(absent.kind, ParentKind::Unknown);
     assert!(absent.core_absence_attested);
+    assert!(!absent.incomplete);
 
     // Candidate not-found + predecessor transient error: the candidate was
     // proven absent, but the inferred-stale check stopped at a tolerated
@@ -744,6 +746,7 @@ async fn core_absence_attested_only_on_candidate_not_found() {
         .unwrap();
     assert_eq!(prev_err.kind, ParentKind::Unknown);
     assert!(!prev_err.core_absence_attested);
+    assert!(prev_err.incomplete);
 
     let strict_prev_err_source = Arc::new(MockCoreHeaderSource::default());
     strict_prev_err_source.set_verbose(header.prev_blockhash, MockResult::Error);
@@ -785,6 +788,7 @@ async fn core_absence_attested_only_when_the_competitor_lookup_completes() {
             .unwrap();
     assert_eq!(missing_comp.kind, ParentKind::Unknown);
     assert!(missing_comp.core_absence_attested);
+    assert!(!missing_comp.incomplete);
 
     let strict_missing_comp =
         BitcoinCoreParentClassifier::from_source(Arc::new(MockCoreHeaderSource::default()))
@@ -812,6 +816,7 @@ async fn core_absence_attested_only_when_the_competitor_lookup_completes() {
         .unwrap();
     assert_eq!(comp_err.kind, ParentKind::Unknown);
     assert!(!comp_err.core_absence_attested);
+    assert!(comp_err.incomplete);
 
     // Candidate not-found + inferred-stale path returns unknown for a
     // competitor whose nBits mismatches: attested.
