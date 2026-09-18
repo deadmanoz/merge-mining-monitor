@@ -181,7 +181,8 @@ async fn run_poll_command(
         spec::ChainId::Namecoin
         | spec::ChainId::Syscoin
         | spec::ChainId::Fractal
-        | spec::ChainId::Qbit => auxpow_family::poll(spec, rt).await,
+        | spec::ChainId::Qbit
+        | spec::ChainId::Terracoin => auxpow_family::poll(spec, rt).await,
         spec::ChainId::Rsk => rsk::backfill::poll(spec, rt).await,
         spec::ChainId::Hathor => hathor::backfill::poll(spec, rt).await,
         spec::ChainId::Elastos => elastos::backfill::poll(spec, rt).await,
@@ -196,7 +197,8 @@ async fn run_backfill_command(
         spec::ChainId::Namecoin
         | spec::ChainId::Syscoin
         | spec::ChainId::Fractal
-        | spec::ChainId::Qbit => auxpow_family::backfill(rt, config).await,
+        | spec::ChainId::Qbit
+        | spec::ChainId::Terracoin => auxpow_family::backfill(rt, config).await,
         spec::ChainId::Rsk => rsk::backfill::backfill(rt, config).await,
         spec::ChainId::Hathor => hathor::backfill::backfill(rt, config).await,
         spec::ChainId::Elastos => elastos::backfill::backfill(rt, config).await,
@@ -360,11 +362,11 @@ mod tests {
     /// Captured byte-for-byte from the pre-consolidation binary
     /// (src/main.rs Some(other) arm), with each later chain appended in `CHAINS`
     /// order. The generator must never drift from it.
-    const GOLDEN_UNKNOWN: &str = "unknown command \"bogus\"; expected poll-namecoin, poll-rsk, poll-syscoin, poll-fractal, poll-hathor, poll-elastos, poll-qbit, backfill-namecoin, backfill-rsk, backfill-syscoin, backfill-fractal, backfill-hathor, backfill-hathor-cache, backfill-elastos, backfill-qbit, import-dataset, import-all, import-known-stales, reclassify-known-stales, reclassify-unknown-parents, reclassify-parent, reclassify-pools, sync-bitcoin-core, reconcile-read-model, revoke-merge-mining-event, restore-merge-mining-event, or serve";
+    const GOLDEN_UNKNOWN: &str = "unknown command \"bogus\"; expected poll-namecoin, poll-rsk, poll-syscoin, poll-fractal, poll-hathor, poll-elastos, poll-qbit, poll-terracoin, backfill-namecoin, backfill-rsk, backfill-syscoin, backfill-fractal, backfill-hathor, backfill-hathor-cache, backfill-elastos, backfill-qbit, backfill-terracoin, import-dataset, import-all, import-known-stales, reclassify-known-stales, reclassify-unknown-parents, reclassify-parent, reclassify-pools, sync-bitcoin-core, reconcile-read-model, revoke-merge-mining-event, restore-merge-mining-event, or serve";
 
     /// Captured byte-for-byte from the pre-consolidation binary
     /// (src/main.rs None arm), with each later chain appended in `CHAINS` order.
-    const GOLDEN_HELP: &str = "No command selected. Use `poll-namecoin` or `backfill-namecoin <start-height> <end-height>` for the Namecoin producer, `poll-rsk` / `backfill-rsk <start-height> <end-height>` for the RSK producer, `poll-syscoin` / `backfill-syscoin <start-height> <end-height>` for the Syscoin producer, `poll-fractal` / `backfill-fractal <start-height> <end-height>` for the Fractal producer, `poll-hathor` / `backfill-hathor <start-height> <end-height>` for the Hathor producer, `poll-elastos` / `backfill-elastos <start-height> <end-height>` for the Elastos producer, `poll-qbit` / `backfill-qbit <start-height> <end-height>` for the Qbit producer, `sync-bitcoin-core` for the Bitcoin Core backbone, or `serve` for the read API.";
+    const GOLDEN_HELP: &str = "No command selected. Use `poll-namecoin` or `backfill-namecoin <start-height> <end-height>` for the Namecoin producer, `poll-rsk` / `backfill-rsk <start-height> <end-height>` for the RSK producer, `poll-syscoin` / `backfill-syscoin <start-height> <end-height>` for the Syscoin producer, `poll-fractal` / `backfill-fractal <start-height> <end-height>` for the Fractal producer, `poll-hathor` / `backfill-hathor <start-height> <end-height>` for the Hathor producer, `poll-elastos` / `backfill-elastos <start-height> <end-height>` for the Elastos producer, `poll-qbit` / `backfill-qbit <start-height> <end-height>` for the Qbit producer, `poll-terracoin` / `backfill-terracoin <start-height> <end-height>` for the Terracoin producer, `sync-bitcoin-core` for the Bitcoin Core backbone, or `serve` for the read API.";
 
     #[test]
     fn unknown_command_message_is_byte_identical_to_the_golden_capture() {

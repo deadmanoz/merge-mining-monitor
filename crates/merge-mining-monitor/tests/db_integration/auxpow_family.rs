@@ -26,6 +26,124 @@ use crate::support::{exact_observation, namecoin_fixture};
 
 const HEIGHT: i32 = 700;
 
+#[tokio::test]
+async fn family_operational_failures_follow_explicit_policy() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let rpc = FixtureBitcoindRpc::carrying(HEIGHT + 1, non_auxpow_block());
+        for chain in [
+            ChainId::Namecoin,
+            ChainId::Syscoin,
+            ChainId::Fractal,
+            ChainId::Qbit,
+            ChainId::Terracoin,
+        ] {
+            let spec = by_id(chain);
+            let context = AuxpowCaptureContext::new_with_classifier(
+                &client,
+                spec,
+                ConfiguredParentClassifier::Disabled,
+            )
+            .await?;
+            assert!(
+                process_auxpow_height(&mut client, &rpc, &context, HEIGHT)
+                    .await
+                    .is_err()
+            );
+            let source_id = get_source_id(&client, spec.source_code).await?;
+            let rows = client
+                .query(
+                    "SELECT height FROM capture_error WHERE source_id=$1",
+                    &[&source_id],
+                )
+                .await?;
+            assert_eq!(rows.len(), usize::from(chain == ChainId::Terracoin));
+        }
+        assert_eq!(advisory_locks_held(&client).await?, 0);
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn terracoin_replay_failure_recovery_and_displacement() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let height = 3_288_246;
+        let context = AuxpowCaptureContext::new_with_classifier(
+            &client,
+            by_id(ChainId::Terracoin),
+            ConfiguredParentClassifier::Disabled,
+        )
+        .await?;
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../fixtures/terracoin/3288246.json"))?;
+        let raw = hex::decode(fixture["rawblock"].as_str().unwrap())?;
+        let rpc = FixtureBitcoindRpc::carrying(height, raw.clone());
+        for _ in 0..2 {
+            assert_eq!(
+                process_auxpow_height(&mut client, &rpc, &context, height).await?,
+                AuxpowHeightOutcome::AuxpowWritten
+            );
+        }
+        let row = client
+            .query_one(
+                "SELECT COUNT(*) FROM merge_mining_event WHERE source_id=21",
+                &[],
+            )
+            .await?;
+        assert_eq!(row.get::<_, i64>(0), 1);
+        // A high saved cursor cannot hide a failed historical replay.
+        mmm_store::upsert_poll_cursor_with_target(&client, 21, height + 100, None).await?;
+        let absent = FixtureBitcoindRpc::carrying(height + 1, raw.clone());
+        assert!(
+            process_auxpow_height(&mut client, &absent, &context, height)
+                .await
+                .is_err()
+        );
+        let row = client
+            .query_one(
+                "SELECT height, error_kind FROM capture_error WHERE source_id=21",
+                &[],
+            )
+            .await?;
+        assert_eq!(row.get::<_, i32>(0), height);
+        assert_eq!(row.get::<_, String>(1), "height_capture_failed");
+        // Processing a different height cannot clear the replay gap.
+        let other = FixtureBitcoindRpc::carrying(height + 1, non_auxpow_block());
+        process_auxpow_height(&mut client, &other, &context, height + 1).await?;
+        assert_eq!(
+            client
+                .query("SELECT 1 FROM capture_error WHERE source_id=21", &[])
+                .await?
+                .len(),
+            1
+        );
+        let mut malformed = raw.clone();
+        malformed.truncate(100);
+        let bad = FixtureBitcoindRpc::carrying(height, malformed);
+        assert_eq!(
+            process_auxpow_height(&mut client, &bad, &context, height).await?,
+            AuxpowHeightOutcome::MalformedHeld
+        );
+        process_auxpow_height(&mut client, &rpc, &context, height).await?;
+        assert!(
+            client
+                .query("SELECT 1 FROM capture_error WHERE source_id=21", &[])
+                .await?
+                .is_empty()
+        );
+        // The ordinary shared displacement path retains the earlier witness.
+        let replacement = FixtureBitcoindRpc::carrying(height, non_auxpow_block());
+        process_auxpow_height(&mut client, &replacement, &context, height).await?;
+        let row = client.query_one("SELECT child_displaced_by IS NOT NULL, revoked_at IS NULL FROM merge_mining_event WHERE source_id=21", &[]).await?;
+        assert!(row.get::<_, bool>(0) && row.get::<_, bool>(1));
+        process_auxpow_height(&mut client, &rpc, &context, height).await?;
+        let row = client.query_one("SELECT child_displaced_by IS NULL, child_height FROM merge_mining_event WHERE source_id=21", &[]).await?;
+        assert!(row.get::<_, bool>(0));
+        assert_eq!(row.get::<_, i32>(1), height);
+        assert_eq!(advisory_locks_held(&client).await?, 0);
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
 /// A `BitcoindRpc` serving one scripted block per height, so the runner's
 /// per-height path runs end to end against a fixture the way `FixtureHathorRpc`
 /// drives the Hathor path. Each tick of a test builds a new chain state.

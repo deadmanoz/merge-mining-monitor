@@ -29,6 +29,7 @@ publication-artifact script checks. That workspace test includes the
 - `fixtures/fractal/` - Fractal AuxPoW and child-block samples.
 - `fixtures/hathor/` - Hathor REST transaction samples.
 - `fixtures/elastos/` - Elastos RPC and AuxPoW samples.
+- `fixtures/terracoin/` - pre-activation, activation, five June refresh candidates and the August 2026 canonical control, with RPC provenance.
 - `fixtures/qbit/` - Qbit mainnet extended-header controls and a native
   synthetic-parent proof.
 - `fixtures/xaya/` - pinned Xaya publication row used to check PowData

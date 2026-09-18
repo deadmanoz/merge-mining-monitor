@@ -110,6 +110,7 @@ where
         url,
         user,
         password,
+        raw_block_boolean_verbose: family.raw_block_boolean_verbose,
         request_timeout: parse_timeout_secs_from_lookup(
             &format!("{prefix}_RPC_TIMEOUT_SECS"),
             DEFAULT_RPC_TIMEOUT_SECS,

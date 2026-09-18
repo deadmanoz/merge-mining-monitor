@@ -42,7 +42,7 @@ const SOURCE_FRESHNESS_THRESHOLD_SECS: i64 = 7 * 24 * 60 * 60;
 const CAPTURE_PROGRESS_STALE_THRESHOLD_SECS: i64 = 60 * 60;
 /// The `sync.error_code` a live AuxPoW source reports while it holds an
 /// unresolved `capture_error` row. One wire code covers every stored
-/// `error_kind`: the kind (`malformed_auxpow_proof` today) is operator
+/// `error_kind`: the kind (malformed proof or per-height failure) is operator
 /// diagnostics, this string is the wire contract. Distinct from the Bitcoin
 /// Core backbone's own error codes, which come from `bitcoin_core_sync_state`.
 const AUXPOW_CAPTURE_ERROR_CODE: &str = "auxpow_capture_error";

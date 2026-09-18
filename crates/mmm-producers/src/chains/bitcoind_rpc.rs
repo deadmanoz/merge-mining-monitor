@@ -1,9 +1,9 @@
 //! The shared thin JSON-RPC client for bitcoind-family chains.
 //!
-//! Namecoin, Syscoin, Fractal, and Qbit expose Bitcoin Core-style RPC; the
+//! Namecoin, Syscoin, Fractal, Qbit, and Terracoin expose Bitcoin Core-style RPC; the
 //! only per-chain differences are configuration (endpoint, auth mode, timeout)
 //! and which proof-fetch method the capture path calls, so ONE client serves
-//! all four. The chain label parameterizes error contexts; auth material arrives
+//! all five. The chain label parameterizes error contexts; auth material arrives
 //! resolved from `chains::config` (this module never reads process env).
 
 use std::str::FromStr;
@@ -33,6 +33,72 @@ pub(crate) struct BitcoindRpcConfig {
     /// `<PREFIX>_RPC_TIMEOUT_SECS` (15s) and prevents a stale tunnel socket
     /// from hanging the live poller's tip fetch indefinitely.
     pub request_timeout: Duration,
+    /// Older daemons require boolean false rather than numeric zero.
+    pub raw_block_boolean_verbose: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    #[tokio::test]
+    async fn raw_block_rpc_preserves_numeric_and_boolean_wire_contracts() -> Result<()> {
+        for boolean in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0")?;
+            let url = format!("http://{}", listener.local_addr()?);
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut data = Vec::new();
+                let request = loop {
+                    let mut buf = [0; 4096];
+                    let n = stream.read(&mut buf).unwrap();
+                    assert!(n > 0);
+                    data.extend_from_slice(&buf[..n]);
+                    if let Some(end) = data.windows(4).position(|w| w == b"\r\n\r\n")
+                        && let Ok(value) = serde_json::from_slice::<Value>(&data[end + 4..])
+                    {
+                        break value;
+                    }
+                };
+                let body = r#"{"result":"00","error":null,"id":"getblock"}"#;
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+                request
+            });
+            let client = BitcoindRpcClient::new(
+                "fixture",
+                BitcoindRpcConfig {
+                    url,
+                    user: Some("fixture".into()),
+                    password: Some("fixture".into()),
+                    request_timeout: Duration::from_secs(5),
+                    raw_block_boolean_verbose: boolean,
+                },
+            )?;
+            let hash =
+                "ca98b313dac20b3d6d6d3c61d035610d0d7aca66cd5070812021d824d08199d3".parse()?;
+            assert_eq!(client.get_block_raw(&hash).await?, vec![0]);
+            let request = server.join().unwrap();
+            assert_eq!(request["method"], "getblock");
+            assert_eq!(
+                request["params"],
+                json!([
+                    hash.to_string(),
+                    if boolean { json!(false) } else { json!(0) }
+                ])
+            );
+        }
+        Ok(())
+    }
 }
 
 /// The Bitcoin Core-style calls the bitcoind-family capture path makes. The
@@ -54,7 +120,8 @@ pub trait BitcoindRpc {
 /// any bitcoind-family chain; the chain `label` only colors error contexts.
 #[derive(Debug, Clone)]
 pub(crate) struct BitcoindRpcClient {
-    /// Chain label for error contexts ("Namecoin", "Syscoin", "Fractal", "Qbit").
+    /// Chain label for error contexts ("Namecoin", "Syscoin", "Fractal", "Qbit",
+    /// "Terracoin").
     label: &'static str,
     config: BitcoindRpcConfig,
     http: Client,
@@ -128,7 +195,17 @@ impl BitcoindRpc for BitcoindRpcClient {
     /// inline for Namecoin/Syscoin).
     async fn get_block_raw(&self, hash: &BlockHash) -> Result<Vec<u8>> {
         let raw_hex: String = self
-            .call("getblock", vec![json!(hash.to_string()), json!(0)])
+            .call(
+                "getblock",
+                vec![
+                    json!(hash.to_string()),
+                    if self.config.raw_block_boolean_verbose {
+                        json!(false)
+                    } else {
+                        json!(0)
+                    },
+                ],
+            )
             .await?;
         hex::decode(&raw_hex).with_context(|| format!("decode {} raw block hex", self.label))
     }

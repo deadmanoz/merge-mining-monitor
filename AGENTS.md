@@ -20,7 +20,8 @@ Use `just` targets, not raw commands, when a target exists:
   `just db-backup` - local DB and backup-first migration workflow.
 - `just serve` - read API plus static `www/` frontend.
 - `just poll-CHAIN` / `just backfill-CHAIN START END` - chain capture for
-  `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, `elastos`, and `qbit`.
+  `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, `elastos`, `qbit`, and
+  `terracoin`.
 - `just import-known-stales` / `just reclassify-known-stales` - known-stale
   membership import and retroactive demotion.
 - `just import-all` / `just import-dataset CHAIN` - pinned normalized
@@ -119,6 +120,10 @@ concurrent tasks inside each locking test.
 - Do not copy a sibling chain module to add a Namecoin-family source. Extend
   the shared source registry, chain spec, config, AuxPoW-family parser, poller,
   and write paths.
+- Strict classic full-block authentication belongs in `mmm-capture::auxpow`,
+  not producers. Each family's RPC verbosity, proof authentication and
+  capture-failure policy are explicit spec facts; recording a capture error and
+  clearing it on a successful capture of the same height follow the same policy.
 - `crates/mmm-api/` must not import producer internals. Cross-layer data needs
   an explicit shared boundary type or API.
 - Hash byte order is fixed: store rust-bitcoin `to_byte_array()` bytes directly;

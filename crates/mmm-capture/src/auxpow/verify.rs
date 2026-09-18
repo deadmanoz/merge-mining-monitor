@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Verify the full CAuxPow commitment for a parsed AuxPoW block whose child block
+/// Verify the Elastos CAuxPow commitment for a parsed AuxPoW block whose child block
 /// hash is `child_block_hash` and merged-mining chain id is `chain_id`.
 ///
 /// This is the trust boundary for capturing against a configurable (possibly
@@ -18,11 +18,31 @@ use super::*;
 /// 5. the parent coinbase txid folds up the coinbase branch to the parent header
 ///    merkle root (wire byte order);
 /// 6. the child block hash folds up the chain branch to the committed aux merkle
-///    root (the standard AuxPoW reversal: the reversed leaf folds to the reversed
+///    root (Elastos's reversal: the reversed leaf folds to the reversed
 ///    committed root). Pinned against ELA 360062 / 1500000 / 2000000.
 pub fn verify_auxpow_commitment(
     parsed: &ParsedAuxpowBlock,
     child_block_hash: BlockHash,
+    chain_id: u32,
+) -> Result<()> {
+    let mut leaf = child_block_hash.to_byte_array();
+    leaf.reverse();
+    verify_commitment_leaf(parsed, leaf, chain_id)
+}
+
+/// Verify a classic Namecoin-family commitment. Its Merkle leaf is the child
+/// hash in wire order; Elastos's existing wrapper uses a reversed leaf.
+pub fn verify_classic_auxpow_commitment(
+    parsed: &ParsedAuxpowBlock,
+    child_block_hash: BlockHash,
+    chain_id: u32,
+) -> Result<()> {
+    verify_commitment_leaf(parsed, child_block_hash.to_byte_array(), chain_id)
+}
+
+fn verify_commitment_leaf(
+    parsed: &ParsedAuxpowBlock,
+    child_leaf: [u8; 32],
     chain_id: u32,
 ) -> Result<()> {
     // 1. Exactly one fabe6d6d marker, with room for the 40-byte commitment.
@@ -96,10 +116,8 @@ pub fn verify_auxpow_commitment(
         "parent coinbase merkle proof does not reach the parent header merkle root"
     );
 
-    // 6. Chain merkle proof (AuxPoW reversal): the reversed child block hash folds
-    //    to the reversed committed aux merkle root.
-    let mut child_leaf = child_block_hash.to_byte_array();
-    child_leaf.reverse();
+    // 6. Fold the protocol-specific leaf; the coinbase commitment stores the
+    // root in display order.
     let chain_root = fold_merkle_branch(child_leaf, &parsed.proof.chain_branch);
     let mut expected_root = aux_merkle_root;
     expected_root.reverse();
@@ -179,6 +197,17 @@ pub fn validates_target(hash: BlockHash, bits: CompactTarget) -> bool {
 }
 
 pub fn parse_bip34_height(script_sig: &[u8]) -> Option<i32> {
+    parse_coinbase_height(script_sig).filter(|height| *height <= 2_000_000)
+}
+
+/// Decode a non-negative child coinbase height without Bitcoin's acquisition ceiling.
+pub fn parse_child_bip34_height(script_sig: &[u8]) -> Option<i32> {
+    let height = parse_coinbase_height(script_sig)?;
+    // Script numbers carry their sign in the high bit of the last byte.
+    (script_sig[script_sig[0] as usize] & 0x80 == 0).then_some(height)
+}
+
+fn parse_coinbase_height(script_sig: &[u8]) -> Option<i32> {
     if script_sig.len() < 2 {
         return None;
     }
@@ -191,5 +220,5 @@ pub fn parse_bip34_height(script_sig: &[u8]) -> Option<i32> {
     let mut raw = [0u8; 4];
     raw[..byte_len].copy_from_slice(&script_sig[1..1 + byte_len]);
     let height = i32::from_le_bytes(raw);
-    (0..=2_000_000).contains(&height).then_some(height)
+    (height >= 0).then_some(height)
 }

@@ -9,8 +9,10 @@
 use anyhow::{Context, Result};
 use tokio_postgres::Client;
 
-/// The `error_kind` for a height whose block claimed a merge-mining proof that
-/// failed to decode. The only kind in the `capture_error` CHECK domain today.
+/// Operational failure during a height capture, including RPC transport errors.
+pub const CAPTURE_ERROR_HEIGHT_CAPTURE_FAILED: &str = "height_capture_failed";
+
+/// The error kind for a height whose claimed merge-mining proof failed validation.
 pub const CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF: &str = "malformed_auxpow_proof";
 
 /// Record (or refresh) the capture error at one height. `first_seen_at` is

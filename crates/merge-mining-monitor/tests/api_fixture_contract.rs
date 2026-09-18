@@ -529,6 +529,18 @@ fn assert_sources_fixture_contract(fixture: &Value) {
             );
         }
     }
+    // Terracoin is registered Live; the fixture shows it catching up.
+    let terracoin = sources
+        .iter()
+        .find(|source| source["code"] == "auxpow:terracoin")
+        .expect("Terracoin fixture");
+    assert_eq!(terracoin["id"], 21);
+    assert_eq!(terracoin["sync"]["mode"], "live");
+    assert_eq!(terracoin["sync"]["state"], "catching_up");
+    assert!(
+        terracoin["sync"]["progress_height"].as_i64().unwrap()
+            < terracoin["sync"]["target_height"].as_i64().unwrap()
+    );
     // The live AuxPoW capture-error class: the wire code, the reduced height,
     // and precedence over the ordinary live/stale verdict even while the cursor
     // is fresh and already past the gap.

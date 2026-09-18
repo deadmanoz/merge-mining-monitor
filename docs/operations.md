@@ -465,3 +465,33 @@ just live-test-classify
 just live-test-reconcile-all
 just live-test-smoke
 ```
+
+## Terracoin activation
+
+Run `just db-migrate-deploy` through the backup-first release workflow before
+starting the new producer. Migration 0030 extends capture-error kinds to
+per-height operational failures; source 21 already exists and needs no new
+identity row. The lifecycle comes from the shared registry.
+
+Run the wallet-disabled Terracoin node on the child-chain VM with private,
+authenticated RPC. Set `TERRACOIN_RPC_URL`, `TERRACOIN_RPC_USER` and
+`TERRACOIN_RPC_PASSWORD`. Use `just backfill-terracoin START END` for bounded
+recovery and `just poll-terracoin` for continuous collection. Backfill does
+not advance the poll cursor. Check successful-height coverage and unresolved
+`capture_error` rows, not only the latest event or node tip.
+
+At first live activation, record the last contiguous successful height C and
+its hash. For activation A=833000 and an explicit positive reorg depth D, set
+`TERRACOIN_START_HEIGHT=max(A,C+1-D)` in the same activation. The override is
+also the replay floor; C+1 alone would omit the boundary overlap. Compare the
+boundary hash, replay earlier if coverage is uncertain, and fail acceptance
+on divergence beyond the checked overlap. Remove the override only after
+successful replay, cleared errors and durable progress through the seam,
+then restart to verify normal cursor-based resume. A pre-existing high
+cursor cannot prove replay succeeded because persistence uses GREATEST.
+
+Keep historical publication imports additive after promotion. On failure,
+stop capture and preserve the database and raw evidence; do not run an old
+authoritative importer over later live events. Retain source-host copies
+until target, independent backup and production acceptance, then retire only
+the separately approved exact inventory.

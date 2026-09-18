@@ -31,8 +31,8 @@ commands:
   reconcile-missing
   smoke
   self-check
-  start <serve|poll-namecoin|poll-rsk|poll-syscoin|poll-fractal|poll-hathor|poll-elastos|poll-qbit|sync-bitcoin-core>
-  stop <serve|poll-namecoin|poll-rsk|poll-syscoin|poll-fractal|poll-hathor|poll-elastos|poll-qbit|sync-bitcoin-core>
+  start <serve|poll-namecoin|poll-rsk|poll-syscoin|poll-fractal|poll-hathor|poll-elastos|poll-qbit|poll-terracoin|sync-bitcoin-core>
+  stop <serve|poll-namecoin|poll-rsk|poll-syscoin|poll-fractal|poll-hathor|poll-elastos|poll-qbit|poll-terracoin|sync-bitcoin-core>
   status
 USAGE
 }
@@ -111,7 +111,7 @@ chain_backfill_cmd() {
 
 chain_poll_cmd() {
     case "$1" in
-        poll-namecoin|poll-rsk|poll-syscoin|poll-fractal|poll-hathor|poll-elastos|poll-qbit) printf '%s' "$1" ;;
+        poll-namecoin|poll-rsk|poll-syscoin|poll-fractal|poll-hathor|poll-elastos|poll-qbit|poll-terracoin) printf '%s' "$1" ;;
         *) die "unknown poll service $1" ;;
     esac
 }
@@ -275,6 +275,7 @@ managed_services() {
         poll-hathor \
         poll-elastos \
         poll-qbit \
+        poll-terracoin \
         sync-bitcoin-core
 }
 
@@ -604,7 +605,7 @@ cmd_self_check() {
     assert_eq "$(chain_backfill_cmd rsk)" "backfill-rsk" "rsk backfill command"
     assert_eq "$(chain_backfill_cmd syscoin)" "backfill-syscoin" "syscoin backfill command"
     assert_eq "$(managed_services | tr '\n' ' ' | sed 's/ $//')" \
-        "serve poll-namecoin poll-rsk poll-syscoin poll-fractal poll-hathor poll-elastos poll-qbit sync-bitcoin-core" \
+        "serve poll-namecoin poll-rsk poll-syscoin poll-fractal poll-hathor poll-elastos poll-qbit poll-terracoin sync-bitcoin-core" \
         "managed service roster"
     assert_eq "$(required_env_vars | tr '\n' ' ' | sed 's/ $//')" \
         "PGHOST PGPORT PGUSER PGPASSWORD PGDATABASE NAMECOIN_RPC_URL RSK_RPC_URL SYSCOIN_RPC_URL FRACTAL_RPC_URL QBIT_RPC_URL BITCOIN_RPC_URL SERVE_BIND_ADDR" \
@@ -666,7 +667,7 @@ service_command() {
     case "$1" in
         serve) printf 'serve' ;;
         sync-bitcoin-core) printf 'sync-bitcoin-core --follow' ;;
-        poll-namecoin|poll-rsk|poll-syscoin|poll-fractal|poll-hathor|poll-elastos|poll-qbit) chain_poll_cmd "$1" ;;
+        poll-namecoin|poll-rsk|poll-syscoin|poll-fractal|poll-hathor|poll-elastos|poll-qbit|poll-terracoin) chain_poll_cmd "$1" ;;
         *) die "unknown service $1" ;;
     esac
 }

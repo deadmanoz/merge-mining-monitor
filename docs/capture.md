@@ -36,6 +36,7 @@ parents, not a separate parent kind, and it is gated by the operator-imported
 
 | Source | Capture path | Notes |
 |---|---|---|
+| Terracoin | Raw block RPC: `getblock <hash> false`. | Shared classic parser; mainnet genesis, chain ID 50, child height/hash, commitment and child target checks. Activation 833,000. |
 | Namecoin | Core-style raw block RPC: `getblock <hash> 0`. | Namecoin-family AuxPoW parser. |
 | Syscoin | Core-style raw block RPC: `getblock <hash> 0`. | Same shared parser as Namecoin, with Syscoin activation/version gates. |
 | Fractal Bitcoin | `getblockheader <hash> false true` for `[header][CAuxPoW]`, plus child block data when needed. | Fractal raw blocks do not carry inline CAuxPoW. |
@@ -45,7 +46,7 @@ parents, not a separate parent kind, and it is gated by the operator-imported
 | Qbit | Core-style raw block RPC: `getblock <hash> 0`, of which only the exact extended-header prefix is decoded. | Qbit's extended header is not a classic CAuxPoW and has no `hashBlock` field, so it uses the dedicated Qbit decoder and is projected straight into normalized evidence. |
 | Bitcoin Core | `sync-bitcoin-core`. | Writes canonical backbone headers and coinbase evidence for tree browsing; follow mode atomically repairs bounded near-tip or lagged-cursor reorg suffixes and retains the displaced side as stale evidence. |
 
-The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit), the Elastos
+The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit, Terracoin), the Elastos
 producer and the Hathor producer record which block the child chain carries at
 every height they process. A captured
 AuxPoW block is recorded inside its capture transaction, after the event
@@ -140,7 +141,7 @@ being recorded as the chain's block.
 
 Backfills are bounded, idempotent over event identity, and do not move the live
 cursor. Use the `just poll-CHAIN` and `just backfill-CHAIN START END` recipes
-for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, `elastos`, and `qbit`.
+for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, `elastos`, `qbit`, and `terracoin`.
 
 ### Malformed Proofs
 
@@ -150,7 +151,7 @@ data, not a property of the failure:
 
 - Namecoin, Syscoin, and Fractal log the failure and continue. The interval is
   still reported complete.
-- Qbit holds the interval. The producer persists a `capture_error` row for the
+- Qbit and Terracoin hold the interval. The producer persists a `capture_error` row for the
   height BEFORE returning, so a crash between detection and return cannot lose
   the signal. A new live height then holds the cursor; a replayed height
   continues, because replay is best-effort by the poller's contract, and the
@@ -231,3 +232,14 @@ a complete parent header.
   cache without making Core RPC calls. A fresh Core tip also rejects a claimed
   BIP34 height more than 144 blocks beyond it, even when a stale cache happens
   to cover that height.
+
+Terracoin also retains per-height RPC and operational failures as
+`height_capture_failed`. These share the public capture-error state and clear
+only after successful processing of the same height.
+
+The family spec declares raw-RPC verbosity separately from classic proof authentication.
+One `CaptureFailurePolicy` owns malformed handling, operational-failure retention
+and successful same-height clearing. Strict classic parsing lives in
+`mmm-capture::auxpow::parse_verified_classic_block`; producers supply expected
+identity and own endpoint checks and persistence, without decoding wire layouts.
+Legacy parsing and Qbit/Elastos proof semantics remain unchanged.

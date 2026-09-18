@@ -622,11 +622,11 @@
         "weak_orphan": 0
       },
       "sync": {
-        "mode": "historical",
-        "state": "historical",
-        "progress_height": null,
-        "progress_updated_at": null,
-        "target_height": null,
+        "mode": "live",
+        "state": "catching_up",
+        "progress_height": 3288246,
+        "progress_updated_at": 1779792000,
+        "target_height": 3288250,
         "latest_evidence_at": null,
         "error_code": null,
         "error_height": null
