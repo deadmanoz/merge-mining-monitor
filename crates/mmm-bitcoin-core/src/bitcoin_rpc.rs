@@ -625,10 +625,11 @@ mod tests {
         assert_eq!(failed.retries, 1);
         assert_eq!(failed.http_attempts, 1);
         assert_eq!(failed.rpc_elements, 1);
-        assert!(failed.latency_max < Duration::from_millis(200));
+        assert_eq!(failed.completed, 0);
         tokio::time::sleep(Duration::from_millis(300)).await;
         let completed = client.metrics().snapshot();
         assert_eq!(completed.http_attempts, 1);
+        assert_eq!(completed.completed, 1);
         assert!(completed.latency_max >= Duration::from_millis(200));
     }
 

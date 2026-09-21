@@ -11,7 +11,8 @@
 //! behavior. The counters live at two levels: an attempt is one dispatched
 //! HTTP request, counted when it is dispatched and timed from dispatch to the
 //! consumed response body, so a window that dispatched a call still in flight
-//! at its end shows the attempt and a later window its latency; a retry and a
+//! at its end shows the attempt and the window the call completes in carries
+//! its latency, averaged over the attempts completed there; a retry and a
 //! failure belong to the caller's retry loop, which alone knows when a failed
 //! attempt is followed by another and when a call has given up.
 //!
@@ -36,6 +37,9 @@ struct Inner {
     rpc_elements: AtomicU64,
     retries: AtomicU64,
     failures: AtomicU64,
+    /// Attempts whose latency has been recorded, so a mean over a window
+    /// pairs each latency with its own attempt.
+    completed: AtomicU64,
     latency_total_nanos: AtomicU64,
     latency_max_nanos: AtomicU64,
 }
@@ -50,6 +54,7 @@ impl RpcMetrics {
             rpc_elements: AtomicU64::new(0),
             retries: AtomicU64::new(0),
             failures: AtomicU64::new(0),
+            completed: AtomicU64::new(0),
             latency_total_nanos: AtomicU64::new(0),
             latency_max_nanos: AtomicU64::new(0),
         }))
@@ -94,6 +99,7 @@ impl RpcMetrics {
     /// Record the latency of an attempt counted by [`Self::record_dispatch`],
     /// once its response is consumed or the caller abandons it.
     pub fn record_latency(&self, latency: Duration) {
+        self.0.completed.fetch_add(1, Ordering::Relaxed);
         let nanos = u64::try_from(latency.as_nanos()).unwrap_or(u64::MAX);
         self.0
             .latency_total_nanos
@@ -130,6 +136,7 @@ impl RpcMetrics {
             rpc_elements: self.0.rpc_elements.load(Ordering::Relaxed),
             retries: self.0.retries.load(Ordering::Relaxed),
             failures: self.0.failures.load(Ordering::Relaxed),
+            completed: self.0.completed.load(Ordering::Relaxed),
             latency_total: Duration::from_nanos(self.0.latency_total_nanos.load(Ordering::Relaxed)),
             latency_max: Duration::from_nanos(self.0.latency_max_nanos.load(Ordering::Relaxed)),
         }
@@ -157,14 +164,16 @@ pub struct RpcMetricsSnapshot {
     pub rpc_elements: u64,
     pub retries: u64,
     pub failures: u64,
+    /// Attempts whose latency is in `latency_total`.
+    pub completed: u64,
     pub latency_total: Duration,
     pub latency_max: Duration,
 }
 
 impl RpcMetricsSnapshot {
-    /// Mean latency per HTTP attempt; zero when no attempt has been recorded.
+    /// Mean latency per completed HTTP attempt; zero when none has completed.
     pub fn latency_avg(&self) -> Duration {
-        mean_latency(self.latency_total, self.http_attempts)
+        mean_latency(self.latency_total, self.completed)
     }
 
     /// What happened between `earlier` and this snapshot: the counters'
@@ -177,15 +186,16 @@ impl RpcMetricsSnapshot {
             rpc_elements: self.rpc_elements.saturating_sub(earlier.rpc_elements),
             retries: self.retries.saturating_sub(earlier.retries),
             failures: self.failures.saturating_sub(earlier.failures),
+            completed: self.completed.saturating_sub(earlier.completed),
             latency_total: self.latency_total.saturating_sub(earlier.latency_total),
         }
     }
 }
 
-fn mean_latency(total: Duration, attempts: u64) -> Duration {
-    match u32::try_from(attempts) {
+fn mean_latency(total: Duration, completed: u64) -> Duration {
+    match u32::try_from(completed) {
         Ok(0) | Err(_) => Duration::ZERO,
-        Ok(attempts) => total / attempts,
+        Ok(completed) => total / completed,
     }
 }
 
@@ -197,13 +207,16 @@ pub struct RpcMetricsDelta {
     pub rpc_elements: u64,
     pub retries: u64,
     pub failures: u64,
+    /// Attempts that completed in the window, whether or not they were
+    /// dispatched in it; `latency_total` is theirs.
+    pub completed: u64,
     pub latency_total: Duration,
 }
 
 impl RpcMetricsDelta {
-    /// Mean latency per attempt in the window; zero when it saw none.
+    /// Mean latency per attempt completed in the window; zero when none did.
     pub fn latency_avg(&self) -> Duration {
-        mean_latency(self.latency_total, self.http_attempts)
+        mean_latency(self.latency_total, self.completed)
     }
 }
 
@@ -318,8 +331,38 @@ mod tests {
         }
         let snapshot = metrics.snapshot();
         assert_eq!(snapshot.http_attempts, 1);
+        assert_eq!(snapshot.completed, 1);
         assert!(snapshot.latency_max >= Duration::from_millis(5));
         assert_eq!(snapshot.failures, 0);
+    }
+
+    #[test]
+    fn a_window_averages_the_latency_of_the_attempts_that_completed_in_it() {
+        // An attempt dispatched in one window and completed in the next is
+        // counted by the first and timed by the second, whose mean pairs the
+        // latency with that attempt rather than with the window's own.
+        let metrics = RpcMetrics::new("core");
+        let start = metrics.snapshot();
+        let in_flight = metrics.attempt(1);
+        let boundary = metrics.snapshot();
+        let first = boundary.since(&start);
+        assert_eq!(first.http_attempts, 1);
+        assert_eq!(first.completed, 0);
+        assert_eq!(first.latency_avg(), Duration::ZERO);
+
+        std::thread::sleep(Duration::from_millis(5));
+        drop(in_flight);
+        let idle = metrics.snapshot().since(&boundary);
+        assert_eq!(idle.http_attempts, 0);
+        assert_eq!(idle.completed, 1);
+        assert!(idle.latency_avg() >= Duration::from_millis(5));
+
+        metrics.record_attempt(1, Duration::from_millis(100));
+        let busy = metrics.snapshot().since(&boundary);
+        assert_eq!(busy.http_attempts, 1);
+        assert_eq!(busy.completed, 2);
+        assert!(busy.latency_avg() >= Duration::from_millis(52));
+        assert!(busy.latency_avg() < Duration::from_millis(100));
     }
 
     #[test]

@@ -31,9 +31,11 @@ This changelog starts with the initial release.
 - Count remote calls at the transport boundary. Every RPC client (Bitcoin
   Core, the bitcoind family, RSK, Elastos, Hathor) owns an `RpcMetrics`
   handle from `mmm-rpc`: an attempt is one dispatched HTTP request, counted
-  at dispatch and timed from dispatch to the consumed response body (a Core
-  call the outer timeout detached is counted in the tick that dispatched it
-  and timed when it completes), and retries and failures are the retry
+  at dispatch and timed from dispatch to the consumed response body, with
+  the window's mean latency taken over the attempts that completed in it (a
+  Core call the outer timeout detached is counted in the tick that
+  dispatched it and timed in the tick it completes in), and retries and
+  failures are the retry
   loop's own, so an exhausted budget counts as one failed call and an
   iteration that timed out waiting for a local slot counts as nothing.
   Every poll tick, empty or failed ones included, logs one line with cursor,
