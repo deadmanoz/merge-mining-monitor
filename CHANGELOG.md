@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-21
+
 - Rescan a trailing-window height with one block-hash lookup: migration
   `0026` adds `child_chain_head`, the block a producer last observed at each
   height with its outcome, and the bitcoind-family and Hathor pollers skip
