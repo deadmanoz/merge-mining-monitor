@@ -140,17 +140,22 @@ Bitcoin Core, to every child-chain node, and to the research VM is about
 340 ms, while the development VM sees well under 1 ms to the same hosts. A
 loop that makes one remote call per row costs a thousand times more in
 production than anywhere it is tested, and three production incidents came
-from exactly that shape. Any operation that iterates over rows, heights, or
-candidates and performs a remote call or a per-item statement must:
+from exactly that shape: a call per item that nothing had budgeted, bounded,
+or timed. Any operation that iterates over rows, heights, or candidates and
+performs a remote call or a per-item statement must:
 
 - State its round-trip budget in the PR description: expected items times
   remote round trips per item, at the production round-trip time. A producer,
   store, or read-model change without a `Round-trip budget:` line is
   incomplete.
-- Issue at most one remote round trip per item without batching, and never a
-  remote call when a local table already holds the answer (the `block` table
-  holds every canonical Bitcoin height; the child-chain head record holds
-  the block the chain last carried at a height).
+- Make no remote call for an item whose answer a local table already holds
+  (the `block` table holds every canonical Bitcoin height; the child-chain
+  head record holds the block the chain last carried at a height), and batch
+  calls where the transport allows it. A call per item is acceptable only
+  where it is irreducible (a height's block hash at its node, a candidate's
+  strict Core classification) and the budget, the bound, and the timing
+  receipt below justify the count; on a path something waits on, such as a
+  tick, the count is the window the budget states and no more.
 - Be bounded, or resumable from a cursor persisted in the database, and
   never run unbounded work inside producer startup or a per-tick refresh.
   Scheduled work is recorded as pending and consumed by an explicit job.

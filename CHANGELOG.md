@@ -78,8 +78,10 @@ This changelog starts with the initial release.
 
 - Codify the remote round-trip rule in `AGENTS.md` and `docs/testing.md`:
   every loop over rows, heights or candidates that performs a remote call
-  states its round-trip budget in the PR, batches or reads locally instead
-  of calling once per item, is bounded or resumable from a persisted
+  states its round-trip budget in the PR, reads locally where a table
+  already holds the answer, batches where the transport allows it, makes a
+  call per item only where it is irreducible and the budget justifies it,
+  is bounded or resumable from a persisted
   cursor, never runs unbounded work inside producer startup or a tick, holds
   no global advisory lock across more than one batch, reports through
   `ProgressReporter` and `RpcMetrics`, pins its per-item remote-call count
