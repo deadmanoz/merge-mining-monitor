@@ -1,5 +1,23 @@
 # Release Notes
 
+## [0.8.1] - 2026-09-21
+
+- A rescanned height behind the poll cursor costs one block-hash lookup at the
+  child node when the chain still carries the block last recorded there
+  (migration `0026` adds `child_chain_head`); only a changed hash, or a record
+  whose verdict may still change, takes the full capture again. Elastos and
+  RSK are unchanged.
+- The unknown-parent recheck no longer runs inside producer startup or the
+  per-tick Bitcoin Core cache refresh. A trigger records it as pending and
+  `reclassify-unknown-parents --scheduled` consumes it a page at a time from a
+  persisted cursor, releasing the Core-cache lock between pages (migrations
+  `0027` and `0028`). Run it after migrating: the first run still covers the
+  sweep migration `0019` scheduled, in the background, and resumes if killed.
+- Every poll tick logs a `poll tick` line with the heights it rescanned and
+  captured, its duration and each RPC client's call counts, and every batch
+  job logs progress (done, total, rate, ETA) and ends with a per-client
+  summary.
+
 ## [0.8.0] - 2026-09-16
 
 - Qbit is a live source. Once its historical publication is imported and the
