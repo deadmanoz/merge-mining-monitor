@@ -108,6 +108,18 @@ fn is_transient_http_status(status: StatusCode) -> bool {
     status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
 }
 
+/// The transport counters a chain job reports: the child-chain client's, plus
+/// the Core classifier's when it is Core-backed. Shared by every poll tick and
+/// backfill summary so both RPC pictures always appear together.
+pub(crate) fn rpc_metrics_for_reporting(
+    chain_metrics: mmm_rpc::RpcMetrics,
+    classifier: &mmm_bitcoin_core::ConfiguredParentClassifier,
+) -> Vec<mmm_rpc::RpcMetrics> {
+    let mut metrics = vec![chain_metrics];
+    metrics.extend(classifier.metrics());
+    metrics
+}
+
 /// Which registry-dispatched command a producer subcommand names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandKind {

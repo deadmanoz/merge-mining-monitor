@@ -380,6 +380,18 @@ impl ConfiguredParentClassifier {
         }
     }
 
+    /// Bitcoin Core RPC transport counters, when this classifier is backed by a
+    /// real Core client. `None` for `Disabled` and the test `Fake` classifier,
+    /// which make no RPC calls to count.
+    pub fn metrics(&self) -> Option<mmm_rpc::RpcMetrics> {
+        match self {
+            Self::Disabled => None,
+            Self::BitcoinCore(classifier) => Some(classifier.metrics()),
+            #[cfg(any(test, feature = "db-integration"))]
+            Self::Fake(_) => None,
+        }
+    }
+
     /// Resolve a canonical Bitcoin header by height for the durable Core header
     /// cache. A disabled classifier cannot service mutating monitor commands.
     pub async fn canonical_header(&self, height: i32) -> Result<CoreHeader> {
@@ -395,6 +407,10 @@ impl ConfiguredParentClassifier {
 }
 
 mod core;
+#[cfg(test)]
+pub(crate) mod core_fixture;
+#[cfg(test)]
+mod core_fixture_tests;
 #[cfg(any(test, feature = "db-integration"))]
 mod fake;
 #[cfg(test)]

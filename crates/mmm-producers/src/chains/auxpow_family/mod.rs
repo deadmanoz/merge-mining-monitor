@@ -21,9 +21,6 @@ use bitcoin::BlockHash;
 use tokio_postgres::Client;
 use tracing::{debug, error, info, warn};
 
-use crate::chains::backfill::{
-    BackfillConfig, BackfillHeightEffect, BackfillSummary, run_delayed_backfill_range,
-};
 use crate::chains::bitcoind_rpc::{BitcoindRpc, BitcoindRpcClient};
 use crate::chains::child_payout_registry::seed_child_payout_identities_for;
 use crate::chains::spec::{ChainSpec, FamilySpec, FetchStrategy, MalformedPolicy, RepairScope};
@@ -643,6 +640,12 @@ impl ChainPoller for AuxpowFamilyPoller {
     /// advances the cursor toward (the cursor table, never `MAX(child_height)`).
     async fn chain_tip(&self) -> Result<i32> {
         self.rpc.get_block_count().await
+    }
+    fn chain_rpc_metrics(&self) -> Option<mmm_rpc::RpcMetrics> {
+        Some(self.rpc.metrics())
+    }
+    fn parent_classifier(&self) -> Option<&ConfiguredParentClassifier> {
+        Some(self.context.parent_classifier())
     }
 
     async fn refresh_core_cache(&mut self) -> Result<()> {

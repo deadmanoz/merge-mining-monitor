@@ -7,6 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, ensure};
 
 use crate::chains::spec::ChainSpec;
+use mmm_capture::progress::ProgressReporter;
 
 /// Shared bounded-backfill argument config. Usage strings and validation
 /// errors are byte-identical to the historical per-chain configs.
@@ -153,10 +154,14 @@ impl BackfillSummary {
 }
 
 /// Drive an inclusive backfill range with an optional per-height delay, folding
-/// each chain-specific outcome into the shared summary format.
+/// each chain-specific outcome into the shared summary format and advancing
+/// `progress` per height. The caller owns the reporter and marks it finished
+/// only once its repair and completion verdict succeed, so the summary logged
+/// on drop names the outcome of the whole backfill.
 pub(crate) async fn run_delayed_backfill_range<F>(
     config: &BackfillConfig,
     delay_ms: u64,
+    progress: &ProgressReporter,
     mut process_height: F,
 ) -> Result<BackfillSummary>
 where
@@ -166,9 +171,24 @@ where
     for height in config.start_height..=config.end_height {
         let effect = process_height(height).await?;
         summary.record(effect);
+        progress.advance(1);
         sleep_backfill_delay(delay_ms).await;
     }
     Ok(summary)
+}
+
+/// A backfill's progress reporter, sized to `config`'s range, with every RPC
+/// client's counters in its final summary.
+pub(crate) fn backfill_progress(
+    job: &'static str,
+    config: &BackfillConfig,
+    metrics: Vec<mmm_rpc::RpcMetrics>,
+) -> ProgressReporter {
+    let total = u64::try_from(config.end_height - config.start_height + 1).unwrap_or(0);
+    metrics.iter().fold(
+        ProgressReporter::new(job, Some(total)),
+        |progress, metrics| progress.with_summary(metrics.summary()),
+    )
 }
 
 async fn sleep_backfill_delay(delay_ms: u64) {

@@ -28,7 +28,7 @@ use serde_json::{Value, json};
 use crate::chains::is_transient_http_status;
 use mmm_capture::auxpow::{MAX_ELASTOS_AUXPOW_BYTES, ParsedHeader};
 use mmm_rpc as rpc_http;
-use rpc_http::build_rpc_client;
+use rpc_http::{RpcMetrics, build_rpc_client};
 
 /// Default endpoint (localhost). Override via `ELASTOS_RPC_URL` for the actual
 /// node: LAN-direct `http://<node-host>:20336` for a self-hosted deployment,
@@ -232,6 +232,7 @@ pub trait ElastosRpc {
 pub(crate) struct ElastosRpcClient {
     config: ElastosRpcConfig,
     http: Client,
+    metrics: RpcMetrics,
 }
 
 impl ElastosRpcClient {
@@ -239,7 +240,17 @@ impl ElastosRpcClient {
     /// the config's whole-request timeout).
     pub(crate) fn new(config: ElastosRpcConfig) -> Result<Self> {
         let http = build_rpc_client(config.request_timeout)?;
-        Ok(Self { config, http })
+        Ok(Self {
+            config,
+            http,
+            metrics: RpcMetrics::new("elastos"),
+        })
+    }
+
+    /// Transport counters for this client, including retries this client's own
+    /// transient-failure backoff loop issues.
+    pub(crate) fn metrics(&self) -> RpcMetrics {
+        self.metrics.clone()
     }
 
     /// Tip height via `getcurrentheight`.
@@ -257,14 +268,23 @@ impl ElastosRpcClient {
     /// 5xx, transport), so a rate-limiting public endpoint does not fail a tick or
     /// a backfill height on the first hiccup. A protocol-level RPC error or a 4xx
     /// other than 429 is permanent and returned immediately.
+    ///
+    /// Every attempt is timed through its consumed body and recorded; the loop
+    /// alone knows whether a transient failure is followed by a retry or is
+    /// the exhausted last one, so it records retries and the failed call.
     async fn call<T: DeserializeOwned>(&self, method: &str, params: Value) -> Result<T> {
         let request = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
         let mut attempt = 0;
         loop {
-            match self.try_call::<T>(method, &request).await {
+            let result = {
+                let _attempt = self.metrics.attempt(1);
+                self.try_call::<T>(method, &request).await
+            };
+            match result {
                 Ok(value) => return Ok(value),
                 Err(call_err) if call_err.transient && attempt < MAX_TRANSIENT_RETRIES => {
                     attempt += 1;
+                    self.metrics.record_retry();
                     tracing::warn!(
                         method,
                         attempt,
@@ -273,7 +293,10 @@ impl ElastosRpcClient {
                     );
                     tokio::time::sleep(Duration::from_millis(200 * attempt as u64)).await;
                 }
-                Err(call_err) => return Err(call_err.err),
+                Err(call_err) => {
+                    self.metrics.record_failure();
+                    return Err(call_err.err);
+                }
             }
         }
     }

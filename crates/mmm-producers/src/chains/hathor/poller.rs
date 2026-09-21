@@ -13,6 +13,7 @@ use crate::chains::hathor::capture::{
 use crate::chains::hathor::rpc::HathorRpcClient;
 use crate::chains::spec::{ChainId, by_id};
 use crate::poller::{ChainPoller, ChainPollerState, HeightProgress, RescanOutcome};
+use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_store::upsert_pending_reconcile;
 
 /// Hathor live capture chain. Maps the rich [`HathorHeightOutcome`] to the
@@ -47,6 +48,12 @@ impl ChainPoller for HathorChainPoller {
 
     async fn chain_tip(&self) -> Result<i32> {
         self.rpc.get_chain_tip().await
+    }
+    fn chain_rpc_metrics(&self) -> Option<mmm_rpc::RpcMetrics> {
+        Some(self.rpc.metrics())
+    }
+    fn parent_classifier(&self) -> Option<&ConfiguredParentClassifier> {
+        Some(self.context.parent_classifier())
     }
 
     async fn refresh_core_cache(&mut self) -> Result<()> {

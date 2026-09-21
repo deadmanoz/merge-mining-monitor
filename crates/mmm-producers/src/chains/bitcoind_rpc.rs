@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use mmm_rpc as rpc_http;
-use rpc_http::build_rpc_client;
+use rpc_http::{RpcMetrics, build_rpc_client};
 
 /// Resolved transport configuration for a bitcoind-family endpoint. Built by
 /// `chains::config::bitcoind_rpc_config`; carries values, never env var names.
@@ -58,18 +58,28 @@ pub(crate) struct BitcoindRpcClient {
     label: &'static str,
     config: BitcoindRpcConfig,
     http: Client,
+    metrics: RpcMetrics,
 }
 
 impl BitcoindRpcClient {
     /// Build the client, materializing the reqwest transport with the config's
-    /// request timeout. `label` is folded into every later error context.
+    /// request timeout. `label` is folded into every later error context and
+    /// used as the [`RpcMetrics`] label.
     pub(crate) fn new(label: &'static str, config: BitcoindRpcConfig) -> Result<Self> {
         let http = build_rpc_client(config.request_timeout)?;
         Ok(Self {
             label,
             config,
             http,
+            metrics: RpcMetrics::new(label),
         })
+    }
+
+    /// Transport counters for this client (attempts, retries, failures,
+    /// latency). This client has no retry loop of its own, so `retries` is
+    /// always zero.
+    pub(crate) fn metrics(&self) -> RpcMetrics {
+        self.metrics.clone()
     }
 
     /// Issue one JSON-RPC 1.0 call and deserialize the `result`. Layers error
@@ -83,8 +93,12 @@ impl BitcoindRpcClient {
     {
         let label = self.label;
         let request = json!({"jsonrpc": "1.0", "id": method, "method": method, "params": params});
-        let response = rpc_http::post_json_rpc_for_status(
-            &self.http,
+        let transport = rpc_http::RpcTransport {
+            http: &self.http,
+            metrics: &self.metrics,
+        };
+        rpc_http::post_required_json_rpc_call(
+            &transport,
             &self.config.url,
             self.config.user.as_deref(),
             self.config.password.as_deref(),
@@ -92,8 +106,7 @@ impl BitcoindRpcClient {
             method,
             &request,
         )
-        .await?;
-        rpc_http::decode_required_json_rpc_response(label, method, response).await
+        .await
     }
 }
 

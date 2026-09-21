@@ -6,7 +6,9 @@
 use anyhow::{Context, Result, bail};
 use tracing::{info, warn};
 
-use crate::chains::backfill::{BackfillConfig, BackfillHeightEffect, run_delayed_backfill_range};
+use crate::chains::backfill::{
+    BackfillConfig, BackfillHeightEffect, backfill_progress, run_delayed_backfill_range,
+};
 use crate::chains::elastos::capture::{
     ElastosCaptureContext, ElastosHeightOutcome, process_elastos_height,
 };
@@ -82,7 +84,12 @@ pub(crate) async fn run_elastos_backfill(
         "starting bounded Elastos backfill"
     );
 
-    let summary = run_delayed_backfill_range(&config, delay_ms, async |height| {
+    let progress = backfill_progress(
+        "chain-backfill",
+        &config,
+        crate::chains::rpc_metrics_for_reporting(rpc.metrics(), context.parent_classifier()),
+    );
+    let summary = run_delayed_backfill_range(&config, delay_ms, &progress, async |height| {
         let outcome = process_elastos_height(&mut client, &rpc, &context, height).await?;
         elastos_backfill_effect(height, outcome)
     })
@@ -95,7 +102,6 @@ pub(crate) async fn run_elastos_backfill(
         malformed_skipped = summary.malformed_skipped,
         "completed bounded Elastos backfill"
     );
-
     run_post_backfill_repair(
         &mut client,
         context.parent_classifier(),
@@ -105,6 +111,7 @@ pub(crate) async fn run_elastos_backfill(
         "Elastos backfill",
     )
     .await?;
+    progress.finish();
 
     Ok(())
 }

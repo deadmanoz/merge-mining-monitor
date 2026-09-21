@@ -17,6 +17,7 @@ use bitcoin::hashes::Hash as _;
 use bitcoin::{Block, BlockHash};
 use corepc_client::client_sync::v28::Client as CoreClient;
 use corepc_client::client_sync::{Auth, Error as CoreError};
+use mmm_rpc::RpcMetrics;
 use tokio::sync::Semaphore;
 use tokio::time::{sleep, timeout};
 use tracing::warn;
@@ -48,6 +49,7 @@ pub struct BitcoinCoreRpcClient {
     semaphore: Arc<Semaphore>,
     max_concurrency: usize,
     timeout: Duration,
+    metrics: RpcMetrics,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,11 +105,18 @@ impl BitcoinCoreRpcClient {
             semaphore: Arc::new(Semaphore::new(max_concurrency)),
             max_concurrency,
             timeout: Duration::from_secs(timeout_secs),
+            metrics: RpcMetrics::new("core"),
         })
     }
 
     pub(crate) fn max_concurrency(&self) -> usize {
         self.max_concurrency
+    }
+
+    /// Transport counters for this client: HTTP attempts (one per RPC call,
+    /// plus one per retry), retries, terminal failures, and latency.
+    pub fn metrics(&self) -> RpcMetrics {
+        self.metrics.clone()
     }
 
     pub async fn get_block_hash(&self, height: u64) -> Result<BlockHash> {
@@ -196,8 +205,15 @@ impl BitcoinCoreRpcClient {
                     .await
                     .context("acquire Bitcoin Core RPC semaphore")?;
                 let call = Arc::clone(&f);
+                let metrics = self.metrics.clone();
+                // The attempt is counted around the call itself, inside the
+                // blocking task: an iteration that times out while waiting for
+                // a slot records nothing, the tick that dispatched a call the
+                // timeout detached still sees the attempt, and the call's real
+                // latency is recorded when it completes.
                 tokio::task::spawn_blocking(move || {
                     let _permit = permit;
+                    let _attempt = metrics.attempt(1);
                     call()
                 })
                 .await
@@ -216,16 +232,21 @@ impl BitcoinCoreRpcClient {
             match result {
                 Ok(value) => return Ok(value),
                 Err(err) if is_transient_rpc_error(&err) && attempt < max_attempts => {
+                    self.metrics.record_retry();
                     let delay = rpc_retry_delay(attempt, retry_base_delay);
                     warn!(attempt, max_attempts, ?delay, error = %err, "retrying transient Bitcoin Core RPC failure");
                     sleep(delay).await;
                 }
                 Err(err) if is_transient_rpc_error(&err) => {
+                    self.metrics.record_failure();
                     return Err(err).with_context(|| {
                         format!("Bitcoin Core RPC failed after {attempt} attempts")
                     });
                 }
-                Err(err) => return Err(err),
+                Err(err) => {
+                    self.metrics.record_failure();
+                    return Err(err);
+                }
             }
         }
         unreachable!("positive RPC attempt count must return from the loop")
@@ -409,6 +430,7 @@ mod tests {
             semaphore: Arc::new(Semaphore::new(1)),
             max_concurrency: 1,
             timeout: Duration::from_secs(1),
+            metrics: RpcMetrics::new("core"),
         }
     }
 
@@ -499,9 +521,10 @@ mod tests {
 
     #[tokio::test]
     async fn retries_transient_transport_failures_until_success() {
+        let client = test_client();
         let attempts = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&attempts);
-        let value = test_client()
+        let value = client
             .rpc_call_with_policy(
                 move || {
                     if observed.fetch_add(1, Ordering::SeqCst) < 2 {
@@ -517,6 +540,10 @@ mod tests {
             .unwrap();
         assert_eq!(value, 42);
         assert_eq!(attempts.load(Ordering::SeqCst), 3);
+        let snapshot = client.metrics().snapshot();
+        assert_eq!(snapshot.http_attempts, 3);
+        assert_eq!(snapshot.retries, 2);
+        assert_eq!(snapshot.failures, 0);
     }
 
     #[tokio::test]
@@ -543,9 +570,10 @@ mod tests {
 
     #[tokio::test]
     async fn reports_transient_failure_after_bounded_attempts() {
+        let client = test_client();
         let attempts = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&attempts);
-        let error = test_client()
+        let error = client
             .rpc_call_with_policy(
                 move || {
                     observed.fetch_add(1, Ordering::SeqCst);
@@ -558,6 +586,10 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("failed after 3 attempts"));
         assert_eq!(attempts.load(Ordering::SeqCst), 3);
+        let snapshot = client.metrics().snapshot();
+        assert_eq!(snapshot.http_attempts, 3);
+        assert_eq!(snapshot.retries, 2);
+        assert_eq!(snapshot.failures, 1);
     }
 
     #[tokio::test]
@@ -583,6 +615,22 @@ mod tests {
         .unwrap_err();
         assert!(error.to_string().contains("failed after 2 attempts"));
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        // The call itself counts as one failure at once; the detached call is
+        // the only transport attempt, counted when it was dispatched so the
+        // failing window sees it, and timed with its real latency once it
+        // completes, while the iteration that timed out waiting for the
+        // retained permit records nothing.
+        let failed = client.metrics().snapshot();
+        assert_eq!(failed.failures, 1);
+        assert_eq!(failed.retries, 1);
+        assert_eq!(failed.http_attempts, 1);
+        assert_eq!(failed.rpc_elements, 1);
+        assert_eq!(failed.completed, 0);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let completed = client.metrics().snapshot();
+        assert_eq!(completed.http_attempts, 1);
+        assert_eq!(completed.completed, 1);
+        assert!(completed.latency_max >= Duration::from_millis(200));
     }
 
     #[tokio::test]

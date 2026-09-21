@@ -599,9 +599,12 @@ async fn drain_core_reconcile_queue_with_budget(
     cascade_budget: usize,
 ) -> Result<()> {
     let mut parents_reconciled = 0_usize;
+    let progress =
+        crate::classifier_progress("core-suffix-reconcile-queue-drain", None, classifier);
     loop {
         let Some(work) = load_next_core_reconcile_work(client, source_id).await? else {
             clear_pending_error_if_queue_empty(client, source_id).await?;
+            progress.finish();
             return Ok(());
         };
 
@@ -621,6 +624,7 @@ async fn drain_core_reconcile_queue_with_budget(
                     )
                 })?;
             parents_reconciled += 1;
+            progress.advance(1);
             mark_core_primary_reconciled(client, source_id, &work).await?;
         } else {
             expand_core_reconcile_work(client, source_id, &work).await?;

@@ -3,6 +3,10 @@
 //! shared runner, and the post-backfill repair under the spec's scope.
 
 use super::*;
+use crate::chains::backfill::{
+    BackfillConfig, BackfillHeightEffect, BackfillSummary, backfill_progress,
+    run_delayed_backfill_range,
+};
 
 /// Registry-dispatched backfill entry point for bitcoind-family chains.
 pub(crate) async fn backfill(rt: ProducerRuntime, config: BackfillConfig) -> Result<()> {
@@ -54,7 +58,12 @@ pub(crate) async fn run_auxpow_backfill(
         "starting bounded AuxPoW backfill"
     );
 
-    let summary = run_delayed_backfill_range(&config, 0, async |height| {
+    let progress = backfill_progress(
+        "chain-backfill",
+        &config,
+        crate::chains::rpc_metrics_for_reporting(rpc.metrics(), context.parent_classifier()),
+    );
+    let summary = run_delayed_backfill_range(&config, 0, &progress, async |height| {
         let outcome = process_auxpow_height(&mut client, &rpc, &context, height).await?;
         Ok(auxpow_backfill_effect(outcome))
     })
@@ -98,7 +107,9 @@ pub(crate) async fn run_auxpow_backfill(
     // Everything captured in the range is written and reconciled; the run
     // itself is still not a success. Reporting completion over a hole is the
     // failure this policy exists to prevent.
-    ensure_backfill_complete(spec, &config, &summary)
+    ensure_backfill_complete(spec, &config, &summary)?;
+    progress.finish();
+    Ok(())
 }
 
 /// The bounded-backfill completion verdict. A range that left any held

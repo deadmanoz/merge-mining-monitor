@@ -22,7 +22,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use mmm_rpc as rpc_http;
-use rpc_http::build_rpc_client;
+use rpc_http::{RpcMetrics, build_rpc_client};
 
 /// Connection settings for the RSK JSON-RPC endpoint. Built from env by
 /// `chains::config::rsk_rpc_config`; optional basic-auth credentials are only
@@ -45,6 +45,7 @@ pub struct RskRpcConfig {
 pub struct RskRpcClient {
     config: RskRpcConfig,
     http: Client,
+    metrics: RpcMetrics,
 }
 
 /// Raw RSK block fields returned by `eth_getBlockByNumber` and
@@ -90,7 +91,18 @@ impl RskRpcClient {
     /// tunnel socket cannot hang the poller's tip fetch indefinitely.
     pub fn new(config: RskRpcConfig) -> Result<Self> {
         let http = build_rpc_client(config.request_timeout)?;
-        Ok(Self { config, http })
+        Ok(Self {
+            config,
+            http,
+            metrics: RpcMetrics::new("rsk"),
+        })
+    }
+
+    /// Transport counters for this client (attempts, retries, failures,
+    /// latency). This client has no retry loop of its own, so `retries` is
+    /// always zero.
+    pub fn metrics(&self) -> RpcMetrics {
+        self.metrics.clone()
     }
 
     /// Current chain tip via `eth_blockNumber`. A null result is an error: a
@@ -125,15 +137,30 @@ impl RskRpcClient {
     }
 
     /// Call an RSK RPC method whose `result` must be non-null. A JSON `null`
-    /// result is treated as an error (eth_blockNumber et al. never return
-    /// null on a healthy node).
+    /// result is a failed call (eth_blockNumber et al. never return null on a
+    /// healthy node), counted as one by the metered boundary.
     async fn call_required<T>(&self, method: &str, params: Vec<Value>) -> Result<T>
     where
         T: DeserializeOwned,
     {
-        self.call_optional(method, params)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("RSK RPC method {method} returned a null result"))
+        let request = json!({"jsonrpc": "2.0", "id": method, "method": method, "params": params});
+        rpc_http::post_required_json_rpc_call(
+            &self.transport(),
+            &self.config.url,
+            self.config.user.as_deref(),
+            self.config.password.as_deref(),
+            "RSK",
+            method,
+            &request,
+        )
+        .await
+    }
+
+    fn transport(&self) -> rpc_http::RpcTransport<'_> {
+        rpc_http::RpcTransport {
+            http: &self.http,
+            metrics: &self.metrics,
+        }
     }
 
     /// Call an RSK RPC method whose `result` may be JSON `null` (the
@@ -147,8 +174,8 @@ impl RskRpcClient {
         T: DeserializeOwned,
     {
         let request = json!({"jsonrpc": "2.0", "id": method, "method": method, "params": params});
-        let response = rpc_http::post_json_rpc_for_status(
-            &self.http,
+        rpc_http::post_json_rpc_call(
+            &self.transport(),
             &self.config.url,
             self.config.user.as_deref(),
             self.config.password.as_deref(),
@@ -156,8 +183,7 @@ impl RskRpcClient {
             method,
             &request,
         )
-        .await?;
-        rpc_http::decode_json_rpc_response("RSK", method, response).await
+        .await
     }
 }
 

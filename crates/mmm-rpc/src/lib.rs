@@ -16,7 +16,15 @@
 //!   next long-interval live tick reuses it, while still letting a tight
 //!   backfill loop reuse the connection across its sub-second call gaps, and
 //! - TCP keepalive so a half-open connection used mid-request is detected.
+//!
+//! [`RpcMetrics`] is the companion counter handle: every chain client owns
+//! one and threads it through its calls (directly, for clients with their own
+//! retry loop, or via [`post_json_rpc_call`] and
+//! [`post_required_json_rpc_call`] for clients without one) so attempts,
+//! retries, failures, and latency are visible without changing any
+//! retry/timeout/ordering behavior.
 
+use std::future::Future;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail, ensure};
@@ -24,6 +32,9 @@ use reqwest::{Client, Response};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+
+mod metrics;
+pub use metrics::{AttemptTimer, RpcMetrics, RpcMetricsDelta, RpcMetricsSnapshot};
 
 /// Default whole-request timeout when `<PREFIX>_RPC_TIMEOUT_SECS` is unset.
 pub const DEFAULT_RPC_TIMEOUT_SECS: u64 = 15;
@@ -81,8 +92,82 @@ pub async fn post_json_rpc(
         .with_context(|| format!("send {label} RPC method {method}"))
 }
 
-/// Send one JSON-RPC POST and require a successful HTTP status.
-pub async fn post_json_rpc_for_status(
+/// The HTTP client plus its [`RpcMetrics`] handle, bundled so
+/// [`post_json_rpc_call`] stays under clippy's argument-count lint.
+pub struct RpcTransport<'a> {
+    pub http: &'a Client,
+    pub metrics: &'a RpcMetrics,
+}
+
+/// One JSON-RPC call whose `result` may be JSON `null`: send the POST, require
+/// a successful HTTP status, read the whole body, and interpret the envelope.
+/// This is the metered boundary for clients with no retry loop of their own
+/// (the bitcoind-family and RSK clients): the attempt is timed from dispatch
+/// to the consumed body, since a block download is mostly body, and recorded
+/// on `transport.metrics` whatever the result; any error, a transport
+/// failure, a bad status, an undecodable body, or an RPC error object, is one
+/// failed call, terminal here because the caller does not retry. Clients that
+/// classify failures as retryable and drive their own retry loop (Elastos,
+/// Hathor) instrument themselves around the bare [`post_json_rpc`] instead,
+/// so they can call [`RpcMetrics::record_retry`] and decide when the call has
+/// failed.
+pub async fn post_json_rpc_call<T>(
+    transport: &RpcTransport<'_>,
+    url: &str,
+    user: Option<&str>,
+    password: Option<&str>,
+    label: &str,
+    method: &str,
+    request: &Value,
+) -> Result<Option<T>>
+where
+    T: DeserializeOwned,
+{
+    metered(transport.metrics, async {
+        let envelope =
+            post_json_rpc_envelope(transport.http, url, user, password, label, method, request)
+                .await?;
+        decode_json_rpc_envelope(label, method, &envelope)
+    })
+    .await
+}
+
+/// [`post_json_rpc_call`] for a method whose result must be present and
+/// non-null; a `null` result is a failed call too.
+pub async fn post_required_json_rpc_call<T>(
+    transport: &RpcTransport<'_>,
+    url: &str,
+    user: Option<&str>,
+    password: Option<&str>,
+    label: &str,
+    method: &str,
+    request: &Value,
+) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    metered(transport.metrics, async {
+        let envelope =
+            post_json_rpc_envelope(transport.http, url, user, password, label, method, request)
+                .await?;
+        decode_required_json_rpc_envelope(label, method, &envelope)
+    })
+    .await
+}
+
+/// Count one call as an attempt at dispatch, time it through its consumed
+/// and interpreted response (or until the caller abandons it mid-flight),
+/// and count an error as one failed call.
+async fn metered<T>(metrics: &RpcMetrics, call: impl Future<Output = Result<T>>) -> Result<T> {
+    let _attempt = metrics.attempt(1);
+    let result = call.await;
+    if result.is_err() {
+        metrics.record_failure();
+    }
+    result
+}
+
+async fn post_json_rpc_envelope(
     http: &Client,
     url: &str,
     user: Option<&str>,
@@ -90,27 +175,24 @@ pub async fn post_json_rpc_for_status(
     label: &str,
     method: &str,
     request: &Value,
-) -> Result<Response> {
-    let response = post_json_rpc(http, url, user, password, label, method, request).await?;
-    response
+) -> Result<Value> {
+    let response = post_json_rpc(http, url, user, password, label, method, request)
+        .await?
         .error_for_status()
-        .with_context(|| format!("{label} RPC HTTP status for method {method}"))
+        .with_context(|| format!("{label} RPC HTTP status for method {method}"))?;
+    read_json_rpc_envelope(label, method, response).await
 }
 
-/// Decode a JSON-RPC response body and interpret the envelope.
-pub async fn decode_json_rpc_response<T>(
+/// Read a JSON-RPC response body as its envelope.
+pub async fn read_json_rpc_envelope(
     label: &str,
     method: &str,
     response: Response,
-) -> Result<Option<T>>
-where
-    T: DeserializeOwned,
-{
-    let envelope: Value = response
+) -> Result<Value> {
+    response
         .json()
         .await
-        .with_context(|| format!("decode {label} RPC response for method {method}"))?;
-    decode_json_rpc_envelope(label, method, &envelope)
+        .with_context(|| format!("decode {label} RPC response for method {method}"))
 }
 
 /// Decode a JSON-RPC response whose result must be present and non-null.
@@ -122,8 +204,20 @@ pub async fn decode_required_json_rpc_response<T>(
 where
     T: DeserializeOwned,
 {
-    decode_json_rpc_response(label, method, response)
-        .await?
+    let envelope = read_json_rpc_envelope(label, method, response).await?;
+    decode_required_json_rpc_envelope(label, method, &envelope)
+}
+
+/// Interpret a JSON-RPC envelope whose result must be present and non-null.
+pub fn decode_required_json_rpc_envelope<T>(
+    label: &str,
+    method: &str,
+    envelope: &Value,
+) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    decode_json_rpc_envelope(label, method, envelope)?
         .ok_or_else(|| anyhow::anyhow!("{label} RPC method {method} returned no result"))
 }
 

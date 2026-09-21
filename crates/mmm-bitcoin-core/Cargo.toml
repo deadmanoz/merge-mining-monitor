@@ -15,9 +15,18 @@ db-integration = []
 
 [dependencies]
 mmm-capture.workspace = true
+mmm-rpc.workspace = true
 anyhow.workspace = true
 bitcoin.workspace = true
 corepc-client.workspace = true
 jsonrpc.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+# Only linked by the test-only scripted Core RPC fixture
+# (parent_classifier::core_fixture): building and parsing the raw JSON-RPC
+# envelopes it serves over a std::net::TcpListener. Both are already
+# transitive dependencies via corepc-client/jsonrpc.
+hex.workspace = true
+serde_json.workspace = true
