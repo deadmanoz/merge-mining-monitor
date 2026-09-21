@@ -155,9 +155,9 @@ where
     .await
 }
 
-/// Time one call through its consumed and interpreted response as one
-/// attempt, recorded even if the caller abandons the call mid-flight, and
-/// count an error as one failed call.
+/// Count one call as an attempt at dispatch, time it through its consumed
+/// and interpreted response (or until the caller abandons it mid-flight),
+/// and count an error as one failed call.
 async fn metered<T>(metrics: &RpcMetrics, call: impl Future<Output = Result<T>>) -> Result<T> {
     let _attempt = metrics.attempt(1);
     let result = call.await;

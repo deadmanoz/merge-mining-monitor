@@ -8,7 +8,7 @@ use std::env;
 use std::fmt;
 use std::io;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use bitcoin::block::Header;
@@ -206,16 +206,15 @@ impl BitcoinCoreRpcClient {
                     .context("acquire Bitcoin Core RPC semaphore")?;
                 let call = Arc::clone(&f);
                 let metrics = self.metrics.clone();
-                // The attempt is recorded around the call itself, inside the
+                // The attempt is counted around the call itself, inside the
                 // blocking task: an iteration that times out while waiting for
-                // a slot records nothing, and a call the timeout detached is
-                // still counted, with its real latency, when it completes.
+                // a slot records nothing, the tick that dispatched a call the
+                // timeout detached still sees the attempt, and the call's real
+                // latency is recorded when it completes.
                 tokio::task::spawn_blocking(move || {
                     let _permit = permit;
-                    let dispatched = Instant::now();
-                    let result = call();
-                    metrics.record_attempt(1, dispatched.elapsed());
-                    result
+                    let _attempt = metrics.attempt(1);
+                    call()
                 })
                 .await
                 .context("Bitcoin Core RPC blocking task panicked")?
@@ -617,17 +616,19 @@ mod tests {
         assert!(error.to_string().contains("failed after 2 attempts"));
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
         // The call itself counts as one failure at once; the detached call is
-        // the only transport attempt and is recorded, with its real latency,
-        // once it completes, while the iteration that timed out waiting for
-        // the retained permit records nothing.
+        // the only transport attempt, counted when it was dispatched so the
+        // failing window sees it, and timed with its real latency once it
+        // completes, while the iteration that timed out waiting for the
+        // retained permit records nothing.
         let failed = client.metrics().snapshot();
         assert_eq!(failed.failures, 1);
         assert_eq!(failed.retries, 1);
-        assert_eq!(failed.http_attempts, 0);
+        assert_eq!(failed.http_attempts, 1);
+        assert_eq!(failed.rpc_elements, 1);
+        assert!(failed.latency_max < Duration::from_millis(200));
         tokio::time::sleep(Duration::from_millis(300)).await;
         let completed = client.metrics().snapshot();
         assert_eq!(completed.http_attempts, 1);
-        assert_eq!(completed.rpc_elements, 1);
         assert!(completed.latency_max >= Duration::from_millis(200));
     }
 

@@ -9,9 +9,11 @@
 //! handle threaded through each client so callers can log attempts, retries,
 //! failures, and latency without changing any retry/timeout/ordering
 //! behavior. The counters live at two levels: an attempt is one dispatched
-//! HTTP request, timed from dispatch to the consumed response body; a retry
-//! and a failure belong to the caller's retry loop, which alone knows when a
-//! failed attempt is followed by another and when a call has given up.
+//! HTTP request, counted when it is dispatched and timed from dispatch to the
+//! consumed response body, so a window that dispatched a call still in flight
+//! at its end shows the attempt and a later window its latency; a retry and a
+//! failure belong to the caller's retry loop, which alone knows when a failed
+//! attempt is followed by another and when a call has given up.
 //!
 //! `rpc_elements` counts JSON-RPC calls carried by the HTTP attempts recorded
 //! so far; it equals `http_attempts` today because every attempt carries
@@ -57,29 +59,41 @@ impl RpcMetrics {
         self.0.label
     }
 
-    /// Start timing one dispatched HTTP attempt carrying `elements` JSON-RPC
-    /// calls. The attempt is recorded when the timer drops, so a request the
-    /// caller's future abandons mid-flight (a cancelled fetch pipeline) is
-    /// still counted with the time it was given.
+    /// Count one dispatched HTTP attempt carrying `elements` JSON-RPC calls
+    /// and start timing it. Its latency is recorded when the timer drops, so
+    /// a request the caller's future abandons mid-flight (a cancelled fetch
+    /// pipeline) is timed with the time it was given.
     pub fn attempt(&self, elements: u32) -> AttemptTimer<'_> {
+        self.record_dispatch(elements);
         AttemptTimer {
             metrics: self,
-            elements,
             start: Instant::now(),
         }
     }
 
-    /// Record one dispatched HTTP attempt: `elements` JSON-RPC calls carried
+    /// Record one completed HTTP attempt: `elements` JSON-RPC calls carried
     /// by it and its wall-clock `latency`, from dispatch to the consumed
     /// response body. Recorded whatever the result, and only for requests
     /// that reached the transport: local waiting (a semaphore slot, a backoff
-    /// sleep) is not an attempt. Async callers use [`Self::attempt`] so a
-    /// cancelled call is recorded too.
+    /// sleep) is not an attempt. Callers whose request may outlive the caller
+    /// use [`Self::attempt`], which counts the attempt at dispatch.
     pub fn record_attempt(&self, elements: u32, latency: Duration) {
+        self.record_dispatch(elements);
+        self.record_latency(latency);
+    }
+
+    /// Count one HTTP attempt at the moment it is dispatched, before its
+    /// outcome is known, so the window that paid for it sees it.
+    pub fn record_dispatch(&self, elements: u32) {
         self.0.http_attempts.fetch_add(1, Ordering::Relaxed);
         self.0
             .rpc_elements
             .fetch_add(u64::from(elements), Ordering::Relaxed);
+    }
+
+    /// Record the latency of an attempt counted by [`Self::record_dispatch`],
+    /// once its response is consumed or the caller abandons it.
+    pub fn record_latency(&self, latency: Duration) {
         let nanos = u64::try_from(latency.as_nanos()).unwrap_or(u64::MAX);
         self.0
             .latency_total_nanos
@@ -122,17 +136,16 @@ impl RpcMetrics {
     }
 }
 
-/// One dispatched attempt in flight; records itself on drop.
+/// One dispatched, already counted attempt in flight; records its latency
+/// on drop.
 pub struct AttemptTimer<'a> {
     metrics: &'a RpcMetrics,
-    elements: u32,
     start: Instant,
 }
 
 impl Drop for AttemptTimer<'_> {
     fn drop(&mut self) {
-        self.metrics
-            .record_attempt(self.elements, self.start.elapsed());
+        self.metrics.record_latency(self.start.elapsed());
     }
 }
 
@@ -293,13 +306,19 @@ mod tests {
     }
 
     #[test]
-    fn a_dropped_attempt_timer_records_the_attempt() {
+    fn an_attempt_timer_counts_at_dispatch_and_times_on_drop() {
         let metrics = RpcMetrics::new("rsk");
         {
             let _in_flight = metrics.attempt(1);
+            let dispatched = metrics.snapshot();
+            assert_eq!(dispatched.http_attempts, 1);
+            assert_eq!(dispatched.rpc_elements, 1);
+            assert_eq!(dispatched.latency_total, Duration::ZERO);
+            std::thread::sleep(Duration::from_millis(5));
         }
         let snapshot = metrics.snapshot();
         assert_eq!(snapshot.http_attempts, 1);
+        assert!(snapshot.latency_max >= Duration::from_millis(5));
         assert_eq!(snapshot.failures, 0);
     }
 

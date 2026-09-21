@@ -209,9 +209,11 @@ Every batch job (a backfill, a reconcile, the scheduled recheck, a queue
 drain) logs progress with done, total, rate and ETA at most every thirty
 seconds and ends, whether it finished or aborted on an error, with a
 `job ended` line and one cumulative line per client, which adds
-`latency_max_ms`. An attempt is one dispatched HTTP request timed through its
-interpreted response; retries and failures are the client's retry loop's own,
-and a failure is a call that gave up. From the production host every remote
+`latency_max_ms`. An attempt is one dispatched HTTP request, counted when it
+is dispatched and timed through its interpreted response, so a Bitcoin Core
+call the outer timeout detached is counted in the tick that dispatched it
+and its latency lands when it completes; retries and failures are the
+client's retry loop's own, and a failure is a call that gave up. From the production host every remote
 call costs about 340 ms, so `attempts` per tick or per height is the first
 number to read when a job is slower than expected.
 
