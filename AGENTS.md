@@ -133,13 +133,67 @@ concurrent tasks inside each locking test.
   `www/js/source-registry.generated.js`, or `www/js/findings.generated.js`;
   regenerate them through the documented `just` targets.
 
+## Remote Round Trips And Batch Work
+
+Production runs far from its data: the round trip from the production host to
+Bitcoin Core, to every child-chain node, and to the research VM is about
+340 ms, while the development VM sees well under 1 ms to the same hosts. A
+loop that makes one remote call per row costs a thousand times more in
+production than anywhere it is tested, and three production incidents came
+from exactly that shape: a call per item that nothing had budgeted, bounded,
+or timed. Any operation that iterates over rows, heights, or candidates and
+performs a remote call or a per-item statement must:
+
+- State its round-trip budget in the PR description: expected items times
+  remote round trips per item, at the production round-trip time. Every PR
+  that changes a producer, store, or read-model crate carries a
+  `Round-trip budget:` line, `none` when it adds no remote or per-item work,
+  so a reviewer never has to guess whether the author looked; a PR without
+  one is incomplete.
+- Make no remote call for an item whose answer a local table already holds
+  (the `block` table holds every canonical Bitcoin height; the child-chain
+  head record holds the block the chain last carried at a height), and batch
+  calls where the transport allows it. A call per item is acceptable only
+  where it is irreducible (a height's block hash at its node, a candidate's
+  strict Core classification) and the budget, the bound, and the timing
+  receipt below justify the count; on a path something waits on, such as a
+  tick, the count is the window the budget states and no more.
+- Be bounded, or resumable from a cursor persisted in the database, and
+  never run unbounded work inside producer startup or a per-tick refresh.
+  Scheduled work is recorded as pending and consumed by an explicit job.
+- Hold no global advisory lock across more than one batch. A batch is
+  processed under the lock; the lock is released before the next batch.
+- Log progress through `ProgressReporter` (done, total, rate, ETA at a
+  fixed interval, and a `job ended` summary with each RPC client's
+  `RpcMetrics` line whether the job finished or aborted). A live poller
+  reports the same counters as per-tick deltas on its `poll tick` line.
+- Carry a test that pins its remote-call count per item at the transport
+  boundary (an `RpcMetrics` snapshot, the scripted Core fixture in
+  `docs/testing.md`), not at a fake classifier's call count.
+- Be timed at production round-trip latency before it ships, with the
+  receipt (items, round trips, wall time) in the PR (`docs/testing.md`).
+
+The last two apply to remote calls. A loop whose per-item cost is a database
+statement (Postgres runs beside the service, so the cost is the statement's
+plan times its count, the shape of the quadratic `reclassify-pools` RSK scan
+in issue #23) states statements per item in its budget, meets the bound,
+lock, and progress requirements as written, and is reviewed by its plan
+(`EXPLAIN` against production row counts) rather than by a counter: the
+counters and the timing recipe do not cover statements today.
+
+Red on any of these is fixed by restructuring the operation, never by an
+allowlist or a larger timeout.
+
 ## Repository Etiquette
 
 - Keep changes scoped to the requested work.
 - For non-trivial implementation work, use a dedicated worktree unless the user
   explicitly says to work in the current checkout.
 - Land every change to `main` through a pull request with the required checks
-  passing. Do not push commits directly to `main`.
+  passing. Do not push commits directly to `main`. A PR that changes a
+  producer, store, or read-model crate carries a `Round-trip budget:` line,
+  `none` when it adds no remote or per-item work
+  (see Remote Round Trips And Batch Work).
 - Commit only when explicitly requested.
 - Commit messages use conventional format and must not include AI attribution.
 - `just arch-lint` red is fixed by refactoring, not by relaxing thresholds or
