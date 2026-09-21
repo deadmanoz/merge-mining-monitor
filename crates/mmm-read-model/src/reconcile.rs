@@ -287,6 +287,47 @@ pub(crate) async fn reconcile_one_event(
     .await
 }
 
+/// The durable Core suffix-cascade row a strict reconcile settles in its own
+/// transaction: the primary at `generation` moves to expansion or retires
+/// according to whether the reconcile changed it, and every other hash it
+/// changes (a canonical predecessor or competitor it synthesized or
+/// corrected) is persisted as an expansion seed for `source_id`, so a process
+/// exit after the commit can lose neither the bookkeeping nor the dependents
+/// of a sibling an idempotent replay would no longer report as changed.
+#[derive(Clone, Copy)]
+pub(crate) struct DurableCascade<'a> {
+    pub(crate) source_id: i64,
+    pub(crate) primary_hash: &'a [u8],
+    pub(crate) generation: i64,
+}
+
+impl DurableCascade<'_> {
+    /// Persist the reconcile's outcome for the queue inside `txn`.
+    async fn settle<C: GenericClient>(&self, txn: &C, changed_hashes: &[Vec<u8>]) -> Result<()> {
+        let mut changed = false;
+        let mut siblings = Vec::new();
+        for hash in changed_hashes {
+            if hash.as_slice() == self.primary_hash {
+                changed = true;
+            } else {
+                siblings.push(hash.clone());
+            }
+        }
+        if !siblings.is_empty() {
+            crate::mutation::enqueue_core_reconcile_expansions(txn, self.source_id, &siblings)
+                .await?;
+        }
+        crate::mutation::settle_core_reconcile_primary(
+            txn,
+            self.source_id,
+            self.primary_hash,
+            self.generation,
+            changed,
+        )
+        .await
+    }
+}
+
 async fn reconcile_one_event_with_policy(
     client: &mut Client,
     event_id: i64,
@@ -294,6 +335,27 @@ async fn reconcile_one_event_with_policy(
     preclassified: Option<PreclassifiedParent>,
     nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
     strict_core_errors: bool,
+) -> Result<Vec<Vec<u8>>> {
+    reconcile_one_event_with_cascade(
+        client,
+        event_id,
+        classifier,
+        preclassified,
+        nbits_table,
+        strict_core_errors,
+        None,
+    )
+    .await
+}
+
+async fn reconcile_one_event_with_cascade(
+    client: &mut Client,
+    event_id: i64,
+    classifier: &ConfiguredParentClassifier,
+    preclassified: Option<PreclassifiedParent>,
+    nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
+    strict_core_errors: bool,
+    durable: Option<DurableCascade<'_>>,
 ) -> Result<Vec<Vec<u8>>> {
     let trusted_preclassified = preclassified;
     for attempt in 0..RECONCILE_LOCK_SET_RETRY_LIMIT {
@@ -321,6 +383,9 @@ async fn reconcile_one_event_with_policy(
         .await
         {
             Ok(changed_hashes) => {
+                if let Some(durable) = &durable {
+                    durable.settle(&txn, &changed_hashes).await?;
+                }
                 txn.commit().await.context("commit reconcile transaction")?;
                 return Ok(changed_hashes);
             }
@@ -726,19 +791,23 @@ pub(crate) async fn reconcile_one_block(
     classifier: &ConfiguredParentClassifier,
     nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
 ) -> Result<Vec<Vec<u8>>> {
-    reconcile_one_block_with_policy(client, hash, classifier, nbits_table, false).await
+    reconcile_one_block_with_policy(client, hash, classifier, nbits_table, false, None).await
 }
 
 /// Reconcile one durable suffix-queue primary while propagating Core transport
 /// failures. A transient classifier error must leave the primary queued for a
 /// later drain rather than committing another unresolved `unknown` verdict.
+/// The queue row is settled, and sibling hashes the reconcile changes are
+/// persisted as expansion seeds, in the reconcile's own transaction.
 pub(crate) async fn reconcile_one_block_strict(
     client: &mut Client,
     hash: &[u8],
     classifier: &ConfiguredParentClassifier,
     nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
+    durable: &DurableCascade<'_>,
 ) -> Result<Vec<Vec<u8>>> {
-    reconcile_one_block_with_policy(client, hash, classifier, nbits_table, true).await
+    reconcile_one_block_with_policy(client, hash, classifier, nbits_table, true, Some(*durable))
+        .await
 }
 
 async fn reconcile_one_block_with_policy(
@@ -747,15 +816,17 @@ async fn reconcile_one_block_with_policy(
     classifier: &ConfiguredParentClassifier,
     nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
     strict_core_errors: bool,
+    durable: Option<DurableCascade<'_>>,
 ) -> Result<Vec<Vec<u8>>> {
     if let Some(event_id) = find_anchor_event_for_block(client, hash).await? {
-        return reconcile_one_event_with_policy(
+        return reconcile_one_event_with_cascade(
             client,
             event_id,
             classifier,
             None,
             nbits_table,
             strict_core_errors,
+            durable,
         )
         .await;
     }
@@ -772,10 +843,14 @@ async fn reconcile_one_block_with_policy(
     let after = load_block_cascade_state(&txn, hash).await?;
     let sh_after = crate::source_health_sql::snapshot_parent_contribution(&txn, hash).await?;
     crate::source_health_sql::apply_source_health_diff(&txn, &sh_before, &sh_after).await?;
-    txn.commit().await.context("commit block reconcile")?;
-    Ok(if before != after {
+    let changed_hashes = if before != after {
         vec![hash.to_vec()]
     } else {
         Vec::new()
-    })
+    };
+    if let Some(durable) = &durable {
+        durable.settle(&txn, &changed_hashes).await?;
+    }
+    txn.commit().await.context("commit block reconcile")?;
+    Ok(changed_hashes)
 }

@@ -43,9 +43,14 @@ mod core_suffix_status;
 #[cfg(feature = "db-integration")]
 pub use core_suffix::drain_core_reconcile_queue_with_budget_for_test;
 pub use core_suffix::{
-    CoreCanonicalReplacement, CoreSuffixReplacementInput, CoreSuffixReplacementSummary,
-    ExpectedCoreCanonicalRow, drain_core_reconcile_queue, replace_core_canonical_suffix,
+    CORE_RECOVERY_BATCH, CoreCanonicalReplacement, CoreSuffixReplacementInput,
+    CoreSuffixReplacementSummary, ExpectedCoreCanonicalRow, drain_core_reconcile_queue,
+    drain_core_reconcile_queue_batch, replace_core_canonical_suffix,
     replace_core_canonical_suffix_validated,
+};
+pub(crate) use core_suffix::{
+    enqueue_core_reconcile_expansions, enqueue_core_reconcile_primaries,
+    settle_core_reconcile_primary,
 };
 
 use super::{

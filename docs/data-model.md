@@ -362,7 +362,14 @@ header cache and its singleton state. Boundaries are marked final only after
 Core re-reads them 100 blocks behind the synced tip. The current shallow epoch
 and moving horizon are refreshed from Core on every command. The state retains
 a safe timestamp-coverage high-water mark for valid non-monotonic header times
-and separately records pending-coverage and full-orphan-recheck retries. nBits and
+and, since `0027`, the scheduled unknown-parent recheck: a pending generation
+with the scope accumulated since the last bind (orphans revisited or not,
+witness sources or all), the acknowledged generation, and the bound pass with
+its cursor, which an invalidating trigger clears while folding its scope back
+into the pending scope. The scheduled job hands each page of candidates to
+`bitcoin_core_reconcile_queue` as strict primaries in the transaction that
+advances its cursor, so the queue, not process memory, holds the dependent
+cascade of every parent the cursor has passed. nBits and
 timestamp classification read this cache, so the monitor has no compiled
 Bitcoin epoch dataset. A strict BIP34 claim above the cached Core horizon stays
 pending, even when the surrounding difficulty epoch is cached. The first cache
@@ -375,10 +382,22 @@ its transaction. Suffix replacement takes the shared cache lock before the
 canonical barrier exclusively. The sweep therefore cannot acknowledge a cache
 generation while an older verdict can still commit or form a lock-order cycle.
 
+A strict primary reconcile also persists, in its own transaction, an
+expansion seed for every sibling hash it changed (a canonical predecessor or
+competitor it synthesized or corrected), so the dependents of those blocks
+are re-examined by the drain rather than by a cascade held in process memory.
+
 Migration `0012_add_bitcoin_core_reconcile_queue.sql` adds generation-protected
 durable two-phase work for atomic near-tip Core suffix replacement. A
-`primary_pending` seed first reconciles its parent, then becomes an expansion
-seed that discovers and enqueues dependents atomically with its own deletion.
+`primary_pending` seed first reconciles its parent and, in that reconcile's
+own transaction, becomes an expansion seed when the reconcile changed the
+parent or the row's `expand_unchanged` (since `0028`) says its enqueuer
+already had, or is retired otherwise; an expansion seed discovers and enqueues
+dependents, without the flag, atomically with its own deletion. A suffix
+replacement's seeds carry the flag, as does a row that was waiting for
+expansion when it was queued again; a scheduled recheck's candidates do not.
+Beyond a seed the cascade continues only through parents whose reconcile
+changed something.
 The sync state remains in `backbone_reorg_reconcile_pending` until the queue
 drains, so a crash or budget exit is visible and restart-safe rather than a
 silent partial reconciliation. The pending status durably suspends an unrelated

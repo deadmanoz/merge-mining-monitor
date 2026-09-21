@@ -109,6 +109,19 @@ async fn cmd_reclassify_known_stales(args: std::env::Args) -> Result<()> {
 async fn cmd_reclassify_unknown_parents(args: std::env::Args) -> Result<()> {
     let config = mmm_read_model::ReclassifyUnknownParentsConfig::from_args(args)?;
     let (mut pg_client, classifier) = mmm_producers::connect_core_required_from_env().await?;
+    if config.scheduled {
+        let report =
+            mmm_read_model::run_scheduled_recheck(&mut pg_client, &classifier, config.batch_size)
+                .await?;
+        info!(
+            pages = report.pages,
+            candidates = report.candidates,
+            changed = report.changed,
+            acknowledged = ?report.acknowledged,
+            "scheduled unknown-parent recheck run finished"
+        );
+        return Ok(());
+    }
     let count =
         mmm_read_model::run_reclassify_unknown_parents(&mut pg_client, &classifier, config).await?;
     info!(count, "reclassified unknown Bitcoin parent headers");

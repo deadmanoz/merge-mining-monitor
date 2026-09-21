@@ -21,7 +21,22 @@ pub struct FakeParentClassifier {
 #[cfg(any(test, feature = "db-integration"))]
 pub(crate) struct FakeParentClassifierState {
     results: VecDeque<ParentClassification>,
+    /// Verdicts queued for one candidate header, consulted before `results`;
+    /// `None` is an injected failure. The last entry repeats.
+    per_header: std::collections::HashMap<BlockHash, VecDeque<Option<ParentClassification>>>,
     calls: u64,
+}
+
+/// The next queued verdict: the front is consumed while more follow, and
+/// the last one repeats. Queues are checked non-empty when built.
+#[cfg(any(test, feature = "db-integration"))]
+fn next_verdict<T: Clone>(queue: &mut VecDeque<T>) -> T {
+    if queue.len() > 1 {
+        queue.pop_front()
+    } else {
+        queue.front().cloned()
+    }
+    .expect("fake classifier verdict queue was checked as non-empty")
 }
 
 #[cfg(any(test, feature = "db-integration"))]
@@ -49,6 +64,7 @@ impl FakeParentClassifier {
         Self {
             state: Arc::new(tokio::sync::Mutex::new(FakeParentClassifierState {
                 results,
+                per_header: std::collections::HashMap::new(),
                 calls: 0,
             })),
             first_call_gate: None,
@@ -64,6 +80,27 @@ impl FakeParentClassifier {
 
     pub fn with_first_call_gate(mut self, gate: Arc<FakeParentClassifierGate>) -> Self {
         self.first_call_gate = Some(gate);
+        self
+    }
+
+    /// Queue verdicts for one candidate header, used ahead of the global
+    /// sequence whenever that header is classified and repeating the last one;
+    /// `None` fails that call. This keeps a cascade test independent of the
+    /// order in which a durable queue visits its parents.
+    pub fn with_verdicts_for<I>(self, header: &Header, verdicts: I) -> Self
+    where
+        I: IntoIterator<Item = Option<ParentClassification>>,
+    {
+        let verdicts = verdicts.into_iter().collect::<VecDeque<_>>();
+        assert!(
+            !verdicts.is_empty(),
+            "fake per-header verdicts need at least one entry"
+        );
+        Arc::clone(&self.state)
+            .try_lock()
+            .expect("fake classifier state has not been shared yet")
+            .per_header
+            .insert(header.block_hash(), verdicts);
         self
     }
 
@@ -180,7 +217,7 @@ impl FakeParentClassifier {
 
     pub(crate) async fn classify_parent(
         &self,
-        _header: &Header,
+        header: &Header,
         _preflight: ParentPreflight,
     ) -> Result<ParentClassification> {
         if let Some(gate) = &self.first_call_gate
@@ -198,18 +235,13 @@ impl FakeParentClassifier {
                 state.calls
             );
         }
-        if state.results.len() > 1 {
-            Ok(state
-                .results
-                .pop_front()
-                .expect("fake classifier sequence was checked as non-empty"))
-        } else {
-            Ok(state
-                .results
-                .front()
-                .expect("fake classifier sequence was checked as non-empty")
-                .clone())
+        let hash = header.block_hash();
+        if let Some(verdicts) = state.per_header.get_mut(&hash) {
+            return next_verdict(verdicts).ok_or_else(|| {
+                anyhow::anyhow!("fake classifier: injected classification error for {hash}")
+            });
         }
+        Ok(next_verdict(&mut state.results))
     }
 
     pub async fn call_count(&self) -> u64 {

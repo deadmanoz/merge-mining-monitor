@@ -11,15 +11,16 @@ use mmm_bitcoin_core::{
     BitcoinCoreBlockCoinbase, ConfiguredParentClassifier, HeightSource, ParentClassification,
 };
 use mmm_capture::capture::ParentKind;
+use mmm_capture::progress::ProgressReporter;
 
 use super::core_suffix_status::{
     ReplacementPending, clear_pending_error_if_queue_empty, clear_pending_error_in_transaction,
-    lock_sync_state, mark_replacement_pending,
+    mark_replacement_pending, try_lock_sync_state,
 };
 use super::{PrimaryDiff, lock_core_canonical_view_exclusive};
 use crate::source_health_sql::MultiParentSourceHealthBracket;
 use crate::{
-    DEFAULT_CASCADE_BUDGET, PreclassifiedParent, ReconcileCascadeBudgetExhausted,
+    DEFAULT_CASCADE_BUDGET, DurableCascade, PreclassifiedParent, ReconcileCascadeBudgetExhausted,
     find_anchor_event_for_block, lock_block_hashes, reconcile_one_block_strict,
     reconcile_one_event_in_txn, upsert_core_canonical_header_with_coinbase,
 };
@@ -205,10 +206,14 @@ where
     let bracket = MultiParentSourceHealthBracket::open(&txn, &plan.affected_hashes).await?;
     apply_suffix_mutation(&txn, replacements, &plan).await?;
 
+    // The replacement itself changed these rows, so each is expanded whatever
+    // the primary reconcile later finds; the cascade continues past their
+    // dependents only where reconciling one changes something.
     enqueue_core_reconcile_hashes(
         &txn,
         source_id,
         &plan.affected_hashes,
+        true,
         "enqueue Bitcoin Core suffix reconcile seeds",
     )
     .await?;
@@ -538,22 +543,118 @@ async fn reconcile_replacement_parent<C: GenericClient>(
     Ok(())
 }
 
+/// Durably enqueue parents as strict-reconcile primaries of the Core suffix
+/// cascade, so a job whose cursor advances past them can leave their
+/// reconciliation and dependent expansion to the queue drain rather than to
+/// process memory. Nothing has changed these rows yet, so the cascade stops
+/// at a primary whose reconcile changes nothing.
+pub(crate) async fn enqueue_core_reconcile_primaries<C: GenericClient>(
+    client: &C,
+    source_id: i64,
+    hashes: &[Vec<u8>],
+) -> Result<()> {
+    enqueue_core_reconcile_hashes(
+        client,
+        source_id,
+        hashes,
+        false,
+        "enqueue scheduled recheck candidates as durable primaries",
+    )
+    .await
+}
+
+/// Settle a primary in the transaction that commits its reconcile: it becomes
+/// an expansion row when the reconcile changed it or its enqueuer already
+/// had (`expand_unchanged`), and is deleted otherwise, so the cascade stops
+/// at an unchanged parent and no crash window separates the reconcile from
+/// its bookkeeping. A row already moved to a newer generation is left alone.
+pub(crate) async fn settle_core_reconcile_primary<C: GenericClient>(
+    client: &C,
+    source_id: i64,
+    hash: &[u8],
+    generation: i64,
+    changed: bool,
+) -> Result<()> {
+    if !changed {
+        let retired = client
+            .execute(
+                "DELETE FROM bitcoin_core_reconcile_queue \
+                 WHERE source_id = $1 AND btc_parent_header_hash = $2 \
+                   AND primary_pending = TRUE AND generation = $3 \
+                   AND NOT expand_unchanged",
+                &[&source_id, &hash, &generation],
+            )
+            .await
+            .context("retire an unchanged Bitcoin Core dependent primary")?;
+        if retired == 1 {
+            return Ok(());
+        }
+    }
+    client
+        .execute(
+            "UPDATE bitcoin_core_reconcile_queue SET primary_pending = FALSE, \
+                 generation = generation + 1, \
+                 updated_at = extract(epoch from now())::bigint \
+             WHERE source_id = $1 AND btc_parent_header_hash = $2 \
+               AND primary_pending = TRUE AND generation = $3",
+            &[&source_id, &hash, &generation],
+        )
+        .await
+        .context("mark Bitcoin Core dependent primary reconciled")?;
+    Ok(())
+}
+
+/// Durably enqueue hashes whose dependents must be re-examined although the
+/// hashes themselves need no primary reconcile (canonical siblings a strict
+/// reconcile synthesized or corrected): expansion-only rows, unless the hash
+/// is already queued as a primary, which then expands after its own reconcile
+/// whatever that finds. A row already queued moves to a newer generation so
+/// work in flight on it is superseded rather than consumed.
+pub(crate) async fn enqueue_core_reconcile_expansions<C: GenericClient>(
+    client: &C,
+    source_id: i64,
+    hashes: &[Vec<u8>],
+) -> Result<()> {
+    client
+        .execute(
+            "INSERT INTO bitcoin_core_reconcile_queue ( \
+                 source_id, btc_parent_header_hash, primary_pending, expand_unchanged \
+             ) SELECT $1, hash, FALSE, FALSE FROM unnest($2::bytea[]) AS pending(hash) \
+             ON CONFLICT (source_id, btc_parent_header_hash) DO UPDATE SET \
+                 expand_unchanged = TRUE, \
+                 generation = bitcoin_core_reconcile_queue.generation + 1, \
+                 updated_at = extract(epoch from now())::bigint",
+            &[&source_id, &hashes],
+        )
+        .await
+        .context("enqueue durable Bitcoin Core sibling expansions")?;
+    Ok(())
+}
+
+/// Enqueue primaries; `expand_unchanged` says their dependents are expanded
+/// even when the primary reconcile changes nothing. A hash already queued
+/// keeps the stronger of the two, and one already waiting for expansion keeps
+/// that expansion whatever its new primary finds.
 async fn enqueue_core_reconcile_hashes<C: GenericClient>(
     client: &C,
     source_id: i64,
     hashes: &[Vec<u8>],
+    expand_unchanged: bool,
     context: &'static str,
 ) -> Result<()> {
     client
         .execute(
             "INSERT INTO bitcoin_core_reconcile_queue ( \
-                 source_id, btc_parent_header_hash, primary_pending \
-             ) SELECT $1, hash, TRUE FROM unnest($2::bytea[]) AS pending(hash) \
+                 source_id, btc_parent_header_hash, primary_pending, expand_unchanged \
+             ) SELECT $1, hash, TRUE, $3 FROM unnest($2::bytea[]) AS pending(hash) \
              ON CONFLICT (source_id, btc_parent_header_hash) DO UPDATE SET \
                  primary_pending = TRUE, \
+                 expand_unchanged = bitcoin_core_reconcile_queue.expand_unchanged \
+                     OR EXCLUDED.expand_unchanged \
+                     OR NOT bitcoin_core_reconcile_queue.primary_pending, \
                  generation = bitcoin_core_reconcile_queue.generation + 1, \
                  updated_at = extract(epoch from now())::bigint",
-            &[&source_id, &hashes],
+            &[&source_id, &hashes, &expand_unchanged],
         )
         .await
         .context(context)?;
@@ -563,15 +664,18 @@ async fn enqueue_core_reconcile_hashes<C: GenericClient>(
 /// Drain durable dependent-cascade seeds for one Bitcoin source.
 ///
 /// Each row alternates through a durable two-phase worklist. A
-/// `primary_pending` row strictly reclassifies and reconciles that parent, then
-/// becomes an expansion row;
-/// expansion enqueues every dependent parent and deletes its seed in one
-/// transaction. Replaying an idempotent primary still expands it, so neither a
-/// crash nor a cascade-budget exit can lose an in-memory frontier. Generation
-/// predicates prevent older work from consuming a newer change to the same
-/// hash. The pending source error clears only when the queue is empty while
-/// holding the source's sync-state row lock. Strict configured classification
-/// makes a transient Core failure retain the durable primary for a later drain.
+/// `primary_pending` row strictly reclassifies and reconciles that parent and,
+/// in that same transaction, becomes an expansion row when the reconcile
+/// changed it or its enqueuer already had (`expand_unchanged`, a property of
+/// that row alone), or is retired so the cascade stops at an unchanged
+/// parent; expansion enqueues every dependent parent and deletes its seed in
+/// one transaction. No crash window
+/// separates a reconcile from its bookkeeping, so neither a crash nor a
+/// cascade-budget exit can lose an in-memory frontier. Generation predicates
+/// prevent older work from consuming a newer change to the same hash. The
+/// pending source error clears only when the queue is empty while holding the
+/// source's sync-state row lock. Strict configured classification makes a
+/// transient Core failure retain the durable primary for a later drain.
 pub async fn drain_core_reconcile_queue(
     client: &mut Client,
     source_id: i64,
@@ -592,40 +696,95 @@ pub async fn drain_core_reconcile_queue_with_budget_for_test(
     drain_core_reconcile_queue_with_budget(client, source_id, classifier, cascade_budget).await
 }
 
+/// Primaries reconciled per exclusive cache-lock hold by the bounded
+/// recovery drain. Each primary is a strict Core-classified reconcile, and
+/// from the production host every Core round trip costs about 340 ms, so
+/// this keeps one hold to the order of a minute even when a reorg queued
+/// thousands of parents.
+pub const CORE_RECOVERY_BATCH: usize = 25;
+
+/// Drain up to `max_primaries` primaries (and every expansion row met on the
+/// way) of the committed Core suffix cascade for `source_id`, and report
+/// whether the queue is empty afterwards.
+///
+/// This is the per-lock-hold unit of the recovery the cache refresh and the
+/// scheduled recheck perform: the caller holds the exclusive cache lock, drains
+/// one batch, and either proceeds (queue empty, same hold) or releases the
+/// lock and calls again, so pollers waiting on the shared lock interleave
+/// between batches while cache-dependent work still waits for an empty queue.
+pub async fn drain_core_reconcile_queue_batch(
+    client: &mut Client,
+    source_id: i64,
+    classifier: &ConfiguredParentClassifier,
+    max_primaries: usize,
+) -> Result<bool> {
+    drain_core_reconcile_queue_up_to(client, source_id, classifier, max_primaries, None).await
+}
+
 async fn drain_core_reconcile_queue_with_budget(
     client: &mut Client,
     source_id: i64,
     classifier: &ConfiguredParentClassifier,
     cascade_budget: usize,
 ) -> Result<()> {
-    let mut parents_reconciled = 0_usize;
     let progress =
         crate::classifier_progress("core-suffix-reconcile-queue-drain", None, classifier);
+    let drained = drain_core_reconcile_queue_up_to(
+        client,
+        source_id,
+        classifier,
+        cascade_budget,
+        Some(&progress),
+    )
+    .await?;
+    if !drained {
+        return Err(ReconcileCascadeBudgetExhausted {
+            budget: cascade_budget,
+        }
+        .into());
+    }
+    progress.finish();
+    Ok(())
+}
+
+/// Drain until the queue is empty (`true`) or `max_primaries` primaries have
+/// been reconciled with work still queued (`false`), reporting each primary
+/// to `progress` when given.
+async fn drain_core_reconcile_queue_up_to(
+    client: &mut Client,
+    source_id: i64,
+    classifier: &ConfiguredParentClassifier,
+    max_primaries: usize,
+    progress: Option<&ProgressReporter>,
+) -> Result<bool> {
+    let mut parents_reconciled = 0_usize;
     loop {
         let Some(work) = load_next_core_reconcile_work(client, source_id).await? else {
             clear_pending_error_if_queue_empty(client, source_id).await?;
-            progress.finish();
-            return Ok(());
+            return Ok(true);
         };
-
         if work.primary_pending {
-            if parents_reconciled >= cascade_budget {
-                return Err(ReconcileCascadeBudgetExhausted {
-                    budget: cascade_budget,
-                }
-                .into());
+            if parents_reconciled >= max_primaries {
+                return Ok(false);
             }
-            reconcile_one_block_strict(client, &work.hash, classifier, None)
-                .await
-                .with_context(|| {
-                    format!(
-                        "reconcile durable Bitcoin Core dependent {}",
-                        hex::encode(&work.hash)
-                    )
-                })?;
+            reconcile_one_block_strict(
+                client,
+                &work.hash,
+                classifier,
+                None,
+                &work.cascade(source_id),
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "reconcile durable Bitcoin Core dependent {}",
+                    hex::encode(&work.hash)
+                )
+            })?;
             parents_reconciled += 1;
-            progress.advance(1);
-            mark_core_primary_reconciled(client, source_id, &work).await?;
+            if let Some(progress) = progress {
+                progress.advance(1);
+            }
         } else {
             expand_core_reconcile_work(client, source_id, &work).await?;
         }
@@ -636,6 +795,16 @@ struct CoreReconcileWork {
     hash: Vec<u8>,
     primary_pending: bool,
     generation: i64,
+}
+
+impl CoreReconcileWork {
+    fn cascade(&self, source_id: i64) -> DurableCascade<'_> {
+        DurableCascade {
+            source_id,
+            primary_hash: &self.hash,
+            generation: self.generation,
+        }
+    }
 }
 
 async fn load_next_core_reconcile_work(
@@ -658,33 +827,13 @@ async fn load_next_core_reconcile_work(
         }))
 }
 
-/// Mark a successfully reconciled parent ready for durable dependent
-/// expansion. A process exit before this compare-and-swap leaves
-/// `primary_pending` true, so restart safely repeats the idempotent primary.
-async fn mark_core_primary_reconciled(
-    client: &Client,
-    source_id: i64,
-    work: &CoreReconcileWork,
-) -> Result<()> {
-    client
-        .execute(
-            "UPDATE bitcoin_core_reconcile_queue SET primary_pending = FALSE, \
-                 generation = generation + 1, \
-                 updated_at = extract(epoch from now())::bigint \
-             WHERE source_id = $1 AND btc_parent_header_hash = $2 \
-               AND primary_pending = TRUE AND generation = $3",
-            &[&source_id, &work.hash, &work.generation],
-        )
-        .await
-        .context("mark Bitcoin Core dependent primary reconciled")?;
-    Ok(())
-}
-
 /// Expand one durable hash to every parent that depends on it, atomically with
 /// deleting the expanded row. Dependent rows enter as `primary_pending`, so a
 /// crash after any earlier parent commit cannot strand a deeper frontier in
-/// process memory. Expansion is unconditional after primary replay: even an
-/// idempotent replay following a crash recreates its grandchildren.
+/// process memory, and without `expand_unchanged`: the cascade continues
+/// past a dependent only when reconciling it changes something. Every row a
+/// suffix replacement changed is a seed of its own, so nothing is lost by
+/// stopping there.
 async fn expand_core_reconcile_work(
     client: &mut Client,
     source_id: i64,
@@ -694,7 +843,7 @@ async fn expand_core_reconcile_work(
         .transaction()
         .await
         .context("begin Bitcoin Core durable dependent expansion")?;
-    lock_sync_state(&txn, source_id).await?;
+    try_lock_sync_state(&txn, source_id).await?;
     let current = txn
         .query_opt(
             "SELECT primary_pending, generation \
@@ -750,6 +899,7 @@ async fn expand_core_reconcile_work(
             &txn,
             source_id,
             &dependents,
+            false,
             "enqueue durable Bitcoin Core dependent primaries",
         )
         .await?;

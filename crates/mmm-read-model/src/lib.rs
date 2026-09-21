@@ -23,10 +23,10 @@ pub use known_stale_reclassify::{
     reclassify_known_stale_hashes_in_transaction, run_reclassify_known_stales,
 };
 pub use mutation::{
-    CommittedParentMutation, CoreCanonicalReplacement, CoreCanonicalWrite,
+    CORE_RECOVERY_BATCH, CommittedParentMutation, CoreCanonicalReplacement, CoreCanonicalWrite,
     CoreSuffixReplacementInput, CoreSuffixReplacementSummary, ExpectedCoreCanonicalRow,
     capture_in_txn, clear_authoritative_historical_provenance_in_transaction,
-    drain_core_reconcile_queue, drain_historical_reconcile_queue,
+    drain_core_reconcile_queue, drain_core_reconcile_queue_batch, drain_historical_reconcile_queue,
     drain_historical_reconcile_queue_with_nbits_table, enqueue_historical_parent_reconcile,
     rebuild_historical_source_health, reconcile_authoritative_historical_source_in_transaction,
     record_coinbase_failure, replace_core_canonical_suffix,
@@ -43,9 +43,11 @@ pub use mutation::{
 pub use source_health_sql::invalidate_source_health_in_transaction;
 #[cfg(any(test, feature = "db-integration"))]
 pub use source_health_sql::{compute_source_health_from_base, rebuild_source_health};
+#[cfg(feature = "db-integration")]
+pub use unknown_reclassify::run_scheduled_recheck_pages_for_test;
 pub use unknown_reclassify::{
-    ReclassifyUnknownParentsConfig, run_reclassify_unknown_parents,
-    run_reclassify_unknown_parents_strict,
+    ReclassifyUnknownParentsConfig, ScheduledRecheckReport, run_reclassify_unknown_parents,
+    run_scheduled_recheck,
 };
 
 use std::collections::{HashMap, HashSet, VecDeque};
