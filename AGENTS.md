@@ -173,6 +173,14 @@ performs a remote call or a per-item statement must:
 - Be timed at production round-trip latency before it ships, with the
   receipt (items, round trips, wall time) in the PR (`docs/testing.md`).
 
+The last two apply to remote calls. A loop whose per-item cost is a database
+statement (Postgres runs beside the service, so the cost is the statement's
+plan times its count, the shape of the quadratic `reclassify-pools` RSK scan
+in issue #23) states statements per item in its budget, meets the bound,
+lock, and progress requirements as written, and is reviewed by its plan
+(`EXPLAIN` against production row counts) rather than by a counter: the
+counters and the timing recipe do not cover statements today.
+
 Red on any of these is fixed by restructuring the operation, never by an
 allowlist or a larger timeout.
 
