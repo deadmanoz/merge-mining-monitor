@@ -145,9 +145,11 @@ or timed. Any operation that iterates over rows, heights, or candidates and
 performs a remote call or a per-item statement must:
 
 - State its round-trip budget in the PR description: expected items times
-  remote round trips per item, at the production round-trip time. A producer,
-  store, or read-model change without a `Round-trip budget:` line is
-  incomplete.
+  remote round trips per item, at the production round-trip time. Every PR
+  that changes a producer, store, or read-model crate carries a
+  `Round-trip budget:` line, `none` when it adds no remote or per-item work,
+  so a reviewer never has to guess whether the author looked; a PR without
+  one is incomplete.
 - Make no remote call for an item whose answer a local table already holds
   (the `block` table holds every canonical Bitcoin height; the child-chain
   head record holds the block the chain last carried at a height), and batch
@@ -181,7 +183,8 @@ allowlist or a larger timeout.
   explicitly says to work in the current checkout.
 - Land every change to `main` through a pull request with the required checks
   passing. Do not push commits directly to `main`. A PR that changes a
-  producer, store, or read-model loop carries a `Round-trip budget:` line
+  producer, store, or read-model crate carries a `Round-trip budget:` line,
+  `none` when it adds no remote or per-item work
   (see Remote Round Trips And Batch Work).
 - Commit only when explicitly requested.
 - Commit messages use conventional format and must not include AI attribution.
