@@ -8,7 +8,8 @@ This changelog starts with the initial release.
 
 - Preserve event identities and enrichment when observations move from ordinary
   stale inventories to the error catalogue by importing error witnesses before
-  authoritative snapshot cleanup.
+  authoritative snapshot cleanup. Reject cleanup that would delete a catalogued
+  witness before error provenance exists, including single-chain imports.
 - Classify reviewed body-invalid Bitcoin parents through the shared error
   catalogue. Retire the separate annotation importer and mirror generator;
   remove the `body_invalid` and `body_invalid_rule` API fields and their

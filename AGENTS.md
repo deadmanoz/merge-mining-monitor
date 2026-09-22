@@ -70,6 +70,8 @@ concurrent tasks inside each locking test.
 - Historical and partial source imports are authoritative snapshots. Live
   source publication imports are additive. Import changed error witnesses before
   ordinary snapshot cleanup to preserve events moving out of stale inventories.
+  Cleanup rejects removal of catalogued witnesses without error provenance;
+  complete `import-all` before retrying a blocked single-chain import.
   Keep this lifecycle distinction in
   the shared source registry, not in per-chain schema branches.
 - The current Research pin is generated from committed revision `e6dc40a` and

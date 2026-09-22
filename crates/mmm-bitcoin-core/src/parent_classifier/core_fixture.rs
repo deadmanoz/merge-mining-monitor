@@ -323,6 +323,15 @@ pub(crate) struct SpawnedFixture {
 /// dropped connection that would otherwise trigger the classifier's own
 /// connection-refused retry/backoff.
 pub(crate) fn spawn(chain: FixtureChain, max_requests: usize) -> SpawnedFixture {
+    spawn_with_delay(chain, max_requests, Duration::ZERO)
+}
+
+/// Inject one response delay per HTTP request for production-RTT measurements.
+pub(crate) fn spawn_with_delay(
+    chain: FixtureChain,
+    max_requests: usize,
+    delay: Duration,
+) -> SpawnedFixture {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture listener");
     let addr = listener.local_addr().expect("fixture listener local addr");
     let counts = Arc::new(FixtureRequestCounts::default());
@@ -331,6 +340,7 @@ pub(crate) fn spawn(chain: FixtureChain, max_requests: usize) -> SpawnedFixture 
         for stream in listener.incoming().take(max_requests) {
             let Ok(mut stream) = stream else { break };
             let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+            std::thread::sleep(delay);
             handle_connection(&mut stream, &chain, &counts_for_thread);
         }
     });

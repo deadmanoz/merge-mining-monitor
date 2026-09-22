@@ -335,8 +335,13 @@ derived work takes the lock and finalizes without replaying source rows.
 
 The command preflights all artifacts before writing. It imports changed error
 observations before ordinary chain snapshots, so witnesses moving out of stale
-inventories gain protected provenance before authoritative cleanup. It then
-processes chains in deterministic order, shares a Bitcoin-parent classification cache,
+inventories gain protected provenance before authoritative cleanup. Cleanup
+rejects any removal of a catalogued error witness without that
+provenance. This guard also applies to `import-dataset CHAIN`; run `import-all`
+before retrying a blocked single-chain import. A rejected chain transaction
+preserves its prior events and provenance.
+
+The importer processes chains in deterministic order, shares a Bitcoin-parent classification cache,
 combines candidate parsing, validation, and preclassification into one stream,
 fills the Bitcoin RPC client's configured bounded concurrency, and runs targeted
 stale-branch reconciliation after all sources are present. A parent already

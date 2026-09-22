@@ -158,6 +158,14 @@ async fn reviewed_body_invalid_import_promotes_stales_without_losing_witnesses()
         let before = evidence_snapshot(&client).await?;
         assert_eq!(before.len(), 19);
         restore_legacy_stale_state(&client, &parents).await?;
+        let error = reconcile_old_snapshots(&mut client).await.unwrap_err();
+        assert!(error.to_string().contains("run import-all"));
+        assert_eq!(evidence_snapshot(&client).await?, before);
+        let provenance_count: i64 = client
+            .query_one("SELECT count(*) FROM historical_event_provenance", &[])
+            .await?
+            .get(0);
+        assert_eq!(provenance_count, 19, "failed cleanup rolls back provenance");
         run_error_observation_import_for_test(&mut client, &classifier, &path, &hashes).await?;
         reconcile_old_snapshots(&mut client).await?;
         assert_eq!(evidence_snapshot(&client).await?, before);
