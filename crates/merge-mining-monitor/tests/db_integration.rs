@@ -6,6 +6,8 @@ mod support;
 mod auxpow_family;
 #[path = "db_integration/bitcoin_core_header.rs"]
 mod bitcoin_core_header;
+#[path = "db_integration/body_invalid_catalogue.rs"]
+mod body_invalid_catalogue;
 #[path = "db_integration/child_displacement.rs"]
 mod child_displacement;
 #[path = "db_integration/elastos.rs"]

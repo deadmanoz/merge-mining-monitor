@@ -42,9 +42,9 @@
       "scenario": "RSK uncle evidence for a near parent with nullable authenticated child header and nBits evidence"
     },
     {
-      "file": "block-body-invalid-stale.json",
+      "file": "block-body-invalid-error.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "Stale block carrying the operator-imported body-invalid annotation (rule + evidence URL) while kind stays stale"
+      "scenario": "Reviewed body-invalid parent classified as error_block, with no stale competition or branch"
     },
     {
       "file": "navigator-stale.json",

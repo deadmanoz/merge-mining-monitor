@@ -173,7 +173,7 @@ generated="${scratch}/generated.csv"
         "# Mirror of deadmanoz/merge-mining-research data/error-blocks/error_blocks.csv" \
         "# Source commit: ${source_commit}" \
         "# Fields intentionally retained here: canonical BTC height, display-order hash," \
-        "# and the primary mechanically re-derived consensus violation." \
+        "# and the primary reviewed consensus violation." \
         "height,hash,rejection_reason"
     python3 - "${research_catalogue}" <<'PY'
 import csv

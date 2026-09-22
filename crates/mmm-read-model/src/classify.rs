@@ -2,22 +2,6 @@
 
 use super::*;
 
-const LEGACY_MTP_REJECTION_REASON: &str = "median_time_past_violation";
-
-fn rejection_reasons_equivalent(left: &str, right: &str) -> bool {
-    left == right
-        || matches!(
-            (left, right),
-            (
-                mmm_bitcoin_core::TIME_BELOW_MTP,
-                LEGACY_MTP_REJECTION_REASON
-            ) | (
-                LEGACY_MTP_REJECTION_REASON,
-                mmm_bitcoin_core::TIME_BELOW_MTP
-            )
-        )
-}
-
 /// Load the `ParentPreflight` for a candidate parent: the persisted state of
 /// its BTC predecessor (`prev_hash`), if `block` already holds one. The
 /// classifier in `mmm-bitcoin-core` uses `known_prev` to short-circuit a Core
@@ -107,28 +91,23 @@ pub fn resolve_parent_classification(
         None,
         catalogue.rejection_reason,
     );
-    let Some(mut live) = live else {
+    let Some(live) = live else {
         return Ok(catalogue_classification);
     };
 
     if live.kind == ParentKind::ErrorBlock {
         if live.height != Some(catalogue.height)
-            || !live.rejection_reason.as_deref().is_some_and(|reason| {
-                rejection_reasons_equivalent(reason, catalogue.rejection_reason)
-            })
+            || live.rejection_reason.as_deref() != Some(catalogue.rejection_reason)
         {
             bail!(
                 "live error-block verdict for {} disagrees with pinned catalogue",
                 header.block_hash()
             );
         }
-        // Preserve the catalogue's primary evidence token even when the live
-        // classifier emits the newer name for the same MTP consensus rule.
-        live.rejection_reason = Some(catalogue.rejection_reason.to_owned());
         return Ok(live);
     }
 
-    if rejection_reasons_equivalent(catalogue.rejection_reason, mmm_bitcoin_core::TIME_BELOW_MTP)
+    if catalogue.rejection_reason == mmm_bitcoin_core::TIME_BELOW_MTP
         && matches!(live.kind, ParentKind::Canonical | ParentKind::Stale)
     {
         bail!(
@@ -558,7 +537,7 @@ mod tests {
         .unwrap()
     }
 
-    fn catalogued_legacy_mtp_header() -> Header {
+    fn catalogued_mtp_380992_header() -> Header {
         deserialize(
             &hex::decode(
                 "0300000092d98cb6018e9baa8dfe136fa81266dfa588c0ee23b26e030000000000000000af324cb995102e1d1c5e7d59459d5f651090881815f2a63f0eba667ce3db7538cf003156140f12182744ec68",
@@ -589,8 +568,8 @@ mod tests {
     }
 
     #[test]
-    fn live_mtp_verdict_accepts_and_preserves_legacy_catalogue_token() {
-        let header = catalogued_legacy_mtp_header();
+    fn live_mtp_verdict_at_380992_matches_canonical_catalogue_token() {
+        let header = catalogued_mtp_380992_header();
         let live = ParentClassification::error_block(
             &header,
             380_992,
@@ -604,7 +583,7 @@ mod tests {
         assert_eq!(resolved.height_source, Some(HeightSource::PrevCanonical));
         assert_eq!(
             resolved.rejection_reason.as_deref(),
-            Some(LEGACY_MTP_REJECTION_REASON)
+            Some(mmm_bitcoin_core::TIME_BELOW_MTP)
         );
     }
 
@@ -612,7 +591,7 @@ mod tests {
     fn catalogued_mtp_tokens_cannot_silently_become_stale() {
         for (header, height) in [
             (catalogued_mtp_header(), 946_213),
-            (catalogued_legacy_mtp_header(), 380_992),
+            (catalogued_mtp_380992_header(), 380_992),
         ] {
             let live = ParentClassification {
                 kind: ParentKind::Stale,

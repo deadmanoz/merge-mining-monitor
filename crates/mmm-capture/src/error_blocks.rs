@@ -24,7 +24,7 @@ pub const TIME_BELOW_MTP: &str = "time_below_mtp";
 /// epoch's target across a retarget boundary.
 pub const NBITS_RETARGET_NOT_APPLIED: &str = "nbits_retarget_not_applied";
 
-/// A pinned, mechanically re-derived Bitcoin consensus failure.
+/// A pinned, reviewed Bitcoin consensus failure, including body-rule evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ErrorBlock {
     /// Height in the canonical context used by the research validator.

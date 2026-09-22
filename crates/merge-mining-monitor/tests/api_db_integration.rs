@@ -6,8 +6,6 @@ mod support;
 mod anchor_tree;
 #[path = "api_db_integration/blocks.rs"]
 mod blocks;
-#[path = "api_db_integration/body_invalid.rs"]
-mod body_invalid;
 #[path = "api_db_integration/branches.rs"]
 mod branches;
 #[path = "api_db_integration/chain_endpoints.rs"]

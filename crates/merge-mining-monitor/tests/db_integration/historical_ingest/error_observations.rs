@@ -96,17 +96,11 @@ async fn import_requires_catalogue_match_before_writing() -> Result<()> {
 }
 
 #[tokio::test]
-async fn import_accepts_live_mtp_verdict_for_legacy_catalogue_token() -> Result<()> {
+async fn import_replaces_legacy_mtp_reason_with_canonical_token() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let header = legacy_mtp_header()?;
         let parent_hash = header.block_hash().to_byte_array();
-        let path = write_csv(
-            &header,
-            "namecoin",
-            255_293,
-            380_992,
-            LEGACY_MTP_REJECTION_REASON,
-        )?;
+        let path = write_csv(&header, "namecoin", 255_293, 380_992, TIME_BELOW_MTP)?;
         let result = async {
             let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
                 ParentClassification::error_block(
@@ -126,6 +120,14 @@ async fn import_accepts_live_mtp_verdict_for_legacy_catalogue_token() -> Result<
             )
             .await?;
             assert_eq!(summary.ingested, 1);
+            client
+                .execute(
+                    "UPDATE block SET error_block_reason = $2 WHERE btc_header_hash = $1",
+                    &[&parent_hash.as_slice(), &LEGACY_MTP_REJECTION_REASON],
+                )
+                .await?;
+            run_error_observation_import_for_test(&mut client, &classifier, &path, &[parent_hash])
+                .await?;
 
             let row = client
                 .query_one(
@@ -138,7 +140,7 @@ async fn import_accepts_live_mtp_verdict_for_legacy_catalogue_token() -> Result<
             assert_eq!(row.get::<_, String>(0), "prev-canonical");
             assert_eq!(
                 row.get::<_, Option<String>>(1).as_deref(),
-                Some(LEGACY_MTP_REJECTION_REASON)
+                Some(TIME_BELOW_MTP)
             );
             Ok::<_, anyhow::Error>(())
         }

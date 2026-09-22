@@ -19,10 +19,92 @@
 use bitcoin::hashes::Hash as _;
 
 use super::core_fixture::{self, FixtureChain};
-use super::{BitcoinCoreParentClassifier, ConfiguredParentClassifier, ParentPreflight};
+use super::{
+    BitcoinCoreParentClassifier, BlockKind, ConfiguredParentClassifier, HeightSource,
+    KnownBlockContext, ParentPreflight,
+};
 use mmm_capture::capture::ParentKind;
 
 const BASE_TIME: u32 = 1_700_000_000;
+
+#[tokio::test]
+async fn strict_import_classification_rpc_budget() {
+    use std::time::{Duration, Instant};
+
+    let delay_ms = std::env::var("MMM_TEST_RPC_DELAY_MS")
+        .map(|value| value.parse::<u64>().expect("integer RPC fixture delay"))
+        .unwrap_or(0);
+    // The aggregate preflight caches by parent hash. Exercise ten distinct
+    // uncached parents, including the MTP-invalid result, with and without the
+    // locally persisted predecessor that import_error_observation_decision uses.
+    for known_prev in [true, false] {
+        let (chain, headers) = FixtureChain::mainline(11, BASE_TIME);
+        let fixture = core_fixture::spawn_with_delay(chain, 200, Duration::from_millis(delay_ms));
+        let classifier = classifier_for(&fixture);
+        let started = Instant::now();
+        for index in 0..10 {
+            let candidate = core_fixture::header(
+                headers[10].block_hash(),
+                if index == 0 {
+                    BASE_TIME
+                } else {
+                    BASE_TIME + 11
+                },
+                900_000 + index,
+            );
+            let preflight = ParentPreflight {
+                known_prev: known_prev.then_some(KnownBlockContext {
+                    kind: BlockKind::Canonical,
+                    btc_height: Some(10),
+                    btc_height_source: Some(HeightSource::BitcoinCore),
+                    canonical_competitor_hash: None,
+                    core_attested: true,
+                }),
+            };
+            let before = classifier.metrics().unwrap().snapshot();
+            let result = classifier
+                .classify_parent_strict(&candidate, preflight)
+                .await
+                .unwrap();
+            assert_eq!(
+                result.kind,
+                if index == 0 {
+                    ParentKind::ErrorBlock
+                } else {
+                    ParentKind::Stale
+                }
+            );
+            let after = classifier.metrics().unwrap().snapshot();
+            assert_eq!(
+                after.http_attempts - before.http_attempts,
+                if known_prev { 15 } else { 18 }
+            );
+            assert_eq!(
+                after.rpc_elements - before.rpc_elements,
+                if known_prev { 15 } else { 18 }
+            );
+        }
+        let snapshot = classifier.metrics().unwrap().snapshot();
+        assert_eq!(snapshot.retries, 0);
+        assert_eq!(
+            snapshot.failures, 10,
+            "one expected Core not-found per parent"
+        );
+        assert_eq!(
+            fixture.counts.getblockheader(),
+            if known_prev { 130 } else { 150 }
+        );
+        assert_eq!(fixture.counts.getblockhash(), 10);
+        assert_eq!(fixture.counts.getblock(), if known_prev { 10 } else { 20 });
+        eprintln!(
+            "strict import RPC receipt: parents=10 known_prev={known_prev} delay_ms={delay_ms} http_attempts={} rpc_elements={} retries={} wall_seconds={:.3}",
+            snapshot.http_attempts,
+            snapshot.rpc_elements,
+            snapshot.retries,
+            started.elapsed().as_secs_f64(),
+        );
+    }
+}
 
 fn classifier_for(fixture: &core_fixture::SpawnedFixture) -> ConfiguredParentClassifier {
     let url = format!("http://{}", fixture.addr);

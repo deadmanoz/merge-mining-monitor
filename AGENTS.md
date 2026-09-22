@@ -25,7 +25,7 @@ Use `just` targets, not raw commands, when a target exists:
   membership import and retroactive demotion.
 - `just import-all` / `just import-dataset CHAIN` - pinned normalized
   historical publication import.
-- `just gen-research-publication-pins` - refresh the three Research pins from
+- `just gen-research-publication-pins` - refresh the Research manifest and error catalogue from
   one committed revision, manifest first.
 - `just reclassify-unknown-parents`, `just reclassify-pools`,
   `just reconcile-read-model` - repair and enrichment commands.
@@ -45,7 +45,7 @@ concurrent tasks inside each locking test.
   catalogue. A proof-of-work-valid match is an `error_block`, never stale or
   orphan evidence; reconciliation persists its catalogue height and rejection
   reason in the derived `block` row. Refresh it with the historical manifest
-  and body-invalid mirror via `just gen-research-publication-pins`; the
+  via `just gen-research-publication-pins`; the
   manifest consumes Research's canonical observation-chain inventory.
 - Producers write only `merge_mining_event` plus 1:1 chain sidecars,
   attribution rows, and their own operational state through `mmm-store`:
@@ -56,27 +56,28 @@ concurrent tasks inside each locking test.
   `child_chain_head` (the block a chain last carried at each processed
   height, written in the capture transaction, read only by the producer's own
   trailing rescan, never by the read model or the API). Historical ingest
-  also attaches
-  `historical_event_provenance`. The further base tables,
-  `known_stale_block` and `body_invalid_stale`, are operator-imported via
-  `import-known-stales` / `import-body-invalid-stales`
-  (written through `mmm-store`, never by capture producers).
-  `body_invalid_stale` (pinned mirror `data/consensus/body_invalid_stales.csv`)
-  is a display annotation joined at API projection only: an annotated block
-  stays `kind='stale'`, and the annotation never feeds classification, orphan
-  derivation, or reconciliation. `block`,
+  also attaches `historical_event_provenance`. The operator imports
+  `known_stale_block` through `import-known-stales`. Reviewed body-invalid
+  parents use the error catalogue; migration `0029` removes the obsolete
+  annotation table.
+  Body-invalid verdicts use `kind=error_block` and `error_block_reason`; retired
+  annotation fields and compatibility types are removed. `block`,
   `attestation_proof`, and `source_health` are derived through
   `mmm-read-model`.
 - Treat child height, hash, header, time, and `nBits` as independent optional
   evidence. Never store a scan counter, placeholder hash, parent timestamp, or
   zero in place of unavailable child evidence.
 - Historical and partial source imports are authoritative snapshots. Live
-  source publication imports are additive. Keep this lifecycle distinction in
+  source publication imports are additive. Import changed error witnesses before
+  ordinary snapshot cleanup to preserve events moving out of stale inventories.
+  Cleanup rejects removal of catalogued witnesses without error provenance;
+  complete `import-all` before retrying a blocked single-chain import.
+  Keep this lifecycle distinction in
   the shared source registry, not in per-chain schema branches.
-- The current Research pin is generated from committed revision `e3dc6d6` and
+- The current Research pin is generated from committed revision `e6dc40a` and
   covers 29 event artifacts plus the stale-descendant and error-observation
-  aggregates, 31 artifacts and 1,286,512 rows in total. Refresh the three pins
-  (manifest, error catalogue, and body-invalid mirror) with
+  aggregates, 31 artifacts and 1,286,512 rows in total. Refresh both pins
+  (manifest and error catalogue) with
   `just gen-research-publication-pins`; a refreshed pin documents import
   readiness, not a completed database import or deploy.
 - Historical describes the recovered dataset, not whether its native chain is

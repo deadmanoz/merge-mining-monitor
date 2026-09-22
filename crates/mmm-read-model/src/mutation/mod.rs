@@ -382,6 +382,16 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
         .collect::<Vec<_>>();
     parent_hashes.sort();
     parent_hashes.dedup();
+    if let Some(hash) = parent_hashes
+        .iter()
+        .find(|hash| mmm_capture::error_blocks::lookup(hash).is_some())
+    {
+        bail!(
+            "authoritative snapshot would delete catalogued error witness for {}; \
+             run import-all to establish error-observation provenance first",
+            BlockHash::from_slice(hash)?
+        );
+    }
 
     let removed = txn
         .execute(

@@ -87,7 +87,7 @@ pub(super) async fn preflight_error_observations(
     Ok(())
 }
 
-/// Write the preflighted aggregate after ordinary chain imports. It deliberately
+/// Write the preflighted aggregate before ordinary chain imports. It deliberately
 /// has no authoritative-delete phase: historical error-witness provenance is
 /// retained outside normal per-chain snapshot reconciliation.
 pub(super) async fn import_error_observations(

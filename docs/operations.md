@@ -406,14 +406,12 @@ contaminated strict/weak rows to `excluded` in the same transaction, maintaining
 available to repeat that repair independently. See
 `docs/historical-ingest.md` for the full fresh-database ordering.
 
-Import the body-invalid stale annotations once per database after migrations
-(order relative to dataset imports does not matter; the annotation gates
-nothing): `just import-body-invalid-stales --csv
-data/consensus/body_invalid_stales.csv --source-label
-"merge-mining-research@<commit>"`. The command is strict about malformed rows,
-refuses an empty mirror, and refuses a hash that is also in the pinned
-error-block catalogue; re-runs are authoritative snapshots that replace rows
-in place and prune withdrawn annotations. See `docs/historical-ingest.md`.
+Reviewed body-invalid parents are imported through the unified error catalogue
+and `import-all`. Stop the old service, apply migration `0029` through
+`just db-migrate-deploy` (automatic backup required), then start the updated
+binary and run `import-all`. The migration drops the obsolete annotation table;
+child witnesses and their provenance remain in the normal evidence tables.
+The former annotation command and response fields are removed.
 
 ## Historical Publication
 

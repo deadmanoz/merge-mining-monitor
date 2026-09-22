@@ -74,6 +74,20 @@ remote-call count per item use these counters; `FakeParentClassifier`'s call
 count measures how often the classifier is invoked, not how many requests it
 makes, and is kept for that purpose only.
 
+`strict_import_classification_rpc_budget` pins the strict aggregate-import
+classification profile at 15 requests per uncached parent with a locally known
+predecessor, or 18 without one, including the eleven-header MTP walk. It covers
+ten distinct parents per profile and asserts both client and server counters.
+Run its optional latency measurement with
+`MMM_TEST_RPC_DELAY_MS=340 cargo test -p mmm-bitcoin-core strict_import_classification_rpc_budget -- --nocapture`.
+On 2026-09-22, the local scripted transport measured 150 requests in 52.172
+seconds and 180 requests in 62.537 seconds respectively, with no retries.
+Each profile recorded ten expected Core not-found responses. This measures
+classification with a 340 ms response delay, not a complete database import or
+real Core block-download throughput. A changed 49-parent aggregate can classify
+all 49 parents again: its conservative no-retry bound is 882 requests, about
+300 seconds of round-trip latency, before database and other import work.
+
 Batch operations log progress through `ProgressReporter` and end, finished
 or aborted, with a `job ended` summary and one line per RPC client. Before a
 change to a batch operation ships, it is timed at the production round-trip
