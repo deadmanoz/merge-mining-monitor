@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-09-22
+
 - Preserve event identities and enrichment when observations move from ordinary
   stale inventories to the error catalogue by importing error witnesses before
   authoritative snapshot cleanup. Reject cleanup that would delete a catalogued

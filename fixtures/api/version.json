@@ -1,12 +1,23 @@
 {
   "schema_version": "v1",
-  "generated_at": 1789974918,
-  "version": "0.8.1",
+  "generated_at": 1790080842,
+  "version": "0.8.2",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 25,
+    "release_count": 26,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.8.2",
+        "date": "2026-09-22",
+        "items": [
+          "Ten reviewed body-invalid Bitcoin parents now appear as error blocks, with their rejection reasons, instead of stales. The unified Research catalogue covers 49 invalid parents and 107 child-chain observations.",
+          "Historical imports preserve observation identities and evidence when a parent moves into the error catalogue. A single-chain import refuses cleanup until the required error observations have been imported with `import-all`.",
+          "Remove the separate body-invalid annotation API fields and importer. API consumers use `kind=error_block` and `error_block_reason`; migration `0029` removes the obsolete annotation table through the backup-first workflow."
+        ],
+        "item_count": 3,
+        "truncated": false
+      },
       {
         "version": "0.8.1",
         "date": "2026-09-21",
