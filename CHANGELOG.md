@@ -6,6 +6,14 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Preserve event identities and enrichment when observations move from ordinary
+  stale inventories to the error catalogue by importing error witnesses before
+  authoritative snapshot cleanup.
+- Classify reviewed body-invalid Bitcoin parents through the shared error
+  catalogue. Retire the separate annotation importer and mirror generator;
+  retain the legacy table and nullable API fields without projecting old
+  annotations. Show the body-rule rejection in the existing error-block UI.
+
 ## [0.8.1] - 2026-09-21
 
 - Rescan a trailing-window height with one block-hash lookup: migration

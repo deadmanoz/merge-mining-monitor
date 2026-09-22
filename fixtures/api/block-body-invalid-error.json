@@ -4,13 +4,10 @@
   "block": {
     "hash": "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd",
     "height": 700006,
-    "kind": "stale",
+    "kind": "error_block",
     "btc_orphan_class": null,
-    "error_block_reason": null,
-    "body_invalid": {
-      "rule": "bad-blk-sigops",
-      "evidence_url": "https://b10c.me/observations/11-invalid-blocks-783426-and-784121/"
-    },
+    "error_block_reason": "bad-blk-sigops",
+    "body_invalid": null,
     "coinbase_tag": null,
     "header": {
       "version": 536870912,
@@ -141,42 +138,8 @@
       }
     }
   ],
-  "competition": {
-    "btc_height": 700006,
-    "stale_hash": "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd",
-    "canonical_hash": "cececececececececececececececececececececececececececececececece",
-    "stale_bitcoin_miner_pool": {
-      "id": 7,
-      "slug": "antpool",
-      "name": "AntPool",
-      "known": true
-    },
-    "canonical_bitcoin_miner_pool": {
-      "id": 8,
-      "slug": "f2pool",
-      "name": "F2Pool",
-      "known": true
-    },
-    "header_time_delta_s": 25,
-    "propagation_delta_s": null
-  },
-  "stale_branch": {
-    "branch_id": "stale-700006-bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd",
-    "root_hash": "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd",
-    "tip_hash": "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd",
-    "member_hashes": [
-      "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd"
-    ],
-    "canonical_competitor_hashes": [
-      "cececececececececececececececececececececececececececececececece"
-    ],
-    "btc_height_min": 700006,
-    "btc_height_max": 700006,
-    "depth": 1,
-    "position": "root_and_tip",
-    "parent_stale_hash": null,
-    "child_stale_hashes": []
-  },
+  "competition": null,
+  "stale_branch": null,
   "commitment": {
     "format": "namecoin-aux",
     "parent_coinbase_txid": "2727272727272727272727272727272727272727272727272727272727272727",

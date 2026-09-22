@@ -251,12 +251,7 @@ function formatInt(value) {
 }
 
 function treeNodeTitle(node, chains) {
-  // body_invalid_rule is present only on annotated stale nodes (serde-skipped
-  // elsewhere): surface it in the hover title without changing the node kind.
-  const kindLabel = node.body_invalid_rule
-    ? `${node.kind} (body-invalid: ${node.body_invalid_rule})`
-    : node.kind;
-  const base = `${kindLabel} ${node.height ?? "unheighted"} ${node.hash}`;
+  const base = `${node.kind} ${node.height ?? "unheighted"} ${node.hash}`;
   if (!chains.length) return base;
   const label = chains.map((item) => `${chainDisplayName(item.chain)}${item.count ? ` x${item.count}` : ""}`).join(", ");
   return `${base} | ${label}`;

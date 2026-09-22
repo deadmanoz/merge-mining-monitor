@@ -8,7 +8,7 @@ The compact catalogue header in `data/consensus/error_blocks.csv` must name
 that same commit; `just gen-error-blocks-catalogue` refuses a
 `--source-commit` that disagrees.
 
-Refresh the three Research pins from one committed Research publication:
+Refresh the Research manifest and error catalogue from one committed Research publication:
 
 ```bash
 just gen-research-publication-pins \
@@ -18,9 +18,9 @@ just gen-research-publication-pins \
 
 Materialize Research's event-file LFS payloads before running this command. The
 manifest generator verifies their pinned size and checksum, then measures each
-artifact's parent-only rows. The combined command stages the manifest, error
-catalogue, and body-invalid mirror together and publishes them only after all
-three generators succeed. It also takes the error-observation chain inventory
+artifact's parent-only rows. The combined command stages the manifest and error
+catalogue together and publishes them only after both generators succeed. It
+also takes the error-observation chain inventory
 from Research's `observation_chain_counts` field. The combined command does
 not accept `--out`. Run it again with `--check` before importing or releasing.
 
@@ -34,7 +34,7 @@ before database mutation, then imports the verified readers in chain order.
 
 ## Publication Contract
 
-The publication contains 1,286,403 event rows across 29 uniform per-chain files:
+The publication contains 1,286,384 event rows across 29 uniform per-chain files:
 
 ```text
 results/monitor-evidence/<chain>_monitor_evidence.csv
@@ -43,7 +43,7 @@ results/monitor-evidence/<chain>_monitor_evidence.csv
 Doichain participates through the same path with a valid zero-row file. The
 separate 21-row `stale-descendants` file is an aggregate view, not an event
 source, because its contributing chain observations already exist in the
-per-chain files. The complete artifact set also includes 88 authenticated
+per-chain files. The complete artifact set also includes 107 authenticated
 error-observation witnesses, for 1,286,512 rows across 31 artifacts.
 
 The total includes 456,660 canonical Namecoin rows whose historical source does
@@ -60,8 +60,8 @@ parents span heights 158,531 through 689,505 and Bitcoin times 1,324,518,895
 through 1,625,316,364; its 191 stale parents span heights 160,948 through
 645,179 and Bitcoin times 1,325,885,242 through 1,598,297,126. The canonical
 rows carry no child height; the stale rows span child heights 179,843 through
-3,259,608. RSK contributes 236,432 rows, including
-236,073 canonical and 353 stale rows; its child heights span 141,809 through
+3,259,608. RSK contributes 236,430 rows, including
+236,073 canonical and 351 stale rows; its child heights span 141,809 through
 9,220,885 for canonical rows and 263,443 through 9,214,131 for stale rows.
 
 A complete publication also carries
@@ -77,7 +77,7 @@ source-chain inventory match the committed manifest, so a missing, truncated,
 or cross-chain-substituted aggregate fails before database mutation. Its
 `error-block-observations` scope is reserved to that aggregate;
 ordinary historical artifacts using it are rejected. Preflight also requires
-coverage of all 39 pinned error parents across its witnesses, and checks
+coverage of all 49 pinned error parents across its witnesses, and checks
 retarget observations against the Core-derived target for their stated height.
 
 `data/historical/historical-source-manifest.json` pins each event payload by
@@ -287,31 +287,15 @@ membership-free diagnostic database. It is not a production cutover option.
 `--limit` must be greater than zero and makes a manifest import additive rather
 than authoritative.
 
-## Body-Invalid Stale Annotations
+## Reviewed Body-Invalid Parents
 
-Import the pinned body-invalid stales mirror after migrations, in any order
-relative to the publication import (the annotation is display-only and gates
-nothing; unlike the historical imports, this command does not require a
-Bitcoin Core connection):
-
-```bash
-just import-body-invalid-stales \
-  --csv data/consensus/body_invalid_stales.csv \
-  --source-label "merge-mining-research@<commit>"
-```
-
-The mirror is refreshed together with the error-block catalogue and the
-historical manifest by `just gen-research-publication-pins`, and its header
-pin must name the same research commit. The importer is strict: any malformed
-row, an empty file, or a hash that is also in the pinned error-block
-catalogue is fatal (the research overlay and catalogue are disjoint by
-construction, so an overlap means the pins are out of step). The mirror is an
-authoritative snapshot: re-imports replace rows in place and prune any
-annotation the newest pin withdrew, so a corrected rule, a corrected evidence
-URL, or a removed row propagates without an operator delete. Annotated blocks
-remain ordinary `stale` rows; only the block detail and tree hover surface
-the annotation, and the projection join is additionally gated on
-`kind = 'stale'`.
+Body-dependent failures are canonical error-catalogue entries and are imported
+through the error-observation aggregate with `import-all`. The old
+`import-body-invalid-stales` command and annotation mirror are retired.
+Existing annotation rows remain stored for historical provenance, but the API
+no longer joins them. A refreshed catalogue and publication import promote
+previous stale classifications to `error_block` without discarding their
+child-chain witnesses. No new database migration or annotation import is needed.
 
 ## Import
 
@@ -348,9 +332,10 @@ the durable historical queue, source-health readiness, and published stale
 branches. A clean match returns before taking the Bitcoin Core lock. Pending
 derived work takes the lock and finalizes without replaying source rows.
 
-The command preflights all artifacts before importing the first changed chain,
-processes
-chains in deterministic order, shares a Bitcoin-parent classification cache,
+The command preflights all artifacts before writing. It imports changed error
+observations before ordinary chain snapshots, so witnesses moving out of stale
+inventories gain protected provenance before authoritative cleanup. It then
+processes chains in deterministic order, shares a Bitcoin-parent classification cache,
 combines candidate parsing, validation, and preclassification into one stream,
 fills the Bitcoin RPC client's configured bounded concurrency, and runs targeted
 stale-branch reconciliation after all sources are present. A parent already

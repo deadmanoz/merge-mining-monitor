@@ -7,14 +7,13 @@
 //! `lib.rs` re-exports the stable public API
 //! (`mmm_store::fn`). Shared, table-generic SQL lives in root modules
 //! (`event`, `pool`, `poll_cursor`, `pending_reconcile`, `capture_error`,
-//! `bitcoin_core_header`, `known_stale`, `body_invalid`, `historical_import`,
+//! `bitcoin_core_header`, `known_stale`, `historical_import`,
 //! `child_displacement`); chain-specific SQL (capture writers, 1:1 evidence
 //! sidecars, per-chain event reads, the RSK pool-identity adapters) lives
 //! under `chains/<chain>.rs`. A new merge-mined chain is a new
 //! `chains/<chain>.rs`, not an append to one god file.
 
 mod bitcoin_core_header;
-mod body_invalid;
 mod capture_error;
 mod chains;
 mod child_displacement;
@@ -36,7 +35,6 @@ pub use bitcoin_core_header::{
     lock_bitcoin_core_header_cache_shared_in_transaction, persist_recheck_cursor,
     record_bitcoin_core_header, replace_bitcoin_core_header_cache, schedule_core_recheck,
 };
-pub use body_invalid::{delete_body_invalid_stales_not_in, upsert_body_invalid_stale};
 pub use capture_error::{
     CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error, has_capture_error,
     record_capture_error,

@@ -589,14 +589,14 @@ mod tests {
     }
 
     #[test]
-    fn live_mtp_verdict_accepts_and_preserves_legacy_catalogue_token() {
+    fn legacy_live_mtp_verdict_uses_canonical_catalogue_token() {
         let header = catalogued_legacy_mtp_header();
         let live = ParentClassification::error_block(
             &header,
             380_992,
             HeightSource::PrevCanonical,
             Some(true),
-            mmm_bitcoin_core::TIME_BELOW_MTP,
+            LEGACY_MTP_REJECTION_REASON,
         );
 
         let resolved = resolve_parent_classification(&header, Some(live)).unwrap();
@@ -604,7 +604,7 @@ mod tests {
         assert_eq!(resolved.height_source, Some(HeightSource::PrevCanonical));
         assert_eq!(
             resolved.rejection_reason.as_deref(),
-            Some(LEGACY_MTP_REJECTION_REASON)
+            Some(mmm_bitcoin_core::TIME_BELOW_MTP)
         );
     }
 

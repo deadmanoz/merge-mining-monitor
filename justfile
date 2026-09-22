@@ -131,7 +131,7 @@ gen-pool-snapshot *args="":
 gen-source-artifacts *args="":
     cargo run --quiet --features artifact-generation --bin gen_source_artifacts -- {{args}}
 
-# Refresh the three Research pins from one commit, manifest first.
+# Refresh the Research manifest and error catalogue from one commit.
 gen-research-publication-pins *args="":
     ./scripts/gen-research-publication-pins.sh {{args}}
 
@@ -142,10 +142,6 @@ gen-historical-source-manifest *args="":
 # Focused compact error-block catalogue generator.
 gen-error-blocks-catalogue *args="":
     ./scripts/gen-error-blocks-catalogue.sh {{args}}
-
-# Focused body-invalid stales mirror generator (data/consensus/body_invalid_stales.csv).
-gen-body-invalid-stales *args="":
-    ./scripts/gen-body-invalid-stales.sh {{args}}
 
 serve:
     cargo run -- serve
@@ -199,9 +195,6 @@ import-all *args:
 
 import-known-stales *args:
     cargo run -- import-known-stales {{args}}
-
-import-body-invalid-stales *args:
-    cargo run -- import-body-invalid-stales {{args}}
 
 reclassify-known-stales *args:
     cargo run -- reclassify-known-stales {{args}}

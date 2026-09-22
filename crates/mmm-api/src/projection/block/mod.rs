@@ -89,12 +89,8 @@ pub struct ApiBlock {
     /// catalogue.
     /// Present only when `kind='error_block'`.
     pub error_block_reason: Option<String>,
-    /// Body-level consensus annotation from the operator-imported
-    /// `body_invalid_stale` reference table: the block stays `kind='stale'`
-    /// (its header passed every stale-profile check) but its complete body is
-    /// known consensus-invalid from external full-block evidence. `null` for
-    /// every block with no annotation row; a display annotation only, never a
-    /// classification input.
+    /// Retained v1 response field, always null. Reviewed body-invalid parents
+    /// use `kind='error_block'` and `error_block_reason`.
     pub body_invalid: Option<BodyInvalid>,
     /// Printable raw tag runs from the commitment representative's Bitcoin
     /// coinbase scriptSig, or `null` when that representative has no recoverable
@@ -114,10 +110,8 @@ pub struct ApiBlock {
     pub source_summary: SourceSummary,
 }
 
-/// Body-level consensus annotation for a block that remains `kind='stale'`.
-/// `rule` is the Bitcoin Core reject family attested by the external
-/// full-body evidence (e.g. `bad-blk-sigops`); `evidence_url` links the public
-/// observation the claim rests on. Pinned by block-*.json.
+/// Legacy v1 annotation shape retained for API clients. Current projections
+/// always return `body_invalid: null`; the error catalogue owns the verdict.
 #[derive(Debug, Clone, Serialize)]
 pub struct BodyInvalid {
     pub rule: String,
@@ -356,7 +350,6 @@ fn block_source_summary(
         height: row.height,
         kind: row.kind,
         btc_orphan_class: row.btc_orphan_class.clone(),
-        body_invalid_rule: row.body_invalid_rule.clone(),
         header_time: row.header_time,
         bitcoin_miner_pool: row.bitcoin_miner_pool.clone(),
         live_observed: row.live_observed,
@@ -448,10 +441,7 @@ async fn block_from_read_model(
             kind: kind_as_str(row.kind),
             btc_orphan_class: row.btc_orphan_class.clone(),
             error_block_reason: row.error_block_reason.clone(),
-            body_invalid: row.body_invalid_rule.clone().map(|rule| BodyInvalid {
-                rule,
-                evidence_url: row.body_invalid_evidence_url.clone(),
-            }),
+            body_invalid: None,
             coinbase_tag,
             header: header_projection(&row.header_bytes)?,
             bitcoin_miner_pool: row.bitcoin_miner_pool,

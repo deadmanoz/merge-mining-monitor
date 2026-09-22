@@ -20,7 +20,7 @@ tree view from that evidence.
 | `capture_error` | Producer-owned operational state: one row per `(source_id, height)` a producer could not capture, with the failure kind, a diagnostic detail, and first/last seen times. Written and cleared only by capture; `/api/v1/sources` reads the earliest unresolved height per source. |
 | `known_stale_block` | Operator-imported known-stale membership loaded by `import-known-stales` from the upstream `bitcoin-data/stale-blocks` dataset. Consulted as an orphan-classification exclusion gate: a catalogued stale is `excluded`, never labelled strict/weak. |
 | `block` | Derived Bitcoin parent block state: canonical, stale, consensus-invalid error block, or unknown. |
-| `body_invalid_stale` | Operator-imported annotation of stale blocks whose complete body is known consensus-invalid from external full-block evidence (the research body-invalid stales overlay, mirrored in `data/consensus/body_invalid_stales.csv`). Display annotation joined at API projection only; loaded by `import-body-invalid-stales`. |
+| `body_invalid_stale` | Retired annotation table preserved as historical evidence. No active writer or API join; reviewed body-invalid parents use the error catalogue. |
 | `attestation_proof` | Derived proof rows supporting a block. |
 | `source_health` | Per-source rollup counters for UI/API health reporting. |
 
@@ -57,20 +57,13 @@ Published direct-stale and stale-descendant provenance is also an exclusion
 from strict/weak orphan classification while a branch remains derived
 `unknown`.
 
-The `body_invalid_stale` membership is the deliberate opposite of an error
-block: annotate, never promote. A member's header passed every check the stale
-evidence profile can apply, so its derived row stays `kind='stale'` with its
-ordinary competition and branch semantics, and the annotation (`rule`,
-`evidence_url`) is joined only at API projection time. Nothing in parent
-classification, orphan-class derivation, source-health counters, or
-reconciliation consults the table, and membership cannot create an
-`error_block` (that kind requires the pinned research catalogue plus the 0008
-CHECK constraints). The importer refuses any hash that is also in the pinned
-error-block catalogue, so the annotation set and the catalogue stay disjoint;
-each import is an authoritative snapshot of the mirror (withdrawn rows are
-pruned in the same transaction), and the API join is gated on
-`kind = 'stale'` so an annotation row can never surface on a non-stale
-block.
+Reviewed body-rule failures use the same `error_block` classification as
+header-context failures. Research authenticates complete body evidence and
+pins the independently established verdicts; Monitor consumes that catalogue.
+The old `body_invalid_stale` table is retained without an active importer or
+API join. The v1 `body_invalid` field is always null, and the optional tree
+`body_invalid_rule` field is absent. No table deletion or data migration is
+needed for this retirement.
 
 Historical error witnesses retain `classification=error_block` in
 `historical_event_provenance`, while `block.error_block_reason` is derived by

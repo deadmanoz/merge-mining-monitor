@@ -6,7 +6,7 @@ evidence-bearing *base* tables: `merge_mining_event` and its 1:1 chain sidecars,
 the `historical_event_provenance` publication identity,
 the `event_pool_attribution` provenance vector, the `pool`/`pool_identity` seed
 rows, the `poll_cursor` live-progress table, producer-owned `capture_error`
-rows, operator-imported `known_stale_block` and `body_invalid_stale`
+rows, operator-imported `known_stale_block`
 membership, child-chain displacement records, and the persisted Bitcoin Core
 header cache. It also exposes the read-only historical-import planning queries
 and the Core-header-cache loader shared by reconciliation and the API. Live
@@ -47,7 +47,6 @@ Shared, table-generic modules:
 | `capture_error` | The producer-owned `capture_error` table: record (upsert preserving `first_seen_at`) and clear one `(source_id, height)`. The monotonic `poll_cursor` cannot express a gap, and `source_health` is derived, so a held height lives here. |
 | `bitcoin_core_header` | Sparse canonical Bitcoin Core header cache: record/replace, shared/exclusive locks, integrity errors, and the read-only nBits-table loader used by reconciliation and the API. |
 | `known_stale` | Operator-imported `known_stale_block` membership: upsert, count, and hash lookup for the orphan-classification exclusion gate. |
-| `body_invalid` | Operator-imported `body_invalid_stale` display annotations: upsert and prune-not-in snapshot writes. Classification never consults this table. |
 | `historical_import` | Read-only publication/base-event streams and finalization-state queries used to plan historical imports without writing. |
 | `child_displacement` | Per-height child-chain block records and locks: which block the child currently carries, and the displace/restore transition. |
 

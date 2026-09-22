@@ -44,6 +44,21 @@ pub(super) async fn write_planned_imports(
     if let Some(plan) = &plan {
         summary.skipped_matching_state = plan.skipped_matching_state;
     }
+    // Protect observations moving out of ordinary snapshots before their
+    // authoritative cleanup can delete the existing events and enrichment.
+    if work_error_observations && let Some(artifact) = error_observations {
+        summary.error_observations = Some(
+            import_error_observations(
+                client,
+                classifier,
+                artifact,
+                classifications,
+                nbits_table,
+                expected_error_parents,
+            )
+            .await?,
+        );
+    }
     let work_total = configs
         .iter()
         .enumerate()
@@ -74,19 +89,6 @@ pub(super) async fn write_planned_imports(
         summary
             .chains
             .push((chain_config.chain.clone(), chain_summary));
-    }
-    if work_error_observations && let Some(artifact) = error_observations {
-        summary.error_observations = Some(
-            import_error_observations(
-                client,
-                classifier,
-                artifact,
-                classifications,
-                nbits_table,
-                expected_error_parents,
-            )
-            .await?,
-        );
     }
     if work_total > 0
         || work_error_observations
