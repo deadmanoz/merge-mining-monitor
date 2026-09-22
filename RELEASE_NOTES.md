@@ -1,5 +1,17 @@
 # Release Notes
 
+## [0.8.2] - 2026-09-22
+
+- Ten reviewed body-invalid Bitcoin parents now appear as error blocks, with
+  their rejection reasons, instead of stales. The unified Research catalogue
+  covers 49 invalid parents and 107 child-chain observations.
+- Historical imports preserve observation identities and evidence when a parent
+  moves into the error catalogue. A single-chain import refuses cleanup until
+  the required error observations have been imported with `import-all`.
+- Remove the separate body-invalid annotation API fields and importer. API
+  consumers use `kind=error_block` and `error_block_reason`; migration `0029`
+  removes the obsolete annotation table through the backup-first workflow.
+
 ## [0.8.1] - 2026-09-21
 
 - A rescanned height behind the poll cursor costs one block-hash lookup at the
