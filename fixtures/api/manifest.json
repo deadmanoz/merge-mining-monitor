@@ -44,7 +44,7 @@
     {
       "file": "block-body-invalid-error.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "Reviewed body-invalid parent classified as error_block, with no stale competition or branch and a null legacy annotation field"
+      "scenario": "Reviewed body-invalid parent classified as error_block, with no stale competition or branch"
     },
     {
       "file": "navigator-stale.json",

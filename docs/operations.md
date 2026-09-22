@@ -407,8 +407,11 @@ available to repeat that repair independently. See
 `docs/historical-ingest.md` for the full fresh-database ordering.
 
 Reviewed body-invalid parents are imported through the unified error catalogue
-and `import-all`. The former annotation import command is retired; existing
-annotation rows remain stored but are no longer projected.
+and `import-all`. Stop the old service, apply migration `0029` through
+`just db-migrate-deploy` (automatic backup required), then start the updated
+binary and run `import-all`. The migration drops the obsolete annotation table;
+child witnesses and their provenance remain in the normal evidence tables.
+The former annotation command and response fields are removed.
 
 ## Historical Publication
 

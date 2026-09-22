@@ -13,5 +13,5 @@ The database regression imports these witnesses, restores their former stale
 state and ordinary publication provenance, then repeats the normal
 error-observation import followed by authoritative snapshot cleanup. It checks event
 identity and evidence preservation, promotion of all ten parents, API exclusion
-from stale competition, and idempotent replay. Core verdicts are scripted;
+from stale competition, removal of the annotation schema, and idempotent replay. Core verdicts are scripted;
 body-rule verification remains the pinned Research admission's responsibility.

@@ -20,7 +20,6 @@ tree view from that evidence.
 | `capture_error` | Producer-owned operational state: one row per `(source_id, height)` a producer could not capture, with the failure kind, a diagnostic detail, and first/last seen times. Written and cleared only by capture; `/api/v1/sources` reads the earliest unresolved height per source. |
 | `known_stale_block` | Operator-imported known-stale membership loaded by `import-known-stales` from the upstream `bitcoin-data/stale-blocks` dataset. Consulted as an orphan-classification exclusion gate: a catalogued stale is `excluded`, never labelled strict/weak. |
 | `block` | Derived Bitcoin parent block state: canonical, stale, consensus-invalid error block, or unknown. |
-| `body_invalid_stale` | Retired annotation table preserved as historical evidence. No active writer or API join; reviewed body-invalid parents use the error catalogue. |
 | `attestation_proof` | Derived proof rows supporting a block. |
 | `source_health` | Per-source rollup counters for UI/API health reporting. |
 
@@ -60,10 +59,10 @@ from strict/weak orphan classification while a branch remains derived
 Reviewed body-rule failures use the same `error_block` classification as
 header-context failures. Research authenticates complete body evidence and
 pins the independently established verdicts; Monitor consumes that catalogue.
-The old `body_invalid_stale` table is retained without an active importer or
-API join. The v1 `body_invalid` field is always null, and the optional tree
-`body_invalid_rule` field is absent. No table deletion or data migration is
-needed for this retirement.
+Migration `0029` drops the obsolete `body_invalid_stale` annotation table. Its
+importer, API joins, `body_invalid` and `body_invalid_rule` fields, and
+compatibility types are removed. Child witnesses and their publication
+provenance remain in the normal evidence tables.
 
 Historical error witnesses retain `classification=error_block` in
 `historical_event_provenance`, while `block.error_block_reason` is derived by

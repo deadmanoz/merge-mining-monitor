@@ -89,9 +89,6 @@ pub struct ApiBlock {
     /// catalogue.
     /// Present only when `kind='error_block'`.
     pub error_block_reason: Option<String>,
-    /// Retained v1 response field, always null. Reviewed body-invalid parents
-    /// use `kind='error_block'` and `error_block_reason`.
-    pub body_invalid: Option<BodyInvalid>,
     /// Printable raw tag runs from the commitment representative's Bitcoin
     /// coinbase scriptSig, or `null` when that representative has no recoverable
     /// coinbase script.
@@ -108,14 +105,6 @@ pub struct ApiBlock {
     /// `DisplayMinerBasis`).
     pub display_miner_basis: &'static str,
     pub source_summary: SourceSummary,
-}
-
-/// Legacy v1 annotation shape retained for API clients. Current projections
-/// always return `body_invalid: null`; the error catalogue owns the verdict.
-#[derive(Debug, Clone, Serialize)]
-pub struct BodyInvalid {
-    pub rule: String,
-    pub evidence_url: Option<String>,
 }
 
 /// The decoded Bitcoin parent header for the wire `header` object (built by
@@ -441,7 +430,6 @@ async fn block_from_read_model(
             kind: kind_as_str(row.kind),
             btc_orphan_class: row.btc_orphan_class.clone(),
             error_block_reason: row.error_block_reason.clone(),
-            body_invalid: None,
             coinbase_tag,
             header: header_projection(&row.header_bytes)?,
             bitcoin_miner_pool: row.bitcoin_miner_pool,
@@ -508,7 +496,6 @@ async fn block_from_direct_events(
             // no Core-gated orphan class (pending by construction).
             btc_orphan_class: None,
             error_block_reason: None,
-            body_invalid: None,
             coinbase_tag,
             header,
             bitcoin_miner_pool,

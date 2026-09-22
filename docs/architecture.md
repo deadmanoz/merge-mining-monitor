@@ -54,8 +54,8 @@ Two base tables retain operator-imported provenance:
 and `known_stale_block` holds known-stale membership loaded by
 `import-known-stales`. The reconciler consults both as orphan-classification
 exclusion evidence. Reviewed body-invalid parents use the shared error
-catalogue. The retired `body_invalid_stale` table remains as historical evidence
-but has no active writer or API join.
+catalogue. Migration `0029` drops the retired `body_invalid_stale` table;
+its importer and API projection path are removed.
 Historical import also writes `historical_reconcile_queue` in the base
 transaction. After commit, the read-model bulk-rebuilds bounded batches whose
 canonical classification is already proven by the Core-backed `block` row.

@@ -550,6 +550,6 @@
   "schema_version": 2,
   "scope": "uniform_monitor_evidence_v1",
   "source_repo": "merge-mining-research",
-  "source_repo_commit": "de4e68ff0234eec9cfe6f6846b965839c296b877",
+  "source_repo_commit": "e6dc40a1a2e9da87b95a5415cb0d60dbceb99296",
   "total_event_rows": 1286384
 }

@@ -11,8 +11,10 @@ This changelog starts with the initial release.
   authoritative snapshot cleanup.
 - Classify reviewed body-invalid Bitcoin parents through the shared error
   catalogue. Retire the separate annotation importer and mirror generator;
-  retain the legacy table and nullable API fields without projecting old
-  annotations. Show the body-rule rejection in the existing error-block UI.
+  remove the `body_invalid` and `body_invalid_rule` API fields and their
+  compatibility types, and drop the obsolete annotation table in migration
+  `0029`. Require canonical rejection tokens without runtime aliases. Show the
+  body-rule rejection in the existing error-block UI.
 
 ## [0.8.1] - 2026-09-21
 

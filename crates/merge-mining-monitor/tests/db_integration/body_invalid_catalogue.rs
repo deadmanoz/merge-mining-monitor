@@ -91,10 +91,6 @@ async fn restore_legacy_stale_state(client: &Client, parents: &[ReviewedParent])
                 &[&hash, &competitor],
             )
             .await?;
-        client.execute(
-            "INSERT INTO body_invalid_stale (hash,btc_height,rule,evidence_url,source_label,imported_at) \
-             VALUES ($1,$2,$3,NULL,'old-release',1)", &[&hash,&parent.height,&parent.reason],
-        ).await?;
     }
     client
         .execute("UPDATE merge_mining_event SET btc_parent_kind='stale'", &[])
@@ -174,7 +170,11 @@ async fn reviewed_body_invalid_import_promotes_stales_without_losing_witnesses()
                 payload.block.error_block_reason.as_deref(),
                 Some(parent.reason.as_str())
             );
-            assert!(payload.block.body_invalid.is_none());
+            assert!(
+                serde_json::to_value(&payload.block)?
+                    .get("body_invalid")
+                    .is_none()
+            );
             assert!(payload.competition.is_none());
             assert!(payload.stale_branch.is_none());
             assert!(!payload.event_details.is_empty());
@@ -187,14 +187,14 @@ async fn reviewed_body_invalid_import_promotes_stales_without_losing_witnesses()
             .await?
             .get(0);
         assert_eq!(remaining_stales, 0);
-        let legacy_rows: i64 = client
-            .query_one("SELECT count(*) FROM body_invalid_stale", &[])
+        let obsolete_table: Option<String> = client
+            .query_one(
+                "SELECT to_regclass(format('%I.body_invalid_stale', current_schema()))::text",
+                &[],
+            )
             .await?
             .get(0);
-        assert_eq!(
-            legacy_rows, 10,
-            "retirement preserves historical annotation evidence"
-        );
+        assert!(obsolete_table.is_none());
         run_error_observation_import_for_test(&mut client, &classifier, &path, &hashes).await?;
         assert_eq!(
             evidence_snapshot(&client).await?,

@@ -18,8 +18,6 @@ mod error_blocks;
 mod helpers;
 #[path = "api_db_integration/orphans.rs"]
 mod orphans;
-#[path = "api_db_integration/retired_body_annotations.rs"]
-mod retired_body_annotations;
 #[path = "api_db_integration/sources.rs"]
 mod sources;
 #[path = "api_db_integration/stales.rs"]

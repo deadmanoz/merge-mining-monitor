@@ -120,9 +120,6 @@ pub struct TreeNode {
     /// for canonical/stale/error-block nodes and for pending/never-Core-checked
     /// unknowns.
     pub btc_orphan_class: Option<String>,
-    /// Retained v1 field, always absent. Body-invalid parents are error blocks.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub body_invalid_rule: Option<String>,
     pub prev_id: Option<usize>,
     pub prev_hash: String,
     pub bitcoin_miner_pool: PoolObject,

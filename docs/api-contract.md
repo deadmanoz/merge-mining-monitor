@@ -751,8 +751,6 @@ Each tree node has:
   `kind` stays
   the structural evidence state; `btc_orphan_class` is the refinement the UI
   renders. It is a per-node detail field, not a navigable bucket;
-- `body_invalid_rule` (deprecated): retained in the v1 type but always absent;
-  reviewed body-invalid parents have `kind=error_block`.
 - `pool`;
 - `source_summary`;
 - `child_chain_evidence[]`, grouped by active AuxPoW `source` and
@@ -839,9 +837,7 @@ Response fields:
   `weak_btc_orphan` / `excluded`, else `null`), nullable
   `error_block_reason` (the live classifier or pinned fallback catalogue's
   primary consensus-rejection token for `kind = 'error_block'`, otherwise
-  `null`), nullable `body_invalid` (deprecated v1 field, always `null`;
-  body-invalid verdicts use `kind=error_block` and `error_block_reason`),
-  nullable `coinbase_tag`
+  `null`), nullable `coinbase_tag`
   (for Core-attested canonical rows with stored Core coinbase
   evidence, extracted from `block.btc_coinbase_script`; otherwise extracted
   from the representative Bitcoin coinbase script in
@@ -849,8 +845,7 @@ Response fields:
   `bitcoin_miner_pool`, `display_miner_pool` + `display_miner_basis` (the
   best-available display miner; see the glossary), and `source_summary`.
   Direct-projected near/unknown blocks (no read-model row) carry
-  `btc_orphan_class: null`, `error_block_reason: null`, and
-  `body_invalid: null`;
+  `btc_orphan_class: null` and `error_block_reason: null`;
 - `proofs`;
 - `event_details`;
 - `competition`;
@@ -1204,7 +1199,6 @@ roughly doubles the payload for a value this endpoint's clients do not need.
 | `block.height` | null (direct-projected) | null (direct-projected) | required | required | required |
 | `block.kind` | required | required | required | required | required |
 | `block.error_block_reason` | null | null | null | null | required |
-| `block.body_invalid` | null | null | null | null | null |
 | `block.coinbase_tag` | null or printable tag | null or printable tag | null or printable tag | null or printable tag | null or printable tag |
 | `block.header` | required | required | required | required | required |
 | `block.bitcoin_miner_pool` | required | required | required | required | required |

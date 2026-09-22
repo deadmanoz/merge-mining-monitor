@@ -203,12 +203,8 @@ fn assert_block_fixture_contract(file: &str, fixture: &Value) {
         );
     }
     assert!(
-        block.contains_key("body_invalid"),
-        "{file} block must include nullable body_invalid"
-    );
-    assert!(
-        block["body_invalid"].is_null(),
-        "{file} retains the v1 annotation field as null; invalid parents use error_block"
+        !block.contains_key("body_invalid"),
+        "{file} must omit the retired annotation field; invalid parents use error_block"
     );
     let events = fixture["event_details"]
         .as_array()

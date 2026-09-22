@@ -57,11 +57,11 @@ concurrent tasks inside each locking test.
   height, written in the capture transaction, read only by the producer's own
   trailing rescan, never by the read model or the API). Historical ingest
   also attaches `historical_event_provenance`. The operator imports
-  `known_stale_block` through `import-known-stales`. The legacy
-  `body_invalid_stale` table is retained as historical evidence, with no active
-  importer or API join. Reviewed body-invalid parents use the error catalogue.
-  The v1 `body_invalid` response field stays null; tree `body_invalid_rule`
-  stays absent for API compatibility. `block`,
+  `known_stale_block` through `import-known-stales`. Reviewed body-invalid
+  parents use the error catalogue; migration `0029` removes the obsolete
+  annotation table.
+  Body-invalid verdicts use `kind=error_block` and `error_block_reason`; retired
+  annotation fields and compatibility types are removed. `block`,
   `attestation_proof`, and `source_health` are derived through
   `mmm-read-model`.
 - Treat child height, hash, header, time, and `nBits` as independent optional
@@ -72,7 +72,7 @@ concurrent tasks inside each locking test.
   ordinary snapshot cleanup to preserve events moving out of stale inventories.
   Keep this lifecycle distinction in
   the shared source registry, not in per-chain schema branches.
-- The current Research pin is generated from committed revision `de4e68f` and
+- The current Research pin is generated from committed revision `e6dc40a` and
   covers 29 event artifacts plus the stale-descendant and error-observation
   aggregates, 31 artifacts and 1,286,512 rows in total. Refresh both pins
   (manifest and error catalogue) with

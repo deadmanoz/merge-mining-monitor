@@ -292,10 +292,11 @@ than authoritative.
 Body-dependent failures are canonical error-catalogue entries and are imported
 through the error-observation aggregate with `import-all`. The old
 `import-body-invalid-stales` command and annotation mirror are retired.
-Existing annotation rows remain stored for historical provenance, but the API
-no longer joins them. A refreshed catalogue and publication import promote
+Migration `0029` drops the redundant annotation table through the backup-first
+migration workflow. A refreshed catalogue and publication import promote
 previous stale classifications to `error_block` without discarding their
-child-chain witnesses. No new database migration or annotation import is needed.
+child-chain witnesses. The API exposes the final error-block representation
+without legacy annotation fields.
 
 ## Import
 
