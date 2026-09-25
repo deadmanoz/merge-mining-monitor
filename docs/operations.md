@@ -496,8 +496,9 @@ Activate in this order, through the backup-first release workflow:
    so the overlap replays C. hash(C) appears in `child_chain_head` only after
    the overlap tick that live-captures C; historical import writes no heads,
    so a missing head straight after the import is not an import failure.
-5. Remove the override only after the cursor has durably advanced past C with
-   no open `capture_error` rows, then restart and verify normal cursor-based
+5. Remove the override only after hash(C) has appeared in `child_chain_head`
+   (the overlap tick captured C) and no `capture_error` rows are open; the
+   cursor is not that proof. Then restart and verify normal cursor-based
    resume. A first start without the override seeds at the node tip and leaves
    a gap no counter shows, and a pre-existing high cursor cannot prove the
    overlap ran, because cursor persistence uses GREATEST.
