@@ -11,8 +11,8 @@ use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, QBIT_SOURCE_CODE};
 use mmm_capture::test_support::load_raw_namecoin_fixture;
 use mmm_producers::RescanOutcome;
 use mmm_producers::chains::{
-    AuxpowCaptureContext, AuxpowHeightOutcome, BitcoindRpc, ChainId, by_id, process_auxpow_height,
-    rescan_auxpow_height,
+    AuxpowCaptureContext, AuxpowHeightOutcome, BitcoindRpc, BitcoindRpcClient, BitcoindRpcConfig,
+    ChainId, by_id, ensure_mainnet_endpoint, process_auxpow_height, rescan_auxpow_height,
 };
 use mmm_store::{
     CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, ChildChainHeadOutcome, ChildChainHeadRecord,
@@ -644,4 +644,260 @@ async fn an_open_capture_error_takes_the_full_capture_despite_a_final_head() -> 
         assert_eq!(rpc.calls(), (2, 1));
         Ok::<_, anyhow::Error>(())
     })
+}
+
+/// Terracoin's per-height remote cost, counted where it is spent: the real
+/// `BitcoindRpcClient` against a scripted endpoint, so `RpcMetrics` sees every
+/// dispatched request. A new height costs `getblockhash` plus raw `getblock`,
+/// an unchanged final rescan one `getblockhash`, and the genesis check one
+/// call per poller start or backfill run. A failed rescan records
+/// `height_capture_failed`, and the next rescan takes the full capture and
+/// clears it. Set `MMM_TEST_RPC_DELAY_MS=340` and run with `--nocapture` to
+/// time each step at the production round trip.
+#[tokio::test]
+async fn terracoin_round_trips_are_pinned_at_the_transport_boundary() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let spec = by_id(ChainId::Terracoin);
+        let context = AuxpowCaptureContext::new_with_classifier(
+            &client,
+            spec,
+            ConfiguredParentClassifier::Disabled,
+        )
+        .await?;
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../fixtures/terracoin/3288246.json"))?;
+        let auxpow = (
+            3_288_246,
+            hex::decode(fixture["rawblock"].as_str().unwrap())?,
+        );
+        let plain = (auxpow.0 + 1, non_auxpow_block());
+        let endpoint = ScriptedTerracoinEndpoint::spawn(&[auxpow.clone(), plain.clone()]);
+        let rpc = BitcoindRpcClient::new(
+            "Terracoin",
+            BitcoindRpcConfig {
+                url: endpoint.url(),
+                user: None,
+                password: None,
+                request_timeout: std::time::Duration::from_secs(30),
+                raw_block_boolean_verbose: true,
+            },
+        )?;
+        let metrics = rpc.metrics();
+        let mut steps = BudgetSteps::new(move || {
+            let snapshot = metrics.snapshot();
+            (snapshot.http_attempts, snapshot.failures, snapshot.retries)
+        });
+
+        ensure_mainnet_endpoint(&rpc, spec.family.as_ref().expect("Terracoin family")).await?;
+        steps.expect("genesis check", 1, 0);
+        let outcome = process_auxpow_height(&mut client, &rpc, &context, auxpow.0).await?;
+        assert_eq!(outcome, AuxpowHeightOutcome::AuxpowWritten);
+        steps.expect("new AuxPoW height", 2, 0);
+        let outcome = process_auxpow_height(&mut client, &rpc, &context, plain.0).await?;
+        assert_eq!(outcome, AuxpowHeightOutcome::NonAuxpowSkipped);
+        steps.expect("new non-AuxPoW height", 2, 0);
+        for height in [auxpow.0, plain.0] {
+            let outcome = rescan_auxpow_height(&mut client, &rpc, &context, height).await?;
+            assert_eq!(outcome, RescanOutcome::Unchanged);
+            steps.expect("unchanged final rescan", 1, 0);
+        }
+
+        endpoint.fail_next_block_hash();
+        assert!(
+            rescan_auxpow_height(&mut client, &rpc, &context, auxpow.0)
+                .await
+                .is_err()
+        );
+        steps.expect("failed rescan", 1, 1);
+        assert_eq!(
+            capture_error_kinds(&client).await?,
+            vec![(auxpow.0, "height_capture_failed".to_owned())]
+        );
+        let outcome = rescan_auxpow_height(&mut client, &rpc, &context, auxpow.0).await?;
+        assert!(matches!(outcome, RescanOutcome::Captured(_)));
+        steps.expect("rescan after a failure", 2, 0);
+        assert!(capture_error_kinds(&client).await?.is_empty());
+
+        assert_eq!(endpoint.served(), steps.total_attempts());
+        assert_eq!(advisory_locks_held(&client).await?, 0);
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+/// `(height, error_kind)` of every open Terracoin capture error.
+async fn capture_error_kinds(client: &Client) -> Result<Vec<(i32, String)>> {
+    let rows = client
+        .query(
+            "SELECT height, error_kind FROM capture_error WHERE source_id = 21 ORDER BY height",
+            &[],
+        )
+        .await?;
+    Ok(rows.iter().map(|row| (row.get(0), row.get(1))).collect())
+}
+
+/// Asserts each step's transport deltas and, when a delay is configured,
+/// prints its wall time: the receipt `docs/testing.md` asks for. Reads the
+/// client's `RpcMetrics` counters as `(http_attempts, failures, retries)`.
+struct BudgetSteps<F: Fn() -> (u64, u64, u64)> {
+    counters: F,
+    last: (u64, u64, u64),
+    started: std::time::Instant,
+    total: u64,
+}
+
+impl<F: Fn() -> (u64, u64, u64)> BudgetSteps<F> {
+    fn new(counters: F) -> Self {
+        let last = counters();
+        Self {
+            counters,
+            last,
+            started: std::time::Instant::now(),
+            total: 0,
+        }
+    }
+
+    fn expect(&mut self, step: &str, attempts: u64, failures: u64) {
+        let now = (self.counters)();
+        assert_eq!(now.0 - self.last.0, attempts, "{step}: HTTP attempts");
+        assert_eq!(now.1 - self.last.1, failures, "{step}: failed calls");
+        assert_eq!(now.2 - self.last.2, 0, "{step}: retries");
+        if rpc_delay() > std::time::Duration::ZERO {
+            eprintln!(
+                "terracoin rpc budget: {step}: {attempts} round trips in {:?}",
+                self.started.elapsed()
+            );
+        }
+        self.total += attempts;
+        self.last = now;
+        self.started = std::time::Instant::now();
+    }
+
+    fn total_attempts(&self) -> u64 {
+        self.total
+    }
+}
+
+/// The optional per-response delay for production round-trip measurement.
+fn rpc_delay() -> std::time::Duration {
+    let millis = std::env::var("MMM_TEST_RPC_DELAY_MS")
+        .map(|value| value.parse::<u64>().expect("integer MMM_TEST_RPC_DELAY_MS"))
+        .unwrap_or(0);
+    std::time::Duration::from_millis(millis)
+}
+
+/// A scripted Terracoin JSON-RPC endpoint on a loopback socket: genesis at
+/// height 0, one scripted block per other height, raw `getblock` by hash, one
+/// request per connection (the client sees `Connection: close`), each
+/// response delayed by [`rpc_delay`]. The next `getblockhash` can be made to
+/// fail with HTTP 503.
+struct ScriptedTerracoinEndpoint {
+    addr: std::net::SocketAddr,
+    fail_next_hash: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    served: std::sync::Arc<AtomicUsize>,
+}
+
+const TERRACOIN_GENESIS: &str = "00000000804bbc6a621a9dbb564ce469f492e1ccf2d70f8a6b241e26a277afa2";
+
+impl ScriptedTerracoinEndpoint {
+    fn spawn(blocks: &[(i32, Vec<u8>)]) -> Self {
+        let mut hashes = HashMap::from([(0, TERRACOIN_GENESIS.to_owned())]);
+        let mut raws = HashMap::new();
+        for (height, raw) in blocks {
+            let hash = block_hash_of(raw).to_string();
+            hashes.insert(*height, hash.clone());
+            raws.insert(hash, hex::encode(raw));
+        }
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind scripted endpoint");
+        let addr = listener.local_addr().expect("scripted endpoint address");
+        let fail_next_hash = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let served = std::sync::Arc::new(AtomicUsize::new(0));
+        let (fail, count, delay) = (fail_next_hash.clone(), served.clone(), rpc_delay());
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(64) {
+                let Ok(mut stream) = stream else { break };
+                std::thread::sleep(delay);
+                count.fetch_add(1, Ordering::SeqCst);
+                let reply = scripted_reply(&mut stream, &hashes, &raws, &fail);
+                let _ = std::io::Write::write_all(&mut stream, reply.as_bytes());
+            }
+        });
+        Self {
+            addr,
+            fail_next_hash,
+            served,
+        }
+    }
+
+    fn url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+
+    fn fail_next_block_hash(&self) {
+        self.fail_next_hash.store(true, Ordering::SeqCst);
+    }
+
+    fn served(&self) -> u64 {
+        self.served.load(Ordering::SeqCst) as u64
+    }
+}
+
+/// Read one JSON-RPC request and build the HTTP response for it.
+fn scripted_reply(
+    stream: &mut std::net::TcpStream,
+    hashes: &HashMap<i32, String>,
+    raws: &HashMap<String, String>,
+    fail_next_hash: &std::sync::atomic::AtomicBool,
+) -> String {
+    let request = read_json_request(stream).unwrap_or_default();
+    let params = &request["params"];
+    let result = match request["method"].as_str() {
+        Some("getblockhash") if fail_next_hash.swap(false, Ordering::SeqCst) => {
+            return "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .to_owned();
+        }
+        Some("getblockhash") => params[0]
+            .as_i64()
+            .and_then(|height| hashes.get(&i32::try_from(height).ok()?)),
+        Some("getblock") if params[1] == serde_json::json!(false) => {
+            params[0].as_str().and_then(|hash| raws.get(hash))
+        }
+        _ => None,
+    };
+    let body = match result {
+        Some(value) => serde_json::json!({"result": value, "error": null, "id": request["id"]}),
+        None => serde_json::json!({
+            "result": null,
+            "error": {"code": -8, "message": "not scripted"},
+            "id": request["id"],
+        }),
+    }
+    .to_string();
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+/// One HTTP request body, read until its `Content-Length` is complete.
+fn read_json_request(stream: &mut std::net::TcpStream) -> Option<serde_json::Value> {
+    let mut data = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        if let Some(end) = data.windows(4).position(|window| window == b"\r\n\r\n") {
+            let headers = String::from_utf8_lossy(&data[..end]).to_ascii_lowercase();
+            let length = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            if data.len() >= end + 4 + length {
+                return serde_json::from_slice(&data[end + 4..end + 4 + length]).ok();
+            }
+        }
+        let read = std::io::Read::read(stream, &mut chunk).ok()?;
+        if read == 0 {
+            return None;
+        }
+        data.extend_from_slice(&chunk[..read]);
+    }
 }

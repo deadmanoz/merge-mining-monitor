@@ -89,6 +89,22 @@ real Core block-download throughput. A changed 49-parent aggregate can classify
 all 49 parents again: its conservative no-retry bound is 882 requests, about
 300 seconds of round-trip latency, before database and other import work.
 
+`terracoin_round_trips_are_pinned_at_the_transport_boundary` (the
+`db_integration` `auxpow_family` module) drives the Terracoin capture path
+through the real `BitcoindRpcClient` against a scripted endpoint and pins its
+per-height cost at `RpcMetrics`: two requests for a new height (`getblockhash`
+and raw `getblock`), one for an unchanged final rescan height, one for the
+genesis check a poller start or backfill run makes, and no retries. A failed
+rescan records `height_capture_failed`, and the next rescan takes the full
+capture (two requests) and clears it. The per-tick `getblockcount` and the
+shared Core cache refresh are outside this test. Time it with
+`MMM_TEST_RPC_DELAY_MS=340 cargo test -p merge-mining-monitor --features db-integration --test db_integration terracoin_round_trips_are_pinned_at_the_transport_boundary -- --test-threads=1 --nocapture`
+against the integration database. On 2026-09-25 the genesis check took 0.35
+seconds, a new AuxPoW and a new non-AuxPoW height 0.81 and 0.72 seconds, each
+unchanged rescan 0.36 seconds, a failed rescan 0.36 seconds and the capture
+that cleared it 0.78 seconds, with no retries. This measures RPC round trips
+through the real client at 340 ms, not database work or node throughput.
+
 Batch operations log progress through `ProgressReporter` and end, finished
 or aborted, with a `job ended` summary and one line per RPC client. Before a
 change to a batch operation ships, it is timed at the production round-trip

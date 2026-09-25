@@ -49,6 +49,9 @@ use mmm_store::{
     upsert_merge_mining_event_with_attributions,
 };
 use qbit::{fetch_qbit_candidate, write_qbit_event};
+#[cfg(any(test, feature = "db-integration"))]
+pub use validation::ensure_mainnet_endpoint;
+#[cfg(not(any(test, feature = "db-integration")))]
 use validation::ensure_mainnet_endpoint;
 
 mod backfill;

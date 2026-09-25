@@ -21,7 +21,7 @@ use rpc_http::{RpcMetrics, build_rpc_client};
 /// Resolved transport configuration for a bitcoind-family endpoint. Built by
 /// `chains::config::bitcoind_rpc_config`; carries values, never env var names.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BitcoindRpcConfig {
+pub struct BitcoindRpcConfig {
     /// Full JSON-RPC endpoint URL (scheme, host, port).
     pub url: String,
     /// HTTP basic-auth user, paired with `password`; both `None` for an
@@ -119,7 +119,7 @@ pub trait BitcoindRpc {
 /// Thin JSON-RPC client over a shared reqwest transport. One instance serves
 /// any bitcoind-family chain; the chain `label` only colors error contexts.
 #[derive(Debug, Clone)]
-pub(crate) struct BitcoindRpcClient {
+pub struct BitcoindRpcClient {
     /// Chain label for error contexts ("Namecoin", "Syscoin", "Fractal", "Qbit",
     /// "Terracoin").
     label: &'static str,
@@ -132,7 +132,7 @@ impl BitcoindRpcClient {
     /// Build the client, materializing the reqwest transport with the config's
     /// request timeout. `label` is folded into every later error context and
     /// used as the [`RpcMetrics`] label.
-    pub(crate) fn new(label: &'static str, config: BitcoindRpcConfig) -> Result<Self> {
+    pub fn new(label: &'static str, config: BitcoindRpcConfig) -> Result<Self> {
         let http = build_rpc_client(config.request_timeout)?;
         Ok(Self {
             label,
@@ -145,7 +145,7 @@ impl BitcoindRpcClient {
     /// Transport counters for this client (attempts, retries, failures,
     /// latency). This client has no retry loop of its own, so `retries` is
     /// always zero.
-    pub(crate) fn metrics(&self) -> RpcMetrics {
+    pub fn metrics(&self) -> RpcMetrics {
         self.metrics.clone()
     }
 

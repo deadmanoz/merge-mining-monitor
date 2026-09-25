@@ -11,7 +11,10 @@ use crate::chains::spec::{
     CaptureFailurePolicy, FamilySpec, FetchStrategy, RawBlockAuthentication,
 };
 
-pub(super) async fn ensure_mainnet_endpoint(
+/// Refuse an endpoint whose genesis block is not the chain's. Reachable from
+/// the integration tests (cfg-gated re-export) so the one genesis call a poller
+/// or backfill makes at startup can be counted at the transport boundary.
+pub async fn ensure_mainnet_endpoint(
     rpc: &impl BitcoindRpc,
     family: &'static FamilySpec,
 ) -> Result<()> {

@@ -34,11 +34,11 @@ pub(crate) mod spec;
 
 #[cfg(any(test, feature = "db-integration"))]
 pub use auxpow_family::{
-    AuxpowCaptureContext, HeightOutcome as AuxpowHeightOutcome, process_auxpow_height,
-    rescan_auxpow_height,
+    AuxpowCaptureContext, HeightOutcome as AuxpowHeightOutcome, ensure_mainnet_endpoint,
+    process_auxpow_height, rescan_auxpow_height,
 };
 #[cfg(any(test, feature = "db-integration"))]
-pub use bitcoind_rpc::BitcoindRpc;
+pub use bitcoind_rpc::{BitcoindRpc, BitcoindRpcClient, BitcoindRpcConfig};
 #[cfg(any(test, feature = "db-integration"))]
 pub use spec::{CHAINS, ChainId, ChainSpec, by_id};
 
