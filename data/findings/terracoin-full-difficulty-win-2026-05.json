@@ -9,7 +9,7 @@
     "auxpow:terracoin"
   ],
   "summary": "The May 2026 Bitcoin win is present in the retained node but absent from the pinned Terracoin publication. A later August witness motivates continuous capture.",
-  "body": "Terracoin block `3,220,057` commits to Bitcoin block `950,154`, which Bitcoin Core confirms is canonical.[^1] The retained June refresh contains this witness and four other candidates, but the pinned Monitor publication ends with earlier events. That publication gap does not establish a period without merge mining.\n\nA second fixed control is Terracoin `3,288,246`, which commits to MiningDutch Bitcoin block `964,388` on 28 August 2026. Live capture and bounded backfill authenticate these proofs and classify parents through Bitcoin Core. The source cursor and capture errors describe collection health independently of the time of the latest Bitcoin-difficulty winner.",
+  "body": "Terracoin block `3,220,057` commits to Bitcoin block `950,154`, which Bitcoin Core confirms is canonical.[^1] The retained June refresh contains this witness and four other candidates, but the pinned Monitor publication ends with earlier events. That publication gap does not establish a period without merge mining.\n\nA second fixed control is Terracoin `3,288,246`, which commits to MiningDutch Bitcoin block `964,388` on 28 August 2026. Live capture and the regenerated Research publication authenticate these proofs and classify parents through Bitcoin Core. The source cursor and capture errors describe collection health independently of the time of the latest Bitcoin-difficulty winner.",
   "anchors": [
     {
       "kind": "btc-height",

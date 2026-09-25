@@ -1682,14 +1682,14 @@
         }
       ],
       "recovery": [
-        "The pinned publication contains 11,292 events: 11,257 canonical and 35 stale witnesses. A retained June refresh and later live capture require separate reconciliation.",
+        "The pinned publication contains 11,292 events: 11,257 canonical and 35 stale witnesses, from an extraction that scanned TRC `833,000` to `3,202,589`. Later heights, including the retained June refresh, are recovered by regenerating the publication; live capture continues from its proven coverage tip.",
         "Legacy coinbase-output decoding matters for pool attribution, but it is not part of parent admission.",
         "Rejected SHA-256d parent inventory stays outside the Bitcoin tree unless it passes Bitcoin difficulty and placement checks."
       ]
     },
     "provenance": {
       "source": "Recovered research publication plus the shared live AuxPoW producer; both retain source ID 21. Reimporting a historical publication preserves later live observations.",
-      "coverage": "The pinned historical event publication ends at child height 2,961,850. This is its last event, not a successful scan boundary. Contiguous coverage is established by successful per-height processing and unresolved capture errors, independently of sparse Bitcoin winners."
+      "coverage": "The pinned publication's extraction scanned TRC `833,000` to `3,202,589`; its last event, at child height 2,961,850, is not a scan boundary. Live coverage is established by successful per-height processing and unresolved capture errors, independently of sparse Bitcoin winners."
     },
     "references": [
       {

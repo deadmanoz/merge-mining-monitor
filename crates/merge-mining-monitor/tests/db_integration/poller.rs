@@ -78,7 +78,8 @@ async fn explicit_overlap_handoff_covers_moving_tip_and_restart() -> Result<()> 
     crate::run_db_test!(client, schema, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         let processed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        // Backfill completed through C=1000. The child tip advances before
+        // Coverage is proven through C=1000 (for Terracoin, the regenerated
+        // publication's coverage tip). The child tip advances before
         // activation. START_HEIGHT is C+1-D, not C+1 (the override is a floor).
         let config = PollerConfig {
             start_height_override: Some(997),
