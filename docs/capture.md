@@ -36,7 +36,7 @@ parents, not a separate parent kind, and it is gated by the operator-imported
 
 | Source | Capture path | Notes |
 |---|---|---|
-| Terracoin | Raw block RPC: `getblock <hash> false`. | Shared classic parser; mainnet genesis, chain ID 50, child height/hash, commitment and child target checks. Activation 833,000. |
+| Terracoin | Raw block RPC: `getblock <hash> false`. | Shared classic parser; mainnet genesis, chain ID 50 on the child and not on the parent (strict chain IDs), child height/hash, commitment and child target checks. Activation 833,000. |
 | Namecoin | Core-style raw block RPC: `getblock <hash> 0`. | Namecoin-family AuxPoW parser. |
 | Syscoin | Core-style raw block RPC: `getblock <hash> 0`. | Same shared parser as Namecoin, with Syscoin activation/version gates. |
 | Fractal Bitcoin | `getblockheader <hash> false true` for `[header][CAuxPoW]`, plus child block data when needed. | Fractal raw blocks do not carry inline CAuxPoW. |

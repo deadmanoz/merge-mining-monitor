@@ -44,6 +44,12 @@ pub fn parse_verified_classic_block(
         (header.header.version.to_consensus() as u32 >> 16) == chain_id,
         "unexpected child chain ID"
     );
+    // Strict chain IDs: consensus rejects a parent that carries the child's own
+    // chain ID, even when every commitment and the child target check pass.
+    ensure!(
+        (auxpow.parent_header.header.version.to_consensus() as u32 >> 16) != chain_id,
+        "parent header carries the child chain ID"
+    );
     // The classic proof interrupts Bitcoin block serialization. Reconstruct the
     // authenticated child body here, where ownership of the wire layout lives.
     let mut child_bytes = raw[..Header::SIZE].to_vec();

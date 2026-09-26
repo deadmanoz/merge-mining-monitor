@@ -77,6 +77,18 @@ fn terracoin_august_canonical_and_mutations() {
             .to_string()
             .contains("child target")
     );
+    // The parent header is the last 80 bytes of the proof; give its version
+    // Terracoin's own chain ID.
+    let mut own_chain_parent = raw.clone();
+    let parent_version = proof.auxpow_bytes.len();
+    own_chain_parent[parent_version..parent_version + 4]
+        .copy_from_slice(&(50u32 << 16 | 4).to_le_bytes());
+    assert!(
+        parse_verified_classic_block(&own_chain_parent, hash, 3_288_246, 50)
+            .unwrap_err()
+            .to_string()
+            .contains("parent header carries the child chain ID")
+    );
     let mut bad_branch = proof.as_ref().clone();
     bad_branch.proof.chain_branch.index ^= 1;
     assert!(verify_classic_auxpow_commitment(&bad_branch, hash, 50).is_err());
