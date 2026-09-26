@@ -169,6 +169,7 @@ poll-hathor: (poll "hathor")
 poll-elastos: (poll "elastos")
 
 poll-qbit: (poll "qbit")
+poll-terracoin: (poll "terracoin")
 
 backfill-namecoin start end: (backfill "namecoin" start end)
 
@@ -183,6 +184,7 @@ backfill-hathor start end: (backfill "hathor" start end)
 backfill-elastos start end: (backfill "elastos" start end)
 
 backfill-qbit start end: (backfill "qbit" start end)
+backfill-terracoin start end: (backfill "terracoin" start end)
 
 backfill-hathor-cache csv *args:
     cargo run -- backfill-hathor-cache {{csv}} {{args}}

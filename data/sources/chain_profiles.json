@@ -1635,32 +1635,34 @@
   "terracoin": {
     "ticker": "TRC",
     "chain_status": "zombie",
-    "status_detail": "Recovered historical dataset; the monitor does not poll Terracoin live. The recovered window is overwhelmingly canonical attestation: 11,258 Bitcoin blocks merge-mined into the main chain from October 2016 into 2025 (with a further winning block in May 2026), mined by BTC.TOP, 1THash, and Huobi Pool among others, alongside 35 admitted stale blocks, the last in August 2020. Real Bitcoin merge-mining has dropped to a negligible tail, but the chain still occasionally wins a full-difficulty Bitcoin block; the Terracoin chain itself keeps producing blocks, mostly at a difficulty far below Bitcoin's.",
-    "tagline": "Dash-derived SHA-256d chain with recovered Bitcoin-difficulty AuxPoW evidence.",
+    "status_detail": "Live AuxPoW capture with retained historical evidence. Bitcoin-difficulty winners are sparse; source health follows the child scan cursor independently of the latest admitted Bitcoin witness.",
+    "tagline": "Dash-derived SHA-256d chain with live and recovered Bitcoin AuxPoW evidence.",
     "byline": "2016-2026",
     "display": {
-      "name": "Terracoin"
+      "name": "Terracoin",
+      "color": "#ac8646",
+      "order": 8
     },
     "history": {
       "founded": "Launched in 2012 as a Bitcoin-derived SHA-256d chain.[^2]",
       "merge_mining": "Namecoin-family AuxPoW starts at Terracoin (TRC) height `833,000`; chain ID `0x0032` with strict chain-ID checking.[^1][^5]",
-      "ended": "Treated here as a historical Bitcoin-evidence source. Canonical merge-mining attestation runs from October 2016 into 2025, with a sporadic winning block as recently as May 2026; August 2020 is only the last admitted stale block, not an evidence cutoff or a Terracoin shutdown.",
-      "narrative": "Terracoin (TRC) launched in 2012 as a Bitcoin-derived SHA-256d chain.[^2] A July 2013 Bitcointalk thread documents a reported 1.2 TH/s 51% attack, but that episode predates Terracoin's AuxPoW era and is not part of this monitor's recovered evidence window.[^3]\n\nThe relevant slice for this monitor is its AuxPoW era. From TRC height `833,000`, Terracoin blocks can carry a parent header, parent coinbase, and merkle proof in a decoded `auxpow` object.[^1][^5]\n\nFor this monitor, Terracoin is a recovered historical source, and most of its value is canonical. 11,258 of its blocks attest to Bitcoin main-chain blocks, spanning BTC heights `434,652`-`950,154` (October 2016 into 2026), mined by Bitcoin pools with BTC.TOP, 1THash, and Huobi Pool prominent among them. Against that backbone sit 35 admitted stale blocks across BTC heights `467,186`-`645,179` (May 2017 to August 2020): the rarer cases where Terracoin hashpower committed to a Bitcoin block the main chain did not keep. August 2020 bounds the stale subset, not the evidence; canonical attestation continues into May 2025 before the merge-mining tail thins out, even as the Terracoin chain keeps producing low-difficulty blocks."
+      "ended": "The chain continues producing blocks. The historical publication is a bounded recovered dataset, not an activity cutoff.",
+      "narrative": "Terracoin (TRC) launched in 2012 as a Bitcoin-derived SHA-256d chain.[^2] A July 2013 Bitcointalk thread documents a reported 1.2 TH/s 51% attack, but that episode predates Terracoin's AuxPoW era and is not part of this monitor's recovered evidence window.[^3]\n\nThe relevant slice for this monitor is its AuxPoW era. From TRC height `833,000`, Terracoin blocks can carry a parent header, parent coinbase, and merkle proof in a decoded `auxpow` object.[^1][^5]\n\nThe historical publication and continuous capture share source 21. Published evidence omits a retained 2026 refresh, so a gap between published winners does not establish a period without merge mining."
     },
     "technical": {
-      "mechanism": "Terracoin exposes Namecoin-family `CAuxPow` through decoded `getblock` JSON. A relevant block carries the parent header, parent coinbase transaction, and merkle branches needed to prove the TRC block commitment.[^5]",
+      "mechanism": "Terracoin carries classic Namecoin-family `CAuxPow` in raw `getblock(hash, false)` bytes. The proof binds the child header through the parent coinbase and Merkle branches.[^5]",
       "uniqueness": "Terracoin is Dash-Core-derived rather than Bitcoin-Core-derived, but the Bitcoin evidence path is still familiar AuxPoW. Chain ID `0x0032` with `fStrictChainId=true` constrains the child-chain commitment, while Bitcoin proof of work, `nBits`, and Core placement decide whether the parent becomes Bitcoin evidence.[^1]",
-      "capture": "Terracoin is imported from committed historical CSV evidence, not polled live. Recovery synced a local `terracoind`, read decoded `auxpow` JSON for blocks at or above height `833,000`, reconstructed Bitcoin parent headers, filtered for full Bitcoin proof of work and expected `nBits`, and classified surviving parents with Bitcoin Core. Current Evidence Counts below show the deployed admitted total.",
-      "bitcoin_relevance": "Terracoin contributes recovered Bitcoin evidence across BTC heights `434,652`-`950,154` (October 2016 into 2026): 11,258 canonical blocks attesting to the Bitcoin main chain, mined by pools such as BTC.TOP, 1THash, and Huobi Pool, plus 35 admitted stales (the last August 2020). The canonical body is the merge-mining attestation itself; the stales are the off-chain subset. Because that window straddles the BCH and BSV splits, the `nBits` contamination gate is part of normal admission before a SHA-256d parent enters the Bitcoin tree.",
+      "capture": "The shared live poller and bounded backfill verify mainnet identity, chain ID 50, the requested child hash and height, both Merkle commitments and the child target. Bitcoin Core-backed classification determines parent placement. Failed heights remain visible until successful replay. Historical publication imports are additive.",
+      "bitcoin_relevance": "Terracoin provides independent witnesses of canonical and stale Bitcoin parents. Current Evidence Counts show admitted data; neither those counts nor the latest winner establish contiguous child-height coverage.",
       "notable": [
         "Strict chain-ID checking constrains the TRC commitment, but it does not replace Bitcoin parent validation.",
-        "Decoded `auxpow` JSON makes recovery field-based rather than a raw binary `CAuxPow` parse.",
+        "Raw block parsing preserves child coinbase evidence without imposing a Bitcoin-height ceiling.",
         "The recovered window is an evidence boundary, not a claim that Terracoin stopped producing blocks."
       ],
       "key_facts": [
         {
           "label": "Proof format",
-          "value": "Namecoin-family `CAuxPow` exposed as decoded `auxpow` JSON[^5]"
+          "value": "Classic Namecoin-family `CAuxPow` in raw blocks[^5]"
         },
         {
           "label": "AuxPoW activation",
@@ -1680,14 +1682,14 @@
         }
       ],
       "recovery": [
-        "Committed dataset contributes 11,258 canonical Bitcoin blocks (BTC `434,652`-`950,154`, mined by BTC.TOP, 1THash, Huobi Pool, and other pools) and 35 admitted stale blocks (BTC `467,186`-`645,179`).",
+        "The pinned publication contains 11,292 events: 11,257 canonical and 35 stale witnesses, from an extraction that scanned TRC `833,000` to `3,202,589`. Later heights, including the retained June refresh, are recovered by regenerating the publication; live capture continues from its proven coverage tip.",
         "Legacy coinbase-output decoding matters for pool attribution, but it is not part of parent admission.",
         "Rejected SHA-256d parent inventory stays outside the Bitcoin tree unless it passes Bitcoin difficulty and placement checks."
       ]
     },
     "provenance": {
-      "source": "Recovered historical dataset from a local `terracoind` sync; monitor ingestion imports the full classified row set from merge-mining-research (canonical attestation and admitted stales together), not the stale subset alone.",
-      "coverage": "Canonical attestation spans BTC heights `434,652`-`950,154` (October 2016 to May 2026, the bulk through May 2025) / TRC heights `849,155`-`3,220,057`; the 35 admitted stales fall within BTC `467,186`-`645,179` (May 2017 to August 2020) / TRC heights `995,584`-`1,810,854`. The August 2020 endpoint bounds the stale subset, not the evidence. Pre-AuxPoW TRC history is outside this recovery, and non-Bitcoin SHA-256d parents are rejected by admission checks."
+      "source": "Recovered research publication plus the shared live AuxPoW producer; both retain source ID 21. Reimporting a historical publication preserves later live observations.",
+      "coverage": "The pinned publication's extraction scanned TRC `833,000` to `3,202,589`; its last event, at child height 2,961,850, is not a scan boundary. Live coverage is established by successful per-height processing and unresolved capture errors, independently of sparse Bitcoin winners."
     },
     "references": [
       {

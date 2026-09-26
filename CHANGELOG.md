@@ -6,6 +6,20 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Add Terracoin live capture through the shared AuxPoW runner, keeping source
+  21 and making later imports of its Research publication additive. Raw
+  proofs are authenticated against the observed block hash, child heights
+  above the Bitcoin acquisition ceiling decode, and any failed new or
+  rescanned height records a `height_capture_failed` capture error that only a
+  later successful capture of the same height clears (migration `0030` widens
+  the `capture_error` kind check). Activation imports the regenerated Research
+  publication after the source becomes Live and then starts the poller at
+  `max(833000, C+1-64)`, where C is the publication's proven contiguous
+  coverage tip; `backfill-terracoin` is a bounded repair tool.
+- Separate each family's RPC dialect and capture-failure policy from offline
+  classic AuxPoW authentication, preserving the incumbent chains' evidence
+  semantics.
+
 ## [0.8.2] - 2026-09-22
 
 - Preserve event identities and enrichment when observations move from ordinary

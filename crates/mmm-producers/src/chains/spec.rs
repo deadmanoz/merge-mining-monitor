@@ -14,7 +14,7 @@ use mmm_capture::child_payout::{
 };
 use mmm_capture::source_registry::{
     ELASTOS_SOURCE_CODE, FRACTAL_SOURCE_CODE, HATHOR_SOURCE_CODE, NAMECOIN_SOURCE_CODE,
-    QBIT_SOURCE_CODE, RSK_SOURCE_CODE, SYSCOIN_SOURCE_CODE,
+    QBIT_SOURCE_CODE, RSK_SOURCE_CODE, SYSCOIN_SOURCE_CODE, TERRACOIN_SOURCE_CODE,
 };
 
 /// Historical acquisition floor for the live poller. RSK history below this
@@ -70,6 +70,7 @@ pub enum ChainId {
     Hathor,
     Elastos,
     Qbit,
+    Terracoin,
 }
 
 /// How a bitcoind-family chain authenticates its JSON-RPC endpoint.
@@ -88,9 +89,12 @@ pub enum RpcAuth {
 /// How a bitcoind-family chain's AuxPoW proof bytes are fetched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FetchStrategy {
-    /// `getblock <hash> 0`: the raw block carries the CAuxPow inline
-    /// (Namecoin, Syscoin); parsed by `parse_namecoin_block`.
-    RawBlock,
+    /// `getblock` with the configured verbosity dialect returns a raw block
+    /// carrying inline classic CAuxPow (Namecoin, Syscoin, Terracoin).
+    /// Authentication selects the legacy or strict classic parser.
+    RawBlock {
+        authentication: RawBlockAuthentication,
+    },
     /// `getblockheader <hash> false true`: a `[child header][CAuxPow]` blob
     /// (Fractal). Only blobs whose child header version equals
     /// `exact_version` are merge-mined; every other class is skipped before
@@ -106,15 +110,25 @@ pub enum FetchStrategy {
     QbitExtendedHeader { genesis_block_hash: &'static str },
 }
 
-/// What a shared-runner chain does with a height whose block claims a
-/// merge-mining proof that fails to decode.
+/// Authentication available for classic full-block acquisition. Other wire formats
+/// retain their own contracts rather than combining incompatible policies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MalformedPolicy {
+pub enum RawBlockAuthentication {
+    NodeValidated,
+    StrictClassic {
+        genesis_block_hash: &'static str,
+        chain_id: u32,
+    },
+}
+
+/// How shared-runner chains retain malformed proofs and operational failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureFailurePolicy {
     /// Log the failure, write nothing, and let the run continue past the
     /// height. The incumbent bitcoind-family behavior (Namecoin, Syscoin,
     /// Fractal): a malformed block is rare and the interval is still reported
     /// complete.
-    SkipAndContinue,
+    SkipMalformedProof,
     /// Persist a `capture_error` row for the height BEFORE returning, then
     /// refuse to report the interval complete: a new live height holds the
     /// cursor, a replayed height continues (replay is best-effort by the
@@ -122,7 +136,15 @@ pub enum MalformedPolicy {
     /// bounded backfill over a range containing one fails the run. The
     /// monotonic poll cursor cannot express a gap on its own, which is why the
     /// durable row exists.
-    HoldInterval,
+    HoldMalformedProof,
+    /// Also retain returned operational failures, including failed replay heights.
+    HoldAnyHeightFailure,
+}
+
+impl CaptureFailurePolicy {
+    pub fn retains_errors(self) -> bool {
+        self != Self::SkipMalformedProof
+    }
 }
 
 /// A parse-time backfill range cap (a public/untrusted-endpoint foot-gun
@@ -147,7 +169,7 @@ pub enum RepairScope {
 }
 
 /// The bitcoind-family sharing contract: everything that distinguishes
-/// Namecoin/Syscoin/Fractal/Qbit from each other, as data consumed by ONE
+/// Namecoin/Syscoin/Fractal/Qbit/Terracoin from each other, as data consumed by ONE
 /// shared client + capture + backfill implementation (`chains::bitcoind_rpc`,
 /// `chains::auxpow_family`). Chains with genuinely divergent protocols (RSK,
 /// Hathor, Elastos) carry `None` and keep real implementations.
@@ -162,6 +184,8 @@ pub struct FamilySpec {
     /// Which RPC call yields the CAuxPow bytes and how the capture path parses
     /// them.
     pub fetch: FetchStrategy,
+    /// Legacy RPC verbosity dialect, independent of proof authentication.
+    pub raw_block_boolean_verbose: bool,
     /// Child-payout reward params for value-side capture; `None` leaves the
     /// reward fields unpopulated.
     pub child_payout: Option<ChildPayoutParams>,
@@ -171,10 +195,10 @@ pub struct FamilySpec {
     /// Whether post-backfill read-model repair scans all sources or only this
     /// chain's source (see [`RepairScope`]).
     pub repair_scope: RepairScope,
-    /// What happens to a height whose block claims a proof that fails to
-    /// decode (see [`MalformedPolicy`]). Declared on every family row so the
+    /// How malformed proofs and operational errors are retained
+    /// (see [`CaptureFailurePolicy`]). Declared on every family row so the
     /// incumbent chains pin their current behavior explicitly.
-    pub malformed_policy: MalformedPolicy,
+    pub failure_policy: CaptureFailurePolicy,
 }
 
 /// One live producer chain, as declared data.
@@ -209,7 +233,7 @@ pub struct ChainSpec {
 
 /// The live producer chains, in the order `main.rs` historically listed their
 /// subcommands, with later additions appended.
-pub static CHAINS: [ChainSpec; 7] = [
+pub static CHAINS: [ChainSpec; 8] = [
     ChainSpec {
         id: ChainId::Namecoin,
         slug: "namecoin",
@@ -225,11 +249,14 @@ pub static CHAINS: [ChainSpec; 7] = [
         family: Some(FamilySpec {
             label: "Namecoin",
             auth: RpcAuth::RequiredUserPass,
-            fetch: FetchStrategy::RawBlock,
+            fetch: FetchStrategy::RawBlock {
+                authentication: RawBlockAuthentication::NodeValidated,
+            },
+            raw_block_boolean_verbose: false,
             child_payout: Some(NAMECOIN_CHILD_PAYOUT_PARAMS),
             floor_warning: None,
             repair_scope: RepairScope::Global,
-            malformed_policy: MalformedPolicy::SkipAndContinue,
+            failure_policy: CaptureFailurePolicy::SkipMalformedProof,
         }),
         backfill_range_cap: None,
     },
@@ -263,13 +290,16 @@ pub static CHAINS: [ChainSpec; 7] = [
         family: Some(FamilySpec {
             label: "Syscoin",
             auth: RpcAuth::OptionalUserPassOrCookie,
-            fetch: FetchStrategy::RawBlock,
+            fetch: FetchStrategy::RawBlock {
+                authentication: RawBlockAuthentication::NodeValidated,
+            },
+            raw_block_boolean_verbose: false,
             child_payout: Some(SYSCOIN_CHILD_PAYOUT_PARAMS),
             floor_warning: Some(
                 "start-height precedes Syscoin AuxPoW activation; earlier blocks parse as non-AuxPoW and will be skipped",
             ),
             repair_scope: RepairScope::SourceScoped,
-            malformed_policy: MalformedPolicy::SkipAndContinue,
+            failure_policy: CaptureFailurePolicy::SkipMalformedProof,
         }),
         backfill_range_cap: None,
     },
@@ -291,12 +321,13 @@ pub static CHAINS: [ChainSpec; 7] = [
             fetch: FetchStrategy::HeaderBlob {
                 exact_version: FRACTAL_MERGE_MINED_VERSION,
             },
+            raw_block_boolean_verbose: false,
             child_payout: Some(FRACTAL_CHILD_REWARD_PARAMS),
             floor_warning: Some(
                 "start-height precedes Fractal AuxPoW activation; earlier blocks are skipped",
             ),
             repair_scope: RepairScope::SourceScoped,
-            malformed_policy: MalformedPolicy::SkipAndContinue,
+            failure_policy: CaptureFailurePolicy::SkipMalformedProof,
         }),
         backfill_range_cap: None,
     },
@@ -363,6 +394,7 @@ pub static CHAINS: [ChainSpec; 7] = [
             fetch: FetchStrategy::QbitExtendedHeader {
                 genesis_block_hash: QBIT_GENESIS_BLOCK_HASH,
             },
+            raw_block_boolean_verbose: false,
             // Qbit publishes no child payout registry; only BTC-parent-side
             // attribution is resolvable.
             child_payout: None,
@@ -370,7 +402,36 @@ pub static CHAINS: [ChainSpec; 7] = [
             // activation and there is nothing to warn about.
             floor_warning: None,
             repair_scope: RepairScope::SourceScoped,
-            malformed_policy: MalformedPolicy::HoldInterval,
+            failure_policy: CaptureFailurePolicy::HoldMalformedProof,
+        }),
+        backfill_range_cap: None,
+    },
+    ChainSpec {
+        id: ChainId::Terracoin,
+        slug: "terracoin",
+        display_name: "Terracoin",
+        env_prefix: "TERRACOIN",
+        source_code: TERRACOIN_SOURCE_CODE,
+        activation_floor: 833_000,
+        poller: PollerDefaults {
+            poll_interval_seconds: 30,
+            batch_size: 100,
+            reorg_depth: 64,
+        },
+        family: Some(FamilySpec {
+            label: "Terracoin",
+            auth: RpcAuth::RequiredUserPass,
+            fetch: FetchStrategy::RawBlock {
+                authentication: RawBlockAuthentication::StrictClassic {
+                    genesis_block_hash: "00000000804bbc6a621a9dbb564ce469f492e1ccf2d70f8a6b241e26a277afa2",
+                    chain_id: 50,
+                },
+            },
+            raw_block_boolean_verbose: true,
+            child_payout: None,
+            floor_warning: Some("start-height precedes Terracoin AuxPoW activation"),
+            repair_scope: RepairScope::SourceScoped,
+            failure_policy: CaptureFailurePolicy::HoldAnyHeightFailure,
         }),
         backfill_range_cap: None,
     },
@@ -468,20 +529,25 @@ mod tests {
 
     /// The shared runner's malformed-proof behavior is per-spec data, so a new
     /// chain cannot silently change an incumbent's. Every chain that predates
-    /// Qbit pins `SkipAndContinue`; Qbit is the only `HoldInterval` row.
+    /// Qbit pins `SkipMalformedProof`; Qbit holds malformed proofs and
+    /// Terracoin additionally retains operational height failures.
     #[test]
-    fn only_qbit_holds_the_interval_on_a_malformed_proof() {
+    fn new_sources_hold_the_interval_on_a_malformed_proof() {
         for spec in &CHAINS {
             let Some(family) = spec.family.as_ref() else {
                 continue;
             };
-            let expected = if spec.id == ChainId::Qbit {
-                MalformedPolicy::HoldInterval
-            } else {
-                MalformedPolicy::SkipAndContinue
+            let expected = match spec.id {
+                ChainId::Terracoin => CaptureFailurePolicy::HoldAnyHeightFailure,
+                ChainId::Qbit => CaptureFailurePolicy::HoldMalformedProof,
+                _ => CaptureFailurePolicy::SkipMalformedProof,
             };
             assert_eq!(
-                family.malformed_policy, expected,
+                family.raw_block_boolean_verbose,
+                spec.id == ChainId::Terracoin
+            );
+            assert_eq!(
+                family.failure_policy, expected,
                 "{} malformed policy",
                 spec.slug
             );

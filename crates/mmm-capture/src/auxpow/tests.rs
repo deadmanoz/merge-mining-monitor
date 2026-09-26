@@ -207,6 +207,17 @@ fn parses_bip34_height() {
 }
 
 #[test]
+fn native_child_height_keeps_bitcoin_ceiling_separate() {
+    let raw = 3_288_246i32.to_le_bytes();
+    let script = [3, raw[0], raw[1], raw[2]];
+    assert_eq!(parse_child_bip34_height(&script), Some(3_288_246));
+    assert_eq!(parse_bip34_height(&script), None);
+    assert_eq!(parse_child_bip34_height(&[1, 0x81]), None);
+    assert_eq!(parse_child_bip34_height(&[]), None);
+    assert_eq!(parse_child_bip34_height(&[3, 1]), None);
+}
+
+#[test]
 fn pow_validates_target_accepts_meeting_hash_and_rejects_malformed_bits() {
     // Build a header hash equal to a known target (the easiest possible
     // target, mantissa 0x7fffff with exponent 0x20 = 32). Any hash whose

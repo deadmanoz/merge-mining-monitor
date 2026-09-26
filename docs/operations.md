@@ -465,3 +465,53 @@ just live-test-classify
 just live-test-reconcile-all
 just live-test-smoke
 ```
+
+## Terracoin activation
+
+Historical Terracoin coverage comes from the Research publication, not from a
+production backfill. Before activation, Research regenerates the Terracoin
+publication to a pinned child tip on the child-chain VM (where the node is
+local) and records C, its proven contiguous coverage tip, with hash(C). C is
+never the publication's maximum event height: the last event says nothing
+about which heights were scanned.
+
+Activate in this order, through the backup-first release workflow:
+
+1. Deploy the release that registers source 21 as Live and apply migration
+   0030 with `just db-migrate-deploy`. Migration 0030 extends capture-error
+   kinds to per-height operational failures; source 21 already exists and
+   needs no new identity row. The lifecycle comes from the shared registry.
+2. Refresh the pins with `just gen-research-publication-pins` from the
+   Research main commit that carries the regenerated publication, and take C
+   and hash(C) from its coverage receipt.
+3. Import it with `just import-dataset terracoin`. Once source 21 is Live the
+   import is additive, so verify that no Terracoin event was removed and that
+   the reconcile queues drained. An import made before the Live release is
+   authoritative and can delete rows, so never run an old Historical importer
+   over later live events.
+4. Prove hash(C) on the node (`getblockhash C`) against the receipt, then start
+   the poller once with `TERRACOIN_START_HEIGHT=max(833000,C+1-64)` and
+   `TERRACOIN_REORG_DEPTH=64`. The poller seeds its cursor at start-1, the
+   override is also the rescan floor, and the first processed height is C-63,
+   so the overlap replays C. hash(C) appears in `child_chain_head` only after
+   the overlap tick that live-captures C; historical import writes no heads,
+   so a missing head straight after the import is not an import failure.
+5. Remove the override only after hash(C) has appeared in `child_chain_head`
+   (the overlap tick captured C) and no `capture_error` rows are open; the
+   cursor is not that proof. Then restart and verify normal cursor-based
+   resume. A first start without the override seeds at the node tip and leaves
+   a gap no counter shows, and a pre-existing high cursor cannot prove the
+   overlap ran, because cursor persistence uses GREATEST.
+
+Run the wallet-disabled Terracoin node on the child-chain VM with private,
+authenticated RPC. Set `TERRACOIN_RPC_URL`, `TERRACOIN_RPC_USER` and
+`TERRACOIN_RPC_PASSWORD`, and use `just poll-terracoin` for continuous
+collection. `just backfill-terracoin START END` is a bounded repair tool for
+heights with open `capture_error` rows, not the recovery path; it does not
+advance the poll cursor. Judge coverage by successful heights and unresolved
+`capture_error` rows, not by the latest event or the node tip.
+
+On failure, stop capture and preserve the database and raw evidence. Retain
+source-host copies until the target, an independent backup and production
+acceptance are in place, then retire only the separately approved exact
+inventory.

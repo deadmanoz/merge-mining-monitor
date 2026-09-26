@@ -1,5 +1,5 @@
 //! The shared capture, poll, and backfill implementation for bitcoind-family
-//! AuxPoW chains (Namecoin, Syscoin, Fractal, Qbit).
+//! AuxPoW chains (Namecoin, Syscoin, Fractal, Qbit, Terracoin).
 //!
 //! Everything chain-specific arrives through the `FamilySpec` data on the
 //! chain's `ChainSpec` row: auth mode and endpoint config (resolved by
@@ -23,13 +23,15 @@ use tracing::{debug, error, info, warn};
 
 use crate::chains::bitcoind_rpc::{BitcoindRpc, BitcoindRpcClient};
 use crate::chains::child_payout_registry::seed_child_payout_identities_for;
-use crate::chains::spec::{ChainSpec, FamilySpec, FetchStrategy, MalformedPolicy, RepairScope};
+use crate::chains::spec::{
+    CaptureFailurePolicy, ChainSpec, FamilySpec, FetchStrategy, RepairScope,
+};
 use crate::poller::{ChainPoller, ChainPollerState, HeightProgress, Poller, RescanOutcome};
 use crate::producer_runtime::{ProducerContext, ProducerRuntime, run_post_backfill_repair};
 use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::auxpow::{
     ParsedAuxpowBlock, ParsedNamecoinBlock, ParsedQbitAuxpow, attach_child_block_coinbase,
-    parse_auxpow_header_blob, parse_child_block_coinbase, parse_namecoin_block,
+    parse_auxpow_header_blob, parse_child_block_coinbase,
 };
 use mmm_capture::capture::{
     ClassificationProof, MergeMiningEventPayload, build_event_payload, now_epoch_seconds,
@@ -46,10 +48,15 @@ use mmm_store::{
     record_child_chain_block_in_own_transaction, reobserve_child_chain_block_in_own_transaction,
     upsert_merge_mining_event_with_attributions,
 };
-use qbit::{ensure_qbit_mainnet_endpoint, fetch_qbit_candidate, write_qbit_event};
+use qbit::{fetch_qbit_candidate, write_qbit_event};
+#[cfg(any(test, feature = "db-integration"))]
+pub use validation::ensure_mainnet_endpoint;
+#[cfg(not(any(test, feature = "db-integration")))]
+use validation::ensure_mainnet_endpoint;
 
 mod backfill;
 mod qbit;
+mod validation;
 
 pub(crate) use self::backfill::backfill;
 
@@ -134,7 +141,7 @@ pub(super) fn family_of(spec: &'static ChainSpec) -> &'static FamilySpec {
 /// `AuxpowWritten` produces a `merge_mining_event`. Skips are normal, not
 /// errors: most heights are non-AuxPoW, and a malformed block is never written
 /// and never demotes prior evidence. Which malformed variant a chain produces
-/// is `FamilySpec::malformed_policy`, not a property of the failure.
+/// is `FamilySpec::failure_policy`, not a property of the failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeightOutcome {
     /// An AuxPoW event was upserted for this height.
@@ -142,10 +149,10 @@ pub enum HeightOutcome {
     /// The block carries no merge-mining proof (or fails the version gate);
     /// nothing written.
     NonAuxpowSkipped,
-    /// `MalformedPolicy::SkipAndContinue`: the block claimed AuxPoW but failed
+    /// `CaptureFailurePolicy::SkipMalformedProof`: the block claimed AuxPoW but failed
     /// to parse; logged and skipped without writing.
     MalformedSkipped,
-    /// `MalformedPolicy::HoldInterval`: same failure, but a `capture_error`
+    /// `CaptureFailurePolicy::HoldMalformedProof`: same failure, but a `capture_error`
     /// row was persisted for the height first and the interval must not be
     /// reported complete. The live cursor holds here; a bounded backfill fails
     /// the run.
@@ -214,6 +221,7 @@ pub async fn process_auxpow_height(
         process_locked_height(client, rpc, context, height, block_hash).await
     }
     .await;
+    let result = validation::retain_failed_height(client, context, height, result).await;
     finish_child_chain_height_operation(client, source_id, height, result).await
 }
 
@@ -261,7 +269,7 @@ pub async fn rescan_auxpow_height(
         // the error and stopped before replacing the head leaves a final head
         // behind): only a successful reprocessing may clear it, so the height
         // takes the full capture.
-        let error_open = context.family().malformed_policy == MalformedPolicy::HoldInterval
+        let error_open = context.family().failure_policy.retains_errors()
             && has_capture_error(client, source_id, height).await?;
         match head {
             Some(head)
@@ -286,6 +294,7 @@ pub async fn rescan_auxpow_height(
         }
     }
     .await;
+    let result = validation::retain_failed_height(client, context, height, result).await;
     finish_child_chain_height_operation(client, source_id, height, result).await
 }
 
@@ -359,7 +368,7 @@ async fn process_locked_height(
     // This exact height was reprocessed successfully, which is the ONLY thing
     // that clears its durable capture error. A cursor advance elsewhere never
     // does. Only hold-policy chains can have written one.
-    if family.malformed_policy == MalformedPolicy::HoldInterval
+    if family.failure_policy.retains_errors()
         && clear_capture_error(client, context.source_id(), height).await?
     {
         info!(
@@ -371,7 +380,7 @@ async fn process_locked_height(
 }
 
 /// Apply the family's malformed-proof policy to one height. Under
-/// `HoldInterval` the `capture_error` row is written BEFORE this returns, so a
+/// `HoldMalformedProof` the `capture_error` row is written BEFORE this returns, so a
 /// crash between detection and return cannot lose the signal.
 async fn record_malformed_height(
     client: &mut Client,
@@ -381,8 +390,8 @@ async fn record_malformed_height(
     detail: String,
 ) -> Result<HeightOutcome> {
     let spec = context.spec;
-    match context.family().malformed_policy {
-        MalformedPolicy::SkipAndContinue => {
+    match context.family().failure_policy {
+        CaptureFailurePolicy::SkipMalformedProof => {
             error!(
                 chain = spec.slug,
                 height,
@@ -392,7 +401,7 @@ async fn record_malformed_height(
             );
             Ok(HeightOutcome::MalformedSkipped)
         }
-        MalformedPolicy::HoldInterval => {
+        CaptureFailurePolicy::HoldMalformedProof | CaptureFailurePolicy::HoldAnyHeightFailure => {
             let now = now_epoch_seconds()?;
             record_capture_error(
                 client,
@@ -500,7 +509,7 @@ async fn fetch_auxpow_candidate(
     let family = context.family();
 
     match family.fetch {
-        FetchStrategy::RawBlock => {
+        FetchStrategy::RawBlock { .. } => {
             fetch_raw_block_candidate(rpc, spec, family, block_hash, height).await
         }
         FetchStrategy::HeaderBlob { exact_version } => {
@@ -523,7 +532,7 @@ async fn fetch_raw_block_candidate(
         .get_block_raw(block_hash)
         .await
         .with_context(|| format!("get raw {} block {block_hash}", family.label))?;
-    match parse_namecoin_block(&raw) {
+    match validation::parse_raw_candidate(&raw, family, block_hash, height) {
         Ok(ParsedNamecoinBlock::NonAuxpow(_)) => {
             debug!(
                 chain = spec.slug,
@@ -602,7 +611,7 @@ async fn attach_child_payout_if_needed(
 /// Live capture chain for the bitcoind family. Heights up to the tip always
 /// exist, so `process_height` never returns `Retry`; it advances past every
 /// captured or skipped height and returns `Hold` only for a malformed proof
-/// under the `HoldInterval` policy (see `height_progress_for`).
+/// under either hold policy (see `height_progress_for`).
 struct AuxpowFamilyPoller {
     state: ChainPollerState,
     rpc: BitcoindRpcClient,
@@ -659,7 +668,7 @@ impl ChainPoller for AuxpowFamilyPoller {
     /// Capture one height. Every height up to the tip exists in a bitcoind
     /// chain, so there is no Retry case here (unlike the header-pull divergent
     /// chains); the one non-advancing outcome is a held malformed proof under
-    /// `MalformedPolicy::HoldInterval`, whose `capture_error` row is already
+    /// either hold policy, whose `capture_error` row is already
     /// persisted by the time this returns. `Hold` blocks the cursor in the new
     /// sub-range; in the best-effort replay sub-range the driver continues, and
     /// the persisted row is what keeps that gap visible.
@@ -695,7 +704,7 @@ fn height_progress_for(outcome: HeightOutcome) -> HeightProgress {
 pub(crate) async fn poll(spec: &'static ChainSpec, rt: ProducerRuntime) -> Result<()> {
     let rpc_config = crate::chains::config::bitcoind_rpc_config(spec)?;
     let rpc = BitcoindRpcClient::new(family_of(spec).label, rpc_config)?;
-    ensure_qbit_mainnet_endpoint(&rpc, family_of(spec)).await?;
+    ensure_mainnet_endpoint(&rpc, family_of(spec)).await?;
     let poller_config = crate::chains::config::poller_config(spec)?;
     let context =
         AuxpowCaptureContext::new_with_classifier(&rt.pg_client, spec, rt.parent_classifier)

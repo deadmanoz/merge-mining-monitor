@@ -67,15 +67,15 @@ From it you can:
 The source rail groups chains by the evidence we actually hold, with Bitcoin
 Core supplying canonical context:
 
-- **Live sources** (7 producers) follow their chain tips continuously: Namecoin
+- **Live sources** (8 AuxPoW producers) follow their chain tips continuously: Namecoin
   (2011), Syscoin (2016), RSK (2018), Elastos (2018), Hathor (2020), Fractal
-  Bitcoin (2024), and Qbit (2026). Bitcoin Core supplies the canonical backbone
-  and classifies every header.
-- **Recovered datasets** (20 chains) are historical AuxPoW records from chains with
+  Bitcoin (2024), Qbit (2026), and Terracoin. Bitcoin Core supplies the canonical
+  backbone and classifies every header, bringing the total to 9 live sources.
+- **Recovered datasets** (19 chains) are historical AuxPoW records from chains with
   no live producer, ingested from recovered evidence: Argentum, Bitcoin Vault,
   Bitmark, CoiledCoin, Crown, Devcoin, Electric Cash, Emercoin, Geistgeld,
   Groupcoin, Huntercoin, i0coin, Ixcoin, Lyncoin, Myriadcoin, SixEleven,
-  SpaceXpanse ROD, Terracoin, Unobtanium, and Xaya. Lyncoin is complete from
+  SpaceXpanse ROD, Unobtanium, and Xaya. Lyncoin is complete from
   genesis through the last SHA-256d block at height 260,499 (11 canonical
   Bitcoin parents);
   SixEleven is complete through its available tip at height 999,406 (seven),

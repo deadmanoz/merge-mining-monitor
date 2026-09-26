@@ -229,7 +229,7 @@ through revocation.
 `NOT VALID`, and `0023_validate_child_displacement.sql` validates them under
 the weaker lock in its own transaction. The block detail API projects the
 pair on each event detail as `child_displaced_at` and `child_displaced_by`.
-The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit), the Elastos
+The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit, Terracoin), the Elastos
 producer and the Hathor producer call the write for every height they
 process. `0024_restore_hathor_displaced_events.sql` brings the events Hathor
 had revoked as `hathor_superseded` or `hathor_voided` to this model.
@@ -275,14 +275,17 @@ derived state whose sole writer is `mmm-read-model`.
 - Cleared only when that SAME height is reprocessed successfully. An unrelated
   cursor advance never clears it.
 - `error_kind` is the stored diagnostic vocabulary (`malformed_auxpow_proof`
-  today); `detail` is diagnostic only and is never projected onto the wire.
+  or `height_capture_failed`); `detail` is diagnostic only and is never
+  projected onto the wire.
 - `/api/v1/sources` reduces a source's rows to the LOWEST unresolved height,
   the earliest gap and therefore the bound on trustworthy coverage, and reports
   it as `sync.error_code = auxpow_capture_error` ahead of the ordinary
   live/stale verdict.
 
-Which chains write rows is `FamilySpec::malformed_policy` on the chain spec, not
-a global rule; see `docs/capture.md`.
+Capture-failure policy is `FamilySpec::failure_policy` on the chain spec:
+skip a malformed proof, hold a malformed proof, or hold any height failure.
+Terracoin holds any height failure, so it also records per-height operational
+failures on new and rescanned heights; see `docs/capture.md`.
 
 ## Read-Model Rules
 
@@ -340,6 +343,8 @@ constraints, and `0023_validate_child_displacement.sql` validates them.
 revoked for a child-DAG replacement or void and records their displacement,
 and `0025_retire_pending_supersede.sql` drops the `supersede` kind of
 `poll_pending_reconcile` with its payload columns.
+`0030_capture_failure_kind.sql` extends capture-error diagnostics to per-height
+operational failures without changing the public error code or source identity.
 
 `0007_support_partial_child_evidence.sql` makes child evidence nullable, adds
 authenticated child header and `nBits` storage, replaces the old composite
