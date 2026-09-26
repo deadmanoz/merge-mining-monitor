@@ -291,6 +291,9 @@ required_env_vars() {
         SYSCOIN_RPC_URL \
         FRACTAL_RPC_URL \
         QBIT_RPC_URL \
+        TERRACOIN_RPC_URL \
+        TERRACOIN_RPC_USER \
+        TERRACOIN_RPC_PASSWORD \
         BITCOIN_RPC_URL \
         SERVE_BIND_ADDR
 }
@@ -608,7 +611,7 @@ cmd_self_check() {
         "serve poll-namecoin poll-rsk poll-syscoin poll-fractal poll-hathor poll-elastos poll-qbit poll-terracoin sync-bitcoin-core" \
         "managed service roster"
     assert_eq "$(required_env_vars | tr '\n' ' ' | sed 's/ $//')" \
-        "PGHOST PGPORT PGUSER PGPASSWORD PGDATABASE NAMECOIN_RPC_URL RSK_RPC_URL SYSCOIN_RPC_URL FRACTAL_RPC_URL QBIT_RPC_URL BITCOIN_RPC_URL SERVE_BIND_ADDR" \
+        "PGHOST PGPORT PGUSER PGPASSWORD PGDATABASE NAMECOIN_RPC_URL RSK_RPC_URL SYSCOIN_RPC_URL FRACTAL_RPC_URL QBIT_RPC_URL TERRACOIN_RPC_URL TERRACOIN_RPC_USER TERRACOIN_RPC_PASSWORD BITCOIN_RPC_URL SERVE_BIND_ADDR" \
         "required env roster"
     assert_eq "$(optional_defaulted_env_vars | tr '\n' ' ' | sed 's/ $//')" \
         "HATHOR_RPC_URL HATHOR_RPC_FALLBACK_URL ELASTOS_RPC_URL" \
