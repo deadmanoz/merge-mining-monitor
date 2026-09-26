@@ -96,3 +96,74 @@ fn terracoin_august_canonical_and_mutations() {
     bad_branch.proof.coinbase_branch.index = 1;
     assert!(verify_classic_auxpow_commitment(&bad_branch, hash, 50).is_err());
 }
+
+/// The August proof with its parent coinbase replaced by `script`, keeping the
+/// coinbase Merkle proof consistent so only the commitment layout differs.
+fn with_parent_coinbase(proof: &ParsedAuxpowBlock, script: Vec<u8>) -> ParsedAuxpowBlock {
+    let mut candidate = proof.clone();
+    candidate.parent_coinbase_script = script;
+    candidate.parent_coinbase_txid = Txid::from_byte_array([7; 32]);
+    candidate.proof.coinbase_branch = MerkleBranch {
+        hashes: Vec::new(),
+        index: 0,
+    };
+    candidate.parent_header.header.merkle_root = TxMerkleNode::from_byte_array([7; 32]);
+    candidate
+}
+
+#[test]
+fn classic_commitment_follows_the_classic_layout_rules() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/terracoin/3288246.json"
+    )))
+    .unwrap();
+    let raw = hex::decode(fixture["rawblock"].as_str().unwrap()).unwrap();
+    let hash: BlockHash = fixture["child_hash"].as_str().unwrap().parse().unwrap();
+    let ParsedNamecoinBlock::Auxpow(proof) =
+        parse_verified_classic_block(&raw, hash, 3_288_246, 50).unwrap()
+    else {
+        panic!("expected AuxPoW")
+    };
+    let script = &proof.parent_coinbase_script;
+    let marker = script
+        .windows(AUXPOW_MAGIC.len())
+        .position(|window| window == AUXPOW_MAGIC)
+        .unwrap();
+    // `[root:32][tree size:4][nonce:4]` exactly as the mined block committed it.
+    let commitment = script[marker + 4..marker + 44].to_vec();
+    let layout = |prefix: &[u8], body: &[u8]| {
+        let mut out = prefix.to_vec();
+        out.extend_from_slice(body);
+        out.extend_from_slice(b"/pool/");
+        with_parent_coinbase(&proof, out)
+    };
+    let marked: Vec<u8> = AUXPOW_MAGIC.iter().chain(&commitment).copied().collect();
+    let verify =
+        |candidate: &ParsedAuxpowBlock| verify_classic_auxpow_commitment(candidate, hash, 50);
+
+    // The marked layout and the legacy markerless layout both verify.
+    verify(&layout(&[3, 1, 2, 3], &marked)).unwrap();
+    verify(&layout(&[3, 1, 2, 3], &commitment)).unwrap();
+    verify(&layout(&[0; 20], &commitment)).unwrap();
+    // A markerless root must start within the first 20 bytes.
+    let late = verify(&layout(&[0; 21], &commitment)).unwrap_err();
+    assert!(late.to_string().contains("first 20 bytes"));
+    // With a marker, it must sit immediately before the root, and only once.
+    let mut split = AUXPOW_MAGIC.to_vec();
+    split.push(0);
+    split.extend_from_slice(&commitment);
+    let detached = verify(&layout(&[3, 1, 2, 3], &split)).unwrap_err();
+    assert!(detached.to_string().contains("immediately before"));
+    let twice: Vec<u8> = marked.iter().chain(&AUXPOW_MAGIC).copied().collect();
+    let duplicate = verify(&layout(&[3, 1, 2, 3], &twice)).unwrap_err();
+    assert!(duplicate.to_string().contains("multiple"));
+    // Classic consensus caps the chain branch at 30 levels.
+    let mut deep = proof.as_ref().clone();
+    deep.proof
+        .chain_branch
+        .hashes
+        .resize(31, TxMerkleNode::from_byte_array([0; 32]));
+    let too_deep = verify_classic_auxpow_commitment(&deep, hash, 50).unwrap_err();
+    assert!(too_deep.to_string().contains("too long"));
+}

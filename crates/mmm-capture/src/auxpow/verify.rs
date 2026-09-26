@@ -30,14 +30,98 @@ pub fn verify_auxpow_commitment(
     verify_commitment_leaf(parsed, leaf, chain_id)
 }
 
-/// Verify a classic Namecoin-family commitment. Its Merkle leaf is the child
-/// hash in wire order; Elastos's existing wrapper uses a reversed leaf.
+/// The deepest chain Merkle branch classic `CAuxPow::check` accepts.
+const CLASSIC_MAX_CHAIN_BRANCH: usize = 30;
+
+/// The furthest into the parent coinbase scriptSig a markerless (legacy) chain
+/// root may start under classic `CAuxPow::check`.
+const CLASSIC_MARKERLESS_ROOT_WINDOW: usize = 20;
+
+/// Verify a classic Namecoin-family commitment, porting the classic
+/// `CAuxPow::check` that Terracoin inherits. Its Merkle leaf is the child hash
+/// in wire order (Elastos's wrapper uses a reversed leaf). Unlike the Elastos
+/// check it locates the committed chain root itself, as consensus does: with a
+/// `fabe6d6d` marker there must be exactly one, immediately before the first
+/// occurrence of the root; without one, the root must start within the first
+/// 20 bytes. The chain branch may be at most 30 levels deep.
 pub fn verify_classic_auxpow_commitment(
     parsed: &ParsedAuxpowBlock,
     child_block_hash: BlockHash,
     chain_id: u32,
 ) -> Result<()> {
-    verify_commitment_leaf(parsed, child_block_hash.to_byte_array(), chain_id)
+    let branch_len = parsed.proof.chain_branch.hashes.len();
+    ensure!(
+        branch_len <= CLASSIC_MAX_CHAIN_BRANCH,
+        "AuxPoW chain merkle branch is too long ({branch_len} > {CLASSIC_MAX_CHAIN_BRANCH})"
+    );
+    ensure!(
+        parsed.proof.coinbase_branch.index == 0,
+        "parent coinbase is not the first transaction (branch index {})",
+        parsed.proof.coinbase_branch.index
+    );
+    ensure!(
+        parsed.proof.chain_branch.index >= 0,
+        "negative AuxPoW chain merkle branch index"
+    );
+    let coinbase_root = fold_merkle_branch(
+        parsed.parent_coinbase_txid.to_byte_array(),
+        &parsed.proof.coinbase_branch,
+    );
+    ensure!(
+        coinbase_root == parsed.parent_header.header.merkle_root.to_byte_array(),
+        "parent coinbase merkle proof does not reach the parent header merkle root"
+    );
+
+    // The coinbase stores the chain root in display order.
+    let mut committed_root =
+        fold_merkle_branch(child_block_hash.to_byte_array(), &parsed.proof.chain_branch);
+    committed_root.reverse();
+    let script = parsed.parent_coinbase_script.as_slice();
+    let root_pos = find_subslice(script, &committed_root)
+        .context("child block hash does not fold to a chain merkle root in the parent coinbase")?;
+    match find_subslice(script, &AUXPOW_MAGIC) {
+        Some(marker) => {
+            ensure!(
+                find_subslice(&script[marker + 1..], &AUXPOW_MAGIC).is_none(),
+                "multiple AuxPoW magic markers in the parent coinbase scriptSig"
+            );
+            ensure!(
+                marker + AUXPOW_MAGIC.len() == root_pos,
+                "the fabe6d6d marker is not immediately before the chain merkle root"
+            );
+        }
+        None => ensure!(
+            root_pos <= CLASSIC_MARKERLESS_ROOT_WINDOW,
+            "a markerless chain merkle root must start within the first \
+             {CLASSIC_MARKERLESS_ROOT_WINDOW} bytes of the parent coinbase"
+        ),
+    }
+
+    let after = root_pos + committed_root.len();
+    ensure!(
+        script.len() >= after + 8,
+        "AuxPoW tree size and nonce missing after the chain merkle root"
+    );
+    let tree_size = u32::from_le_bytes(script[after..after + 4].try_into().unwrap());
+    let nonce = u32::from_le_bytes(script[after + 4..after + 8].try_into().unwrap());
+    ensure!(
+        tree_size == 1u32 << branch_len,
+        "AuxPoW tree size {tree_size} != 1 << {branch_len}"
+    );
+    let expected_slot = auxpow_expected_index(nonce, chain_id, branch_len);
+    let chain_index = u32::try_from(parsed.proof.chain_branch.index).unwrap();
+    ensure!(
+        chain_index == expected_slot,
+        "AuxPoW chain slot {chain_index} != deterministic slot {expected_slot} for chain id {chain_id}"
+    );
+    Ok(())
+}
+
+/// Index of the first occurrence of `needle` in `haystack`.
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn verify_commitment_leaf(
