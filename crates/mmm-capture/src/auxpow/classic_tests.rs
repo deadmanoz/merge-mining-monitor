@@ -31,15 +31,22 @@ fn terracoin_activation_and_archived_candidates() {
     }
 }
 
-#[test]
-fn terracoin_august_canonical_and_mutations() {
+/// Terracoin 3,288,246, the August block that commits to Bitcoin 964,388: the
+/// fixture JSON, its raw block and its child hash.
+fn august_block() -> (serde_json::Value, Vec<u8>, BlockHash) {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../fixtures/terracoin/3288246.json"
     )))
     .unwrap();
     let raw = hex::decode(fixture["rawblock"].as_str().unwrap()).unwrap();
-    let hash: BlockHash = fixture["child_hash"].as_str().unwrap().parse().unwrap();
+    let hash = fixture["child_hash"].as_str().unwrap().parse().unwrap();
+    (fixture, raw, hash)
+}
+
+#[test]
+fn terracoin_august_canonical_and_mutations() {
+    let (fixture, raw, hash) = august_block();
     let ParsedNamecoinBlock::Auxpow(proof) =
         parse_verified_classic_block(&raw, hash, 3_288_246, 50).unwrap()
     else {
@@ -113,13 +120,7 @@ fn with_parent_coinbase(proof: &ParsedAuxpowBlock, script: Vec<u8>) -> ParsedAux
 
 #[test]
 fn classic_commitment_follows_the_classic_layout_rules() {
-    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../fixtures/terracoin/3288246.json"
-    )))
-    .unwrap();
-    let raw = hex::decode(fixture["rawblock"].as_str().unwrap()).unwrap();
-    let hash: BlockHash = fixture["child_hash"].as_str().unwrap().parse().unwrap();
+    let (_, raw, hash) = august_block();
     let ParsedNamecoinBlock::Auxpow(proof) =
         parse_verified_classic_block(&raw, hash, 3_288_246, 50).unwrap()
     else {

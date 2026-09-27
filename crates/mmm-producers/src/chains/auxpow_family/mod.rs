@@ -24,14 +24,15 @@ use tracing::{debug, error, info, warn};
 use crate::chains::bitcoind_rpc::{BitcoindRpc, BitcoindRpcClient};
 use crate::chains::child_payout_registry::seed_child_payout_identities_for;
 use crate::chains::spec::{
-    CaptureFailurePolicy, ChainSpec, FamilySpec, FetchStrategy, RepairScope,
+    CaptureFailurePolicy, ChainSpec, FamilySpec, FetchStrategy, RawBlockAuthentication, RepairScope,
 };
 use crate::poller::{ChainPoller, ChainPollerState, HeightProgress, Poller, RescanOutcome};
 use crate::producer_runtime::{ProducerContext, ProducerRuntime, run_post_backfill_repair};
 use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::auxpow::{
     ParsedAuxpowBlock, ParsedNamecoinBlock, ParsedQbitAuxpow, attach_child_block_coinbase,
-    parse_auxpow_header_blob, parse_child_block_coinbase,
+    parse_auxpow_header_blob, parse_child_block_coinbase, parse_namecoin_block,
+    parse_verified_classic_block,
 };
 use mmm_capture::capture::{
     ClassificationProof, MergeMiningEventPayload, build_event_payload, now_epoch_seconds,
@@ -49,10 +50,7 @@ use mmm_store::{
     upsert_merge_mining_event_with_attributions,
 };
 use qbit::{fetch_qbit_candidate, write_qbit_event};
-#[cfg(any(test, feature = "db-integration"))]
 pub use validation::ensure_mainnet_endpoint;
-#[cfg(not(any(test, feature = "db-integration")))]
-use validation::ensure_mainnet_endpoint;
 
 mod backfill;
 mod qbit;
@@ -509,8 +507,8 @@ async fn fetch_auxpow_candidate(
     let family = context.family();
 
     match family.fetch {
-        FetchStrategy::RawBlock { .. } => {
-            fetch_raw_block_candidate(rpc, spec, family, block_hash, height).await
+        FetchStrategy::RawBlock { authentication } => {
+            fetch_raw_block_candidate(rpc, spec, family, block_hash, height, authentication).await
         }
         FetchStrategy::HeaderBlob { exact_version } => {
             fetch_header_blob_candidate(rpc, spec, family, block_hash, height, exact_version).await
@@ -527,12 +525,19 @@ async fn fetch_raw_block_candidate(
     family: &'static FamilySpec,
     block_hash: &BlockHash,
     height: i32,
+    authentication: RawBlockAuthentication,
 ) -> Result<AuxpowFetch> {
     let raw = rpc
         .get_block_raw(block_hash)
         .await
         .with_context(|| format!("get raw {} block {block_hash}", family.label))?;
-    match validation::parse_raw_candidate(&raw, family, block_hash, height) {
+    let parsed = match authentication {
+        RawBlockAuthentication::NodeValidated => parse_namecoin_block(&raw),
+        RawBlockAuthentication::StrictClassic { chain_id, .. } => {
+            parse_verified_classic_block(&raw, *block_hash, height, chain_id)
+        }
+    };
+    match parsed {
         Ok(ParsedNamecoinBlock::NonAuxpow(_)) => {
             debug!(
                 chain = spec.slug,

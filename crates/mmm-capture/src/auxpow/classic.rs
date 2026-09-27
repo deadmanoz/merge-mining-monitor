@@ -59,18 +59,13 @@ pub fn parse_verified_classic_block(
         child.child_height == Some(requested_height),
         "child coinbase height does not match RPC height"
     );
-    let proof = assemble_auxpow_block(
+    let mut proof = assemble_auxpow_block(
         header,
-        ChildCoinbase {
-            height: child.child_height,
-            txid: Some(child.child_coinbase_txid),
-            script: Some(child.child_coinbase_script),
-            outputs: child.child_coinbase_outputs,
-            output_addresses: Vec::new(),
-        },
+        ChildCoinbase::absent(),
         auxpow,
         raw[Header::SIZE..body_offset].to_vec(),
     );
+    attach_child_block_coinbase(&mut proof, child)?;
     verify_classic_auxpow_commitment(&proof, requested_hash, chain_id)?;
     ensure!(
         validates_target(proof.parent_header.hash(), proof.child_header.bits()),

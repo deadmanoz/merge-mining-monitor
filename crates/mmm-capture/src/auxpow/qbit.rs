@@ -15,8 +15,10 @@
 //!
 //! - The chain-commitment fold runs in INTERNAL byte order over
 //!   `sha256d(pure child header)`, and the coinbase scriptSig commits the
-//!   DISPLAY-order (reversed) fold result. Classic folds the reversed leaf
-//!   and commits wire order; the two conventions are not interchangeable.
+//!   DISPLAY-order (reversed) fold result, as classic `CAuxPow::check` does
+//!   (the marker placement and footer are read by the shared
+//!   `read_commitment_footer`). Elastos instead folds the reversed leaf and
+//!   commits wire order; the two conventions are not interchangeable.
 //! - Mainnet accepts display-order commitments at EVERY height from zero,
 //!   including the legacy no-marker rule (without `fabe6d6d`, the first
 //!   occurrence of the display-order root must start at scriptSig byte
@@ -340,7 +342,8 @@ fn verify_qbit_proof(
     let chain_root = fold_merkle_branch(child_header.hash().to_byte_array(), &auxpow.chain_branch);
     let mut display_root = chain_root;
     display_root.reverse();
-    let (tree_size, nonce) = read_qbit_commitment_footer(&auxpow.coinbase_script, &display_root)?;
+    let (tree_size, nonce) = read_commitment_footer(&auxpow.coinbase_script, &display_root)
+        .context("Qbit chain commitment")?;
     ensure!(
         tree_size == 1u32 << chain_len,
         "Qbit commitment tree size {tree_size} != 1 << {chain_len}"
@@ -356,45 +359,6 @@ fn verify_qbit_proof(
         "Qbit parent proof fails child header target"
     );
     Ok(())
-}
-
-/// Locate the display-order commitment in the parent coinbase scriptSig
-/// (first occurrence) and return its `[tree_size:4][nonce:4]` footer. When
-/// `fabe6d6d` is present it must occur exactly once and sit immediately
-/// before the root; without it the legacy rule requires the root to start
-/// at byte offset <= 20.
-fn read_qbit_commitment_footer(script: &[u8], display_root: &[u8; 32]) -> Result<(u32, u32)> {
-    let root_pos = find_subslice(script, display_root).context(
-        "Qbit display-order chain commitment missing from the parent coinbase scriptSig",
-    )?;
-    match find_subslice(script, &AUXPOW_MAGIC) {
-        Some(magic_pos) => {
-            ensure!(
-                find_subslice(&script[magic_pos + 1..], &AUXPOW_MAGIC).is_none(),
-                "multiple Qbit merged-mining markers in the parent coinbase scriptSig"
-            );
-            ensure!(
-                magic_pos + AUXPOW_MAGIC.len() == root_pos,
-                "Qbit merged-mining marker must immediately precede the commitment"
-            );
-        }
-        None => ensure!(
-            root_pos <= 20,
-            "Qbit legacy commitment starts beyond scriptSig byte 20"
-        ),
-    }
-    ensure!(
-        script.len() >= root_pos + 40,
-        "truncated Qbit commitment footer"
-    );
-    let tree_size = u32::from_le_bytes(script[root_pos + 32..root_pos + 36].try_into().unwrap());
-    let nonce = u32::from_le_bytes(script[root_pos + 36..root_pos + 40].try_into().unwrap());
-    Ok((tree_size, nonce))
-}
-
-/// First occurrence of `needle` in `haystack`, or `None`.
-fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 /// The decoded structure of a stored Qbit proof blob: the slot index, the

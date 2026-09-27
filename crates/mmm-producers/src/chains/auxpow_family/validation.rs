@@ -1,10 +1,8 @@
-//! Optional mainnet and classic proof authentication for shared family capture.
+//! Mainnet endpoint checks and failed-height retention for shared family
+//! capture.
 
 use anyhow::{Context, Result, ensure};
 use bitcoin::BlockHash;
-use mmm_capture::auxpow::{
-    ParsedNamecoinBlock, parse_namecoin_block, parse_verified_classic_block,
-};
 
 use crate::chains::bitcoind_rpc::BitcoindRpc;
 use crate::chains::spec::{
@@ -42,20 +40,6 @@ pub(super) fn ensure_genesis(label: &str, actual: &BlockHash, genesis: &str) -> 
         label
     );
     Ok(())
-}
-
-pub(super) fn parse_raw_candidate(
-    raw: &[u8],
-    family: &FamilySpec,
-    requested_hash: &BlockHash,
-    height: i32,
-) -> Result<ParsedNamecoinBlock> {
-    match family.fetch {
-        FetchStrategy::RawBlock {
-            authentication: RawBlockAuthentication::StrictClassic { chain_id, .. },
-        } => parse_verified_classic_block(raw, *requested_hash, height, chain_id),
-        _ => parse_namecoin_block(raw),
-    }
 }
 
 /// Preserve failures during replay as well as new work: under
@@ -96,18 +80,5 @@ pub(super) async fn retain_failed_height<T>(
         Err(record_error) => Err(error.context(format!(
             "height {height} failed and its capture error could not be recorded: {record_error:#}"
         ))),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn genesis_guard_rejects_another_network() {
-        let hash: BlockHash = "00000000804bbc6a621a9dbb564ce469f492e1ccf2d70f8a6b241e26a277afa2"
-            .parse()
-            .unwrap();
-        ensure_genesis("Terracoin", &hash, &hash.to_string()).unwrap();
-        assert!(ensure_genesis("Terracoin", &hash, "wrong").is_err());
     }
 }

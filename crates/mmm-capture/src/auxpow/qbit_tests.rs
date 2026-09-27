@@ -241,7 +241,7 @@ fn mutate_commitment(kind: &str) -> Vec<u8> {
     let off = offsets(&raw);
     let marker = marker_pos(&raw, off.tx_end);
     match kind {
-        // Wire-order commitment: classic's convention, rejected by Qbit.
+        // Wire-order commitment: the Elastos convention, rejected by Qbit.
         "order" => raw[marker + 4..marker + 36].reverse(),
         "size" => raw[marker + 36] ^= 1,
         "nonce" => raw[marker + 40] ^= 1,
