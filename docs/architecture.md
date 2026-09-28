@@ -17,14 +17,14 @@ base evidence, the read-model reconciler is the only writer of derived tables,
 and the API serves those derived projections without writing capture state.
 
 ```text
-1. CAPTURE          producers parse source evidence into base tables
+1. CAPTURE          offline parsers authenticate; producers write base tables
 ──────────────────────────────────────────────────────────────────────
    child-chain source ──> parser / verifier ─┬─> merge_mining_event
                                              │   chain sidecar tables
                                              │   event_pool_attribution
                                              └─> capture_error
-                                                 (a proof that will not decode,
-                                                  on a hold-policy chain)
+                                                 (malformed proofs on hold-policy chains;
+                                                  Terracoin height capture failures)
 
    historical publication ──> preflight / database-state comparison
                                   matching ──> no-op before Core lock
@@ -164,3 +164,8 @@ justfile           # db, build, test, lint, serve, sync, poll, and backfill targ
   `crates/mmm-capture/src/findings_registry/mod.rs`, which validates the
   hand-authored `data/findings/` files and emits
   `www/js/findings.generated.js`.
+
+Strict classic AuxPoW authentication is owned by `mmm-capture::auxpow`.
+The producer family spec independently selects RPC dialect, raw proof
+authentication and capture-failure policy. This keeps byte-layout knowledge
+out of acquisition/persistence orchestration.

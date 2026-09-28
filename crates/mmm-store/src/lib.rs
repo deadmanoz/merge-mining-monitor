@@ -36,8 +36,8 @@ pub use bitcoin_core_header::{
     record_bitcoin_core_header, replace_bitcoin_core_header_cache, schedule_core_recheck,
 };
 pub use capture_error::{
-    CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error, has_capture_error,
-    record_capture_error,
+    CAPTURE_ERROR_HEIGHT_CAPTURE_FAILED, CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error,
+    has_capture_error, record_capture_error,
 };
 pub use chains::elastos::{
     ElastosIdentityReresolveRow, load_elastos_identity_reresolve_batch,

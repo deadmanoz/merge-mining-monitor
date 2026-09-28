@@ -5,18 +5,18 @@ automatically via `set dotenv-load`; the binary itself does not.
 
 ## Per-Chain Variables
 
-Prefixes: `NAMECOIN`, `RSK`, `SYSCOIN`, `FRACTAL`, `HATHOR`, `ELASTOS`, `QBIT`.
+Prefixes: `NAMECOIN`, `RSK`, `SYSCOIN`, `FRACTAL`, `HATHOR`, `ELASTOS`, `QBIT`, `TERRACOIN`.
 
 | Variable | Applies to | Contract |
 |---|---|---|
-| `<PREFIX>_RPC_URL` | all | Endpoint. Required for Namecoin, RSK, Syscoin, Fractal, and Qbit; defaults exist for Hathor and Elastos. |
+| `<PREFIX>_RPC_URL` | all | Endpoint. Required for Namecoin, RSK, Syscoin, Fractal, Qbit, and Terracoin; defaults exist for Hathor and Elastos. |
 | `<PREFIX>_RPC_USER` / `<PREFIX>_RPC_PASSWORD` | all but Hathor | Auth policy is chain-specific and pinned by tests. Set both unless that chain explicitly allows unauthenticated access or cookie auth. |
 | `<PREFIX>_RPC_COOKIEFILE` | Syscoin, Fractal, Qbit | Bitcoin Core-style `user:password` cookie file used when the user/password pair is unset. |
 | `<PREFIX>_RPC_TIMEOUT_SECS` | all | Whole-request HTTP timeout, default 15 seconds. |
 | `<PREFIX>_START_HEIGHT` | all | Explicit live cursor seed override. Use once for first deploy or controlled reset, then remove. |
 | `<PREFIX>_POLL_INTERVAL_SECONDS` | all | Live tick interval, default 30 seconds. |
 | `<PREFIX>_BATCH_SIZE` | all | Maximum number of new heights the cursor advances per tick (default 100); a tick attempts up to `reorg_depth + batch_size` heights in total. |
-| `<PREFIX>_REORG_DEPTH` | all | Trailing rescan window in blocks: each tick re-processes this many heights ending at and including the persisted cursor, then advances the cursor by up to the batch size, so the window ends at the tip only once the cursor has caught up. A rescanned height whose block changed marks the earlier event displaced (see `docs/data-model.md`, Child Displacement); every live producer except RSK records it. The compiled defaults are 0 except RSK (64) and Hathor (20); a deployment sets the depth per chain. For Hathor, a depth above 32 rescans that far, but the displacement floor stays bounded at a 32-block fork, so a replacement across a deeper fork may be captured without being recorded as the chain's block. |
+| `<PREFIX>_REORG_DEPTH` | all | Trailing rescan window in blocks: each tick re-processes this many heights ending at and including the persisted cursor, then advances the cursor by up to the batch size, so the window ends at the tip only once the cursor has caught up. A rescanned height whose block changed marks the earlier event displaced (see `docs/data-model.md`, Child Displacement); every live producer except RSK records it. The compiled defaults are 0 except RSK and Terracoin (64), and Hathor (20); a deployment sets the depth per chain. For Hathor, a depth above 32 rescans that far, but the displacement floor stays bounded at a 32-block fork, so a replacement across a deeper fork may be captured without being recorded as the chain's block. |
 | `<PREFIX>_MAX_BACKFILL_RANGE` | Hathor, Elastos | Backfill range cap. |
 | `<PREFIX>_ALLOW_LARGE_BACKFILL` | Hathor, Elastos | Exact `"1"` boolean to lift the range cap. |
 | `<PREFIX>_RPC_BACKFILL_DELAY_MS` | Hathor, Elastos | Per-height backfill delay. |

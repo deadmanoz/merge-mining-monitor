@@ -1,47 +1,32 @@
 {
   "slug": "terracoin-full-difficulty-win-2026-05",
-  "title": "Terracoin wins a full-difficulty Bitcoin block, a year after \"collapse\"",
+  "title": "Terracoin still contributes Bitcoin witnesses beyond its historical publication",
   "category": "dataset-note",
   "status": "monitoring",
   "observed_at": "2026-05-20",
   "published_at": "2026-07-29",
-  "affected_sources": ["auxpow:terracoin"],
-  "summary": "One new canonical parent at Bitcoin height 950,154 shows Terracoin still sporadically clears the full Bitcoin target, keeping its merge-mining window open.",
-  "body": "A single new canonical parent at Bitcoin height `950,154` shows Terracoin still sporadically clears the full Bitcoin target, a year after its merge-mining activity was thought to have collapsed.[^1]\n\nThe rate arithmetic makes the sparseness legible. At the difficulty Terracoin's network reported at the time of writing (about `4.77e9`, implying roughly 150 PH/s at its observed ~2 minute block cadence), a full-difficulty Bitcoin block is expected about every six weeks.[^2] The observed record is roughly ten times sparser than that, which says the hashrate behind Terracoin arrives in bursts: the expectation only accrues while a pool is actually pointing hashrate at the chain.\n\nIts merge-mining window therefore stays open, and the live classifier's proof-of-work target check remains the authority on which candidates count (a leading-zero proxy over-counts sub-difficulty shares).",
-  "anchors": [
-    { "kind": "btc-height", "value": "950154", "label": "recovered canonical parent" },
-    { "kind": "source", "value": "auxpow:terracoin" }
+  "affected_sources": [
+    "auxpow:terracoin"
   ],
-  "figures": [
+  "summary": "The May 2026 Bitcoin win is present in the retained node but absent from the pinned Terracoin publication. A later August witness motivates continuous capture.",
+  "body": "Terracoin block `3,220,057` commits to Bitcoin block `950,154`, which Bitcoin Core confirms is canonical.[^1] The retained June refresh contains this witness and four other candidates, but the pinned Monitor publication ends with earlier events. That publication gap does not establish a period without merge mining.\n\nA second fixed control is Terracoin `3,288,246`, which commits to MiningDutch Bitcoin block `964,388` on 28 August 2026. Live capture and the regenerated Research publication authenticate these proofs and classify parents through Bitcoin Core. The source cursor and capture errors describe collection health independently of the time of the latest Bitcoin-difficulty winner.",
+  "anchors": [
     {
-      "kind": "event-timeline",
-      "caption": "Recent Terracoin parents that cleared Bitcoin's full target, compared with the six-week expectation while hashrate is present.",
-      "accessible_summary": "Terracoin recorded two full-difficulty Bitcoin parents three days apart in May 2025, then no further one until May 20, 2026. That 379-day gap is about nine times the six-week expectation, showing bursty rather than continuous hashrate.",
-      "summary": [
-        { "label": "Observed gap", "value": "379 days", "detail": "6 May 2025 to 20 May 2026" },
-        { "label": "Active-rate expectation", "value": "~6 weeks", "detail": "Only while hashrate points at Terracoin" },
-        { "label": "Latest parent", "value": "BTC 950,154", "detail": "20 May 2026" }
-      ],
-      "events": [
-        { "t": "2025-05-03T04:20", "lane": "Full-target parents", "label": "BTC 894,986", "detail": "3 May 2025" },
-        { "t": "2025-05-06T08:51", "lane": "Full-target parents", "label": "BTC 895,496", "detail": "6 May 2025" },
-        { "t": "2026-05-20T00:13", "lane": "Full-target parents", "label": "BTC 950,154", "detail": "20 May 2026" }
-      ],
-      "cadence": { "days": 42, "label": "Expected about every 6 weeks while hashrate is active" },
-      "x_ticks": ["2025-05-03T04:20", "2025-09-01", "2026-01-01", "2026-05-20"],
-      "note": "Full-target parents from this monitor's recovered Terracoin event data. Expected cadence uses the reported ~4.77e9 difficulty and observed ~2-minute child-block cadence."
+      "kind": "btc-height",
+      "value": "950154",
+      "label": "recovered canonical parent"
+    },
+    {
+      "kind": "source",
+      "value": "auxpow:terracoin"
     }
   ],
+  "figures": [],
   "references": [
     {
       "id": 1,
       "label": "mempool.space - Bitcoin block 950,154",
       "url": "https://mempool.space/block/950154"
-    },
-    {
-      "id": 2,
-      "label": "Terracoin Insight explorer (network difficulty)",
-      "url": "https://insight.terracoin.io/api/status"
     }
   ]
 }

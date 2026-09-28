@@ -124,9 +124,9 @@ pub(crate) struct BackfillSummary {
     /// Heights skipped as non-AuxPoW or failing the version gate.
     pub non_auxpow_skipped: usize,
     /// Heights skipped as malformed-but-claimed-AuxPoW (logged, not written)
-    /// under `MalformedPolicy::SkipAndContinue`.
+    /// under `CaptureFailurePolicy::SkipMalformedProof`.
     pub malformed_skipped: usize,
-    /// Heights that failed to decode under `MalformedPolicy::HoldInterval`.
+    /// Heights that failed to decode under `CaptureFailurePolicy::HoldMalformedProof`.
     /// Each one persisted a `capture_error` row, and a non-zero count makes
     /// the whole range incomplete: the caller must not report success.
     pub malformed_held: usize,

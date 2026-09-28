@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Verify the full CAuxPow commitment for a parsed AuxPoW block whose child block
+/// Verify the Elastos CAuxPow commitment for a parsed AuxPoW block whose child block
 /// hash is `child_block_hash` and merged-mining chain id is `chain_id`.
 ///
 /// This is the trust boundary for capturing against a configurable (possibly
@@ -18,7 +18,7 @@ use super::*;
 /// 5. the parent coinbase txid folds up the coinbase branch to the parent header
 ///    merkle root (wire byte order);
 /// 6. the child block hash folds up the chain branch to the committed aux merkle
-///    root (the standard AuxPoW reversal: the reversed leaf folds to the reversed
+///    root (Elastos's reversal: the reversed leaf folds to the reversed
 ///    committed root). Pinned against ELA 360062 / 1500000 / 2000000.
 pub fn verify_auxpow_commitment(
     parsed: &ParsedAuxpowBlock,
@@ -111,6 +111,108 @@ pub fn verify_auxpow_commitment(
     Ok(())
 }
 
+/// The deepest chain Merkle branch classic `CAuxPow::check` accepts.
+const CLASSIC_MAX_CHAIN_BRANCH: usize = 30;
+
+/// The furthest into the parent coinbase scriptSig a markerless (legacy) chain
+/// root may start under classic `CAuxPow::check`.
+const CLASSIC_MARKERLESS_ROOT_WINDOW: usize = 20;
+
+/// Verify a classic Namecoin-family commitment, porting the classic
+/// `CAuxPow::check` that Terracoin inherits. Its Merkle leaf is the child hash
+/// in wire order (Elastos's wrapper uses a reversed leaf). Unlike the Elastos
+/// check it locates the committed chain root itself, as consensus does: with a
+/// `fabe6d6d` marker there must be exactly one, immediately before the first
+/// occurrence of the root; without one, the root must start within the first
+/// 20 bytes. The chain branch may be at most 30 levels deep.
+pub fn verify_classic_auxpow_commitment(
+    parsed: &ParsedAuxpowBlock,
+    child_block_hash: BlockHash,
+    chain_id: u32,
+) -> Result<()> {
+    let branch_len = parsed.proof.chain_branch.hashes.len();
+    ensure!(
+        branch_len <= CLASSIC_MAX_CHAIN_BRANCH,
+        "AuxPoW chain merkle branch is too long ({branch_len} > {CLASSIC_MAX_CHAIN_BRANCH})"
+    );
+    ensure!(
+        parsed.proof.coinbase_branch.index == 0,
+        "parent coinbase is not the first transaction (branch index {})",
+        parsed.proof.coinbase_branch.index
+    );
+    ensure!(
+        parsed.proof.chain_branch.index >= 0,
+        "negative AuxPoW chain merkle branch index"
+    );
+    let coinbase_root = fold_merkle_branch(
+        parsed.parent_coinbase_txid.to_byte_array(),
+        &parsed.proof.coinbase_branch,
+    );
+    ensure!(
+        coinbase_root == parsed.parent_header.header.merkle_root.to_byte_array(),
+        "parent coinbase merkle proof does not reach the parent header merkle root"
+    );
+
+    // The coinbase stores the chain root in display order.
+    let mut display_root =
+        fold_merkle_branch(child_block_hash.to_byte_array(), &parsed.proof.chain_branch);
+    display_root.reverse();
+    let (tree_size, nonce) = read_commitment_footer(&parsed.parent_coinbase_script, &display_root)?;
+    ensure!(
+        tree_size == 1u32 << branch_len,
+        "AuxPoW tree size {tree_size} != 1 << {branch_len}"
+    );
+    let expected_slot = auxpow_expected_index(nonce, chain_id, branch_len);
+    let chain_index = u32::try_from(parsed.proof.chain_branch.index).unwrap();
+    ensure!(
+        chain_index == expected_slot,
+        "AuxPoW chain slot {chain_index} != deterministic slot {expected_slot} for chain id {chain_id}"
+    );
+    Ok(())
+}
+
+/// Locate the display-order chain root in a parent coinbase scriptSig and
+/// return its `[tree_size:4][nonce:4]` footer, following classic
+/// `CAuxPow::check` placement (shared by the classic family and Qbit): the
+/// first occurrence of the root counts; a `fabe6d6d` marker, when present,
+/// must occur once and sit immediately before it; without a marker the root
+/// must start within the first 20 bytes.
+pub(crate) fn read_commitment_footer(script: &[u8], display_root: &[u8; 32]) -> Result<(u32, u32)> {
+    let root_pos = find_subslice(script, display_root)
+        .context("display-order chain commitment missing from the parent coinbase scriptSig")?;
+    match find_subslice(script, &AUXPOW_MAGIC) {
+        Some(marker) => {
+            ensure!(
+                find_subslice(&script[marker + 1..], &AUXPOW_MAGIC).is_none(),
+                "multiple merged-mining markers in the parent coinbase scriptSig"
+            );
+            ensure!(
+                marker + AUXPOW_MAGIC.len() == root_pos,
+                "the merged-mining marker is not immediately before the chain commitment"
+            );
+        }
+        None => ensure!(
+            root_pos <= CLASSIC_MARKERLESS_ROOT_WINDOW,
+            "a markerless chain commitment must start within the first \
+             {CLASSIC_MARKERLESS_ROOT_WINDOW} bytes of the parent coinbase"
+        ),
+    }
+    ensure!(
+        script.len() >= root_pos + 40,
+        "truncated chain commitment footer"
+    );
+    let tree_size = u32::from_le_bytes(script[root_pos + 32..root_pos + 36].try_into().unwrap());
+    let nonce = u32::from_le_bytes(script[root_pos + 36..root_pos + 40].try_into().unwrap());
+    Ok((tree_size, nonce))
+}
+
+/// Index of the first occurrence of `needle` in `haystack`.
+pub(crate) fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
 /// The deterministic AuxPoW chain slot: a fixed LCG over the parent coinbase
 /// `nonce` and the merged-mining `chain_id`, modulo the tree size
 /// (`1 << branch_len`). All arithmetic is u32-wrapping; ported from the
@@ -179,6 +281,17 @@ pub fn validates_target(hash: BlockHash, bits: CompactTarget) -> bool {
 }
 
 pub fn parse_bip34_height(script_sig: &[u8]) -> Option<i32> {
+    parse_coinbase_height(script_sig).filter(|height| *height <= 2_000_000)
+}
+
+/// Decode a non-negative child coinbase height without Bitcoin's acquisition ceiling.
+pub fn parse_child_bip34_height(script_sig: &[u8]) -> Option<i32> {
+    let height = parse_coinbase_height(script_sig)?;
+    // Script numbers carry their sign in the high bit of the last byte.
+    (script_sig[script_sig[0] as usize] & 0x80 == 0).then_some(height)
+}
+
+fn parse_coinbase_height(script_sig: &[u8]) -> Option<i32> {
     if script_sig.len() < 2 {
         return None;
     }
@@ -191,5 +304,5 @@ pub fn parse_bip34_height(script_sig: &[u8]) -> Option<i32> {
     let mut raw = [0u8; 4];
     raw[..byte_len].copy_from_slice(&script_sig[1..1 + byte_len]);
     let height = i32::from_le_bytes(raw);
-    (0..=2_000_000).contains(&height).then_some(height)
+    (height >= 0).then_some(height)
 }

@@ -21,7 +21,7 @@ const AUXPOW_HELP = {
     meta: "How this Bitcoin block commits to its auxiliary chains",
     body: [
       "A merge-mined Bitcoin block commits to one or more auxiliary chains through its coinbase, so the same proof-of-work can secure all of them. How the commitment is encoded depends on the chain family (see Format).",
-      "Namecoin-family chains (Namecoin, Syscoin, Fractal, Elastos) use a 44-byte marker in the coinbase scriptSig: the 0xfabe6d6d magic, a 32-byte aux_merkle_root, and merkle_size / merkle_nonce; this panel shows those decoded fields. RSK discards the coinbase under RSKIP-92, so its commitment is opaque with no recoverable marker; Hathor uses the RFC 0006 \"Hath\" split-header form instead of fabe6d6d.",
+      "Namecoin-family chains (Namecoin, Syscoin, Fractal, Elastos, Terracoin) use a 44-byte marker in the coinbase scriptSig: the 0xfabe6d6d magic, a 32-byte aux_merkle_root, and merkle_size / merkle_nonce; this panel shows those decoded fields. RSK discards the coinbase under RSKIP-92, so its commitment is opaque with no recoverable marker; Hathor uses the RFC 0006 \"Hath\" split-header form instead of fabe6d6d.",
     ],
   },
   aux_merkle_root: {

@@ -9,6 +9,7 @@ use super::*;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ParsedTransaction {
     pub(crate) txid: Txid,
+    pub(crate) is_coinbase: bool,
     pub(crate) first_input_script: Option<Vec<u8>>,
     pub(crate) outputs: Vec<TxOut>,
 }
@@ -97,6 +98,7 @@ pub(crate) fn read_transaction(reader: &mut Reader<'_>) -> Result<ParsedTransact
 
     Ok(ParsedTransaction {
         txid: tx.compute_txid(),
+        is_coinbase: tx.is_coinbase(),
         first_input_script: tx
             .input
             .first()

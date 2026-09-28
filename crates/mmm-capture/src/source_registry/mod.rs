@@ -123,6 +123,7 @@ pub const SYSCOIN_SOURCE_CODE: &str = "auxpow:syscoin";
 pub const FRACTAL_SOURCE_CODE: &str = "auxpow:fractal";
 pub const HATHOR_SOURCE_CODE: &str = "auxpow:hathor";
 pub const ELASTOS_SOURCE_CODE: &str = "auxpow:elastos";
+pub const TERRACOIN_SOURCE_CODE: &str = "auxpow:terracoin";
 pub const QBIT_SOURCE_CODE: &str = "auxpow:qbit";
 pub const BITCOIN_SOURCE_CODE: &str = "live-chaintip:bitcoin:core";
 
@@ -238,7 +239,7 @@ pub const SOURCE_REGISTRY: &[SourceDefinition] = &[
     historical_auxpow(18, "auxpow:i0coin", "i0coin"),
     historical_auxpow(19, "auxpow:ixcoin", "ixcoin"),
     historical_auxpow(20, "auxpow:myriadcoin", "myriadcoin"),
-    historical_auxpow(21, "auxpow:terracoin", "terracoin"),
+    live_auxpow(21, TERRACOIN_SOURCE_CODE, "terracoin"),
     historical_auxpow(22, "auxpow:unobtanium", "unobtanium"),
     historical_powdata_auxpow(23, "auxpow:xaya", "xaya"),
     // -- recovery candidates and recovered datasets --
@@ -424,8 +425,8 @@ mod tests {
 
     #[test]
     fn registry_lifecycle_counts_match_recovery_state() {
-        assert_eq!(live().count(), 8);
-        assert_eq!(historical().count(), 20);
+        assert_eq!(live().count(), 9);
+        assert_eq!(historical().count(), 19);
         assert_eq!(partial().count(), 1);
         assert_eq!(surveyed().count(), 1);
         assert_eq!(catalogued().count(), 5);

@@ -140,11 +140,11 @@ function sourceFixture() {
         last_seen_at: null,
         status: "not_started",
         sync: {
-          mode: "historical",
-          state: "historical",
-          progress_height: null,
+          mode: "live",
+          state: "catching_up",
+          progress_height: 3288246,
           progress_updated_at: null,
-          target_height: null,
+          target_height: 3288250,
           latest_evidence_at: null,
           error_code: null,
           error_height: null,
@@ -355,7 +355,7 @@ test("renders source capture progress in the topbar, popover, and source rail", 
   const button = page.locator("#source-status-button");
   await expect(button).toContainText("Sources 1 error");
   await expect(button).toContainText("1 error");
-  await expect(button).toContainText("2 catching up");
+  await expect(button).toContainText("3 catching up");
   await expect(button).toContainText("1 stale");
   await expect(button).toContainText("1 live");
 
@@ -740,8 +740,6 @@ test("source modal renders code formatting, citations, and a Sources list", asyn
   });
   await page.goto("/");
 
-  // Terracoin (a Phase A authored chain) lives in the collapsed historical group.
-  await page.locator('details[data-source-group="historical"] > summary').click();
   await page.locator('.source-info-button[data-source-info="auxpow:terracoin"]').click();
 
   const dialog = page.locator("#source-dialog");
@@ -773,4 +771,28 @@ test("source modal renders authored history breaks as separate paragraphs", asyn
 
   await page.locator('.source-info-button[data-source-info="auxpow:namecoin"]').click();
   await expect(page.locator("#sd-panel-history p:not(.sd-status-detail)")).toHaveCount(3);
+});
+
+
+test("Terracoin live progress stays separate from sparse evidence and capture errors", async ({ page }) => {
+  await stubCommonApi(page);
+  const fixture = sourceFixture();
+  const trc = fixture.sources.find(source => source.code === "auxpow:terracoin");
+  await page.route("**/api/v1/sources", route => route.fulfill({ json: fixture }));
+  await page.goto("/");
+  await expect(sourceOptionByName(page, "Terracoin").locator(".source-sync-state-catching-up")).toBeVisible();
+  await page.locator("#source-status-button").click();
+  const row = page.getByRole("dialog", { name: "Source capture status" }).getByRole("row", { name: /Terracoin/ });
+  await expect(row).toContainText("3,288,246 / 3,288,250");
+  trc.sync.state = "error";
+  trc.sync.error_code = "auxpow_capture_error";
+  trc.sync.error_height = 3288200;
+  await page.reload();
+  await expect(sourceOptionByName(page, "Terracoin").locator(".source-sync-state-error")).toBeVisible();
+  trc.sync.state = "live";
+  trc.sync.progress_height = trc.sync.target_height;
+  trc.sync.error_code = null;
+  trc.sync.error_height = null;
+  await page.reload();
+  await expect(sourceOptionByName(page, "Terracoin").locator(".source-sync-state-live")).toBeVisible();
 });

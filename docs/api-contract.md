@@ -5,7 +5,7 @@ Fixture examples live in `fixtures/api/`; fixture
 coverage is listed by `fixtures/api/manifest.json`.
 
 The current implementation supports Namecoin, RSK, Syscoin, Fractal Bitcoin,
-Hathor, Elastos, and Qbit capture. See `docs/data-model.md` for schema details,
+Hathor, Elastos, Qbit, and Terracoin capture. See `docs/data-model.md` for schema details,
 `docs/architecture.md` for current code flow, and
 `docs/tree-semantics.md` for implementation notes on deriving `/api/v1/tree`
 and orphan navigator responses.
@@ -392,6 +392,7 @@ Reserved source codes:
 - `auxpow:hathor`
 - `auxpow:elastos`
 - `auxpow:qbit`
+- `auxpow:terracoin`
 - `live-chaintip:bitcoin:core`
 
 Reserved historical (recovered) AuxPoW source codes (defined in the Source
@@ -413,7 +414,6 @@ Lifecycle Registry with lifecycle `historical`; no live producer):
 - `auxpow:myriadcoin`
 - `auxpow:rod`
 - `auxpow:sixeleven`
-- `auxpow:terracoin`
 - `auxpow:unobtanium`
 - `auxpow:xaya`
 - `auxpow:elcash`
@@ -906,9 +906,10 @@ commitments therefore report `coinbase_tag: null` because their representative
 commitment intentionally has no recoverable Bitcoin coinbase script.
 
 `event_details[]` additionally carry `chain_id` (the reference AuxPoW chain id;
-cite-or-null, Namecoin = 1, Qbit = 47, `null` for not-yet-cited chains and
-non-AuxPoW families) and `slot_index` (this chain's slot in the parent's aux
-merkle tree, decoded from the stored proof blob). Both are selected per proof
+cite-or-null, Namecoin = 1, Elastos = 1224, Qbit = 47, Terracoin = 50, `null`
+for not-yet-cited chains and non-AuxPoW families) and `slot_index` (this
+chain's slot in the parent's aux merkle tree, decoded from the stored proof
+blob). Both are selected per proof
 format from the chain slug — classic CAuxPow for the Namecoin family, Qbit's
 native format for `qbit`, never sniffed from stored bytes — and are `null` for
 every other family; `slot_index` is additionally gated on the blob's embedded
@@ -1249,7 +1250,7 @@ this event's block at `child_height`, and the hash of the block carried there
 instead, in the same display order as `child_block_hash`. They are always set
 or cleared together. A null pair means no displacement has been recorded for
 the event, not that the event is the chain's current block at that height.
-Every live producer (Namecoin, Syscoin, Fractal, Qbit, Elastos and Hathor)
+Every live producer (Namecoin, Syscoin, Fractal, Qbit, Terracoin, Elastos and Hathor)
 records it for the heights it processes, so Hathor events carry non-null
 values from the release that ships it; an event written without a chain
 observation (a historical import for a live chain, or Hathor's archive cache
@@ -1433,3 +1434,8 @@ lists every `fixtures/api/*.json` file except
 `tests/api_fixture_contract.rs` smoke-checks the manifest, parses every fixture,
 and verifies the minimal response envelope. Endpoint behavior is covered by the
 endpoint and route tests rather than by field-by-field fixture assertions.
+
+The sources fixture includes Terracoin (source 21) as Live and catching up.
+Its progress and target heights describe collection separately from evidence
+freshness. Per-height transport failures use the existing public
+`auxpow_capture_error` code, just as malformed proofs do.

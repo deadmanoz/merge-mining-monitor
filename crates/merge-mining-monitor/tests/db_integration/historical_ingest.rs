@@ -1198,12 +1198,12 @@ async fn operator_csv_is_additive_for_historical_sources() -> Result<()> {
     })
 }
 
-#[tokio::test]
-async fn live_import_is_additive_and_never_removes_live_events() -> Result<()> {
+async fn assert_live_import_additive(chain: &str) -> Result<()> {
+    let source = format!("auxpow:{chain}");
     crate::run_mut_db_test!(client, {
         let header = header_meeting_bits(0x207f_ffff, 1_700_000_011, 22);
         let csv_path = write_normalized_csv_for_chain(
-            "namecoin",
+            chain,
             &header,
             "canonical",
             "",
@@ -1215,22 +1215,29 @@ async fn live_import_is_additive_and_never_removes_live_events() -> Result<()> {
             let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
                 canonical_verdict(&header, 700_011),
             ));
-            let mut config = HistoricalImportConfig::for_csv("namecoin", &csv_path);
+            let mut config = HistoricalImportConfig::for_csv(chain, &csv_path);
             config.allow_empty_known_stales = true;
             run_historical_import(&mut client, &classifier, &config).await?;
-            seed_unpublished_event(&client, "auxpow:namecoin", 99, vec![0x55; 32]).await?;
+            seed_unpublished_event(&client, &source, 99, vec![0x55; 32]).await?;
 
             let summary = run_historical_import(&mut client, &classifier, &config).await?;
             assert_eq!(summary.removed, 0);
-            assert_eq!(
-                active_source_event_count(&client, "auxpow:namecoin").await?,
-                2
-            );
+            assert_eq!(active_source_event_count(&client, &source).await?, 2);
             Ok::<_, anyhow::Error>(())
         }
         .await;
         finish_import_with_cleanup(result, &[&csv_path])
     })
+}
+
+#[tokio::test]
+async fn live_import_is_additive_and_never_removes_live_events() -> Result<()> {
+    assert_live_import_additive("namecoin").await
+}
+
+#[tokio::test]
+async fn promoted_terracoin_import_preserves_later_live_events() -> Result<()> {
+    assert_live_import_additive("terracoin").await
 }
 
 #[tokio::test]

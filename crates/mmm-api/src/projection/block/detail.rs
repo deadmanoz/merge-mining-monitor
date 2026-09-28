@@ -27,7 +27,8 @@ use mmm_capture::pool_resolver::PoolResolver;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ChainFamily {
-    /// Namecoin / Syscoin / Fractal: standard `fabe6d6d` AuxPoW marker.
+    /// Namecoin / Syscoin / Fractal / Elastos / Terracoin: classic CAuxPow
+    /// proof blob and the standard `fabe6d6d` AuxPoW marker.
     NamecoinFamily,
     /// Qbit: native proof format (no `hashBlock`, display-order chain
     /// commitment); stored proofs decode via `decode_qbit_auxpow_proof`,
@@ -42,16 +43,15 @@ pub(super) enum ChainFamily {
 
 /// Map a child chain slug to its AuxPoW `ChainFamily`. The single gate that
 /// decides which chains get fabe6d6d marker scanning + slot/aux-proof decoding
-/// (NamecoinFamily: namecoin/syscoin/fractal/elastos) vs the Qbit native
+/// (NamecoinFamily: namecoin/syscoin/fractal/elastos/terracoin) vs the Qbit native
 /// format (qbit) vs opaque (rsk) vs split-header (hathor). Proof-format
 /// selection is explicit per slug — never sniffed from stored bytes, and
 /// never a try-one-then-the-other fallback. Adding a family chain is a new
 /// arm here, never a cloned module (architecture rule).
 pub(super) fn chain_family(chain: Option<&str>) -> ChainFamily {
     match chain {
-        Some("namecoin") | Some("syscoin") | Some("fractal") | Some("elastos") => {
-            ChainFamily::NamecoinFamily
-        }
+        Some("namecoin") | Some("syscoin") | Some("fractal") | Some("elastos")
+        | Some("terracoin") => ChainFamily::NamecoinFamily,
         Some("qbit") => ChainFamily::Qbit,
         Some("rsk") => ChainFamily::Rsk,
         Some("hathor") => ChainFamily::Hathor,
@@ -63,8 +63,11 @@ pub(super) fn chain_family(chain: Option<&str>) -> ChainFamily {
 /// `AUXPOW_CHAIN_ID` is 1 (the merged-mining spec's worked example confirms slot
 /// derivation with `chain_id = 1`). Elastos's is 1224, verified against live
 /// blocks. Qbit's is 47, cited from pinned Qbit revision `70fea84` chainparams
-/// (the version field's chain-id bits and the LCG slot input). Syscoin /
-/// Fractal are not yet cited from their chainparams, so they return `None`
+/// (the version field's chain-id bits and the LCG slot input). Terracoin's is
+/// 50, the strict chain id the capture path enforces, verified against live
+/// blocks (the version's chain-id bits and the LCG slot of the pinned
+/// `fixtures/terracoin` blocks). Syscoin / Fractal are not yet cited from
+/// their chainparams, so they return `None`
 /// until a sourced constant is added. `slot_index` (decoded from the proof) is
 /// the per-block datum used for verification.
 pub(super) fn chain_id_for_chain(chain: &str) -> Option<u32> {
@@ -72,6 +75,7 @@ pub(super) fn chain_id_for_chain(chain: &str) -> Option<u32> {
         "namecoin" => Some(1),
         "elastos" => Some(1224),
         "qbit" => Some(47),
+        "terracoin" => Some(50),
         _ => None,
     }
 }
@@ -783,6 +787,51 @@ mod tests {
         bad.parent_hash = vec![0xffu8; 32];
         let rendered = render_event_details(vec![bad], &HashMap::new()).expect("render");
         assert!(rendered[0].slot_index.is_none());
+    }
+
+    /// Terracoin is a classic CAuxPow chain: a real authenticated block
+    /// projects chain id 50, its slot and a branch breakdown with hash_block,
+    /// and a Terracoin-only parent yields a `namecoin-aux` commitment rather
+    /// than `null`.
+    #[test]
+    fn terracoin_arm_projects_classic_proof_and_commitment() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../../fixtures/terracoin/3288246.json"
+        ))
+        .expect("parse Terracoin fixture");
+        let raw = hex::decode(fixture["rawblock"].as_str().expect("rawblock")).expect("decode hex");
+        let hash: bitcoin::BlockHash = fixture["child_hash"]
+            .as_str()
+            .expect("child hash")
+            .parse()
+            .expect("parse child hash");
+        let parsed =
+            match mmm_capture::auxpow::parse_verified_classic_block(&raw, hash, 3_288_246, 50)
+                .expect("authenticate Terracoin block")
+            {
+                mmm_capture::auxpow::ParsedNamecoinBlock::Auxpow(parsed) => *parsed,
+                mmm_capture::auxpow::ParsedNamecoinBlock::NonAuxpow(_) => panic!("expected AuxPoW"),
+            };
+        let row = || {
+            let mut row = event_row(1, "terracoin");
+            row.aux_merkle_proof = Some(parsed.auxpow_bytes.clone());
+            row.parent_hash = parsed.parent_header.hash().to_byte_array().to_vec();
+            row.btc_parent_coinbase_script = Some(parsed.parent_coinbase_script.clone());
+            row
+        };
+
+        let rendered = render_event_details(vec![row()], &HashMap::new()).expect("render");
+        assert_eq!(rendered[0].chain_id, Some(50));
+        assert_eq!(
+            rendered[0].slot_index,
+            Some(u32::try_from(parsed.proof.chain_branch.index).expect("non-negative slot"))
+        );
+        let aux = rendered[0].aux_proof.as_ref().expect("aux proof");
+        assert!(aux.hash_block.is_some());
+
+        let commitment = derive_commitment(&[row()]).expect("Terracoin-only parent commitment");
+        assert_eq!(commitment.format, "namecoin-aux");
+        assert!(commitment.marker.is_some());
     }
 
     #[test]

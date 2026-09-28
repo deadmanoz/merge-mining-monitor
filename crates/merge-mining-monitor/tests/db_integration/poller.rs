@@ -24,6 +24,7 @@ struct FakeChain {
     state: ChainPollerState,
     tip: i32,
     fail_above: Option<i32>,
+    processed: Option<std::sync::Arc<std::sync::Mutex<Vec<i32>>>>,
 }
 
 impl ChainPoller for FakeChain {
@@ -50,6 +51,9 @@ impl ChainPoller for FakeChain {
         {
             anyhow::bail!("fake process_height failure at {height}");
         }
+        if let Some(processed) = &self.processed {
+            processed.lock().unwrap().push(height);
+        }
         Ok(HeightProgress::Advance)
     }
 }
@@ -65,6 +69,71 @@ async fn fake_chain(schema: &str, tip: i32, fail_above: Option<i32>) -> Result<F
         ),
         tip,
         fail_above,
+        processed: None,
+    })
+}
+
+#[tokio::test]
+async fn explicit_overlap_handoff_covers_moving_tip_and_restart() -> Result<()> {
+    crate::run_db_test!(client, schema, {
+        let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let processed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        // Coverage is proven through C=1000 (for Terracoin, the regenerated
+        // publication's coverage tip). The child tip advances before
+        // activation. START_HEIGHT is C+1-D, not C+1 (the override is a floor).
+        let config = PollerConfig {
+            start_height_override: Some(997),
+            ..monotonic_poll_config(4)
+        };
+        let mut chain = fake_chain(&schema, 1_003, None).await?;
+        chain.processed = Some(processed.clone());
+        let mut poller = Poller::new(chain, config).await?;
+        poller.poll_tick().await?;
+        assert_eq!(
+            *processed.lock().unwrap(),
+            (997..=1_003).collect::<Vec<_>>()
+        );
+        assert_eq!(load_poll_cursor(&client, source_id).await?, Some(1_003));
+        drop(poller);
+        processed.lock().unwrap().clear();
+        let mut resumed = fake_chain(&schema, 1_005, None).await?;
+        resumed.processed = Some(processed.clone());
+        Poller::new(resumed, monotonic_poll_config(4))
+            .await?
+            .poll_tick()
+            .await?;
+        assert_eq!(
+            *processed.lock().unwrap(),
+            (1_000..=1_005).collect::<Vec<_>>()
+        );
+
+        // A pre-existing high cursor is not proof that the explicit replay
+        // succeeded. Keep the override after an error until coverage passes.
+        upsert_poll_cursor_with_target(&client, source_id, 1_050, None).await?;
+        processed.lock().unwrap().clear();
+        let mut failing = fake_chain(&schema, 1_050, Some(1_001)).await?;
+        failing.processed = Some(processed.clone());
+        assert!(
+            Poller::new(failing, config)
+                .await?
+                .poll_tick()
+                .await
+                .is_err()
+        );
+        assert_eq!(load_poll_cursor(&client, source_id).await?, Some(1_050));
+        assert_eq!(
+            *processed.lock().unwrap(),
+            (997..=1_001).collect::<Vec<_>>()
+        );
+        processed.lock().unwrap().clear();
+        let mut repaired = fake_chain(&schema, 1_050, None).await?;
+        repaired.processed = Some(processed.clone());
+        Poller::new(repaired, config).await?.poll_tick().await?;
+        assert_eq!(
+            *processed.lock().unwrap(),
+            (997..=1_050).collect::<Vec<_>>()
+        );
+        Ok::<_, anyhow::Error>(())
     })
 }
 

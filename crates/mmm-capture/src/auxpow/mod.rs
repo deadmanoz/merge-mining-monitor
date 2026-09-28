@@ -162,22 +162,13 @@ pub use verify::*;
 /// snapshot carries the BTC payout addresses). `auxpow_bytes` captures only the
 /// `CAuxPow` byte range between header end and tx-vector start.
 pub fn parse_namecoin_block(raw: &[u8]) -> Result<ParsedNamecoinBlock> {
-    ensure!(
-        raw.len() >= Header::SIZE,
-        "block is shorter than an 80-byte header"
-    );
-
-    let child_header =
-        parse_header(raw[0..Header::SIZE].try_into().unwrap()).context("parse child header")?;
-    if child_header.header.version.to_consensus() & VERSION_AUXPOW == 0 {
+    let (child_header, prefix) = read_classic_prefix(raw)?;
+    let Some((auxpow, auxpow_end)) = prefix else {
         return Ok(ParsedNamecoinBlock::NonAuxpow(child_header));
-    }
-
+    };
+    let auxpow_start = Header::SIZE;
     let mut reader = Reader::new(raw);
-    reader.skip(Header::SIZE)?;
-    let auxpow_start = reader.position();
-    let auxpow = read_auxpow(&mut reader).context("parse AuxPoW payload")?;
-    let auxpow_end = reader.position();
+    reader.skip(auxpow_end)?;
 
     let child = if !reader.is_eof() {
         let tx_count = reader.read_varint_usize().context("read child tx count")?;
@@ -304,6 +295,13 @@ pub fn parse_auxpow_header_blob(raw: &[u8]) -> Result<ParsedAuxpowBlock> {
 /// proof with child reward identity. The block transaction merkle root must
 /// match its header before any coinbase identity is trusted.
 pub fn parse_child_block_coinbase(raw: &[u8]) -> Result<ParsedChildBlockCoinbase> {
+    parse_child_block_coinbase_with_height(raw, parse_bip34_height)
+}
+
+fn parse_child_block_coinbase_with_height(
+    raw: &[u8],
+    height_parser: fn(&[u8]) -> Option<i32>,
+) -> Result<ParsedChildBlockCoinbase> {
     let block: Block = deserialize(raw).context("deserialize full child block")?;
     ensure!(
         block.check_merkle_root(),
@@ -327,7 +325,7 @@ pub fn parse_child_block_coinbase(raw: &[u8]) -> Result<ParsedChildBlockCoinbase
         child_header: ParsedHeader {
             header: block.header,
         },
-        child_height: parse_bip34_height(&script),
+        child_height: height_parser(&script),
         child_coinbase_txid: coinbase.compute_txid(),
         child_coinbase_script: script,
         child_coinbase_outputs: coinbase.output.clone(),
@@ -422,3 +420,7 @@ pub mod evidence {
         decode_qbit_auxpow_proof, extract_coinbase_tag, output_addresses,
     };
 }
+
+mod classic;
+pub use classic::parse_verified_classic_block;
+use classic::read_classic_prefix;

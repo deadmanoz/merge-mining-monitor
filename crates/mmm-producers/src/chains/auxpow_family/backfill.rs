@@ -30,7 +30,7 @@ pub(crate) async fn run_auxpow_backfill(
     } = rt;
     let spec = config.spec;
     let family = family_of(spec);
-    ensure_qbit_mainnet_endpoint(&rpc, family).await?;
+    ensure_mainnet_endpoint(&rpc, family).await?;
 
     let chain_tip = rpc
         .get_block_count()
