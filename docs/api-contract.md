@@ -906,9 +906,10 @@ commitments therefore report `coinbase_tag: null` because their representative
 commitment intentionally has no recoverable Bitcoin coinbase script.
 
 `event_details[]` additionally carry `chain_id` (the reference AuxPoW chain id;
-cite-or-null, Namecoin = 1, Qbit = 47, `null` for not-yet-cited chains and
-non-AuxPoW families) and `slot_index` (this chain's slot in the parent's aux
-merkle tree, decoded from the stored proof blob). Both are selected per proof
+cite-or-null, Namecoin = 1, Elastos = 1224, Qbit = 47, Terracoin = 50, `null`
+for not-yet-cited chains and non-AuxPoW families) and `slot_index` (this
+chain's slot in the parent's aux merkle tree, decoded from the stored proof
+blob). Both are selected per proof
 format from the chain slug — classic CAuxPow for the Namecoin family, Qbit's
 native format for `qbit`, never sniffed from stored bytes — and are `null` for
 every other family; `slot_index` is additionally gated on the blob's embedded

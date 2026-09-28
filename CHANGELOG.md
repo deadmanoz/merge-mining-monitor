@@ -15,7 +15,9 @@ This changelog starts with the initial release.
   the `capture_error` kind check). Activation imports the regenerated Research
   publication after the source becomes Live and then starts the poller at
   `max(833000, C+1-64)`, where C is the publication's proven contiguous
-  coverage tip; `backfill-terracoin` is a bounded repair tool.
+  coverage tip; `backfill-terracoin` is a bounded repair tool. Block detail
+  projects Terracoin's chain ID (50), slot and classic proof, and a
+  Terracoin-only parent reports a `namecoin-aux` commitment instead of `null`.
 - Separate each family's RPC dialect and capture-failure policy from offline
   classic AuxPoW authentication, preserving the incumbent chains' evidence
   semantics.
