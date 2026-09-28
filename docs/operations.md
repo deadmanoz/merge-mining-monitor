@@ -477,14 +477,22 @@ about which heights were scanned.
 
 Activate in this order, through the backup-first release workflow:
 
-1. Deploy the release that registers source 21 as Live and apply migration
-   0030 with `just db-migrate-deploy`. Migration 0030 extends capture-error
-   kinds to per-height operational failures; source 21 already exists and
-   needs no new identity row. The lifecycle comes from the shared registry.
-2. Refresh the pins with `just gen-research-publication-pins` from the
-   Research main commit that carries the regenerated publication, and take C
-   and hash(C) from its coverage receipt.
-3. Import it with `just import-dataset terracoin`. Once source 21 is Live the
+1. Refresh the pins with `just gen-research-publication-pins --repo-dir
+   "$MERGE_MINING_RESEARCH_DIR" --source-commit <commit>`, where `<commit>` is
+   the Research main commit that carries the regenerated publication (see
+   Historical Publication), and take C and hash(C) from its coverage receipt.
+   The pinned manifest is compiled into the binary, so the refresh must be on
+   main before the release is cut and ships in the same release that registers
+   source 21 as Live. Terracoin is listed as a Live source that has not
+   started from that release until the poller starts in step 4; releasing the
+   Live registration ahead of the refresh would need a second release and
+   stretch that window across both.
+2. Deploy that release and apply migration 0030 with `just db-migrate-deploy`.
+   Migration 0030 extends capture-error kinds to per-height operational
+   failures; source 21 already exists and needs no new identity row. The
+   lifecycle comes from the shared registry.
+3. Import the publication with `just import-all` (see Historical Publication);
+   unchanged artifacts are skipped. Once source 21 is Live the Terracoin
    import is additive, so verify that no Terracoin event was removed and that
    the reconcile queues drained. An import made before the Live release is
    authoritative and can delete rows, so never run an old Historical importer
