@@ -1,5 +1,17 @@
 # Release Notes
 
+## [0.9.0] - 2026-09-29
+
+- Terracoin is a live source. Once the poller is first started with
+  `TERRACOIN_START_HEIGHT` at or below 3,202,526, 64 blocks below 3,202,589
+  where its historical publication ends, its merge-mined blocks are tracked
+  continuously. Each raw block is authenticated against the requested hash and
+  height, and a height that fails to capture keeps a capture error until that
+  same height succeeds (migration `0030`).
+- Block details show Terracoin's chain ID, slot and proof for captured events,
+  and a Bitcoin block seen only through Terracoin now shows its merge-mining
+  commitment.
+
 ## [0.8.2] - 2026-09-22
 
 - Ten reviewed body-invalid Bitcoin parents now appear as error blocks, with

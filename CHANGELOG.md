@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-29
+
 - Add Terracoin live capture through the shared AuxPoW runner, keeping source
   21 and making later imports of its Research publication additive. Raw
   proofs are authenticated against the observed block hash, child heights
