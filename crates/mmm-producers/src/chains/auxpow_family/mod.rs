@@ -40,7 +40,7 @@ use mmm_capture::capture::{
 };
 use mmm_capture::child_payout::PoolIdentityLookup;
 use mmm_capture::pool_resolver::PoolResolver;
-use mmm_read_model::capture_in_txn;
+use mmm_read_model::CaptureOutcome;
 use mmm_store::{
     CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, ChildChainHeadOutcome, ChildChainHeadRecord,
     CurrentBlockParent, EvidenceMarker, clear_capture_error, finish_child_chain_height_operation,
@@ -137,8 +137,9 @@ pub(super) fn family_of(spec: &'static ChainSpec) -> &'static FamilySpec {
 
 /// Per-height capture verdict. Drives the backfill summary counters; only
 /// `AuxpowWritten` produces a `merge_mining_event`. Skips are normal, not
-/// errors: most heights are non-AuxPoW, and a malformed block is never written
-/// and never demotes prior evidence. Which malformed variant a chain produces
+/// errors: most heights are non-AuxPoW, a malformed block is never written
+/// and never demotes prior evidence, and a parent from another chain is never
+/// evidence at all. Which malformed variant a chain produces
 /// is `FamilySpec::failure_policy`, not a property of the failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeightOutcome {
@@ -147,6 +148,14 @@ pub enum HeightOutcome {
     /// The block carries no merge-mining proof (or fails the version gate);
     /// nothing written.
     NonAuxpowSkipped,
+    /// The proof verified but its parent is another chain's header (the
+    /// lineage gate in `mmm_read_model::capture_in_txn`); nothing written, and
+    /// the height is settled.
+    NonBitcoinParent,
+    /// The parent's lineage waits on a Bitcoin epoch the Core header cache
+    /// has not reached; nothing written. The live cursor holds here until a
+    /// later tick's cache refresh decides it; a bounded backfill fails.
+    LineagePending,
     /// `CaptureFailurePolicy::SkipMalformedProof`: the block claimed AuxPoW but failed
     /// to parse; logged and skipped without writing.
     MalformedSkipped,
@@ -311,13 +320,9 @@ async fn process_locked_height(
     let outcome = match fetch_auxpow_candidate(rpc, context, &block_hash, height).await? {
         AuxpowFetch::Classic(mut parsed) => {
             attach_child_payout_if_needed(rpc, context, &block_hash, parsed.as_mut()).await?;
-            write_classic_event(client, context, height, &parsed).await?;
-            HeightOutcome::AuxpowWritten
+            write_classic_event(client, context, height, &parsed).await?
         }
-        AuxpowFetch::Qbit(parsed) => {
-            write_qbit_event(client, context, height, &parsed).await?;
-            HeightOutcome::AuxpowWritten
-        }
+        AuxpowFetch::Qbit(parsed) => write_qbit_event(client, context, height, &parsed).await?,
         AuxpowFetch::NonAuxpow => HeightOutcome::NonAuxpowSkipped,
         AuxpowFetch::Malformed(detail) => {
             record_malformed_height(client, context, height, &block_hash, detail).await?
@@ -326,9 +331,12 @@ async fn process_locked_height(
 
     // A block the node confirms carries no AuxPoW cannot be any hashless AuxPoW
     // observation, so it displaces them; a proof that failed to parse leaves
-    // the block's parent unknown, so hashless rows are left alone.
+    // the block's parent unknown, so hashless rows are left alone. A verified
+    // proof was recorded with its parent by the write path.
     let eventless_record = match outcome {
-        HeightOutcome::AuxpowWritten => None,
+        HeightOutcome::AuxpowWritten
+        | HeightOutcome::NonBitcoinParent
+        | HeightOutcome::LineagePending => None,
         HeightOutcome::NonAuxpowSkipped => Some((
             CurrentBlockParent::NoAuxpow,
             ChildChainHeadOutcome::NoAuxpow,
@@ -352,13 +360,16 @@ async fn process_locked_height(
                 outcome: head_outcome,
                 evidence: EvidenceMarker::None,
                 observed_at: now_epoch_seconds()?,
+                core_cache_generation: None,
             },
         )
         .await?;
     }
     if matches!(
         outcome,
-        HeightOutcome::MalformedSkipped | HeightOutcome::MalformedHeld
+        HeightOutcome::MalformedSkipped
+            | HeightOutcome::MalformedHeld
+            | HeightOutcome::LineagePending
     ) {
         return Ok(outcome);
     }
@@ -430,7 +441,7 @@ async fn write_classic_event(
     context: &AuxpowCaptureContext,
     height: i32,
     parsed: &ParsedAuxpowBlock,
-) -> Result<()> {
+) -> Result<HeightOutcome> {
     let pool_ids = resolve_event_pools_with_child_payout(
         parsed,
         &context.resolver,
@@ -455,46 +466,87 @@ async fn write_classic_event(
 /// the record is ordered correctly against a concurrent capture at the same
 /// height; the upsert closure may run more than once under the retry loop and
 /// the record is idempotent.
+///
+/// A parent the lineage gate refuses writes no event, but the block is still
+/// the chain's block at the height, so it is recorded with its parent in a
+/// transaction of its own: settled for another chain's parent, stamped with
+/// the Core-cache generation the refusal was decided under, and held for a
+/// pending one.
 pub(super) async fn write_event_in_txn(
     client: &mut Client,
     context: &AuxpowCaptureContext,
     payload: &mut MergeMiningEventPayload,
-) -> Result<()> {
+) -> Result<HeightOutcome> {
     let observed_at = now_epoch_seconds()?;
-    capture_in_txn(
+    let child_height = payload
+        .child_height
+        .context("bitcoind-family event payload carries no child height")?;
+    let child_block_hash = payload
+        .child_block_hash
+        .clone()
+        .context("bitcoind-family event payload carries no child block hash")?;
+    let captured = context
+        .base
+        .capture(
+            client,
+            payload,
+            context.family().label,
+            async |txn, source_id, payload| {
+                let outcome =
+                    upsert_merge_mining_event_with_attributions(txn, source_id, payload).await?;
+                record_child_chain_block(
+                    txn,
+                    source_id,
+                    child_height,
+                    ChildChainHeadRecord {
+                        block_hash: &child_block_hash,
+                        parent: CurrentBlockParent::Known(
+                            payload.btc_parent_header_hash.as_slice(),
+                        ),
+                        outcome: ChildChainHeadOutcome::captured(
+                            payload.classification_provisional,
+                        ),
+                        evidence: EvidenceMarker::None,
+                        observed_at,
+                        core_cache_generation: None,
+                    },
+                )
+                .await?;
+                Ok(outcome)
+            },
+        )
+        .await?;
+    let (head_outcome, outcome, core_cache_generation) = match captured {
+        CaptureOutcome::Written(_) => return Ok(HeightOutcome::AuxpowWritten),
+        CaptureOutcome::NotBitcoin {
+            core_cache_generation,
+            ..
+        } => (
+            ChildChainHeadOutcome::Recorded,
+            HeightOutcome::NonBitcoinParent,
+            Some(core_cache_generation),
+        ),
+        CaptureOutcome::LineagePending(_) => (
+            ChildChainHeadOutcome::Held,
+            HeightOutcome::LineagePending,
+            None,
+        ),
+    };
+    record_child_chain_block_in_own_transaction(
         client,
         context.source_id(),
-        context.parent_classifier(),
-        payload,
-        context.family().label,
-        async |txn, source_id, payload| {
-            let outcome =
-                upsert_merge_mining_event_with_attributions(txn, source_id, payload).await?;
-            let child_height = payload
-                .child_height
-                .context("bitcoind-family event payload carries no child height")?;
-            let child_block_hash = payload
-                .child_block_hash
-                .as_deref()
-                .context("bitcoind-family event payload carries no child block hash")?;
-            record_child_chain_block(
-                txn,
-                source_id,
-                child_height,
-                ChildChainHeadRecord {
-                    block_hash: child_block_hash,
-                    parent: CurrentBlockParent::Known(payload.btc_parent_header_hash.as_slice()),
-                    outcome: ChildChainHeadOutcome::captured(payload.classification_provisional),
-                    evidence: EvidenceMarker::None,
-                    observed_at,
-                },
-            )
-            .await?;
-            Ok(outcome)
+        child_height,
+        ChildChainHeadRecord {
+            block_hash: &child_block_hash,
+            parent: CurrentBlockParent::Known(payload.btc_parent_header_hash.as_slice()),
+            outcome: head_outcome,
+            evidence: EvidenceMarker::None,
+            observed_at,
+            core_cache_generation,
         },
     )
     .await?;
-    Ok(())
+    Ok(outcome)
 }
 
 async fn fetch_auxpow_candidate(
@@ -616,7 +668,8 @@ async fn attach_child_payout_if_needed(
 /// Live capture chain for the bitcoind family. Heights up to the tip always
 /// exist, so `process_height` never returns `Retry`; it advances past every
 /// captured or skipped height and returns `Hold` only for a malformed proof
-/// under either hold policy (see `height_progress_for`).
+/// under either hold policy or a parent whose lineage is pending (see
+/// `height_progress_for`).
 struct AuxpowFamilyPoller {
     state: ChainPollerState,
     rpc: BitcoindRpcClient,
@@ -661,6 +714,9 @@ impl ChainPoller for AuxpowFamilyPoller {
     fn parent_classifier(&self) -> Option<&ConfiguredParentClassifier> {
         Some(self.context.parent_classifier())
     }
+    fn non_bitcoin_parents(&self) -> usize {
+        self.context.base.non_bitcoin_parents()
+    }
 
     async fn refresh_core_cache(&mut self) -> Result<()> {
         self.context
@@ -672,11 +728,12 @@ impl ChainPoller for AuxpowFamilyPoller {
 
     /// Capture one height. Every height up to the tip exists in a bitcoind
     /// chain, so there is no Retry case here (unlike the header-pull divergent
-    /// chains); the one non-advancing outcome is a held malformed proof under
-    /// either hold policy, whose `capture_error` row is already
-    /// persisted by the time this returns. `Hold` blocks the cursor in the new
-    /// sub-range; in the best-effort replay sub-range the driver continues, and
-    /// the persisted row is what keeps that gap visible.
+    /// chains); the non-advancing outcomes are a held malformed proof under
+    /// either hold policy, whose `capture_error` row is already persisted by
+    /// the time this returns, and a pending parent, whose held child head
+    /// makes every later observation capture it again. `Hold` blocks the
+    /// cursor in the new sub-range; in the best-effort replay sub-range the
+    /// driver continues, and the persisted row is what keeps that gap visible.
     async fn process_height(&mut self, height: i32) -> Result<HeightProgress> {
         let outcome =
             process_auxpow_height(&mut self.state.client, &self.rpc, &self.context, height).await?;
@@ -693,14 +750,16 @@ impl ChainPoller for AuxpowFamilyPoller {
     }
 }
 
-/// Whether the live cursor may move past a captured height. Only a held
-/// malformed proof blocks it; a skip (non-AuxPoW, or malformed under the
-/// skip-and-continue policy) advances exactly as it always has.
+/// Whether the live cursor may move past a captured height. A held malformed
+/// proof and a parent whose lineage is pending block it; a skip (non-AuxPoW,
+/// malformed under the skip-and-continue policy, or another chain's parent)
+/// advances.
 fn height_progress_for(outcome: HeightOutcome) -> HeightProgress {
     match outcome {
-        HeightOutcome::MalformedHeld => HeightProgress::Hold,
+        HeightOutcome::MalformedHeld | HeightOutcome::LineagePending => HeightProgress::Hold,
         HeightOutcome::AuxpowWritten
         | HeightOutcome::NonAuxpowSkipped
+        | HeightOutcome::NonBitcoinParent
         | HeightOutcome::MalformedSkipped => HeightProgress::Advance,
     }
 }
@@ -817,17 +876,17 @@ mod tests {
         assert_eq!(payload.btc_parent_kind, ParentKind::Unknown);
     }
 
-    /// Only a held malformed proof blocks the live cursor. The incumbent
-    /// skip-and-continue outcome advances exactly as it always has.
+    /// A held malformed proof and a pending parent block the live cursor;
+    /// every other outcome advances.
     #[test]
-    fn only_a_held_malformed_proof_blocks_the_cursor() {
-        assert_eq!(
-            height_progress_for(HeightOutcome::MalformedHeld),
-            HeightProgress::Hold
-        );
+    fn only_held_and_pending_heights_block_the_cursor() {
+        for holding in [HeightOutcome::MalformedHeld, HeightOutcome::LineagePending] {
+            assert_eq!(height_progress_for(holding), HeightProgress::Hold);
+        }
         for advancing in [
             HeightOutcome::AuxpowWritten,
             HeightOutcome::NonAuxpowSkipped,
+            HeightOutcome::NonBitcoinParent,
             HeightOutcome::MalformedSkipped,
         ] {
             assert_eq!(height_progress_for(advancing), HeightProgress::Advance);

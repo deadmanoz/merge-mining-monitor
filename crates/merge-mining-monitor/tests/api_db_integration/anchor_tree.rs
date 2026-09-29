@@ -291,13 +291,6 @@ async fn anchor_tree_places_weak_orphan_in_canonical_window() -> Result<()> {
         // dangling off the nearest
         // in-window canonical via the approximate edge.
         let orphan_time = 1_240_000_000i64;
-        crate::support::db::seed_bitcoin_core_header_cache_through(
-            &client,
-            300_000,
-            orphan_time,
-            0x1d00_ffff,
-        )
-        .await?;
         let ph = mmm_store::load_bitcoin_core_nbits_table(&client)
             .await?
             .epoch_height_for_time(orphan_time)

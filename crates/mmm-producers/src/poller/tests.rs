@@ -376,65 +376,6 @@ async fn tick_policy_replay_hold_continues_without_lowering_the_cursor() -> Resu
 }
 
 #[tokio::test]
-async fn tick_policy_new_height_abort_bails() -> Result<()> {
-    // The Hathor Core-cache horizon maps TableHorizonHold -> Abort: a new
-    // height returning Abort must error the tick (not silently Hold like a
-    // not-yet-captured height), after advancing the heights below it.
-    let mut cursor = 4;
-    let mut seen = Vec::new();
-    let result = run_tick_policy(
-        &mut cursor,
-        TickWindow {
-            rescan_start: 5,
-            end: 8,
-        },
-        async |height, _kind| {
-            seen.push(height);
-            if height == 6 {
-                Ok(HeightProgress::Abort)
-            } else {
-                Ok(HeightProgress::Advance)
-            }
-        },
-    )
-    .await;
-    assert!(result.is_err());
-    // 5 advanced; 6 aborted the tick; 7/8 never ran.
-    assert_eq!(seen, vec![5, 6]);
-    assert_eq!(cursor, 5);
-    Ok(())
-}
-
-#[tokio::test]
-async fn tick_policy_replay_abort_bails() -> Result<()> {
-    // Unlike a best-effort replay *error* (swallowed so it never starves the
-    // tip), an Abort in the replay sub-range stops the whole tick.
-    let mut cursor = 5;
-    let mut seen = Vec::new();
-    let result = run_tick_policy(
-        &mut cursor,
-        TickWindow {
-            rescan_start: 3,
-            end: 7,
-        },
-        async |height, _kind| {
-            seen.push(height);
-            if height == 4 {
-                Ok(HeightProgress::Abort)
-            } else {
-                Ok(HeightProgress::Advance)
-            }
-        },
-    )
-    .await;
-    assert!(result.is_err());
-    // 3 replayed; 4 aborted; replay 5 and the new heights 6/7 never ran.
-    assert_eq!(seen, vec![3, 4]);
-    assert_eq!(cursor, 5);
-    Ok(())
-}
-
-#[tokio::test]
 async fn tick_policy_cursor_ahead_of_tip_only_replays() -> Result<()> {
     // cursor (1_000) ahead of tip; window ends at tip (980). Only the
     // replay sub-range runs, capped at the tip; no new heights requested.

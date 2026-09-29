@@ -657,6 +657,38 @@ pub async fn load_bitcoin_core_header_cache_horizon<C: GenericClient>(
         .transpose()
 }
 
+/// The Core header cache's generation, which a refresh that can change
+/// verdicts already given advances. Read under the shared cache lock, it names
+/// the cache a verdict was decided under.
+pub async fn load_core_cache_generation<C: GenericClient>(client: &C) -> Result<i64> {
+    Ok(client
+        .query_one(
+            "SELECT core_cache_generation FROM bitcoin_core_header_cache_state WHERE singleton",
+            &[],
+        )
+        .await
+        .context("load the Core header cache generation")?
+        .get(0))
+}
+
+/// The height of a cached Core header, `None` when the cache does not hold
+/// `block_hash`. The cache holds each epoch boundary and the tip it last
+/// refreshed to, so this places the tip on Bitcoin's active chain before the
+/// canonical sync has written its `block` row.
+pub async fn cached_bitcoin_core_header_height<C: GenericClient>(
+    client: &C,
+    block_hash: &[u8],
+) -> Result<Option<i32>> {
+    Ok(client
+        .query_opt(
+            "SELECT height FROM bitcoin_core_header WHERE block_hash = $1",
+            &[&block_hash],
+        )
+        .await
+        .context("look up a cached Core header by hash")?
+        .map(|row| row.get(0)))
+}
+
 async fn load_previous_shallow_bitcoin_core_headers(
     transaction: &Transaction<'_>,
 ) -> Result<Vec<BitcoinCoreHeader>> {

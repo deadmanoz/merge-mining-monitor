@@ -43,7 +43,7 @@
 use std::future::Future;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use tokio::time::sleep;
 use tokio_postgres::Client;
 use tracing::{debug, error, info, warn};
@@ -68,12 +68,9 @@ pub enum HeightProgress {
     /// The height was captured; the cursor may move past it.
     Advance,
     /// The height could not be captured yet (e.g. an absent RSK canonical
-    /// block) and must be retried on a later tick, not skipped.
+    /// block, or a parent whose lineage is pending) and must be retried on a
+    /// later tick, not skipped.
     Hold,
-    /// A cursor-blocking condition (the Hathor Core-cache horizon): the tick
-    /// must STOP in both the replay and new sub-ranges rather than advance or be
-    /// counted as processed, until an operator resolves it.
-    Abort,
 }
 
 /// Per-chain default configuration values. Env vars override each field.
@@ -248,6 +245,12 @@ pub trait ChainPoller {
     fn parent_classifier(&self) -> Option<&ConfiguredParentClassifier> {
         None
     }
+    /// Child blocks the lineage gate has refused for a non-Bitcoin parent
+    /// since the poller started; the tick summary reports the delta. Test
+    /// pollers capture nothing.
+    fn non_bitcoin_parents(&self) -> usize {
+        0
+    }
     /// The transport counters the tick summary reports as deltas: the chain
     /// client's, plus the Core classifier's when it is Core-backed.
     fn rpc_metrics(&self) -> Vec<RpcMetrics> {
@@ -266,9 +269,9 @@ struct TickSummary {
     processed: usize,
     rescanned: usize,
     new: i32,
-    /// A height answered with a hold (a replay hold, a new height not yet
-    /// capturable, or a cursor-blocking abort), as the policy observed it; a
-    /// tick that failed on an error is not held.
+    /// A height answered with a hold (a replay hold or a new height not yet
+    /// capturable), as the policy observed it; a tick that failed on an error
+    /// is not held.
     held: bool,
 }
 
@@ -378,6 +381,7 @@ impl<C: ChainPoller> Poller<C> {
         let tick_start = Instant::now();
         let metrics = self.chain.rpc_metrics();
         let before = metrics.iter().map(RpcMetrics::snapshot).collect::<Vec<_>>();
+        let non_bitcoin_before = self.chain.non_bitcoin_parents();
         let mut summary = TickSummary::default();
         let result = self.poll_tick_steps(&mut summary).await;
         info!(
@@ -387,6 +391,7 @@ impl<C: ChainPoller> Poller<C> {
             rescanned = summary.rescanned,
             new = summary.new,
             held = summary.held,
+            non_bitcoin = self.chain.non_bitcoin_parents() - non_bitcoin_before,
             failed = result.is_err(),
             tick_ms = tick_start.elapsed().as_millis(),
             rpc = rpc_deltas(&metrics, &before),
@@ -793,10 +798,6 @@ where
     let replay_end = (*cursor).min(window.end);
     for height in window.rescan_start..=replay_end {
         match process(height, TickHeight::Rescan).await {
-            Ok(HeightProgress::Abort) => {
-                progress.held = true;
-                bail!("cursor-blocking hold at replay height {height}; aborting tick")
-            }
             Ok(HeightProgress::Hold) => {
                 progress.held = true;
                 progress.processed += 1;
@@ -825,10 +826,6 @@ where
                         "new height not yet captured (hold); retry next tick"
                     );
                     break;
-                }
-                Ok(HeightProgress::Abort) => {
-                    progress.held = true;
-                    bail!("cursor-blocking hold at new height {height}; aborting tick")
                 }
                 Err(err) => return Err(err),
             }

@@ -14,7 +14,7 @@ use super::{
     NORMALIZED_HEADER, NormalizedCsvRow, active_source_event_count, finish_import_with_cleanup,
     normalized_csv_line, temp_csv_path,
 };
-use crate::support::{db::seed_bitcoin_core_header_cache_through, header_meeting_bits};
+use crate::support::header_meeting_bits;
 
 const LEGACY_MTP_REJECTION_REASON: &str = "median_time_past_violation";
 
@@ -210,13 +210,6 @@ async fn retarget_observation_requires_core_epoch_nbits() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let header = retarget_header()?;
         let expected_parent_hashes = [header.block_hash().to_byte_array()];
-        seed_bitcoin_core_header_cache_through(
-            &client,
-            717_696,
-            i64::from(header.time),
-            0x170b_8c8b,
-        )
-        .await?;
         let accepted_path = write_csv_with_expected_nbits(
             &header,
             "emercoin",

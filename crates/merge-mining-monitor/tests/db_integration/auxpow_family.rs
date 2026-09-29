@@ -7,7 +7,7 @@ use bitcoin::block::Header;
 use bitcoin::consensus::deserialize;
 use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier, ParentClassification};
-use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, QBIT_SOURCE_CODE};
+use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, QBIT_SOURCE_CODE, TERRACOIN_SOURCE_CODE};
 use mmm_capture::test_support::load_raw_namecoin_fixture;
 use mmm_producers::RescanOutcome;
 use mmm_producers::chains::{
@@ -286,9 +286,71 @@ async fn rows_at_height(
         .collect())
 }
 
+/// Real Terracoin blocks from the live start whose AuxPoW parents belong to
+/// other SHA-256 chains (a Bitcoin Cash share and block, a Fractal-like block)
+/// write no event and no block, record their block as settled, and reach no
+/// Bitcoin Core call; the Bitcoin share beside them is still written. The
+/// production Core classifier points at a port nothing serves, and its
+/// transport counters pin zero requests.
+#[tokio::test]
+async fn terracoin_parents_from_other_chains_write_nothing_and_cost_no_core_call() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/terracoin/lineage-parents.json"
+        ))?;
+        let core =
+            mmm_bitcoin_core::BitcoinCoreParentClassifier::from_env_url("http://127.0.0.1:9")?;
+        let core_metrics = core.metrics();
+        let context = AuxpowCaptureContext::new_with_classifier(
+            &client,
+            by_id(ChainId::Terracoin),
+            ConfiguredParentClassifier::BitcoinCore(core),
+        )
+        .await?;
+        let source_id = get_source_id(&client, TERRACOIN_SOURCE_CODE).await?;
+        for block in fixture["blocks"].as_array().context("fixture blocks")? {
+            let parent = block["parent"].as_str().context("parent label")?;
+            let height = i32::try_from(block["child_height"].as_i64().context("height")?)?;
+            let raw = hex::decode(block["rawblock"].as_str().context("rawblock")?)?;
+            let rpc = FixtureBitcoindRpc::carrying(height, raw);
+            let bitcoin = parent == "bitcoin-share";
+            let outcome = process_auxpow_height(&mut client, &rpc, &context, height).await?;
+            let expected = if bitcoin {
+                AuxpowHeightOutcome::AuxpowWritten
+            } else {
+                AuxpowHeightOutcome::NonBitcoinParent
+            };
+            assert_eq!(outcome, expected, "{parent}");
+            let row = client
+                .query_one(
+                    "SELECT (SELECT count(*) FROM merge_mining_event \
+                              WHERE source_id = $1 AND child_height = $2), \
+                            (SELECT outcome FROM child_chain_head \
+                              WHERE source_id = $1 AND child_height = $2)",
+                    &[&source_id, &height],
+                )
+                .await?;
+            assert_eq!(row.get::<_, i64>(0), i64::from(bitcoin), "{parent}");
+            let head = if bitcoin { "captured" } else { "recorded" };
+            assert_eq!(row.get::<_, String>(1), head, "{parent}");
+        }
+        // Foreign parents are refused before classification, and the Bitcoin
+        // share is near, which needs no Core answer.
+        assert_eq!(core_metrics.snapshot().http_attempts, 0);
+        let blocks: i64 = client
+            .query_one("SELECT count(*) FROM block", &[])
+            .await?
+            .get(0);
+        assert_eq!(blocks, 0, "no parent became a block row");
+        assert_eq!(advisory_locks_held(&client).await?, 0);
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
 #[tokio::test]
 async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_one() -> Result<()> {
     crate::run_mut_db_test!(client, {
+        crate::support::seed_synthetic_fixture_history(&client).await?;
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         let context = AuxpowCaptureContext::new_with_classifier(
             &client,
@@ -368,6 +430,7 @@ async fn head_at_height(client: &Client, source_id: i64) -> Result<Option<(Strin
 #[tokio::test]
 async fn rescan_of_an_unchanged_height_costs_one_hash_lookup() -> Result<()> {
     crate::run_mut_db_test!(client, {
+        crate::support::seed_synthetic_fixture_history(&client).await?;
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         let context = AuxpowCaptureContext::new_with_classifier(
             &client,
@@ -439,6 +502,7 @@ async fn rescan_of_an_unchanged_height_costs_one_hash_lookup() -> Result<()> {
 #[tokio::test]
 async fn rescan_with_a_matching_hash_still_displaces_an_imported_sibling() -> Result<()> {
     crate::run_mut_db_test!(client, {
+        crate::support::seed_synthetic_fixture_history(&client).await?;
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         let context = AuxpowCaptureContext::new_with_classifier(
             &client,
@@ -605,6 +669,7 @@ async fn an_open_capture_error_takes_the_full_capture_despite_a_final_head() -> 
                 outcome: ChildChainHeadOutcome::NoAuxpow,
                 evidence: EvidenceMarker::None,
                 observed_at: 1_000,
+                core_cache_generation: None,
             },
         )
         .await?;

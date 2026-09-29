@@ -33,8 +33,6 @@ pub struct HistoricalPublicationStateRow {
     pub btc_parent_coinbase_outputs_sha256: Option<Vec<u8>>,
     pub btc_parent_coinbase_outputs_text_sha256: Option<Vec<u8>>,
     pub btc_parent_coinbase_tx_sha256: Option<Vec<u8>>,
-    pub revoked_at: Option<i64>,
-    pub revocation_reason: Option<String>,
     pub rsk_block_hash: Option<Vec<u8>>,
     pub rsk_height: Option<i32>,
     pub rsk_is_uncle: Option<bool>,
@@ -78,20 +76,18 @@ impl HistoricalPublicationStateRow {
             btc_parent_coinbase_outputs_sha256: row.get(22),
             btc_parent_coinbase_outputs_text_sha256: row.get(23),
             btc_parent_coinbase_tx_sha256: row.get(24),
-            revoked_at: row.get(25),
-            revocation_reason: row.get(26),
-            rsk_block_hash: row.get(27),
-            rsk_height: row.get(28),
-            rsk_is_uncle: row.get(29),
-            rsk_uncle_index: row.get(30),
-            rsk_uncle_parent_height: row.get(31),
-            rsk_miner: row.get(32),
-            rsk_merge_mining_hash: row.get(33),
-            rsk_merkle_proof_sha256: row.get(34),
-            rsk_coinbase_tail_sha256: row.get(35),
-            rsk_proof_format: row.get(36),
-            error_block_reason: row.get(37),
-            event_id: row.get(38),
+            rsk_block_hash: row.get(25),
+            rsk_height: row.get(26),
+            rsk_is_uncle: row.get(27),
+            rsk_uncle_index: row.get(28),
+            rsk_uncle_parent_height: row.get(29),
+            rsk_miner: row.get(30),
+            rsk_merge_mining_hash: row.get(31),
+            rsk_merkle_proof_sha256: row.get(32),
+            rsk_coinbase_tail_sha256: row.get(33),
+            rsk_proof_format: row.get(34),
+            error_block_reason: row.get(35),
+            event_id: row.get(36),
         }
     }
 }
@@ -111,7 +107,6 @@ pub async fn stream_historical_publication_state(client: &Client) -> Result<RowS
                     sha256(e.btc_parent_coinbase_outputs), \
                     sha256(convert_to(e.btc_parent_coinbase_outputs_text, 'UTF8')), \
                     sha256(e.btc_parent_coinbase_tx_bytes), \
-                    e.revoked_at, e.revocation_reason, \
                     r.rsk_block_hash, r.rsk_height, r.is_uncle, r.uncle_index, \
                     r.uncle_parent_height, r.rsk_miner, r.merge_mining_hash, \
                     sha256(r.merkle_proof), sha256(r.coinbase_tail), r.proof_format, \
@@ -144,7 +139,6 @@ pub async fn stream_historical_error_observation_state(client: &Client) -> Resul
                     sha256(e.btc_parent_coinbase_outputs), \
                     sha256(convert_to(e.btc_parent_coinbase_outputs_text, 'UTF8')), \
                     sha256(e.btc_parent_coinbase_tx_bytes), \
-                    e.revoked_at, e.revocation_reason, \
                     r.rsk_block_hash, r.rsk_height, r.is_uncle, r.uncle_index, \
                     r.uncle_parent_height, r.rsk_miner, r.merge_mining_hash, \
                     sha256(r.merkle_proof), sha256(r.coinbase_tail), r.proof_format, \

@@ -305,7 +305,7 @@ async fn insert_unknown_parent_event(client: &Client) -> Result<UnknownParentFix
     let (resolver, pool_ids_by_slug, source_id, parsed) = namecoin_fixture(client).await?;
     let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
         .context("Namecoin fixture must carry a BIP34 parent height")?;
-    crate::support::db::seed_bitcoin_core_header_cache_through(
+    crate::support::db::seed_synthetic_bitcoin_history(
         client,
         parent_height,
         i64::from(parsed.parent_header.header.time),
@@ -337,7 +337,7 @@ async fn insert_two_unknown_parents(client: &Client) -> Result<()> {
     let (_, _, source_id, parsed) = namecoin_fixture(client).await?;
     let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
         .context("Namecoin fixture must carry a BIP34 parent height")?;
-    crate::support::db::seed_bitcoin_core_header_cache_through(
+    crate::support::db::seed_synthetic_bitcoin_history(
         client,
         parent_height + 2_016,
         i64::from(parsed.parent_header.header.time) + 1,
@@ -361,7 +361,7 @@ async fn two_unknown_parents_and_a_classifier(
     client: &Client,
 ) -> Result<(FakeParentClassifier, ConfiguredParentClassifier)> {
     insert_two_unknown_parents(client).await?;
-    let (_, _, _, parsed) = namecoin_fixture(client).await?;
+    let parsed = crate::support::parse_auxpow_fixture("500000-valid-parent")?;
     let fake = FakeParentClassifier::new(orphan_candidate_verdict(&parsed.parent_header.header));
     Ok((fake.clone(), ConfiguredParentClassifier::Fake(fake)))
 }

@@ -74,6 +74,7 @@ async fn block_projects_direct_near_without_double_counting_sources() -> Result<
 #[tokio::test]
 async fn block_hydrates_canonical_proof_contributing_events() -> Result<()> {
     crate::run_mut_db_test!(client, {
+        crate::support::seed_synthetic_fixture_history(&client).await?;
         let ts = day_epoch(2026, Month::May, 10);
 
         // Read-model scenario: one canonical-classified capture whose evidence
@@ -568,6 +569,7 @@ async fn block_projects_child_displacement_on_event_details() -> Result<()> {
                 outcome: ChildChainHeadOutcome::Captured,
                 evidence: EvidenceMarker::None,
                 observed_at: ts + 60,
+                core_cache_generation: None,
             },
         )
         .await?;

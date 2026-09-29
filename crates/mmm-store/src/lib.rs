@@ -27,11 +27,12 @@ mod pool;
 pub use bitcoin_core_header::{
     BitcoinCoreHeader, BitcoinCoreHeaderCacheIntegrityError, BitcoinCoreHeaderCacheUpdate,
     RecheckPass, RecheckScope, ScheduledRecheck, acknowledge_recheck_pass, bind_recheck_pass,
-    bitcoin_core_header_cache_integrity_error, finish_bitcoin_core_header_cache_operation,
-    finish_bitcoin_core_header_cache_shared_operation, highest_final_bitcoin_core_epoch,
-    is_bitcoin_core_header_cache_integrity_error, load_bitcoin_core_header_cache_horizon,
-    load_bitcoin_core_nbits_table, load_bitcoin_core_nbits_table_if_present,
-    load_scheduled_recheck, lock_bitcoin_core_header_cache, lock_bitcoin_core_header_cache_shared,
+    bitcoin_core_header_cache_integrity_error, cached_bitcoin_core_header_height,
+    finish_bitcoin_core_header_cache_operation, finish_bitcoin_core_header_cache_shared_operation,
+    highest_final_bitcoin_core_epoch, is_bitcoin_core_header_cache_integrity_error,
+    load_bitcoin_core_header_cache_horizon, load_bitcoin_core_nbits_table,
+    load_bitcoin_core_nbits_table_if_present, load_core_cache_generation, load_scheduled_recheck,
+    lock_bitcoin_core_header_cache, lock_bitcoin_core_header_cache_shared,
     lock_bitcoin_core_header_cache_shared_in_transaction, persist_recheck_cursor,
     record_bitcoin_core_header, replace_bitcoin_core_header_cache, schedule_core_recheck,
 };
@@ -39,10 +40,7 @@ pub use capture_error::{
     CAPTURE_ERROR_HEIGHT_CAPTURE_FAILED, CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error,
     has_capture_error, record_capture_error,
 };
-pub use chains::elastos::{
-    ElastosIdentityReresolveRow, load_elastos_identity_reresolve_batch,
-    write_elastos_capture_in_txn,
-};
+pub use chains::elastos::{ElastosIdentityReresolveRow, load_elastos_identity_reresolve_batch};
 pub use chains::hathor::{
     hathor_sidecar_graph_heads_at_height, load_hathor_reward_replay_batch,
     update_hathor_reward_audit, write_hathor_capture_in_txn,
@@ -60,10 +58,10 @@ pub use child_displacement::{
     record_child_chain_block_in_own_transaction, reobserve_child_chain_block_in_own_transaction,
 };
 pub use event::{
-    EventWriteDisposition, EventWriteOutcome, active_event_ids_for_child_block,
-    delete_event_pool_attributions_for_source, upsert_event_pool_attributions,
-    upsert_event_pool_attributions_without_stale_cleanup, upsert_merge_mining_event,
-    upsert_merge_mining_event_with_attributions,
+    EventWriteDisposition, EventWriteOutcome, delete_child_block_events,
+    delete_event_pool_attributions_for_source, has_child_block_events,
+    upsert_event_pool_attributions, upsert_event_pool_attributions_without_stale_cleanup,
+    upsert_merge_mining_event, upsert_merge_mining_event_with_attributions,
 };
 pub use historical_import::{
     HistoricalBaseEventRow, HistoricalFinalizationState, HistoricalPublicationStateRow,
@@ -73,7 +71,7 @@ pub use historical_import::{
 pub use known_stale::{count_known_stale_blocks, is_known_stale_hash, upsert_known_stale_block};
 pub use pending_reconcile::{
     PendingReconcileRow, bump_pending_attempts, delete_pending_reconcile, list_pending_reconcile,
-    retag_revocation_reason, upsert_pending_reconcile,
+    upsert_pending_reconcile,
 };
 pub use poll_cursor::{get_source_id, load_poll_cursor, upsert_poll_cursor_with_target};
 pub use pool::{

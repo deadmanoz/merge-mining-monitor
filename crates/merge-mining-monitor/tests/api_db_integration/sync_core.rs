@@ -408,14 +408,7 @@ async fn assert_completed_repair_state(
     );
     assert_eq!(sync.get::<_, i32>(2), target_height);
     assert_eq!(sync.get::<_, Option<String>>(3), None);
-    let queued: i64 = client
-        .query_one(
-            "SELECT count(*)::bigint FROM bitcoin_core_reconcile_queue",
-            &[],
-        )
-        .await?
-        .get(0);
-    assert_eq!(queued, 0);
+    assert_empty_core_queue(client).await?;
     Ok(())
 }
 
@@ -466,6 +459,19 @@ async fn assert_pending_core_queue(client: &Client, source_id: i64, count: i64) 
         pending_code.as_deref(),
         Some("backbone_reorg_reconcile_pending")
     );
+    Ok(())
+}
+
+/// Every Core reconcile row, of every source, has been drained.
+async fn assert_empty_core_queue(client: &Client) -> Result<()> {
+    let queued: i64 = client
+        .query_one(
+            "SELECT count(*)::bigint FROM bitcoin_core_reconcile_queue",
+            &[],
+        )
+        .await?
+        .get(0);
+    assert_eq!(queued, 0);
     Ok(())
 }
 
@@ -1278,6 +1284,7 @@ async fn follow_repair_switches_production_shaped_fork_atomically() -> Result<()
 #[tokio::test]
 async fn follow_tick_forces_repair_when_scheduled_sweep_is_recent() -> Result<()> {
     crate::run_mut_db_test!(client, {
+        crate::support::db::clear_bitcoin_history(&client).await?;
         let original = test_header_chain(4, 1_800_005_000);
         let original_source = FakeBitcoinCoreBackboneSource::new(3, original.clone());
         run_sync_bitcoin_core(
@@ -1404,14 +1411,7 @@ async fn forced_repair_propagates_structural_conflict_below_bounded_view() -> Re
         assert_eq!(state.get::<_, Option<i32>>(1), Some(9));
         let details: Json<serde_json::Value> = state.get(2);
         assert_eq!(details.0["previous_height"], json!(8));
-        let queued: i64 = client
-            .query_one(
-                "SELECT count(*)::bigint FROM bitcoin_core_reconcile_queue",
-                &[],
-            )
-            .await?
-            .get(0);
-        assert_eq!(queued, 0);
+        assert_empty_core_queue(&client).await?;
 
         Ok::<_, anyhow::Error>(())
     })
@@ -1809,14 +1809,7 @@ async fn follow_repair_coinbase_failure_leaves_fork_unmodified() -> Result<()> {
             .await?;
         assert_eq!(sync.get::<_, Option<i32>>(0), Some(3));
         assert_eq!(sync.get::<_, i32>(1), 3);
-        let queued: i64 = client
-            .query_one(
-                "SELECT count(*)::bigint FROM bitcoin_core_reconcile_queue",
-                &[],
-            )
-            .await?
-            .get(0);
-        assert_eq!(queued, 0);
+        assert_empty_core_queue(&client).await?;
 
         Ok::<_, anyhow::Error>(())
     })

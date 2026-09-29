@@ -43,6 +43,7 @@ async fn record(
             outcome: ChildChainHeadOutcome::Captured,
             evidence: EvidenceMarker::None,
             observed_at,
+            core_cache_generation: None,
         },
     )
     .await?;
@@ -336,6 +337,7 @@ async fn concurrent_captures_at_one_height_serialize_on_the_lock_and_the_later_c
                 outcome: ChildChainHeadOutcome::Unverified,
                 evidence: EvidenceMarker::None,
                 observed_at: 3_001,
+                core_cache_generation: None,
             },
         )
         .await?;
@@ -358,6 +360,7 @@ async fn concurrent_captures_at_one_height_serialize_on_the_lock_and_the_later_c
                     outcome: ChildChainHeadOutcome::Unverified,
                     evidence: EvidenceMarker::None,
                     observed_at: 3_002,
+                    core_cache_generation: None,
                 },
             )
             .await?;

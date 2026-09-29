@@ -82,7 +82,10 @@ async fn proof_is_active(client: &Client, parent_hash: &[u8], source_id: i64) ->
         .get(0))
 }
 
+/// The shared setup of the mutation tests, whose parents are crafted easy-bits
+/// headers in the synthetic fixture history.
 async fn mutation_pool_snapshot(client: &mut Client) -> Result<(DefaultPoolSnapshot, i64)> {
+    crate::support::seed_synthetic_fixture_history(client).await?;
     rebuild_source_health(client).await?;
     let snapshot = default_pool_snapshot(client).await?;
     let namecoin = get_source_id(client, NAMECOIN_SOURCE_CODE).await?;

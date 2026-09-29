@@ -1496,14 +1496,7 @@ async fn follow_repair_refuses_reorg_beyond_window_without_chain_mutation() -> R
         assert_eq!(details.0["reason"], json!("common_ancestor_outside_window"));
         assert_eq!(details.0["view"], json!("live_tip"));
         assert_eq!(details.0["target_tip_height"], json!(4));
-        let queued: i64 = client
-            .query_one(
-                "SELECT count(*)::bigint FROM bitcoin_core_reconcile_queue",
-                &[],
-            )
-            .await?
-            .get(0);
-        assert_eq!(queued, 0);
+        assert_empty_core_queue(&client).await?;
 
         Ok::<_, anyhow::Error>(())
     })
@@ -1570,6 +1563,7 @@ async fn cursor_repair_revalidates_its_own_target_before_mutation() -> Result<()
 #[tokio::test]
 async fn scheduled_follow_repairs_stale_cursor_clears_error_and_resumes() -> Result<()> {
     crate::run_mut_db_test!(client, {
+        crate::support::db::clear_bitcoin_history(&client).await?;
         let original = test_header_chain(81, 1_800_035_000);
         let original_source = FakeBitcoinCoreBackboneSource::new(2, original.clone());
         run_sync_bitcoin_core(
@@ -1661,14 +1655,7 @@ async fn scheduled_follow_repairs_stale_cursor_clears_error_and_resumes() -> Res
         assert_eq!(sync.get::<_, i32>(2), 5);
         assert_eq!(sync.get::<_, Option<String>>(3), None);
         assert_bounded_cursor_recovery_rpc(&active_source);
-        let queued: i64 = client
-            .query_one(
-                "SELECT count(*)::bigint FROM bitcoin_core_reconcile_queue",
-                &[],
-            )
-            .await?
-            .get(0);
-        assert_eq!(queued, 0);
+        assert_empty_core_queue(&client).await?;
 
         Ok::<_, anyhow::Error>(())
     })

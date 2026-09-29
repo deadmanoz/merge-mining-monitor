@@ -100,7 +100,6 @@ pub(crate) struct ComparablePublicationState {
     pub(super) btc_parent_coinbase_outputs_sha256: Option<[u8; 32]>,
     pub(super) btc_parent_coinbase_outputs_text_sha256: Option<[u8; 32]>,
     pub(super) btc_parent_coinbase_tx_sha256: Option<[u8; 32]>,
-    pub(super) elastos_reactivation_required: bool,
     pub(super) rsk: Option<ComparableRskState>,
     pub(super) error_block_reason: Option<String>,
 }
@@ -128,7 +127,6 @@ impl ComparablePublicationState {
         push_bytes(&mut engine, &self.btc_parent_header_hash);
         push_bytes(&mut engine, &self.btc_parent_prev_header_hash);
         push_i64(&mut engine, self.btc_parent_header_time);
-        push_bool(&mut engine, self.elastos_reactivation_required);
         if mask.includes(ERROR_BLOCK_REASON) {
             push_option_bytes(
                 &mut engine,
@@ -291,10 +289,6 @@ impl ComparablePublicationState {
                 row.btc_parent_coinbase_tx_sha256,
                 "btc_parent_coinbase_tx_sha256",
             )?,
-            elastos_reactivation_required: row.chain == "elastos"
-                && row.revoked_at.is_some()
-                && row.revocation_reason.as_deref()
-                    == Some(mmm_capture::capture::ELASTOS_REVOKE_NON_BTC),
             rsk,
             error_block_reason: row.error_block_reason,
         })
@@ -401,7 +395,6 @@ fn comparable_state_from_record(
             .as_deref()
             .map(|value| digest(value.as_bytes())),
         btc_parent_coinbase_tx_sha256: digest_optional(parent_coinbase.tx_bytes.as_deref()),
-        elastos_reactivation_required: false,
         rsk,
         error_block_reason: if error_observation {
             rejection_reason
@@ -637,7 +630,6 @@ mod tests {
             btc_parent_coinbase_outputs_sha256: None,
             btc_parent_coinbase_outputs_text_sha256: None,
             btc_parent_coinbase_tx_sha256: None,
-            elastos_reactivation_required: false,
             rsk: None,
             error_block_reason: None,
         }
@@ -691,7 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn error_reason_and_elastos_reactivation_are_comparison_state() {
+    fn error_reason_is_comparison_state() {
         let mut expected = comparable();
         expected.error_block_reason = Some("time_below_mtp".to_owned());
         let mut changed = expected.clone();
@@ -699,13 +691,6 @@ mod tests {
         assert_ne!(
             expected.fingerprint(PublicationFieldMask(ERROR_BLOCK_REASON)),
             changed.fingerprint(PublicationFieldMask(ERROR_BLOCK_REASON))
-        );
-
-        changed = expected.clone();
-        changed.elastos_reactivation_required = true;
-        assert_ne!(
-            expected.fingerprint(PublicationFieldMask(0)),
-            changed.fingerprint(PublicationFieldMask(0))
         );
     }
 }

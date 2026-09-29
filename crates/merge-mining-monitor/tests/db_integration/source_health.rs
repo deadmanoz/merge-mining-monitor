@@ -352,7 +352,7 @@ async fn source_health_matches_recompute_on_orphan_class_transition() -> Result<
         let header = fixture.parsed.parent_header.header;
         let parent_height = parse_bip34_height(&fixture.parsed.parent_coinbase_script)
             .expect("Namecoin fixture must carry a BIP34 parent height");
-        crate::support::db::seed_bitcoin_core_header_cache_through(
+        crate::support::db::seed_synthetic_bitcoin_history(
             &client,
             parent_height,
             i64::from(header.time),

@@ -110,6 +110,7 @@ async fn contradictory_rsk_sidecar_rolls_back_historical_provenance() -> Result<
 #[tokio::test]
 async fn rsk_capture_reconciles_read_model_in_transaction() -> Result<()> {
     crate::run_mut_db_test!(client, {
+        crate::support::seed_synthetic_fixture_history(&client).await?;
         let block = load_rsk_block_fixture("canonical-valid");
         let header = btc_header_from_fixture(&block);
         let parent_hash = header.block_hash().to_byte_array().to_vec();

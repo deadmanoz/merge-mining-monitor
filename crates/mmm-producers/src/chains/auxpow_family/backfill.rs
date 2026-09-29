@@ -5,7 +5,7 @@
 use super::*;
 use crate::chains::backfill::{
     BackfillConfig, BackfillHeightEffect, BackfillSummary, backfill_progress,
-    run_delayed_backfill_range,
+    lineage_pending_error, run_delayed_backfill_range,
 };
 
 /// Registry-dispatched backfill entry point for bitcoind-family chains.
@@ -65,7 +65,7 @@ pub(crate) async fn run_auxpow_backfill(
     );
     let summary = run_delayed_backfill_range(&config, 0, &progress, async |height| {
         let outcome = process_auxpow_height(&mut client, &rpc, &context, height).await?;
-        Ok(auxpow_backfill_effect(outcome))
+        auxpow_backfill_effect(spec, height, outcome)
     })
     .await?;
 
@@ -75,6 +75,7 @@ pub(crate) async fn run_auxpow_backfill(
             processed = summary.processed,
             auxpow_written = summary.auxpow_written,
             non_auxpow_skipped = summary.non_auxpow_skipped,
+            non_bitcoin_parent = summary.non_bitcoin_parent,
             malformed_skipped = summary.malformed_skipped,
             malformed_held = summary.malformed_held,
             "bounded AuxPoW backfill left unresolved capture errors"
@@ -85,6 +86,7 @@ pub(crate) async fn run_auxpow_backfill(
             processed = summary.processed,
             auxpow_written = summary.auxpow_written,
             non_auxpow_skipped = summary.non_auxpow_skipped,
+            non_bitcoin_parent = summary.non_bitcoin_parent,
             malformed_skipped = summary.malformed_skipped,
             "completed bounded AuxPoW backfill"
         );
@@ -132,13 +134,19 @@ fn ensure_backfill_complete(
     Ok(())
 }
 
-fn auxpow_backfill_effect(outcome: HeightOutcome) -> BackfillHeightEffect {
-    match outcome {
+fn auxpow_backfill_effect(
+    spec: &ChainSpec,
+    height: i32,
+    outcome: HeightOutcome,
+) -> Result<BackfillHeightEffect> {
+    Ok(match outcome {
         HeightOutcome::AuxpowWritten => BackfillHeightEffect::AuxpowWritten,
         HeightOutcome::NonAuxpowSkipped => BackfillHeightEffect::NonAuxpowSkipped,
+        HeightOutcome::NonBitcoinParent => BackfillHeightEffect::NonBitcoinParent,
         HeightOutcome::MalformedSkipped => BackfillHeightEffect::MalformedSkipped,
         HeightOutcome::MalformedHeld => BackfillHeightEffect::MalformedHeld,
-    }
+        HeightOutcome::LineagePending => return Err(lineage_pending_error(spec, height)),
+    })
 }
 
 #[cfg(test)]
@@ -177,16 +185,20 @@ mod tests {
     }
 
     /// The malformed-outcome to backfill-counter mapping keeps the two policies
-    /// in separate columns, so a held height can never be tallied as a skip.
+    /// in separate columns, so a held height can never be tallied as a skip,
+    /// and a pending parent stops the run rather than being tallied at all.
     #[test]
     fn backfill_effects_keep_held_and_skipped_separate() {
+        let spec = by_id(ChainId::Namecoin);
+        let effect = |outcome| auxpow_backfill_effect(spec, 7, outcome);
         assert_eq!(
-            auxpow_backfill_effect(HeightOutcome::MalformedHeld),
+            effect(HeightOutcome::MalformedHeld).unwrap(),
             BackfillHeightEffect::MalformedHeld
         );
         assert_eq!(
-            auxpow_backfill_effect(HeightOutcome::MalformedSkipped),
+            effect(HeightOutcome::MalformedSkipped).unwrap(),
             BackfillHeightEffect::MalformedSkipped
         );
+        assert!(effect(HeightOutcome::LineagePending).is_err());
     }
 }

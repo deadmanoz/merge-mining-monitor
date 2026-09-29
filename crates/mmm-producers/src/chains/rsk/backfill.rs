@@ -10,8 +10,10 @@ use anyhow::{Context, Result};
 use futures::StreamExt;
 use tracing::{info, warn};
 
-use crate::chains::backfill::BackfillConfig;
-use crate::chains::rsk::capture::{HeightOutcome, RskCaptureContext, write_rsk_bundle};
+use crate::chains::backfill::{BackfillConfig, lineage_pending_error};
+use crate::chains::rsk::capture::{
+    BlockOutcome, HeightOutcome, RskCaptureContext, write_rsk_bundle,
+};
 use crate::chains::rsk::rpc::RskRpcClient;
 use crate::chains::rsk::traverse::fetch_rsk_height_bundle;
 use crate::producer_runtime::{ProducerRuntime, run_post_backfill_repair};
@@ -26,18 +28,21 @@ pub(crate) const RSK_DEFAULT_BACKFILL_FETCH_CONCURRENCY: usize = 16;
 /// Grand totals a backfill run folds [`HeightOutcome`](crate::chains::rsk::capture::HeightOutcome)s
 /// into, via `accumulate_rsk_summary`.
 /// Canonical counts partition by outcome (written / no parent header / malformed /
-/// missing); uncle counts sum across all heights. Logged at run end.
+/// non-Bitcoin parent / missing); uncle counts sum across all heights. Logged at
+/// run end.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct RskBackfillSummary {
     pub(crate) heights_processed: usize,
     pub(crate) canonical_written: usize,
     pub(crate) canonical_no_parent_header: usize,
     pub(crate) canonical_malformed: usize,
+    pub(crate) canonical_non_bitcoin: usize,
     pub(crate) canonical_missing: usize,
     pub(crate) uncles_seen: usize,
     pub(crate) uncles_written: usize,
     pub(crate) uncles_no_parent_header: usize,
     pub(crate) uncles_malformed: usize,
+    pub(crate) uncles_non_bitcoin: usize,
 }
 
 /// Registry-dispatched live-poll entry point for RSK.
@@ -129,10 +134,15 @@ pub(crate) async fn run_rsk_backfill(
         .map(|height| fetch_rsk_height_bundle(rpc.clone(), i64::from(height)))
         .buffered(fetch_concurrency);
 
+    let mut height = config.start_height;
     while let Some(bundle) = fetches.next().await {
         let outcome = write_rsk_bundle(&mut client, &context, bundle?, &now_epoch_seconds).await?;
+        if outcome.lineage_pending {
+            return Err(lineage_pending_error(config.spec, height));
+        }
         accumulate_rsk_summary(&mut summary, outcome);
         progress.advance(1);
+        height += 1;
     }
 
     let elapsed = started.elapsed();
@@ -146,11 +156,13 @@ pub(crate) async fn run_rsk_backfill(
         canonical_written = summary.canonical_written,
         canonical_no_parent_header = summary.canonical_no_parent_header,
         canonical_malformed = summary.canonical_malformed,
+        canonical_non_bitcoin = summary.canonical_non_bitcoin,
         canonical_missing = summary.canonical_missing,
         uncles_seen = summary.uncles_seen,
         uncles_written = summary.uncles_written,
         uncles_no_parent_header = summary.uncles_no_parent_header,
         uncles_malformed = summary.uncles_malformed,
+        uncles_non_bitcoin = summary.uncles_non_bitcoin,
         elapsed_secs = elapsed.as_secs_f64(),
         blocks_per_sec,
         "completed bounded RSK AuxPoW backfill"
@@ -177,17 +189,16 @@ fn accumulate_rsk_summary(summary: &mut RskBackfillSummary, outcome: HeightOutco
         return;
     }
     match outcome.canonical {
-        Some(crate::chains::rsk::capture::BlockOutcome::Written) => summary.canonical_written += 1,
-        Some(crate::chains::rsk::capture::BlockOutcome::NoParentHeaderSkipped) => {
-            summary.canonical_no_parent_header += 1;
-        }
-        Some(crate::chains::rsk::capture::BlockOutcome::MalformedSkipped) => {
-            summary.canonical_malformed += 1;
-        }
-        None => summary.canonical_missing += 1,
+        Some(BlockOutcome::Written) => summary.canonical_written += 1,
+        Some(BlockOutcome::NoParentHeaderSkipped) => summary.canonical_no_parent_header += 1,
+        Some(BlockOutcome::MalformedSkipped) => summary.canonical_malformed += 1,
+        Some(BlockOutcome::NonBitcoinParent) => summary.canonical_non_bitcoin += 1,
+        // The caller stops the run at a pending height before tallying it.
+        Some(BlockOutcome::LineagePending) | None => summary.canonical_missing += 1,
     }
     summary.uncles_seen += outcome.uncles_seen;
     summary.uncles_written += outcome.uncles_written;
     summary.uncles_no_parent_header += outcome.uncles_no_parent_header;
     summary.uncles_malformed += outcome.uncles_malformed;
+    summary.uncles_non_bitcoin += outcome.uncles_non_bitcoin;
 }

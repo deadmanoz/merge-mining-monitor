@@ -36,10 +36,9 @@ pub const RSK_PROOF_FORMAT_OPAQUE: &str = "rskj_rpc_opaque";
 
 /// Hathor-specific evidence sidecar payload. Carries the RFC 0006 proof bytes
 /// that do not fit `merge_mining_event` (the `aux_pow` blob, the `funds_graph`
-/// prefix, the brute-forced split offset) plus the offline `expected_btc_nbits`
-/// recorded in an overwrite-safe place. There is no `is_voided` field (capture
-/// only writes non-voided
-/// blocks, so the voided state is the event revocation, not a sidecar flag).
+/// prefix, the brute-forced split offset) and the parsed reward outputs. There
+/// is no `is_voided` field: capture only writes non-voided blocks, and a
+/// replaced block is recorded as displacement.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HathorEvidencePayload {
     pub hathor_block_hash: Vec<u8>,
@@ -49,7 +48,6 @@ pub struct HathorEvidencePayload {
     pub funds_graph_split: i32,
     pub reward_output_details: Option<serde_json::Value>,
     pub reward_addresses: Option<serde_json::Value>,
-    pub expected_btc_nbits: i64,
     pub proof_format: &'static str,
 }
 
@@ -57,22 +55,3 @@ pub struct HathorEvidencePayload {
 /// merge-mining proof layout (aux_pow blob + funds_graph prefix + brute-forced
 /// split offset). Persisted literal in the hathor sidecar.
 pub const HATHOR_PROOF_FORMAT_RFC0006: &str = "hathor_rfc0006";
-
-/// Sticky: the Core-cache nBits verdict was Valid but the classifier
-/// contradicted it; never auto-restored by a recapture. A child-DAG
-/// replacement or void is not a revocation reason: the producer records it as
-/// displacement (`child_displaced_at` / `child_displaced_by`).
-pub const HATHOR_REVOKE_NBITS_CONFLICT: &str = "hathor_nbits_classifier_conflict";
-/// Reversible: the current canonical block's parent classified as non-BTC under
-/// the Core-cache nBits verdict (BCH/indeterminate). If the persisted cache is
-/// later refreshed so the block is Valid, a recapture auto-restores it.
-pub const HATHOR_REVOKE_NON_BTC: &str = "hathor_non_btc";
-
-/// Revocation reasons the Elastos producer applies automatically when a captured
-/// height's verdict flips to rejected on a replay/backfill (a refreshed Core
-/// cache or classifier evidence). A later Valid recapture of the same
-/// `(source, height, hash)` auto-restores ONLY the reversible
-/// `ELASTOS_REVOKE_NON_BTC`; an `ELASTOS_REVOKE_CLASSIFIER_CONFLICT` or any manual
-/// revoke is sticky.
-pub const ELASTOS_REVOKE_NON_BTC: &str = "elastos_non_btc";
-pub const ELASTOS_REVOKE_CLASSIFIER_CONFLICT: &str = "elastos_nbits_classifier_conflict";

@@ -198,8 +198,10 @@ async fn migration_0019_schedules_a_generation_the_job_acknowledges() -> Result<
 #[tokio::test]
 async fn core_header_cache_retains_epochs_replaces_horizon_and_rejects_conflicts() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // `new_test_db` supplies this genesis row. An identical observation is
-        // harmless, while a conflicting row below must fail closed.
+        // An identical observation is harmless, while a conflicting row below
+        // must fail closed.
+        crate::support::db::clear_bitcoin_history(&client).await?;
+        record_bitcoin_core_header(&client, &header(0, 0, 1, 0x1d00_ffff)).await?;
         record_bitcoin_core_header(&client, &header(0, 0, 1, 0x1d00_ffff)).await?;
         record_bitcoin_core_header(&client, &header(2016, 1, 2, 0x1c00_ffff)).await?;
         replace_bitcoin_core_header_cache(
@@ -487,7 +489,7 @@ async fn seed_unknown_parent(client: &Client) -> Result<SeededParent> {
     let parent_height = parse_bip34_height(&fixture.parsed.parent_coinbase_script)
         .expect("Namecoin fixture carries a BIP34 parent height");
     let parent_header = fixture.parsed.parent_header.header;
-    crate::support::db::seed_bitcoin_core_header_cache_through(
+    crate::support::db::seed_synthetic_bitcoin_history(
         client,
         parent_height,
         i64::from(parent_header.time),
@@ -745,7 +747,7 @@ async fn cache_blocked_reconcile_does_not_block_canonical_exclusive() -> Result<
         let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
             .expect("Namecoin fixture carries a BIP34 parent height");
         let parent_header = parsed.parent_header.header;
-        crate::support::db::seed_bitcoin_core_header_cache_through(
+        crate::support::db::seed_synthetic_bitcoin_history(
             &client,
             parent_height,
             i64::from(parent_header.time),
@@ -928,7 +930,7 @@ async fn revocation_waits_for_cache_before_taking_a_parent_lock() -> Result<()> 
         let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
             .expect("Namecoin fixture carries a BIP34 parent height");
         let parent_header = parsed.parent_header.header;
-        crate::support::db::seed_bitcoin_core_header_cache_through(
+        crate::support::db::seed_synthetic_bitcoin_history(
             &client,
             parent_height,
             i64::from(parent_header.time),
@@ -1097,9 +1099,7 @@ async fn refresh_retries_a_same_height_core_reorg_before_writing() -> Result<()>
 #[tokio::test]
 async fn refresh_detects_an_advancing_tip_reorg_at_the_prior_horizon() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        client
-            .execute("DELETE FROM bitcoin_core_header", &[])
-            .await?;
+        crate::support::db::clear_bitcoin_history(&client).await?;
         let first = ConfiguredParentClassifier::Fake(
             FakeParentClassifier::new(ParentClassification::unknown(
                 &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,

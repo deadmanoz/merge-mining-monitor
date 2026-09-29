@@ -249,17 +249,19 @@ impl Scenario {
                     let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
                         evidence.verdict,
                     ));
-                    let event_id = capture_in_txn(
-                        client,
-                        source_id,
-                        &classifier,
-                        &mut payload,
-                        "scenario",
-                        async |txn, sid, p| {
-                            upsert_merge_mining_event_with_attributions(txn, sid, p).await
-                        },
-                    )
-                    .await?;
+                    let event_id = super::written_event_id(
+                        capture_in_txn(
+                            client,
+                            source_id,
+                            &classifier,
+                            &mut payload,
+                            "scenario",
+                            async |txn, sid, p| {
+                                upsert_merge_mining_event_with_attributions(txn, sid, p).await
+                            },
+                        )
+                        .await?,
+                    )?;
                     event_ids.insert(evidence.key, event_id);
                 }
             }

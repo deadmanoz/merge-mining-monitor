@@ -1,38 +1,7 @@
-//! Elastos producer base-table SQL: the event-row-only capture writer (no
-//! sidecar) and the per-height active-event read query.
+//! Elastos producer base-table SQL: the identity re-resolution page load.
 
 use anyhow::{Context, Result};
 use tokio_postgres::GenericClient;
-
-use mmm_capture::capture::{ELASTOS_REVOKE_NON_BTC, MergeMiningEventPayload};
-
-use crate::{EventWriteOutcome, upsert_merge_mining_event_with_attributions};
-
-/// Write a Valid Elastos capture: upsert the shared event row, then clear ONLY the
-/// reversible auto-revocation reason (`ELASTOS_REVOKE_NON_BTC`) so a later re-Valid
-/// recapture of a row auto-revoked for a stale-table non-BTC verdict reactivates
-/// it. A sticky `ELASTOS_REVOKE_CLASSIFIER_CONFLICT` or any manual revoke is never
-/// auto-restored. Elastos writes only the shared event row (no sidecar), so this
-/// is the upsert plus the scoped reactivation.
-pub async fn write_elastos_capture_in_txn<C: GenericClient>(
-    client: &C,
-    source_id: i64,
-    payload: &MergeMiningEventPayload,
-) -> Result<EventWriteOutcome> {
-    let mut outcome =
-        upsert_merge_mining_event_with_attributions(client, source_id, payload).await?;
-    let reactivated = client
-        .execute(
-            "UPDATE merge_mining_event \
-                SET revoked_at = NULL, revocation_reason = NULL \
-              WHERE id = $1 AND revocation_reason = $2",
-            &[&outcome.event_id, &ELASTOS_REVOKE_NON_BTC],
-        )
-        .await
-        .context("clear reversible Elastos revocation on recapture")?;
-    outcome.parent_read_model_changed |= reactivated > 0;
-    Ok(outcome)
-}
 
 /// One active (non-revoked) Elastos event that has at least one registry-matchable
 /// but still-unresolved child identity attribution. `attributions` is a JSON array

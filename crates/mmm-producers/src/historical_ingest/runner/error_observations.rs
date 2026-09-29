@@ -154,7 +154,6 @@ pub(super) async fn import_error_observations(
             &txn,
             &ImportContext {
                 source_id,
-                chain: spec.chain,
                 classifier,
                 resolver: &resolver,
                 pool_ids_by_slug: &pool_ids_by_slug,

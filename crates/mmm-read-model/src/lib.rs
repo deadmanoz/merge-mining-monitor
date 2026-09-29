@@ -23,10 +23,11 @@ pub use known_stale_reclassify::{
     reclassify_known_stale_hashes_in_transaction, run_reclassify_known_stales,
 };
 pub use mutation::{
-    CORE_RECOVERY_BATCH, CommittedParentMutation, CoreCanonicalReplacement, CoreCanonicalWrite,
-    CoreSuffixReplacementInput, CoreSuffixReplacementSummary, ExpectedCoreCanonicalRow,
-    capture_in_txn, clear_authoritative_historical_provenance_in_transaction,
-    drain_core_reconcile_queue, drain_core_reconcile_queue_batch, drain_historical_reconcile_queue,
+    CORE_RECOVERY_BATCH, CaptureOutcome, CommittedParentMutation, CoreCanonicalReplacement,
+    CoreCanonicalWrite, CoreSuffixReplacementInput, CoreSuffixReplacementSummary,
+    ExpectedCoreCanonicalRow, capture_in_txn,
+    clear_authoritative_historical_provenance_in_transaction, drain_core_reconcile_queue,
+    drain_core_reconcile_queue_batch, drain_historical_reconcile_queue,
     drain_historical_reconcile_queue_with_nbits_table, enqueue_historical_parent_reconcile,
     rebuild_historical_source_health, reconcile_authoritative_historical_source_in_transaction,
     record_coinbase_failure, replace_core_canonical_suffix,

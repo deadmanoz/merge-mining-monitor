@@ -33,9 +33,6 @@ tokio-postgres.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-# chains/nbits_horizon tests exercise fail-closed resolver paths with the
-# db-integration-gated fake classifier.
-mmm-bitcoin-core = { workspace = true, features = ["db-integration"] }
 # chains/rsk test code calls mmm_capture::test_support from #[cfg(test)];
 # a dependent's cfg(test) never activates a dependency's feature.
 mmm-capture = { workspace = true, features = ["test-support"] }

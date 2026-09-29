@@ -2,235 +2,12 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 use mmm_capture::capture::CHILD_PAYOUT_REGISTRY_SOURCE;
-use mmm_capture::source_registry::{ELASTOS_SOURCE_CODE, HATHOR_SOURCE_CODE};
 use mmm_producers::chains::hathor::{
     HATHOR_REWARD_ADDRESS_NAMESPACE, HathorBlockMeta, HathorRpc, HathorTransaction,
 };
-use mmm_store::get_source_id;
 use tokio_postgres::Client;
 
 use crate::support::seed::pool_id_for_slug;
-
-async fn revoke_event(client: &Client, event_id: i64, revoked_at: i64, reason: &str) -> Result<()> {
-    client
-        .execute(
-            "UPDATE merge_mining_event SET revoked_at=$2, revocation_reason=$3 WHERE id=$1",
-            &[&event_id, &revoked_at, &reason],
-        )
-        .await?;
-    Ok(())
-}
-
-async fn event_revoked_at(client: &Client, event_id: i64) -> Result<Option<i64>> {
-    Ok(client
-        .query_one(
-            "SELECT revoked_at FROM merge_mining_event WHERE id=$1",
-            &[&event_id],
-        )
-        .await?
-        .get("revoked_at"))
-}
-
-#[tokio::test]
-async fn elastos_recapture_restores_reversible_but_keeps_conflict_sticky() -> Result<()> {
-    use bitcoin::consensus::serialize;
-    use bitcoin::hashes::Hash as _;
-    use mmm_capture::auxpow::{
-        ELASTOS_AUXPOW_CHAIN_ID, parse_elastos_auxpow, verify_auxpow_commitment,
-    };
-    use mmm_capture::capture::{
-        ClassificationProof, ELASTOS_REVOKE_CLASSIFIER_CONFLICT, ELASTOS_REVOKE_NON_BTC,
-        NormalizedEventEvidence, ResolvedPoolAttributions, build_event_payload_from_evidence,
-    };
-    use mmm_producers::chains::elastos::ElastosBlock;
-    use mmm_store::{retag_revocation_reason, write_elastos_capture_in_txn};
-
-    crate::run_db_test!(client, {
-        let source_id = get_source_id(&client, ELASTOS_SOURCE_CODE).await?;
-
-        // Build a real Elastos event payload from the committed stale fixture.
-        let block: ElastosBlock =
-            serde_json::from_str(include_str!("../../../../fixtures/elastos/ela-360062.json"))
-                .unwrap();
-        let recon = block.reconstruct()?;
-        let auxpow = recon.auxpow.clone().expect("auxpow present in fixture");
-        let parsed = parse_elastos_auxpow(recon.prefix_header.clone(), &auxpow)?;
-        verify_auxpow_commitment(&parsed, recon.block_hash, ELASTOS_AUXPOW_CHAIN_ID)?;
-        let payload = build_event_payload_from_evidence(
-            NormalizedEventEvidence {
-                child_height: Some(recon.height),
-                child_block_hash: Some(recon.block_hash.to_byte_array().to_vec()),
-                child_header_bytes: None,
-                child_block_time: Some(i64::from(recon.time)),
-                child_nbits: None,
-                btc_parent_header: parsed.parent_header.header,
-                pow_validates_child_target: Some(true),
-                btc_parent_coinbase_txid: Some(
-                    parsed.parent_coinbase_txid.to_byte_array().to_vec(),
-                ),
-                btc_parent_coinbase_script: Some(parsed.parent_coinbase_script.clone()),
-                btc_parent_coinbase_outputs: Some(serialize(&parsed.parent_coinbase_outputs)),
-                btc_parent_coinbase_outputs_text: None,
-                btc_parent_coinbase_tx_bytes: None,
-                child_coinbase_txid: None,
-                child_coinbase_script: None,
-                child_coinbase_outputs: None,
-                aux_merkle_proof: Some(parsed.auxpow_bytes.clone()),
-            },
-            ResolvedPoolAttributions::default(),
-            ClassificationProof::default(),
-            1_800_000_000,
-        )?;
-
-        let event_id = write_elastos_capture_in_txn(&client, source_id, &payload)
-            .await?
-            .event_id;
-
-        // Reversible (elastos_non_btc) revoke -> a Valid recapture reactivates it.
-        revoke_event(&client, event_id, 1_800_000_001, ELASTOS_REVOKE_NON_BTC).await?;
-        write_elastos_capture_in_txn(&client, source_id, &payload).await?;
-        assert!(
-            event_revoked_at(&client, event_id).await?.is_none(),
-            "a reversible elastos_non_btc revocation must be restored on recapture"
-        );
-
-        // Reversible revoke -> retag sticky (the classifier-conflict path) -> a Valid
-        // recapture must NOT reactivate it.
-        revoke_event(&client, event_id, 1_800_000_002, ELASTOS_REVOKE_NON_BTC).await?;
-        let parent_hash = parsed.parent_header.hash();
-        let retagged = retag_revocation_reason(
-            &client,
-            source_id,
-            recon.height,
-            recon.block_hash.as_ref(),
-            parent_hash.as_ref(),
-            ELASTOS_REVOKE_NON_BTC,
-            ELASTOS_REVOKE_CLASSIFIER_CONFLICT,
-        )
-        .await?;
-        assert_eq!(retagged, 1, "the reversible-revoked row is retagged sticky");
-        write_elastos_capture_in_txn(&client, source_id, &payload).await?;
-        assert!(
-            event_revoked_at(&client, event_id).await?.is_some(),
-            "a sticky classifier-conflict revoke must NOT be auto-restored on recapture"
-        );
-
-        Ok(())
-    })
-}
-
-async fn assert_hathor_recapture_restored(client: &Client, event_id: i64) -> Result<()> {
-    assert!(
-        event_revoked_at(client, event_id).await?.is_none(),
-        "a voided revocation must be restored on recapture"
-    );
-    let nbits: i64 = client
-        .query_one(
-            "SELECT expected_btc_nbits FROM hathor_merge_mining_evidence WHERE event_id=$1",
-            &[&event_id],
-        )
-        .await?
-        .get(0);
-    assert_eq!(
-        nbits, 222,
-        "the sidecar expected_btc_nbits must refresh on recapture"
-    );
-
-    Ok(())
-}
-
-async fn assert_hathor_conflict_sticky(client: &Client, event_id: i64) -> Result<()> {
-    assert!(
-        event_revoked_at(client, event_id).await?.is_some(),
-        "a classifier-conflict revocation must stay sticky"
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn hathor_recapture_restores_reversible_but_keeps_conflict_sticky() -> Result<()> {
-    use bitcoin::hashes::Hash as _;
-    use mmm_capture::capture::{
-        ClassificationProof, HATHOR_PROOF_FORMAT_RFC0006, HATHOR_REVOKE_NBITS_CONFLICT,
-        HATHOR_REVOKE_NON_BTC, HathorEvidencePayload, NormalizedEventEvidence,
-        ResolvedPoolAttributions, build_event_payload_from_evidence,
-    };
-    use mmm_producers::chains::hathor::reconstruct_from_blobs;
-    use mmm_store::write_hathor_capture_in_txn;
-    use std::str::FromStr;
-
-    crate::run_db_test!(client, {
-        let source_id = get_source_id(&client, HATHOR_SOURCE_CODE).await?;
-
-        // Reconstruct a real BTC parent from a committed fixture.
-        let fx: serde_json::Value =
-            serde_json::from_str(include_str!("../../../../fixtures/hathor/1971823.json")).unwrap();
-        let raw = hex::decode(fx["raw_hex"].as_str().unwrap()).unwrap();
-        let aux_pow = hex::decode(fx["aux_pow_hex"].as_str().unwrap()).unwrap();
-        let expected = bitcoin::BlockHash::from_str(fx["tx_id"].as_str().unwrap()).unwrap();
-        let (_aux, recon) = reconstruct_from_blobs(&raw, &aux_pow, expected).unwrap();
-        let block_hash = recon.header.block_hash().to_byte_array().to_vec();
-
-        let evidence = NormalizedEventEvidence {
-            child_height: Some(1_971_823),
-            child_block_hash: Some(block_hash.clone()),
-            child_header_bytes: None,
-            child_block_time: Some(1_637_668_049),
-            child_nbits: None,
-            btc_parent_header: recon.header,
-            pow_validates_child_target: None,
-            btc_parent_coinbase_txid: None,
-            btc_parent_coinbase_script: None,
-            btc_parent_coinbase_outputs: None,
-            btc_parent_coinbase_outputs_text: None,
-            btc_parent_coinbase_tx_bytes: None,
-            child_coinbase_txid: None,
-            child_coinbase_script: None,
-            child_coinbase_outputs: None,
-            aux_merkle_proof: None,
-        };
-        let payload = build_event_payload_from_evidence(
-            evidence,
-            ResolvedPoolAttributions::default(),
-            ClassificationProof::default(),
-            1_800_000_000,
-        )?;
-        let sidecar = |nbits: i64| HathorEvidencePayload {
-            hathor_block_hash: block_hash.clone(),
-            hathor_height: 1_971_823,
-            aux_pow: aux_pow.clone(),
-            funds_graph: raw[..4].to_vec(),
-            funds_graph_split: 35,
-            reward_output_details: None,
-            reward_addresses: None,
-            expected_btc_nbits: nbits,
-            proof_format: HATHOR_PROOF_FORMAT_RFC0006,
-        };
-
-        // Capture, revoke as non-BTC, then recapture with a CHANGED expected nBits.
-        let event_id = write_hathor_capture_in_txn(&client, source_id, &payload, &sidecar(111))
-            .await?
-            .event_id;
-        revoke_event(&client, event_id, 1_800_000_001, HATHOR_REVOKE_NON_BTC).await?;
-        write_hathor_capture_in_txn(&client, source_id, &payload, &sidecar(222)).await?;
-
-        assert_hathor_recapture_restored(&client, event_id).await?;
-
-        // A classifier-conflict revocation must be STICKY across a recapture.
-        revoke_event(
-            &client,
-            event_id,
-            1_800_000_002,
-            HATHOR_REVOKE_NBITS_CONFLICT,
-        )
-        .await?;
-        write_hathor_capture_in_txn(&client, source_id, &payload, &sidecar(222)).await?;
-        assert_hathor_conflict_sticky(&client, event_id).await?;
-
-        Ok(())
-    })
-}
 
 /// A small in-memory [`HathorRpc`] so the per-height state machine can be driven
 /// deterministically through `process_hathor_height` without the live REST API.
@@ -374,13 +151,6 @@ async fn hathor_state_machine_drives_capture_void_and_hold() -> Result<()> {
     }
 
     crate::run_mut_db_test!(client, {
-        crate::support::db::seed_bitcoin_core_header_cache_through(
-            &client,
-            710_969,
-            i64::MAX,
-            0x170c_69ea,
-        )
-        .await?;
         let context = HathorCaptureContext::new_with_classifier(
             &client,
             ConfiguredParentClassifier::Disabled,
@@ -446,13 +216,6 @@ async fn hathor_cache_ingest_streams_counts_and_is_idempotent() -> Result<()> {
     };
 
     crate::run_mut_db_test!(client, {
-        crate::support::db::seed_bitcoin_core_header_cache_through(
-            &client,
-            710_969,
-            i64::MAX,
-            0x170c_69ea,
-        )
-        .await?;
         let context = HathorCaptureContext::new_with_classifier(
             &client,
             ConfiguredParentClassifier::Disabled,

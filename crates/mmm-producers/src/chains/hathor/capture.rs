@@ -6,8 +6,9 @@
 //! third-party public REST API. Because the API is untrusted the slice
 //! self-verifies the BTC evidence: RFC 0006 reconstruction identity + the
 //! "Hath" marker (in [`crate::chains::hathor::auxpow`]) + the block's own
-//! Hathor target + the BTC parent PoW + the Core-cache nBits contamination
-//! verdict. Hathor DAG membership/height stays RPC-asserted.
+//! Hathor target + the BTC parent PoW, and the shared Bitcoin-lineage gate
+//! every capture passes (`mmm_read_model::capture_in_txn`). Hathor DAG
+//! membership/height stays RPC-asserted.
 //!
 //! Hathor blocks can be VOIDED (DAG reorg) or replaced at a height. A replaced
 //! block's event is still valid Bitcoin-side evidence, so the state machine
@@ -16,8 +17,6 @@
 //! Displacement"), and the earlier event is marked displaced. The endpoint
 //! may be untrusted, so a block is recorded only under the rule in
 //! [`may_record_current_block`]; `docs/capture.md` states it in prose.
-//! Revocation keeps its one meaning, a non-BTC parent or a classifier
-//! conflict, applied to the block the verdict was reached on.
 
 use anyhow::{Context, Result};
 use bitcoin::Transaction;
@@ -34,26 +33,18 @@ use crate::chains::hathor::reconstruct::{
 };
 use crate::chains::hathor::reward::{HATHOR_REWARD_ADDRESS_NAMESPACE, parse_hathor_reward_outputs};
 use crate::chains::hathor::rpc::{HathorBlockMeta, HathorRpc, HathorTransaction};
-use crate::chains::nbits_horizon::{HorizonGate, cached_horizon_gate};
-use crate::chains::{
-    ensure_offline_valid_not_classifier_conflict, is_offline_valid_classifier_conflict,
-    revoke_active_block,
-};
 use crate::poller::RescanOutcome;
 use crate::producer_runtime::ProducerContext;
 use mmm_bitcoin_core::ConfiguredParentClassifier;
-use mmm_capture::auxpow::parse_bip34_height;
 use mmm_capture::capture::{
-    ClassificationProof, HATHOR_PROOF_FORMAT_RFC0006, HATHOR_REVOKE_NBITS_CONFLICT,
-    HATHOR_REVOKE_NON_BTC, HathorEvidencePayload, NormalizedEventEvidence,
-    ResolvedPoolAttributions, build_event_payload_from_evidence, now_epoch_seconds,
-    resolve_parent_pool_attribution_from_coinbase,
+    ClassificationProof, HATHOR_PROOF_FORMAT_RFC0006, HathorEvidencePayload,
+    NormalizedEventEvidence, ResolvedPoolAttributions, build_event_payload_from_evidence,
+    now_epoch_seconds, resolve_parent_pool_attribution_from_coinbase,
 };
 use mmm_capture::child_payout::PoolIdentityLookup;
-use mmm_capture::nbits_table::{NbitsLookup, NbitsTable, NbitsVerdict};
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_capture::source_registry::HATHOR_SOURCE_CODE;
-use mmm_read_model::capture_in_txn;
+use mmm_read_model::CaptureOutcome;
 use mmm_store::{
     ChildChainHeadOutcome, ChildChainHeadRecord, CurrentBlockParent, EvidenceMarker,
     finish_child_chain_height_operation, hathor_sidecar_graph_heads_at_height,
@@ -147,8 +138,8 @@ impl HathorCaptureContext {
         self.base.source_id()
     }
 
-    /// The configured BTC parent classifier, threaded into every capture and
-    /// revoke so the read-model reconcile runs under the same placement policy.
+    /// The configured BTC parent classifier, threaded into every capture so the
+    /// read-model reconcile runs under the same placement policy.
     pub fn parent_classifier(&self) -> &ConfiguredParentClassifier {
         self.base.parent_classifier()
     }
@@ -156,14 +147,17 @@ impl HathorCaptureContext {
     pub(super) async fn refresh_core_header_cache(&self, client: &mut Client) -> Result<()> {
         self.base.refresh_core_header_cache(client).await
     }
+
+    pub(super) fn non_bitcoin_parents(&self) -> usize {
+        self.base.non_bitcoin_parents()
+    }
 }
 
-/// Per-height capture outcome. The poller maps the `*Hold` variants to
-/// [`crate::poller::HeightProgress`]; the cursor-blocking `TableHorizonHold`
-/// becomes `Abort`.
+/// Per-height capture outcome. The poller maps the holds and a pending
+/// lineage to [`crate::poller::HeightProgress::Hold`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HathorHeightOutcome {
-    /// A verified BTC-parent event was written (or restored-and-refreshed).
+    /// A verified BTC-parent event was written.
     AuxpowWritten,
     /// A non-merge-mined (version != 3) block; no event, nothing recorded.
     NonAuxpowSkipped,
@@ -174,30 +168,24 @@ pub enum HathorHeightOutcome {
     NearSkipped,
     /// The proof was malformed / inconsistent and was skipped without a write.
     MalformedSkipped,
-    /// A validated Hathor block whose parent is non-BTC (BCH contaminant or
-    /// indeterminate); no event.
-    NonBtcParentSkipped,
-    /// The Core-cache nBits verdict was Valid but the classifier contradicted
-    /// it (difficulty_epoch_ok = false); the write was blocked.
-    ConflictSkipped,
+    /// A validated Hathor block whose parent is another chain's header (the
+    /// shared lineage gate); no event.
+    NonBitcoinParent,
+    /// The parent's lineage waits on a Bitcoin epoch the Core header cache
+    /// has not reached; no event, and the height is retried.
+    LineagePending,
     /// The block was definitively absent (best-effort hold).
     AbsentHold,
     /// A transient REST failure, or a response for another height than the
     /// one asked for (best-effort hold: retried, never counted as processed).
     TransientHold,
-    /// The parent BIP34 height is beyond the Core-cache horizon (cursor-blocking).
-    TableHorizonHold,
 }
 
-/// Everything assembled offline from a reconstructed parent, before the write
-/// decision. Built first so the `verdict` (Valid / non-BTC / above-horizon)
-/// can route to write-vs-revoke without re-deriving the evidence.
+/// Everything assembled offline from a reconstructed parent for the write.
 struct BuiltCapture {
     evidence: NormalizedEventEvidence,
     sidecar: HathorEvidencePayload,
     pool_attributions: ResolvedPoolAttributions,
-    verdict: NbitsVerdict,
-    bip34_height: Option<i32>,
 }
 
 /// Fetch-result decision before any DB mutation. This keeps voided DAG state and
@@ -323,34 +311,40 @@ async fn process_locked_block(
         HathorBlockDecision::Auxpow { current_hash, tx } => (current_hash, tx),
     };
 
-    // Reconstruction is pure CPU and decides the common near case, so it runs
-    // before the Core-cache lock and the nBits table load only a BTC-valid
-    // parent needs.
-    let (outcome, work) = match reconstruct_or_skip(height, &tx)? {
-        HathorParentReconstruction::Malformed => (HathorHeightOutcome::MalformedSkipped, None),
-        HathorParentReconstruction::Near(work) => (HathorHeightOutcome::NearSkipped, Some(work)),
+    // Reconstruction is pure CPU and decides the common near case before any
+    // write.
+    let (outcome, work, core_cache_generation) = match reconstruct_or_skip(height, &tx)? {
+        HathorParentReconstruction::Malformed => {
+            (HathorHeightOutcome::MalformedSkipped, None, None)
+        }
+        HathorParentReconstruction::Near(work) => {
+            (HathorHeightOutcome::NearSkipped, Some(work), None)
+        }
         HathorParentReconstruction::BtcValid(parent) => {
             let work = parent.work;
-            let outcome =
-                classify_and_write_btc_valid(client, context, height, &current_hash, &tx, parent)
-                    .await?;
-            (outcome, Some(work))
+            let (outcome, core_cache_generation) =
+                write_btc_valid(client, context, height, &current_hash, &tx, parent).await?;
+            (outcome, Some(work), core_cache_generation)
         }
     };
 
     // A captured block was recorded inside its capture transaction; any
     // other reconstructed block is recorded here, in a transaction of its
-    // own: a near, non-BTC, held or conflicting parent is still the parent of
-    // the block the chain carries.
+    // own: a near, non-Bitcoin or pending parent is still the parent of the
+    // block the chain carries.
     if outcome != HathorHeightOutcome::AuxpowWritten
         && let Some(work) = work
         && may_record_current_block(&*client, context, height, work).await?
     {
-        // A near parent is a settled proof-of-work comparison; a non-BTC or
-        // conflicting verdict follows the Core cache and may change when the
-        // height is observed again, so it is not final for a rescan.
+        // A near verdict is settled; a non-Bitcoin one carries the Core-cache
+        // generation it was decided under, so a verdict-changing refresh
+        // reopens it; a pending one is retried, and an unusable coinbase is
+        // not a verdict.
         let head_outcome = match outcome {
-            HathorHeightOutcome::NearSkipped => ChildChainHeadOutcome::Recorded,
+            HathorHeightOutcome::NearSkipped | HathorHeightOutcome::NonBitcoinParent => {
+                ChildChainHeadOutcome::Recorded
+            }
+            HathorHeightOutcome::LineagePending => ChildChainHeadOutcome::Held,
             _ => ChildChainHeadOutcome::Unverified,
         };
         record_child_chain_block_in_own_transaction(
@@ -363,6 +357,7 @@ async fn process_locked_block(
                 outcome: head_outcome,
                 evidence: EvidenceMarker::HathorSidecars,
                 observed_at: now_epoch_seconds()?,
+                core_cache_generation,
             },
         )
         .await?;
@@ -491,54 +486,33 @@ async fn fetch_validated_hathor_transaction(
     Ok(Ok(tx))
 }
 
-/// Classify a reconstructed BTC-valid parent against the Core cache and
-/// apply its verdict, under the shared cache lock.
-async fn classify_and_write_btc_valid(
+/// Build the evidence from a reconstructed BTC-valid parent and capture it
+/// through the shared seam, whose lineage gate decides whether the parent is
+/// Bitcoin's. A refused parent also returns the Core-cache generation its
+/// verdict was decided under, for the block's child head.
+async fn write_btc_valid(
     client: &mut Client,
     context: &HathorCaptureContext,
     height: i32,
     current_hash: &[u8],
     tx: &HathorTransaction,
     parent: HathorReconstructedParent,
-) -> Result<HathorHeightOutcome> {
-    mmm_store::lock_bitcoin_core_header_cache_shared(client).await?;
-    let result = async {
-        let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
-        let HathorReconstructedParent {
-            raw,
-            aux_pow,
-            recon,
-            work,
-        } = parent;
-        // Reuse the prefix length reconstruct already computed; no second scan of raw.
-        let funds_graph = &raw[..recon.funds_graph_len];
-        match build_hathor_capture(
-            context,
-            tx,
-            height,
-            &aux_pow,
-            &recon,
-            funds_graph,
-            &nbits_table,
-        )? {
-            Some(built) => {
-                apply_hathor_verdict(
-                    client,
-                    context,
-                    height,
-                    current_hash,
-                    work,
-                    built,
-                    &nbits_table,
-                )
-                .await
-            }
-            // The block reconstructed; only its reconstructed coinbase is unusable.
-            None => Ok(HathorHeightOutcome::MalformedSkipped),
-        }
+) -> Result<(HathorHeightOutcome, Option<i64>)> {
+    let HathorReconstructedParent {
+        raw,
+        aux_pow,
+        recon,
+        work,
+    } = parent;
+    // Reuse the prefix length reconstruct already computed; no second scan of raw.
+    let funds_graph = &raw[..recon.funds_graph_len];
+    match build_hathor_capture(context, tx, height, &aux_pow, &recon, funds_graph)? {
+        Some(built) => write_capture(client, context, height, current_hash, work, built)
+            .await
+            .with_context(|| format!("Hathor capture at height {height}")),
+        // The block reconstructed; only its reconstructed coinbase is unusable.
+        None => Ok((HathorHeightOutcome::MalformedSkipped, None)),
     }
-    .await;
-    mmm_store::finish_bitcoin_core_header_cache_shared_operation(client, result).await
 }
 
 /// Whether a block declaring `work` may be recorded as the chain's block at
@@ -599,111 +573,19 @@ async fn may_record_current_block<C: GenericClient>(
     Ok(holds)
 }
 
-async fn apply_hathor_verdict(
+/// Capture a verified block: the event and sidecar, then the record that this
+/// block is the chain's block there (under [`may_record_current_block`]), all
+/// in the capture transaction under the per-height lock it takes first. A
+/// parent the lineage gate refuses writes nothing; the caller records the
+/// block with its verdict.
+async fn write_capture(
     client: &mut Client,
     context: &HathorCaptureContext,
     height: i32,
     current_hash: &[u8],
     work: DeclaredWork,
     built: BuiltCapture,
-    nbits_table: &NbitsTable,
-) -> Result<HathorHeightOutcome> {
-    match built.verdict {
-        NbitsVerdict::AboveTableHorizon => {
-            let bip34_height = built
-                .bip34_height
-                .expect("AboveTableHorizon requires a parsed BIP34 height");
-            match cached_horizon_gate(
-                context.parent_classifier(),
-                nbits_table.horizon_height(),
-                bip34_height,
-            )
-            .await
-            {
-                HorizonGate::FarFuture => {
-                    revoke_active_block(
-                        client,
-                        &context.base,
-                        height,
-                        current_hash,
-                        current_hash,
-                        HATHOR_REVOKE_NON_BTC,
-                    )
-                    .await?;
-                    Ok(HathorHeightOutcome::NonBtcParentSkipped)
-                }
-                HorizonGate::Hold | HorizonGate::WithinTip => {
-                    Ok(HathorHeightOutcome::TableHorizonHold)
-                }
-            }
-        }
-        NbitsVerdict::Contaminant | NbitsVerdict::Indeterminate => {
-            // A validated Hathor block with a non-BTC parent writes no event AND
-            // revokes this block's own active capture, a row whose verdict
-            // flipped after capture (e.g. a Core-cache correction). The non-BTC
-            // reason is reversible, so a later re-Valid recapture restores it.
-            revoke_active_block(
-                client,
-                &context.base,
-                height,
-                current_hash,
-                current_hash,
-                HATHOR_REVOKE_NON_BTC,
-            )
-            .await?;
-            Ok(HathorHeightOutcome::NonBtcParentSkipped)
-        }
-        NbitsVerdict::Valid => {
-            // A matching nBits value is not enough to write a claimed BIP34
-            // height beyond the persisted Core horizon, even within the current
-            // difficulty epoch. A fresh tip can demote a clearly fabricated
-            // claim; all other unobserved claims hold for a cache refresh.
-            if let Some(height_claim) = built.bip34_height {
-                match cached_horizon_gate(
-                    context.parent_classifier(),
-                    nbits_table.horizon_height(),
-                    height_claim,
-                )
-                .await
-                {
-                    HorizonGate::FarFuture => {
-                        revoke_active_block(
-                            client,
-                            &context.base,
-                            height,
-                            current_hash,
-                            current_hash,
-                            HATHOR_REVOKE_NON_BTC,
-                        )
-                        .await?;
-                        Ok(HathorHeightOutcome::NonBtcParentSkipped)
-                    }
-                    HorizonGate::Hold => Ok(HathorHeightOutcome::TableHorizonHold),
-                    HorizonGate::WithinTip => {
-                        write_valid_capture(client, context, height, current_hash, work, built)
-                            .await
-                    }
-                }
-            } else {
-                write_valid_capture(client, context, height, current_hash, work, built).await
-            }
-        }
-    }
-}
-
-/// Write a Valid BTC-parent capture: the event and sidecar, then the record
-/// that this block is the chain's block there (under
-/// [`may_record_current_block`]), all in the capture transaction under the
-/// per-height lock it takes first. Nothing remains to complete after the
-/// commit.
-async fn write_valid_capture(
-    client: &mut Client,
-    context: &HathorCaptureContext,
-    height: i32,
-    current_hash: &[u8],
-    work: DeclaredWork,
-    built: BuiltCapture,
-) -> Result<HathorHeightOutcome> {
+) -> Result<(HathorHeightOutcome, Option<i64>)> {
     let now = now_epoch_seconds()?;
     let mut payload = build_event_payload_from_evidence(
         built.evidence,
@@ -713,66 +595,51 @@ async fn write_valid_capture(
     )?;
     let sidecar = built.sidecar;
 
-    let write_result = capture_in_txn(
-        client,
-        context.source_id(),
-        context.parent_classifier(),
-        &mut payload,
-        "Hathor",
-        async |txn, source_id, payload| {
-            // Capture-time pre-upsert guard: only Valid rows reach here, so a
-            // preclassified difficulty_epoch_ok == Some(false) contradicts the
-            // offline verdict; abort rather than store the contradiction.
-            ensure_offline_valid_not_classifier_conflict(payload)?;
-            let outcome = write_hathor_capture_in_txn(txn, source_id, payload, &sidecar).await?;
-            if may_record_current_block(txn, context, height, work).await? {
-                record_child_chain_block(
-                    txn,
-                    source_id,
-                    height,
-                    ChildChainHeadRecord {
-                        block_hash: current_hash,
-                        parent: CurrentBlockParent::Known(current_hash),
-                        outcome: ChildChainHeadOutcome::captured(
-                            payload.classification_provisional,
-                        ),
-                        evidence: EvidenceMarker::HathorSidecars,
-                        observed_at: now,
-                    },
-                )
-                .await?;
-            }
-            Ok(outcome)
-        },
-    )
-    .await;
-
-    match write_result {
-        Ok(_event_id) => Ok(HathorHeightOutcome::AuxpowWritten),
-        Err(err) if is_offline_valid_classifier_conflict(&err) => {
-            warn!(
-                height,
-                "Hathor offline-Valid row conflicts with classifier; write blocked"
-            );
-            // The current block conflicts with the classifier: revoke its own
-            // active capture stickily (never auto-restored). No replacement was
-            // written; the caller still records the block as the chain's.
-            revoke_active_block(
-                client,
-                &context.base,
-                height,
-                current_hash,
-                current_hash,
-                HATHOR_REVOKE_NBITS_CONFLICT,
-            )
-            .await?;
-            Ok(HathorHeightOutcome::ConflictSkipped)
-        }
-        Err(err) => Err(err).with_context(|| format!("Hathor capture at height {height}")),
-    }
+    let captured = context
+        .base
+        .capture(
+            client,
+            &mut payload,
+            "Hathor",
+            async |txn, source_id, payload| {
+                let outcome =
+                    write_hathor_capture_in_txn(txn, source_id, payload, &sidecar).await?;
+                if may_record_current_block(txn, context, height, work).await? {
+                    record_child_chain_block(
+                        txn,
+                        source_id,
+                        height,
+                        ChildChainHeadRecord {
+                            block_hash: current_hash,
+                            parent: CurrentBlockParent::Known(current_hash),
+                            outcome: ChildChainHeadOutcome::captured(
+                                payload.classification_provisional,
+                            ),
+                            evidence: EvidenceMarker::HathorSidecars,
+                            observed_at: now,
+                            core_cache_generation: None,
+                        },
+                    )
+                    .await?;
+                }
+                Ok(outcome)
+            },
+        )
+        .await?;
+    Ok(match captured {
+        CaptureOutcome::Written(_) => (HathorHeightOutcome::AuxpowWritten, None),
+        CaptureOutcome::NotBitcoin {
+            core_cache_generation,
+            ..
+        } => (
+            HathorHeightOutcome::NonBitcoinParent,
+            Some(core_cache_generation),
+        ),
+        CaptureOutcome::LineagePending(_) => (HathorHeightOutcome::LineagePending, None),
+    })
 }
 
-/// Build the hand-assembled evidence + sidecar + pool ids + nBits verdict from a
+/// Build the hand-assembled evidence + sidecar + pool ids from a
 /// reconstructed parent. Deserializes the reconstructed coinbase once.
 ///
 /// Returns `Ok(None)` when the reconstructed bytes do not deserialize as a
@@ -790,7 +657,6 @@ fn build_hathor_capture(
     aux_pow: &[u8],
     recon: &HathorReconstruction,
     funds_graph: &[u8],
-    nbits_table: &NbitsTable,
 ) -> Result<Option<BuiltCapture>> {
     let coinbase: Transaction = match deserialize(&recon.full_coinbase) {
         Ok(tx) => tx,
@@ -812,16 +678,8 @@ fn build_hathor_capture(
     }
     let coinbase_input = &coinbase.input[0];
     let script_sig = coinbase_input.script_sig.as_bytes().to_vec();
-    let bip34_height = parse_bip34_height(&script_sig);
     let output_addresses = derive_output_addresses(&coinbase);
     let coinbase_txid = coinbase.compute_txid();
-
-    let nbits = recon.header.bits;
-    let verdict = nbits_table.classify_nbits(bip34_height, nbits);
-    let expected_btc_nbits = match nbits_table.expected_nbits(bip34_height.unwrap_or(-1)) {
-        NbitsLookup::Found(bits) => i64::from(bits),
-        _ => i64::from(nbits.to_consensus()),
-    };
 
     let block_hash_bytes = recon.header.block_hash().to_byte_array().to_vec();
     let parent_attribution = resolve_parent_pool_attribution_from_coinbase(
@@ -884,7 +742,6 @@ fn build_hathor_capture(
         reward_addresses: reward_parse
             .as_ref()
             .map(|parsed| parsed.reward_addresses_json()),
-        expected_btc_nbits,
         proof_format: HATHOR_PROOF_FORMAT_RFC0006,
     };
 
@@ -892,8 +749,6 @@ fn build_hathor_capture(
         evidence,
         sidecar,
         pool_attributions,
-        verdict,
-        bip34_height,
     }))
 }
 
