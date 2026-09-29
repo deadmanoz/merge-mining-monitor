@@ -1,5 +1,23 @@
 # Release Notes
 
+## [0.9.1] - 2026-09-29
+
+- Merge-mined parents from other SHA-256 chains, mostly Bitcoin Cash, are no
+  longer counted as Bitcoin evidence. Every live capture now checks a parent
+  against Bitcoin's difficulty history before storing it: another chain's
+  parent is skipped and counted as `non_bitcoin` on the poll tick, and one
+  whose difficulty epoch the Bitcoin Core header cache has not reached yet
+  holds the height until it has. The more than 52,000 `unknown` blocks and
+  their events that earlier captures stored for other chains' parents are
+  removed at deploy.
+- A Bitcoin block that no evidence attests any longer is removed together with
+  its AuxPoW proofs instead of staying as an empty `unknown` block.
+- Orphan classification uses the same rule. A header on a known Bitcoin block
+  whose difficulty is not that height's is never an orphan, and a historical
+  import that carries one stops instead of storing it.
+- Migration `0031` drops the Hathor sidecar's `expected_btc_nbits`, which only
+  the replaced Hathor check wrote, through the backup-first workflow.
+
 ## [0.9.0] - 2026-09-29
 
 - Terracoin is a live source. Once the poller is first started with
