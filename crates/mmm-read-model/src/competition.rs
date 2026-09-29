@@ -90,7 +90,6 @@ pub(crate) async fn compute_block_orphan_class<C: GenericClient>(
     kind: BlockKind,
     classification: &ParentClassification,
     header: &Header,
-    difficulty_epoch_ok: Option<bool>,
     nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
 ) -> Result<Option<String>> {
     if kind != BlockKind::Unknown {
@@ -109,16 +108,6 @@ pub(crate) async fn compute_block_orphan_class<C: GenericClient>(
             hash = %hex::encode(hash),
             "known-stale membership: excluding parent from strict/weak orphan classification"
         );
-        return Ok(BtcOrphanVerdict::Excluded.as_db_str().map(str::to_string));
-    }
-    // Core proved the candidate absent, but if the header carries the wrong nBits
-    // for its only possible BTC height (`difficulty_epoch_ok = Some(false)`), it is
-    // an invalid scratch parent: exclude it directly rather than letting the
-    // offline timestamp/BIP34 classifier mislabel it as a strict or weak orphan.
-    // The merged value (current result over the event rollup) preserves a
-    // previously-proven `false` across a transient `--recheck-orphans` pass, so a
-    // previously-excluded wrong-epoch parent stays excluded instead of flipping.
-    if difficulty_epoch_ok == Some(false) {
         return Ok(BtcOrphanVerdict::Excluded.as_db_str().map(str::to_string));
     }
     let strict_height = load_strict_bip34_height(client, hash).await?;

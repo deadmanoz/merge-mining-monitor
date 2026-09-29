@@ -1348,7 +1348,7 @@ remain `null`.
 | `pool_attributions` | always present, BTC parent matches, legacy child script tags, and chain-native child payout addresses when matched or observed | always present, BTC parent matches and `fractal_reward_address` rows when matched or observed | always present, child `rsk_miner_address` when observed | always present, BTC parent matches and `hathor_reward_address` rows when observed |
 | `pow_validates_btc_target` | populated | populated | populated | populated |
 | `pow_validates_child_target` | populated | populated | `null` | `null` |
-| `difficulty_epoch_ok` | `null` | `null` | `null` | `null` |
+| `difficulty_epoch_ok` | `true` when Core placed the parent, else `null` | same | same | same |
 | Lifecycle fields | populated | populated | populated | populated |
 
 ## Proof Lifecycle
