@@ -332,7 +332,9 @@ async fn insert_unknown_parent_event(client: &Client) -> Result<UnknownParentFix
 
 /// Two distinct target-validating unknown parents (the Namecoin valid-parent
 /// and wrong-chain-parent fixtures) at consecutive child heights, plus the
-/// cache coverage their reconcile needs.
+/// cache coverage their reconcile needs. The cache's time horizon falls
+/// between the two, and the second carries no coinbase height, so its orphan
+/// class stays pending until the cache reaches its time.
 async fn insert_two_unknown_parents(client: &Client) -> Result<()> {
     let (_, _, source_id, parsed) = namecoin_fixture(client).await?;
     let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
@@ -348,7 +350,10 @@ async fn insert_two_unknown_parents(client: &Client) -> Result<()> {
         ("500000-valid-parent", 500_000, 0xa1),
         ("500002-wrong-chain-parent", 500_002, 0xa2),
     ] {
-        let payload = exact_observation(fixture, height, [byte; 32], 1_000)?;
+        let mut payload = exact_observation(fixture, height, [byte; 32], 1_000)?;
+        if height == 500_002 {
+            payload.btc_parent_coinbase_script = None;
+        }
         upsert_merge_mining_event(client, source_id, &payload).await?;
     }
     Ok(())

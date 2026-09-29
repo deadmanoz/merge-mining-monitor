@@ -35,14 +35,6 @@ pub enum NbitsLookup {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NbitsVerdict {
-    Valid,
-    Contaminant,
-    Indeterminate,
-    AboveTableHorizon,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WeakVerdict {
     Match,
     NonBtcEpochBits,
@@ -197,33 +189,10 @@ impl NbitsTable {
             WeakVerdict::NonBtcEpochBits
         }
     }
-
-    pub fn classify_nbits(
-        &self,
-        bip34_height: Option<i32>,
-        actual_bits: CompactTarget,
-    ) -> NbitsVerdict {
-        let Some(height) = bip34_height else {
-            return NbitsVerdict::Indeterminate;
-        };
-        match self.expected_nbits(height) {
-            NbitsLookup::Found(expected) => classify_against_expected_nbits(expected, actual_bits),
-            NbitsLookup::BelowTable => NbitsVerdict::Indeterminate,
-            NbitsLookup::AboveTable => NbitsVerdict::AboveTableHorizon,
-        }
-    }
 }
 
 pub fn daa_epoch_start(height: i32) -> i32 {
     height.div_euclid(DAA_EPOCH_INTERVAL) * DAA_EPOCH_INTERVAL
-}
-
-pub fn classify_against_expected_nbits(expected: u32, actual: CompactTarget) -> NbitsVerdict {
-    if actual.to_consensus() == expected {
-        NbitsVerdict::Valid
-    } else {
-        NbitsVerdict::Contaminant
-    }
 }
 
 #[cfg(test)]
