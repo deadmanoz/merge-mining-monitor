@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-29
+
 - Refuse AuxPoW parents that are not Bitcoin headers. Merge mining lets a
   child chain commit to any SHA-256 parent, so Bitcoin Cash blocks and shares
   and other chains' blocks were stored as Bitcoin `near` shares and `unknown`
@@ -28,7 +30,10 @@ This changelog starts with the initial release.
   revocations with the shared gate. Migration `0031` drops the Hathor
   sidecar's `expected_btc_nbits`, which only that check wrote.
 - `difficulty_epoch_ok` is now only `true` or `null`: a bits mismatch against
-  a would-be competitor leaves the parent `unknown` without recording `false`.
+  a would-be competitor leaves the parent `unknown` without recording `false`
+  and without a Core-absence verdict, so it never becomes an orphan. A child
+  of a catalogued error block gets the same check against Bitcoin's block at
+  its height.
 
 ## [0.9.0] - 2026-09-29
 
