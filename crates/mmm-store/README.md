@@ -40,12 +40,12 @@ Shared, table-generic modules:
 
 | Module | Responsibility |
 |--------|----------------|
-| `event` | Exact/partial `merge_mining_event` identity resolution and store-owned write dispositions, lossless parent-coinbase evidence upserts, `historical_event_provenance`, the `event_pool_attribution` provenance writes (with and without stale-attribution cleanup), and NULL-preserving evidence fill. |
+| `event` | Exact/partial `merge_mining_event` identity resolution and store-owned write dispositions, the child-block event delete a refused parent retracts, lossless parent-coinbase evidence upserts, `historical_event_provenance`, the `event_pool_attribution` provenance writes (with and without stale-attribution cleanup), and NULL-preserving evidence fill. |
 | `pool` | Pool snapshot upserts, the generic registry-only pool seeding, and the namespace `pool_identity` seeding and lookup helper. |
 | `poll_cursor` | The `poll_cursor` live-progress table: source-id lookup, cursor load, and monotonic upsert (with optional observed target). Backfills never move the cursor. |
-| `pending_reconcile` | The pending-reconcile work-queue rows: list, upsert, attempt-bump, revocation-reason retag, and delete. |
+| `pending_reconcile` | The pending-reconcile work-queue rows: list, upsert, attempt-bump, and delete. |
 | `capture_error` | The producer-owned `capture_error` table: record (upsert preserving `first_seen_at`) and clear one `(source_id, height)`. The monotonic `poll_cursor` cannot express a gap, and `source_health` is derived, so a held height lives here. |
-| `bitcoin_core_header` | Sparse canonical Bitcoin Core header cache: record/replace, shared/exclusive locks, integrity errors, and the read-only nBits-table loader used by reconciliation and the API. |
+| `bitcoin_core_header` | Sparse canonical Bitcoin Core header cache: record/replace, shared/exclusive locks, integrity errors, the cached-header lookup that places a prev, and the read-only nBits-table loader used by the lineage gate, reconciliation and the API. |
 | `known_stale` | Operator-imported `known_stale_block` membership: upsert, count, and hash lookup for the orphan-classification exclusion gate. |
 | `historical_import` | Read-only publication/base-event streams and finalization-state queries used to plan historical imports without writing. |
 | `child_displacement` | Per-height child-chain block records and locks: which block the child currently carries, and the displace/restore transition. |
@@ -56,7 +56,7 @@ Per-chain modules under `chains/` (each chain's SQL in one place):
 |--------|----------------|
 | `chains::rsk` | The RSK event + `rsk_merge_mining_evidence` sidecar capture writer, the RSK pool / `pool_identity` adapters over the `pool` helpers, and the `rsk_merge_mining_evidence.pool_identity_id` late-fill helper. |
 | `chains::hathor` | The Hathor event + `hathor_merge_mining_evidence` sidecar capture writer, the per-height event read, and the DB-only reward-address replay loads / audit updates. |
-| `chains::elastos` | The Elastos event-row-only capture writer (no sidecar; scoped revoke/reactivate) and the per-height active-event read. |
+| `chains::elastos` | The Elastos identity re-resolution page load; Elastos captures write the shared event row only. |
 
 ## See also
 

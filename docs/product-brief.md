@@ -61,9 +61,11 @@ pools, and stale branches.
 
 ## Interpretation Comes From Bitcoin Classification
 
-Child-chain producers record what they can verify locally: `near` when the
-embedded Bitcoin parent header fails Bitcoin target validation, and `unknown`
-when it passes but lacks Bitcoin-chain proof. The `live-chaintip:bitcoin:core`
+Child-chain producers record what they can verify locally. A merge-mined
+child can commit to any SHA-256 parent, so a parent from another chain, such as
+a Bitcoin Cash block or share, is recognised from Bitcoin's difficulty history
+and never stored. A Bitcoin parent is `near` when it fails its own target and
+`unknown` when it meets it but lacks Bitcoin-chain proof. The `live-chaintip:bitcoin:core`
 source is the Bitcoin Core classifier that turns captured evidence into
 interpretation: canonical and stale verdicts, same-height competition, branch
 context, and the strict/weak orphan refinement for valid blocks Bitcoin Core

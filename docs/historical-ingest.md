@@ -204,6 +204,15 @@ value-paired forms. Recognizable Bitcoin payout addresses participate in
 capture-time attribution, and `reclassify-pools` can replay from the stored
 text later.
 
+An unknown row is stored only with a strict or weak BTC-orphan verdict, which
+the Bitcoin lineage rule decides (`docs/capture.md`, "Bitcoin Lineage Gate"):
+a coinbase height consistent with the header's time and carrying its epoch's
+bits is strict, bits matching the time's epoch are weak, and another chain's
+header is excluded. Canonical and stale rows are Core-attested, error
+observations are catalogued, and published stale branches are Research
+validated, so every stored parent is a Bitcoin header. A pinned publication
+fails on any row it would skip, including an excluded or pending one.
+
 For Hathor unknown parents, strict BIP34 evidence requires a matching full
 coinbase transaction. A script without that transaction contributes only to the
 weak path, using the same rule as live capture, reconciliation and API height

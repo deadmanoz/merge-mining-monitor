@@ -215,7 +215,9 @@ source as live. The same applies after any controlled cursor reset.
 
 Every poll tick, whether it processed a window, found none, or failed, logs
 one `poll tick` line with the cursor, tip, the heights rescanned and new (as
-far as a failed tick got), whether any height answered with a hold, the
+far as a failed tick got), whether any height answered with a hold, how many
+child blocks the lineage gate refused for a parent from another chain
+(`non_bitcoin`, never stored; `docs/capture.md`, "Bitcoin Lineage Gate"), the
 duration of the whole tick (Core-cache refresh, pending work, tip
 fetch, capture and cursor persistence), and each RPC client's counters as
 deltas over that tick, the child chain's and Bitcoin Core's, for example
@@ -233,6 +235,16 @@ attempts of its own. Retries and failures are the client's retry loop's own,
 and a failure is a call that gave up. From the production host every remote
 call costs about 340 ms, so `attempts` per tick or per height is the first
 number to read when a job is slower than expected.
+
+Accept a newly activated live source by its parent mix, not only by its
+cursor. The first ticks should show `non_bitcoin` counts in line with the
+chain's known parents (most Terracoin parents are Bitcoin Cash headers, so most
+of its ticks refuse some) and no open `capture_error` rows. Then compare the
+source's `counts` in `/api/v1/sources` (near, unknown, strict and weak
+orphans) with the Research publication's classification counts over the
+overlapping heights. Unknown or near counts that grow where Research records
+none for the same heights mean parents are being stored that should not be:
+stop the poller before they spread and investigate.
 
 A Qbit backfill exits non-zero when any height in the range holds an unresolved
 capture error. The written evidence and the read-model repair still complete;
@@ -507,7 +519,8 @@ Activate in this order, through the backup-first release workflow:
 5. Remove the override only after hash(C) has appeared in `child_chain_head`
    (the overlap tick captured C) and no `capture_error` rows are open; the
    cursor is not that proof. Then restart and verify normal cursor-based
-   resume. A first start without the override seeds at the node tip and leaves
+   resume. Accept the source by its parent mix (see Live Capture). A first
+   start without the override seeds at the node tip and leaves
    a gap no counter shows, and a pre-existing high cursor cannot prove the
    overlap ran, because cursor persistence uses GREATEST.
 

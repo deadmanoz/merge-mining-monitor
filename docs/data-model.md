@@ -25,10 +25,19 @@ tree view from that evidence.
 
 ## Parent Classification
 
+Every stored parent is a Bitcoin header. Merge mining lets a child chain
+commit to any SHA-256 parent, so a proof that verifies says nothing about
+the parent's chain: a Bitcoin Cash block or share, or another SHA-256 chain's
+block, verifies just as well. The capture lineage gate
+(`mmm_capture::lineage::bitcoin_lineage`, applied in
+`mmm_read_model::capture_in_txn`) refuses such a parent before anything is
+written, and the event is never stored. See [Capture](capture.md#bitcoin-lineage-gate).
+
 `btc_parent_kind` is one of:
 
-- `near` - parent header fails Bitcoin target validation.
-- `unknown` - parent header passes target validation, but no Bitcoin-chain
+- `near` - a Bitcoin share: the parent is a Bitcoin header that fails its own
+  target.
+- `unknown` - a Bitcoin header that meets its own target, but no Bitcoin-chain
   membership proof is available.
 - `canonical` - Bitcoin Core proves the parent is on the active chain.
 - `stale` - Bitcoin Core proves the parent is a valid off-chain Bitcoin block.
@@ -43,7 +52,10 @@ tree view from that evidence.
 Orphan status is not a `btc_parent_kind`. It is the derived
 `block.btc_orphan_class` (`strict_btc_orphan`, `weak_btc_orphan`, or
 `excluded`; NULL while pending), set only after a Core-absence-attested verdict
-and the Core-cache-backed strict/weak orphan classifier. A verdict attests
+and the Core-cache-backed strict/weak orphan classifier, which reads the
+lineage rule: a coinbase height consistent with the header's time and its
+epoch's bits is strict evidence, bits matching the time's epoch are weak
+evidence, and a header newer than the cache waits for it. A verdict attests
 absence only when the candidate was found absent and every further consensus
 lookup completed or found nothing; a lookup the lenient live policy tolerated
 leaves the row pending for the next recheck. A header on a placed Bitcoin prev
@@ -313,16 +325,18 @@ failures on new and rescanned heights; see `docs/capture.md`.
 - A transient classifier `unknown` never demotes a previously proven canonical
   or stale row.
 - Bad evidence is removed with explicit event revocation, then the read model
-  recomputes the affected parent state.
+  recomputes the affected parent state. A parent that stops being a Bitcoin
+  header after a Core-cache change is not revoked: the next capture of its
+  child block deletes the event, and a block or proof no evidence attests any
+  more is deleted with it.
 - A child-chain reorg is not bad evidence. The schema records a displaced
   child block with `child_displaced_at` and `child_displaced_by` so the
   event can stay active for Bitcoin-side state. Every live producer except
   RSK writes those columns for the heights it processes; RSK's heights hold
-  several blocks by design and it keeps its own rescan. A verdict that
-  revokes evidence (a non-BTC parent or a classifier conflict) is scoped to
-  the block it was reached on, never to every event at the height; a block
-  is its hash, or for a hashless historical row its height and Bitcoin
-  parent.
+  several blocks by design and it keeps its own rescan. A lineage verdict
+  that removes evidence is scoped to the block it was reached on, never to
+  every event at the height; a block is its hash, or for a hashless
+  historical row its height and Bitcoin parent.
 - Bitcoin Core backbone rows are written by `sync-bitcoin-core` and are required
   for tree windows the UI should browse.
 
@@ -347,6 +361,8 @@ and `0025_retire_pending_supersede.sql` drops the `supersede` kind of
 `poll_pending_reconcile` with its payload columns.
 `0030_capture_failure_kind.sql` extends capture-error diagnostics to per-height
 operational failures without changing the public error code or source identity.
+`0031_drop_hathor_expected_btc_nbits.sql` drops the Hathor sidecar's
+`expected_btc_nbits`, which only Hathor's retired private lineage check wrote.
 
 `0007_support_partial_child_evidence.sql` makes child evidence nullable, adds
 authenticated child header and `nBits` storage, replaces the old composite

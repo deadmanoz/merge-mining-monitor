@@ -1,0 +1,75 @@
+// Capture and parent classification for one child block.
+// Render: dot -Tpng -Gdpi=144 docs/img/capture-classification-flow.dot -o docs/img/capture-classification-flow.png
+digraph capture_classification_flow {
+  graph [bgcolor="#181a2b", fontname="Courier New", fontcolor="#e8e8f0", fontsize=18,
+         label="Merge Mining Monitor - Capture & Parent Classification (per child block)",
+         labelloc=t, nodesep=0.6, ranksep=0.55, pad=0.4, splines=ortho];
+  node  [fontname="Courier New", fontcolor="#e8e8f0", fontsize=11, style=filled,
+         shape=box, width=4.2, height=0.8, penwidth=1.4];
+  edge  [color="#c8c8d0", penwidth=1.6, arrowsize=0.9, fontname="Courier New",
+         fontsize=10];
+
+  start   [shape=ellipse, width=3.4, fillcolor="#1f3d1f", color="#7ee07e",
+           label=<<b>Poller tick / backfill run</b><br/><b>(per source chain)</b>>];
+  cursor  [fillcolor="#1f2a3d", color="#5aa9e6",
+           label="Read poll_cursor\nseed: START_HEIGHT -> persisted cursor -> tip - reorg_depth\n(backfills never move the live cursor)"];
+  fetch   [fillcolor="#1f2a3d", color="#5aa9e6",
+           label="Fetch child block evidence\nchain RPC / REST (mmm-rpc)"];
+  parse   [fillcolor="#1f2a3d", color="#5aa9e6",
+           label="Parse child header + AuxPoW\nverify merge-mining commitment locally (mmm-capture)"];
+  pools   [fillcolor="#1f2a3d", color="#5aa9e6",
+           label="Resolve pool attributions\n(coinbase tags - child reward addresses - RSK miner)"];
+
+  lineage [shape=diamond, width=5.2, height=1.6, fillcolor="#3d321f", color="#e6c229",
+           label="Is the parent a Bitcoin header?\nlineage gate (mmm-capture::lineage)\nerror catalogue - placed prev -\ncoinbase height - Core cache epochs"];
+  foreign [fillcolor="#3d1f24", color="#e65a6a", width=3.6,
+           label=<<b>another chain</b><br/>nothing stored; the child block is<br/>recorded, the rejection logged and<br/>counted on the tick line>];
+  pending [fillcolor="#2b2b3d", color="#9aa0c8", width=3.6,
+           label="lineage pending\nnext epoch not cached: nothing\nwritten, the height is held"];
+
+  target  [shape=diamond, width=4.6, height=1.3, fillcolor="#3d321f", color="#e6c229",
+           label="Parent meets its\nown PoW target?"];
+  near    [fillcolor="#2b2b2b", color="#999999", width=3.4,
+           label="near\na Bitcoin share"];
+
+  core    [shape=diamond, width=4.6, height=1.5, fillcolor="#3d321f", color="#e6c229",
+           label="Bitcoin Core parent\nclassification\n(mmm-bitcoin-core)"];
+  canonical [fillcolor="#1f3d1f", color="#5fd38d", width=3.0,
+             label=<<b>canonical</b><br/><b>on the active chain</b>>];
+  unknown [fillcolor="#3d3a1f", color="#e6c229", width=3.2,
+           label="unknown\nno chain-membership proof yet\n(upgrade later: reclassify-\nunknown-parents)"];
+  stale   [fillcolor="#3d2a1f", color="#e6964a", width=3.2,
+           label=<<b>stale</b><br/><b>valid off-chain Bitcoin block</b>>];
+  error   [fillcolor="#3d1f2e", color="#d36fa8", width=3.2,
+           label="error_block\nconsensus-invalid (MTP rule\nor pinned catalogue)"];
+
+  write   [fillcolor="#1f3d2a", color="#5fd38d", width=5.6, penwidth=2.2,
+           label=<<b>one transaction: append merge_mining_event + chain sidecar (mmm-store),</b><br/><b>recompute block - attestation_proof - source_health (mmm-read-model)</b>>];
+  api     [shape=ellipse, width=3.8, fillcolor="#2a1a3d", color="#b388ff",
+           label=<<b>axum API projects the Bitcoin tree</b><br/><b>to the www/ frontend</b>>];
+
+  note    [shape=plaintext, style="", width=4.8, fontcolor="#b8b8c8", fontsize=10,
+           label="orphan is not a parent kind: block.btc_orphan_class\n(strict / weak / excluded) is set only after a Core\nabsence-attested verdict, from the lineage rule:\na coinbase height consistent with the header's time\nis strict, bits matching the time's epoch are weak.\nA catalogued known stale is excluded, never\nlabelled strict/weak."];
+
+  start -> cursor -> fetch -> parse -> pools -> lineage;
+  foreign -> lineage [color="#e65a6a", dir=back];
+  lineage -> pending [color="#9aa0c8"];
+  lineage -> target  [xlabel="Bitcoin", fontcolor="#7ee07e", color="#7ee07e"];
+  target -> near     [xlabel="fails", fontcolor="#999999", color="#999999"];
+  target -> core     [xlabel="passes", fontcolor="#7ee07e", color="#7ee07e"];
+  core -> canonical  [xlabel="on active chain", fontcolor="#7ee07e", color="#7ee07e"];
+  core -> unknown    [xlabel="no proof", fontcolor="#e6c229", color="#e6c229"];
+  core -> stale      [xlabel="valid off-chain", fontcolor="#e6964a", color="#e6964a"];
+  core -> error      [xlabel="consensus-invalid", fontcolor="#d36fa8", color="#d36fa8"];
+  near -> write;
+  canonical -> write;
+  unknown -> write;
+  stale -> write;
+  error -> write;
+  write -> api [color="#b388ff"];
+  api -> note [style=invis];
+
+  { rank=same; foreign; lineage; pending; }
+  { rank=same; target; near; }
+  { rank=same; canonical; unknown; stale; error; }
+}

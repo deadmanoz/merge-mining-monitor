@@ -6,6 +6,30 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Refuse AuxPoW parents that are not Bitcoin headers. Merge mining lets a
+  child chain commit to any SHA-256 parent, so Bitcoin Cash blocks and shares
+  and other chains' blocks were stored as Bitcoin `near` shares and `unknown`
+  blocks; most of Terracoin's parents are Bitcoin Cash headers. Every live
+  capture now passes one lineage gate in the shared capture seam before
+  classification or any Bitcoin Core call. It decides from the error
+  catalogue, the parent's placed prev, its coinbase height and the Core
+  header cache's epochs. A refused parent is never stored, and an event an
+  earlier capture held for that child block is deleted. A parent whose
+  lineage needs an epoch the cache has not reached holds the height. Poll
+  ticks and backfill summaries count refusals (`non_bitcoin`,
+  `non_bitcoin_parent`).
+- Delete a derived block and its AuxPoW proofs once no evidence attests
+  them, instead of keeping an empty `unknown` block.
+- Classify BTC orphans with the same lineage rule. A coinbase height outside
+  the epoch the header's time selects falls to the time rule instead of
+  leaving the row pending, as Research's classifier orders it.
+- Replace the private Elastos and Hathor lineage checks, their fresh-tip
+  horizon gates and their reversible non-BTC and classifier-conflict
+  revocations with the shared gate. Migration `0031` drops the Hathor
+  sidecar's `expected_btc_nbits`, which only that check wrote.
+- `difficulty_epoch_ok` is now only `true` or `null`: a bits mismatch against
+  a would-be competitor leaves the parent `unknown` without recording `false`.
+
 ## [0.9.0] - 2026-09-29
 
 - Add Terracoin live capture through the shared AuxPoW runner, keeping source

@@ -108,8 +108,11 @@ yield the same response. The backend produces the collapsed-context fields
 ## Where BTC Orphan Classes Appear
 
 The orphan classes (`strict_btc_orphan`, `weak_btc_orphan`,
-`excluded`, `pending`) split `kind='unknown'` into more specific states
-and appear consistently across endpoints:
+`excluded`, `pending`) split `kind='unknown'` into more specific states.
+Every stored unknown parent is a Bitcoin header, since the capture lineage
+gate refuses other chains' headers: `excluded` marks a catalogued known stale
+or a published stale branch, and `pending` a header the Core cache has not
+reached yet. They appear consistently across endpoints:
 
 - `/api/v1/navigator/orphan`, `/api/v1/navigator/orphan-branch`, and
   `/api/v1/tree?unheighted_anchor=`: the navigation endpoints. They default to

@@ -9,14 +9,15 @@ unavailable values remain `NULL`.
 ## Capture And Classification Flow
 
 <p align="center">
-  <img src="img/capture-classification-flow.png" width="820" alt="Per-child-block capture flow from poller cursor selection through AuxPoW verification, event storage, pool attribution, Bitcoin proof-of-work checks, Core classification, and read-model reconciliation" />
+  <img src="img/capture-classification-flow.png" width="820" alt="Per-child-block capture flow from poller cursor selection through AuxPoW verification, pool attribution, the Bitcoin lineage gate, the parent's own proof-of-work check, Core classification, and the event write with its read-model reconcile" />
 </p>
 
 For a live child block, the poller advances from cursor selection to source
-fetching, AuxPoW parsing, event insertion, sidecar insertion, and pool
-attribution. Parent classification starts with Bitcoin target validation and
-Bitcoin Core placement. Target failures become `near`; Core-known parents become
-`canonical` or `stale`. For a Core-absent target-valid parent with a known
+fetching, AuxPoW parsing and pool attribution. The capture then passes the
+[Bitcoin lineage gate](#bitcoin-lineage-gate): a parent that is not a Bitcoin
+header is never stored. Parent classification starts with the parent's own
+target and Bitcoin Core placement. Target failures become `near`; Core-known
+parents become `canonical` or `stale`. For a Core-absent target-valid parent with a known
 predecessor, the classifier verifies its expected `nBits` and reads the exact
 eleven linked predecessor headers to apply Bitcoin's median-time-past rule. A
 timestamp at or below that median becomes `error_block` with the
@@ -31,6 +32,51 @@ refinement of Core-absent `unknown`
 parents, not a separate parent kind, and it is gated by the operator-imported
 `known_stale_block` membership: a header catalogued as a known stale is
 `excluded` from strict/weak orphan classification rather than overclaimed.
+
+## Bitcoin Lineage Gate
+
+Merge mining lets a child chain commit to any SHA-256 parent, and a proof that
+verifies says nothing about whether the parent is a Bitcoin header. Bitcoin
+Cash blocks and shares, and other SHA-256 chains' blocks, verify just as well;
+most of Terracoin's parents are Bitcoin Cash headers. Every live capture
+therefore passes one gate in the shared seam, `mmm_read_model::capture_in_txn`,
+before classification or any Bitcoin Core call. It decides from local evidence
+under the shared Core-cache lock the capture already holds, using the rule in
+`mmm_capture::lineage`:
+
+1. A header in the pinned error catalogue is Bitcoin's (block 717,696 kept the
+   previous epoch's bits by design).
+2. A prev the Monitor has placed (a canonical, stale or error block, or the
+   Core cache's tip): a share is Bitcoin's whatever its bits, since pool
+   templates briefly keep the previous epoch's bits across a retarget; a
+   block must carry the epoch bits for the prev's height plus one.
+3. A strict BIP34 coinbase height consistent with the header's time must
+   carry that height's epoch bits. A height outside the epoch the time
+   selects falls to the next step, since another chain's heights run ahead
+   of Bitcoin's.
+4. Otherwise the bits must match the epoch the header's time selects or a
+   neighbour. A header newer than the cache must carry the latest epoch's
+   bits (or, for a share, the previous epoch's).
+
+A verdict that needs an epoch the cache has not reached (a block right after a
+retarget) is pending, and a coinbase height more than 144 blocks past the
+cache's tip is another chain's. A BIP34 mismatch alone never rejects.
+
+The capture returns `Written`, `NotBitcoin` or `LineagePending`. A foreign
+parent writes nothing, and any event the source already held for that child
+block is deleted in the same transaction, since a Core-cache change can turn a
+stored verdict. The producer still records the block as the chain's block at
+its height with a settled outcome, so a rescan does not capture it again. A
+pending parent writes nothing and holds the height: the live cursor stops
+there until a later tick's cache refresh decides it, and a bounded backfill
+stops with an error. Rejections are logged per block and counted on the
+`poll tick` line (`non_bitcoin`) and in backfill summaries
+(`non_bitcoin_parent`); nothing about them is stored.
+
+The same rule decides the strict/weak orphan class of Core-absent `unknown`
+parents, which the historical importer relies on: it stores unknown rows only
+with a strict or weak verdict, and a pinned publication aborts on any row it
+would skip.
 
 ## Live Sources
 
@@ -76,14 +122,13 @@ branch across the configured rescan depth, itself bounded at 32 blocks. A
 height with no captured block to hold it against records nothing. A response for another height than
 the one requested holds the height for a retry rather than counting it as
 processed; the position itself stays the endpoint's assertion, as it is for
-every captured event. A merge-mined block whose parent misses
-Bitcoin's target, the common case, is recorded without an event; a voided
+every captured event. A merge-mined block whose parent misses its
+own target, the common case, is recorded without an event, as is one whose
+parent the lineage gate refuses; a voided
 block names no replacement and records nothing; a non-merge-mined block
 carries no proof the producer verifies and is not recorded; the archive cache
 ingest (`backfill-hathor-cache`) replays a snapshot of the chain as it was and
-records nothing. A replaced or voided Hathor block is never revoked. The only
-Hathor revocations are a non-BTC parent and a classifier conflict, applied to
-the block the verdict was reached on.
+records nothing. A replaced or voided Hathor block is never revoked.
 
 RSK replays may refine role and optional proof fields, but an existing sidecar's
 block identity, height, miner, merge-mining hash, proof format, and any two
@@ -174,8 +219,9 @@ RSK's live acquisition floor of 139,999 records the historical capture boundary,
 not the first usable merge-mining proof or the RSKIP-92 format transition.
 Explicit bounded backfills can start below it. Capture accepts complete
 80-byte Bitcoin parent headers and skips fallback-signature payloads, evaluating
-each listed uncle independently. A parent header that fails the Bitcoin
-proof-of-work target is stored as `near`. Backfill summary fields
+each listed uncle independently. A Bitcoin parent header that fails its own
+proof-of-work target is stored as `near`; a parent from another chain is not
+stored, and `canonical_non_bitcoin` and `uncles_non_bitcoin` count them. Backfill summary fields
 `canonical_no_parent_header` and `uncles_no_parent_header` count skips lacking
 a complete parent header.
 
@@ -227,11 +273,10 @@ a complete parent header.
   timestamp coverage does
   not regress when a valid newer Core header has an older timestamp. Historical
   imports retain that lock across candidate validation and
-  the durable derived rebuild, so one import uses one table. Hathor and Elastos
-  retry once after a cache-horizon hold. The read-only API serves the persisted
-  cache without making Core RPC calls. A fresh Core tip also rejects a claimed
-  BIP34 height more than 144 blocks beyond it, even when a stale cache happens
-  to cover that height.
+  the durable derived rebuild, so one import uses one table. The read-only API
+  serves the persisted cache without making Core RPC calls. A parent whose
+  lineage waits on the next epoch is held and retried after the next tick's
+  refresh (see [Bitcoin Lineage Gate](#bitcoin-lineage-gate)).
 
 Terracoin also retains per-height RPC and operational failures as
 `height_capture_failed`. These share the public capture-error state and clear
