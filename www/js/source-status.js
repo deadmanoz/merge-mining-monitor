@@ -33,7 +33,7 @@ const SOURCE_SYNC_MODE_META = {
 };
 const SOURCE_STATUS_HELP = {
   cursorUpdated: "When the progress cursor was last seeded or advanced. This is not a process heartbeat.",
-  latestEvidence: "Newest accepted AuxPoW evidence timestamp. This can be older than the live cursor when recent blocks are near shares or non-BTC parents.",
+  latestEvidence: "Newest accepted AuxPoW evidence timestamp. This can be older than the live cursor when recent blocks yield no stored evidence: near shares the chain does not keep, or parents from other chains, which are never stored.",
 };
 
 function normalizeSourceSync(source) {

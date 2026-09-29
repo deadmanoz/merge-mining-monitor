@@ -343,9 +343,8 @@ impl HathorCacheConfig {
 /// a clean run (any adapter-level corruption aborts instead):
 ///
 /// - rows: `rows_seen = auxpow_written + non_auxpow_skipped + voided_skipped +
-///   near_skipped + malformed_skipped + non_btc_parent_skipped + conflict_skipped +
-///   table_horizon_hold` (and `rows_seen + rows_out_of_range` = archive data
-///   rows read);
+///   near_skipped + malformed_skipped + non_bitcoin_parent + lineage_pending`
+///   (and `rows_seen + rows_out_of_range` = archive data rows read);
 /// - heights: `height_attempts() = rows_seen + absent_heights`.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct HathorCacheSummary {
@@ -357,9 +356,8 @@ pub struct HathorCacheSummary {
     pub voided_skipped: u64,
     pub near_skipped: u64,
     pub malformed_skipped: u64,
-    pub non_btc_parent_skipped: u64,
-    pub conflict_skipped: u64,
-    pub table_horizon_hold: u64,
+    pub non_bitcoin_parent: u64,
+    pub lineage_pending: u64,
     pub first_processed_height: Option<i32>,
     pub last_processed_height: Option<i32>,
 }
@@ -379,9 +377,8 @@ impl HathorCacheSummary {
             HathorHeightOutcome::VoidedSkipped => self.voided_skipped += 1,
             HathorHeightOutcome::NearSkipped => self.near_skipped += 1,
             HathorHeightOutcome::MalformedSkipped => self.malformed_skipped += 1,
-            HathorHeightOutcome::NonBtcParentSkipped => self.non_btc_parent_skipped += 1,
-            HathorHeightOutcome::ConflictSkipped => self.conflict_skipped += 1,
-            HathorHeightOutcome::TableHorizonHold => self.table_horizon_hold += 1,
+            HathorHeightOutcome::NonBitcoinParent => self.non_bitcoin_parent += 1,
+            HathorHeightOutcome::LineagePending => self.lineage_pending += 1,
             // Absent/Transient holds are handled (fatally) by the runner
             // before record().
             HathorHeightOutcome::AbsentHold | HathorHeightOutcome::TransientHold => {}
@@ -426,9 +423,8 @@ async fn finish_cache_ingest(
         voided_skipped = summary.voided_skipped,
         near_skipped = summary.near_skipped,
         malformed_skipped = summary.malformed_skipped,
-        non_btc_parent_skipped = summary.non_btc_parent_skipped,
-        conflict_skipped = summary.conflict_skipped,
-        table_horizon_hold = summary.table_horizon_hold,
+        non_bitcoin_parent = summary.non_bitcoin_parent,
+        lineage_pending = summary.lineage_pending,
         "completed Hathor cache ingest"
     );
 
@@ -500,13 +496,13 @@ pub async fn run_hathor_cache_ingest<R: BufRead>(
             .await
             .with_context(|| format!("ingest cached Hathor height {}", row.height))?;
         match outcome {
-            // A horizon verdict on a historical archive row means the Core cache
-            // refreshed for this command does not cover the claimed BIP34 height.
+            // A pending lineage on a historical archive row means the Core cache
+            // refreshed for this command does not reach the parent's epoch.
             // Record it in the ledger rather than misclassifying the evidence.
-            HathorHeightOutcome::TableHorizonHold => {
+            HathorHeightOutcome::LineagePending => {
                 warn!(
                     height = row.height,
-                    "Core-cache horizon verdict on an archive row; counted + ledgered"
+                    "pending parent lineage on an archive row; counted + ledgered"
                 );
                 ledger_skip_line(ledger, row.height, outcome)?;
             }

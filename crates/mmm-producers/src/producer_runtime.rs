@@ -13,17 +13,22 @@
 //! resolver and the caller decides whether to keep it.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
-use tokio_postgres::Client;
-use tracing::warn;
+use bitcoin::BlockHash;
+use bitcoin::hashes::Hash as _;
+use tokio_postgres::{Client, Transaction};
+use tracing::{info, warn};
 
 use mmm_bitcoin_core::ConfiguredParentClassifier;
+use mmm_capture::capture::MergeMiningEventPayload;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::{
-    ReconcileReadModelConfig, is_reconcile_budget_exhausted, run_reconcile_read_model,
+    CaptureOutcome, ReconcileReadModelConfig, capture_in_txn, is_reconcile_budget_exhausted,
+    run_reconcile_read_model,
 };
-use mmm_store::{self, get_source_id, upsert_pool_snapshot};
+use mmm_store::{self, EventWriteOutcome, get_source_id, upsert_pool_snapshot};
 
 use crate::bitcoin_epoch_cache::refresh_bitcoin_core_header_cache;
 
@@ -34,6 +39,9 @@ pub(crate) struct ProducerContext {
     pool_ids_by_slug: HashMap<String, i64>,
     source_id: i64,
     parent_classifier: ConfiguredParentClassifier,
+    /// Child blocks whose parent the lineage gate refused as another chain's,
+    /// since the context was built. Poll ticks report it as a delta.
+    non_bitcoin_parents: AtomicUsize,
 }
 
 impl ProducerContext {
@@ -56,6 +64,7 @@ impl ProducerContext {
             pool_ids_by_slug,
             source_id,
             parent_classifier,
+            non_bitcoin_parents: AtomicUsize::new(0),
         })
     }
 
@@ -73,6 +82,7 @@ impl ProducerContext {
             pool_ids_by_slug,
             source_id,
             parent_classifier,
+            non_bitcoin_parents: AtomicUsize::new(0),
         }
     }
 
@@ -86,6 +96,64 @@ impl ProducerContext {
     /// provide the Core-backed variant; `Disabled` is only for library tests.
     pub(crate) fn parent_classifier(&self) -> &ConfiguredParentClassifier {
         &self.parent_classifier
+    }
+
+    /// Capture one child block through the shared read-model seam
+    /// ([`capture_in_txn`]), whose lineage gate writes nothing for a parent
+    /// that is not a Bitcoin header. A refused parent is logged here and
+    /// counted for the poll tick summary; nothing about it is persisted.
+    pub(crate) async fn capture<F>(
+        &self,
+        client: &mut Client,
+        payload: &mut MergeMiningEventPayload,
+        chain_label: &str,
+        upsert: F,
+    ) -> Result<CaptureOutcome>
+    where
+        F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
+    {
+        let outcome = capture_in_txn(
+            client,
+            self.source_id,
+            &self.parent_classifier,
+            payload,
+            chain_label,
+            upsert,
+        )
+        .await?;
+        let parent = || {
+            BlockHash::from_slice(&payload.btc_parent_header_hash).map_or_else(
+                |_| hex::encode(&payload.btc_parent_header_hash),
+                |hash| hash.to_string(),
+            )
+        };
+        match outcome {
+            CaptureOutcome::Written(_) => {}
+            CaptureOutcome::NotBitcoin { reason, .. } => {
+                self.non_bitcoin_parents.fetch_add(1, Ordering::Relaxed);
+                info!(
+                    chain = chain_label,
+                    child_height = payload.child_height,
+                    parent = parent(),
+                    reason,
+                    "AuxPoW parent is not a Bitcoin header; no evidence recorded"
+                );
+            }
+            CaptureOutcome::LineagePending(reason) => info!(
+                chain = chain_label,
+                child_height = payload.child_height,
+                parent = parent(),
+                reason,
+                "AuxPoW parent lineage waits on the next Bitcoin epoch in the Core header cache; held"
+            ),
+        }
+        Ok(outcome)
+    }
+
+    /// Child blocks refused for a non-Bitcoin parent since the context was
+    /// built.
+    pub(crate) fn non_bitcoin_parents(&self) -> usize {
+        self.non_bitcoin_parents.load(Ordering::Relaxed)
     }
 
     /// Refresh the durable Core-header cache before capture resumes.

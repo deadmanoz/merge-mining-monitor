@@ -65,6 +65,11 @@ concurrent tasks inside each locking test.
   annotation fields and compatibility types are removed. `block`,
   `attestation_proof`, and `source_health` are derived through
   `mmm-read-model`.
+- Every stored parent is a Bitcoin header. The lineage rule
+  (`mmm_capture::lineage::bitcoin_lineage`) is the only place that decides it:
+  live capture reaches it through the gate in `mmm_read_model::capture_in_txn`,
+  and the strict/weak orphan verdict is its projection. Do not add a
+  per-producer lineage or nBits check.
 - Treat child height, hash, header, time, and `nBits` as independent optional
   evidence. Never store a scan counter, placeholder hash, parent timestamp, or
   zero in place of unavailable child evidence.

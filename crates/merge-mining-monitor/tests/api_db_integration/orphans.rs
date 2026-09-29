@@ -99,13 +99,6 @@ fn serialized_coinbase_tx(script_sig: &[u8]) -> Vec<u8> {
 async fn retained_hathor_script_needs_matching_full_coinbase_for_strict_evidence() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let parent: Header = deserialize(&hex::decode(BTC_400000_HEADER_HEX)?)?;
-        crate::support::db::seed_bitcoin_core_header_cache_through(
-            &client,
-            400_000,
-            i64::from(parent.time),
-            parent.bits.to_consensus(),
-        )
-        .await?;
         let parent_hash = header_hash_bytes(&parent);
         let script_sig = hex::decode(BTC_400000_COINBASE_SCRIPTSIG_HEX)?;
         let absent = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
@@ -226,13 +219,6 @@ async fn orphans_classifies_real_header_weak_then_strict_and_tracks_revocation()
         // excluded. The fake verdict's absence attestation is what
         // makes the (in reality canonical) header an orphan candidate here.
         let parent: Header = deserialize(&hex::decode(BTC_400000_HEADER_HEX)?)?;
-        crate::support::db::seed_bitcoin_core_header_cache_through(
-            &client,
-            400_000,
-            i64::from(parent.time),
-            parent.bits.to_consensus(),
-        )
-        .await?;
         let parent_hash = header_hash_bytes(&parent);
 
         // First capture the header WITHOUT its coinbase scriptSig: no BIP34

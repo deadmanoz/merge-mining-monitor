@@ -186,8 +186,8 @@ pub(crate) async fn apply_event_classification<C: GenericClient>(
 /// distinguishes the two entry forms: `Some` (a live reconcile) runs the result
 /// through `effective_classification`; `None` (a dependent-cascade rebuild)
 /// falls back to `persisted_classification_from_block`, else `unknown`. When no
-/// active event remains for the hash the row is demoted via
-/// `demote_zero_active_block`. Core adds one
+/// active event remains for the hash its derived rows are retired via
+/// `retire_zero_active_block`. Core adds one
 /// to `distinct_sources` and forces `pow_validated` when `core_attested`. The
 /// orphan class is computed before the upsert so `kind` and `btc_orphan_class`
 /// land in one CHECK-safe statement.
@@ -200,8 +200,7 @@ pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
     let rollup = load_parent_rollup(client, hash).await?;
 
     let Some(rollup) = rollup else {
-        demote_zero_active_block(client, hash).await?;
-        rebuild_auxpow_proofs(client, hash).await?;
+        retire_zero_active_block(client, hash).await?;
         return Ok(());
     };
 
@@ -255,24 +254,16 @@ pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
     };
 
     let core_source_count = if classification.core_attested { 1 } else { 0 };
-    // The effective wrong-epoch evidence: the current classifier result merged with
-    // the event rollup, which COALESCEs a previously-proven `false` across a
-    // transient `--recheck-orphans` pass (see apply_event_classification). Used for
-    // both the block column and the orphan-class gate so they cannot disagree (and
-    // the missing-only repair scanner sees no drift).
+    // The current classifier result merged with the event rollup, which
+    // COALESCEs a stored value across a transient recheck (see
+    // apply_event_classification), so the block column and the event rollup
+    // agree and the missing-only repair scanner sees no drift.
     let difficulty_epoch_ok = merge_difficulty(rollup.difficulty_epoch_ok, &classification);
     // Compute before building the block so the orphan class is written in the same
     // upsert statement as `kind` (CHECK-safe).
-    let btc_orphan_class = compute_block_orphan_class(
-        client,
-        hash,
-        kind,
-        &classification,
-        &header,
-        difficulty_epoch_ok,
-        nbits_table,
-    )
-    .await?;
+    let btc_orphan_class =
+        compute_block_orphan_class(client, hash, kind, &classification, &header, nbits_table)
+            .await?;
     let coinbase = coinbase_columns(classification.coinbase.as_ref());
     let bitcoin_miner_pool_id =
         resolve_effective_bitcoin_miner_pool_id(client, hash, kind, &classification, &event)

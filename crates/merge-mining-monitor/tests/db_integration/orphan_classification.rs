@@ -30,72 +30,6 @@ struct UnknownParentFixture {
 }
 
 #[tokio::test]
-async fn core_absent_unknown_keeps_wrong_epoch_exclusion_across_transient_recheck() -> Result<()> {
-    crate::run_mut_db_test!(client, {
-        let fixture = insert_unknown_parent_event(&client).await?;
-
-        // First pass: Core-absent and wrong-epoch (difficulty_epoch_ok = false) ->
-        // excluded.
-        let mut wrong_epoch = orphan_candidate_verdict(&fixture.header);
-        wrong_epoch.difficulty_epoch_ok = Some(false);
-        reconcile_from_merge_mining_event(
-            &mut client,
-            fixture.event_id,
-            &ConfiguredParentClassifier::Fake(FakeParentClassifier::new(wrong_epoch)),
-            None,
-        )
-        .await?;
-
-        // A later --recheck-orphans pass where the inferred-stale competitor lookup
-        // is transiently missing: Core-absent but difficulty_epoch_ok = None. The
-        // proven wrong-epoch evidence must be preserved (both the block column and
-        // the orphan class) so the parent does NOT flip to a strict/weak orphan.
-        let mut transient = orphan_candidate_verdict(&fixture.header);
-        transient.difficulty_epoch_ok = None;
-        reconcile_from_merge_mining_event(
-            &mut client,
-            fixture.event_id,
-            &ConfiguredParentClassifier::Fake(FakeParentClassifier::new(transient)),
-            None,
-        )
-        .await?;
-
-        let row = client
-            .query_one(
-                "SELECT btc_orphan_class, difficulty_epoch_ok FROM block WHERE btc_header_hash = $1",
-                &[&fixture.parent_hash],
-            )
-            .await?;
-        assert_eq!(
-            row.get::<_, Option<String>>(0).as_deref(),
-            Some("excluded"),
-            "a transient recheck must not flip a wrong-epoch exclusion to an orphan"
-        );
-        assert_eq!(
-            row.get::<_, Option<bool>>(1),
-            Some(false),
-            "the proven wrong-epoch difficulty must survive a transient recheck"
-        );
-        // The event keeps difficulty_epoch_ok = false too (COALESCE, not clobber),
-        // so the block column and the event rollup agree and the missing-only
-        // repair scanner sees no drift to churn on.
-        let event_difficulty: Option<bool> = client
-            .query_one(
-                "SELECT difficulty_epoch_ok FROM merge_mining_event WHERE id = $1",
-                &[&fixture.event_id],
-            )
-            .await?
-            .get(0);
-        assert_eq!(
-            event_difficulty,
-            Some(false),
-            "a transient recheck must not clobber the event's proven wrong-epoch difficulty"
-        );
-        Ok::<_, anyhow::Error>(())
-    })
-}
-
-#[tokio::test]
 async fn core_absence_sets_orphan_class_and_canonical_promotion_clears_it() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let fixture = insert_unknown_parent_event(&client).await?;
@@ -305,7 +239,7 @@ async fn insert_unknown_parent_event(client: &Client) -> Result<UnknownParentFix
     let (resolver, pool_ids_by_slug, source_id, parsed) = namecoin_fixture(client).await?;
     let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
         .context("Namecoin fixture must carry a BIP34 parent height")?;
-    crate::support::db::seed_bitcoin_core_header_cache_through(
+    crate::support::db::seed_synthetic_bitcoin_history(
         client,
         parent_height,
         i64::from(parsed.parent_header.header.time),
@@ -332,12 +266,14 @@ async fn insert_unknown_parent_event(client: &Client) -> Result<UnknownParentFix
 
 /// Two distinct target-validating unknown parents (the Namecoin valid-parent
 /// and wrong-chain-parent fixtures) at consecutive child heights, plus the
-/// cache coverage their reconcile needs.
+/// cache coverage their reconcile needs. The cache's time horizon falls
+/// between the two, and the second carries no coinbase height, so its orphan
+/// class stays pending until the cache reaches its time.
 async fn insert_two_unknown_parents(client: &Client) -> Result<()> {
     let (_, _, source_id, parsed) = namecoin_fixture(client).await?;
     let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
         .context("Namecoin fixture must carry a BIP34 parent height")?;
-    crate::support::db::seed_bitcoin_core_header_cache_through(
+    crate::support::db::seed_synthetic_bitcoin_history(
         client,
         parent_height + 2_016,
         i64::from(parsed.parent_header.header.time) + 1,
@@ -348,7 +284,10 @@ async fn insert_two_unknown_parents(client: &Client) -> Result<()> {
         ("500000-valid-parent", 500_000, 0xa1),
         ("500002-wrong-chain-parent", 500_002, 0xa2),
     ] {
-        let payload = exact_observation(fixture, height, [byte; 32], 1_000)?;
+        let mut payload = exact_observation(fixture, height, [byte; 32], 1_000)?;
+        if height == 500_002 {
+            payload.btc_parent_coinbase_script = None;
+        }
         upsert_merge_mining_event(client, source_id, &payload).await?;
     }
     Ok(())
@@ -361,7 +300,7 @@ async fn two_unknown_parents_and_a_classifier(
     client: &Client,
 ) -> Result<(FakeParentClassifier, ConfiguredParentClassifier)> {
     insert_two_unknown_parents(client).await?;
-    let (_, _, _, parsed) = namecoin_fixture(client).await?;
+    let parsed = crate::support::parse_auxpow_fixture("500000-valid-parent")?;
     let fake = FakeParentClassifier::new(orphan_candidate_verdict(&parsed.parent_header.header));
     Ok((fake.clone(), ConfiguredParentClassifier::Fake(fake)))
 }

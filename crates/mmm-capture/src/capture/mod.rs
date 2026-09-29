@@ -403,9 +403,7 @@ impl EventPoolAttribution {
 mod sidecars;
 
 pub use sidecars::{
-    ELASTOS_REVOKE_CLASSIFIER_CONFLICT, ELASTOS_REVOKE_NON_BTC, HATHOR_PROOF_FORMAT_RFC0006,
-    HATHOR_REVOKE_NBITS_CONFLICT, HATHOR_REVOKE_NON_BTC, HathorEvidencePayload,
-    RSK_PROOF_FORMAT_OPAQUE, RskEvidencePayload,
+    HATHOR_PROOF_FORMAT_RFC0006, HathorEvidencePayload, RSK_PROOF_FORMAT_OPAQUE, RskEvidencePayload,
 };
 
 /// Chain-agnostic capture evidence consumed by

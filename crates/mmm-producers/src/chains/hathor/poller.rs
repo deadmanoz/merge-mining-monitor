@@ -5,7 +5,6 @@
 
 use anyhow::Result;
 use tokio_postgres::Client;
-use tracing::warn;
 
 use crate::chains::hathor::capture::{
     HathorCaptureContext, HathorHeightOutcome, process_hathor_height, rescan_hathor_height,
@@ -17,8 +16,8 @@ use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_store::upsert_pending_reconcile;
 
 /// Hathor live capture chain. Maps the rich [`HathorHeightOutcome`] to the
-/// driver's [`HeightProgress`]: the table-horizon hold is cursor-blocking
-/// (`Abort`); best-effort holds enqueue a durable reconcile row and `Hold`.
+/// driver's [`HeightProgress`]: best-effort holds enqueue a durable reconcile
+/// row and `Hold`, and a pending parent lineage holds.
 pub(crate) struct HathorChainPoller {
     state: ChainPollerState,
     rpc: HathorRpcClient,
@@ -55,6 +54,9 @@ impl ChainPoller for HathorChainPoller {
     fn parent_classifier(&self) -> Option<&ConfiguredParentClassifier> {
         Some(self.context.parent_classifier())
     }
+    fn non_bitcoin_parents(&self) -> usize {
+        self.context.non_bitcoin_parents()
+    }
 
     async fn refresh_core_cache(&mut self) -> Result<()> {
         self.context
@@ -89,38 +91,15 @@ impl ChainPoller for HathorChainPoller {
 }
 
 impl HathorChainPoller {
-    /// Map a capture outcome to the driver's progress, retrying once behind a
-    /// refreshed Core header cache on a horizon hold and queueing a durable
-    /// retry for the best-effort holds.
+    /// Map a capture outcome to the driver's progress, queueing a durable retry
+    /// for the best-effort holds.
     async fn progress_for(
         &mut self,
         height: i32,
-        mut outcome: HathorHeightOutcome,
+        outcome: HathorHeightOutcome,
     ) -> Result<HeightProgress> {
-        if matches!(outcome, HathorHeightOutcome::TableHorizonHold) {
-            match self
-                .context
-                .refresh_core_header_cache(&mut self.state.client)
-                .await
-            {
-                Ok(()) => {
-                    outcome = process_hathor_height(
-                        &mut self.state.client,
-                        &self.rpc,
-                        &self.context,
-                        height,
-                    )
-                    .await?;
-                }
-                Err(error) => warn!(
-                    height,
-                    error = %error,
-                    "failed to refresh the Core header cache after a Hathor horizon hold"
-                ),
-            }
-        }
         Ok(match outcome {
-            HathorHeightOutcome::TableHorizonHold => HeightProgress::Abort,
+            HathorHeightOutcome::LineagePending => HeightProgress::Hold,
             HathorHeightOutcome::AbsentHold | HathorHeightOutcome::TransientHold => {
                 // Best-effort hold: enqueue a durable reconcile row so a replay
                 // hold (dropped by the replay sub-range) is still retried via the

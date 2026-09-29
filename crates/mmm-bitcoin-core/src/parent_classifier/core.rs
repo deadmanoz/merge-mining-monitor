@@ -255,18 +255,27 @@ impl BitcoinCoreParentClassifier {
         fail_on_rpc_error: bool,
     ) -> Result<ParentClassification> {
         if let Some(known_prev) = preflight.known_prev
-            && matches!(known_prev.kind, BlockKind::Canonical | BlockKind::Stale)
             && let Some(prev_height) = known_prev.btc_height
         {
-            return self
-                .classify_inferred_stale(
-                    header,
-                    prev_height,
-                    None,
-                    known_prev.kind,
-                    fail_on_rpc_error,
-                )
-                .await;
+            match known_prev.kind {
+                BlockKind::Canonical | BlockKind::Stale => {
+                    return self
+                        .classify_inferred_stale(
+                            header,
+                            prev_height,
+                            None,
+                            known_prev.kind,
+                            fail_on_rpc_error,
+                        )
+                        .await;
+                }
+                BlockKind::ErrorBlock => {
+                    return self
+                        .classify_error_block_child(header, prev_height, fail_on_rpc_error)
+                        .await;
+                }
+                BlockKind::Unknown => {}
+            }
         }
 
         let prev_verbose = match self.source.get_header_verbose(header.prev_blockhash).await {
@@ -338,11 +347,14 @@ impl BitcoinCoreParentClassifier {
             Competitor::Absent => return Ok(core_absence_unknown(header)),
             Competitor::Unavailable => return Ok(ParentClassification::incomplete_unknown(header)),
         };
+        // Bits that are not the competitor's cannot make a stale sibling, and
+        // a header on a placed Bitcoin prev is no orphan either: it is another
+        // chain's. The capture lineage gate refuses it before it is stored. It
+        // stays unknown without the absence verdict, so no orphan class is
+        // derived for it and a pinned historical import that carries it
+        // aborts.
         if !bits_match_expected(header, competitor.header.bits) {
-            return Ok(ParentClassification {
-                difficulty_epoch_ok: Some(false),
-                ..core_absence_unknown(header)
-            });
+            return Ok(ParentClassification::unknown(header));
         }
 
         match self
@@ -369,6 +381,32 @@ impl BitcoinCoreParentClassifier {
             MtpCheck::AncestorMissing => Ok(ParentClassification::unknown(header)),
             MtpCheck::Unavailable => Ok(ParentClassification::incomplete_unknown(header)),
         }
+    }
+
+    /// A child of a catalogued error block sits on an invalid branch, so it is
+    /// never a stale sibling. It remains an orphan candidate only with the
+    /// bits of Bitcoin's block at its height; other bits make it another
+    /// chain's header, which gets no absence verdict.
+    async fn classify_error_block_child(
+        &self,
+        header: &Header,
+        prev_height: i32,
+        fail_on_rpc_error: bool,
+    ) -> Result<ParentClassification> {
+        let Some(height) = prev_height.checked_add(1) else {
+            return Ok(core_absence_unknown(header));
+        };
+        Ok(
+            match self.fetch_competitor(height, fail_on_rpc_error).await? {
+                Competitor::Found(competitor)
+                    if !bits_match_expected(header, competitor.header.bits) =>
+                {
+                    ParentClassification::unknown(header)
+                }
+                Competitor::Found(_) | Competitor::Absent => core_absence_unknown(header),
+                Competitor::Unavailable => ParentClassification::incomplete_unknown(header),
+            },
+        )
     }
 
     /// Validate the candidate against the exact eleven-header MTP window.
@@ -617,10 +655,7 @@ pub(crate) fn classify_inferred_stale_with_competitor(
         return ParentClassification::unknown(header);
     };
     if !bits_match_expected(header, competitor.header.bits) {
-        return ParentClassification {
-            difficulty_epoch_ok: Some(false),
-            ..ParentClassification::unknown(header)
-        };
+        return ParentClassification::unknown(header);
     }
 
     // The siblings are persisted with the verdict; a coinbase one of them

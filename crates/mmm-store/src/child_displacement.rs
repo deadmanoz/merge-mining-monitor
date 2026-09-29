@@ -148,6 +148,11 @@ pub struct ChildChainHeadRecord<'a> {
     pub outcome: ChildChainHeadOutcome,
     pub evidence: EvidenceMarker,
     pub observed_at: i64,
+    /// The Core-cache generation the outcome was decided under, when it was
+    /// decided in an earlier transaction (a lineage refusal); `None` stamps
+    /// the generation current in the recording transaction. A verdict-changing
+    /// refresh between the two then leaves the head non-final.
+    pub core_cache_generation: Option<i64>,
 }
 
 /// The block a child chain last carried at a height, as its producer recorded
@@ -388,6 +393,7 @@ pub async fn record_child_chain_block(
         outcome,
         evidence,
         observed_at,
+        core_cache_generation,
     } = record;
     ensure!(
         current_block_hash.len() == 32,
@@ -401,7 +407,7 @@ pub async fn record_child_chain_block(
         "INSERT INTO child_chain_head \
              (source_id, child_height, block_hash, btc_parent_header_hash, outcome, \
               core_cache_generation, evidence_marker, observed_at) \
-         SELECT $1, $2, $3, $4, $5, s.core_cache_generation, $7, $6 \
+         SELECT $1, $2, $3, $4, $5, COALESCE($8, s.core_cache_generation), $7, $6 \
            FROM bitcoin_core_header_cache_state s WHERE s.singleton \
          ON CONFLICT (source_id, child_height) DO UPDATE SET \
              block_hash = EXCLUDED.block_hash, \
@@ -418,6 +424,7 @@ pub async fn record_child_chain_block(
             &outcome.as_db_str(),
             &observed_at,
             &evidence_marker,
+            &core_cache_generation,
         ],
     )
     .await

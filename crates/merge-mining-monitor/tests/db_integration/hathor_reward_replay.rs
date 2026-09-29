@@ -184,8 +184,8 @@ async fn insert_hathor_reward_sidecar_event(
         .execute(
             "INSERT INTO hathor_merge_mining_evidence ( \
                 event_id, hathor_block_hash, hathor_height, aux_pow, funds_graph, \
-                funds_graph_split, expected_btc_nbits, proof_format \
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                funds_graph_split, proof_format \
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7)",
             &[
                 &event_id,
                 &child_block_hash,
@@ -193,7 +193,6 @@ async fn insert_hathor_reward_sidecar_event(
                 &aux_pow,
                 &funds_graph,
                 &funds_graph_split,
-                &0x1d00ffff_i64,
                 &HATHOR_PROOF_FORMAT_RFC0006,
             ],
         )

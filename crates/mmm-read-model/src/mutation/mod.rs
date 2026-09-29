@@ -38,6 +38,9 @@ pub use historical_queue::{
     reconcile_proven_canonical_batch_for_test,
 };
 
+mod lineage_gate;
+pub use lineage_gate::CaptureOutcome;
+
 mod core_suffix;
 mod core_suffix_status;
 #[cfg(feature = "db-integration")]
@@ -278,7 +281,8 @@ async fn cascade_changed_with_nbits_table(
 /// into the shared callback.
 ///
 /// `upsert` is [`AsyncFn`] (not `AsyncFnOnce`): the retry loop may invoke it more
-/// than once.
+/// than once. It runs only for a parent the lineage gate admits; the outcome
+/// says whether it ran.
 pub async fn capture_in_txn<F>(
     client: &mut Client,
     source_id: i64,
@@ -286,13 +290,11 @@ pub async fn capture_in_txn<F>(
     payload: &mut MergeMiningEventPayload,
     chain_label: &str,
     upsert: F,
-) -> Result<i64>
+) -> Result<CaptureOutcome>
 where
     F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
 {
-    let outcome =
-        capture_event(client, source_id, classifier, payload, chain_label, upsert).await?;
-    Ok(outcome.event_id)
+    capture_event(client, source_id, classifier, payload, chain_label, upsert).await
 }
 
 /// Write one historical observation inside a caller-owned chain transaction.
@@ -460,13 +462,18 @@ pub async fn rebuild_historical_source_health(client: &mut Client) -> Result<()>
 /// when the payload names a child height (the first lock, so a producer's
 /// child-displacement record inside `upsert` is ordered before every parent
 /// lock and two captures at one child height serialize), take the shared
-/// Core-view barrier, classify the parent (which may update `payload`),
+/// Core-view barrier, pass the parent through the lineage gate
+/// ([`lineage_gate`]), classify the parent (which may update `payload`),
 /// acquire the payload's read-model lock set plus the parent-hash lock, open
 /// the source-health bracket, perform the chain-specific `upsert`, reconcile
 /// the event in-transaction unless the parent is `near`, close the bracket,
 /// and commit. Dependents are cascaded after commit. Holding the shared barrier
 /// from classification through commit prevents a suffix switch from landing
 /// between those two points.
+///
+/// A parent the gate refuses is never classified or written: a foreign
+/// parent retracts any event this source held for the child block and
+/// commits that, a pending one rolls back.
 ///
 /// The classified `payload` is passed INTO the callback rather than captured at
 /// the call site: this function holds the only `&mut` borrow of `payload` (it
@@ -484,7 +491,7 @@ async fn capture_event<F>(
     payload: &mut MergeMiningEventPayload,
     chain_label: &str,
     upsert: F,
-) -> Result<EventWriteOutcome>
+) -> Result<CaptureOutcome>
 where
     F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
 {
@@ -498,6 +505,22 @@ where
             mmm_store::lock_child_chain_height(&txn, source_id, child_height).await?;
         }
         lock_core_classification_view_shared(&txn, None).await?;
+        match lineage_gate::refuse_parent(&txn, source_id, payload).await? {
+            None => {}
+            Some(refused @ CaptureOutcome::NotBitcoin { .. }) => {
+                let changed = lineage_gate::retract_child_block(&txn, source_id, payload).await?;
+                txn.commit()
+                    .await
+                    .with_context(|| format!("commit {chain_label} retraction"))?;
+                break (refused, changed);
+            }
+            Some(refused) => {
+                txn.rollback()
+                    .await
+                    .with_context(|| format!("roll back {chain_label} pending capture"))?;
+                return Ok(refused);
+            }
+        }
         let preclassified = classify_payload_parent(&txn, payload, classifier).await?;
         lock_payload_parent_read_model_in_txn(&txn, payload, preclassified.as_ref()).await?;
         // Ensure the parent is locked even for near / target-failing payloads (the
@@ -529,7 +552,7 @@ where
                 txn.commit()
                     .await
                     .with_context(|| format!("commit {chain_label} capture transaction"))?;
-                break (outcome, changed_hashes);
+                break (CaptureOutcome::Written(outcome.event_id), changed_hashes);
             }
             Err(err) if is_reconcile_lock_set_changed(&err) && attempts + 1 < retry_attempts() => {
                 txn.rollback().await.with_context(|| {

@@ -114,7 +114,7 @@ pub(crate) fn parse_height(label: &'static str, value: &str) -> Result<i32> {
 }
 
 /// Tally of a bounded backfill for the final log line. `processed` equals the
-/// sum of the four outcome counters.
+/// sum of the five outcome counters.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct BackfillSummary {
     /// Heights visited (every height in the requested inclusive range).
@@ -123,6 +123,9 @@ pub(crate) struct BackfillSummary {
     pub auxpow_written: usize,
     /// Heights skipped as non-AuxPoW or failing the version gate.
     pub non_auxpow_skipped: usize,
+    /// Heights whose AuxPoW parent is another chain's header, refused by the
+    /// lineage gate and not written.
+    pub non_bitcoin_parent: usize,
     /// Heights skipped as malformed-but-claimed-AuxPoW (logged, not written)
     /// under `CaptureFailurePolicy::SkipMalformedProof`.
     pub malformed_skipped: usize,
@@ -137,8 +140,21 @@ pub(crate) struct BackfillSummary {
 pub(crate) enum BackfillHeightEffect {
     AuxpowWritten,
     NonAuxpowSkipped,
+    NonBitcoinParent,
     MalformedSkipped,
     MalformedHeld,
+}
+
+/// The error a bounded backfill stops with at a height whose AuxPoW parent
+/// lineage waits on a Bitcoin epoch the Core header cache has not reached: a
+/// range is never reported complete over a height it could not decide.
+pub(crate) fn lineage_pending_error(spec: &ChainSpec, height: i32) -> anyhow::Error {
+    anyhow::anyhow!(
+        "{} backfill stopped at height {height}: its AuxPoW parent needs a Bitcoin epoch \
+         the Core header cache has not reached yet; re-run the range once Bitcoin Core \
+         has the next retarget",
+        spec.display_name
+    )
 }
 
 impl BackfillSummary {
@@ -147,6 +163,7 @@ impl BackfillSummary {
         match effect {
             BackfillHeightEffect::AuxpowWritten => self.auxpow_written += 1,
             BackfillHeightEffect::NonAuxpowSkipped => self.non_auxpow_skipped += 1,
+            BackfillHeightEffect::NonBitcoinParent => self.non_bitcoin_parent += 1,
             BackfillHeightEffect::MalformedSkipped => self.malformed_skipped += 1,
             BackfillHeightEffect::MalformedHeld => self.malformed_held += 1,
         }

@@ -3,7 +3,8 @@
 use bitcoin::{CompactTarget, Transaction, consensus::deserialize};
 
 use crate::auxpow::parse_bip34_height;
-use crate::nbits_table::{DAA_EPOCH_INTERVAL, NbitsTable, NbitsVerdict, WeakVerdict};
+use crate::lineage::{Lineage, LineageEvidence, ParentLineageInput, bitcoin_lineage};
+use crate::nbits_table::NbitsTable;
 
 /// BIP34 activation height. Earlier coinbase data cannot support strict height
 /// evidence.
@@ -85,52 +86,46 @@ impl BtcOrphanVerdict {
     }
 }
 
-/// Classify a Core-attested-absent BTC-PoW-valid header. The supplied table is
-/// derived from the persisted Bitcoin Core header cache for the operation.
+/// Classify a Core-attested-absent header that meets its own target: the
+/// strength of the evidence that it is a Bitcoin orphan, read from the
+/// lineage rule ([`bitcoin_lineage`]) with no placed prev. A coinbase height
+/// consistent with the header's time is strict evidence, bits matching the
+/// time's epoch are weak evidence, another chain's header is excluded, and a
+/// header the cache cannot decide yet is pending.
 pub fn classify_btc_orphan_with(
     nbits: &NbitsTable,
     header_time: i64,
     header_bits: CompactTarget,
     strict_height: Option<i32>,
 ) -> (BtcOrphanVerdict, &'static str) {
-    let strict_height = strict_height.filter(|&height| height >= BIP34_HEIGHT);
-    if strict_height.is_some_and(|height| height > nbits.horizon_height()) {
-        return (BtcOrphanVerdict::Pending, "above_nbits_height_horizon");
-    }
-    if header_time > nbits.horizon_time() {
-        return (BtcOrphanVerdict::Pending, "above_nbits_time_horizon");
-    }
-    if let Some(height) = strict_height {
-        let time_epoch_consistent = nbits
-            .epoch_height_for_time(header_time)
-            .is_some_and(|epoch| (epoch..epoch + DAA_EPOCH_INTERVAL).contains(&height));
-        if time_epoch_consistent {
-            match nbits.classify_nbits(Some(height), header_bits) {
-                NbitsVerdict::Valid => {
-                    return (BtcOrphanVerdict::Strict, "strict_height_nbits_match");
-                }
-                NbitsVerdict::Contaminant => {
-                    return (BtcOrphanVerdict::Excluded, "non_btc_epoch_bits");
-                }
-                NbitsVerdict::AboveTableHorizon => {
-                    return (BtcOrphanVerdict::Pending, "above_nbits_height_horizon");
-                }
-                NbitsVerdict::Indeterminate => {}
-            }
+    let input = ParentLineageInput {
+        bits: header_bits,
+        time: header_time,
+        meets_own_target: true,
+        prev_height: None,
+        strict_height: strict_height.filter(|&height| height >= BIP34_HEIGHT),
+    };
+    match bitcoin_lineage(&input, nbits) {
+        Lineage::Bitcoin(LineageEvidence::StrictHeight | LineageEvidence::PlacedPrev) => {
+            (BtcOrphanVerdict::Strict, "strict_height_nbits_match")
         }
-    }
-    match nbits.classify_nbits_by_time(header_time, header_bits) {
-        WeakVerdict::Match => (BtcOrphanVerdict::Weak, "timestamp_epoch_nbits_match"),
-        WeakVerdict::NonBtcEpochBits => (BtcOrphanVerdict::Excluded, "non_btc_epoch_bits"),
-        WeakVerdict::BelowFloor => (BtcOrphanVerdict::Excluded, "insufficient_evidence"),
-        WeakVerdict::AboveHorizon => (BtcOrphanVerdict::Pending, "above_nbits_time_horizon"),
+        Lineage::Bitcoin(LineageEvidence::EpochTime) => {
+            (BtcOrphanVerdict::Weak, "timestamp_epoch_nbits_match")
+        }
+        // Newer than the cache: its class is decided once the cache reaches
+        // its time.
+        Lineage::Bitcoin(LineageEvidence::CurrentEpoch) => {
+            (BtcOrphanVerdict::Pending, "above_nbits_time_horizon")
+        }
+        Lineage::NotBitcoin(reason) => (BtcOrphanVerdict::Excluded, reason),
+        Lineage::Pending(reason) => (BtcOrphanVerdict::Pending, reason),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nbits_table::BitcoinEpochHeader;
+    use crate::nbits_table::{BitcoinEpochHeader, DAA_EPOCH_INTERVAL};
     use bitcoin::{
         Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut, Witness, absolute,
         consensus::serialize, transaction,
@@ -216,6 +211,18 @@ mod tests {
                 .0,
             BtcOrphanVerdict::Excluded
         );
+        // Newer than the cache: the latest epoch's bits wait for the cache to
+        // reach the header's time, and an old epoch's bits are not Bitcoin's.
+        assert_eq!(
+            classify_btc_orphan_with(
+                &table,
+                2_001,
+                CompactTarget::from_consensus(0x1d00_aaaa),
+                None,
+            )
+            .0,
+            BtcOrphanVerdict::Pending
+        );
         assert_eq!(
             classify_btc_orphan_with(
                 &table,
@@ -224,32 +231,37 @@ mod tests {
                 None,
             )
             .0,
-            BtcOrphanVerdict::Pending
+            BtcOrphanVerdict::Excluded
         );
     }
 
     #[test]
-    fn strict_height_above_the_cache_horizon_stays_pending() {
+    fn a_coinbase_height_that_runs_ahead_of_the_time_falls_to_the_time_rule() {
+        // Another chain's coinbase heights run ahead of Bitcoin's: a height
+        // outside the epoch the time selects is not strict evidence, and the
+        // header is judged by its time instead of waiting for that height.
         let (verdict, reason) = classify_btc_orphan_with(
             &table(),
             1_475,
             CompactTarget::from_consensus(0x1d00_aaaa),
             Some(500_000),
         );
-        assert_eq!(verdict, BtcOrphanVerdict::Pending);
-        assert_eq!(reason, "above_nbits_height_horizon");
+        assert_eq!(verdict, BtcOrphanVerdict::Weak);
+        assert_eq!(reason, "timestamp_epoch_nbits_match");
     }
 
     #[test]
-    fn strict_height_in_the_current_epoch_but_above_the_core_horizon_stays_pending() {
+    fn strict_height_in_the_current_epoch_is_decided_by_that_epochs_bits() {
+        // The current epoch's bits are known from its boundary, so a height
+        // above the cached tip but inside that epoch is decided now.
         let (verdict, reason) = classify_btc_orphan_with(
             &table(),
             1_495,
             CompactTarget::from_consensus(0x1d00_aaaa),
             Some(301_000),
         );
-        assert_eq!(verdict, BtcOrphanVerdict::Pending);
-        assert_eq!(reason, "above_nbits_height_horizon");
+        assert_eq!(verdict, BtcOrphanVerdict::Strict);
+        assert_eq!(reason, "strict_height_nbits_match");
     }
 
     #[test]

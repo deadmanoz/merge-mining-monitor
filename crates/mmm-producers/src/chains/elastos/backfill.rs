@@ -3,11 +3,12 @@
 //! foot-gun guard, and the per-height delay for the public endpoint. Env
 //! reads route through `chains::config`; behavior unchanged.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use tracing::{info, warn};
 
 use crate::chains::backfill::{
-    BackfillConfig, BackfillHeightEffect, backfill_progress, run_delayed_backfill_range,
+    BackfillConfig, BackfillHeightEffect, backfill_progress, lineage_pending_error,
+    run_delayed_backfill_range,
 };
 use crate::chains::elastos::capture::{
     ElastosCaptureContext, ElastosHeightOutcome, process_elastos_height,
@@ -91,7 +92,7 @@ pub(crate) async fn run_elastos_backfill(
     );
     let summary = run_delayed_backfill_range(&config, delay_ms, &progress, async |height| {
         let outcome = process_elastos_height(&mut client, &rpc, &context, height).await?;
-        elastos_backfill_effect(height, outcome)
+        elastos_backfill_effect(config.spec, height, outcome)
     })
     .await?;
 
@@ -99,6 +100,7 @@ pub(crate) async fn run_elastos_backfill(
         processed = summary.processed,
         auxpow_written = summary.auxpow_written,
         non_auxpow_skipped = summary.non_auxpow_skipped,
+        non_bitcoin_parent = summary.non_bitcoin_parent,
         malformed_skipped = summary.malformed_skipped,
         "completed bounded Elastos backfill"
     );
@@ -117,25 +119,19 @@ pub(crate) async fn run_elastos_backfill(
 }
 
 fn elastos_backfill_effect(
+    spec: &crate::chains::spec::ChainSpec,
     height: i32,
     outcome: ElastosHeightOutcome,
 ) -> Result<BackfillHeightEffect> {
-    match outcome {
-        ElastosHeightOutcome::AuxpowWritten => Ok(BackfillHeightEffect::AuxpowWritten),
+    Ok(match outcome {
+        ElastosHeightOutcome::AuxpowWritten => BackfillHeightEffect::AuxpowWritten,
         ElastosHeightOutcome::NonAuxpowSkipped
         | ElastosHeightOutcome::NearSkipped
-        | ElastosHeightOutcome::ChildTargetSkipped
-        | ElastosHeightOutcome::NonBtcParentSkipped
-        | ElastosHeightOutcome::ClassifierConflictSkipped => {
-            Ok(BackfillHeightEffect::NonAuxpowSkipped)
-        }
-        ElastosHeightOutcome::MalformedSkipped => Ok(BackfillHeightEffect::MalformedSkipped),
-        // A bounded backfill must not silently leave gaps. A beyond-horizon hold
-        // means the command's fresh Core cache did not cover the evidence.
-        ElastosHeightOutcome::TableHorizonHold => bail!(
-            "Elastos backfill hit the persisted Core-cache horizon at height {height}; ensure Bitcoin Core is fully synced before retrying"
-        ),
-    }
+        | ElastosHeightOutcome::ChildTargetSkipped => BackfillHeightEffect::NonAuxpowSkipped,
+        ElastosHeightOutcome::NonBitcoinParent => BackfillHeightEffect::NonBitcoinParent,
+        ElastosHeightOutcome::MalformedSkipped => BackfillHeightEffect::MalformedSkipped,
+        ElastosHeightOutcome::LineagePending => return Err(lineage_pending_error(spec, height)),
+    })
 }
 
 #[cfg(test)]

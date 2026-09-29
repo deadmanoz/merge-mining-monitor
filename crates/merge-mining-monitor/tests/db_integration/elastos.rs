@@ -5,7 +5,7 @@ use bitcoin::hashes::{Hash as _, sha256d};
 use bitcoin::{BlockHash, CompactTarget};
 use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier, ParentClassification};
 use mmm_capture::auxpow::{parse_bip34_height, parse_elastos_auxpow};
-use mmm_capture::capture::{CHILD_PAYOUT_REGISTRY_SOURCE, ELASTOS_REVOKE_NON_BTC};
+use mmm_capture::capture::CHILD_PAYOUT_REGISTRY_SOURCE;
 use mmm_capture::nbits_table::daa_epoch_start;
 use mmm_capture::source_registry::ELASTOS_SOURCE_CODE;
 use mmm_producers::chains::elastos::{
@@ -41,7 +41,6 @@ async fn capture_unknown_elastos_block(
     client: &mut Client,
     block: ElastosBlock,
 ) -> Result<(i64, i64)> {
-    seed_core_cache_for_elastos(client, &block).await?;
     let context =
         ElastosCaptureContext::new_with_classifier(&*client, unknown_classifier()).await?;
     let source_id = context.source_id();
@@ -65,7 +64,6 @@ async fn core_cache_match_writes_the_event_end_to_end() -> Result<()> {
         )))
         .expect("deserialize Elastos 2243660 fixture");
         let height = block.height;
-        seed_core_cache_for_elastos(&client, &block).await?;
         let context = ElastosCaptureContext::new_with_classifier(
             &client,
             ConfiguredParentClassifier::Fake(
@@ -93,11 +91,10 @@ async fn core_cache_match_writes_the_event_end_to_end() -> Result<()> {
 }
 
 #[tokio::test]
-async fn core_cache_nbits_mismatch_revokes_an_existing_event() -> Result<()> {
+async fn a_foreign_parent_retracts_only_its_own_blocks_event() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let block = writable_elastos_block_without_identity();
         let height = block.height;
-        seed_core_cache_for_elastos(&client, &block).await?;
         let context = ElastosCaptureContext::new_with_classifier(
             &client,
             ConfiguredParentClassifier::Fake(
@@ -153,31 +150,22 @@ async fn core_cache_nbits_mismatch_revokes_an_existing_event() -> Result<()> {
 
         assert_eq!(
             process_elastos_height(&mut client, &rpc, &context, height).await?,
-            ElastosHeightOutcome::NonBtcParentSkipped
+            ElastosHeightOutcome::NonBitcoinParent
         );
-        let row = client
-            .query_one(
-                "SELECT COUNT(*)::int8, \
-                        COUNT(*) FILTER (WHERE revoked_at IS NULL)::int8, \
-                        MAX(revocation_reason) \
-                 FROM merge_mining_event \
+        let remaining: Vec<Vec<u8>> = client
+            .query(
+                "SELECT child_block_hash FROM merge_mining_event \
                  WHERE source_id = $1 AND child_height = $2",
                 &[&context.source_id(), &height],
             )
-            .await?;
+            .await?
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
         assert_eq!(
-            row.get::<_, i64>(0),
-            2,
-            "reprocess must not write a replacement row"
-        );
-        assert_eq!(
-            row.get::<_, i64>(1),
-            1,
-            "mismatched Core nBits must revoke this block's event and no other"
-        );
-        assert_eq!(
-            row.get::<_, Option<String>>(2).as_deref(),
-            Some(ELASTOS_REVOKE_NON_BTC)
+            remaining,
+            std::slice::from_ref(&sibling_hash),
+            "a foreign parent retracts this block's event and no other"
         );
         let sibling = client
             .query_one(
@@ -190,32 +178,8 @@ async fn core_cache_nbits_mismatch_revokes_an_existing_event() -> Result<()> {
         assert_eq!(
             sibling.get::<_, Option<Vec<u8>>>(1),
             Some(reconstructed.block_hash.to_byte_array().to_vec()),
-            "the sibling is displaced by the block the chain carries, not revoked"
+            "the sibling is displaced by the block the chain carries, not removed"
         );
-        Ok(())
-    })
-}
-
-#[tokio::test]
-async fn in_table_valid_far_future_height_is_revoked_against_fresh_tip() -> Result<()> {
-    crate::run_mut_db_test!(client, {
-        let block = writable_elastos_block_without_identity();
-        let height = block.height;
-        seed_core_cache_for_elastos(&client, &block).await?;
-        // The fixture's parent is a real in-table BTC block (height 572,333, nBits
-        // match -> in-table Valid). A FRESH Core tip far below that claimed height
-        // proves it fabricated-far-future, so it must be revoked, not written, even
-        // though its nBits matched a covered epoch (the in-table bypass this closes).
-        let context = ElastosCaptureContext::new_with_classifier(
-            &client,
-            ConfiguredParentClassifier::Fake(
-                FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(500_000),
-            ),
-        )
-        .await?;
-        let rpc = FixtureElastosRpc { block };
-        let outcome = process_elastos_height(&mut client, &rpc, &context, height).await?;
-        assert_eq!(outcome, ElastosHeightOutcome::NonBtcParentSkipped);
         Ok(())
     })
 }
@@ -426,24 +390,6 @@ fn writable_elastos_block_without_identity() -> ElastosBlock {
     .expect("deserialize Elastos 360062 fixture")
 }
 
-async fn seed_core_cache_for_elastos(client: &Client, block: &ElastosBlock) -> Result<()> {
-    let reconstructed = block.reconstruct()?;
-    let auxpow = reconstructed
-        .auxpow
-        .as_deref()
-        .context("Elastos fixture must carry AuxPoW")?;
-    let parsed = parse_elastos_auxpow(reconstructed.prefix_header, auxpow)?;
-    let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
-        .context("Elastos fixture must carry a BIP34 parent height")?;
-    crate::support::db::seed_bitcoin_core_header_cache_through(
-        client,
-        parent_height,
-        i64::from(parsed.parent_header.time()),
-        parsed.parent_header.bits().to_consensus(),
-    )
-    .await
-}
-
 fn writable_elastos_block_with_identity(minerinfo: Option<&str>) -> ElastosBlock {
     let mut block = writable_elastos_block_without_identity();
     let identity_block: ElastosBlock = serde_json::from_str(include_str!(concat!(
@@ -538,7 +484,6 @@ async fn an_unproven_block_at_a_rescanned_height_leaves_the_record_alone() -> Re
     crate::run_mut_db_test!(client, {
         let block_a = writable_elastos_block_without_identity();
         let height = block_a.height;
-        seed_core_cache_for_elastos(&client, &block_a).await?;
         let context = ElastosCaptureContext::new_with_classifier(
             &client,
             ConfiguredParentClassifier::Fake(

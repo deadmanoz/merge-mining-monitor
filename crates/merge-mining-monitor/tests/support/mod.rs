@@ -83,13 +83,6 @@ pub fn btc_400000_coinbase_script() -> Result<Vec<u8>> {
 pub async fn btc_400000_orphan_fixture(client: &Client) -> Result<(Header, Vec<u8>, &'static str)> {
     let header = btc_400000_header()?;
     let coinbase_script = btc_400000_coinbase_script()?;
-    db::seed_bitcoin_core_header_cache_through(
-        client,
-        400_000,
-        i64::from(header.time),
-        header.bits.to_consensus(),
-    )
-    .await?;
     let nbits_table = load_bitcoin_core_nbits_table(client).await?;
     let relevance = match classify_btc_orphan_with(
         &nbits_table,
@@ -120,8 +113,21 @@ pub async fn default_pool_snapshot(client: &Client) -> Result<DefaultPoolSnapsho
     Ok((resolver, pool_ids_by_slug))
 }
 
+/// The synthetic Bitcoin history the synthetic fixtures' easy-bits parents
+/// (the Namecoin raw blocks, the RSK headers, crafted mutation headers) belong
+/// to: the regtest-limit bits from the all-zero genesis they build on, through
+/// the Namecoin parents' BIP34 heights (800,000 to 800,002) and times.
+#[cfg(feature = "db-integration")]
+pub async fn seed_synthetic_fixture_history(client: &Client) -> Result<()> {
+    db::seed_synthetic_bitcoin_history(client, 800_002, 1_700_000_130, 0x207f_ffff).await
+}
+
+/// The synthetic Namecoin fixture world: seeds [`seed_synthetic_fixture_history`]
+/// (replacing whatever history the test set up before), so a test that needs
+/// a different history seeds it after this call.
 #[cfg(feature = "db-integration")]
 pub async fn namecoin_fixture(client: &Client) -> Result<NamecoinFixture> {
+    seed_synthetic_fixture_history(client).await?;
     let (resolver, pool_ids_by_slug) = default_pool_snapshot(client).await?;
     let source_id = get_source_id(client, NAMECOIN_SOURCE_CODE).await?;
     let parsed = parse_auxpow_fixture("500000-valid-parent")?;
@@ -153,15 +159,27 @@ pub async fn capture_test_payload(
     classifier: &ConfiguredParentClassifier,
     payload: &mut MergeMiningEventPayload,
 ) -> Result<i64> {
-    capture_in_txn(
-        client,
-        source_id,
-        classifier,
-        payload,
-        "test",
-        async |txn, sid, p| upsert_merge_mining_event(txn, sid, p).await,
+    written_event_id(
+        capture_in_txn(
+            client,
+            source_id,
+            classifier,
+            payload,
+            "test",
+            async |txn, sid, p| upsert_merge_mining_event(txn, sid, p).await,
+        )
+        .await?,
     )
-    .await
+}
+
+/// The id of the event a capture wrote; a capture the lineage gate refused
+/// is a fixture error for a test that expects its evidence stored.
+#[cfg(feature = "db-integration")]
+pub fn written_event_id(outcome: mmm_read_model::CaptureOutcome) -> Result<i64> {
+    match outcome {
+        mmm_read_model::CaptureOutcome::Written(event_id) => Ok(event_id),
+        refused => anyhow::bail!("the lineage gate refused the fixture parent: {refused:?}"),
+    }
 }
 
 #[cfg(feature = "db-integration")]

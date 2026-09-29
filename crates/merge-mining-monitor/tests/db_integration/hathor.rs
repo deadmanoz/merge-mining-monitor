@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use anyhow::Result;
 use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier, ParentClassification};
-use mmm_capture::capture::{HATHOR_REVOKE_NON_BTC, MergeMiningEventPayload};
+use mmm_capture::capture::MergeMiningEventPayload;
 use mmm_capture::nbits_table::daa_epoch_start;
 use mmm_capture::source_registry::{HATHOR_SOURCE_CODE, NAMECOIN_SOURCE_CODE};
 use mmm_producers::RescanOutcome;
@@ -69,20 +69,6 @@ async fn live_context(
     .await
 }
 
-async fn hathor_context(
-    client: &Client,
-    classifier: ConfiguredParentClassifier,
-) -> Result<HathorCaptureContext> {
-    crate::support::db::seed_bitcoin_core_header_cache_through(
-        client,
-        710_969,
-        i64::MAX,
-        0x170c_69ea,
-    )
-    .await?;
-    live_context(client, classifier).await
-}
-
 fn hathor_1971823_fixture() -> (i32, FixtureHathorRpc) {
     hathor_fixture(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -118,92 +104,50 @@ fn hathor_fixture(json: &str) -> (i32, FixtureHathorRpc) {
     )
 }
 
-async fn assert_revoked_hathor_event(client: &Client, source_id: i64, height: i32) -> Result<()> {
-    let row = client
+/// The event count at `(source, height)`: a parent the lineage gate refuses
+/// leaves none, whatever an earlier capture stored.
+async fn hathor_events_at(client: &Client, source_id: i64, height: i32) -> Result<i64> {
+    Ok(client
         .query_one(
-            "SELECT COUNT(*)::int8, \
-                    COUNT(*) FILTER (WHERE revoked_at IS NULL)::int8, \
-                    MAX(revocation_reason) \
-             FROM merge_mining_event \
+            "SELECT COUNT(*)::int8 FROM merge_mining_event \
              WHERE source_id = $1 AND child_height = $2",
             &[&source_id, &height],
         )
+        .await?
+        .get(0))
+}
+
+/// Make the Core cache disagree with the fixture parent's epoch bits, so the
+/// parent at 710,969 no longer looks like a Bitcoin header.
+async fn contradict_fixture_parent_epoch(client: &Client) -> Result<()> {
+    client
+        .execute(
+            "UPDATE bitcoin_core_header SET bits = $1 WHERE height = $2",
+            &[&i64::from(0x170c_69ea_u32 ^ 1), &daa_epoch_start(710_969)],
+        )
         .await?;
-    assert_eq!(
-        row.get::<_, i64>(0),
-        1,
-        "reprocess must not write a replacement row"
-    );
-    assert_eq!(
-        row.get::<_, i64>(1),
-        0,
-        "a rejected Hathor parent must revoke the active event"
-    );
-    assert_eq!(
-        row.get::<_, Option<String>>(2).as_deref(),
-        Some(HATHOR_REVOKE_NON_BTC)
-    );
     Ok(())
 }
 
 #[tokio::test]
-async fn hathor_in_table_valid_far_future_height_is_revoked_against_fresh_tip() -> Result<()> {
+async fn a_parent_that_turns_out_foreign_retracts_its_event() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let (height, rpc) = hathor_1971823_fixture();
-
-        let write_context = hathor_context(&client, fake_classifier_synced_to(955_609)).await?;
-        assert_eq!(
-            process_hathor_height(&mut client, &rpc, &write_context, height).await?,
-            HathorHeightOutcome::AuxpowWritten
-        );
-        let active: i64 = client
-            .query_one(
-                "SELECT count(*) FROM merge_mining_event \
-                 WHERE source_id = $1 AND child_height = $2 AND revoked_at IS NULL",
-                &[&write_context.source_id(), &height],
-            )
-            .await?
-            .get(0);
-        assert_eq!(
-            active, 1,
-            "the in-table Valid fixture must first write an active event"
-        );
-
-        // BTC parent height 710,969 is in-table Valid, but a fresh Core tip far
-        // below it proves the claimed height fabricated; the production Valid arm
-        // must revoke the active event.
-        let revoke_context = hathor_context(&client, fake_classifier_synced_to(500_000)).await?;
-        assert_eq!(revoke_context.source_id(), write_context.source_id());
-        assert_eq!(
-            process_hathor_height(&mut client, &rpc, &revoke_context, height).await?,
-            HathorHeightOutcome::NonBtcParentSkipped
-        );
-        assert_revoked_hathor_event(&client, revoke_context.source_id(), height).await?;
-        Ok(())
-    })
-}
-
-#[tokio::test]
-async fn core_cache_nbits_mismatch_revokes_an_existing_event() -> Result<()> {
-    crate::run_mut_db_test!(client, {
-        let (height, rpc) = hathor_1971823_fixture();
-        let context = hathor_context(&client, fake_classifier_synced_to(955_609)).await?;
+        let context = live_context(&client, fake_classifier_synced_to(955_609)).await?;
         assert_eq!(
             process_hathor_height(&mut client, &rpc, &context, height).await?,
             HathorHeightOutcome::AuxpowWritten
         );
 
-        client
-            .execute(
-                "UPDATE bitcoin_core_header SET bits = $1 WHERE height = $2",
-                &[&i64::from(0x170c_69ea_u32 ^ 1), &daa_epoch_start(710_969)],
-            )
-            .await?;
+        contradict_fixture_parent_epoch(&client).await?;
         assert_eq!(
             process_hathor_height(&mut client, &rpc, &context, height).await?,
-            HathorHeightOutcome::NonBtcParentSkipped
+            HathorHeightOutcome::NonBitcoinParent
         );
-        assert_revoked_hathor_event(&client, context.source_id(), height).await?;
+        assert_eq!(
+            hathor_events_at(&client, context.source_id(), height).await?,
+            0
+        );
         Ok(())
     })
 }
@@ -211,13 +155,11 @@ async fn core_cache_nbits_mismatch_revokes_an_existing_event() -> Result<()> {
 #[tokio::test]
 async fn in_table_valid_writes_the_event_end_to_end() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // A real validated Hathor block (BTC parent 710,969, in-table Valid). Core
-        // enabled + a fresh tip above the parent height -> Valid (not far-future) ->
-        // the event is WRITTEN through the full production `write_valid_capture` path,
-        // the same Hathor write the above-horizon Valid arm dispatches to (which has
-        // no real above-horizon Hathor block to exercise it directly yet).
+        // A real validated Hathor block (BTC parent 710,969): its coinbase
+        // height and bits match Bitcoin's epoch history, so the lineage gate
+        // admits it and the event is WRITTEN through the full production path.
         let (height, rpc) = hathor_1971823_fixture();
-        let context = hathor_context(&client, fake_classifier_synced_to(955_609)).await?;
+        let context = live_context(&client, fake_classifier_synced_to(955_609)).await?;
         let outcome = process_hathor_height(&mut client, &rpc, &context, height).await?;
         assert_eq!(outcome, HathorHeightOutcome::AuxpowWritten);
         let active: i64 = client
@@ -230,7 +172,7 @@ async fn in_table_valid_writes_the_event_end_to_end() -> Result<()> {
             .get(0);
         assert_eq!(
             active, 1,
-            "an in-table Valid Hathor parent must write one active event"
+            "a Bitcoin Hathor parent must write one active event"
         );
         Ok(())
     })
@@ -240,7 +182,7 @@ async fn in_table_valid_writes_the_event_end_to_end() -> Result<()> {
 async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let (height, rpc) = hathor_1971823_fixture();
-        let context = hathor_context(&client, fake_classifier_synced_to(955_609)).await?;
+        let context = live_context(&client, fake_classifier_synced_to(955_609)).await?;
         let outcome = process_hathor_height(&mut client, &rpc, &context, height).await?;
         assert_eq!(outcome, HathorHeightOutcome::AuxpowWritten);
         let fetched = rpc.tx_calls.load(Ordering::SeqCst);
@@ -281,9 +223,9 @@ async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> R
             .execute(
                 "INSERT INTO hathor_merge_mining_evidence \
                      (event_id, hathor_block_hash, hathor_height, aux_pow, funds_graph, \
-                      funds_graph_split, expected_btc_nbits, proof_format) \
+                      funds_graph_split, proof_format) \
                  SELECT $1, hathor_block_hash, hathor_height, aux_pow, funds_graph, \
-                        funds_graph_split, expected_btc_nbits, proof_format \
+                        funds_graph_split, proof_format \
                    FROM hathor_merge_mining_evidence h \
                    JOIN merge_mining_event e ON e.id = h.event_id \
                   WHERE e.source_id = $2 AND e.child_height = $3 AND e.id <> $1",
@@ -328,13 +270,8 @@ async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> R
         // A verdict came from the Core header cache. When the cache replaces a
         // boundary that can change verdicts (its generation moves) the head is
         // no longer final: the rescan captures the height again, and with the
-        // epoch's nBits changed underneath it the event is revoked.
-        client
-            .execute(
-                "UPDATE bitcoin_core_header SET bits = $1 WHERE height = $2",
-                &[&i64::from(0x170c_69ea_u32 ^ 1), &daa_epoch_start(710_969)],
-            )
-            .await?;
+        // epoch's nBits changed underneath it the event is retracted.
+        contradict_fixture_parent_epoch(&client).await?;
         client
             .execute(
                 "UPDATE bitcoin_core_header_cache_state \
@@ -345,10 +282,13 @@ async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> R
         let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
         assert_eq!(
             outcome,
-            RescanOutcome::Captured(HathorHeightOutcome::NonBtcParentSkipped)
+            RescanOutcome::Captured(HathorHeightOutcome::NonBitcoinParent)
         );
         assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched + 1);
-        assert_revoked_hathor_event(&client, context.source_id(), height).await?;
+        assert_eq!(
+            hathor_events_at(&client, context.source_id(), height).await?,
+            0
+        );
         Ok(())
     })
 }
@@ -357,7 +297,7 @@ async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> R
 async fn live_capture_promotes_a_hashless_historical_row_without_revoking_it() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let (height, rpc) = hathor_1971823_fixture();
-        let context = hathor_context(&client, fake_classifier_synced_to(955_609)).await?;
+        let context = live_context(&client, fake_classifier_synced_to(955_609)).await?;
         assert_eq!(
             process_hathor_height(&mut client, &rpc, &context, height).await?,
             HathorHeightOutcome::AuxpowWritten
@@ -432,25 +372,6 @@ fn internal_hash(tx_id: &str) -> Vec<u8> {
 /// `(child_block_hash, child_displaced_by, revoked_at)` of one event.
 type DisplacementRow = (Vec<u8>, Option<Vec<u8>>, Option<i64>);
 
-/// Seed the Core cache so the parents of both fixtures classify Valid: the
-/// cache reaches B's parent (751,763) with B's nBits, and A's epoch keeps A's.
-async fn seed_core_cache_for_both_fixtures(client: &Client) -> Result<()> {
-    crate::support::db::seed_bitcoin_core_header_cache_through(
-        client,
-        751_763,
-        i64::MAX,
-        0x1709_ed88,
-    )
-    .await?;
-    client
-        .execute(
-            "UPDATE bitcoin_core_header SET bits = $1 WHERE height = $2",
-            &[&i64::from(0x170c_69ea_u32), &daa_epoch_start(710_969)],
-        )
-        .await?;
-    Ok(())
-}
-
 /// A copy of a fixture RPC with its response edited: what the endpoint would
 /// answer if it misplaced, voided or corrupted that block.
 fn variant_of(
@@ -483,7 +404,6 @@ async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> 
         let hash_a = internal_hash(&rpc_a.meta.tx_id);
         let hash_b = internal_hash(&rpc_b.meta.tx_id);
 
-        seed_core_cache_for_both_fixtures(&client).await?;
         let context = live_context(&client, fake_classifier_synced_to(955_609)).await?;
         let source_id = context.source_id();
         let sorted = |mut rows: Vec<DisplacementRow>| {
@@ -574,7 +494,7 @@ async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> 
 async fn a_block_declaring_trivial_work_does_not_displace_the_captured_block() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let (height, rpc_a) = hathor_1971823_fixture();
-        let context = hathor_context(&client, fake_classifier_synced_to(955_609)).await?;
+        let context = live_context(&client, fake_classifier_synced_to(955_609)).await?;
         let source_id = context.source_id();
         let hash_a = internal_hash(&rpc_a.meta.tx_id);
         assert_eq!(

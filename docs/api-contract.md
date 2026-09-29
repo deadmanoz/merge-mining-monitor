@@ -564,18 +564,23 @@ Response arrays use stable ordering:
 : One of `near`, `unknown`, `canonical`, or `stale`.
 
 `near`
-: Parent header satisfies the child-chain AuxPoW target but fails Bitcoin
-  target.
+: A Bitcoin share: the parent is a Bitcoin header that satisfies the
+  child-chain AuxPoW target but fails its own target.
 
 `unknown`
-: Parent header passes Bitcoin target, but Bitcoin-chain proof has not yet
-  classified it as canonical or stale.
+: A Bitcoin header that meets its own target, but Bitcoin-chain proof has
+  not yet classified it as canonical or stale.
 
 `canonical`
 : Parent header is on the active Bitcoin chain.
 
 `stale`
 : Parent header is Bitcoin-valid but not on the active chain.
+
+Every parent the API serves is a Bitcoin header. A parent from another SHA-256
+chain (a Bitcoin Cash block or share, for instance) is refused at capture and
+never stored, so it appears in no count or projection (`docs/capture.md`,
+"Bitcoin Lineage Gate").
 
 `stale_branch`
 : One or more stale blocks linked by parent-child edges, with branch depth,
@@ -1348,7 +1353,7 @@ remain `null`.
 | `pool_attributions` | always present, BTC parent matches, legacy child script tags, and chain-native child payout addresses when matched or observed | always present, BTC parent matches and `fractal_reward_address` rows when matched or observed | always present, child `rsk_miner_address` when observed | always present, BTC parent matches and `hathor_reward_address` rows when observed |
 | `pow_validates_btc_target` | populated | populated | populated | populated |
 | `pow_validates_child_target` | populated | populated | `null` | `null` |
-| `difficulty_epoch_ok` | `null` | `null` | `null` | `null` |
+| `difficulty_epoch_ok` | `true` when Core placed the parent, else `null` | same | same | same |
 | Lifecycle fields | populated | populated | populated | populated |
 
 ## Proof Lifecycle

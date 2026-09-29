@@ -49,7 +49,7 @@ Cross-cutting modules:
 | `chains::auxpow_family` + `chains::bitcoind_rpc` | The shared bitcoind-family capture/poll/backfill runner and the one thin JSON-RPC client serving Namecoin, Syscoin, Fractal, and Qbit. `auxpow_family::qbit` is the Qbit format adapter: extended-header prefix split, native-placement authentication, and the projection into `NormalizedEventEvidence`. The runner also owns the per-spec malformed-proof policy and the `capture_error` writes it implies. |
 | `poller` | The crate-internal `ChainPoller` trait and the generic `Poller<C>` driver: cursor seeding, the trailing rescan window, batch advance, startup read-model repair, shutdown, and bounded tip-fetch retry. |
 | `bitcoin_core_backbone` | The durable Bitcoin spine sync (one-shot batch plus the follow daemon), the live-tip window maintenance, and the structural integrity guards in `integrity.rs`. |
-| `producer_runtime` | The shared runtime: `ProducerRuntime` (`PG*` + `BITCOIN_RPC_*`), the composed `ProducerContext`, `connect_from_env`, the post-backfill repair hook, and the classifier-enabled-backfill warning. |
+| `producer_runtime` | The shared runtime: `ProducerRuntime` (`PG*` + `BITCOIN_RPC_*`), the composed `ProducerContext` (whose `capture` goes through the shared lineage-gated seam and counts refused parents for the tick line), `connect_from_env`, the post-backfill repair hook, and the classifier-enabled-backfill warning. |
 | `historical_ingest` | Uniform CSV-backed historical evidence ingest with zero public-API calls. Its `csv_source` parser preserves lossless parent-coinbase evidence, while the runner commits base snapshots before bounded read-model work drains from the durable historical queue. |
 
 Per-chain divergent modules under `chains/`:
@@ -57,7 +57,7 @@ Per-chain divergent modules under `chains/`:
 | Module | Responsibility |
 |--------|----------------|
 | `chains::rsk` | RSKj `eth_*` capture with canonical-plus-uncle traversal and RLP child headers, plus the DB-only miner-identity reclassification tail (`identity_reresolve`). |
-| `chains::hathor` | Public-REST capture with reconstructed coinbase and nBits-horizon hold semantics, the cache-backed historical ingest, and the reward-address replay (`reward_replay`). |
+| `chains::hathor` | Public-REST capture with reconstructed coinbase and the displacement work floor, the cache-backed historical ingest, and the reward-address replay (`reward_replay`). |
 | `chains::elastos` | Dual-endpoint self-verifying capture with RPC-observed reward and minerinfo identities. |
 
 Cross-chain pool repair stays at the crate root as `reclassify_pools`. Parent

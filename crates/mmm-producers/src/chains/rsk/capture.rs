@@ -36,7 +36,7 @@ use mmm_capture::capture::{
 };
 use mmm_capture::pool_resolver::{PoolIdentityRegistry, PoolResolver};
 use mmm_capture::source_registry::RSK_SOURCE_CODE;
-use mmm_read_model::capture_in_txn;
+use mmm_read_model::CaptureOutcome;
 use mmm_store::{upsert_rsk_only_pools, upsert_rsk_pool_identities, write_rsk_capture_in_txn};
 
 /// Startup-resolved state shared by every RSK capture: the embedded
@@ -148,6 +148,12 @@ pub enum BlockOutcome {
     /// A merge-mining field was undecodable (bad hex, wrong byte length, height
     /// overflow). Skipped so one bad block never aborts the backfill.
     MalformedSkipped,
+    /// The BTC parent header is another chain's (the lineage gate in
+    /// `mmm_read_model::capture_in_txn`); nothing written.
+    NonBitcoinParent,
+    /// The parent's lineage waits on a Bitcoin epoch the Core header cache
+    /// has not reached; nothing written, and the height is retried.
+    LineagePending,
 }
 
 /// Inputs ready for transactional RSK capture. Produced by
@@ -183,6 +189,10 @@ pub struct HeightOutcome {
     pub uncles_written: usize,
     pub uncles_no_parent_header: usize,
     pub uncles_malformed: usize,
+    pub uncles_non_bitcoin: usize,
+    /// Whether the canonical block or an uncle has a parent whose lineage is
+    /// pending; the live poller then holds the height.
+    pub lineage_pending: bool,
 }
 
 /// Live-poll path: fetch one height's bundle over RPC and write it on the same
@@ -229,6 +239,7 @@ where
     let canonical_result =
         capture_block(client, context, &canonical, false, None, None, observed_at).await?;
     outcome.canonical = Some(canonical_result);
+    outcome.lineage_pending |= canonical_result == BlockOutcome::LineagePending;
 
     // The fetch stage only populated `uncles` when the canonical RSK height
     // decoded cleanly into i32 range, so this is the parent height for every
@@ -276,6 +287,8 @@ where
             BlockOutcome::Written => outcome.uncles_written += 1,
             BlockOutcome::NoParentHeaderSkipped => outcome.uncles_no_parent_header += 1,
             BlockOutcome::MalformedSkipped => outcome.uncles_malformed += 1,
+            BlockOutcome::NonBitcoinParent => outcome.uncles_non_bitcoin += 1,
+            BlockOutcome::LineagePending => outcome.lineage_pending = true,
         }
     }
 
@@ -313,18 +326,22 @@ async fn capture_ready_inputs(
     context: &RskCaptureContext,
     mut inputs: RskCaptureInputs,
 ) -> Result<BlockOutcome> {
-    capture_in_txn(
-        client,
-        context.source_id(),
-        context.parent_classifier(),
-        &mut inputs.payload,
-        "RSK",
-        async |txn, source_id, payload| {
-            write_rsk_capture_in_txn(txn, source_id, payload, &inputs.evidence).await
-        },
-    )
-    .await?;
-    Ok(BlockOutcome::Written)
+    let outcome = context
+        .base
+        .capture(
+            client,
+            &mut inputs.payload,
+            "RSK",
+            async |txn, source_id, payload| {
+                write_rsk_capture_in_txn(txn, source_id, payload, &inputs.evidence).await
+            },
+        )
+        .await?;
+    Ok(match outcome {
+        CaptureOutcome::Written(_) => BlockOutcome::Written,
+        CaptureOutcome::NotBitcoin { .. } => BlockOutcome::NonBitcoinParent,
+        CaptureOutcome::LineagePending(_) => BlockOutcome::LineagePending,
+    })
 }
 
 #[cfg(any(test, feature = "db-integration"))]
@@ -669,8 +686,9 @@ fn decode_optional_hex(raw: Option<&str>) -> Result<Option<Vec<u8>>> {
 use crate::chains::spec::{ChainId, by_id};
 use crate::poller::{ChainPoller, ChainPollerState, HeightProgress};
 
-/// RSK live capture chain. An absent canonical block yields `Hold` so the
-/// height is retried rather than skipped.
+/// RSK live capture chain. An absent canonical block, or a block whose parent
+/// lineage is pending, yields `Hold` so the height is retried rather than
+/// skipped.
 pub(crate) struct RskChainPoller {
     state: ChainPollerState,
     rpc: RskRpcClient,
@@ -708,6 +726,9 @@ impl ChainPoller for RskChainPoller {
     fn parent_classifier(&self) -> Option<&ConfiguredParentClassifier> {
         Some(self.context.parent_classifier())
     }
+    fn non_bitcoin_parents(&self) -> usize {
+        self.context.base.non_bitcoin_parents()
+    }
 
     async fn refresh_core_cache(&mut self) -> Result<()> {
         self.context
@@ -725,7 +746,7 @@ impl ChainPoller for RskChainPoller {
             height as i64,
         )
         .await?;
-        Ok(if outcome.canonical_present {
+        Ok(if outcome.canonical_present && !outcome.lineage_pending {
             HeightProgress::Advance
         } else {
             HeightProgress::Hold

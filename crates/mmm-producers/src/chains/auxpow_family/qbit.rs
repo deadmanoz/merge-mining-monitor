@@ -16,7 +16,7 @@ use bitcoin::hashes::Hash as _;
 use tokio_postgres::Client;
 use tracing::debug;
 
-use super::{AuxpowCaptureContext, AuxpowFetch, write_event_in_txn};
+use super::{AuxpowCaptureContext, AuxpowFetch, HeightOutcome, write_event_in_txn};
 use crate::chains::bitcoind_rpc::BitcoindRpc;
 use crate::chains::spec::{ChainSpec, FamilySpec};
 use mmm_capture::auxpow::{
@@ -125,7 +125,7 @@ pub(super) async fn write_qbit_event(
     context: &AuxpowCaptureContext,
     height: i32,
     parsed: &ParsedQbitAuxpow,
-) -> Result<()> {
+) -> Result<HeightOutcome> {
     let attributions = resolve_parent_pool_attribution_from_coinbase(
         &parsed.parent_coinbase_script,
         &parsed.parent_coinbase_output_addresses,

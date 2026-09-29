@@ -465,7 +465,7 @@ fn inferred_stale_classification_checks_height_source_and_bits() {
         Some(mismatch_competitor),
     );
     assert_eq!(mismatch.kind, ParentKind::Unknown);
-    assert_eq!(mismatch.difficulty_epoch_ok, Some(false));
+    assert_eq!(mismatch.difficulty_epoch_ok, None);
 
     let missing =
         classify_inferred_stale_with_competitor(&header, 720_000, None, BlockKind::Canonical, None);
@@ -928,7 +928,8 @@ async fn core_absence_attested_only_when_the_competitor_lookup_completes() {
     assert!(comp_err.incomplete);
 
     // Candidate not-found + inferred-stale path returns unknown for a
-    // competitor whose nBits mismatches: attested.
+    // competitor whose nBits mismatches: another chain's header on a placed
+    // prev, so not an orphan candidate and not attested.
     let mismatch_header = test_header(41, 0x207f_ffff);
     let mut competitor_header = test_header(42, 0x1d00_ffff);
     competitor_header.prev_blockhash = mismatch_header.prev_blockhash;
@@ -947,5 +948,36 @@ async fn core_absence_attested_only_when_the_competitor_lookup_completes() {
         .await
         .unwrap();
     assert_eq!(mismatch.kind, ParentKind::Unknown);
-    assert!(mismatch.core_absence_attested);
+    assert!(!mismatch.core_absence_attested);
+}
+
+#[tokio::test]
+async fn error_block_child_is_an_orphan_candidate_only_with_its_heights_bits() {
+    let error_prev = ParentPreflight {
+        known_prev: Some(KnownBlockContext {
+            kind: BlockKind::ErrorBlock,
+            btc_height: Some(717_696),
+            btc_height_source: Some(HeightSource::ErrorBlockCatalog),
+            canonical_competitor_hash: None,
+            core_attested: false,
+        }),
+    };
+    let competitor = classified_header(test_header(61, 0x207f_ffff), 717_697);
+    let classify = async |header: Header| {
+        BitcoinCoreParentClassifier::from_source(source_with_competitor(
+            717_697,
+            competitor.clone(),
+        ))
+        .classify_parent(&header, error_prev.clone())
+        .await
+        .unwrap()
+    };
+
+    let bitcoin = classify(test_header(62, 0x207f_ffff)).await;
+    assert_eq!(bitcoin.kind, ParentKind::Unknown);
+    assert!(bitcoin.core_absence_attested);
+
+    let foreign = classify(test_header(63, 0x1d00_ffff)).await;
+    assert_eq!(foreign.kind, ParentKind::Unknown);
+    assert!(!foreign.core_absence_attested);
 }

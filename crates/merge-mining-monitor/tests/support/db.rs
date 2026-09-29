@@ -24,7 +24,7 @@
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use mmm_pg::{PgConfig, connect};
 use mmm_store::{BitcoinCoreHeader, record_bitcoin_core_header};
 use tokio_postgres::Client;
@@ -35,7 +35,7 @@ pub async fn new_test_db() -> Result<(Client, String)> {
     let client = connect(&PgConfig::from_env()?).await?;
     let schema = unique_schema();
     apply_migrations(&client, &schema).await?;
-    seed_minimum_bitcoin_core_header_cache(&client).await?;
+    seed_bitcoin_epoch_history(&client).await?;
     Ok((client, schema))
 }
 
@@ -154,36 +154,87 @@ pub async fn apply_migrations(client: &Client, schema: &str) -> Result<()> {
     Ok(())
 }
 
-/// Seed the smallest valid cache for tests that exercise DB bootstrap without
-/// exercising nBits classification. Tests that classify an unknown parent add
-/// the specific Core epoch they need with
-/// [`seed_bitcoin_core_header_cache_through`].
-async fn seed_minimum_bitcoin_core_header_cache(client: &Client) -> Result<()> {
-    record_bitcoin_core_header(
-        client,
-        &BitcoinCoreHeader {
-            height: 0,
-            block_hash: core_header_hash(0),
-            block_time: 1,
-            bits: 0x1d00_ffff,
-        },
-    )
-    .await
+/// Seed Bitcoin's real retarget history (`fixtures/bitcoin/epoch-headers.json`:
+/// every epoch boundary plus the tip at 967,961) as the Core header cache, so
+/// every test captures against the difficulty history production decides
+/// lineage by. A real Bitcoin fixture parent passes the lineage gate; a
+/// synthetic one has to look like Bitcoin (a placed prev, or its epoch's
+/// bits), or the capture refuses it. The rows carry synthetic hashes: the
+/// fixture records heights, times and bits only.
+async fn seed_bitcoin_epoch_history(client: &Client) -> Result<()> {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/bitcoin/epoch-headers.json"
+    )))
+    .context("parse the Bitcoin epoch-history fixture")?;
+    let mut heights = Vec::new();
+    let mut times = Vec::new();
+    let mut bits = Vec::new();
+    for row in fixture["headers"]
+        .as_array()
+        .context("epoch-history fixture has no headers")?
+    {
+        heights.push(i32::try_from(
+            row["height"].as_i64().context("header height")?,
+        )?);
+        times.push(row["time"].as_i64().context("header time")?);
+        bits.push(i64::from(u32::from_str_radix(
+            row["bits"].as_str().context("header bits")?,
+            16,
+        )?));
+    }
+    let hashes = heights
+        .iter()
+        .map(|&height| core_header_hash(height))
+        .collect::<Vec<_>>();
+    let finals = heights
+        .iter()
+        .map(|height| height % mmm_capture::nbits_table::DAA_EPOCH_INTERVAL == 0)
+        .collect::<Vec<_>>();
+    client
+        .execute(
+            "INSERT INTO bitcoin_core_header (height, block_hash, block_time, bits, is_final) \
+             SELECT * FROM unnest($1::int4[], $2::bytea[], $3::int8[], $4::int8[], $5::bool[])",
+            &[&heights, &hashes, &times, &bits, &finals],
+        )
+        .await
+        .context("seed the Bitcoin epoch history")?;
+    client
+        .execute(
+            "UPDATE bitcoin_core_header_cache_state SET horizon_time = $1 WHERE singleton",
+            &[&times.iter().copied().max().unwrap_or_default()],
+        )
+        .await
+        .context("seed the Bitcoin epoch-history horizon time")?;
+    Ok(())
 }
 
-/// Seed a synthetic Core-derived cache through one fixture parent. The helper
-/// models Core's sparse epoch and current-horizon rows without carrying any
-/// production chain data in the test harness.
-pub async fn seed_bitcoin_core_header_cache_through(
+/// Empty the Core header cache the harness seeds, for tests of the cache
+/// machinery itself and tests whose fake Core chain the cache refresh
+/// follows.
+pub async fn clear_bitcoin_history(client: &Client) -> Result<()> {
+    client
+        .batch_execute(
+            "DELETE FROM bitcoin_core_header; \
+             UPDATE bitcoin_core_header_cache_state SET horizon_time = 0 WHERE singleton;",
+        )
+        .await
+        .context("clear the seeded Bitcoin history")
+}
+
+/// Replace the seeded Bitcoin history with a synthetic one, for tests whose
+/// fixture parents are synthetic: a header that meets its own target can only
+/// be built with easy bits, so in this history every epoch from genesis to a
+/// horizon at `horizon_height` and `horizon_time` carries `bits`. Genesis has
+/// the all-zero hash the synthetic fixtures build on, so a fixture parent on
+/// it has a placed prev.
+pub async fn seed_synthetic_bitcoin_history(
     client: &Client,
     horizon_height: i32,
     horizon_time: i64,
-    horizon_bits: u32,
+    bits: u32,
 ) -> Result<()> {
-    ensure!(
-        horizon_height >= mmm_capture::nbits_table::DAA_EPOCH_INTERVAL,
-        "synthetic Core cache horizon must be at least one difficulty epoch"
-    );
+    clear_bitcoin_history(client).await?;
     let epoch_height = mmm_capture::nbits_table::daa_epoch_start(horizon_height);
     for height in (0..=epoch_height).step_by(mmm_capture::nbits_table::DAA_EPOCH_INTERVAL as usize)
     {
@@ -193,11 +244,7 @@ pub async fn seed_bitcoin_core_header_cache_through(
                 height,
                 block_hash: core_header_hash(height),
                 block_time: i64::from(height) + 1,
-                bits: if height == epoch_height {
-                    horizon_bits
-                } else {
-                    0x1d00_ffff
-                },
+                bits,
             },
         )
         .await?;
@@ -209,7 +256,7 @@ pub async fn seed_bitcoin_core_header_cache_through(
                 height: horizon_height,
                 block_hash: core_header_hash(horizon_height),
                 block_time: horizon_time,
-                bits: horizon_bits,
+                bits,
             },
         )
         .await?;

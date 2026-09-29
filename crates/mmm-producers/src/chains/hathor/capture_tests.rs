@@ -27,25 +27,9 @@ fn reconstructed_coinbase_validation_preserves_valid_and_skips_invalid() {
     let aux_pow = reconstructed.aux_pow;
     let mut recon = reconstructed.recon;
     let funds_graph = &raw[..recon.funds_graph_len];
-    let nbits_table =
-        NbitsTable::from_bitcoin_core_headers(&[mmm_capture::nbits_table::BitcoinEpochHeader {
-            height: 0,
-            block_time: 1,
-            bits: 0x1d00_ffff,
-        }])
-        .expect("the minimal test Core header cache is valid");
-
-    let intact = build_hathor_capture(
-        &context,
-        &tx,
-        height,
-        &aux_pow,
-        &recon,
-        funds_graph,
-        &nbits_table,
-    )
-    .unwrap()
-    .expect("fixture coinbase must build");
+    let intact = build_hathor_capture(&context, &tx, height, &aux_pow, &recon, funds_graph)
+        .unwrap()
+        .expect("fixture coinbase must build");
     assert_eq!(
         intact.evidence.btc_parent_coinbase_tx_bytes.as_deref(),
         Some(recon.full_coinbase.as_slice()),
@@ -54,16 +38,8 @@ fn reconstructed_coinbase_validation_preserves_valid_and_skips_invalid() {
 
     let pristine_coinbase = recon.full_coinbase.clone();
     recon.full_coinbase.push(0x00);
-    let corrupted = build_hathor_capture(
-        &context,
-        &tx,
-        height,
-        &aux_pow,
-        &recon,
-        funds_graph,
-        &nbits_table,
-    )
-    .unwrap();
+    let corrupted =
+        build_hathor_capture(&context, &tx, height, &aux_pow, &recon, funds_graph).unwrap();
     assert!(
         corrupted.is_none(),
         "trailing-byte coinbase must skip, not error"
@@ -75,16 +51,7 @@ fn reconstructed_coinbase_validation_preserves_valid_and_skips_invalid() {
     assert!(!non_coinbase.is_coinbase());
     recon.full_coinbase = serialize(&non_coinbase);
 
-    let built = build_hathor_capture(
-        &context,
-        &tx,
-        height,
-        &aux_pow,
-        &recon,
-        funds_graph,
-        &nbits_table,
-    )
-    .unwrap();
+    let built = build_hathor_capture(&context, &tx, height, &aux_pow, &recon, funds_graph).unwrap();
     assert!(
         built.is_none(),
         "well-formed non-coinbase transaction must skip"

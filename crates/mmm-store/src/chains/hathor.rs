@@ -6,13 +6,13 @@ use anyhow::{Context, Result};
 use tokio_postgres::GenericClient;
 use tokio_postgres::types::Json;
 
-use mmm_capture::capture::{HATHOR_REVOKE_NON_BTC, HathorEvidencePayload, MergeMiningEventPayload};
+use mmm_capture::capture::{HathorEvidencePayload, MergeMiningEventPayload};
 
 use crate::{EventWriteOutcome, upsert_merge_mining_event_with_attributions};
 
 /// Write a Hathor capture in the caller's transaction (injected as the
-/// `capture_in_txn` upsert closure): upsert the event, restore a
-/// reversibly-revoked row, then upsert the 1:1 evidence sidecar.
+/// `capture_in_txn` upsert closure): upsert the event, then the 1:1 evidence
+/// sidecar.
 pub async fn write_hathor_capture_in_txn<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -20,21 +20,6 @@ pub async fn write_hathor_capture_in_txn<C: GenericClient>(
     evidence: &HathorEvidencePayload,
 ) -> Result<EventWriteOutcome> {
     let outcome = upsert_merge_mining_event_with_attributions(client, source_id, payload).await?;
-    // RESTORE-AND-REFRESH, scoped by reason: a re-observation of a block whose
-    // parent was auto-revoked as non-BTC under an earlier Core-cache verdict
-    // clears that reversible revocation; a hathor_nbits_classifier_conflict or
-    // any manual revoke stays sticky and is never re-activated by a recapture.
-    // A child-DAG replacement is not a revocation: the caller records it as
-    // displacement (`record_child_chain_block`).
-    client
-        .execute(
-            "UPDATE merge_mining_event \
-                SET revoked_at = NULL, revocation_reason = NULL \
-              WHERE id = $1 AND revocation_reason = $2",
-            &[&outcome.event_id, &HATHOR_REVOKE_NON_BTC],
-        )
-        .await
-        .context("clear reversible Hathor revocation on recapture")?;
     upsert_hathor_evidence(client, outcome.event_id, evidence).await?;
     Ok(outcome)
 }
@@ -50,9 +35,8 @@ async fn upsert_hathor_evidence<C: GenericClient>(
         .execute(
             "INSERT INTO hathor_merge_mining_evidence ( \
                 event_id, hathor_block_hash, hathor_height, aux_pow, funds_graph, \
-                funds_graph_split, reward_output_details, reward_addresses, \
-                expected_btc_nbits, proof_format \
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+                funds_graph_split, reward_output_details, reward_addresses, proof_format \
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
              ON CONFLICT (event_id) DO UPDATE SET \
                 hathor_block_hash = EXCLUDED.hathor_block_hash, \
                 hathor_height = EXCLUDED.hathor_height, \
@@ -61,7 +45,6 @@ async fn upsert_hathor_evidence<C: GenericClient>(
                 funds_graph_split = EXCLUDED.funds_graph_split, \
                 reward_output_details = EXCLUDED.reward_output_details, \
                 reward_addresses = EXCLUDED.reward_addresses, \
-                expected_btc_nbits = EXCLUDED.expected_btc_nbits, \
                 proof_format = EXCLUDED.proof_format",
             &[
                 &event_id,
@@ -72,7 +55,6 @@ async fn upsert_hathor_evidence<C: GenericClient>(
                 &evidence.funds_graph_split,
                 &reward_output_details,
                 &reward_addresses,
-                &evidence.expected_btc_nbits,
                 &evidence.proof_format,
             ],
         )

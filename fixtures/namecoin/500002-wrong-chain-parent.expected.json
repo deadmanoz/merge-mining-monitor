@@ -4,7 +4,7 @@
   "expected_parent_kind": "unknown",
   "expected_pow_validates_btc_target": true,
   "expected_pow_validates_child_target": true,
-  "expected_difficulty_epoch_ok": false,
+  "expected_difficulty_epoch_ok": null,
   "expected_parent_pool_slug": "foundry-usa",
   "expected_child_height": 500002,
   "expected_child_hash": "785bd48ee578cd6a04d96ddea9d77b39111d6eccc32d603b87b30bc748e27629",

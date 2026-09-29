@@ -114,11 +114,11 @@ that annotate those rows.
 | Crate | Role |
 |---|---|
 | `mmm-pg` | Postgres connection configuration. No domain SQL. |
-| `mmm-capture` | Offline parsing, normalization, pool resolution, source registry, and Bitcoin nBits/orphan helpers. No network or database I/O in normal builds. |
+| `mmm-capture` | Offline parsing, normalization, pool resolution, source registry, and the Bitcoin lineage rule with its nBits and orphan helpers. No network or database I/O in normal builds. |
 | `mmm-rpc` | Shared HTTP transport policy for child-chain clients. |
 | `mmm-bitcoin-core` | The only crate that links `corepc-client`; wraps Bitcoin Core RPC and parent classification. |
 | `mmm-store` | SQL for producer base tables: events, sidecars, cursors, capture errors, and seed helpers. It also exposes the read-only Core-header-cache loader shared by reconciliation and the API. |
-| `mmm-read-model` | Sole writer of derived tables: `block`, `attestation_proof`, and `source_health`. |
+| `mmm-read-model` | Sole writer of derived tables: `block`, `attestation_proof`, and `source_health`. Owns the shared capture seam (`capture_in_txn`) and its Bitcoin lineage gate. |
 | `mmm-producers` | Runtime engines: chain pollers/backfills, historical importer, Bitcoin Core backbone sync, and pool reclassification. |
 | `mmm-api` | Read-only API views plus static frontend serving. |
 | `merge-mining-monitor` | CLI wiring, generator binaries, and cross-crate integration tests. |

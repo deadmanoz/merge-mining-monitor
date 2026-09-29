@@ -6,7 +6,6 @@
 //! a spec row plus a `source_registry` entry - never a cloned module (see the
 //! Architecture Rules in `AGENTS.md` and `docs/capture.md`).
 
-use mmm_capture::capture::MergeMiningEventPayload;
 use reqwest::StatusCode;
 
 #[cfg(any(test, feature = "db-integration"))]
@@ -25,7 +24,6 @@ pub(crate) mod elastos;
 pub mod hathor;
 #[cfg(not(any(test, feature = "db-integration")))]
 pub(crate) mod hathor;
-pub(crate) mod nbits_horizon;
 #[cfg(any(test, feature = "db-integration"))]
 pub mod rsk;
 #[cfg(not(any(test, feature = "db-integration")))]
@@ -41,68 +39,6 @@ pub use auxpow_family::{
 pub use bitcoind_rpc::{BitcoindRpc, BitcoindRpcClient, BitcoindRpcConfig};
 #[cfg(any(test, feature = "db-integration"))]
 pub use spec::{CHAINS, ChainId, ChainSpec, by_id};
-
-#[derive(Debug)]
-struct OfflineValidClassifierConflict;
-
-impl std::fmt::Display for OfflineValidClassifierConflict {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Core-cache nBits verdict conflicts with classifier")
-    }
-}
-
-impl std::error::Error for OfflineValidClassifierConflict {}
-
-/// Revoke the active events for one child block, the block a verdict was
-/// reached on: the exact row for its hash, plus a hashless historical row at
-/// the height whose Bitcoin parent is `parent_hash` (the identity partial
-/// promotion uses). Never another block's event at the height: a rescanned
-/// height can hold a displaced block's event beside the current one, and
-/// that event is still valid Bitcoin-side evidence. Reuses the public revoke
-/// path (event mutation + parent reconcile in one transaction).
-pub(crate) async fn revoke_active_block(
-    client: &mut tokio_postgres::Client,
-    context: &crate::producer_runtime::ProducerContext,
-    height: i32,
-    block_hash: &[u8],
-    parent_hash: &[u8],
-    reason: &str,
-) -> anyhow::Result<()> {
-    use anyhow::Context as _;
-    let event_ids = mmm_store::active_event_ids_for_child_block(
-        &*client,
-        context.source_id(),
-        height,
-        block_hash,
-        parent_hash,
-    )
-    .await?;
-    for event_id in event_ids {
-        mmm_read_model::revoke_merge_mining_event(
-            client,
-            event_id,
-            reason,
-            context.parent_classifier(),
-        )
-        .await
-        .with_context(|| format!("revoke event {event_id} ({reason})"))?;
-    }
-    Ok(())
-}
-
-fn ensure_offline_valid_not_classifier_conflict(
-    payload: &MergeMiningEventPayload,
-) -> anyhow::Result<()> {
-    match payload.difficulty_epoch_ok {
-        Some(false) => Err(anyhow::Error::new(OfflineValidClassifierConflict)),
-        _ => Ok(()),
-    }
-}
-
-fn is_offline_valid_classifier_conflict(err: &anyhow::Error) -> bool {
-    err.downcast_ref::<OfflineValidClassifierConflict>()
-        .is_some()
-}
 
 fn is_transient_http_status(status: StatusCode) -> bool {
     status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()

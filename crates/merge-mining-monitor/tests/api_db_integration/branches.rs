@@ -508,6 +508,7 @@ async fn orphan_branches_indexes_multi_block_components_time_bounded() -> Result
 #[tokio::test]
 async fn stale_branches_indexes_production_reconciled_stale_chain() -> Result<()> {
     crate::run_mut_db_test!(client, {
+        crate::support::seed_synthetic_fixture_history(&client).await?;
         let ts = day_epoch(2026, Month::May, 10);
 
         // Read-model scenario: canonical spine A100 <- A101 <- A102 written

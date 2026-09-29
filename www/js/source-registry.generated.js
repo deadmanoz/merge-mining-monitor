@@ -2103,12 +2103,13 @@ export const CHAIN_PROFILES = {
     "technical": {
       "mechanism": "Terracoin carries classic Namecoin-family `CAuxPow` in raw `getblock(hash, false)` bytes. The proof binds the child header through the parent coinbase and Merkle branches.[^5]",
       "uniqueness": "Terracoin is Dash-Core-derived rather than Bitcoin-Core-derived, but the Bitcoin evidence path is still familiar AuxPoW. Chain ID `0x0032` with `fStrictChainId=true` constrains the child-chain commitment, while Bitcoin proof of work, `nBits`, and Core placement decide whether the parent becomes Bitcoin evidence.[^1]",
-      "capture": "The shared live poller and bounded backfill verify mainnet identity, chain ID 50, the requested child hash and height, both Merkle commitments and the child target. Bitcoin Core-backed classification determines parent placement. Failed heights remain visible until successful replay. Historical publication imports are additive.",
+      "capture": "The shared live poller and bounded backfill verify mainnet identity, chain ID 50, the requested child hash and height, both Merkle commitments and the child target. Most Terracoin parents are Bitcoin Cash headers rather than Bitcoin ones; the shared lineage gate recognises them from Bitcoin's difficulty history and never stores them. Bitcoin Core-backed classification places the Bitcoin parents. Failed heights remain visible until successful replay. Historical publication imports are additive.",
       "bitcoin_relevance": "Terracoin provides independent witnesses of canonical and stale Bitcoin parents. Current Evidence Counts show admitted data; neither those counts nor the latest winner establish contiguous child-height coverage.",
       "notable": [
         "Strict chain-ID checking constrains the TRC commitment, but it does not replace Bitcoin parent validation.",
         "Raw block parsing preserves child coinbase evidence without imposing a Bitcoin-height ceiling.",
-        "The recovered window is an evidence boundary, not a claim that Terracoin stopped producing blocks."
+        "The recovered window is an evidence boundary, not a claim that Terracoin stopped producing blocks.",
+        "Most live parents are Bitcoin Cash blocks and shares; only Bitcoin-lineage parents are stored, so the Evidence Counts cover a minority of Terracoin blocks."
       ],
       "key_facts": [
         {

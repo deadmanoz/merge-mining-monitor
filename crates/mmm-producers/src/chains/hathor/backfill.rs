@@ -1,14 +1,15 @@
 //! Bounded Hathor historical backfill. Intentionally divergent from the shared
 //! family runner: public-REST range cap, per-height delay, and the
-//! absent/transient hold policy (`HATHOR_BACKFILL_SKIP_HOLDS`; a
-//! Core-cache-horizon hold always stops the backfill). Env reads route
+//! absent/transient hold policy (`HATHOR_BACKFILL_SKIP_HOLDS`; a pending
+//! parent lineage always stops the backfill). Env reads route
 //! through `chains::config`; behavior unchanged.
 
 use anyhow::{Context, Result, bail};
 use tracing::{info, warn};
 
 use crate::chains::backfill::{
-    BackfillConfig, BackfillHeightEffect, backfill_progress, run_delayed_backfill_range,
+    BackfillConfig, BackfillHeightEffect, backfill_progress, lineage_pending_error,
+    run_delayed_backfill_range,
 };
 use crate::chains::hathor::capture::{
     ChainObservation, HathorCaptureContext, HathorHeightOutcome, process_hathor_height,
@@ -50,7 +51,7 @@ pub(crate) async fn backfill(rt: ProducerRuntime, config: BackfillConfig) -> Res
 
 /// Drive the inclusive `[start, end]` range through the shared capture path over
 /// the public REST API, then run the post-backfill read-model repair. A bounded
-/// backfill must not leave silent gaps: the Core-cache horizon always aborts,
+/// backfill must not leave silent gaps: a pending parent lineage always aborts,
 /// and absent/transient holds abort by default
 /// unless `HATHOR_BACKFILL_SKIP_HOLDS` downgrades them to logged skips. Honors
 /// the per-height delay; does NOT move the live poll cursor.
@@ -103,7 +104,7 @@ pub(crate) async fn run_hathor_backfill(
     );
     let summary = run_delayed_backfill_range(&config, delay_ms, &progress, async |height| {
         let outcome = process_hathor_height(&mut client, &rpc, &context, height).await?;
-        hathor_backfill_effect(height, outcome, skip_holds)
+        hathor_backfill_effect(config.spec, height, outcome, skip_holds)
     })
     .await?;
 
@@ -111,6 +112,7 @@ pub(crate) async fn run_hathor_backfill(
         processed = summary.processed,
         auxpow_written = summary.auxpow_written,
         non_auxpow_skipped = summary.non_auxpow_skipped,
+        non_bitcoin_parent = summary.non_bitcoin_parent,
         malformed_skipped = summary.malformed_skipped,
         "completed bounded Hathor backfill"
     );
@@ -129,6 +131,7 @@ pub(crate) async fn run_hathor_backfill(
 }
 
 fn hathor_backfill_effect(
+    spec: &crate::chains::spec::ChainSpec,
     height: i32,
     outcome: HathorHeightOutcome,
     skip_holds: bool,
@@ -137,16 +140,12 @@ fn hathor_backfill_effect(
         HathorHeightOutcome::AuxpowWritten => Ok(BackfillHeightEffect::AuxpowWritten),
         HathorHeightOutcome::NonAuxpowSkipped
         | HathorHeightOutcome::VoidedSkipped
-        | HathorHeightOutcome::NearSkipped
-        | HathorHeightOutcome::NonBtcParentSkipped
-        | HathorHeightOutcome::ConflictSkipped => Ok(BackfillHeightEffect::NonAuxpowSkipped),
+        | HathorHeightOutcome::NearSkipped => Ok(BackfillHeightEffect::NonAuxpowSkipped),
+        HathorHeightOutcome::NonBitcoinParent => Ok(BackfillHeightEffect::NonBitcoinParent),
         HathorHeightOutcome::MalformedSkipped => Ok(BackfillHeightEffect::MalformedSkipped),
-        // A bounded backfill must not silently leave gaps. A beyond-horizon
-        // hold means the command's fresh Core cache did not cover the evidence.
-        // Transient/absent holds fail by default, with an explicit skip override.
-        HathorHeightOutcome::TableHorizonHold => bail!(
-            "Hathor backfill hit the persisted Core-cache horizon at height {height}; ensure Bitcoin Core is fully synced before retrying"
-        ),
+        // A bounded backfill must not silently leave gaps. Transient/absent
+        // holds fail by default, with an explicit skip override.
+        HathorHeightOutcome::LineagePending => Err(lineage_pending_error(spec, height)),
         HathorHeightOutcome::AbsentHold | HathorHeightOutcome::TransientHold => {
             if skip_holds {
                 warn!(
