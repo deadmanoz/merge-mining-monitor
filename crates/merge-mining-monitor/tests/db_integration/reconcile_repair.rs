@@ -128,8 +128,16 @@ async fn revoke_cascades_to_child_event_read_model() -> Result<()> {
         )
         .await?;
 
-        let parent_kind = block_kind(&client, &parent.parent_hash).await?;
-        assert_eq!(parent_kind, "unknown");
+        assert!(
+            client
+                .query_opt(
+                    "SELECT 1 FROM block WHERE btc_header_hash = $1",
+                    &[&parent.parent_hash],
+                )
+                .await?
+                .is_none(),
+            "the revoked parent's block is retired"
+        );
 
         let child_kind = block_kind(&client, &child.parent_hash).await?;
         assert_eq!(child_kind, "unknown");

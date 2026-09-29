@@ -2,19 +2,55 @@
 
 use super::*;
 
-/// Zero-active demotion: rewrite `block` when its event rollup has no active
-/// events left (all revoked). A core-attested block is preserved as the backbone
-/// row Core still vouches for (kind, height, competitor, single distinct source,
-/// `pow_validated=true`, persisted Core-coinbase miner reattributed); a non-core
-/// block collapses to a fully-revoked `unknown` husk (counters zeroed,
-/// `pow_validated=false`, `btc_orphan_class` and `error_block_reason` cleared,
-/// miner NULL). The
-/// `pow_validated=false` husk is what the api orphan index filters out so it does
-/// not masquerade as a genuine PoW-valid unknown.
-pub(crate) async fn demote_zero_active_block<C: GenericClient>(
+/// Retire the derived rows of a parent with no active non-near evidence left
+/// (its events were deleted or revoked). A block exists only while evidence
+/// attests it, so a non-Core block and its proofs are deleted. A Core-attested
+/// block stays as the backbone row Core vouches for, and a block another row
+/// still names as its `canonical_competitor_hash` cannot be deleted (the
+/// foreign key has no `ON DELETE`); both are demoted in place and keep their
+/// proof history, and the dependent cascade re-derives any referencing row.
+pub(crate) async fn retire_zero_active_block<C: GenericClient>(
     client: &C,
     hash: &[u8],
 ) -> Result<()> {
+    let row = client
+        .query_opt(
+            "SELECT core_attested, \
+                    EXISTS (SELECT 1 FROM block r WHERE r.canonical_competitor_hash = $1) \
+             FROM block WHERE btc_header_hash = $1",
+            &[&hash],
+        )
+        .await
+        .context("load zero-active block")?;
+    let (core_attested, referenced) = match row {
+        Some(row) => (row.get::<_, bool>(0), row.get::<_, bool>(1)),
+        None => (false, false),
+    };
+    if core_attested || referenced {
+        demote_zero_active_block(client, hash).await?;
+        return rebuild_auxpow_proofs(client, hash).await;
+    }
+    client
+        .execute(
+            "DELETE FROM attestation_proof WHERE btc_header_hash = $1 AND proof_kind = 'auxpow'",
+            &[&hash],
+        )
+        .await
+        .context("delete proofs of a zero-active block")?;
+    client
+        .execute("DELETE FROM block WHERE btc_header_hash = $1", &[&hash])
+        .await
+        .context("delete zero-active block")?;
+    Ok(())
+}
+
+/// Rewrite a zero-active `block` row in place: a Core-attested block keeps the
+/// backbone fields Core vouches for (kind, height, competitor, one distinct
+/// source, `pow_validated=true`, persisted Core-coinbase miner); a non-Core
+/// block that must survive because a row still references it collapses to an
+/// `unknown` husk (counters zeroed, `pow_validated=false`, orphan class and
+/// error reason cleared, miner NULL), which the API orphan index filters out.
+async fn demote_zero_active_block<C: GenericClient>(client: &C, hash: &[u8]) -> Result<()> {
     let core_pool_id = resolve_persisted_core_coinbase_bitcoin_miner_pool_id(client, hash).await?;
     client
         .execute(

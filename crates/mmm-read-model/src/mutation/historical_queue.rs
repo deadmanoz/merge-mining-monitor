@@ -304,6 +304,18 @@ updated_proofs AS (
        OR attestation_proof.revocation_reason IS DISTINCT FROM EXCLUDED.revocation_reason
     RETURNING btc_header_hash
 ),
+dangling_proofs AS (
+    DELETE FROM attestation_proof ap
+    USING eligible x
+    WHERE ap.btc_header_hash = x.btc_parent_header_hash
+      AND ap.proof_kind = 'auxpow'
+      AND NOT EXISTS (
+          SELECT 1 FROM merge_mining_event e
+          WHERE e.btc_parent_header_hash = ap.btc_header_hash
+            AND e.source_id = ap.source_id
+            AND e.btc_parent_kind <> 'near'
+      )
+),
 completed AS (
     DELETE FROM historical_reconcile_queue q
     USING eligible x

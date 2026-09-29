@@ -327,14 +327,16 @@ async fn mutation_error_block_revoke_restore_and_missing_only_converge() -> Resu
         );
 
         revoke_merge_mining_event(&mut client, event_id, "mutation_test", &classifier).await?;
-        let revoked: (String, Option<String>) = client
-            .query_one(
-                "SELECT kind, error_block_reason FROM block WHERE btc_header_hash = $1",
-                &[&parent_hash],
-            )
-            .await
-            .map(|row| (row.get(0), row.get(1)))?;
-        assert_eq!(revoked, ("unknown".to_owned(), None));
+        assert!(
+            client
+                .query_opt(
+                    "SELECT 1 FROM block WHERE btc_header_hash = $1",
+                    &[&parent_hash]
+                )
+                .await?
+                .is_none(),
+            "a revoked non-Core error block leaves no block row"
+        );
         let count: i64 = client
             .query_one(
                 "SELECT error_block_parents FROM source_health WHERE source_id = $1",
@@ -664,19 +666,20 @@ async fn mutation_revoke_and_restore_roundtrip_block_proof_source_health() -> Re
         );
 
         revoke_merge_mining_event(&mut client, event_id, "mutation_test", &classifier).await?;
-        let demoted = read_block_mutation_state(&client, &parent_hash)
-            .await?
-            .context("block row missing after revoke")?;
-        assert_eq!(
-            demoted.0, "unknown",
-            "zero-active parent demotes to unknown"
-        );
-        assert_eq!(demoted.1, None, "demoted parent loses its height");
-        assert_eq!(demoted.2, 0, "no active attestations");
         assert!(
-            !proof_is_active(&client, &parent_hash, fixture.source_id).await?,
-            "derived proof revoked with its only event"
+            read_block_mutation_state(&client, &parent_hash)
+                .await?
+                .is_none(),
+            "a non-Core parent without active evidence has no block row"
         );
+        let proofs: i64 = client
+            .query_one(
+                "SELECT count(*) FROM attestation_proof WHERE btc_header_hash = $1",
+                &[&parent_hash],
+            )
+            .await?
+            .get(0);
+        assert_eq!(proofs, 0, "its proofs go with it");
         assert_eq!(
             canonical_parents_for(&client, fixture.source_id).await?,
             0,

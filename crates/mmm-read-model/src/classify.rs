@@ -186,8 +186,8 @@ pub(crate) async fn apply_event_classification<C: GenericClient>(
 /// distinguishes the two entry forms: `Some` (a live reconcile) runs the result
 /// through `effective_classification`; `None` (a dependent-cascade rebuild)
 /// falls back to `persisted_classification_from_block`, else `unknown`. When no
-/// active event remains for the hash the row is demoted via
-/// `demote_zero_active_block`. Core adds one
+/// active event remains for the hash its derived rows are retired via
+/// `retire_zero_active_block`. Core adds one
 /// to `distinct_sources` and forces `pow_validated` when `core_attested`. The
 /// orphan class is computed before the upsert so `kind` and `btc_orphan_class`
 /// land in one CHECK-safe statement.
@@ -200,8 +200,7 @@ pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
     let rollup = load_parent_rollup(client, hash).await?;
 
     let Some(rollup) = rollup else {
-        demote_zero_active_block(client, hash).await?;
-        rebuild_auxpow_proofs(client, hash).await?;
+        retire_zero_active_block(client, hash).await?;
         return Ok(());
     };
 

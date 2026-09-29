@@ -510,5 +510,24 @@ pub(crate) async fn rebuild_auxpow_proofs<C: GenericClient>(client: &C, hash: &[
             .await
             .context("upsert attestation_proof")?;
     }
+    delete_proofs_without_evidence(client, hash).await
+}
+
+/// Delete a parent's proofs from sources that no longer hold any non-near
+/// event on it, so a proof never names deleted evidence.
+async fn delete_proofs_without_evidence<C: GenericClient>(client: &C, hash: &[u8]) -> Result<()> {
+    client
+        .execute(
+            "DELETE FROM attestation_proof ap \
+             WHERE ap.btc_header_hash = $1 AND ap.proof_kind = 'auxpow' \
+               AND NOT EXISTS ( \
+                   SELECT 1 FROM merge_mining_event e \
+                   WHERE e.btc_parent_header_hash = $1 \
+                     AND e.source_id = ap.source_id \
+                     AND e.btc_parent_kind <> 'near')",
+            &[&hash],
+        )
+        .await
+        .context("delete proofs of sources without evidence")?;
     Ok(())
 }
