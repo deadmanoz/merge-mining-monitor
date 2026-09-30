@@ -239,6 +239,21 @@ mod tests {
     }
 
     #[test]
+    fn fetch_keeps_canonical_blocks_whose_evidence_capture_skips() {
+        // A missing (pre-RSKIP92) or malformed merge-mining field is a downstream
+        // skip, not a fetch error: the fetch stage keeps the block verbatim so a
+        // backfill records the skip instead of aborting.
+        for (fixture, height) in [("pre-rskip92", 100_000), ("malformed-header", 729_002)] {
+            let block = load_rsk_block_fixture(fixture);
+            let source =
+                FakeRskSource::default().with_canonical(height, FakeResponse::block(block.clone()));
+            let bundle = block_on(fetch_rsk_height_bundle(source, height)).unwrap();
+            assert_eq!(bundle.canonical.as_ref(), Some(&block), "{fixture}");
+            assert!(bundle.uncles.is_empty(), "{fixture}");
+        }
+    }
+
+    #[test]
     fn fetch_multi_uncle_height_preserves_listed_order() {
         let uncle0 = load_rsk_block_fixture("uncle-valid");
         let uncle1 = load_rsk_block_fixture("uncle-second-miner");
