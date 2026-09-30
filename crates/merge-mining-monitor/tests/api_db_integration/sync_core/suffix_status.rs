@@ -103,10 +103,6 @@ async fn seed_two_block_suffix(
     Ok((bitcoin, original, replacements))
 }
 
-async fn drain_core_reconcile_disabled(client: &mut Client, source_id: i64) -> Result<()> {
-    drain_core_reconcile_queue(client, source_id, &ConfiguredParentClassifier::Disabled).await
-}
-
 #[tokio::test]
 async fn cursor_suffix_pending_state_preserves_the_higher_live_target() -> Result<()> {
     crate::run_mut_db_test!(client, {

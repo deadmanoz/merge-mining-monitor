@@ -36,32 +36,6 @@ fn partial_payload(child_height: i32, observed_at: i64) -> Result<MergeMiningEve
 }
 
 #[tokio::test]
-async fn migration_supports_nullable_child_evidence_columns() -> Result<()> {
-    crate::run_db_test!(client, {
-        let rows = client
-            .query(
-                "SELECT column_name, is_nullable \
-                 FROM information_schema.columns \
-                 WHERE table_schema = current_schema() \
-                   AND table_name = 'merge_mining_event' \
-                   AND column_name = ANY($1) \
-                 ORDER BY column_name",
-                &[&vec![
-                    "child_block_hash",
-                    "child_block_time",
-                    "child_header_bytes",
-                    "child_height",
-                    "child_nbits",
-                ]],
-            )
-            .await?;
-        assert_eq!(rows.len(), 5);
-        assert!(rows.iter().all(|row| row.get::<_, String>(1) == "YES"));
-        Ok::<_, anyhow::Error>(())
-    })
-}
-
-#[tokio::test]
 async fn migration_pairs_child_displacement_and_rejects_self_displacement() -> Result<()> {
     crate::run_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;

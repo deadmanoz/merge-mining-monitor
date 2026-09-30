@@ -21,40 +21,6 @@ fn fractal_reward_child_hash() -> BlockHash {
     FRACTAL_REWARD_CHILD_HASH.parse().unwrap()
 }
 
-#[tokio::test]
-async fn reclassify_pools_fills_fractal_reward_from_stored_outputs() -> Result<()> {
-    crate::run_mut_db_test!(client, {
-        default_pool_snapshot(&client).await?;
-        let source_id = get_source_id(&client, FRACTAL_SOURCE_CODE).await?;
-        let event_id = insert_fractal_event_without_child_coinbase(&client, source_id).await?;
-        set_child_coinbase_outputs(&client, event_id, fractal_reward_outputs()).await?;
-
-        let f2pool_id = pool_id_for_slug(&client, "f2pool").await?;
-        let identity_id = insert_fractal_reward_identity(
-            &client,
-            f2pool_id,
-            "bc1qg4l3fvmsrnzuspuntv9yswwh7s58n08a59y3l7",
-        )
-        .await?;
-        let stats = run_reclassify_pools(&mut client, ReclassifyPoolsConfig::default()).await?;
-        assert_eq!(stats.child_pool_updates, 1);
-        assert_eq!(
-            child_reward_rows(&client, event_id, "fractal_reward_address").await?,
-            [(
-                CHILD_PAYOUT_REGISTRY_SOURCE.to_owned(),
-                "bc1qg4l3fvmsrnzuspuntv9yswwh7s58n08a59y3l7".to_owned(),
-                Some(f2pool_id),
-                Some(identity_id),
-            )]
-        );
-
-        let again = run_reclassify_pools(&mut client, ReclassifyPoolsConfig::default()).await?;
-        assert_eq!(again.child_pool_updates, 0);
-
-        Ok::<_, anyhow::Error>(())
-    })
-}
-
 /// The new embedded-registry path: `reclassify-pools` self-seeds the embedded
 /// `data/pools/child-identities/fractal_reward_address_registry.json` (no manual `pool_identity`
 /// insert) and resolves a stored child reward output to the seeded pool. Parity
@@ -93,6 +59,9 @@ async fn reclassify_pools_seeds_embedded_fractal_registry_and_resolves() -> Resu
                 Some(identity_id),
             )]
         );
+
+        let again = run_reclassify_pools(&mut client, ReclassifyPoolsConfig::default()).await?;
+        assert_eq!(again.child_pool_updates, 0);
 
         Ok::<_, anyhow::Error>(())
     })
@@ -133,18 +102,6 @@ async fn set_child_coinbase_outputs(
     Ok(())
 }
 
-fn fractal_reward_outputs() -> Vec<u8> {
-    let reward_hash: [u8; 20] = hex::decode("457f14b3701cc5c807935b0a4839d7f42879bcfd")
-        .unwrap()
-        .try_into()
-        .unwrap();
-    let outputs = vec![TxOut {
-        value: Amount::from_sat(1),
-        script_pubkey: ScriptBuf::new_p2wpkh(&WPubkeyHash::from_slice(&reward_hash).unwrap()),
-    }];
-    serialize(&outputs)
-}
-
 /// A child coinbase output paying the witness-program hash that formats to the
 /// registry's F2Pool Fractal reward address `bc1qptpxl288ng4c7mg6klzu9t0are7nhqlfmtmk9k`
 /// (the same vector pinned in `mmm_capture::child_payout`'s formatter test).
@@ -158,20 +115,4 @@ fn f2pool_registry_reward_outputs() -> Vec<u8> {
         script_pubkey: ScriptBuf::new_p2wpkh(&WPubkeyHash::from_slice(&reward_hash).unwrap()),
     }];
     serialize(&outputs)
-}
-
-async fn insert_fractal_reward_identity(
-    client: &Client,
-    pool_id: i64,
-    address: &str,
-) -> Result<i64> {
-    Ok(client
-        .query_one(
-            "INSERT INTO pool_identity (pool_id, namespace, identifier) \
-             VALUES ($1, 'fractal_reward_address', $2) \
-             RETURNING id",
-            &[&pool_id, &address],
-        )
-        .await?
-        .get(0))
 }

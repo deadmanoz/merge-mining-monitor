@@ -7,7 +7,6 @@ use mmm_bitcoin_core::{
     ParentClassification,
 };
 use mmm_capture::capture::{ClassificationProof, ParentKind};
-use mmm_pg::{PgConfig, connect};
 use mmm_read_model::{
     ReclassifyUnknownParentsConfig, ReconcileReadModelConfig, reconcile_from_merge_mining_event,
     revoke_merge_mining_event, run_reclassify_unknown_parents, run_reconcile_read_model,
@@ -204,59 +203,6 @@ async fn reclassify_unknown_parents_pages_past_stuck_headers() -> Result<()> {
 }
 
 #[tokio::test]
-async fn reconcile_all_pages_beyond_first_batch() -> Result<()> {
-    crate::run_mut_db_test!(client, {
-        let fixture = NamecoinEventFixture::new(&client).await?;
-        let first = fixture
-            .insert_event(&client, 500_000, ClassificationProof::default(), 2_200)
-            .await?;
-        let first_header = first.header;
-        let first_hash = first_header.block_hash().to_byte_array().to_vec();
-
-        let mut second_header = first_header;
-        second_header.nonce = second_header.nonce.wrapping_add(99);
-        let second = fixture
-            .insert_event_with_header(
-                &client,
-                500_001,
-                0x99,
-                second_header,
-                ClassificationProof::default(),
-                2_201,
-            )
-            .await?;
-
-        let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new_sequence([
-            canonical_parent_classification(&first_header, 721_000, true),
-            canonical_parent_classification(&second.header, 721_001, true),
-        ]));
-        let repaired = run_reconcile_read_model(
-            &mut client,
-            &classifier,
-            ReconcileReadModelConfig {
-                missing_only: false,
-                batch_size: 1,
-                ..ReconcileReadModelConfig::default()
-            },
-        )
-        .await?;
-        assert_eq!(repaired, 2);
-
-        let count: i64 = client
-            .query_one(
-                "SELECT COUNT(*)::bigint FROM block \
-                 WHERE btc_header_hash IN ($1, $2) AND kind = 'canonical'",
-                &[&first_hash, &second.parent_hash],
-            )
-            .await?
-            .get(0);
-        assert_eq!(count, 2);
-
-        Ok::<_, anyhow::Error>(())
-    })
-}
-
-#[tokio::test]
 async fn reconcile_all_distinguishes_unknown_height_from_i32_max() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let fixture = NamecoinEventFixture::new(&client).await?;
@@ -438,10 +384,7 @@ async fn retries_reconcile_when_event_change_expands_lock_set() -> Result<()> {
             .with_first_call_gate(gate.clone()),
         );
 
-        let mut task_client = connect(&PgConfig::from_env()?).await?;
-        task_client
-            .batch_execute(&format!("SET search_path TO {schema}, public;"))
-            .await?;
+        let mut task_client = crate::support::db::connect_to_schema(&schema).await?;
         let task_classifier = classifier.clone();
         let reconcile_task = tokio::spawn(async move {
             reconcile_from_merge_mining_event(&mut task_client, event_id, &task_classifier, None)

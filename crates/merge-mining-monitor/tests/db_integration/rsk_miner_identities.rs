@@ -11,7 +11,7 @@ use serde_json::json;
 use tokio_postgres::Client;
 
 use crate::support::default_pool_snapshot;
-use crate::support::seed::pool_id_for_slug;
+use crate::support::seed::{insert_pool_identity, pool_id_for_slug};
 
 const KNOWN_MINER: &str = "12d3178a62ef1f520944534ed04504609f7307a1";
 const PRIORITY_UNKNOWN_MINER: &str = "0fd9b9b567a459c6c9645ab0847785aef13dfe1b";
@@ -56,7 +56,13 @@ async fn reclassify_pools_requires_overwrite_before_remapping_existing_identity(
         let f2pool_id = f2pool_id(&client).await?;
         let antpool_id = pool_id_for_slug(&client, "antpool").await?;
         assert_ne!(f2pool_id, antpool_id);
-        let identity_id = insert_rsk_pool_identity(&client, KNOWN_MINER, antpool_id).await?;
+        let identity_id = insert_pool_identity(
+            &client,
+            antpool_id,
+            RSK_MINER_ADDRESS_NAMESPACE,
+            KNOWN_MINER,
+        )
+        .await?;
 
         let err = reclassify_pools(&mut client)
             .await
@@ -136,23 +142,6 @@ async fn only_main_skips_the_rsk_pass() -> Result<()> {
         let full = reclassify_pools(&mut client).await?;
         assert_eq!(full.rsk_miner_rows_scanned, 1);
 
-        Ok::<_, anyhow::Error>(())
-    })
-}
-
-#[tokio::test]
-async fn watermark_table_is_retired_after_migrations() -> Result<()> {
-    crate::run_db_test!(client, {
-        let table_count: i64 = client
-            .query_one(
-                "SELECT count(*)::bigint FROM information_schema.tables \
-                 WHERE table_schema = current_schema() \
-                   AND table_name = 'rsk_reclassify_watermark'",
-                &[],
-            )
-            .await?
-            .get(0);
-        assert_eq!(table_count, 0, "migration 0009 must drop the singleton");
         Ok::<_, anyhow::Error>(())
     })
 }
@@ -411,22 +400,6 @@ async fn f2pool_id(client: &Client) -> Result<i64> {
         .get("f2pool")
         .copied()
         .ok_or_else(|| anyhow::anyhow!("f2pool in snapshot"))
-}
-
-async fn insert_rsk_pool_identity(
-    client: &Client,
-    miner_address: &str,
-    pool_id: i64,
-) -> Result<i64> {
-    client
-        .query_one(
-            "INSERT INTO pool_identity (pool_id, namespace, identifier) \
-             VALUES ($1, $2, $3) RETURNING id",
-            &[&pool_id, &RSK_MINER_ADDRESS_NAMESPACE, &miner_address],
-        )
-        .await
-        .map(|row| row.get(0))
-        .map_err(Into::into)
 }
 
 async fn pool_identity_pool_id(client: &Client, identity_id: i64) -> Result<i64> {

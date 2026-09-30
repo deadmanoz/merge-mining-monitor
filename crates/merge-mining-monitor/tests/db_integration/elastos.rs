@@ -20,7 +20,9 @@ use tokio_postgres::Client;
 use crate::support::db::{advisory_locks_held, displacement_at};
 
 use crate::support::default_pool_snapshot;
-use crate::support::seed::{EventSeed, hash_bytes, insert_event, pool_id_for_slug};
+use crate::support::seed::{
+    EventSeed, hash_bytes, insert_event, insert_pool_identity, pool_id_for_slug,
+};
 
 const BINANCE_MINERINFO: &str = "binance";
 const F2POOL_REWARD_ADDRESS: &str = "EXm7Gqs1bS4ddry8EUrN7KZHF7oax79upR";
@@ -227,14 +229,14 @@ async fn live_capture_maps_known_reward_and_minerinfo_identities() -> Result<()>
     crate::run_mut_db_test!(client, {
         default_pool_snapshot(&client).await?;
         let f2pool_id = pool_id_for_slug(&client, "f2pool").await?;
-        let reward_identity_id = insert_elastos_identity(
+        let reward_identity_id = insert_pool_identity(
             &client,
             f2pool_id,
             ELASTOS_REWARD_ADDRESS_NAMESPACE,
             F2POOL_REWARD_ADDRESS,
         )
         .await?;
-        let minerinfo_identity_id = insert_elastos_identity(
+        let minerinfo_identity_id = insert_pool_identity(
             &client,
             f2pool_id,
             ELASTOS_MINERINFO_NAMESPACE,
@@ -441,23 +443,6 @@ async fn elastos_identity_rows(
         .into_iter()
         .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3), row.get(4)))
         .collect())
-}
-
-async fn insert_elastos_identity(
-    client: &Client,
-    pool_id: i64,
-    namespace: &str,
-    identifier: &str,
-) -> Result<i64> {
-    Ok(client
-        .query_one(
-            "INSERT INTO pool_identity (pool_id, namespace, identifier) \
-             VALUES ($1, $2, $3) \
-             RETURNING id",
-            &[&pool_id, &namespace, &identifier],
-        )
-        .await?
-        .get(0))
 }
 
 /// Recompute the RPC-reported hash after a field change, using the same
