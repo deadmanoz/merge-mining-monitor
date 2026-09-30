@@ -33,7 +33,6 @@ impl<T> MockResult<T> {
 
 #[derive(Default)]
 struct MockCoreHeaderSource {
-    chain_status: Mutex<Option<MockResult<BitcoinCoreChainStatus>>>,
     verbose: Mutex<HashMap<BlockHash, MockResult<CoreHeaderStatus>>>,
     block_hashes: Mutex<HashMap<u64, MockResult<BlockHash>>>,
     headers: Mutex<HashMap<BlockHash, MockResult<ClassifiedHeader>>>,
@@ -45,10 +44,6 @@ struct MockCoreHeaderSource {
 }
 
 impl MockCoreHeaderSource {
-    fn set_chain_status(&self, result: MockResult<BitcoinCoreChainStatus>) {
-        *self.chain_status.lock().unwrap() = Some(result);
-    }
-
     fn set_verbose(&self, hash: BlockHash, result: MockResult<CoreHeaderStatus>) {
         self.verbose.lock().unwrap().insert(hash, result);
     }
@@ -84,14 +79,7 @@ impl MockCoreHeaderSource {
 
 impl CoreHeaderSource for MockCoreHeaderSource {
     fn get_chain_status(&self) -> CoreRpcFuture<'_, BitcoinCoreChainStatus> {
-        Box::pin(async move {
-            self.chain_status
-                .lock()
-                .unwrap()
-                .clone()
-                .unwrap_or(MockResult::Error)
-                .into_result()
-        })
+        Box::pin(async { MockResult::Error.into_result() })
     }
 
     fn get_block_hash(&self, height: u64) -> CoreRpcFuture<'_, BlockHash> {
@@ -282,56 +270,6 @@ async fn disabled_classifier_returns_unknown() {
 }
 
 #[tokio::test]
-async fn configured_classifier_exposes_only_synced_core_tip_height() {
-    let disabled_tip = ConfiguredParentClassifier::Disabled
-        .synced_tip_height()
-        .await
-        .unwrap();
-    assert_eq!(disabled_tip, None);
-
-    let synced_source = Arc::new(MockCoreHeaderSource::default());
-    synced_source.set_chain_status(MockResult::Ok(BitcoinCoreChainStatus {
-        is_mainnet: true,
-        blocks: 953_305,
-        headers: 953_305,
-        initial_block_download: false,
-        median_time: 0,
-    }));
-    let synced_tip = ConfiguredParentClassifier::BitcoinCore(
-        BitcoinCoreParentClassifier::from_source(synced_source),
-    )
-    .synced_tip_height()
-    .await
-    .unwrap();
-    assert_eq!(synced_tip, Some(953_305));
-
-    let unsynced_source = Arc::new(MockCoreHeaderSource::default());
-    unsynced_source.set_chain_status(MockResult::Ok(BitcoinCoreChainStatus {
-        is_mainnet: true,
-        blocks: 953_304,
-        headers: 953_305,
-        initial_block_download: false,
-        median_time: 0,
-    }));
-    let unsynced_tip = ConfiguredParentClassifier::BitcoinCore(
-        BitcoinCoreParentClassifier::from_source(unsynced_source),
-    )
-    .synced_tip_height()
-    .await
-    .unwrap();
-    assert_eq!(unsynced_tip, None);
-
-    let fake_tip = ConfiguredParentClassifier::Fake(
-        FakeParentClassifier::new(ParentClassification::unknown(&test_header(43, 0x207f_ffff)))
-            .with_synced_tip_height(953_305),
-    )
-    .synced_tip_height()
-    .await
-    .unwrap();
-    assert_eq!(fake_tip, Some(953_305));
-}
-
-#[tokio::test]
 async fn canonical_header_fetches_header_only() {
     let source = Arc::new(MockCoreHeaderSource::default());
     // `test_header` carries time = 1; bits is the Elastos live-stall epoch nBits.
@@ -475,8 +413,8 @@ fn inferred_stale_classification_checks_height_source_and_bits() {
 #[test]
 fn tip_is_fresh_within_the_max_age() {
     // A synced tip is fresh while its median time is within ~24h of now, and stale
-    // once older (a lagging / isolated node), so the far-future guard holds instead
-    // of revoking valid evidence against a stale tip.
+    // once older (a lagging / isolated node), which the header-cache refresh
+    // refuses to work against.
     let now = 2_000_000_000;
     assert!(tip_is_fresh(now, now));
     assert!(tip_is_fresh(now - 86_400, now)); // exactly at the bound
