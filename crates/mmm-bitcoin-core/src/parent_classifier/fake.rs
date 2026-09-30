@@ -11,6 +11,7 @@ pub struct FakeParentClassifier {
     classification_error_on_call: Option<u64>,
     synced_tip_is_mainnet: bool,
     synced_tip_height: Option<i32>,
+    synced_tip_fresh: bool,
     fail_synced_tip: bool,
     canonical_headers:
         Arc<tokio::sync::Mutex<std::collections::HashMap<i32, VecDeque<CoreHeader>>>>,
@@ -70,6 +71,7 @@ impl FakeParentClassifier {
             classification_error_on_call: None,
             synced_tip_is_mainnet: true,
             synced_tip_height: None,
+            synced_tip_fresh: true,
             fail_synced_tip: false,
             canonical_headers: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             max_concurrency: 1,
@@ -130,8 +132,16 @@ impl FakeParentClassifier {
         self
     }
 
-    /// Make `synced_tip_height` return `Err` (Core unreachable), so the resolver's
-    /// fail-closed-to-Hold path can be exercised.
+    /// A synced mainnet tip whose median time is too old, for commands that
+    /// must refuse monitor work against a stalled or isolated node.
+    pub fn with_stale_synced_tip(mut self, height: i32) -> Self {
+        self.synced_tip_height = Some(height);
+        self.synced_tip_fresh = false;
+        self
+    }
+
+    /// Make `synced_tip` return `Err`, as when Core is unreachable, so a
+    /// caller's Core-failure path can be exercised.
     pub fn with_synced_tip_error(mut self) -> Self {
         self.fail_synced_tip = true;
         self
@@ -169,13 +179,6 @@ impl FakeParentClassifier {
         self
     }
 
-    pub(crate) async fn synced_tip_height(&self) -> Result<Option<i32>> {
-        if self.fail_synced_tip {
-            bail!("fake classifier: injected synced_tip_height error");
-        }
-        Ok(self.synced_tip_height)
-    }
-
     pub(crate) async fn synced_tip(&self) -> Result<Option<SyncedTip>> {
         if self.fail_synced_tip {
             bail!("fake classifier: injected synced_tip error");
@@ -183,7 +186,7 @@ impl FakeParentClassifier {
         Ok(self.synced_tip_height.map(|height| SyncedTip {
             is_mainnet: self.synced_tip_is_mainnet,
             height,
-            fresh: true,
+            fresh: self.synced_tip_fresh,
         }))
     }
 

@@ -619,6 +619,23 @@ async fn refresh_rejects_a_non_mainnet_core_node() -> Result<()> {
 }
 
 #[tokio::test]
+async fn refresh_rejects_a_stale_core_tip() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let classifier = ConfiguredParentClassifier::Fake(
+            FakeParentClassifier::new(ParentClassification::unknown(
+                &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
+            ))
+            .with_stale_synced_tip(2030),
+        );
+        let error = refresh_bitcoin_core_header_cache(&mut client, &classifier)
+            .await
+            .expect_err("a stalled node's lagging tip must not drive monitor work");
+        assert!(error.to_string().contains("tip is stale"));
+        Ok(())
+    })
+}
+
+#[tokio::test]
 async fn core_header_cache_refresh_lock_serializes_sessions() -> Result<()> {
     crate::run_db_test!(client, schema, {
         lock_bitcoin_core_header_cache(&client).await?;

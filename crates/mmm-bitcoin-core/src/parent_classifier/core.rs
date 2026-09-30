@@ -15,8 +15,8 @@ pub struct CoreHeader {
 /// A Bitcoin Core tip that is synced, with whether it is also FRESH. `fresh` is
 /// false when the tip's median time is older than [`MAX_TIP_AGE_SECS`]: a stalled
 /// or isolated node can report `blocks == headers && !IBD` while sitting far behind
-/// the real network tip, and trusting its lagging tip would wrongly classify a
-/// valid beyond-horizon parent as a fabricated far-future height.
+/// the real network tip, so the header-cache refresh refuses monitor work
+/// against a tip that is not fresh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SyncedTip {
     pub is_mainnet: bool,
@@ -25,10 +25,8 @@ pub struct SyncedTip {
 }
 
 /// Maximum age (seconds) of the chain tip's median time before a synced Core is
-/// treated as stale for the far-future decision. ~24h, aligned with the 144-block
-/// (~1 day) far-future tolerance: only once Core lags the real tip by more than the
-/// tolerance can a genuine parent exceed `tip + tolerance`, and a tip that far
-/// behind has a median time at least this old.
+/// treated as stale. ~24h is about 144 blocks of network progress, far beyond
+/// ordinary gaps between mainnet blocks.
 const MAX_TIP_AGE_SECS: i64 = 86_400;
 
 /// Whether a tip whose median time is `median_time` is fresh as of `now_secs`.
@@ -213,15 +211,9 @@ impl BitcoinCoreParentClassifier {
         self.max_concurrency
     }
 
-    pub async fn synced_tip_height(&self) -> Result<Option<i32>> {
-        let status = self.source.get_chain_status().await?;
-        Ok(status.is_synced_tip().then_some(status.blocks))
-    }
-
     /// The synced Core tip with its freshness, or `None` when Core is not at a
     /// synced tip (IBD or `blocks != headers`). `fresh` separates a tip Core has
-    /// actually advanced to recently from a stalled node's lagging tip, so the
-    /// far-future decision never revokes a valid parent against a stale tip.
+    /// actually advanced to recently from a stalled node's lagging tip.
     pub async fn synced_tip(&self) -> Result<Option<SyncedTip>> {
         let status = self.source.get_chain_status().await?;
         if !status.is_synced_tip() {
