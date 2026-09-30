@@ -20,9 +20,8 @@ mod reclassify_pools;
 #[cfg(any(test, feature = "db-integration"))]
 pub use bitcoin_core_backbone::{
     BitcoinCoreBackboneSource, BitcoinCoreBackboneTip, accept_live_repaired_target_for_test,
-    initialize_follow_state, record_retryable_repair_failure_for_test,
-    repair_near_tip_backbone_for_test, run_bitcoin_core_follow_tick_for_test,
-    run_bitcoin_core_initial_follow_tick_for_test,
+    record_retryable_repair_failure_for_test, repair_near_tip_backbone_for_test,
+    run_bitcoin_core_follow_tick_for_test, run_bitcoin_core_initial_follow_tick_for_test,
 };
 pub use bitcoin_core_backbone::{
     BitcoinCoreSyncConfig, BitcoinCoreSyncStats, run_sync_bitcoin_core,
@@ -49,5 +48,5 @@ pub use known_stale_import::{
 pub use poller::{
     ChainPoller, ChainPollerState, HeightProgress, Poller, PollerConfig, RescanOutcome,
 };
-pub use producer_runtime::{connect_core_required_from_env, connect_from_env};
+pub use producer_runtime::connect_core_required_from_env;
 pub use reclassify_pools::{ReclassifyPoolsConfig, ReclassifyPoolsStats, run_reclassify_pools};

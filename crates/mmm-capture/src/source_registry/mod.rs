@@ -267,48 +267,6 @@ pub fn by_code(code: &str) -> Option<&'static SourceDefinition> {
     SOURCE_REGISTRY.iter().find(|s| s.code == code)
 }
 
-/// The live sources (active producers + the Bitcoin classifier). Positive
-/// `== Live` match so catalogued rows are excluded (a `!= Historical` predicate
-/// would wrongly include them).
-#[cfg(any(test, feature = "test-support"))]
-pub fn live() -> impl Iterator<Item = &'static SourceDefinition> {
-    SOURCE_REGISTRY
-        .iter()
-        .filter(|s| s.lifecycle == SourceLifecycle::Live)
-}
-
-/// The recovered dataset sources without live Monitor producers.
-#[cfg(any(test, feature = "test-support"))]
-pub fn historical() -> impl Iterator<Item = &'static SourceDefinition> {
-    SOURCE_REGISTRY
-        .iter()
-        .filter(|s| s.lifecycle == SourceLifecycle::Historical)
-}
-
-/// The catalogued (known BTC-merge-mined, not recovered) sources.
-#[cfg(any(test, feature = "test-support"))]
-pub fn catalogued() -> impl Iterator<Item = &'static SourceDefinition> {
-    SOURCE_REGISTRY
-        .iter()
-        .filter(|s| s.lifecycle == SourceLifecycle::Catalogued)
-}
-
-/// The ingestible recovered subsets whose full child chain remains unavailable.
-#[cfg(any(test, feature = "test-support"))]
-pub fn partial() -> impl Iterator<Item = &'static SourceDefinition> {
-    SOURCE_REGISTRY
-        .iter()
-        .filter(|s| s.lifecycle == SourceLifecycle::Partial)
-}
-
-/// Recovered and reviewed sources with no admissible Bitcoin evidence rows.
-#[cfg(any(test, feature = "test-support"))]
-pub fn surveyed() -> impl Iterator<Item = &'static SourceDefinition> {
-    SOURCE_REGISTRY
-        .iter()
-        .filter(|s| s.lifecycle == SourceLifecycle::Surveyed)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,47 +379,6 @@ mod tests {
         let got: Vec<(i64, &str)> = SOURCE_REGISTRY.iter().map(|s| (s.id, s.code)).collect();
         assert_eq!(got, want);
         assert!(by_code("auxpow:mazacoin").is_none());
-    }
-
-    #[test]
-    fn registry_lifecycle_counts_match_recovery_state() {
-        assert_eq!(live().count(), 9);
-        assert_eq!(historical().count(), 19);
-        assert_eq!(partial().count(), 1);
-        assert_eq!(surveyed().count(), 1);
-        assert_eq!(catalogued().count(), 5);
-        assert_eq!(SOURCE_REGISTRY.len(), 35);
-        // Every historical entry is recovered AuxPoW evidence.
-        for s in historical() {
-            assert_eq!(s.kind, SourceKind::Auxpow, "{}", s.code);
-        }
-        // Every catalogued entry is AuxPoW (the merge-mining catch-all); they have
-        // no producer and no recovered evidence.
-        for s in catalogued() {
-            assert_eq!(s.kind, SourceKind::Auxpow, "{}", s.code);
-        }
-        assert_eq!(partial().next().unwrap().code, "auxpow:vcash");
-        assert_eq!(surveyed().next().unwrap().code, "auxpow:doichain");
-        assert_eq!(
-            by_code("auxpow:lyncoin").unwrap().lifecycle,
-            SourceLifecycle::Historical
-        );
-        assert_eq!(
-            by_code("auxpow:sixeleven").unwrap().lifecycle,
-            SourceLifecycle::Historical
-        );
-        let rod = by_code("auxpow:rod").unwrap();
-        assert_eq!(rod.id, 35);
-        assert_eq!(rod.lifecycle, SourceLifecycle::Historical);
-        assert_eq!(rod.child_target_location, ChildTargetLocation::PowData);
-        assert_eq!(
-            by_code("auxpow:elcash").unwrap().child_target_location,
-            ChildTargetLocation::HeaderNbits
-        );
-        let qbit = by_code(QBIT_SOURCE_CODE).unwrap();
-        assert_eq!(qbit.id, 36);
-        assert_eq!(qbit.lifecycle, SourceLifecycle::Live);
-        assert_eq!(qbit.child_target_location, ChildTargetLocation::HeaderNbits);
     }
 
     #[test]

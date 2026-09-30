@@ -23,7 +23,7 @@ use {
         btc_orphan::{BtcOrphanVerdict, classify_btc_orphan_with},
         capture::{
             ClassificationProof, MergeMiningEventPayload, ParentKind, ResolvedPoolAttributions,
-            build_event_payload, resolve_event_pools,
+            build_event_payload, resolve_event_pools_with_child_payout,
         },
         pool_resolver::PoolResolver,
         source_registry::NAMECOIN_SOURCE_CODE,
@@ -48,9 +48,7 @@ pub mod seed;
 // given binary are expected (each binary compiles its own support copy).
 #[allow(unused_imports)]
 #[cfg(feature = "test-support")]
-pub use mmm_capture::test_support::{
-    header_meeting_bits, parse_auxpow_fixture, valid_btc_header, valid_btc_header_two,
-};
+pub use mmm_capture::test_support::{header_meeting_bits, parse_auxpow_fixture};
 
 #[cfg(feature = "db-integration")]
 pub type DefaultPoolSnapshot = (PoolResolver, HashMap<String, i64>);
@@ -146,7 +144,7 @@ pub fn namecoin_event_payload(
     build_event_payload(
         parsed,
         Some(child_height),
-        resolve_event_pools(parsed, resolver, pool_ids_by_slug),
+        resolve_event_pools_with_child_payout(parsed, resolver, pool_ids_by_slug, None, None),
         proof,
         observed_at_epoch,
     )

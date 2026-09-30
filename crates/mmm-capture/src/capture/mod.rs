@@ -207,8 +207,8 @@ pub struct HistoricalEventProvenance {
     pub relevance_reason: Option<String>,
 }
 
-/// Ordered set of pool attributions for one event, produced by the
-/// `resolve_event_pools*` family and folded into
+/// Ordered set of pool attributions for one event, produced by
+/// `resolve_event_pools_with_child_payout` and folded into
 /// `MergeMiningEventPayload.pool_attributions`. Order is meaningful: parent
 /// attribution first, then child script, then child payout addresses, matching
 /// the resolver call order in `resolve_event_pools_with_child_payout`.
@@ -572,17 +572,6 @@ fn namecoin_evidence(
             .then(|| serialize(&parsed.child_coinbase_outputs)),
         aux_merkle_proof: Some(parsed.auxpow_bytes.clone()),
     })
-}
-
-/// Test-support wrapper for resolving AuxPoW pool attributions without the
-/// child-payout pass. Production capture uses [`resolve_event_pools_with_child_payout`].
-#[cfg(any(test, feature = "test-support"))]
-pub fn resolve_event_pools(
-    parsed: &ParsedAuxpowBlock,
-    resolver: &PoolResolver,
-    pool_ids_by_slug: &HashMap<String, i64>,
-) -> ResolvedPoolAttributions {
-    resolve_event_pools_with_child_payout(parsed, resolver, pool_ids_by_slug, None, None)
 }
 
 /// Full AuxPoW pool resolution. Emits attributions in a fixed order: BTC

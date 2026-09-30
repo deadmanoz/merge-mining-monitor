@@ -18,10 +18,9 @@ use mmm_capture::capture::ClassificationProof;
 use mmm_capture::source_registry::{BITCOIN_SOURCE_CODE, NAMECOIN_SOURCE_CODE};
 use mmm_producers::{
     BitcoinCoreBackboneSource, BitcoinCoreBackboneTip, BitcoinCoreSyncConfig,
-    accept_live_repaired_target_for_test, initialize_follow_state,
-    record_retryable_repair_failure_for_test, repair_near_tip_backbone_for_test,
-    run_bitcoin_core_follow_tick_for_test, run_bitcoin_core_initial_follow_tick_for_test,
-    run_sync_bitcoin_core,
+    accept_live_repaired_target_for_test, record_retryable_repair_failure_for_test,
+    repair_near_tip_backbone_for_test, run_bitcoin_core_follow_tick_for_test,
+    run_bitcoin_core_initial_follow_tick_for_test, run_sync_bitcoin_core,
 };
 use mmm_read_model::{
     CoreCanonicalReplacement, CoreSuffixReplacementInput, ExpectedCoreCanonicalRow,
@@ -876,27 +875,42 @@ async fn follow_missing_only_retry_skips_completed_tail() -> Result<()> {
 }
 
 /// w0m: the follow daemon must initialize its sync-state row before reading the
-/// cursor. On a freshly migrated DB no row exists yet; `initialize_follow_state`
-/// (a finite, shutdown-free wrapper) must insert the default row and return the
-/// default cursor without driving the infinite follow loop.
+/// cursor. On a freshly migrated DB no row exists yet, so a first follow tick
+/// that read its cursor first would fail its bookkeeping and never progress.
+/// The daemon and this finite tick share one start path.
 #[tokio::test]
-async fn initialize_follow_state_seeds_row_on_fresh_db() -> Result<()> {
-    crate::run_db_test!(client, {
-        let source_id = get_source_id(&client, BITCOIN_SOURCE_CODE).await?;
+async fn first_follow_tick_on_fresh_db_seeds_sync_state() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        crate::support::db::clear_bitcoin_history(&client).await?;
         let before: i64 = client
             .query_one("SELECT count(*)::bigint FROM bitcoin_core_sync_state", &[])
             .await?
             .get(0);
         assert_eq!(before, 0, "fresh DB has no Bitcoin Core sync-state row");
 
-        let cch = initialize_follow_state(&client, source_id).await?;
-        assert_eq!(cch, -1, "fresh cursor is the migration default of -1");
+        let headers = test_header_chain(4, 1_800_005_000);
+        let source = FakeBitcoinCoreBackboneSource::new(3, headers.clone());
+        let (progressed, _) = run_bitcoin_core_follow_tick_for_test(
+            &mut client,
+            &source,
+            &core_cache_classifier(&headers, 3),
+            BitcoinCoreSyncConfig::default(),
+        )
+        .await?;
+        assert!(progressed, "the first tick syncs from the seeded cursor");
 
-        let after: i64 = client
-            .query_one("SELECT count(*)::bigint FROM bitcoin_core_sync_state", &[])
-            .await?
-            .get(0);
-        assert_eq!(after, 1, "initialize_follow_state inserts the default row");
+        let rows = client
+            .query(
+                "SELECT contiguous_complete_height FROM bitcoin_core_sync_state",
+                &[],
+            )
+            .await?;
+        assert_eq!(rows.len(), 1, "the first tick inserts the default row");
+        assert_eq!(
+            rows[0].get::<_, i32>(0),
+            3,
+            "the cursor reaches the Core tip"
+        );
 
         Ok::<_, anyhow::Error>(())
     })
