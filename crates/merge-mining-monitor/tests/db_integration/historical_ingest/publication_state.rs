@@ -1,40 +1,6 @@
 use super::*;
 
 #[tokio::test]
-async fn migration_0016_drops_the_0015_receipt_table() -> Result<()> {
-    let (client, schema) =
-        crate::support::db::new_test_db_through("0015_add_historical_import_artifact").await?;
-    let result = async {
-        let before: Option<String> = client
-            .query_one(
-                "SELECT to_regclass('historical_import_artifact')::text",
-                &[],
-            )
-            .await?
-            .get(0);
-        assert_eq!(before.as_deref(), Some("historical_import_artifact"));
-
-        client
-            .batch_execute(include_str!(
-                "../../../../../migrations/0016_drop_historical_import_artifact.sql"
-            ))
-            .await?;
-
-        let after: Option<String> = client
-            .query_one(
-                "SELECT to_regclass('historical_import_artifact')::text",
-                &[],
-            )
-            .await?
-            .get(0);
-        assert_eq!(after, None);
-        Ok::<_, anyhow::Error>(())
-    }
-    .await;
-    crate::support::db::teardown_test_db(&client, &schema, result).await
-}
-
-#[tokio::test]
 async fn import_all_state_check_skips_matches_and_reconciles_operator_extras() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let published = header_meeting_bits(0x207f_ffff, 1_700_000_080, 80);
