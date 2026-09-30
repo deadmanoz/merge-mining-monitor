@@ -19,7 +19,7 @@ use mmm_store::{
 use serde_json::json;
 use tokio_postgres::Client;
 
-use crate::support::seed::{child_reward_rows, insert_namecoin_payout_identity, pool_id_for_slug};
+use crate::support::seed::{child_reward_rows, insert_pool_identity, pool_id_for_slug};
 use crate::support::{default_pool_snapshot, parse_auxpow_fixture};
 
 fn parent_pool_attributions(pool_id: i64) -> ResolvedPoolAttributions {
@@ -295,9 +295,10 @@ async fn reclassify_pools_fills_child_tag_and_payout_from_outputs() -> Result<()
         let spiderpool_id = pool_id_for_slug(&client, "spiderpool").await?;
         let f2pool_id = pool_id_for_slug(&client, "f2pool").await?;
         let child_outputs = namecoin_p2pkh_outputs(&[[0; 20]]);
-        let identity_id = insert_namecoin_payout_identity(
+        let identity_id = insert_pool_identity(
             &client,
             f2pool_id,
+            NAMECOIN_PAYOUT_ADDRESS_NAMESPACE,
             "MvaNCeVyvP6ZXYFWGpKaDX9ujEQ418F7sm",
         )
         .await?;

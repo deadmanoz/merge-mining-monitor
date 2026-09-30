@@ -11,25 +11,9 @@ use serde_json::{Value, json};
 use tokio_postgres::Client;
 
 use crate::support::default_pool_snapshot;
-use crate::support::seed::{child_reward_rows, pool_id_for_slug};
+use crate::support::seed::{child_reward_rows, insert_pool_identity, pool_id_for_slug};
 
 const ZULUPOOL_REWARD_ADDRESS: &str = "HFhvehg9Uy1YBg9bJ7eTRWwgoc6B4e1vmP";
-
-async fn insert_hathor_reward_identity(
-    client: &Client,
-    pool_id: i64,
-    address: &str,
-) -> Result<i64> {
-    Ok(client
-        .query_one(
-            "INSERT INTO pool_identity (pool_id, namespace, identifier) \
-             VALUES ($1, $2, $3) \
-             RETURNING id",
-            &[&pool_id, &HATHOR_REWARD_ADDRESS_NAMESPACE, &address],
-        )
-        .await?
-        .get(0))
-}
 
 async fn hathor_reward_identity_id(client: &Client, address: &str) -> Result<i64> {
     Ok(client
@@ -306,8 +290,13 @@ async fn reclassify_pools_records_unknown_and_nonstandard_hathor_rewards() -> Re
         assert_synthetic_reward_audit_details(&details);
 
         let spiderpool_id = pool_id_for_slug(&client, "spiderpool").await?;
-        let identity_id =
-            insert_hathor_reward_identity(&client, spiderpool_id, &reward_address).await?;
+        let identity_id = insert_pool_identity(
+            &client,
+            spiderpool_id,
+            HATHOR_REWARD_ADDRESS_NAMESPACE,
+            &reward_address,
+        )
+        .await?;
         let upgrade = run_reclassify_pools(&mut client, ReclassifyPoolsConfig::default()).await?;
         assert_eq!(upgrade.child_pool_updates, 1);
         assert_eq!(upgrade.hathor_reward_updates, 1);

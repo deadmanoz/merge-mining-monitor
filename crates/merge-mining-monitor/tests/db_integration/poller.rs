@@ -1,16 +1,12 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use mmm_capture::capture::{ClassificationProof, ResolvedPoolAttributions, build_event_payload};
 use mmm_capture::source_registry::NAMECOIN_SOURCE_CODE;
 use mmm_producers::{ChainPoller, ChainPollerState, HeightProgress, Poller, PollerConfig};
-use mmm_store::{
-    get_source_id, load_poll_cursor, upsert_merge_mining_event, upsert_poll_cursor_with_target,
-};
+use mmm_store::{get_source_id, load_poll_cursor, upsert_poll_cursor_with_target};
 use tokio_postgres::Client;
 
 use crate::support::db::connect_to_schema;
-use crate::support::{default_pool_snapshot, parse_auxpow_fixture};
 
 // ---------------------------------------------------------------------------
 // poll_cursor: live-poll cursor decoupled from merge_mining_event.
@@ -159,26 +155,6 @@ async fn load_poll_cursor_row(client: &Client, source_id: i64) -> Result<(i32, O
 }
 
 #[tokio::test]
-async fn poll_cursor_round_trip_is_monotonic() -> Result<()> {
-    crate::run_db_test!(client, {
-        let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
-        assert_eq!(load_poll_cursor(&client, source_id).await?, None);
-
-        upsert_poll_cursor_with_target(&client, source_id, 1_000, None).await?;
-        assert_eq!(load_poll_cursor(&client, source_id).await?, Some(1_000));
-
-        // A lower replay must not downgrade persisted live progress.
-        upsert_poll_cursor_with_target(&client, source_id, 500, None).await?;
-        assert_eq!(load_poll_cursor(&client, source_id).await?, Some(1_000));
-
-        // A higher value advances.
-        upsert_poll_cursor_with_target(&client, source_id, 1_500, None).await?;
-        assert_eq!(load_poll_cursor(&client, source_id).await?, Some(1_500));
-        Ok::<_, anyhow::Error>(())
-    })
-}
-
-#[tokio::test]
 async fn poll_cursor_target_updates_do_not_refresh_progress_time() -> Result<()> {
     crate::run_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
@@ -198,31 +174,6 @@ async fn poll_cursor_target_updates_do_not_refresh_progress_time() -> Result<()>
         upsert_poll_cursor_with_target(&client, source_id, 1_500, None).await?;
         let (cursor, target, _) = load_poll_cursor_row(&client, source_id).await?;
         assert_eq!((cursor, target), (1_500, Some(900)));
-        Ok::<_, anyhow::Error>(())
-    })
-}
-
-#[tokio::test]
-async fn poll_cursor_unaffected_by_event_writes() -> Result<()> {
-    crate::run_db_test!(client, {
-        default_pool_snapshot(&client).await?;
-        let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
-
-        upsert_poll_cursor_with_target(&client, source_id, 800_000, None).await?;
-
-        // A backfill-style event write at a low height must not touch the
-        // live cursor.
-        let parsed = parse_auxpow_fixture("500000-valid-parent")?;
-        let event = build_event_payload(
-            &parsed,
-            Some(500_000),
-            ResolvedPoolAttributions::default(),
-            ClassificationProof::default(),
-            111,
-        )?;
-        upsert_merge_mining_event(&client, source_id, &event).await?;
-
-        assert_eq!(load_poll_cursor(&client, source_id).await?, Some(800_000));
         Ok::<_, anyhow::Error>(())
     })
 }

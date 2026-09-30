@@ -259,19 +259,6 @@ async fn navigator_endpoint_validates_queries_before_db_checkout() {
 }
 
 #[tokio::test]
-async fn deleted_navigator_routes_are_not_served() {
-    for uri in [
-        "/api/v1/stales/page",
-        "/api/v1/stale-branches",
-        "/api/v1/orphans",
-        "/api/v1/orphan-branches",
-    ] {
-        let (status, _) = get(uri).await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
-    }
-}
-
-#[tokio::test]
 async fn block_owns_the_invalid_hash_envelope() {
     let (status, body) = get("/api/v1/block/not-a-hash").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);

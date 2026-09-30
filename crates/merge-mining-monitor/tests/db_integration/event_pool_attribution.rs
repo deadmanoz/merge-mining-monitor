@@ -10,7 +10,7 @@ use serde_json::json;
 use tokio_postgres::Client;
 
 use crate::support::default_pool_snapshot;
-use crate::support::seed::insert_namecoin_payout_identity;
+use crate::support::seed::insert_pool_identity;
 
 #[tokio::test]
 async fn child_payout_source_upgrade_preserves_row_when_snapshot_is_mixed() -> Result<()> {
@@ -34,7 +34,13 @@ async fn child_payout_source_upgrade_preserves_row_when_snapshot_is_mixed() -> R
         )
         .await?;
 
-        let identity_id = insert_namecoin_payout_identity(&client, f2pool_id, upgraded).await?;
+        let identity_id = insert_pool_identity(
+            &client,
+            f2pool_id,
+            NAMECOIN_PAYOUT_ADDRESS_NAMESPACE,
+            upgraded,
+        )
+        .await?;
         upsert_event_pool_attributions(
             &client,
             event_id,

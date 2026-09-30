@@ -1870,6 +1870,10 @@ async fn follow_repair_target_move_leaves_chain_rows_unmodified() -> Result<()> 
     })
 }
 
+async fn drain_core_reconcile_disabled(client: &mut Client, source_id: i64) -> Result<()> {
+    drain_core_reconcile_queue(client, source_id, &ConfiguredParentClassifier::Disabled).await
+}
+
 #[path = "sync_core/reorg_edge_cases.rs"]
 mod reorg_edge_cases;
 

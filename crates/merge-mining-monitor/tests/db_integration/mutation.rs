@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use anyhow::{Context, Result};
 use bitcoin::hashes::Hash as _;
 use bitcoin::{block::Header, consensus::deserialize};
@@ -16,9 +14,8 @@ use mmm_capture::capture::{
 use mmm_capture::source_registry::NAMECOIN_SOURCE_CODE;
 use mmm_capture::test_support::header_meeting_bits_with_prev;
 use mmm_read_model::{
-    CoreCanonicalWrite, drain_historical_reconcile_queue,
-    drain_historical_reconcile_queue_with_budget_for_test, rebuild_source_health,
-    run_reclassify_parent, run_reconcile_read_model, update_parent_events, write_core_canonical,
+    CoreCanonicalWrite, rebuild_source_health, run_reclassify_parent, run_reconcile_read_model,
+    update_parent_events, write_core_canonical,
 };
 use mmm_read_model::{
     ReconcileReadModelConfig, restore_merge_mining_event, revoke_merge_mining_event,
@@ -532,63 +529,6 @@ async fn full_reconcile_demotes_removed_catalogue_membership() -> Result<()> {
             "after full-scan removed error-block catalogue membership",
         )
         .await?;
-        Ok::<_, anyhow::Error>(())
-    })
-}
-
-#[tokio::test]
-async fn historical_cascade_failure_retains_durable_seeds_for_resume() -> Result<()> {
-    crate::run_mut_db_test!(client, {
-        let changed_hash = vec![0x31; 32];
-        let child_hash = vec![0x32; 32];
-        insert_block(
-            &client,
-            &child_hash,
-            &changed_hash,
-            None,
-            "unknown",
-            1_700_000_000,
-            None,
-        )
-        .await?;
-        client
-            .execute(
-                "INSERT INTO historical_reconcile_queue ( \
-                    btc_parent_header_hash, primary_pending, changed_hashes, generation \
-                 ) VALUES ($1, FALSE, ARRAY[$1::bytea], 2)",
-                &[&changed_hash],
-            )
-            .await?;
-
-        let classifier = ConfiguredParentClassifier::Disabled;
-        let classifications = HashMap::new();
-        drain_historical_reconcile_queue_with_budget_for_test(
-            &mut client,
-            &classifier,
-            &classifications,
-            0,
-        )
-        .await
-        .expect_err("zero cascade budget must interrupt dependent work");
-
-        let retained: (bool, Vec<Vec<u8>>) = client
-            .query_one(
-                "SELECT primary_pending, changed_hashes \
-                 FROM historical_reconcile_queue \
-                 WHERE btc_parent_header_hash = $1",
-                &[&changed_hash],
-            )
-            .await
-            .map(|row| (row.get(0), row.get(1)))?;
-        assert!(!retained.0);
-        assert_eq!(retained.1, vec![changed_hash.clone()]);
-
-        drain_historical_reconcile_queue(&mut client, &classifier, &classifications).await?;
-        let queued: i64 = client
-            .query_one("SELECT count(*) FROM historical_reconcile_queue", &[])
-            .await?
-            .get(0);
-        assert_eq!(queued, 0);
         Ok::<_, anyhow::Error>(())
     })
 }

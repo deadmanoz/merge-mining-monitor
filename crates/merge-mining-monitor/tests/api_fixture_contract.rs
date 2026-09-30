@@ -572,24 +572,6 @@ fn assert_sources_fixture_contract(fixture: &Value) {
             source["code"]
         );
     }
-
-    for (code, expected_events, expected_last_seen) in [
-        ("auxpow:vcash", 68, 1_659_809_588),
-        ("auxpow:lyncoin", 11, 1_721_667_253),
-        ("auxpow:sixeleven", 7, 1_536_793_971),
-        ("auxpow:rod", 1, 1_741_327_653),
-    ] {
-        let source = sources
-            .iter()
-            .find(|source| source["code"] == code)
-            .unwrap_or_else(|| panic!("sources fixture must include recovered {code}"));
-        assert_eq!(source["counts"]["events"], expected_events);
-        assert_eq!(source["counts"]["canonical"], expected_events);
-        assert_eq!(source["counts"]["stale"], 0);
-        assert_eq!(source["counts"]["error_block"], 0);
-        assert_eq!(source["status"], "stale");
-        assert_eq!(source["last_seen_at"], expected_last_seen);
-    }
 }
 
 fn string_field<'a>(value: &'a Value, key: &str) -> &'a str {

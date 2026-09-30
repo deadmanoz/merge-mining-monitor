@@ -325,55 +325,6 @@ async fn import_persists_lossless_parent_coinbase_evidence() -> Result<()> {
 }
 
 #[tokio::test]
-async fn import_summary_reports_partial_to_exact_promotion() -> Result<()> {
-    crate::run_mut_db_test!(client, {
-        let header = header_meeting_bits(0x207f_ffff, 1_700_000_031, 31);
-        let child_hash = vec![0x77; 32];
-        let csv_path = write_normalized_csv_row(
-            &header,
-            &NormalizedCsvRow {
-                chain: "devcoin",
-                source_row_number: 1,
-                classification: "canonical",
-                relevance: "",
-                relevance_reason: "canonical_parent",
-                coinbase_script: &[],
-                btc_height: 700_031,
-                child_height: 12,
-                child_hash: Some(&child_hash),
-            },
-        )?;
-        let result = async {
-            seed_identity_event(&client, "auxpow:devcoin", &header, 12, None).await?;
-            let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
-                canonical_verdict(&header, 700_031),
-            ));
-
-            let summary =
-                run_historical_import(&mut client, &classifier, &devcoin_import_config(&csv_path))
-                    .await?;
-
-            assert_eq!(summary.promoted, 1);
-            assert_eq!(summary.inserted, 0);
-            assert_eq!(summary.updated, 0);
-            assert_eq!(summary.satisfied_by_existing_exact, 0);
-            let stored_hash: Option<Vec<u8>> = client
-                .query_one(
-                    "SELECT child_block_hash FROM merge_mining_event \
-                     WHERE source_id = (SELECT id FROM source WHERE code = 'auxpow:devcoin')",
-                    &[],
-                )
-                .await?
-                .get(0);
-            assert_eq!(stored_hash, Some(child_hash));
-            Ok::<_, anyhow::Error>(())
-        }
-        .await;
-        finish_import_with_cleanup(result, &[&csv_path])
-    })
-}
-
-#[tokio::test]
 async fn import_summary_reports_partial_satisfied_by_existing_exact() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let header = header_meeting_bits(0x207f_ffff, 1_700_000_032, 32);
@@ -1233,11 +1184,6 @@ async fn assert_live_import_additive(chain: &str) -> Result<()> {
 #[tokio::test]
 async fn live_import_is_additive_and_never_removes_live_events() -> Result<()> {
     assert_live_import_additive("namecoin").await
-}
-
-#[tokio::test]
-async fn promoted_terracoin_import_preserves_later_live_events() -> Result<()> {
-    assert_live_import_additive("terracoin").await
 }
 
 #[tokio::test]

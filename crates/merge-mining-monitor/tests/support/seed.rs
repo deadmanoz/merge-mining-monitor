@@ -18,7 +18,6 @@ use bitcoin::block::Header;
 use bitcoin::hashes::Hash as _;
 use bitcoin::{BlockHash, CompactTarget, TxMerkleNode};
 use mmm_api::query;
-use mmm_capture::child_payout::NAMECOIN_PAYOUT_ADDRESS_NAMESPACE;
 use serde_json::json;
 use time::{Date, Month};
 use tokio_postgres::Client;
@@ -43,19 +42,20 @@ pub async fn pool_id_for_slug(client: &Client, slug: &str) -> Result<i64> {
         .get(0))
 }
 
-/// Insert a Namecoin payout-address pool identity. Shared by the
-/// reclassify-pools and event_pool_attribution DB integration binaries.
-pub async fn insert_namecoin_payout_identity(
+/// Insert a `pool_identity` row mapping `identifier` in `namespace` to
+/// `pool_id`, returning its id.
+pub async fn insert_pool_identity(
     client: &Client,
     pool_id: i64,
-    address: &str,
+    namespace: &str,
+    identifier: &str,
 ) -> Result<i64> {
     Ok(client
         .query_one(
             "INSERT INTO pool_identity (pool_id, namespace, identifier) \
              VALUES ($1, $2, $3) \
              RETURNING id",
-            &[&pool_id, &NAMECOIN_PAYOUT_ADDRESS_NAMESPACE, &address],
+            &[&pool_id, &namespace, &identifier],
         )
         .await?
         .get(0))

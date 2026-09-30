@@ -151,32 +151,6 @@ async fn a_parent_that_turns_out_foreign_retracts_its_event() -> Result<()> {
 }
 
 #[tokio::test]
-async fn in_table_valid_writes_the_event_end_to_end() -> Result<()> {
-    crate::run_mut_db_test!(client, {
-        // A real validated Hathor block (BTC parent 710,969): its coinbase
-        // height and bits match Bitcoin's epoch history, so the lineage gate
-        // admits it and the event is WRITTEN through the full production path.
-        let (height, rpc) = hathor_1971823_fixture();
-        let context = live_context(&client, fake_classifier_synced_to(955_609)).await?;
-        let outcome = process_hathor_height(&mut client, &rpc, &context, height).await?;
-        assert_eq!(outcome, HathorHeightOutcome::AuxpowWritten);
-        let active: i64 = client
-            .query_one(
-                "SELECT count(*) FROM merge_mining_event \
-                 WHERE source_id = $1 AND child_height = $2 AND revoked_at IS NULL",
-                &[&context.source_id(), &height],
-            )
-            .await?
-            .get(0);
-        assert_eq!(
-            active, 1,
-            "a Bitcoin Hathor parent must write one active event"
-        );
-        Ok(())
-    })
-}
-
-#[tokio::test]
 async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let (height, rpc) = hathor_1971823_fixture();

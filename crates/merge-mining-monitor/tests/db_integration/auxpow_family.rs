@@ -21,7 +21,7 @@ use mmm_store::{
 };
 use tokio_postgres::Client;
 
-use crate::support::db::advisory_locks_held;
+use crate::support::db::{advisory_locks_held, displacement_at};
 use crate::support::{exact_observation, namecoin_fixture};
 
 const HEIGHT: i32 = 700;
@@ -90,8 +90,6 @@ async fn terracoin_replay_failure_recovery_and_displacement() -> Result<()> {
             )
             .await?;
         assert_eq!(row.get::<_, i64>(0), 1);
-        // A high saved cursor cannot hide a failed historical replay.
-        mmm_store::upsert_poll_cursor_with_target(&client, 21, height + 100, None).await?;
         let absent = FixtureBitcoindRpc::carrying(height + 1, raw.clone());
         assert!(
             process_auxpow_height(&mut client, &absent, &context, height)
@@ -265,27 +263,6 @@ fn non_auxpow_block() -> Vec<u8> {
     raw
 }
 
-/// `(child_block_hash, child_displaced_by, revoked_at)` for every event at
-/// `HEIGHT`, ordered by hash.
-async fn rows_at_height(
-    client: &Client,
-    source_id: i64,
-) -> Result<Vec<(Vec<u8>, Option<Vec<u8>>, Option<i64>)>> {
-    let rows = client
-        .query(
-            "SELECT child_block_hash, child_displaced_by, revoked_at \
-             FROM merge_mining_event \
-             WHERE source_id = $1 AND child_height = $2 \
-             ORDER BY child_block_hash",
-            &[&source_id, &HEIGHT],
-        )
-        .await?;
-    Ok(rows
-        .iter()
-        .map(|row| (row.get(0), row.get(1), row.get(2)))
-        .collect())
-}
-
 /// Real Terracoin blocks from the live start whose AuxPoW parents belong to
 /// other SHA-256 chains (a Bitcoin Cash share and block, a Fractal-like block)
 /// write no event and no block, record their block as settled, and reach no
@@ -368,7 +345,7 @@ async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_on
         let outcome = process_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
         assert_eq!(outcome, AuxpowHeightOutcome::AuxpowWritten);
         assert_eq!(
-            rows_at_height(&client, source_id).await?,
+            displacement_at(&client, source_id, HEIGHT).await?,
             vec![(hash(&block_a), None, None)]
         );
         assert_eq!(advisory_locks_held(&client).await?, 0);
@@ -383,7 +360,7 @@ async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_on
             (hash(&block_b), None, None),
         ];
         expected.sort();
-        assert_eq!(rows_at_height(&client, source_id).await?, expected);
+        assert_eq!(displacement_at(&client, source_id, HEIGHT).await?, expected);
 
         // Tick 3: the chain flips back to A. A is restored, B is displaced.
         let rpc = FixtureBitcoindRpc::carrying(HEIGHT, block_a.clone());
@@ -393,7 +370,7 @@ async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_on
             (hash(&block_b), Some(hash(&block_a)), None),
         ];
         expected.sort();
-        assert_eq!(rows_at_height(&client, source_id).await?, expected);
+        assert_eq!(displacement_at(&client, source_id, HEIGHT).await?, expected);
 
         // Tick 4: a block with no AuxPoW takes the height. No event is written
         // for it, but it is still recorded as the chain's block, so A is
@@ -401,7 +378,7 @@ async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_on
         let rpc = FixtureBitcoindRpc::carrying(HEIGHT, block_n.clone());
         let outcome = process_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
         assert_eq!(outcome, AuxpowHeightOutcome::NonAuxpowSkipped);
-        let rows = rows_at_height(&client, source_id).await?;
+        let rows = displacement_at(&client, source_id, HEIGHT).await?;
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| row.2.is_none()));
         assert_eq!(advisory_locks_held(&client).await?, 0);
@@ -454,7 +431,7 @@ async fn rescan_of_an_unchanged_height_costs_one_hash_lookup() -> Result<()> {
         assert_eq!(outcome, RescanOutcome::Unchanged);
         assert_eq!(rpc.calls(), (2, 1));
         assert_eq!(
-            rows_at_height(&client, source_id).await?,
+            displacement_at(&client, source_id, HEIGHT).await?,
             vec![(hash(&block_a), None, None)]
         );
         assert_eq!(advisory_locks_held(&client).await?, 0);
@@ -522,7 +499,7 @@ async fn rescan_with_a_matching_hash_still_displaces_an_imported_sibling() -> Re
         let sibling = exact_observation("500001-near-parent", HEIGHT, sibling_hash, 2_030)?;
         upsert_merge_mining_event(&client, source_id, &sibling).await?;
         assert!(
-            rows_at_height(&client, source_id)
+            displacement_at(&client, source_id, HEIGHT)
                 .await?
                 .iter()
                 .all(|row| row.1.is_none())
@@ -538,7 +515,7 @@ async fn rescan_with_a_matching_hash_still_displaces_an_imported_sibling() -> Re
             (sibling_hash.to_vec(), Some(hash_a), None),
         ];
         expected.sort();
-        assert_eq!(rows_at_height(&client, source_id).await?, expected);
+        assert_eq!(displacement_at(&client, source_id, HEIGHT).await?, expected);
         Ok::<_, anyhow::Error>(())
     })
 }

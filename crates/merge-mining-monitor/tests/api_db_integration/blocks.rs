@@ -18,7 +18,7 @@ use tokio_postgres::Client;
 use crate::support::scenario::{ChildEvidence, canonical_verdict, capture_child_event};
 use crate::support::seed::{
     EventSeed, day_epoch, display_hash, hash_bytes, header_hash_bytes, insert_attestation_proof,
-    insert_block, insert_event, insert_pool, set_block_pool,
+    insert_block, insert_event, insert_pool, insert_pool_identity, set_block_pool,
 };
 use crate::support::{default_pool_snapshot, header_meeting_bits};
 
@@ -206,15 +206,8 @@ async fn block_hydrates_rsk_uncle_sidecar_fields() -> Result<()> {
         let rskpool = insert_pool(&client, "rskpool", "RSKPool").await?;
         let remapped_pool = insert_pool(&client, "remapped-rskpool", "Remapped RSKPool").await?;
         let rsk_miner = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
-        let identity: i64 = client
-            .query_one(
-                "INSERT INTO pool_identity (pool_id, namespace, identifier) \
-                 VALUES ($1, 'rsk_miner_address', $2) \
-                 RETURNING id",
-                &[&rskpool, &rsk_miner],
-            )
-            .await?
-            .get(0);
+        let identity =
+            insert_pool_identity(&client, rskpool, "rsk_miner_address", rsk_miner).await?;
         let ts = day_epoch(2026, Month::May, 10);
         let parent = hash_bytes(0xc101);
         let child_hash = hash_bytes(0xc201);

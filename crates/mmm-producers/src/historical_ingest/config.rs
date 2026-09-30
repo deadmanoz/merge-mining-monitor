@@ -393,6 +393,12 @@ mod tests {
                 .is_authoritative()
         );
         assert!(
+            !historical_chain_spec("terracoin")
+                .copied()
+                .expect("terracoin")
+                .is_authoritative()
+        );
+        assert!(
             !historical_chain_spec("doichain")
                 .copied()
                 .expect("doichain")

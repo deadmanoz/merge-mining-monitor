@@ -6,10 +6,6 @@ use tokio::task::JoinHandle;
 type CaptureTask = JoinHandle<Result<i64>>;
 type RepairTask = JoinHandle<Result<()>>;
 
-async fn drain_core_reconcile_disabled(client: &mut Client, source_id: i64) -> Result<()> {
-    drain_core_reconcile_queue(client, source_id, &ConfiguredParentClassifier::Disabled).await
-}
-
 async fn spawn_gated_canonical_capture(
     schema: &str,
     source_id: i64,
