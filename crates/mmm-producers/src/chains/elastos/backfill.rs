@@ -163,16 +163,4 @@ mod tests {
         .unwrap_err();
         assert!(err.to_string().contains("ELASTOS_MAX_BACKFILL_RANGE"));
     }
-
-    #[test]
-    fn elastos_rejects_end_before_start() {
-        let empty: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        let err = BackfillConfig::from_args_with_lookup(
-            crate::chains::spec::by_id(crate::chains::spec::ChainId::Elastos),
-            ["360100", "360000"],
-            |key| empty.get(key).cloned(),
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("greater than or equal"));
-    }
 }

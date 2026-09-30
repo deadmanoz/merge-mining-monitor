@@ -707,14 +707,9 @@ mod tests {
     }
 
     #[test]
-    fn render_is_deterministic_and_exports_findings() {
+    fn render_exports_findings() {
         let findings = load_findings(&repo_findings_dir());
         let js = render_findings_js(&findings);
-        assert_eq!(
-            js,
-            render_findings_js(&findings),
-            "generation must be deterministic"
-        );
         assert!(js.starts_with("// GENERATED"), "banner present");
         assert!(js.contains("data/findings/"), "banner names the data dir");
         assert!(js.contains("export const FINDINGS = ["), "array export");

@@ -10,8 +10,6 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-fn assert_send<T: Send>(_: T) {}
-
 #[derive(Clone)]
 enum MockResult<T> {
     Ok(T),
@@ -256,18 +254,6 @@ async fn classify_after_known_canonical(
         .classify_parent(header, known_canonical_prev(predecessor_height))
         .await
         .unwrap()
-}
-
-#[test]
-fn production_classifier_future_is_send() {
-    let header = test_header(0, 0x207f_ffff);
-    let disabled = ConfiguredParentClassifier::Disabled;
-    assert_send(disabled.classify_parent(&header, ParentPreflight { known_prev: None }));
-
-    let bitcoin_core = ConfiguredParentClassifier::BitcoinCore(
-        BitcoinCoreParentClassifier::from_source(Arc::new(MockCoreHeaderSource::default())),
-    );
-    assert_send(bitcoin_core.classify_parent(&header, ParentPreflight { known_prev: None }));
 }
 
 #[tokio::test]

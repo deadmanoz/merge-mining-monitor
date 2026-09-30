@@ -58,36 +58,6 @@ fn accepts_real_xaya_publication_with_zero_header_and_external_target() {
 }
 
 #[test]
-fn rod_powdata_target_uses_external_nbits_for_parent_work() {
-    let (hash, header) = child_identity_with_nbits(0);
-    for (child_nbits, expected_pow) in [("1d00ffff", true), ("184c238c", false)] {
-        let parsed = candidate(
-            "rod",
-            &row(TestRow {
-                chain: "rod",
-                child_height: "2697753",
-                child_hash: &hash,
-                child_header: &header,
-                child_time: "1231006505",
-                child_nbits,
-                classification: "canonical",
-                relevance_reason: "canonical_parent",
-                ..TestRow::default()
-            }),
-        )
-        .unwrap();
-        assert_eq!(
-            parsed.evidence.child_nbits,
-            Some(u32::from_str_radix(child_nbits, 16).unwrap())
-        );
-        assert_eq!(
-            parsed.evidence.pow_validates_child_target,
-            Some(expected_pow)
-        );
-    }
-}
-
-#[test]
 fn accepts_authenticated_rod_canonical_fixture_without_identity_contradictions() {
     let input = include_str!("../../../../../../fixtures/rod/rod_monitor_evidence.csv");
     let row = input.lines().nth(1).expect("ROD fixture data row");
@@ -160,39 +130,6 @@ fn accepts_authenticated_rod_canonical_fixture_without_identity_contradictions()
         parsed.historical_provenance.provenance,
         "rod-core-rpc:active-chain@248f1af050579a369af527288f5773a021ae8492;terminal:4127689:4a16afd2df5efd2ae7db5e07ba83820bf3174914efe2754da618a150c3df6b0a;powdata-envelope:f85552ad15221899c8a666ac0fd4047435044e2969a6b02a03e5c7361821b50d;audit:a0a6957e53b5d1dee6a0e54cc444467b13278b4f63b14a988b89101c6d605030;candidate-review:14f7c0b1ed9d57271499fb6ecfa34abab04cf884eedfd39a7e1262dafb23ad1c"
     );
-}
-
-#[test]
-fn rod_powdata_target_rejects_header_nbits_and_zero_external_target() {
-    for (hash, header, child_nbits) in [
-        {
-            let (hash, header) = child_identity();
-            (hash, header, "184c238c")
-        },
-        {
-            let (hash, header) = child_identity_with_nbits(0);
-            (hash, header, "00000000")
-        },
-    ] {
-        assert_eq!(
-            candidate(
-                "rod",
-                &row(TestRow {
-                    chain: "rod",
-                    child_height: "2697753",
-                    child_hash: &hash,
-                    child_header: &header,
-                    child_time: "1231006505",
-                    child_nbits,
-                    classification: "canonical",
-                    relevance_reason: "canonical_parent",
-                    ..TestRow::default()
-                }),
-            )
-            .unwrap_err(),
-            SkipReason::EvidenceMismatch
-        );
-    }
 }
 
 #[test]

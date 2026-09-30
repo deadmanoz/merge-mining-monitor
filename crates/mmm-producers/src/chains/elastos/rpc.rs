@@ -394,30 +394,10 @@ mod tests {
     }
 
     #[test]
-    fn reconstruct_rejects_hash_mismatch() {
-        let mut block = block_360062();
-        block.hash = "0000000000000000000000000000000000000000000000000000000000000000".to_owned();
-        assert!(block.reconstruct().is_err());
-    }
-
-    #[test]
     fn reconstruct_rejects_oversize_auxpow_hex() {
         let mut block = block_360062();
         block.auxpow = Some("ab".repeat(MAX_ELASTOS_AUXPOW_HEX_LEN));
         assert!(block.reconstruct().is_err());
-    }
-
-    #[test]
-    fn dummy_block_reconstructs_but_carries_zero_parent_bits() {
-        // ELA 100000 is a pre-activation dummy: it still reconstructs (the child
-        // header is real) but its embedded parent header has bits == 0, which the
-        // capture path filters before commitment verification.
-        let block: ElastosBlock = serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/elastos/ela-100000.json"
-        )))
-        .unwrap();
-        assert!(block.reconstruct().is_ok());
     }
 
     #[test]

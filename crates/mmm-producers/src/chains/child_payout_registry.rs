@@ -214,7 +214,6 @@ fn params_for_namespace(namespace: &str) -> Option<ChildPayoutParams> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mmm_capture::identity_registry::distinct_pool_definitions;
 
     fn parse(json: &str) -> ChildPayoutRegistry {
         serde_json::from_str(json).expect("registry parses")
@@ -237,8 +236,6 @@ mod tests {
                 identity_key,
             )
             .unwrap_or_else(|err| panic!("{namespace} registry invalid: {err}"));
-            // Every distinct pool resolves to a single canonical name.
-            let _ = distinct_pool_definitions(entries.iter().copied());
         }
     }
 

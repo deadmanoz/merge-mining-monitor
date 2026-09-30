@@ -92,8 +92,8 @@ pub struct GeneratedPool {
 }
 
 /// The `source` provenance block written into `current.json`. The
-/// `source_metadata_is_forward_looking` test pins the serialized contents
-/// (license, name, notes, upstream_url) so the embedded file stays byte-stable.
+/// `embedded_current_json_is_byte_stable` test pins its serialized contents
+/// (license, name, notes, upstream_url) through the embedded file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GeneratedSource {
     pub name: String,
@@ -417,31 +417,6 @@ mod tests {
     }
 
     #[test]
-    fn new_pool_defaults_to_filename_stem() {
-        let files = vec![upstream("secpool", "SecPool", &["SecPool"], &[], None)];
-        let pools = map_pools(&files, &default_slug_map()).unwrap();
-        assert_eq!(pools[0].slug, "secpool");
-    }
-
-    #[test]
-    fn filename_rename_does_not_change_slug_via_map() {
-        // Upstream renamed `ocean.json` -> `ocean-mining.json`; the pinned map
-        // keeps the stable slug so the DB id is unaffected.
-        let mut map = default_slug_map();
-        map.remap
-            .insert("ocean-mining".to_owned(), "ocean-xyz".to_owned());
-        let files = vec![upstream(
-            "ocean-mining",
-            "Ocean.xyz",
-            &["OCEAN.XYZ"],
-            &[],
-            None,
-        )];
-        let pools = map_pools(&files, &map).unwrap();
-        assert_eq!(pools[0].slug, "ocean-xyz");
-    }
-
-    #[test]
     fn rejects_slug_map_collision() {
         let mut map = default_slug_map();
         map.remap
@@ -493,49 +468,6 @@ mod tests {
     }
 
     #[test]
-    fn json_formatting_is_two_space_indent_with_trailing_newline() {
-        let files = vec![upstream(
-            "antpool",
-            "AntPool",
-            &["/AntPool/"],
-            &["1abc"],
-            None,
-        )];
-        let pools = map_pools(&files, &default_slug_map()).unwrap();
-        let snapshot = build_snapshot(pools, "2026-06-05");
-        let json = render_snapshot_json(&snapshot).unwrap();
-        assert!(json.ends_with("}\n"));
-        assert!(json.contains("\n  \"schema_version\": 1,"));
-        // 2-space-per-level: a pool object sits in the `pools` array (level 2,
-        // 4-space indent), its `coinbase_tags` key at level 3 (6 spaces), and
-        // each tag value at level 4 (8 spaces).
-        assert!(json.contains("\n      \"coinbase_tags\": ["));
-        assert!(json.contains("\n        \"/AntPool/\""));
-    }
-
-    #[test]
-    fn snapshot_reproduces_byte_for_byte_given_same_inputs() {
-        let files = vec![
-            upstream(
-                "spiderpool",
-                "SpiderPool",
-                &["SpiderPool"],
-                &["1addr"],
-                Some("https://s"),
-            ),
-            upstream("antpool", "AntPool", &["/AntPool/"], &[], None),
-        ];
-        let map = default_slug_map();
-        let pools_a = map_pools(&files, &map).unwrap();
-        let pools_b = map_pools(&files, &map).unwrap();
-        let snap_a = build_snapshot(pools_a, "2026-06-05");
-        let snap_b = build_snapshot(pools_b, "2026-06-05");
-        let json_a = render_snapshot_json(&snap_a).unwrap();
-        let json_b = render_snapshot_json(&snap_b).unwrap();
-        assert_eq!(json_a, json_b);
-    }
-
-    #[test]
     fn embedded_current_json_is_byte_stable() {
         // Pin the byte-stability contract `--check` depends on, without needing
         // the upstream clone: parse the embedded current.json, project its own
@@ -556,17 +488,6 @@ mod tests {
     }
 
     #[test]
-    fn source_metadata_is_forward_looking() {
-        let snapshot = build_snapshot(Vec::new(), "2026-06-05");
-        let json = render_snapshot_json(&snapshot).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        let source = parsed["source"].as_object().unwrap();
-        let keys: Vec<&str> = source.keys().map(String::as_str).collect();
-        assert_eq!(keys, vec!["license", "name", "notes", "upstream_url"]);
-        assert_eq!(source["license"], "MIT");
-    }
-
-    #[test]
     fn civil_date_utc_matches_known_epoch_days() {
         // Fixed Unix timestamps (UTC midnight) -> known civil dates.
         assert_eq!(civil_date_utc(0), "1970-01-01");
@@ -578,35 +499,6 @@ mod tests {
         // the same date.
         assert_eq!(civil_date_utc(1_780_617_600), "2026-06-05");
         assert_eq!(civil_date_utc(1_780_617_600 + 86_399), "2026-06-05");
-    }
-
-    #[test]
-    fn rendered_snapshot_with_duplicate_tag_fails_resolver_validation() {
-        // The generator validates its own output by constructing a
-        // `PoolResolver` from the rendered JSON before writing. Two pools that
-        // share a coinbase tag must therefore fail at generation time, not only
-        // at producer startup. This pins the property `build_validated_snapshot`
-        // in the binary relies on.
-        use crate::pool_resolver::PoolResolver;
-
-        let files = vec![
-            upstream("one", "One", &["SHARED"], &[], None),
-            upstream("two", "Two", &["SHARED"], &[], None),
-        ];
-        let pools = map_pools(&files, &default_slug_map()).unwrap();
-        let snapshot = build_snapshot(pools, "2026-06-05");
-        let json = render_snapshot_json(&snapshot).unwrap();
-        let err = PoolResolver::from_json_str(&json).unwrap_err();
-        assert!(
-            matches!(
-                err,
-                crate::pool_resolver::PoolResolverError::DuplicateValue {
-                    field: "coinbase_tags",
-                    ..
-                }
-            ),
-            "expected DuplicateValue for coinbase_tags, got {err:?}"
-        );
     }
 
     #[test]

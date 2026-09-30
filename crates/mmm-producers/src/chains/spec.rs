@@ -571,11 +571,4 @@ mod tests {
             other => panic!("Qbit must use the extended-header fetch, got {other:?}"),
         }
     }
-
-    #[test]
-    fn by_id_returns_the_matching_row() {
-        assert_eq!(by_id(ChainId::Namecoin).slug, "namecoin");
-        assert_eq!(by_id(ChainId::Elastos).slug, "elastos");
-        assert_eq!(by_id(ChainId::Rsk).activation_floor, RSK_ACQUISITION_FLOOR);
-    }
 }

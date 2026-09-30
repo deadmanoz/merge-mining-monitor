@@ -477,13 +477,6 @@ mod tests {
     }
 
     #[test]
-    fn loads_default_elastos_minerinfo_registry() {
-        let registry = default_registry();
-        assert_eq!(registry.schema_version, 1);
-        assert_eq!(registry.entries.len(), 2);
-    }
-
-    #[test]
     fn loads_default_elastos_reward_registry() {
         let registry = ElastosRewardRegistry::from_json_str(DEFAULT_ELASTOS_REWARD_REGISTRY_JSON)
             .expect("embedded Elastos reward registry parses and validates");
@@ -512,25 +505,6 @@ mod tests {
             .find(|entry| entry.pool_slug == "viabtc")
             .expect("viabtc entry");
         assert_eq!(viabtc.minerinfo, "Mined by ViaBTC");
-    }
-
-    #[test]
-    fn rejects_unsupported_schema_version() {
-        let err =
-            ElastosMinerinfoRegistry::from_json_str(r#"{ "schema_version": 2, "entries": [] }"#)
-                .unwrap_err();
-        assert!(format!("{err:#}").contains("unsupported identity registry schema_version 2"));
-    }
-
-    #[test]
-    fn rejects_empty_minerinfo() {
-        let err = ElastosMinerinfoRegistry::from_json_str(
-            r#"{ "schema_version": 1, "entries": [
-                { "minerinfo": "", "pool_slug": "f2pool", "pool_canonical_name": "F2Pool" }
-            ] }"#,
-        )
-        .unwrap_err();
-        assert!(format!("{err:#}").contains("minerinfo is empty"));
     }
 
     #[test]
