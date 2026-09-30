@@ -37,7 +37,7 @@ const MAX_MERKLE_COUNT: usize = 32;
 
 /// Parsed RFC 0006 split-header AuxPoW blob.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HathorAuxPow {
+struct HathorAuxPow {
     /// BTC header bytes 0..36 (version + previous-block hash).
     head_36: [u8; 36],
     /// BTC parent coinbase up to and including the `"Hath"` marker; the 32-byte
@@ -260,11 +260,10 @@ pub fn reconstruct_from_blobs(
     raw: &[u8],
     aux_pow: &[u8],
     expected_block_hash: BlockHash,
-) -> Result<(HathorAuxPow, HathorReconstruction)> {
+) -> Result<HathorReconstruction> {
     let aux = parse_hathor_aux_pow(aux_pow)?;
     let funds_graph = funds_graph_from_raw(raw, aux_pow)?;
-    let reconstruction = reconstruct_btc_header(&aux, funds_graph, expected_block_hash)?;
-    Ok((aux, reconstruction))
+    reconstruct_btc_header(&aux, funds_graph, expected_block_hash)
 }
 
 /// Index of the first occurrence of `needle` in `haystack`, or `None`. First
@@ -392,7 +391,7 @@ mod tests {
             let aux_pow = hex::decode(field(&j, "aux_pow_hex")).unwrap();
             let expected = BlockHash::from_str(field(&j, "tx_id")).unwrap();
 
-            let (_, recon) = reconstruct_from_blobs(&raw, &aux_pow, expected).unwrap();
+            let recon = reconstruct_from_blobs(&raw, &aux_pow, expected).unwrap();
 
             // Header is byte-identical to the validated CSV header.
             assert_eq!(
@@ -430,17 +429,17 @@ mod tests {
     fn altered_commitment_marker_is_rejected() {
         let (raw, aux_pow, expected) = first_fixture();
         let mut aux = parse_hathor_aux_pow(&aux_pow).unwrap();
-        // Corrupt the trailing "Hath" magic.
+        let funds_graph = funds_graph_from_raw(&raw, &aux_pow).unwrap();
+        let split = reconstruct_btc_header(&aux, funds_graph, expected)
+            .unwrap()
+            .funds_graph_split;
+        // Corrupt the trailing "Hath" magic, then report the hash of the header
+        // that corrupted coinbase assembles to: the hash identity alone would
+        // accept this response, so only the marker check can reject it.
         let n = aux.cb_head.len();
         aux.cb_head[n - 1] ^= 0xFF;
-        let funds_graph = funds_graph_from_raw(&raw, &aux_pow).unwrap();
-        // The corrupted byte also breaks the hash identity, so assert the
-        // marker check is what rejects it.
-        let err = reconstruct_btc_header(&aux, funds_graph, expected).unwrap_err();
-        assert!(
-            err.to_string().contains("'Hath' commitment marker"),
-            "{err:#}"
-        );
+        let (forged, _) = assemble_btc_header(&aux, funds_graph, split).unwrap();
+        assert!(reconstruct_btc_header(&aux, funds_graph, forged.block_hash()).is_err());
     }
 
     #[test]

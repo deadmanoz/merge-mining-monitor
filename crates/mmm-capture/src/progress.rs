@@ -18,8 +18,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-/// Default interval between progress log lines from [`ProgressReporter::advance`].
-const DEFAULT_LOG_INTERVAL: Duration = Duration::from_secs(30);
+/// Interval between progress log lines from [`ProgressReporter::advance`].
+const LOG_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Tracks completed-unit counts and elapsed time for one batch job, logging a
 /// progress line at most once per interval and always a final summary: the
@@ -29,7 +29,6 @@ const DEFAULT_LOG_INTERVAL: Duration = Duration::from_secs(30);
 pub struct ProgressReporter {
     job: &'static str,
     total: Option<u64>,
-    interval: Duration,
     start: Instant,
     done: AtomicU64,
     last_log: Mutex<Instant>,
@@ -40,17 +39,10 @@ pub struct ProgressReporter {
 impl ProgressReporter {
     /// A reporter that logs progress at most once every 30 seconds.
     pub fn new(job: &'static str, total: Option<u64>) -> Self {
-        Self::with_interval(job, total, DEFAULT_LOG_INTERVAL)
-    }
-
-    /// A reporter with an explicit log interval, for tests that need to
-    /// observe `advance` logging without waiting 30 real seconds.
-    pub fn with_interval(job: &'static str, total: Option<u64>, interval: Duration) -> Self {
         let now = Instant::now();
         Self {
             job,
             total,
-            interval,
             start: now,
             done: AtomicU64::new(0),
             last_log: Mutex::new(now),
@@ -74,7 +66,7 @@ impl ProgressReporter {
     }
 
     /// Record `n` more completed units. Logs one progress line if at least
-    /// `interval` has elapsed since the last progress log (never on every
+    /// [`LOG_INTERVAL`] has elapsed since the last progress log (never on every
     /// call, so a tight per-row loop cannot flood the log).
     pub fn advance(&self, n: u64) {
         let done = self.done.fetch_add(n, Ordering::Relaxed) + n;
@@ -83,7 +75,7 @@ impl ProgressReporter {
             .last_log
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if now.duration_since(*last_log) < self.interval {
+        if now.duration_since(*last_log) < LOG_INTERVAL {
             return;
         }
         *last_log = now;
@@ -159,8 +151,7 @@ mod tests {
 
     #[test]
     fn advance_accumulates_done() {
-        let reporter =
-            ProgressReporter::with_interval("test-job", Some(100), Duration::from_secs(3600));
+        let reporter = ProgressReporter::new("test-job", Some(100));
         reporter.advance(10);
         reporter.advance(5);
         assert_eq!(reporter.done(), 15);
