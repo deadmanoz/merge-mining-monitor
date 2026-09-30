@@ -480,7 +480,7 @@ async fn a_block_declaring_trivial_work_does_not_displace_the_captured_block() -
         // 2^68 hashes, and a block that far below it is not the chain's block.
         let raw = hex::decode(&rpc_a.tx.raw)?;
         let aux_pow = hex::decode(rpc_a.tx.aux_pow.as_deref().unwrap())?;
-        let (_aux, recon) = reconstruct_from_blobs(
+        let recon = reconstruct_from_blobs(
             &raw,
             &aux_pow,
             bitcoin::BlockHash::from_str(&rpc_a.meta.tx_id)?,

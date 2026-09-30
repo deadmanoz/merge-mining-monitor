@@ -513,7 +513,10 @@ async fn block_returns_not_found_for_valid_hash_without_evidence() -> Result<()>
             Ok(_) => anyhow::bail!("expected not_found"),
             Err(err) => err,
         };
-        assert!(matches!(err, ProjectionError::Api(_)));
+        assert!(
+            matches!(&err, ProjectionError::Api(api) if api.code() == "not_found"),
+            "expected not_found, got {err:?}"
+        );
 
         Ok::<_, anyhow::Error>(())
     })

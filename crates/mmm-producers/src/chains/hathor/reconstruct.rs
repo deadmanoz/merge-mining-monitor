@@ -76,7 +76,7 @@ pub(crate) fn reconstruct_or_skip(
         return Ok(HathorParentReconstruction::Malformed);
     };
     let recon = match reconstruct_from_blobs(&inputs.raw, &inputs.aux_pow, inputs.expected) {
-        Ok((_aux, recon)) => recon,
+        Ok(recon) => recon,
         Err(err) => {
             error!(height, error = %err, "Hathor reconstruction failed; skipping");
             return Ok(HathorParentReconstruction::Malformed);
@@ -232,7 +232,7 @@ mod tests {
         let raw = hex::decode(&tx.raw).unwrap();
         let aux_pow = hex::decode(tx.aux_pow.as_deref().unwrap()).unwrap();
         let expected = BlockHash::from_str(&tx.hash).unwrap();
-        let (_aux, recon) = reconstruct_from_blobs(&raw, &aux_pow, expected).unwrap();
+        let recon = reconstruct_from_blobs(&raw, &aux_pow, expected).unwrap();
 
         let declared = declared_weight(&raw, recon.funds_graph_split).unwrap();
         assert!(
@@ -271,7 +271,7 @@ mod tests {
         let raw = hex::decode(&tx.raw).unwrap();
         let aux_pow = hex::decode(tx.aux_pow.as_deref().unwrap()).unwrap();
         let expected = BlockHash::from_str(&tx.hash).unwrap();
-        let (_aux, recon) = reconstruct_from_blobs(&raw, &aux_pow, expected).unwrap();
+        let recon = reconstruct_from_blobs(&raw, &aux_pow, expected).unwrap();
         let (forged_raw, forged_hash) =
             forge_with_weight(&raw, &aux_pow, recon.funds_graph_split, 1e-6).unwrap();
         assert_ne!(forged_hash, expected);

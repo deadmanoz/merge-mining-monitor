@@ -37,7 +37,7 @@ const MAX_MERKLE_COUNT: usize = 32;
 
 /// Parsed RFC 0006 split-header AuxPoW blob.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HathorAuxPow {
+struct HathorAuxPow {
     /// BTC header bytes 0..36 (version + previous-block hash).
     head_36: [u8; 36],
     /// BTC parent coinbase up to and including the `"Hath"` marker; the 32-byte
@@ -49,14 +49,6 @@ pub struct HathorAuxPow {
     merkle_path: Vec<[u8; 32]>,
     /// BTC header bytes 68..80 (nTime + nBits + nNonce).
     tail_12: [u8; 12],
-}
-
-impl HathorAuxPow {
-    /// The BTC parent coinbase commitment marker terminates `cb_head`.
-    #[cfg(test)]
-    pub fn cb_head(&self) -> &[u8] {
-        &self.cb_head
-    }
 }
 
 /// A successful, self-verified reconstruction.
@@ -268,11 +260,10 @@ pub fn reconstruct_from_blobs(
     raw: &[u8],
     aux_pow: &[u8],
     expected_block_hash: BlockHash,
-) -> Result<(HathorAuxPow, HathorReconstruction)> {
+) -> Result<HathorReconstruction> {
     let aux = parse_hathor_aux_pow(aux_pow)?;
     let funds_graph = funds_graph_from_raw(raw, aux_pow)?;
-    let reconstruction = reconstruct_btc_header(&aux, funds_graph, expected_block_hash)?;
-    Ok((aux, reconstruction))
+    reconstruct_btc_header(&aux, funds_graph, expected_block_hash)
 }
 
 /// Index of the first occurrence of `needle` in `haystack`, or `None`. First
@@ -400,7 +391,7 @@ mod tests {
             let aux_pow = hex::decode(field(&j, "aux_pow_hex")).unwrap();
             let expected = BlockHash::from_str(field(&j, "tx_id")).unwrap();
 
-            let (aux, recon) = reconstruct_from_blobs(&raw, &aux_pow, expected).unwrap();
+            let recon = reconstruct_from_blobs(&raw, &aux_pow, expected).unwrap();
 
             // Header is byte-identical to the validated CSV header.
             assert_eq!(
@@ -422,8 +413,6 @@ mod tests {
             );
             // The reconstructed parent satisfies BTC-difficulty PoW.
             assert!(mmm_capture::auxpow::pow_validates_target(&recon.header));
-            // The coinbase carries the Hathor commitment marker.
-            verify_commitment_marker(aux.cb_head()).unwrap();
         }
     }
 
@@ -440,11 +429,17 @@ mod tests {
     fn altered_commitment_marker_is_rejected() {
         let (raw, aux_pow, expected) = first_fixture();
         let mut aux = parse_hathor_aux_pow(&aux_pow).unwrap();
-        // Corrupt the trailing "Hath" magic.
+        let funds_graph = funds_graph_from_raw(&raw, &aux_pow).unwrap();
+        let split = reconstruct_btc_header(&aux, funds_graph, expected)
+            .unwrap()
+            .funds_graph_split;
+        // Corrupt the trailing "Hath" magic, then report the hash of the header
+        // that corrupted coinbase assembles to: the hash identity alone would
+        // accept this response, so only the marker check can reject it.
         let n = aux.cb_head.len();
         aux.cb_head[n - 1] ^= 0xFF;
-        let funds_graph = funds_graph_from_raw(&raw, &aux_pow).unwrap();
-        assert!(reconstruct_btc_header(&aux, funds_graph, expected).is_err());
+        let (forged, _) = assemble_btc_header(&aux, funds_graph, split).unwrap();
+        assert!(reconstruct_btc_header(&aux, funds_graph, forged.block_hash()).is_err());
     }
 
     #[test]
