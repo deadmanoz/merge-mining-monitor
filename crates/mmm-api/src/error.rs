@@ -271,9 +271,6 @@ mod tests {
         );
     }
 
-    // not_found and range_too_large are not HTTP-reachable in SP1; these assert
-    // their status + envelope at the response-mapping level so SP2/SP3 inherit a
-    // proven contract.
     #[test]
     fn not_found_matches_fixture() {
         let err =

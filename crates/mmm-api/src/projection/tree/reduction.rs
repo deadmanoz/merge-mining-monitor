@@ -179,12 +179,14 @@ mod tests {
     }
 
     #[test]
-    fn protected_nodes_over_cap_are_range_too_large() {
-        let nodes = (0..501)
-            .map(|i| canonical(i, i as i32, true, true))
+    fn protected_context_is_never_stripped() {
+        // Protected nodes carry no evidence here, so only the protection rule
+        // keeps them: the unprotected tail is the one removable run.
+        let nodes = (0..600)
+            .map(|i| canonical(i, i as i32, i < 300, false))
             .collect::<Vec<_>>();
-        let err = reduce(&nodes).unwrap_err();
-        assert_eq!(err.code(), "range_too_large");
+        let reduced = reduce(&nodes).unwrap();
+        assert!((0..300).all(|i| reduced.visible_hashes.contains(&format!("{i:064x}"))));
     }
 
     #[test]

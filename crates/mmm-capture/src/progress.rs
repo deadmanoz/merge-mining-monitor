@@ -158,15 +158,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn advance_accumulates_done_and_logs_at_most_once_per_interval() {
+    fn advance_accumulates_done() {
         let reporter =
             ProgressReporter::with_interval("test-job", Some(100), Duration::from_secs(3600));
         reporter.advance(10);
         reporter.advance(5);
         assert_eq!(reporter.done(), 15);
-        // Nothing else to assert without a tracing subscriber; the interval
-        // guard is exercised for real by not panicking/looping and by the
-        // eta/rate helpers below.
     }
 
     #[test]

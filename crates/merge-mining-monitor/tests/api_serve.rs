@@ -491,7 +491,8 @@ async fn tree_validates_queries_before_db_checkout() {
 }
 
 #[tokio::test]
-async fn undecodable_query_string_is_invalid_query() {
+async fn non_utf8_query_value_is_invalid_query() {
+    // `%ff` decodes lossily to U+FFFD, which no source code can contain.
     let (status, body) = get("/api/v1/tree?source=%ff").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_error_envelope(&body, "invalid_query");

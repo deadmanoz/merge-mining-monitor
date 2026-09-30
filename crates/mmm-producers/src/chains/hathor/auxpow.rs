@@ -51,14 +51,6 @@ pub struct HathorAuxPow {
     tail_12: [u8; 12],
 }
 
-impl HathorAuxPow {
-    /// The BTC parent coinbase commitment marker terminates `cb_head`.
-    #[cfg(test)]
-    pub fn cb_head(&self) -> &[u8] {
-        &self.cb_head
-    }
-}
-
 /// A successful, self-verified reconstruction.
 #[derive(Debug, Clone)]
 pub struct HathorReconstruction {
@@ -400,7 +392,7 @@ mod tests {
             let aux_pow = hex::decode(field(&j, "aux_pow_hex")).unwrap();
             let expected = BlockHash::from_str(field(&j, "tx_id")).unwrap();
 
-            let (aux, recon) = reconstruct_from_blobs(&raw, &aux_pow, expected).unwrap();
+            let (_, recon) = reconstruct_from_blobs(&raw, &aux_pow, expected).unwrap();
 
             // Header is byte-identical to the validated CSV header.
             assert_eq!(
@@ -422,8 +414,6 @@ mod tests {
             );
             // The reconstructed parent satisfies BTC-difficulty PoW.
             assert!(mmm_capture::auxpow::pow_validates_target(&recon.header));
-            // The coinbase carries the Hathor commitment marker.
-            verify_commitment_marker(aux.cb_head()).unwrap();
         }
     }
 
@@ -444,7 +434,13 @@ mod tests {
         let n = aux.cb_head.len();
         aux.cb_head[n - 1] ^= 0xFF;
         let funds_graph = funds_graph_from_raw(&raw, &aux_pow).unwrap();
-        assert!(reconstruct_btc_header(&aux, funds_graph, expected).is_err());
+        // The corrupted byte also breaks the hash identity, so assert the
+        // marker check is what rejects it.
+        let err = reconstruct_btc_header(&aux, funds_graph, expected).unwrap_err();
+        assert!(
+            err.to_string().contains("'Hath' commitment marker"),
+            "{err:#}"
+        );
     }
 
     #[test]
