@@ -360,17 +360,8 @@ impl ConfiguredParentClassifier {
         }
     }
 
-    pub async fn synced_tip_height(&self) -> Result<Option<i32>> {
-        match self {
-            Self::Disabled => Ok(None),
-            Self::BitcoinCore(classifier) => classifier.synced_tip_height().await,
-            #[cfg(any(test, feature = "db-integration"))]
-            Self::Fake(classifier) => classifier.synced_tip_height().await,
-        }
-    }
-
     /// The synced Core tip with its freshness (see [`SyncedTip`]). `Disabled`
-    /// reports no tip, so the far-future resolver holds rather than revoking.
+    /// reports no tip, so the header-cache refresh refuses monitor work.
     pub async fn synced_tip(&self) -> Result<Option<SyncedTip>> {
         match self {
             Self::Disabled => Ok(None),
