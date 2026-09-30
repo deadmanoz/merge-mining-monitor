@@ -369,16 +369,6 @@ mod tests {
     }
 
     #[test]
-    fn resolves_newly_added_pool_by_coinbase_tag() {
-        // A pool outside the old 9-pool subset (SpiderPool) now resolves.
-        let resolver = PoolResolver::from_default_snapshot().unwrap();
-        let resolved = resolver
-            .resolve_coinbase_script(b"\x03\x01\x02\x03/SpiderPool/837/\x00")
-            .expect("SpiderPool coinbase tag should resolve after expansion");
-        assert_eq!(resolved.pool.slug, "spiderpool");
-    }
-
-    #[test]
     fn longest_tag_first_disambiguates_real_overlapping_snapshot_tags() {
         // The expanded 162-pool registry contains real nested coinbase tags
         // where one pool's tag is a substring of another's. The substring

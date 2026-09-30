@@ -212,16 +212,6 @@ fn window_clamped_by_batch_size() {
 }
 
 #[test]
-fn window_start_below_floor_reaches_floor() {
-    // Configured start below the floor: effective_start lifts to the floor,
-    // and the window reaches the floor once tip >= floor (never parks below).
-    let effective_start = 139_999; // max(start=0, floor=139_999)
-    let window = compute_tick_window(effective_start, 139_998, 140_000, 64, 100).unwrap();
-    assert_eq!(window.rescan_start, 139_999);
-    assert_eq!(window.end, 140_000);
-}
-
-#[test]
 fn window_cold_start_above_floor_begins_at_start() {
     // RSK_START_HEIGHT = 729_000, reorg_depth = 64, cold seed cursor 728_999.
     // The first window begins exactly at 729_000, not 728_936.

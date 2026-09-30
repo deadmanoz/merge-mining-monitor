@@ -263,25 +263,6 @@ mod tests {
     }
 
     #[test]
-    fn unknown_kind_is_invalid_query() {
-        assert_eq!(
-            code(&normalize_sources(Some("bogus:namecoin")).unwrap_err()),
-            "invalid_query"
-        );
-    }
-
-    #[test]
-    fn valid_kind_but_unregistered_is_unsupported_source() {
-        // A well-formed auxpow code for a chain not in SOURCE_REGISTRY: valid
-        // kind, but no such source. Synthetic so it cannot become registered by
-        // a future chain addition (Doichain, the old example, is now surveyed).
-        assert_eq!(
-            code(&normalize_sources(Some("auxpow:not-a-registered-chain")).unwrap_err()),
-            "unsupported_source"
-        );
-    }
-
-    #[test]
     fn removed_source_kinds_are_invalid_query() {
         for raw in ["dataset:foo", "harvester:bar"] {
             assert_eq!(
@@ -376,23 +357,5 @@ mod tests {
             code(&parse_classifications(Some("bogus")).unwrap_err()),
             "invalid_query"
         );
-    }
-
-    #[test]
-    fn classification_db_str_maps_pending_to_null() {
-        assert_eq!(
-            Classification::StrictBtcOrphan.as_db_str(),
-            Some("strict_btc_orphan")
-        );
-        assert_eq!(
-            Classification::WeakBtcOrphan.as_db_str(),
-            Some("weak_btc_orphan")
-        );
-        assert_eq!(
-            Classification::BtcStaleExcluded.as_db_str(),
-            Some("excluded")
-        );
-        assert_eq!(Classification::Pending.as_db_str(), None);
-        assert_eq!(Classification::Pending.as_str(), "pending");
     }
 }

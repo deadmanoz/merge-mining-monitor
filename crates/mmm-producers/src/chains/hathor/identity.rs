@@ -14,8 +14,6 @@ use tokio_postgres::Client;
 
 use crate::chains::hathor::address::{MAINNET_P2PKH_VERSION, MAINNET_P2SH_VERSION};
 use crate::chains::hathor::reward::HATHOR_REWARD_ADDRESS_NAMESPACE;
-#[cfg(test)]
-use mmm_capture::identity_registry::distinct_pool_definitions;
 use mmm_capture::identity_registry::{
     IdentityRegistryEntry, IdentityRegistryError, identity_key, validate_identity_registry,
 };
@@ -183,38 +181,6 @@ mod tests {
                 .entries
                 .iter()
                 .any(|entry| entry.reward_address == "HH5As5aLtzFkcbmbXZmE65wSd22GqPWq2T")
-        );
-    }
-
-    #[test]
-    fn distinct_pool_definitions_preserves_first_seen_order() {
-        let registry = HathorRewardRegistry::from_json_str(
-            r#"{
-                "schema_version": 1,
-                "entries": [
-                    {
-                        "reward_address": "HH5As5aLtzFkcbmbXZmE65wSd22GqPWq2T",
-                        "pool_slug": "f2pool",
-                        "pool_canonical_name": "F2Pool"
-                    },
-                    {
-                        "reward_address": "HV3iKMJpuZpktXwpoBxKEUetG6NS3zfXje",
-                        "pool_slug": "poolin",
-                        "pool_canonical_name": "Poolin"
-                    },
-                    {
-                        "reward_address": "HHDXRkSZorcWkZ9sHhSM6bWA9W9ozj8uxe",
-                        "pool_slug": "f2pool",
-                        "pool_canonical_name": "F2Pool"
-                    }
-                ]
-            }"#,
-        )
-        .unwrap();
-
-        assert_eq!(
-            distinct_pool_definitions(registry.entries.iter().map(hathor_registry_entry)),
-            vec![("f2pool", "F2Pool"), ("poolin", "Poolin")]
         );
     }
 

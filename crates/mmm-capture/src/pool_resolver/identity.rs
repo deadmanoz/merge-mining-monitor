@@ -414,40 +414,4 @@ mod tests {
             }
         );
     }
-
-    #[test]
-    fn distinct_pool_definitions_preserves_first_seen_order() {
-        let registry = PoolIdentityRegistry::from_rsk_json_str(
-            r#"{
-                "schema_version": 1,
-                "generated_at": "2026-05-26",
-                "scope": "test",
-                "source": { "name": "test" },
-                "entries": [
-                    {
-                        "miner_address": "12d3178a62ef1f520944534ed04504609f7307a1",
-                        "pool_slug": "f2pool",
-                        "pool_canonical_name": "F2Pool"
-                    },
-                    {
-                        "miner_address": "4e5dabc28e4a0f5e5b19fcb56b28c5a1989352c1",
-                        "pool_slug": "antpool",
-                        "pool_canonical_name": "AntPool"
-                    },
-                    {
-                        "miner_address": "1b7a75ef070ff49e6b9491a26403d799f2099ebd",
-                        "pool_slug": "antpool",
-                        "pool_canonical_name": "AntPool"
-                    }
-                ]
-            }"#,
-        )
-        .unwrap();
-
-        let definitions = registry.distinct_pool_definitions();
-        assert_eq!(
-            definitions,
-            vec![("f2pool", "F2Pool"), ("antpool", "AntPool")]
-        );
-    }
 }

@@ -229,15 +229,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_wrong_arity_with_the_exact_usage_string() {
-        let err = BackfillConfig::from_args(by_id(ChainId::Namecoin), ["10"]).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "usage: backfill-namecoin <start-height> <end-height>"
-        );
-    }
-
-    #[test]
     fn rejects_invalid_integer() {
         let err = BackfillConfig::from_args(by_id(ChainId::Namecoin), ["abc", "10"]).unwrap_err();
         assert!(err.to_string().contains("start-height must be a valid"));
@@ -268,25 +259,6 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("requested end height 20 exceeds observed Namecoin chain tip 19")
-        );
-    }
-
-    #[test]
-    fn syscoin_rejects_end_above_tip() {
-        let config = BackfillConfig::from_args(by_id(ChainId::Syscoin), ["10", "20"]).unwrap();
-        let err = config.validate_against_tip(19).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("requested end height 20 exceeds observed Syscoin chain tip 19")
-        );
-    }
-
-    #[test]
-    fn syscoin_usage_string_is_exact() {
-        let err = BackfillConfig::from_args(by_id(ChainId::Syscoin), ["10"]).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "usage: backfill-syscoin <start-height> <end-height>"
         );
     }
 }

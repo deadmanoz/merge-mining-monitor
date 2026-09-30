@@ -2,11 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-#[cfg(test)]
-use bitcoin::block::Header;
-#[cfg(test)]
-use bitcoin::consensus::serialize;
-
 use crate::chains::rsk::rpc::RskBlock;
 
 /// Miner address present in the test registry (resolves to `f2pool`).
@@ -42,38 +37,6 @@ pub fn load_rsk_block_fixture(name: &str) -> RskBlock {
             path.display()
         )
     })
-}
-
-/// An 80-byte BTC parent header whose PoW satisfies `bits`, for fixtures that
-/// need a parent passing (or, with a tight `bits`, failing) its own target.
-#[cfg(test)]
-pub(crate) fn header_meeting_bits(bits: u32) -> Header {
-    mmm_capture::test_support::header_meeting_bits(bits, 1_700_000_000, 0)
-}
-
-/// Synthesize an [`RskBlock`] with all merge-mining fields populated as RSKj-style
-/// `0x` hex, deriving a deterministic hash from `height` so prefetch-ordering
-/// tests can recover the height from the block.
-#[cfg(test)]
-pub(crate) fn rsk_block_with(
-    height: i64,
-    timestamp: i64,
-    miner_hex: &str,
-    btc_header: Header,
-    uncles: Vec<&str>,
-) -> RskBlock {
-    RskBlock {
-        hash: format!("0x{:064x}", height),
-        number: format!("0x{height:x}"),
-        timestamp: format!("0x{timestamp:x}"),
-        miner: format!("0x{miner_hex}"),
-        difficulty: Some("0x1000".to_owned()),
-        bitcoin_merged_mining_header: Some(format!("0x{}", hex::encode(serialize(&btc_header)))),
-        bitcoin_merged_mining_coinbase_transaction: Some("0xdeadbeef".to_owned()),
-        bitcoin_merged_mining_merkle_proof: Some("0xcafebabe".to_owned()),
-        hash_for_merged_mining: Some(format!("0x{:064x}", 0xa5a5a5a5u32)),
-        uncles: uncles.into_iter().map(str::to_owned).collect(),
-    }
 }
 
 #[cfg(test)]

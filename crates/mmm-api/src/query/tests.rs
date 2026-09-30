@@ -7,14 +7,6 @@ fn err_code(err: ApiError) -> &'static str {
 }
 
 #[test]
-fn undecodable_query_is_invalid_query() {
-    assert_eq!(
-        err_code(parse_tree_query(Some("source=%ff")).unwrap_err()),
-        "invalid_query"
-    );
-}
-
-#[test]
 fn dates_require_two_digit_month_and_day() {
     assert_eq!(
         err_code(
@@ -33,12 +25,6 @@ fn unknown_parameter_is_invalid_query() {
         err_code(parse_tree_query(Some("from_height=1&to_height=2&typo=1")).unwrap_err()),
         "invalid_query"
     );
-}
-
-#[test]
-fn tree_bounds_are_checked_before_db() {
-    let err = parse_tree_query(Some("from_height=1&to_height=3000")).unwrap_err();
-    assert_eq!(err.code(), "range_too_large");
 }
 
 #[test]

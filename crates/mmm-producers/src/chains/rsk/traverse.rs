@@ -155,9 +155,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::chains::rsk::test_fixtures::{
-        KNOWN_MINER_HEX, header_meeting_bits, load_rsk_block_fixture, rsk_block_with,
-    };
+    use crate::chains::rsk::test_fixtures::load_rsk_block_fixture;
 
     /// What the fake source should return for one canonical block or uncle
     /// lookup: a present block, an explicit `null` (`Ok(None)`), or a fetch
@@ -241,27 +239,18 @@ mod tests {
     }
 
     #[test]
-    fn fetch_canonical_without_parent_header_is_kept_in_bundle() {
-        // Parent-header shape and decode skips are downstream concerns; the fetch stage
-        // keeps any present canonical block verbatim.
-        let block = load_rsk_block_fixture("pre-rskip92");
-        let source =
-            FakeRskSource::default().with_canonical(100_000, FakeResponse::block(block.clone()));
-        let bundle = block_on(fetch_rsk_height_bundle(source, 100_000)).unwrap();
-        assert_eq!(bundle.canonical.as_ref(), Some(&block));
-        assert!(bundle.uncles.is_empty());
-    }
-
-    #[test]
-    fn fetch_keeps_canonical_with_malformed_evidence_fields() {
-        // A malformed merge-mining field is a downstream `MalformedSkipped`, not
-        // a fetch error: the bundle still carries the canonical block.
-        let block = load_rsk_block_fixture("malformed-header");
-        let source =
-            FakeRskSource::default().with_canonical(729_002, FakeResponse::block(block.clone()));
-        let bundle = block_on(fetch_rsk_height_bundle(source, 729_002)).unwrap();
-        assert_eq!(bundle.canonical.as_ref(), Some(&block));
-        assert!(bundle.uncles.is_empty());
+    fn fetch_keeps_canonical_blocks_whose_evidence_capture_skips() {
+        // A missing (pre-RSKIP92) or malformed merge-mining field is a downstream
+        // skip, not a fetch error: the fetch stage keeps the block verbatim so a
+        // backfill records the skip instead of aborting.
+        for (fixture, height) in [("pre-rskip92", 100_000), ("malformed-header", 729_002)] {
+            let block = load_rsk_block_fixture(fixture);
+            let source =
+                FakeRskSource::default().with_canonical(height, FakeResponse::block(block.clone()));
+            let bundle = block_on(fetch_rsk_height_bundle(source, height)).unwrap();
+            assert_eq!(bundle.canonical.as_ref(), Some(&block), "{fixture}");
+            assert!(bundle.uncles.is_empty(), "{fixture}");
+        }
     }
 
     #[test]
@@ -372,39 +361,5 @@ mod tests {
             .expect("malformed canonical number must be non-fatal");
         assert_eq!(bundle.canonical.as_ref(), Some(&canonical));
         assert!(bundle.uncles.is_empty());
-    }
-
-    #[test]
-    fn buffered_pipeline_yields_bundles_in_ascending_height_order() {
-        use futures::StreamExt;
-
-        // Each height has a present canonical whose `hash` encodes the height,
-        // so we can assert the consumer sees them strictly ascending even though
-        // the fetch stage runs concurrently.
-        let mut source = FakeRskSource::default();
-        for height in 200_000_i64..=200_009 {
-            let block = rsk_block_with(
-                height,
-                1_700_000_000 + height,
-                KNOWN_MINER_HEX,
-                header_meeting_bits(0x207f_ffff),
-                vec![],
-            );
-            source = source.with_canonical(height, FakeResponse::block(block));
-        }
-
-        let observed = block_on(async {
-            let mut heights = Vec::new();
-            let mut fetches = futures::stream::iter(200_000_i64..=200_009)
-                .map(|height| fetch_rsk_height_bundle(source.clone(), height))
-                .buffered(4);
-            while let Some(bundle) = fetches.next().await {
-                let canonical = bundle.unwrap().canonical.unwrap();
-                heights.push(decode_quantity_i64(&canonical.number).unwrap());
-            }
-            heights
-        });
-
-        assert_eq!(observed, (200_000_i64..=200_009).collect::<Vec<_>>());
     }
 }

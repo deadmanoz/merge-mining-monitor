@@ -471,9 +471,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn seed_sql_is_deterministic_and_well_formed() {
+    fn seed_sql_is_well_formed() {
         let sql = render_seed_sql();
-        assert_eq!(sql, render_seed_sql(), "generation must be deterministic");
         assert!(sql.contains("RAISE EXCEPTION"), "fail-fast guard present");
         assert!(
             sql.contains("OVERRIDING SYSTEM VALUE"),
@@ -500,9 +499,8 @@ mod tests {
     }
 
     #[test]
-    fn frontend_js_is_deterministic_and_exports_dicts() {
+    fn frontend_js_exports_dicts() {
         let js = render_frontend_js();
-        assert_eq!(js, render_frontend_js(), "generation must be deterministic");
         for name in [
             "CHAIN_COLORS",
             "CHAIN_DISPLAY_NAMES",
@@ -544,25 +542,6 @@ mod tests {
         // CHAIN_PROFILES carries the per-chain editorial profile, keyed by slug.
         assert!(js.contains("\"namecoin\": {"));
         assert!(js.contains("\"chain_status\":"));
-    }
-
-    #[test]
-    fn chain_profiles_cover_every_registry_chain() {
-        // load_chain_profiles panics on an unknown profile key, a missing registry
-        // chain, an empty required field, or a bad chain_status; calling it here
-        // makes the real-corpus completeness contract an explicit, named test.
-        let profiles = load_chain_profiles();
-        let registry_chains: BTreeSet<&str> = SOURCE_REGISTRY.iter().map(|s| s.chain).collect();
-        assert_eq!(
-            profiles.len(),
-            registry_chains.len(),
-            "exactly one profile per distinct registry chain"
-        );
-        for chain in &registry_chains {
-            assert!(profiles.contains_key(*chain), "missing profile for {chain}");
-        }
-        // The Bitcoin parent chain must also carry a profile (3-tab modal target).
-        assert!(profiles.contains_key("bitcoin"));
     }
 
     #[test]

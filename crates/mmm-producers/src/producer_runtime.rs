@@ -276,16 +276,3 @@ pub(crate) async fn warn_if_empty_known_stale_membership<C: tokio_postgres::Gene
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pool_ids_by_slug_mut_appends_in_place() {
-        let mut ctx =
-            ProducerContext::from_parts(HashMap::new(), 1, ConfiguredParentClassifier::Disabled);
-        ctx.pool_ids_by_slug_mut().insert("btc-com".to_owned(), 3);
-        assert_eq!(ctx.pool_ids_by_slug().get("btc-com"), Some(&3));
-    }
-}

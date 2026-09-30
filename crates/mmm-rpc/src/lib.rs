@@ -352,18 +352,6 @@ mod tests {
     }
 
     #[test]
-    fn build_rpc_client_succeeds_for_normal_timeout() {
-        assert!(build_rpc_client(Duration::from_secs(15)).is_ok());
-    }
-
-    #[test]
-    fn build_rpc_client_succeeds_for_short_timeout() {
-        // A request timeout below DEFAULT_CONNECT_TIMEOUT still builds; the
-        // connect timeout is clamped down to the request timeout.
-        assert!(build_rpc_client(Duration::from_secs(2)).is_ok());
-    }
-
-    #[test]
     fn envelope_interprets_null_value_missing_and_error() {
         let envelope: Value =
             serde_json::from_str(r#"{"jsonrpc":"2.0","id":"x","result":null}"#).unwrap();

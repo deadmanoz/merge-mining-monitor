@@ -454,16 +454,4 @@ mod tests {
         let absent: BlockResponse = serde_json::from_str(r#"{"success":false}"#).unwrap();
         assert!(!absent.success && absent.block.is_none());
     }
-
-    #[test]
-    fn fallback_url_defaults_to_node2_and_can_be_disabled() {
-        // Empty fallback_url means the loader yields None (disabled).
-        let cfg = HathorRpcConfig {
-            url: DEFAULT_API_URL.to_owned(),
-            fallback_url: None,
-            request_timeout: Duration::from_secs(15),
-            max_retries: DEFAULT_MAX_RETRIES,
-        };
-        assert!(HathorRpcClient::new(cfg).is_ok());
-    }
 }

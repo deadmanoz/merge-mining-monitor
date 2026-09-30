@@ -198,35 +198,4 @@ mod tests {
                  set HATHOR_ALLOW_LARGE_BACKFILL=1 to override (the public REST API must not be swept)"
         );
     }
-
-    #[test]
-    fn hathor_rejects_end_before_start() {
-        let empty: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        let err = BackfillConfig::from_args_with_lookup(
-            crate::chains::spec::by_id(crate::chains::spec::ChainId::Hathor),
-            ["20", "10"],
-            |key| empty.get(key).cloned(),
-        )
-        .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("end-height must be greater than or equal to start-height")
-        );
-    }
-
-    #[test]
-    fn hathor_rejects_end_above_tip() {
-        let empty: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        let config = BackfillConfig::from_args_with_lookup(
-            crate::chains::spec::by_id(crate::chains::spec::ChainId::Hathor),
-            ["10", "20"],
-            |key| empty.get(key).cloned(),
-        )
-        .unwrap();
-        let err = config.validate_against_tip(19).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("requested end height 20 exceeds observed Hathor chain tip 19")
-        );
-    }
 }

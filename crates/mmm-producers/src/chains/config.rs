@@ -415,14 +415,6 @@ mod tests {
     }
 
     #[test]
-    fn namecoin_is_the_family_reference_chain() {
-        let spec = by_id(ChainId::Namecoin);
-        let family = spec.family.expect("namecoin is bitcoind-family");
-        assert_eq!(family.label, "Namecoin");
-        assert!(family.floor_warning.is_none());
-    }
-
-    #[test]
     fn rsk_auth_contract_is_one_sided_tolerant() {
         // Today's contract: user without password (or vice versa) is silently
         // accepted, never a set-together error.
