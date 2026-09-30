@@ -387,10 +387,37 @@ where
     last_near_tip_repair_at: Option<Instant>,
 }
 
-impl<S> BitcoinCoreLiveProducer<'_, S>
+impl<'a, S> BitcoinCoreLiveProducer<'a, S>
 where
     S: BitcoinCoreBackboneSource,
 {
+    /// Normalize the follow config and ensure the `bitcoin_core_sync_state` row
+    /// exists before the first cursor read, which fails on a freshly migrated
+    /// database without it. The daemon and the finite test tick both start here.
+    async fn start(
+        client: &'a mut Client,
+        source: &'a S,
+        header_cache_classifier: &'a ConfiguredParentClassifier,
+        mut config: BitcoinCoreSyncConfig,
+        last_near_tip_repair_at: Option<Instant>,
+    ) -> Result<Self> {
+        normalize_follow_config(&mut config);
+        let source_id = get_source_id(client, BITCOIN_SOURCE_CODE).await?;
+        let initial_cch = load_or_init_sync_state(client, source_id)
+            .await?
+            .contiguous_complete_height;
+        Ok(Self {
+            client,
+            source,
+            source_id,
+            initial_cch,
+            header_cache_classifier,
+            config,
+            stall: 0,
+            last_near_tip_repair_at,
+        })
+    }
+
     async fn bookkeeping_failure_outcome(
         &self,
         progress_before: Option<FollowProgress>,
@@ -615,20 +642,10 @@ pub async fn run_sync_bitcoin_core_follow<S>(
 where
     S: BitcoinCoreBackboneSource,
 {
-    let mut config = config;
-    normalize_follow_config(&mut config);
-    let source_id = get_source_id(client, BITCOIN_SOURCE_CODE).await?;
-    let initial_cch = initialize_follow_state(client, source_id).await?;
-    run_live_loop(BitcoinCoreLiveProducer {
-        client,
-        source,
-        source_id,
-        initial_cch,
-        header_cache_classifier,
-        config,
-        stall: 0,
-        last_near_tip_repair_at: None,
-    })
+    run_live_loop(
+        BitcoinCoreLiveProducer::start(client, source, header_cache_classifier, config, None)
+            .await?,
+    )
     .await
 }
 
@@ -686,37 +703,23 @@ async fn run_bitcoin_core_follow_tick_with_repair_state_for_test<S>(
     client: &mut Client,
     source: &S,
     header_cache_classifier: &ConfiguredParentClassifier,
-    mut config: BitcoinCoreSyncConfig,
+    config: BitcoinCoreSyncConfig,
     last_near_tip_repair_at: Option<Instant>,
 ) -> Result<(bool, bool)>
 where
     S: BitcoinCoreBackboneSource,
 {
-    normalize_follow_config(&mut config);
-    let source_id = get_source_id(client, BITCOIN_SOURCE_CODE).await?;
-    let initial_cch = initialize_follow_state(client, source_id).await?;
-    let outcome = BitcoinCoreLiveProducer {
+    let outcome = BitcoinCoreLiveProducer::start(
         client,
         source,
-        source_id,
-        initial_cch,
         header_cache_classifier,
         config,
-        stall: 0,
         last_near_tip_repair_at,
-    }
+    )
+    .await?
     .tick()
     .await?;
     Ok((outcome.progressed, outcome.idle_at_target))
-}
-
-/// Ensure the `bitcoin_core_sync_state` row exists and return the initial
-/// contiguous-complete height (cch). Public so the live producer can initialize
-/// before its first cursor read AND an external integration test can exercise
-/// the fresh-DB startup invariant directly.
-pub async fn initialize_follow_state(client: &Client, source_id: i64) -> Result<i32> {
-    let state = load_or_init_sync_state(client, source_id).await?;
-    Ok(state.contiguous_complete_height)
 }
 
 /// Read the current follow-loop progress for the source. The loop calls this

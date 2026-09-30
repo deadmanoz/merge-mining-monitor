@@ -172,20 +172,10 @@ fn extract_coinbase_tag_matches_frontend_ascii_rules() {
 fn auxpow_blob_decoders_read_fractal_ca_auxpow_and_reject_full_blob() {
     let (raw, parsed) = parse_fractal_auxpow_header_blob();
 
-    // The stored CAuxPow-only blob is `parsed.auxpow_bytes`.
-    let summary = auxpow_blob_summary(&parsed.auxpow_bytes).expect("summary");
-    assert_eq!(summary.parent_header_hash, parsed.parent_header.hash());
-    assert_eq!(
-        summary.slot_index,
-        u32::try_from(parsed.proof.chain_branch.index).unwrap()
-    );
-
     // Real-data smoke: the Fractal parent coinbase carries a decodable marker.
     assert!(decode_aux_marker(&parsed.parent_coinbase_script).is_some());
 
-    // The full `[child header][CAuxPow]` blob must NOT be accepted here.
-    assert!(auxpow_blob_summary(&raw).is_none());
-
+    // The stored CAuxPow-only blob is `parsed.auxpow_bytes`.
     let detail = decode_auxpow_proof(&parsed.auxpow_bytes).expect("proof detail");
 
     assert_eq!(detail.slot_index, 0);
@@ -195,7 +185,7 @@ fn auxpow_blob_decoders_read_fractal_ca_auxpow_and_reject_full_blob() {
     assert!(detail.blockchain_branch.siblings.is_empty());
     assert_eq!(detail.blockchain_branch.index, 0);
     assert!(!detail.coinbase_branch.siblings.is_empty());
-    // The full blob is still rejected by the same guard.
+    // The full `[child header][CAuxPow]` blob is rejected.
     assert!(decode_auxpow_proof(&raw).is_none());
 }
 

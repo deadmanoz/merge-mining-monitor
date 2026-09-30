@@ -810,7 +810,6 @@ mod writers;
 
 pub use classify::load_parent_preflight;
 pub(crate) use classify::*;
-pub use competition::load_persisted_kind_and_orphan_class;
 pub(crate) use competition::*;
 pub(crate) use queries::*;
 pub use queries::{lock_block_hash, lock_block_hashes};

@@ -16,14 +16,13 @@ use mmm_bitcoin_core::{
     ParentClassification,
 };
 use mmm_capture::capture::{
-    EventPoolAttribution, NormalizedEventEvidence, ParentKind, PoolAttributionConfidence,
-    PoolAttributionSide, ResolvedPoolAttributions, build_event_payload_from_evidence,
+    NormalizedEventEvidence, ParentKind, ResolvedPoolAttributions,
+    build_event_payload_from_evidence,
 };
 use mmm_read_model::{
     CoreCanonicalWrite, capture_in_txn, revoke_merge_mining_event, write_core_canonical,
 };
 use mmm_store::{get_source_id, upsert_merge_mining_event_with_attributions};
-use serde_json::json;
 use tokio_postgres::Client;
 
 /// Verdict for a parent Core reports on its active chain.
@@ -106,7 +105,6 @@ pub struct ChildEvidence {
     pub verdict: ParentClassification,
     pub observed_at: i64,
     pub parent_coinbase_script: Option<Vec<u8>>,
-    pub parent_pool_id: Option<i64>,
 }
 
 impl ChildEvidence {
@@ -134,7 +132,6 @@ impl ChildEvidence {
             verdict,
             observed_at,
             parent_coinbase_script: None,
-            parent_pool_id: None,
         }
     }
 
@@ -142,12 +139,6 @@ impl ChildEvidence {
     /// the captured evidence.
     pub fn with_parent_coinbase_script(mut self, script: Vec<u8>) -> Self {
         self.parent_coinbase_script = Some(script);
-        self
-    }
-
-    /// Attribute the BTC parent to an already-seeded pool id.
-    pub fn with_parent_pool(mut self, pool_id: i64) -> Self {
-        self.parent_pool_id = Some(pool_id);
         self
     }
 }
@@ -205,22 +196,6 @@ impl Scenario {
                 Step::Child(evidence) => {
                     let source_id = get_source_id(client, evidence.source_code).await?;
                     let proof = evidence.verdict.to_proof();
-                    let attributions = evidence
-                        .parent_pool_id
-                        .filter(|_| {
-                            evidence.source_code != mmm_capture::source_registry::RSK_SOURCE_CODE
-                        })
-                        .map(|pool_id| EventPoolAttribution {
-                            side: PoolAttributionSide::BtcParent,
-                            namespace: "btc_coinbase_tag",
-                            match_kind: "test_seed",
-                            matched_value: format!("test-pool-{pool_id}"),
-                            pool_id: Some(pool_id),
-                            pool_identity_id: None,
-                            source: "test_seed",
-                            confidence: PoolAttributionConfidence::High,
-                            details: json!({}),
-                        });
                     let mut payload = build_event_payload_from_evidence(
                         NormalizedEventEvidence {
                             child_height: Some(evidence.child_height),
@@ -240,9 +215,7 @@ impl Scenario {
                             child_coinbase_outputs: None,
                             aux_merkle_proof: None,
                         },
-                        ResolvedPoolAttributions {
-                            attributions: attributions.into_iter().collect(),
-                        },
+                        ResolvedPoolAttributions::default(),
                         proof,
                         evidence.observed_at,
                     )?;

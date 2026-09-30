@@ -154,30 +154,6 @@ async fn has_published_stale_branch_attestation<C: GenericClient>(
         .is_some())
 }
 
-/// Read the persisted `block.kind` and `btc_orphan_class` for a hash, for
-/// callers that must report what reconciliation STORED rather than what an
-/// incoming payload carried (`effective_classification` can retain an
-/// existing canonical/stale row when a later classification is unknown, and
-/// the known-stale membership gate can persist `excluded` over a strict/weak
-/// offline verdict). `None` when no `block` row exists.
-pub async fn load_persisted_kind_and_orphan_class<C: GenericClient>(
-    client: &C,
-    hash: &[u8],
-) -> Result<Option<(BlockKind, Option<String>)>> {
-    let row = client
-        .query_opt(
-            "SELECT kind, btc_orphan_class FROM block WHERE btc_header_hash = $1",
-            &[&hash],
-        )
-        .await
-        .context("load persisted block kind and orphan class")?;
-    row.map(|row| {
-        let kind: String = row.get(0);
-        Ok((BlockKind::from_db_str(&kind)?, row.get(1)))
-    })
-    .transpose()
-}
-
 /// Read the persisted `block.btc_orphan_class` for a hash. The preserve-under-
 /// transient-unknown fallback in `compute_block_orphan_class`: when a reconcile
 /// pass carries no fresh Core-absence verdict, the stored class is reused so a

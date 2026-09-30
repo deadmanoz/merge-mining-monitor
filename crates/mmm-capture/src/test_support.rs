@@ -99,15 +99,3 @@ pub fn parse_auxpow_fixture(name: &str) -> anyhow::Result<Box<crate::auxpow::Par
         }
     }
 }
-
-/// Canonical "valid" BTC parent header used by RSK structure/capture tests.
-pub fn valid_btc_header() -> Header {
-    header_meeting_bits(0x207f_ffff, 1_700_000_000, 0)
-}
-
-/// A second valid BTC parent header (different time + merkle seed) used
-/// where a test needs two distinct headers, for example a canonical block
-/// and its uncle in the same suite.
-pub fn valid_btc_header_two() -> Header {
-    header_meeting_bits(0x207f_ffff, 1_700_000_001, 0x1111_1111)
-}

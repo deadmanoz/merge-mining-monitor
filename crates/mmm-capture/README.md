@@ -33,12 +33,10 @@ Most modules are flat single-job files; the four with internal structure
 (`auxpow`, `capture`, `pool_resolver`, `source_registry`) are directories with a
 `mod.rs` (the repo bans self-named module files). Where a module is split, a
 re-export keeps that restructuring API-compatible for the six consumer crates,
-so a split is never a breaking change. Separately, a few helpers reachable only
-from tests are gated behind `#[cfg(any(test, feature = "test-support"))]`
-(`auxpow::auxpow_blob_summary`,
-`source_registry::{live, historical, partial, surveyed, catalogued}`): they
-are absent from the normal build intentionally and are not part of the consumer
-API.
+so a split is never a breaking change. The shared fixture helpers in
+`test_support` are gated behind `#[cfg(any(test, feature = "test-support"))]`:
+they are absent from the normal build intentionally and are not part of the
+consumer API.
 
 | Module | Responsibility |
 |--------|----------------|

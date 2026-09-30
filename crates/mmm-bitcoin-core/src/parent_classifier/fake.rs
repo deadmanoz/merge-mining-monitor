@@ -11,7 +11,6 @@ pub struct FakeParentClassifier {
     classification_error_on_call: Option<u64>,
     synced_tip_is_mainnet: bool,
     synced_tip_height: Option<i32>,
-    synced_tip_fresh: bool,
     fail_synced_tip: bool,
     canonical_headers:
         Arc<tokio::sync::Mutex<std::collections::HashMap<i32, VecDeque<CoreHeader>>>>,
@@ -71,7 +70,6 @@ impl FakeParentClassifier {
             classification_error_on_call: None,
             synced_tip_is_mainnet: true,
             synced_tip_height: None,
-            synced_tip_fresh: true,
             fail_synced_tip: false,
             canonical_headers: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             max_concurrency: 1,
@@ -132,15 +130,6 @@ impl FakeParentClassifier {
         self
     }
 
-    /// A synced tip that is STALE (its median time is too old): the far-future
-    /// resolver must HOLD rather than revoke a beyond-tolerance parent against a
-    /// lagging / isolated node.
-    pub fn with_stale_synced_tip(mut self, height: i32) -> Self {
-        self.synced_tip_height = Some(height);
-        self.synced_tip_fresh = false;
-        self
-    }
-
     /// Make `synced_tip_height` return `Err` (Core unreachable), so the resolver's
     /// fail-closed-to-Hold path can be exercised.
     pub fn with_synced_tip_error(mut self) -> Self {
@@ -194,7 +183,7 @@ impl FakeParentClassifier {
         Ok(self.synced_tip_height.map(|height| SyncedTip {
             is_mainnet: self.synced_tip_is_mainnet,
             height,
-            fresh: self.synced_tip_fresh,
+            fresh: true,
         }))
     }
 

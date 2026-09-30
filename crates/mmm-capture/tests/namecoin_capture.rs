@@ -9,8 +9,7 @@ use mmm_capture::auxpow::{ParsedNamecoinBlock, parse_namecoin_block};
 use mmm_capture::capture::{
     BTC_POOL_SNAPSHOT_LEGACY_CHILD_SCRIPT_SOURCE, CHILD_COINBASE_OUTPUT_SOURCE,
     CHILD_PAYOUT_REGISTRY_SOURCE, ClassificationProof, EventPoolAttribution,
-    ResolvedPoolAttributions, build_event_payload, resolve_event_pools,
-    resolve_event_pools_with_child_payout,
+    ResolvedPoolAttributions, build_event_payload, resolve_event_pools_with_child_payout,
 };
 use mmm_capture::child_payout::{
     NAMECOIN_CHILD_PAYOUT_PARAMS, NAMECOIN_PAYOUT_ADDRESS_NAMESPACE, PoolIdentityLookup,
@@ -86,7 +85,8 @@ fn parses_raw_namecoin_auxpow_fixtures() {
         assert_eq!(parsed.proof.coinbase_branch.index, 0);
         assert_eq!(parsed.proof.chain_branch.index, 0);
 
-        let pool_ids = resolve_event_pools(&parsed, &resolver, &ids_by_slug);
+        let pool_ids =
+            resolve_event_pools_with_child_payout(&parsed, &resolver, &ids_by_slug, None, None);
         let event = build_event_payload(
             &parsed,
             expected.height_hint,

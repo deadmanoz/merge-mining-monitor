@@ -67,7 +67,9 @@ impl RpcMetrics {
     /// Count one dispatched HTTP attempt carrying `elements` JSON-RPC calls
     /// and start timing it. Its latency is recorded when the timer drops, so
     /// a request the caller's future abandons mid-flight (a cancelled fetch
-    /// pipeline) is timed with the time it was given.
+    /// pipeline) is timed with the time it was given. Start it only for a
+    /// request that reaches the transport: local waiting (a semaphore slot, a
+    /// backoff sleep) is not an attempt.
     pub fn attempt(&self, elements: u32) -> AttemptTimer<'_> {
         self.record_dispatch(elements);
         AttemptTimer {
@@ -76,20 +78,9 @@ impl RpcMetrics {
         }
     }
 
-    /// Record one completed HTTP attempt: `elements` JSON-RPC calls carried
-    /// by it and its wall-clock `latency`, from dispatch to the consumed
-    /// response body. Recorded whatever the result, and only for requests
-    /// that reached the transport: local waiting (a semaphore slot, a backoff
-    /// sleep) is not an attempt. Callers whose request may outlive the caller
-    /// use [`Self::attempt`], which counts the attempt at dispatch.
-    pub fn record_attempt(&self, elements: u32, latency: Duration) {
-        self.record_dispatch(elements);
-        self.record_latency(latency);
-    }
-
     /// Count one HTTP attempt at the moment it is dispatched, before its
     /// outcome is known, so the window that paid for it sees it.
-    pub fn record_dispatch(&self, elements: u32) {
+    fn record_dispatch(&self, elements: u32) {
         self.0.http_attempts.fetch_add(1, Ordering::Relaxed);
         self.0
             .rpc_elements
@@ -98,7 +89,7 @@ impl RpcMetrics {
 
     /// Record the latency of an attempt counted by [`Self::record_dispatch`],
     /// once its response is consumed or the caller abandons it.
-    pub fn record_latency(&self, latency: Duration) {
+    fn record_latency(&self, latency: Duration) {
         self.0.completed.fetch_add(1, Ordering::Relaxed);
         let nanos = u64::try_from(latency.as_nanos()).unwrap_or(u64::MAX);
         self.0
@@ -272,13 +263,19 @@ impl fmt::Display for RpcMetricsSnapshot {
 mod tests {
     use super::*;
 
+    /// One attempt that completed after `latency`, without sleeping for it.
+    fn completed_attempt(metrics: &RpcMetrics, latency: Duration) {
+        metrics.record_dispatch(1);
+        metrics.record_latency(latency);
+    }
+
     #[test]
     fn records_attempts_elements_and_latency() {
         let metrics = RpcMetrics::new("core");
-        metrics.record_attempt(1, Duration::from_millis(100));
-        metrics.record_attempt(1, Duration::from_millis(1280));
+        completed_attempt(&metrics, Duration::from_millis(100));
+        completed_attempt(&metrics, Duration::from_millis(1280));
         metrics.record_retry();
-        metrics.record_attempt(1, Duration::from_millis(52));
+        completed_attempt(&metrics, Duration::from_millis(52));
 
         let snapshot = metrics.snapshot();
         assert_eq!(snapshot.http_attempts, 3);
@@ -291,9 +288,9 @@ mod tests {
     #[test]
     fn a_failure_is_the_call_giving_up_not_an_attempt() {
         let metrics = RpcMetrics::new("rsk");
-        metrics.record_attempt(1, Duration::from_millis(10));
+        completed_attempt(&metrics, Duration::from_millis(10));
         metrics.record_retry();
-        metrics.record_attempt(1, Duration::from_millis(10));
+        completed_attempt(&metrics, Duration::from_millis(10));
         metrics.record_failure();
 
         let snapshot = metrics.snapshot();
@@ -305,10 +302,10 @@ mod tests {
     #[test]
     fn a_delta_reports_only_what_the_window_saw() {
         let metrics = RpcMetrics::new("core");
-        metrics.record_attempt(1, Duration::from_millis(900));
+        completed_attempt(&metrics, Duration::from_millis(900));
         let before = metrics.snapshot();
-        metrics.record_attempt(1, Duration::from_millis(100));
-        metrics.record_attempt(1, Duration::from_millis(300));
+        completed_attempt(&metrics, Duration::from_millis(100));
+        completed_attempt(&metrics, Duration::from_millis(300));
         metrics.record_retry();
         metrics.record_failure();
         let delta = metrics.snapshot().since(&before);
@@ -357,7 +354,7 @@ mod tests {
         assert_eq!(idle.completed, 1);
         assert!(idle.latency_avg() >= Duration::from_millis(5));
 
-        metrics.record_attempt(1, Duration::from_millis(100));
+        completed_attempt(&metrics, Duration::from_millis(100));
         let busy = metrics.snapshot().since(&boundary);
         assert_eq!(busy.http_attempts, 1);
         assert_eq!(busy.completed, 2);
@@ -369,19 +366,16 @@ mod tests {
     fn display_matches_the_documented_one_line_format() {
         let metrics = RpcMetrics::new("core");
         for _ in 0..11 {
-            metrics.record_attempt(1, Duration::from_millis(300));
+            completed_attempt(&metrics, Duration::from_millis(300));
         }
-        metrics.record_attempt(1, Duration::from_millis(1280));
+        completed_attempt(&metrics, Duration::from_millis(1280));
         metrics.record_retry();
         // The retried call still eventually succeeds; that final attempt is
         // recorded separately from the retryable one above.
         let snapshot = metrics.snapshot();
         assert_eq!(
             snapshot.to_string(),
-            format!(
-                "core: attempts=12 elements=12 retries=1 failures=0 latency_avg_ms={} latency_max_ms=1280",
-                snapshot.latency_avg().as_millis()
-            )
+            "core: attempts=12 elements=12 retries=1 failures=0 latency_avg_ms=381 latency_max_ms=1280"
         );
     }
 }

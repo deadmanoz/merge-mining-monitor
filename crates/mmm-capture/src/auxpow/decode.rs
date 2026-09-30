@@ -1,4 +1,4 @@
-//! Stored-bytes decoding: aux markers, blob summaries, proof detail, and
+//! Stored-bytes decoding: aux markers, proof detail, and
 //! coinbase tag/address presentation helpers.
 
 use super::*;
@@ -13,20 +13,6 @@ pub struct AuxMarker {
     pub aux_merkle_root: TxMerkleNode,
     pub merkle_size: u32,
     pub merkle_nonce: u32,
-}
-
-/// The slot-index + parent-header-hash subset of a decoded CAuxPow-only blob
-/// (`merge_mining_event.aux_merkle_proof`): the chain's slot index
-/// (`nChainIndex`) and the embedded parent header hash (used to gate the slot
-/// against the event's own `btc_parent_header_hash`). The production `/block`
-/// read path uses the richer `AuxpowProofDetail` via `decode_auxpow_proof`; this
-/// narrow subset (and its `auxpow_blob_summary` constructor) is gated behind
-/// `test-support` and backs only the fixture-contract test.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuxpowBlobSummary {
-    pub slot_index: u32,
-    pub parent_header_hash: BlockHash,
 }
 
 /// One merkle branch (`CMerkleBranch`) out of a CAuxPow record: the sibling
@@ -116,27 +102,11 @@ pub fn extract_coinbase_tag(coinbase_script: &[u8]) -> Option<String> {
     (!tags.is_empty()).then(|| tags.join(" "))
 }
 
-/// Re-parse a stored CAuxPow-only blob (the `aux_merkle_proof` BYTEA, i.e. the
-/// `auxpow_bytes` region) and return its slot index and embedded parent header
-/// hash. Returns `None` on any parse failure or a negative `nChainIndex` (so a
-/// corrupt index never becomes a huge positive slot). The full
-/// `[child header][CAuxPow]` blob is *not* accepted here: it would mis-parse the
-/// child header as a transaction and error out.
-#[cfg(any(test, feature = "test-support"))]
-pub fn auxpow_blob_summary(aux_merkle_proof: &[u8]) -> Option<AuxpowBlobSummary> {
-    let detail = decode_auxpow_proof(aux_merkle_proof)?;
-    Some(AuxpowBlobSummary {
-        slot_index: detail.slot_index,
-        parent_header_hash: detail.parent_header_hash,
-    })
-}
-
 /// Fully decode a stored CAuxPow-only blob into its two merkle branches plus the
 /// slot index, parent header hash, and redundant `hashBlock`. This is the
-/// production `/block` read path over a stored `aux_merkle_proof`; the
-/// test-only `auxpow_blob_summary` keeps only the slot index and parent header
-/// hash from this same decode. Full-consumption EOF check and negative-index
-/// rejection; the full `[child header][CAuxPow]` blob is not accepted.
+/// production `/block` read path over a stored `aux_merkle_proof`.
+/// Full-consumption EOF check and negative-index rejection; the full
+/// `[child header][CAuxPow]` blob is not accepted.
 pub fn decode_auxpow_proof(aux_merkle_proof: &[u8]) -> Option<AuxpowProofDetail> {
     let mut reader = Reader::new(aux_merkle_proof);
     let auxpow = read_auxpow(&mut reader).ok()?;

@@ -8,8 +8,8 @@
 //! snapshot, source id, and classifier. The [`PoolResolver`] is intentionally
 //! NOT a field here: only the five BTC-coinbase-attributing producers (the
 //! Namecoin family) keep a resolver and use it per height
-//! (`capture::resolve_event_pools`), while RSK attributes by miner-address
-//! identity and holds none. So [`ProducerContext::bootstrap_with`] BORROWS a
+//! (`capture::resolve_event_pools_with_child_payout`), while RSK attributes by
+//! miner-address identity and holds none. So [`ProducerContext::bootstrap_with`] BORROWS a
 //! resolver and the caller decides whether to keep it.
 
 use std::collections::HashMap;
@@ -207,9 +207,8 @@ pub async fn connect_core_required_from_env() -> Result<(Client, ConfiguredParen
     Ok((pg_client, parent_classifier))
 }
 
-/// `PgConfig::from_env` + `connect`, the two-line DB setup the 12 poll/backfill
-/// subcommand arms in `main.rs` previously repeated.
-pub async fn connect_from_env() -> Result<Client> {
+/// `PgConfig::from_env` + `connect`.
+async fn connect_from_env() -> Result<Client> {
     let config = mmm_pg::PgConfig::from_env()?;
     mmm_pg::connect(&config).await
 }
