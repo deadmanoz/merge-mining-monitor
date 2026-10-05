@@ -478,6 +478,39 @@ test("renders version metadata and release notes in the about dialog", async ({ 
   await expect(olderEntry).toBeVisible();
 });
 
+test("scrolls and preserves release section heights when many releases exist", async ({ page }) => {
+  const releases = Array.from({ length: 25 }, (_, i) => ({
+    version: `0.${25 - i}.0`,
+    date: "2026-01-01",
+    items: [`Feature bullet for 0.${25 - i}.0`],
+    item_count: 1,
+    truncated: false,
+  }));
+  await stubApi(page, [], {
+    versionPayload: versionPayload({
+      release_notes: {
+        source: "RELEASE_NOTES.md",
+        release_count: 25,
+        truncated: false,
+        releases,
+      },
+    }),
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "About this monitor" }).click();
+  const dialog = page.getByRole("dialog", { name: "About This Monitor" });
+  await dialog.getByRole("tab", { name: "Release notes" }).click();
+  const notes = dialog.locator("#about-release-notes-body");
+  await expect(notes.getByText("Feature bullet for 0.25.0")).toBeVisible();
+
+  const isScrollable = await notes.evaluate((el) => el.scrollHeight > el.clientHeight);
+  expect(isScrollable).toBe(true);
+
+  const firstRelBox = await notes.locator(".rel").first().boundingBox();
+  expect(firstRelBox.height).toBeGreaterThan(60);
+});
+
 test("surfaces source registry request failures", async ({ page }) => {
   await stubCommonApi(page);
   await page.route("**/api/v1/sources", async (route) => {
