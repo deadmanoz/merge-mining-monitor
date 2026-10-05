@@ -142,6 +142,7 @@
   min-height: 0;
   overflow-y: auto;
   display: grid;
+  grid-auto-rows: max-content;
   gap: 8px;
   align-content: start;
   padding: 4px 16px 14px;
