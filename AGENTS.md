@@ -73,12 +73,14 @@ concurrent tasks inside each locking test.
 - Treat child height, hash, header, time, and `nBits` as independent optional
   evidence. Never store a scan counter, placeholder hash, parent timestamp, or
   zero in place of unavailable child evidence.
-- Complete manifest-backed imports replace normal Research provenance for each
-  chain, regardless of lifecycle. Historical and partial sources also remove
+- Complete manifest-backed imports replace normal Research provenance for
+  Live, Historical and Partial chains. Historical and partial sources also remove
   omitted events; Live sources retain those events, proofs and attribution.
   Snapshot prior stale attestations before retiring claims, then queue changed
   attestation gates before committing, including omitted Live witnesses.
   Preserve independent operator and error-observation provenance.
+  Surveyed sources publish zero rows; reject unexpected publication-owned events
+  rather than treating a lifecycle change as an automatic evidence cleanup.
   Import changed error witnesses before
   ordinary snapshot cleanup to preserve events moving out of stale inventories.
   Cleanup rejects removal of catalogued witnesses without error provenance;

@@ -235,10 +235,12 @@ The shared source registry controls reconciliation:
   proof or attribution. A complete publication still replaces its prior Research
   claims, so an old accepting source label cannot survive a withdrawn verdict.
 - `Surveyed` sources must publish zero rows. Doichain completes preflight and
-  performs no database writes.
+  performs no database writes. `import-all` rejects unexpected publication-owned
+  events for a surveyed chain; changing a chain to this lifecycle is not an
+  automatic evidence cleanup.
 
 Each complete manifest-backed artifact retires normal Research provenance from
-superseded publication commits for its chain, independent of source lifecycle.
+superseded publication commits for Live, Historical and Partial chains.
 It snapshots prior stale attestations before clearing those claims and queues
 changed attestation gates before commit, including retained Live observations
 absent from the replacement. The comparison uses fixed set-based SQL per chain
