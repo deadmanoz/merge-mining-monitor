@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-07
+
 - Update source profiles to describe the current Research publication and authenticated Xaya heights.
 
 - Queue changed publication attestation gates without reconciling every unchanged imported parent.
