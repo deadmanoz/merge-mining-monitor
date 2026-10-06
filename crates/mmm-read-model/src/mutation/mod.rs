@@ -30,7 +30,9 @@ use mmm_store::EventWriteOutcome;
 mod historical_queue;
 use historical_queue::enqueue_historical_parent;
 pub use historical_queue::{
-    drain_historical_reconcile_queue, drain_historical_reconcile_queue_with_nbits_table,
+    clear_authoritative_historical_provenance_in_transaction, drain_historical_reconcile_queue,
+    drain_historical_reconcile_queue_with_nbits_table,
+    enqueue_changed_historical_attestations_in_transaction,
 };
 #[cfg(feature = "db-integration")]
 pub use historical_queue::{
@@ -364,7 +366,8 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
                AND NOT EXISTS ( \
                     SELECT 1 FROM historical_event_provenance error_provenance \
                     WHERE error_provenance.event_id = e.id \
-                      AND error_provenance.artifact_scope = 'error-block-observations' \
+                      AND (error_provenance.artifact_scope = 'error-block-observations' \
+                           OR error_provenance.publication_ref = 'operator-csv') \
                ) \
                AND NOT EXISTS ( \
                     SELECT 1 FROM historical_event_provenance p \
@@ -402,7 +405,8 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
                AND NOT EXISTS ( \
                     SELECT 1 FROM historical_event_provenance error_provenance \
                     WHERE error_provenance.event_id = e.id \
-                      AND error_provenance.artifact_scope = 'error-block-observations' \
+                      AND (error_provenance.artifact_scope = 'error-block-observations' \
+                           OR error_provenance.publication_ref = 'operator-csv') \
                ) \
                AND NOT EXISTS ( \
                     SELECT 1 FROM historical_event_provenance p \
@@ -418,29 +422,6 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
         enqueue_historical_parent(txn, &hash).await?;
     }
     Ok(removed)
-}
-
-/// Replace the manifest-backed provenance view for one complete authoritative
-/// snapshot.
-///
-/// Every prior pinned publication for the chain is superseded; additive
-/// `operator-csv` provenance remains independent. The delete and all
-/// replacement provenance rows share the caller's chain transaction, so a
-/// failed import restores the previous snapshot intact.
-pub async fn clear_authoritative_historical_provenance_in_transaction(
-    txn: &Transaction<'_>,
-    chain: &str,
-) -> Result<()> {
-    txn.execute(
-        "DELETE FROM historical_event_provenance \
-         WHERE chain = $1 \
-           AND publication_ref <> 'operator-csv' \
-           AND artifact_scope <> 'error-block-observations'",
-        &[&chain],
-    )
-    .await
-    .context("clear prior authoritative historical provenance snapshot")?;
-    Ok(())
 }
 
 /// Recompute source-health state after all durable historical work has drained.

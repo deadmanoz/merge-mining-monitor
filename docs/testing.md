@@ -85,9 +85,10 @@ On 2026-09-22, the local scripted transport measured 150 requests in 52.172
 seconds and 180 requests in 62.537 seconds respectively, with no retries.
 Each profile recorded ten expected Core not-found responses. This measures
 classification with a 340 ms response delay, not a complete database import or
-real Core block-download throughput. A changed 49-parent aggregate can classify
-all 49 parents again: its conservative no-retry bound is 882 requests, about
-300 seconds of round-trip latency, before database and other import work.
+real Core block-download throughput. The current error aggregate contains 121
+witnesses for 53 parents. A changed aggregate can classify all 53 parents again:
+its conservative no-retry bound is 954 requests, about 324 seconds of round-trip
+latency, before database and other import work.
 
 `terracoin_round_trips_are_pinned_at_the_transport_boundary` (the
 `db_integration` `auxpow_family` module) drives the Terracoin capture path

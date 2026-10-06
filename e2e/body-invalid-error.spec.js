@@ -3,6 +3,7 @@ const { blockPayload, makeNode, stubApi, treeEnvelope } = require("./support/api
 
 const HASH = "bd".repeat(32);
 const cases = [
+  ["consensus_invalid_parent", "Invalid predecessor", "authenticated predecessor path"],
   ["bad-blk-sigops", "Too many sigops", "signature-operation cost"],
   ["block-script-verify-flag-failed", "Script verification failed", "redeem scripts"],
   ["bad-cb-amount", "Coinbase overpayment", "subsidy plus its transaction fees"],
@@ -10,7 +11,7 @@ const cases = [
 ];
 
 for (const [reason, label, explanation] of cases) {
-  test(`body-invalid ${reason} is an error block in the drawer and tree`, async ({ page }) => {
+  test(`catalogued ${reason} is an error block in the drawer and tree`, async ({ page }) => {
     const node = makeNode(HASH, 700000, null, "error_block", { id: 1, prev_id: null });
     await stubApi(page, [], {
       treePayload: (params) => treeEnvelope(params, { nodes: [node] }),

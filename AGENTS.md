@@ -73,16 +73,23 @@ concurrent tasks inside each locking test.
 - Treat child height, hash, header, time, and `nBits` as independent optional
   evidence. Never store a scan counter, placeholder hash, parent timestamp, or
   zero in place of unavailable child evidence.
-- Historical and partial source imports are authoritative snapshots. Live
-  source publication imports are additive. Import changed error witnesses before
+- Complete manifest-backed imports replace normal Research provenance for
+  Live, Historical and Partial chains. Historical and partial sources also remove
+  omitted events; Live sources retain those events, proofs and attribution.
+  Snapshot prior stale attestations before retiring claims, then queue changed
+  attestation gates before committing, including omitted Live witnesses.
+  Preserve independent operator and error-observation provenance.
+  Surveyed sources publish zero rows; reject unexpected publication-owned events
+  rather than treating a lifecycle change as an automatic evidence cleanup.
+  Import changed error witnesses before
   ordinary snapshot cleanup to preserve events moving out of stale inventories.
   Cleanup rejects removal of catalogued witnesses without error provenance;
   complete `import-all` before retrying a blocked single-chain import.
   Keep this lifecycle distinction in
   the shared source registry, not in per-chain schema branches.
-- The current Research pin is generated from committed revision `e6dc40a` and
-  covers 29 event artifacts plus the stale-descendant and error-observation
-  aggregates, 31 artifacts and 1,286,512 rows in total. Refresh both pins
+- The generated historical manifest owns the selected Research revision and
+  artifact inventory, including the stale-descendant and error-observation
+  aggregates. Refresh both pins
   (manifest and error catalogue) with
   `just gen-research-publication-pins`; a refreshed pin documents import
   readiness, not a completed database import or deploy.
