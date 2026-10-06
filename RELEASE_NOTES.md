@@ -1,5 +1,17 @@
 # Release Notes
 
+## [0.9.2] - 2026-10-07
+
+- Use the more complete Huntercoin and Xaya evidence recovered from Daniel
+  Kraft's native blockchain dumps. Xaya observations use authenticated native
+  block heights.
+- Refresh historical Research claims while preserving independent live
+  observations and separately imported operator evidence. Matching imports
+  skip records that are already current.
+- Update the error catalogue to 53 Bitcoin parents and 121 child-chain
+  observations, and explain errors inherited from an invalid predecessor.
+- Keep the About dialog's release-note rows readable when the list scrolls.
+
 ## [0.9.1] - 2026-09-29
 
 - Merge-mined parents from other SHA-256 chains, mostly Bitcoin Cash, are no

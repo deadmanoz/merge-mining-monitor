@@ -101,13 +101,25 @@ Example:
 ```json
 {
   "schema_version": "v1",
-  "generated_at": 1790669692,
-  "version": "0.9.1",
+  "generated_at": 1791327433,
+  "version": "0.9.2",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 28,
+    "release_count": 29,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.9.2",
+        "date": "2026-10-07",
+        "items": [
+          "Use the more complete Huntercoin and Xaya evidence recovered from Daniel Kraft's native blockchain dumps. Xaya observations use authenticated native block heights.",
+          "Refresh historical Research claims while preserving independent live observations and separately imported operator evidence. Matching imports skip records that are already current.",
+          "Update the error catalogue to 53 Bitcoin parents and 121 child-chain observations, and explain errors inherited from an invalid predecessor.",
+          "Keep the About dialog's release-note rows readable when the list scrolls."
+        ],
+        "item_count": 4,
+        "truncated": false
+      },
       {
         "version": "0.9.1",
         "date": "2026-09-29",
