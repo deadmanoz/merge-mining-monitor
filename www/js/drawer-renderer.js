@@ -115,6 +115,14 @@ function auxpowHelpFor(topic) {
 // `renderParentBlock`) rather than opening an empty or mislabelled dialog.
 // Header-context and reviewed body-rule failures share this map and dialog.
 const CONSENSUS_RULE_HELP = {
+  consensus_invalid_parent: {
+    name: "Invalid predecessor",
+    meta: "Extends a Bitcoin consensus-invalid branch",
+    body: [
+      "This block extends a predecessor that the reviewed Research catalogue establishes as consensus-invalid. The authenticated predecessor path cannot form a valid Bitcoin branch, even when this block carries sufficient proof of work.",
+      "The rejection follows from that ancestry. It does not establish a separate transaction or script failure in this block's own body.",
+    ],
+  },
   "bad-blk-sigops": {
     name: "Too many sigops (bad-blk-sigops)",
     meta: "Signature-operation cost exceeds Bitcoin's 80,000 limit",

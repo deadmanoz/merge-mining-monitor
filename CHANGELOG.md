@@ -6,6 +6,18 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Update source profiles to describe the current Research publication and authenticated Xaya heights.
+
+- Queue changed publication attestation gates without reconciling every unchanged imported parent.
+
+- Replace superseded Research claims for Live chains without removing their
+  observations, proofs or attribution, and reconcile parents whose claims retire.
+- Preserve separately imported operator evidence during authoritative historical
+  publication cleanup, and skip matching reruns without replaying that evidence.
+- Refresh the historical manifest and error catalogue from the same Kraft-based
+  Research publication, including the expanded Huntercoin/Xaya evidence.
+- Explain error blocks whose authenticated ancestry extends an invalid predecessor.
+
 ## [0.9.1] - 2026-09-29
 
 - Refuse AuxPoW parents that are not Bitcoin headers. Merge mining lets a

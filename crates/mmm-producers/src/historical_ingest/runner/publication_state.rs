@@ -71,7 +71,7 @@ pub(super) async fn plan_publication_import(
         .map(|(index, config)| (config.chain.as_str(), index))
         .collect::<BTreeMap<_, _>>();
     let (mut expected, mut expected_errors) = build_expected_rows(artifacts, error_observations)?;
-    match_normal_state(client, configs, &chain_indices, &mut expected, &mut plan).await?;
+    match_normal_state(client, &chain_indices, &mut expected, &mut plan).await?;
     let error_event_ids = match_error_state(client, &mut expected_errors).await?;
 
     for row in expected.values() {
@@ -155,7 +155,6 @@ fn build_expected_rows<'a>(
 
 async fn match_normal_state(
     client: &Client,
-    configs: &[HistoricalImportConfig],
     chain_indices: &BTreeMap<&str, usize>,
     expected: &mut ExpectedRows<'_>,
     plan: &mut ImportPlan,
@@ -180,8 +179,10 @@ async fn match_normal_state(
         if let Some(expected) = expected.get_mut(&key) {
             if expected.state.matches(&stored) {
                 expected.matched = true;
+            } else {
+                plan.work_chain[artifact_index] = true;
             }
-        } else if exact_lifecycle(configs[artifact_index].chain.as_str())? {
+        } else {
             plan.work_chain[artifact_index] = true;
         }
     }
@@ -334,15 +335,6 @@ fn cover_partial(
         parent_hash,
     };
     expected[index].contains(&identity) && seen[index].insert(identity)
-}
-
-fn exact_lifecycle(chain: &str) -> Result<bool> {
-    Ok(matches!(
-        historical_chain_spec(chain)
-            .with_context(|| format!("publication chain {chain:?} is absent from source registry"))?
-            .lifecycle,
-        SourceLifecycle::Historical | SourceLifecycle::Partial | SourceLifecycle::Surveyed
-    ))
 }
 
 fn array32(value: Vec<u8>, field: &str) -> Result<[u8; 32]> {

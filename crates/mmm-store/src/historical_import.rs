@@ -178,9 +178,9 @@ impl HistoricalBaseEventRow {
     }
 }
 
-/// Stream every event owned by authoritative historical/partial sources.
-/// The caller removes the bounded set of retained error-observation event IDs
-/// before comparing this authoritative base set.
+/// Stream publication-owned events from authoritative historical/partial sources.
+/// Independent operator imports are excluded here. The caller removes retained
+/// error-observation event IDs before comparing this authoritative base set.
 pub async fn stream_authoritative_historical_base_events(
     client: &Client,
     source_ids: &[i64],
@@ -193,6 +193,10 @@ pub async fn stream_authoritative_historical_base_events(
              FROM merge_mining_event e \
              JOIN source s ON s.id = e.source_id \
              WHERE e.source_id = ANY($1) \
+               AND NOT EXISTS ( \
+                   SELECT 1 FROM historical_event_provenance p \
+                   WHERE p.event_id = e.id AND p.publication_ref = 'operator-csv' \
+               ) \
              ORDER BY s.chain, e.id",
             params,
         )

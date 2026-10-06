@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result, bail};
-use tokio_postgres::{Client, GenericClient};
+use tokio_postgres::{Client, GenericClient, Transaction};
 use tracing::info;
 
 use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
@@ -19,6 +19,104 @@ use crate::{
 };
 
 const CANONICAL_BULK_RECONCILE_BATCH_SIZE: i64 = 10_000;
+
+/// Replace normal Research provenance inside a complete chain transaction.
+/// Independent operator/error claims and Live base observations remain intact.
+/// Save prior stale attestations before deletion; after replacement rows are
+/// written, enqueue only parents whose attestation gate actually changed.
+pub async fn clear_authoritative_historical_provenance_in_transaction(
+    txn: &Transaction<'_>,
+    chain: &str,
+) -> Result<()> {
+    txn.batch_execute(
+        "CREATE TEMP TABLE IF NOT EXISTS historical_prior_stale_attestations ( \
+             chain text, btc_parent_header_hash bytea, PRIMARY KEY (chain, btc_parent_header_hash) \
+         ) ON COMMIT DROP",
+    )
+    .await
+    .context("create prior historical attestation snapshot")?;
+    // Lock old events before ordinary writes and queue rows, preserving the
+    // writer's event -> queue order. No parent advisory locks span this import.
+    txn.execute(
+        "WITH locked_events AS MATERIALIZED ( \
+             SELECT e.id, e.btc_parent_header_hash, e.revoked_at \
+             FROM merge_mining_event e \
+             WHERE EXISTS ( \
+                 SELECT 1 FROM historical_event_provenance p \
+                 WHERE p.event_id = e.id AND p.chain = $1 \
+                   AND p.publication_ref <> 'operator-csv' \
+                   AND p.artifact_scope <> 'error-block-observations' \
+             ) \
+             ORDER BY e.id FOR UPDATE OF e \
+         ) \
+         INSERT INTO historical_prior_stale_attestations \
+         SELECT DISTINCT $1, e.btc_parent_header_hash FROM locked_events e \
+         JOIN historical_event_provenance p ON p.event_id = e.id \
+         WHERE e.revoked_at IS NULL AND p.chain = $1 \
+           AND p.publication_ref <> 'operator-csv' \
+           AND p.artifact_scope <> 'error-block-observations' \
+           AND p.relevance_reason IN ('valid_direct_stale', 'valid_stale_descendant') \
+         ON CONFLICT DO NOTHING",
+        &[&chain],
+    )
+    .await
+    .context("save prior Research stale attestations")?;
+    txn.execute(
+        "DELETE FROM historical_event_provenance \
+         WHERE chain = $1 \
+           AND publication_ref <> 'operator-csv' \
+           AND artifact_scope <> 'error-block-observations'",
+        &[&chain],
+    )
+    .await
+    .context("clear prior authoritative historical provenance snapshot")?;
+    Ok(())
+}
+
+/// Queue only changed stale-attestation gates after the complete replacement.
+/// Base evidence changes and event removals have their own durable queue paths.
+/// This set-based comparison adds no per-row SQL or RPC calls. It shares the
+/// chain transaction with the earlier snapshot, delete and replacement writes.
+pub async fn enqueue_changed_historical_attestations_in_transaction(
+    txn: &Transaction<'_>,
+    chain: &str,
+) -> Result<()> {
+    txn.execute(
+        "WITH current_attestations AS MATERIALIZED ( \
+             SELECT DISTINCT e.btc_parent_header_hash \
+             FROM historical_event_provenance p \
+             JOIN merge_mining_event e ON e.id = p.event_id \
+             WHERE e.revoked_at IS NULL AND p.chain = $1 \
+               AND p.publication_ref <> 'operator-csv' \
+               AND p.artifact_scope <> 'error-block-observations' \
+               AND p.relevance_reason IN ('valid_direct_stale', 'valid_stale_descendant') \
+         ), changed AS MATERIALIZED ( \
+             (SELECT btc_parent_header_hash FROM historical_prior_stale_attestations WHERE chain = $1 \
+              EXCEPT SELECT btc_parent_header_hash FROM current_attestations) \
+             UNION \
+             (SELECT btc_parent_header_hash FROM current_attestations \
+              EXCEPT SELECT btc_parent_header_hash FROM historical_prior_stale_attestations WHERE chain = $1) \
+         ), locked_events AS MATERIALIZED ( \
+             SELECT e.id, e.btc_parent_header_hash FROM merge_mining_event e \
+             JOIN changed c USING (btc_parent_header_hash) \
+             ORDER BY e.id FOR UPDATE OF e \
+         ) \
+         INSERT INTO historical_reconcile_queue (btc_parent_header_hash) \
+         SELECT DISTINCT btc_parent_header_hash FROM locked_events \
+         ORDER BY btc_parent_header_hash \
+         ON CONFLICT (btc_parent_header_hash) DO UPDATE SET \
+             primary_pending = TRUE, \
+             generation = historical_reconcile_queue.generation + 1, \
+             updated_at = now()",
+        &[&chain],
+    )
+    .await
+    .context("enqueue changed Research stale attestations")?;
+    txn.batch_execute("DROP TABLE historical_prior_stale_attestations")
+        .await
+        .context("release prior historical attestation snapshot")?;
+    Ok(())
+}
 
 /// Drain durable historical parent work to completion.
 ///

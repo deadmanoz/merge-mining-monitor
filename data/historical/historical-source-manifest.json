@@ -1,5 +1,5 @@
 {
-  "aggregate_rows": 21,
+  "aggregate_rows": 23,
   "artifacts": [
     {
       "chain": "argentum",
@@ -165,7 +165,7 @@
       "chain": "error-block-observations",
       "counts": {
         "canonical": 0,
-        "error_block": 107,
+        "error_block": 121,
         "stale": 0,
         "stale_descendant": 0,
         "strict_btc_orphan": 0,
@@ -174,9 +174,9 @@
       "csv_path": "results/monitor-evidence/error-block-observations_monitor_evidence.csv",
       "parent_only_rows": 0,
       "role": "error_observation",
-      "row_count": 107,
-      "sha256": "a435860632f69ec3149de8944899e863cdc607cf84fb2769ad4ce93777a13d6e",
-      "size_bytes": 145994,
+      "row_count": 121,
+      "sha256": "c7bb5dda94c8a07cbbf8799d44550b6e3bfc32b61e04faaea57ef89712835eb1",
+      "size_bytes": 163094,
       "source_chain_counts": {
         "devcoin": 19,
         "elastos": 5,
@@ -184,9 +184,10 @@
         "fractal": 1,
         "groupcoin": 1,
         "hathor": 1,
-        "i0coin": 3,
-        "ixcoin": 16,
-        "namecoin": 45,
+        "huntercoin": 3,
+        "i0coin": 6,
+        "ixcoin": 20,
+        "namecoin": 49,
         "rsk": 7,
         "syscoin": 5,
         "unobtanium": 1,
@@ -260,8 +261,8 @@
     {
       "chain": "huntercoin",
       "counts": {
-        "canonical": 857,
-        "stale": 13,
+        "canonical": 10627,
+        "stale": 78,
         "stale_descendant": 0,
         "strict_btc_orphan": 0,
         "weak_btc_orphan": 0
@@ -269,9 +270,9 @@
       "csv_path": "results/monitor-evidence/huntercoin_monitor_evidence.csv",
       "parent_only_rows": 0,
       "role": "event",
-      "row_count": 870,
-      "sha256": "433b1b4ba9eff74e6eac7025126aa02fb95e0b2944b9faf5439ad59a8720ab75",
-      "size_bytes": 1713586
+      "row_count": 10705,
+      "sha256": "26479e9e99d3027e5242e124f999ae076eb353c015feda8ea96c910fa3639cb7",
+      "size_bytes": 11586372
     },
     {
       "chain": "i0coin",
@@ -279,15 +280,15 @@
         "canonical": 27661,
         "stale": 191,
         "stale_descendant": 0,
-        "strict_btc_orphan": 2,
+        "strict_btc_orphan": 0,
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/i0coin_monitor_evidence.csv",
       "parent_only_rows": 0,
       "role": "event",
-      "row_count": 27854,
-      "sha256": "a0c885ee6aa0b5e271ed63ea6ca58953865a172e353f8182a854c24432fbcf74",
-      "size_bytes": 43612303
+      "row_count": 27852,
+      "sha256": "a172e1fb1a7fd69ab1216bdefa67a9a21f87e45c81b7f7359674e5030c3e6605",
+      "size_bytes": 43609563
     },
     {
       "chain": "ixcoin",
@@ -295,15 +296,15 @@
         "canonical": 46808,
         "stale": 464,
         "stale_descendant": 3,
-        "strict_btc_orphan": 3,
+        "strict_btc_orphan": 0,
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/ixcoin_monitor_evidence.csv",
       "parent_only_rows": 0,
       "role": "event",
-      "row_count": 47278,
-      "sha256": "9264ee7bafb5dd34992d57ae0502c87c7fcd80230094690974b0ddc5613fdd05",
-      "size_bytes": 60968240
+      "row_count": 47275,
+      "sha256": "9058b8ca9d73f650e646fa3ced1a652f79f77d6685596fa7005b2edde5616a38",
+      "size_bytes": 60965252
     },
     {
       "chain": "lyncoin",
@@ -342,16 +343,16 @@
       "counts": {
         "canonical": 456660,
         "stale": 1641,
-        "stale_descendant": 20,
-        "strict_btc_orphan": 11,
-        "weak_btc_orphan": 10
+        "stale_descendant": 22,
+        "strict_btc_orphan": 8,
+        "weak_btc_orphan": 8
       },
       "csv_path": "results/monitor-evidence/namecoin_monitor_evidence.csv",
       "parent_only_rows": 456660,
       "role": "event",
-      "row_count": 458342,
-      "sha256": "7237f1e594c19dddf47f25b7e1c64a3453eefd7318b4104a0cd1807d5c348102",
-      "size_bytes": 404790114
+      "row_count": 458339,
+      "sha256": "51b006c4f0ea293023defb9d6f03e79469f2bbfc3f5f23f0231be0acf3b114fe",
+      "size_bytes": 404788079
     },
     {
       "chain": "qbit",
@@ -422,16 +423,16 @@
       "counts": {
         "canonical": 0,
         "stale": 0,
-        "stale_descendant": 21,
+        "stale_descendant": 23,
         "strict_btc_orphan": 0,
         "weak_btc_orphan": 0
       },
       "csv_path": "results/monitor-evidence/stale-descendants_monitor_evidence.csv",
       "parent_only_rows": 0,
       "role": "aggregate",
-      "row_count": 21,
-      "sha256": "4cfabcdb3205a1df833504e2fdf547d7d81bb5c834ad2a2908308c42280ab33f",
-      "size_bytes": 21916
+      "row_count": 23,
+      "sha256": "1c155e69ba4161577c9af83691b6b0bd051afaffd58194fcf8372d495303bc9f",
+      "size_bytes": 24283
     },
     {
       "chain": "syscoin",
@@ -500,8 +501,8 @@
     {
       "chain": "xaya",
       "counts": {
-        "canonical": 20801,
-        "stale": 38,
+        "canonical": 23542,
+        "stale": 42,
         "stale_descendant": 0,
         "strict_btc_orphan": 0,
         "weak_btc_orphan": 0
@@ -509,15 +510,15 @@
       "csv_path": "results/monitor-evidence/xaya_monitor_evidence.csv",
       "parent_only_rows": 0,
       "role": "event",
-      "row_count": 20839,
-      "sha256": "487505c674c73110ef2242b8950e847996858186c73e7c4aa2c5c8e1c24af3d4",
-      "size_bytes": 25404286
+      "row_count": 23584,
+      "sha256": "f64fd2867329188d3a04e540278d717d58233607c377c7b88bf0fe9f6a296074",
+      "size_bytes": 29686248
     }
   ],
-  "error_observation_rows": 107,
+  "error_observation_rows": 121,
   "manifest_generator": "scripts/gen-historical-source-manifest.sh",
   "publication_manifest_path": "results/monitor-evidence/monitor-evidence-manifest.json",
-  "publication_manifest_sha256": "ba5a212bb55fb997ac2cd74bd5e5d47b68274e3ba970392259031caa488ddcfb",
+  "publication_manifest_sha256": "efd3261c55914d3c044ecc927465673bf17bdb3e916fc4c46c6b2f5f568935d9",
   "required_columns": [
     "chain",
     "source_kind",
@@ -550,6 +551,6 @@
   "schema_version": 2,
   "scope": "uniform_monitor_evidence_v1",
   "source_repo": "merge-mining-research",
-  "source_repo_commit": "e6dc40a1a2e9da87b95a5415cb0d60dbceb99296",
-  "total_event_rows": 1286384
+  "source_repo_commit": "e5b2750f0503db7b1f7d8fe6c74858ea6957a95a",
+  "total_event_rows": 1298956
 }

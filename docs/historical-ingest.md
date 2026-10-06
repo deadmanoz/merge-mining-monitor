@@ -29,22 +29,28 @@ the committed parent-only counts while still checking the Git publication
 metadata. The explicit release check above omits that flag and rescans the
 materialized payloads.
 
-`import-all` verifies the source revision, manifest, and all 31 artifacts once,
+`import-all` verifies the source revision, manifest, and complete artifact set once,
 before database mutation, then imports the verified readers in chain order.
+
+Authoritative historical snapshots remove events absent from the selected
+publication, while retaining separately imported operator CSV evidence and
+error-observation witnesses. Matching content from an earlier Research pin can
+satisfy an unchanged publication coordinate. These retained events do not force
+another import of a matching snapshot.
 
 ## Publication Contract
 
-The publication contains 1,286,384 event rows across 29 uniform per-chain files:
+The pinned manifest records the current event counts across uniform per-chain files:
 
 ```text
 results/monitor-evidence/<chain>_monitor_evidence.csv
 ```
 
 Doichain participates through the same path with a valid zero-row file. The
-separate 21-row `stale-descendants` file is an aggregate view, not an event
-source, because its contributing chain observations already exist in the
-per-chain files. The complete artifact set also includes 107 authenticated
-error-observation witnesses, for 1,286,512 rows across 31 artifacts.
+separate `stale-descendants` file is an aggregate view, because its contributing
+chain observations already exist in the per-chain files. The complete artifact
+set also includes authenticated error-observation witnesses. The pinned
+manifest records the row counts and checksums for every artifact.
 
 The total includes 456,660 canonical Namecoin rows whose historical source does
 not authenticate a child hash or height. The Monitor manifest pins that
@@ -55,7 +61,7 @@ Fractal's 58,970 canonical rows retain child height and remain importable even
 though they lack an exact child hash. Every non-canonical row still requires a
 child hash or height.
 
-The refreshed I0coin artifact contains 27,854 rows. Its canonical Bitcoin
+The refreshed I0coin artifact contains 27,852 rows. Its canonical Bitcoin
 parents span heights 158,531 through 689,505 and Bitcoin times 1,324,518,895
 through 1,625,316,364; its 191 stale parents span heights 160,948 through
 645,179 and Bitcoin times 1,325,885,242 through 1,598,297,126. The canonical
@@ -77,7 +83,7 @@ source-chain inventory match the committed manifest, so a missing, truncated,
 or cross-chain-substituted aggregate fails before database mutation. Its
 `error-block-observations` scope is reserved to that aggregate;
 ordinary historical artifacts using it are rejected. Preflight also requires
-coverage of all 49 pinned error parents across its witnesses, and checks
+coverage of every pinned error parent across its witnesses, and checks
 retarget observations against the Core-derived target for their stated height.
 
 `data/historical/historical-source-manifest.json` pins each event payload by
@@ -172,9 +178,7 @@ evidence fails the chain transaction.
 An exact identity represents the one child-ledger block exposed under that
 hash, including the parent proof retained by the child node. A later row with
 the same source and child hash but a different Bitcoin parent is contradictory
-source evidence, not a second event, and fails closed. The pinned publication
-contains 494,655 non-null child hashes with no duplicate
-`(chain, child_block_hash)` identities.
+source evidence, not a second event, and fails closed.
 
 `child_block_hash` encodes the exact bytes stored by live capture. For
 SHA256d child headers this is lowercase hex of the raw
@@ -186,7 +190,7 @@ cross-checks, while the stored parent identity is derived from
 `expected_nbits` is the publication validator's expected Bitcoin target for an
 admitted row. When populated, it must equal the `nBits` encoded in
 `btc_header_hex`; disagreement is contradictory evidence and fails closed.
-All 3,951 populated values in the pinned publication satisfy this invariant.
+Preflight checks every populated value in the selected publication.
 
 `historical_event_provenance` retains every imported source row. Its
 `publication_ref` is the pinned research commit for manifest-backed imports and
@@ -226,16 +230,23 @@ The shared source registry controls reconciliation:
   their authoritative snapshot. After a complete successful manifest import,
   source events absent from the pinned publication are deleted, including rows
   created by the retired synthetic importer.
-- `Live` sources are additive. Historical publication rows can fill or refine
-  a matching live event, but absence from the publication never deletes a
-  live-captured event.
+- `Live` base evidence is additive. Publication rows can fill or refine a
+  matching event, but absence from the publication never deletes its observation,
+  proof or attribution. A complete publication still replaces its prior Research
+  claims, so an old accepting source label cannot survive a withdrawn verdict.
 - `Surveyed` sources must publish zero rows. Doichain completes preflight and
   performs no database writes.
 
-Each chain writes its complete base/provenance snapshot, removes obsolete
-authoritative rows, retires manifest-backed provenance from every superseded
-publication commit for that chain, and enqueues affected parents in one
-transaction. Additive `operator-csv` provenance is preserved. A failure before
+Each complete manifest-backed artifact retires normal Research provenance from
+superseded publication commits for its chain, independent of source lifecycle.
+It snapshots prior stale attestations before clearing those claims and queues
+changed attestation gates before commit, including retained Live observations
+absent from the replacement. The comparison uses fixed set-based SQL per chain
+and no per-row RPC. Base evidence changes and event removals retain their
+existing queue paths. Omitted-event deletion remains limited
+to authoritative sources. `operator-csv` and dedicated error-observation
+provenance remain independent. These changes and replacement rows share one
+transaction. A failure before
 that commit rolls back the whole chain, including restoration of the previous
 publication provenance. After commit, the importer first rebuilds proven
 Core-canonical parents in bounded set-based batches. A parent qualifies only
@@ -332,9 +343,15 @@ compares it with stored non-operator provenance from any research pin. A
 matching file skips classification, writes, and authoritative reconciliation.
 The summary reports `skipped_matching_state`.
 
-Historical and partial sources require the exact authoritative base-event set,
-including detection of operator-created extras. Live sources permit additional
-database rows. The current error-observation publication is a required subset
+Extra or contradictory normal Research provenance requires replacement even for
+a Live source, including when a matching current row also exists. A retained pin
+whose entire normalized content matches remains a no-op; importing a new commit
+alone does not require rewriting equivalent evidence.
+
+Historical and partial sources require the exact publication-owned base-event
+set and remove unowned extras. Independently imported operator-csv events remain
+retained. Live sources permit additional database rows. The current
+error-observation publication is a required subset
 of retained deduplicated history, and surveyed zero-row sources are checked
 explicitly. Database-only enrichment is accepted only where the publication
 omitted the corresponding field. If every artifact matches, the command checks

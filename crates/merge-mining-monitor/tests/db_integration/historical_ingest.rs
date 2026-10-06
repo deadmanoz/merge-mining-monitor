@@ -1381,6 +1381,15 @@ fn write_manifest_fixture_rows_with_counts(
     counts: serde_json::Value,
     parent_only_rows: u64,
 ) -> Result<ManifestFixture> {
+    write_manifest_fixture_rows_for_chain("devcoin", rows, counts, parent_only_rows)
+}
+
+fn write_manifest_fixture_rows_for_chain(
+    chain: &str,
+    rows: &[String],
+    counts: serde_json::Value,
+    parent_only_rows: u64,
+) -> Result<ManifestFixture> {
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .context("clock before epoch")?
@@ -1392,7 +1401,7 @@ fn write_manifest_fixture_rows_with_counts(
     let publication_dir = root.join("results/monitor-evidence");
     std::fs::create_dir_all(&publication_dir)?;
 
-    let artifact_path = publication_dir.join("devcoin_monitor_evidence.csv");
+    let artifact_path = publication_dir.join(format!("{chain}_monitor_evidence.csv"));
     std::fs::write(
         &artifact_path,
         format!("{NORMALIZED_HEADER}{}", rows.concat()),
@@ -1414,27 +1423,27 @@ fn write_manifest_fixture_rows_with_counts(
     let artifacts = manifest["artifacts"]
         .as_array_mut()
         .context("manifest artifacts array")?;
-    let devcoin_index = artifacts
+    let chain_index = artifacts
         .iter()
-        .position(|artifact| artifact["chain"] == "devcoin" && artifact["role"] == "event")
-        .context("devcoin event artifact")?;
-    let prior_devcoin_rows = artifacts[devcoin_index]["row_count"]
+        .position(|artifact| artifact["chain"] == chain && artifact["role"] == "event")
+        .context("fixture chain event artifact")?;
+    let prior_chain_rows = artifacts[chain_index]["row_count"]
         .as_u64()
-        .context("devcoin row_count")?;
-    artifacts[devcoin_index]["row_count"] = serde_json::json!(row_count);
-    artifacts[devcoin_index]["parent_only_rows"] = serde_json::json!(parent_only_rows);
-    artifacts[devcoin_index]["size_bytes"] = serde_json::json!(artifact_bytes.len());
-    artifacts[devcoin_index]["sha256"] =
+        .context("fixture chain row_count")?;
+    artifacts[chain_index]["row_count"] = serde_json::json!(row_count);
+    artifacts[chain_index]["parent_only_rows"] = serde_json::json!(parent_only_rows);
+    artifacts[chain_index]["size_bytes"] = serde_json::json!(artifact_bytes.len());
+    artifacts[chain_index]["sha256"] =
         serde_json::json!(sha256::Hash::hash(&artifact_bytes).to_string());
-    artifacts[devcoin_index]["counts"] = counts;
+    artifacts[chain_index]["counts"] = counts;
 
     let donor = artifacts
         .iter_mut()
         .find(|artifact| artifact["chain"] == "elastos" && artifact["role"] == "event")
         .context("elastos event artifact")?;
-    let transferred_rows = prior_devcoin_rows
+    let transferred_rows = prior_chain_rows
         .checked_sub(row_count)
-        .context("fixture cannot exceed committed devcoin row count")?;
+        .context("fixture cannot exceed committed chain row count")?;
     donor["row_count"] = serde_json::json!(
         donor["row_count"].as_u64().context("elastos row_count")? + transferred_rows
     );

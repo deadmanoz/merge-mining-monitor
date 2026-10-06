@@ -22,7 +22,8 @@ use mmm_capture::nbits_table::NbitsTable;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::{
     clear_authoritative_historical_provenance_in_transaction,
-    drain_historical_reconcile_queue_with_nbits_table, enqueue_historical_parent_reconcile,
+    drain_historical_reconcile_queue_with_nbits_table,
+    enqueue_changed_historical_attestations_in_transaction, enqueue_historical_parent_reconcile,
     invalidate_source_health_in_transaction, rebuild_historical_source_health,
     reconcile_authoritative_historical_source_in_transaction, write_historical_base_in_transaction,
 };
@@ -347,7 +348,7 @@ pub(super) async fn run_historical_import_with_cache(
         .await
         .with_context(|| format!("begin {} historical chain transaction", spec.chain))?;
     let pool_ids_by_slug = upsert_pool_snapshot(&txn, resolver.snapshot()).await?;
-    if config.is_authoritative_snapshot(spec) {
+    if config.is_complete_publication() {
         clear_authoritative_historical_provenance_in_transaction(&txn, spec.chain).await?;
     }
     let (mut summary, parent_counts) = import_rows_in_transaction(
@@ -388,6 +389,9 @@ async fn commit_chain_import_transaction(
     source_id: i64,
     summary: &mut HistoricalImportSummary,
 ) -> Result<()> {
+    if config.is_complete_publication() {
+        enqueue_changed_historical_attestations_in_transaction(&txn, spec.chain).await?;
+    }
     if config.is_authoritative_snapshot(spec) {
         summary.removed = reconcile_authoritative_historical_source_in_transaction(
             &txn,
@@ -564,7 +568,9 @@ async fn run_preflighted_historical_import_configs(
                 .all(|(config, artifact)| config.chain == artifact.chain),
         "preflighted artifact order does not match import configs"
     );
-    let publication_backed = configs.iter().all(|config| config.manifest_path.is_some());
+    let publication_backed = configs
+        .iter()
+        .all(|config| config.is_complete_publication());
     let plan = if publication_backed {
         Some(
             plan_publication_import(

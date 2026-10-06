@@ -1,7 +1,207 @@
 use super::*;
 
 #[tokio::test]
-async fn import_all_state_check_skips_matches_and_reconciles_operator_extras() -> Result<()> {
+async fn complete_live_publication_retires_claims_without_removing_observations() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let retained = header_meeting_bits(0x207f_ffff, 1_700_000_100, 100);
+        let omitted = btc_400000_header()?;
+        let (initial, revised) = live_publication_refresh_fixtures(&retained, &omitted)?;
+        let result = async {
+            let mut initial_config = devcoin_publication_config(&initial);
+            initial_config.chain = "namecoin".into();
+            run_historical_import_configs_for_test(&mut client,
+                &ConfiguredParentClassifier::Fake(FakeParentClassifier::new_sequence([
+                    canonical_verdict(&retained, 700_100),
+                    crate::support::scenario::orphan_candidate_verdict(&omitted),
+                ])), vec![initial_config]).await?;
+            assert_eq!(block_kind_and_orphan_class(&client, &omitted).await?,
+                ("unknown".into(), Some("excluded".into())));
+            client.execute("UPDATE historical_event_provenance SET publication_ref = \
+                'a302831000000000000000000000000000000000' WHERE chain = 'namecoin'", &[]).await?;
+            add_independent_live_evidence(&mut client, &retained, &revised.artifact_path).await?;
+            assert_eq!(client.query_one("SELECT count(*) FROM attestation_proof WHERE source_id = 1", &[])
+                .await?.get::<_, i64>(0), 2);
+            let base_before = live_observation_snapshot(&client).await?;
+            let protected_before = independent_provenance_snapshot(&client).await?;
+            let mut revised_config = devcoin_publication_config(&revised);
+            revised_config.chain = "namecoin".into();
+            // Observe actual durable queue writes at the import boundary. A
+            // provenance refresh must not enqueue unchanged canonical parents.
+            client.batch_execute("CREATE TABLE publication_reconcile_enqueues (hash bytea); \
+                CREATE FUNCTION audit_publication_enqueue() RETURNS trigger LANGUAGE plpgsql AS $$ \
+                BEGIN INSERT INTO publication_reconcile_enqueues VALUES (NEW.btc_parent_header_hash); \
+                RETURN NEW; END $$; \
+                CREATE TRIGGER publication_enqueue_audit AFTER INSERT OR UPDATE \
+                ON historical_reconcile_queue FOR EACH ROW EXECUTE FUNCTION audit_publication_enqueue()")
+                .await?;
+            let refreshed = run_historical_import_configs_for_test(&mut client,
+                &absent_classifier(&omitted), vec![revised_config.clone()]).await?;
+            assert_eq!(refreshed.skipped_matching_state, 0, "an omitted Research claim requires replacement");
+            assert_eq!(refreshed.chains[0].1.removed, 0);
+            let enqueued = client.query("SELECT DISTINCT hash FROM publication_reconcile_enqueues", &[]).await?
+                .into_iter().map(|row| row.get::<_,Vec<u8>>(0)).collect::<Vec<_>>();
+            assert_eq!(enqueued, vec![omitted.block_hash().to_byte_array().to_vec()],
+                "only the retired stale attestation needs provenance reconciliation");
+            assert_eq!(live_observation_snapshot(&client).await?, base_before);
+            assert_eq!(independent_provenance_snapshot(&client).await?, protected_before);
+            assert_eq!(client.query_one("SELECT count(*) FROM historical_event_provenance \
+                WHERE publication_ref = 'a302831000000000000000000000000000000000'", &[]).await?.get::<_,i64>(0), 0);
+            assert_eq!(block_kind_and_orphan_class(&client, &omitted).await?, ("unknown".into(), Some("strict_btc_orphan".into())),
+                "the withdrawn claim must stop excluding the retained unknown observation");
+            // A matching current row must not hide contradictory prior-pin provenance.
+            client.execute("INSERT INTO historical_event_provenance (event_id, publication_ref, chain, \
+                source_kind, source_path, source_row_number, artifact_scope, provenance, classification, \
+                btc_height, validation_status, btc_stale_relevance, relevance_reason) \
+                SELECT event_id, 'c302831000000000000000000000000000000000', chain, source_kind, \
+                source_path, source_row_number, artifact_scope, 'superseded-source-claim', classification, \
+                btc_height, validation_status, btc_stale_relevance, relevance_reason \
+                FROM historical_event_provenance WHERE publication_ref = $1 AND chain = 'namecoin'",
+                &[&pinned_publication_ref()]).await?;
+            let repaired = run_historical_import_configs_for_test(&mut client,
+                &absent_classifier(&omitted), vec![revised_config.clone()]).await?;
+            assert_eq!(repaired.skipped_matching_state, 0);
+            assert_eq!(independent_provenance_snapshot(&client).await?, protected_before);
+            client.execute("UPDATE historical_event_provenance SET publication_ref = \
+                'd302831000000000000000000000000000000000' WHERE publication_ref = $1 AND chain = 'namecoin'",
+                &[&pinned_publication_ref()]).await?;
+            let repeated = run_historical_import_configs_for_test(&mut client,
+                &ConfiguredParentClassifier::Disabled, vec![revised_config]).await?;
+            assert_eq!(repeated.skipped_matching_state, 1);
+            assert!(repeated.chains.is_empty());
+            assert_eq!(live_observation_snapshot(&client).await?, base_before);
+            client.execute("TRUNCATE publication_reconcile_enqueues", &[]).await?;
+            let mut reinstated = devcoin_publication_config(&initial);
+            reinstated.chain = "namecoin".into();
+            run_historical_import_configs_for_test(&mut client,
+                &absent_classifier(&omitted), vec![reinstated]).await?;
+            assert_eq!(block_kind_and_orphan_class(&client, &omitted).await?,
+                ("unknown".into(), Some("excluded".into())),
+                "a reinstated stale claim must update the retained observation's attestation gate");
+            assert_eq!(client.query_one("SELECT count(*) FROM publication_reconcile_enqueues \
+                WHERE hash=$1", &[&retained.block_hash().to_byte_array().to_vec()]).await?.get::<_,i64>(0), 0);
+            assert!(client.query_one("SELECT count(*) FROM publication_reconcile_enqueues \
+                WHERE hash=$1", &[&omitted.block_hash().to_byte_array().to_vec()]).await?.get::<_,i64>(0) > 0);
+            Ok::<_, anyhow::Error>(())
+        }.await;
+        for fixture in [&initial, &revised] {
+            std::fs::remove_dir_all(&fixture.root)?;
+        }
+        result
+    })
+}
+
+fn live_publication_refresh_fixtures(
+    retained: &Header,
+    omitted: &Header,
+) -> Result<(ManifestFixture, ManifestFixture)> {
+    let script = btc_400000_coinbase_script()?;
+    let retained_row = normalized_csv_line(
+        retained,
+        &NormalizedCsvRow {
+            chain: "namecoin",
+            source_row_number: 1,
+            classification: "canonical",
+            relevance: "",
+            relevance_reason: "canonical_parent",
+            coinbase_script: &[],
+            btc_height: 700_100,
+            child_height: 12,
+            child_hash: Some(&[0x77; 32]),
+        },
+    );
+    let omitted_row = normalized_csv_line(
+        omitted,
+        &NormalizedCsvRow {
+            chain: "namecoin",
+            source_row_number: 2,
+            classification: "unknown",
+            relevance: "",
+            relevance_reason: "valid_direct_stale",
+            coinbase_script: &script,
+            btc_height: 400_000,
+            child_height: 13,
+            child_hash: None,
+        },
+    );
+    let initial = write_manifest_fixture_rows_for_chain(
+        "namecoin",
+        &[retained_row.clone(), omitted_row],
+        serde_json::json!({"canonical":1,"stale":1,"stale_descendant":0,"strict_btc_orphan":0,"weak_btc_orphan":0}),
+        0,
+    )?;
+    let revised = write_manifest_fixture_rows_for_chain(
+        "namecoin",
+        &[retained_row],
+        serde_json::json!({"canonical":1,"stale":0,"stale_descendant":0,"strict_btc_orphan":0,"weak_btc_orphan":0}),
+        0,
+    )?;
+    Ok((initial, revised))
+}
+
+async fn add_independent_live_evidence(
+    client: &mut tokio_postgres::Client,
+    retained: &Header,
+    operator_csv: &Path,
+) -> Result<()> {
+    let mut operator_config = HistoricalImportConfig::for_csv("namecoin", operator_csv);
+    operator_config.allow_empty_known_stales = true;
+    run_historical_import(
+        client,
+        &ConfiguredParentClassifier::Fake(FakeParentClassifier::new(canonical_verdict(
+            retained, 700_100,
+        ))),
+        &operator_config,
+    )
+    .await?;
+    // Exercise aggregate ownership protection, not scientific error admission.
+    client
+        .execute(
+            "INSERT INTO historical_event_provenance (event_id, publication_ref, \
+        chain, source_kind, source_path, source_row_number, artifact_scope, provenance, \
+        classification, btc_height, validation_status, btc_stale_relevance, relevance_reason) \
+        SELECT event_id, 'b302831000000000000000000000000000000000', chain, source_kind, \
+        '<retained-error-owner>', source_row_number, 'error-block-observations', provenance, \
+        classification, btc_height, validation_status, btc_stale_relevance, relevance_reason \
+        FROM historical_event_provenance WHERE publication_ref = 'operator-csv'",
+            &[],
+        )
+        .await?;
+    let unowned = seed_unpublished_event(client, "auxpow:namecoin", 99, vec![0x55; 32]).await?;
+    client
+        .execute(
+            "UPDATE merge_mining_event SET revoked_at = 1234 WHERE id = $1",
+            &[&unowned],
+        )
+        .await?;
+    client.execute("INSERT INTO event_pool_attribution (event_id, side, namespace, match_kind, \
+        matched_value, source, confidence, first_seen_at, last_seen_at) \
+        SELECT id, 'btc_parent', 'btc_coinbase_tag', 'test_seed', 'retained-witness', \
+        'test_seed', 'high', 1, 1 FROM merge_mining_event WHERE source_id = 1 AND child_height = 13", &[]).await?;
+    Ok(())
+}
+
+async fn live_observation_snapshot(client: &tokio_postgres::Client) -> Result<String> {
+    Ok(client.query_one("SELECT jsonb_build_object( \
+        'events', (SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id) FROM merge_mining_event e WHERE source_id = 1), \
+        'attribution', (SELECT jsonb_agg(to_jsonb(a) ORDER BY a.event_id) FROM event_pool_attribution a), \
+        'proofs', (SELECT jsonb_agg(to_jsonb(p) ORDER BY p.id) FROM attestation_proof p WHERE source_id = 1))::text",
+        &[]).await?.get(0))
+}
+
+async fn independent_provenance_snapshot(client: &tokio_postgres::Client) -> Result<String> {
+    Ok(client
+        .query_one(
+            "SELECT jsonb_agg(to_jsonb(p) ORDER BY p.publication_ref, p.chain, p.source_path, p.source_row_number)::text \
+        FROM historical_event_provenance p WHERE publication_ref = 'operator-csv' \
+        OR artifact_scope = 'error-block-observations'",
+            &[],
+        )
+        .await?
+        .get(0))
+}
+
+#[tokio::test]
+async fn import_all_preserves_operator_evidence_and_removes_unowned_extras() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let published = header_meeting_bits(0x207f_ffff, 1_700_000_080, 80);
         let extra = header_meeting_bits(0x207f_ffff, 1_700_000_081, 81);
@@ -88,16 +288,9 @@ async fn import_all_state_check_skips_matches_and_reconciles_operator_extras() -
                 2
             );
 
-            let reconciled =
-                run_historical_import_configs_for_test(&mut client, &classifier, publication)
-                    .await?;
-            assert_eq!(reconciled.skipped_matching_state, 0);
-            assert_eq!(reconciled.chains[0].1.removed, 1);
+            verify_operator_preservation_and_unowned_cleanup(&mut client, &classifier, publication)
+                .await?;
             assert_eq!(fake.call_count().await, 2);
-            assert_eq!(
-                active_source_event_count(&client, "auxpow:devcoin").await?,
-                1
-            );
             Ok::<_, anyhow::Error>(())
         }
         .await;
@@ -105,6 +298,57 @@ async fn import_all_state_check_skips_matches_and_reconciles_operator_extras() -
             .with_context(|| format!("remove fixture root {}", fixture.root.display()))?;
         finish_import_with_cleanup(result, &[&extra_csv])
     })
+}
+
+async fn verify_operator_preservation_and_unowned_cleanup(
+    client: &mut tokio_postgres::Client,
+    classifier: &ConfiguredParentClassifier,
+    publication: Vec<HistoricalImportConfig>,
+) -> Result<()> {
+    let operator_id: i64 = client.query_one(
+        "SELECT event_id FROM historical_event_provenance WHERE publication_ref = 'operator-csv'",
+        &[],
+    ).await?.get(0);
+    let preserved =
+        run_historical_import_configs_for_test(client, classifier, publication.clone()).await?;
+    assert_eq!(preserved.skipped_matching_state, 1);
+    assert!(preserved.chains.is_empty());
+    let unowned_id = seed_unpublished_event(client, "auxpow:devcoin", 99, vec![0x45; 32]).await?;
+    let reconciled =
+        run_historical_import_configs_for_test(client, classifier, publication.clone()).await?;
+    assert_eq!(reconciled.skipped_matching_state, 0);
+    assert_eq!(reconciled.chains[0].1.removed, 1);
+    assert_eq!(
+        active_source_event_count(client, "auxpow:devcoin").await?,
+        2
+    );
+    assert!(
+        client
+            .query_opt(
+                "SELECT id FROM merge_mining_event WHERE id = $1",
+                &[&operator_id]
+            )
+            .await?
+            .is_some()
+    );
+    assert!(
+        client
+            .query_opt(
+                "SELECT id FROM merge_mining_event WHERE id = $1",
+                &[&unowned_id]
+            )
+            .await?
+            .is_none()
+    );
+    let repeated = run_historical_import_configs_for_test(
+        client,
+        &ConfiguredParentClassifier::Disabled,
+        publication,
+    )
+    .await?;
+    assert_eq!(repeated.skipped_matching_state, 1);
+    assert!(repeated.chains.is_empty());
+    Ok(())
 }
 
 #[tokio::test]

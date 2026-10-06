@@ -132,7 +132,11 @@ impl HistoricalImportConfig {
     }
 
     pub(super) fn is_authoritative_snapshot(&self, spec: &HistoricalChainSpec) -> bool {
-        self.manifest_path.is_some() && self.limit.is_none() && spec.is_authoritative()
+        self.is_complete_publication() && spec.is_authoritative()
+    }
+
+    pub(super) fn is_complete_publication(&self) -> bool {
+        self.manifest_path.is_some() && self.limit.is_none()
     }
 
     /// Parse `import-dataset <chain> [flags...]`.
