@@ -1,5 +1,10 @@
 # Release Notes
 
+## [0.9.3] - 2026-10-18
+
+- Show Qbit miner attribution from authenticated child coinbase tags, independently
+  of the Bitcoin parent miner.
+
 ## [0.9.2] - 2026-10-07
 
 - Use the more complete Huntercoin and Xaya evidence recovered from Daniel
