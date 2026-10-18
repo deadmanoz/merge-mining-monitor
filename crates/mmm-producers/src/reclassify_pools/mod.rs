@@ -1,50 +1,13 @@
-//! Offline historical pool re-resolution: the `reclassify-pools` subcommand.
+//! Offline historical pool re-resolution (`reclassify-pools`).
 //!
-//! Replays stored BYTEA coinbase columns
-//! (`btc_parent_coinbase_script`, `btc_parent_coinbase_outputs`,
-//! `child_coinbase_script`) against the embedded, expanded `PoolResolver` and
-//! materializes source-scoped `event_pool_attribution` rows. The CLI refreshes
-//! the required Core cache before invoking this DB-only replay; its read-model
-//! reconciliation deliberately uses a disabled classifier, exactly like the
-//! missing-only startup repair.
-//!
-//! Self-contained: it seeds the expanded `pool` snapshot, RSK-only pool slugs,
-//! and child identity registries itself, so `pool_ids_by_slug` is populated
-//! before scanning. It works on a fresh schema or in CI without a prior producer
-//! run.
-//!
-//! Safety rules (RSK-safe):
-//! - Only rows whose relevant evidence column is present are considered for an
-//!   attribution family; RSK miner-address rows are handled by the RSK sidecar
-//!   tail rather than the BTC/child-coinbase scan.
-//! - BTC-derived matching only writes resolved attributions. Child payout replay
-//!   also writes unresolved observed payout addresses with NULL pool IDs.
-//! - Default is fill-missing-only. `--overwrite` additionally replaces existing
-//!   source-scoped BTC-coinbase-derived attribution rows while never erasing a
-//!   row because the current resolver cannot match it.
-//! - Bounded and idempotent: a second run with no registry change is a no-op.
-//!
-//! Transactional per parent (mirrors `mmm_read_model::capture_in_txn`): a
-//! parent's attribution-row writes and that parent's read-model reconcile commit
-//! together in ONE transaction when parent attribution changes. A mid-pass
-//! failure (cascade budget, transient DB error) is therefore atomic per parent:
-//! either the parent's events plus its reconcile both commit, or neither does.
-//! So an interrupted run self-heals on re-run, and no parent is ever left with
-//! updated parent attribution but a stale read model.
-//! Dependent stale-competitor cascades run after each parent's commit, exactly
-//! as `capture_in_txn` does.
-//!
-//! Child-pool attribution includes legacy child script tags, Namecoin/Syscoin/
-//! Fractal chain-native payout/reward addresses decoded from stored child
-//! coinbase outputs, and Hathor reward addresses decoded from stored
-//! `hathor_merge_mining_evidence.funds_graph` bytes. Older rows without the
-//! relevant raw bytes still require raw-block/RFC fixture replay.
-//!
-//! The pure planning layer (candidate decoding, pool resolution, and the
-//! per-event write decisions) lives in [`plan`]; this module keeps the SQL/IO
-//! (`candidate_batch_sql`, `load_candidate_batch`, `apply_parent_group`) and
-//! the `run_reclassify_pools` driver that pairs each planned parent group with
-//! that parent's read-model reconcile.
+//! Seeds the embedded `PoolResolver`, RSK-only slugs, and child identity
+//! registries, then runs four phase-gated passes: RSK miner-address sidecar
+//! re-resolution, keyset-paged coinbase/payout replay (`plan`), Hathor
+//! `funds_graph` reward replay, and Elastos identity promotion.
+//! Parent-group attribution updates and their read-model reconciliation commit
+//! atomically per parent via `mmm_read_model::update_parent_events` (classifier
+//! disabled), with fill-missing-only by default and `--overwrite` to refresh
+//! resolved attributions without erasing unresolved rows.
 
 use std::collections::HashMap;
 
@@ -143,21 +106,12 @@ const EVENT_POOL_ATTRIBUTION_JSON_ROWS_SELECT: &str = r"
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReclassifyPoolsConfig {
-    /// When true, also replace an existing BTC-coinbase-derived attribution with
-    /// a newly resolved one. Default false (fill-missing-only).
     pub overwrite: bool,
-    /// Keyset page size: rows loaded and planned per `(id)`-ordered batch.
-    /// Bounds peak memory; must be positive.
     pub batch_size: i64,
-    /// Phase gates, all `true` by default. `--only <phase>` runs exactly one;
-    /// `--skip-<phase>` drops one (the two are mutually exclusive). Seeding always
-    /// runs regardless; these gate only the four work phases.
     pub run_rsk: bool,
     pub run_main: bool,
     pub run_hathor: bool,
     pub run_elastos: bool,
-    /// Optional `--source <code>` filter for the main candidate scan only (the
-    /// RSK/Hathor/Elastos tails are already source-scoped). `None` = all sources.
     pub source: Option<String>,
 }
 
@@ -176,9 +130,6 @@ impl Default for ReclassifyPoolsConfig {
 }
 
 impl ReclassifyPoolsConfig {
-    /// Parse argv. `--batch-size` keeps bespoke error wording that predates the
-    /// shared `cli_args` helpers (pinned by the `from_args` tests); the value
-    /// must be positive.
     pub fn from_args<I, S>(args: I) -> Result<Self>
     where
         I: IntoIterator<Item = S>,
@@ -194,8 +145,6 @@ impl ReclassifyPoolsConfig {
                     true
                 }
                 "--batch-size" => {
-                    // Bespoke wording predating the shared helpers; pinned by
-                    // the from_args tests below.
                     let value = cur
                         .raw_value()
                         .with_context(|| "--batch-size needs a value".to_owned())?;
@@ -237,8 +186,6 @@ impl ReclassifyPoolsConfig {
         })?;
         require_positive(config.batch_size, "--batch-size")?;
 
-        // `--only` names the single phase to run; `--skip-<phase>` drops phases.
-        // Mixing the two is ambiguous, so reject it.
         if let Some(phase) = &only_phase {
             if any_skip {
                 bail!("reclassify-pools: --only and --skip-<phase> are mutually exclusive");
@@ -265,55 +212,23 @@ impl ReclassifyPoolsConfig {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ReclassifyPoolsStats {
-    /// Events whose parent-side attribution was set/changed.
     pub parent_pool_updates: usize,
-    /// Events whose child-side attribution was set/changed.
     pub child_pool_updates: usize,
-    /// Distinct parent header hashes whose read model was reconciled.
     pub parents_reconciled: usize,
-    /// Rows whose stored structured `btc_parent_coinbase_outputs` blob failed
-    /// to deserialize. Preserved publication text may still resolve them.
     pub corrupt_parent_outputs: usize,
-    /// Rows whose stored `child_coinbase_outputs` blob failed to deserialize
-    /// and were skipped for child payout replay.
     pub corrupt_child_outputs_skipped: usize,
-    /// Hathor events whose reward-address attribution rows were set or upgraded
-    /// from persisted sidecar `funds_graph` bytes.
     pub hathor_reward_updates: usize,
-    /// Hathor sidecar rows whose parsed reward audit JSON was set or refreshed.
     pub hathor_reward_audit_updates: usize,
-    /// Rows whose stored Hathor `funds_graph` could not be parsed and were
-    /// skipped for reward-address replay.
     pub corrupt_hathor_funds_graph_skipped: usize,
-    /// Elastos child identity attributions promoted from unmapped to a registry
-    /// pool by the no-RPC re-resolution tail (their `matched_value` matched a
-    /// newly-seeded `pool_identity`).
     pub elastos_identity_updates: usize,
-    /// RSK sidecar rows scanned by the no-RPC miner-address reclassification
-    /// tail.
     pub rsk_miner_rows_scanned: usize,
-    /// Scanned RSK miner rows that matched the embedded miner registry.
     pub rsk_miner_registry_resolved_rows: usize,
-    /// Scanned RSK miner rows that remain unmapped but retain observed
-    /// `rsk_rpc_miner` attribution.
     pub rsk_miner_unresolved_rows: usize,
-    /// RSK child-side miner attribution rows set, promoted, or overwritten.
     pub rsk_miner_attribution_updates: usize,
-    /// RSK sidecar `pool_identity_id` values late-filled from NULL.
     pub rsk_miner_sidecar_late_fills: usize,
 }
 
-/// Apply one parent group atomically through the read-model mutation module:
-/// write every event's attribution rows and (when parent attribution changed)
-/// reconcile the parent's read model IN THE SAME transaction, commit, then
-/// cascade dependents. The module owns lock ordering, source-health ownership,
-/// and the bounded lock-set-change retry, so this path can no longer diverge
-/// from the capture/revoke/restore paths.
 async fn apply_parent_group(client: &mut Client, group: &ParentUpdateGroup) -> Result<()> {
-    // Reconcile the parent's read model from any of its now-updated events (all
-    // share `btc_parent_header_hash`, so any one anchors the rebuild). Disabled
-    // classifier: offline, preserves persisted classification. A pool-only
-    // group with no parent-pool change skips the reconcile (and the cascade).
     let reconcile_anchor = if group.parent_rollup_changed {
         Some(
             group
@@ -374,17 +289,9 @@ async fn apply_parent_group(client: &mut Client, group: &ParentUpdateGroup) -> R
     .await
 }
 
-/// Keyset-paged candidate scan. Column order is a contract with
-/// `plan::plan_batch_updates`/`attribution_state_from_row` (positional
-/// `row.get`). The two parent/child LATERAL subqueries roll each side's
-/// source-scoped attribution up to a single row (NULL fields when not exactly
-/// one); the third aggregates child payout rows to JSON. Params: `$1`
-/// overwrite, `$2`/`$3` snapshot/legacy-child sources, `$4` payout-eligible source
-/// codes, `$5` optional source ID, `$6` keyset cursor, `$7` page limit, and
-/// `$8`/`$9` child payout namespaces/sources. Scoped
-/// to non-revoked events with usable evidence, ordered by `e.id` for resumable
-/// paging. Materialize the page before loading attribution details: otherwise a
-/// source-scoped sort can run every lateral aggregate for all remaining events.
+/// Keyset-paged candidate scan; column order must match `plan::plan_batch_updates`.
+/// Materialize the page before loading attribution details so source-scoped scans
+/// do not evaluate lateral aggregates for every remaining event.
 fn candidate_batch_sql() -> String {
     let parent_attr = source_scoped_attribution_lateral("parent_attr", "btc_parent", "$2");
     let child_attr = source_scoped_attribution_lateral("child_attr", "child_block", "$3");
@@ -456,21 +363,12 @@ fn source_scoped_attribution_lateral(alias: &str, side: &str, source_param: &str
     )
 }
 
-/// Load one keyset page of candidate rows after `cursor` (exclusive). Binds the
-/// fixed child payout namespace/source/source-code sets, the mode flags from
-/// `config`, and the optional `source_filter` (`$5`, `None` = all sources), then
-/// runs `candidate_batch_sql`. Returns raw rows; decoding and planning happen in
-/// `plan::plan_batch_updates`.
 async fn load_candidate_batch(
     client: &Client,
     cursor: Option<i64>,
     config: &ReclassifyPoolsConfig,
     source_filter: Option<i64>,
 ) -> Result<Vec<tokio_postgres::Row>> {
-    // In fill-missing-only mode ($1 = false), scan rows whose source-scoped
-    // attribution provenance has not been materialized yet. `--overwrite` scans
-    // all rows with usable evidence because it may re-attribute an already-set
-    // row and should refresh provenance at the same time.
     let child_payout_namespaces = vec![
         NAMECOIN_PAYOUT_ADDRESS_NAMESPACE.to_owned(),
         SYSCOIN_PAYOUT_ADDRESS_NAMESPACE.to_owned(),
@@ -501,9 +399,7 @@ async fn load_candidate_batch(
         .context("load reclassify-pools candidate batch")
 }
 
-/// Count the scan's initial eligible snapshot without hydrating provenance.
-/// Producers may add candidates while replay runs; the total is a starting
-/// estimate, not a lock held across the pass.
+/// Count initial eligible candidates without hydrating provenance.
 async fn count_candidates(client: &Client, overwrite: bool, source: Option<i64>) -> Result<u64> {
     let sql = format!(
         "SELECT count(*) FROM merge_mining_event e JOIN source s ON s.id = e.source_id \
@@ -525,11 +421,6 @@ async fn count_candidates(client: &Client, overwrite: bool, source: Option<i64>)
     Ok(u64::try_from(row.get::<_, i64>(0))?)
 }
 
-/// Self-seed the embedded resolver, RSK-only pool slugs, and the Hathor reward,
-/// Elastos minerinfo, Elastos reward-address, and Namecoin/Syscoin/Fractal/Qbit
-/// child-payout identity registries, then load the child payout identity lookup.
-/// All idempotent `ON CONFLICT` upserts, safe alongside live producers. Returns the
-/// resolver, registry, slug map, and identity lookup the phases read.
 async fn seed_reclassify_pools(
     client: &mut Client,
 ) -> Result<(
@@ -581,10 +472,6 @@ async fn seed_reclassify_pools(
     ))
 }
 
-/// Run the main keyset candidate scan: optionally `--source`-scoped, paged by
-/// `(id)` ascending, applying each parent group transactionally through the
-/// read-model mutation module. Extracted from `run_reclassify_pools` so the
-/// driver stays a thin phase orchestrator.
 async fn run_main_candidate_scan(
     client: &mut Client,
     resolver: &PoolResolver,
@@ -594,8 +481,6 @@ async fn run_main_candidate_scan(
     stats: &mut ReclassifyPoolsStats,
 ) -> Result<()> {
     let progress = ProgressReporter::new("reclassify-pools-main", None);
-    // Optional `--source` filter resolves to a `source_id` and bounds the
-    // candidate scan to that one source; the tails are already source-scoped.
     let source_filter = match &config.source {
         Some(code) => Some(
             get_source_id(client, code)
@@ -605,12 +490,6 @@ async fn run_main_candidate_scan(
         None => None,
     };
 
-    // Page by (id) ascending. Within each batch, the planned updates are grouped
-    // by parent header hash and applied + reconciled in one transaction per
-    // parent, so peak memory stays bounded by `batch_size`. A parent split across
-    // two batches gets one atomic transaction per batch-portion (each pairing its
-    // events with a reconcile); read-model reconciliation is idempotent, so the
-    // second reconcile is harmless.
     info!(
         phase = "main_scan",
         source = ?config.source,
@@ -643,13 +522,6 @@ async fn run_main_candidate_scan(
             .sum::<usize>();
         progress.advance((rows.len() - updates) as u64);
 
-        // Apply each parent group transactionally through the read-model mutation
-        // module: parent attribution writes and that parent's read-model reconcile
-        // commit together, exactly like producer capture, and the module cascades
-        // dependent stale competitors after the commit. Stale competition miner
-        // detail is derived from block rows, so a Bitcoin miner change does not
-        // require a competition-cache refresh. A failure rolls the whole group
-        // back so an interrupted run self-heals on re-run.
         for group in &groups {
             apply_parent_group(client, group).await?;
             for update in &group.updates {
@@ -679,23 +551,10 @@ async fn run_main_candidate_scan(
     Ok(())
 }
 
-/// Run the offline historical pool re-resolution. Self-seeds the embedded pool
-/// snapshot, RSK-only slugs, and the Hathor reward + Elastos minerinfo identities
-/// so slug lookups resolve. It first runs the RSK miner-address sidecar tail
-/// (from persisted `rsk_miner`) so registry remap conflicts fail before any
-/// parent/child coinbase updates, then keyset-pages candidates, planning and
-/// applying one atomic transaction per parent header hash, and finishes with
-/// the no-RPC Hathor reward-address replay (re-derives from stored `funds_graph`)
-/// plus Elastos identity promotion (promotes registry-matchable existing
-/// attributions by their stored `matched_value`, since Elastos stores no child
-/// coinbase outputs to re-derive from). Idempotent and resumable: a re-run with
-/// no registry change is a no-op.
 pub async fn run_reclassify_pools(
     client: &mut Client,
     config: ReclassifyPoolsConfig,
 ) -> Result<ReclassifyPoolsStats> {
-    // Self-seed the embedded resolver + registries so slug/identity lookups
-    // resolve before any phase scans. Idempotent, safe alongside live producers.
     let (resolver, registry, pool_ids_by_slug, child_payout_identities) =
         seed_reclassify_pools(client).await?;
 
@@ -766,10 +625,6 @@ pub async fn run_reclassify_pools(
         );
     }
 
-    // Elastos stores no child coinbase outputs, so its identity is not
-    // re-derivable from the candidate scan above; instead promote
-    // registry-matchable existing Elastos attributions by their stored
-    // matched_value (no RPC).
     if config.run_elastos {
         info!(
             phase = "elastos",

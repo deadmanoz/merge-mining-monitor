@@ -1,17 +1,5 @@
-//! Thin RSK JSON-RPC client.
-//!
-//! RSK exposes Ethereum-compatible `eth_*` methods. The structure/capture
-//! slice only needs three of them:
-//!
-//! - `eth_blockNumber`: current chain tip
-//! - `eth_getBlockByNumber(blocknum, include_txs=false)`: canonical block
-//!   with merge-mining metadata
-//! - `eth_getUncleByBlockNumberAndIndex(blocknum, idx)`: uncle/ommer block
-//!   carrying its own merge-mining metadata
-//!
-//! Block numbers, timestamps, and the integer `difficulty` are returned as
-//! `0x`-prefixed hex strings; byte fields are also `0x`-prefixed hex. The
-//! client strips the prefix and decodes lazily so callers see typed values.
+//! RSK Ethereum-compatible JSON-RPC client (`eth_blockNumber`,
+//! `eth_getBlockByNumber`, `eth_getUncleByBlockNumberAndIndex`).
 
 use std::time::Duration;
 
@@ -24,23 +12,14 @@ use serde_json::{Value, json};
 use mmm_rpc as rpc_http;
 use rpc_http::{RpcMetrics, build_rpc_client};
 
-/// Connection settings for the RSK JSON-RPC endpoint. Built from env by
-/// `chains::config::rsk_rpc_config`; optional basic-auth credentials are only
-/// sent when both `user` and `password` are present.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RskRpcConfig {
     pub url: String,
     pub user: Option<String>,
     pub password: Option<String>,
-    /// Whole-request timeout for the HTTP transport. Defaults to
-    /// `RSK_RPC_TIMEOUT_SECS` (15s) and prevents a stale tunnel socket from
-    /// hanging the live poller's tip fetch indefinitely.
     pub request_timeout: Duration,
 }
 
-/// Thin `eth_*` JSON-RPC client over a shared `reqwest::Client`. Cheap to
-/// `Clone` (the inner HTTP client is `Arc`-backed), which the backfill prefetch
-/// pipeline relies on to clone one source per in-flight height.
 #[derive(Debug, Clone)]
 pub struct RskRpcClient {
     config: RskRpcConfig,
@@ -48,47 +27,29 @@ pub struct RskRpcClient {
     metrics: RpcMetrics,
 }
 
-/// Raw RSK block fields returned by `eth_getBlockByNumber` and
-/// `eth_getUncleByBlockNumberAndIndex`. Numeric fields stay as hex strings;
-/// the capture path decodes them with [`decode_quantity_i64`] and
-/// [`decode_hex_bytes`].
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct RskBlock {
-    /// `0x`-prefixed 32-byte block hash.
     pub hash: String,
-    /// `0x`-prefixed hex-encoded block number.
     pub number: String,
-    /// `0x`-prefixed hex-encoded unix timestamp.
     pub timestamp: String,
-    /// `0x`-prefixed 20-byte RSK miner address.
     pub miner: String,
-    /// `0x`-prefixed hex-encoded integer difficulty.
     #[serde(default)]
     pub difficulty: Option<String>,
-    /// `0x`-prefixed 80-byte Bitcoin parent header. Early blocks return
-    /// either a complete 80-byte header or a shorter pre-Orchid/RSKIP-92
-    /// fallback-signature payload here; callers must validate the length.
+    /// `0x`-prefixed 80-byte Bitcoin parent header, or a shorter pre-Orchid/RSKIP-92
+    /// fallback signature on early blocks.
     #[serde(rename = "bitcoinMergedMiningHeader", default)]
     pub bitcoin_merged_mining_header: Option<String>,
-    /// `0x`-prefixed coinbase transaction tail (RSKIP-92 midstate scheme).
     #[serde(rename = "bitcoinMergedMiningCoinbaseTransaction", default)]
     pub bitcoin_merged_mining_coinbase_transaction: Option<String>,
-    /// `0x`-prefixed merkle proof bytes; stored opaquely until RSKj era
-    /// boundaries are confirmed.
     #[serde(rename = "bitcoinMergedMiningMerkleProof", default)]
     pub bitcoin_merged_mining_merkle_proof: Option<String>,
-    /// `0x`-prefixed 32-byte hash committed in the BTC coinbase.
     #[serde(rename = "hashForMergedMining", default)]
     pub hash_for_merged_mining: Option<String>,
-    /// Canonical-only: list of uncle hashes. Walk via
-    /// [`RskRpcClient::get_uncle_by_block_number_and_index`].
     #[serde(default)]
     pub uncles: Vec<String>,
 }
 
 impl RskRpcClient {
-    /// Build a client over a `request_timeout`-bounded HTTP transport so a stale
-    /// tunnel socket cannot hang the poller's tip fetch indefinitely.
     pub fn new(config: RskRpcConfig) -> Result<Self> {
         let http = build_rpc_client(config.request_timeout)?;
         Ok(Self {
@@ -98,31 +59,21 @@ impl RskRpcClient {
         })
     }
 
-    /// Transport counters for this client (attempts, retries, failures,
-    /// latency). This client has no retry loop of its own, so `retries` is
-    /// always zero.
     pub fn metrics(&self) -> RpcMetrics {
         self.metrics.clone()
     }
 
-    /// Current chain tip via `eth_blockNumber`. A null result is an error: a
-    /// healthy node never returns null for the tip.
     pub async fn get_block_number(&self) -> Result<i64> {
         let raw: String = self.call_required("eth_blockNumber", vec![]).await?;
         decode_quantity_i64(&raw).context("decode eth_blockNumber response")
     }
 
-    /// Canonical block at `height` (txs excluded). `Ok(None)` when RSKj returns
-    /// `{"result": null}` for an absent block, so the caller can `Hold`/skip the
-    /// height rather than treating it as an error.
+    /// Canonical block at `height` (`Ok(None)` when the node returns `{"result": null}`).
     pub async fn get_block_by_number(&self, height: i64) -> Result<Option<RskBlock>> {
         let params = vec![json!(encode_quantity(height)), json!(false)];
         self.call_optional("eth_getBlockByNumber", params).await
     }
 
-    /// One uncle of the canonical block at `block_height` by listed index.
-    /// `Ok(None)` for a `null` result (a listed uncle the node no longer serves),
-    /// matching [`get_block_by_number`](Self::get_block_by_number).
     pub async fn get_uncle_by_block_number_and_index(
         &self,
         block_height: i64,
@@ -136,9 +87,6 @@ impl RskRpcClient {
             .await
     }
 
-    /// Call an RSK RPC method whose `result` must be non-null. A JSON `null`
-    /// result is a failed call (eth_blockNumber et al. never return null on a
-    /// healthy node), counted as one by the metered boundary.
     async fn call_required<T>(&self, method: &str, params: Vec<Value>) -> Result<T>
     where
         T: DeserializeOwned,
@@ -163,12 +111,6 @@ impl RskRpcClient {
         }
     }
 
-    /// Call an RSK RPC method whose `result` may be JSON `null` (the
-    /// canonical way RSKj signals "no such block" / "no such uncle" without
-    /// an `error` object). Explicit `null` becomes `Ok(None)`; a response
-    /// missing both `result` and `error` is treated as a protocol violation
-    /// and surfaces as `Err` rather than silently masquerading as a missing
-    /// block.
     async fn call_optional<T>(&self, method: &str, params: Vec<Value>) -> Result<Option<T>>
     where
         T: DeserializeOwned,
@@ -187,17 +129,9 @@ impl RskRpcClient {
     }
 }
 
-/// Decode an Ethereum-style `0x`-prefixed hex quantity to i64.
-///
-/// RSK heights and timestamps fit comfortably in i64 across the chain's
-/// lifetime; we use signed types throughout the producer to match the
-/// existing schema (`INTEGER` heights, `BIGINT` epoch timestamps).
-///
-/// Per the JSON-RPC hex quantity spec, zero is encoded `0x0` (one digit),
-/// not the bare `0x` prefix. An empty quantity is treated as malformed so
-/// downstream callers can convert that to a `MalformedSkipped` outcome
-/// instead of writing `height = 0` rows that look like a valid genesis
-/// record.
+/// Decode an Ethereum-style `0x`-prefixed hex quantity to `i64`.
+/// Rejects bare `"0x"` / `""` (`0` is `"0x0"`) so empty fields become
+/// `MalformedSkipped` rather than silently producing height/timestamp `0`.
 pub(crate) fn decode_quantity_i64(raw: &str) -> Result<i64> {
     let trimmed = raw.trim().trim_start_matches("0x");
     if trimmed.is_empty() {
@@ -206,13 +140,11 @@ pub(crate) fn decode_quantity_i64(raw: &str) -> Result<i64> {
     i64::from_str_radix(trimmed, 16).with_context(|| format!("parse hex quantity {raw:?} as i64"))
 }
 
-/// Decode an Ethereum-style `0x`-prefixed hex byte string.
 pub(crate) fn decode_hex_bytes(raw: &str) -> Result<Vec<u8>> {
     hex::decode(raw.trim().trim_start_matches("0x"))
         .with_context(|| format!("decode hex byte string {raw:?}"))
 }
 
-/// Encode an i64 as an Ethereum-style `0x`-prefixed minimal hex quantity.
 pub(crate) fn encode_quantity(value: i64) -> String {
     if value == 0 {
         "0x0".to_owned()

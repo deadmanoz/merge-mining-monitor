@@ -1,11 +1,4 @@
-//! The single definition of what a stale-vs-canonical competition IS.
-//!
-//! Three projections read competitions (tree decoration, block detail, and
-//! the `/api/v1/competitions` endpoint), and every one of them needs the same
-//! join, the same kind predicates, and the same overflow-guarded header-time
-//! delta. Keeping those here means a change to the definition (an added
-//! predicate, a different guard) lands in one place rather than being
-//! copy-edited across three query strings.
+//! Shared stale-vs-canonical competition SQL for tree decoration, block detail, and `/api/v1/competitions`.
 
 use tokio_postgres::Row;
 
@@ -28,18 +21,8 @@ pub(crate) const COMPETITION_DELTA_SQL: &str = "CASE WHEN canonical.btc_header_t
           THEN (canonical.btc_header_time::numeric - stale.btc_header_time::numeric)::int \
           ELSE NULL END";
 
-/// The stale-to-canonical join with both miner pools, terminated by the
-/// predicates that make the pair a competition. Callers append their own
-/// `AND <predicate>` and/or `ORDER BY`.
-///
-/// Both predicates are load-bearing, not decorative. `canonical_competitor_hash`
-/// is only a foreign key to `block` with a not-self check, so the schema permits
-/// it to point at a non-canonical row, or at a canonical row from a different
-/// height. Only the classifier's same-height rule keeps that from happening, and
-/// a competition across two heights is not a competition: its delta and pool
-/// pair would describe two blocks that never raced, and `canonical_hash` would
-/// not be recoverable from the reported `btc_height` the way
-/// `/api/v1/competitions` documents.
+/// Stale-to-canonical join requiring both `canonical.kind = 'canonical'` and same-height
+/// (`canonical.btc_height = stale.btc_height`), since `canonical_competitor_hash` is only an FK to `block`.
 pub(crate) const COMPETITION_FROM_SQL: &str = "FROM block stale \
      JOIN block canonical ON canonical.btc_header_hash = stale.canonical_competitor_hash \
      LEFT JOIN pool sp ON sp.id = stale.bitcoin_miner_pool_id \
@@ -48,9 +31,6 @@ pub(crate) const COMPETITION_FROM_SQL: &str = "FROM block stale \
        AND canonical.kind = 'canonical' \
        AND canonical.btc_height = stale.btc_height";
 
-/// Column list for the two hash-keyed competition queries (tree decoration and
-/// block detail), whose projections are identical. Columns 0..=8 are what
-/// [`CompetitionCore::from_row`] reads.
 pub(crate) fn competition_core_select() -> String {
     format!(
         "SELECT stale.btc_header_hash, canonical.btc_header_hash, \
@@ -60,8 +40,6 @@ pub(crate) fn competition_core_select() -> String {
     )
 }
 
-/// One competition as the hash-keyed callers read it: both sides' hashes in
-/// storage byte order, the guarded delta, and both miner pools.
 #[derive(Debug, Clone)]
 pub(crate) struct CompetitionCore {
     pub(crate) stale_hash: Vec<u8>,
@@ -72,8 +50,6 @@ pub(crate) struct CompetitionCore {
 }
 
 impl CompetitionCore {
-    /// Map a row selected by [`competition_core_select`]. Column order is the
-    /// contract between the two functions; they change together.
     pub(crate) fn from_row(row: &Row) -> Self {
         Self {
             stale_hash: row.get(0),

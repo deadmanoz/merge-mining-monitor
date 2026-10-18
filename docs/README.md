@@ -26,11 +26,11 @@ system, run it, and change it carefully.
 
 ## Product And API
 
-- `product-brief.md` - product intent and audience.
 - `api-contract.md` - HTTP JSON contract and shared fixture expectations.
 - `tree-semantics.md` - implementation notes for deriving `/api/v1/tree` and
   orphan navigator responses (compact context, orphan placement, tree reduction).
-- `ui-model.md` - frontend state model and user-facing tree behavior.
+- `ui-model.md` - product intent, frontend state model, and user-facing tree
+  behavior.
 
 ## Data And Fixtures
 

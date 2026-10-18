@@ -1,20 +1,4 @@
-//! Runs the PRODUCTION `ConfiguredParentClassifier` / `classify_parent`
-//! against the scripted `core_fixture` server for the three shapes of parent
-//! evidence Core-backed classification distinguishes: a header Core already
-//! carries as canonical, one it carries as a losing (stale) sibling, and one
-//! it has never seen at all (forcing the inferred-stale median-time-past
-//! ancestor walk in `core.rs`'s `classify_inferred_stale`/
-//! `median_time_past_passes`, around lines 299-393).
-//!
-//! Every case passes an empty `ParentPreflight` (`known_prev: None`), so the
-//! classifier resolves the predecessor itself over RPC instead of a read-model
-//! lookup; none of these tests need Postgres.
-//!
-//! The expected `RpcMetrics`/server-side counts documented on each assertion
-//! were captured by running this suite once and reading back the actual
-//! `RpcMetricsSnapshot` and `FixtureRequestCounts`, not derived from theory
-//! alone; a future change to `core.rs`'s call sequence should update both the
-//! code and this comment together.
+//! End-to-end `ConfiguredParentClassifier` tests against `core_fixture`, pinning per-call `RpcMetrics`.
 
 use bitcoin::hashes::Hash as _;
 

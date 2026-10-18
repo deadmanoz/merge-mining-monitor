@@ -1,23 +1,14 @@
-//! Generic connected-component extraction shared by the stale-branch and
-//! orphan-branch navigator indexes. Both build a prev -> children forest over
-//! `(hash, prev_hash)` rows, sort siblings/roots by an ordering key then hash,
-//! DFS each component, and keep components of depth >= 2. They differ only in
-//! the ordering key (BTC height for stale branches, header time for orphan
-//! branches) and their row/summary types, so the algorithm lives here once and
-//! each module supplies a `BranchRow` impl plus a small component -> summary map.
+//! Connected-component extraction shared by stale-branch and orphan-branch
+//! navigator indexes.
 
 use std::collections::{HashMap, HashSet};
 
-/// A node in a branch index: keyed by hash, with a parent link and an ordering
-/// key (BTC height for stale branches, header time for orphan branches).
 pub(super) trait BranchRow: Clone {
     fn hash(&self) -> &[u8];
     fn prev_hash(&self) -> &[u8];
     fn order_key(&self) -> i64;
 }
 
-/// One extracted branch component. `key_min` / `key_max` are the ordering key's
-/// range across the component's members (BTC height or header time).
 pub(super) struct BranchComponent {
     pub root_hash: Vec<u8>,
     pub member_hashes: Vec<Vec<u8>>,
@@ -69,8 +60,7 @@ pub(super) fn branch_components<R: BranchRow>(rows: Vec<R>) -> Vec<BranchCompone
         }
     }
 
-    // Cycles / rows whose parent is also in the set but that no root reached:
-    // walk any still-unvisited node so a malformed forest still summarizes.
+    // Walk remaining unvisited nodes so cycles still summarize.
     let mut leftovers = by_hash.values().cloned().collect::<Vec<_>>();
     leftovers.sort_by(|a, b| {
         a.order_key()
@@ -94,10 +84,6 @@ pub(super) fn branch_components<R: BranchRow>(rows: Vec<R>) -> Vec<BranchCompone
         .collect()
 }
 
-/// DFS one component from `root_hash`, marking `visited`, collecting members,
-/// and summarizing: tips are members with no in-component child, sorted
-/// newest-key-first with hash tie-break; `key_min/key_max` span the component;
-/// `depth` is the member count. `None` if the root resolves to no rows.
 fn summarize_component<R: BranchRow>(
     root_hash: &[u8],
     by_hash: &HashMap<Vec<u8>, R>,

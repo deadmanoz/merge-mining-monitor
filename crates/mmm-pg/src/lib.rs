@@ -1,9 +1,5 @@
-//! Postgres connection configuration and connector.
-//!
-//! Knows how to open a Postgres connection from env; contains zero SQL and
-//! zero domain types. Every other crate that touches the database builds on
-//! this one - the api's deadpool pool and the producers' direct clients share
-//! `PgConfig::to_tokio_config` as the single source of connection truth.
+//! Postgres connection configuration and connector (`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`).
+//! Contains no SQL or domain types; shared by direct clients and the API pool.
 
 use std::env;
 
@@ -34,9 +30,7 @@ impl PgConfig {
         })
     }
 
-    /// Build the `tokio_postgres::Config` for this connection. Shared by the
-    /// direct `connect()` path and the read-API `deadpool_postgres` pool so both
-    /// connection paths use identical Postgres parameters.
+    /// Build the `tokio_postgres::Config` for this connection.
     pub fn to_tokio_config(&self) -> Config {
         let mut pg = Config::new();
         pg.host(&self.host)

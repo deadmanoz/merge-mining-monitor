@@ -4,12 +4,8 @@ use serde::Serialize;
 
 const RELEASE_NOTES: &str = include_str!("../../../RELEASE_NOTES.md");
 const RELEASE_NOTES_SOURCE: &str = "RELEASE_NOTES.md";
-// The About dialog renders release notes in a dedicated, scrollable, per-release
-// collapsible pane, so the projection is unbounded: every section and every item
-// in RELEASE_NOTES.md is exposed. The `truncated` / `*_count` fields and the
-// max-cap parameters threaded through `parse_release_notes` are retained as a
-// dormant safety net, so reintroducing a hard cap (or surviving a runaway file)
-// degrades gracefully without a wire-contract change.
+// Unbounded projection for the scrollable About pane; `truncated` / `*_count`
+// fields remain on the wire contract if a hard cap is reintroduced.
 const MAX_RELEASES: usize = usize::MAX;
 const MAX_ITEMS_PER_RELEASE: usize = usize::MAX;
 
@@ -50,12 +46,8 @@ pub(crate) fn payload() -> VersionPayload {
     }
 }
 
-/// The served version projection as a JSON value: the exact `version` and
-/// `release_notes` subtree `/api/v1/version` responds with (envelope fields
-/// excluded). A test seam so the committed version fixture can be asserted
-/// deep-equal to what the code actually serves, making a release bump that
-/// edits `RELEASE_NOTES.md` without regenerating the fixture a test failure
-/// rather than silent drift.
+/// Served `/api/v1/version` payload (without envelope fields) for fixture
+/// contract tests.
 pub fn payload_json() -> serde_json::Value {
     serde_json::to_value(payload()).expect("version payload serializes")
 }
@@ -244,9 +236,6 @@ mod tests {
 
     #[test]
     fn production_caps_expose_every_section_and_item() {
-        // Four sections (> the old 3-release cap), the newest with nine bullets
-        // (> the old 8-item cap): the lifted production constants return them all,
-        // untruncated, so the scrollable About pane sees the whole file.
         let notes = "## [Unreleased]\n\n- a\n- b\n- c\n- d\n- e\n- f\n- g\n- h\n- i\n\n\
 ## [0.9.0] - 2026-06-23\n\n- x\n\n## [0.8.0] - 2026-06-10\n\n- y\n\n\
 ## [0.7.0] - 2026-05-28\n\n- z\n";

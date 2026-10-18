@@ -1,9 +1,4 @@
-//! Bitcoin Core backbone live producer.
-//!
-//! The continuous catch-up-then-follow-tip managed-service mode wrapping the
-//! one-shot `super::run_sync_bitcoin_core` batch, plus its cursor/decision
-//! helpers. Split out of the parent module to keep each file under the
-//! arch-lint file-size budget.
+//! Bitcoin Core backbone live follow producer.
 
 use std::time::{Duration, Instant};
 
@@ -26,9 +21,7 @@ use mmm_capture::source_registry::BITCOIN_SOURCE_CODE;
 use mmm_read_model::drain_core_reconcile_queue;
 use mmm_store::get_source_id;
 
-/// Consecutive no-forward-progress batches below tip before the live producer
-/// fail-stops, so a stuck cursor surfaces as a stopped service rather than a
-/// healthy-looking one. At the default 60s interval this is ~5 minutes.
+/// Consecutive no-forward-progress batches below tip before the live producer fail-stops.
 const FOLLOW_STALL_EXIT_THRESHOLD: usize = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,13 +37,6 @@ impl FollowProgress {
     }
 }
 
-// Normalize the follow invariants at this public entry point so a direct caller
-// (not via from_args) still gets correct catch-up-then-follow-tip behavior:
-// --tip is required for live mode to record and track the target tip (otherwise
-// target_tip stays NULL and the stall logic treats it as caught up, idling below
-// tip); missing_only keeps retries and the forward crawl from re-fetching
-// already-complete rows; and live mode always works from the persisted cursor
-// to the live tip, never a fixed height range.
 fn normalize_follow_config(config: &mut BitcoinCoreSyncConfig) {
     config.tip = true;
     config.missing_only = true;
@@ -58,14 +44,8 @@ fn normalize_follow_config(config: &mut BitcoinCoreSyncConfig) {
     config.to_height = None;
 }
 
-/// Pure stall accounting. Returns `(next_stall, should_exit)`.
-///
-/// A batch counts as a STALL when it neither made forward progress NOR is caught
-/// up at the tip: an `Ok` no-progress batch below tip, or a transient `Err`
-/// (the caller passes `caught_up = false, progressed = false`). Idling at tip
-/// (`caught_up`) resets the counter. `FOLLOW_STALL_EXIT_THRESHOLD` consecutive
-/// stalls trip a fail-stop so neither a Core-unservable height nor a persistent
-/// fetch failure can silently pin a running producer.
+/// Returns `(next_stall, should_exit)`. Idling at tip (`caught_up`) or making
+/// forward progress resets the stall counter.
 fn follow_stall_step(caught_up: bool, progressed: bool, stall: usize) -> (usize, bool) {
     if progressed || caught_up {
         (0, false)
@@ -75,9 +55,6 @@ fn follow_stall_step(caught_up: bool, progressed: bool, stall: usize) -> (usize,
     }
 }
 
-/// Whether the live-window repair sweep is due: always on the first pass (no
-/// prior repair), then once at least `interval` has elapsed since the last one.
-/// The boundary is inclusive (`>=`), so a repair exactly at the interval runs.
 fn near_tip_repair_due(last_repair: Option<Instant>, interval: Duration) -> bool {
     last_repair.is_none_or(|last_repair| last_repair.elapsed() >= interval)
 }
@@ -102,9 +79,6 @@ impl NearTipRepairSchedule {
     }
 }
 
-/// Snapshot the current Core tip to use as the live-window repair target. Held
-/// as a unit (height + hash) so the repair and its post-verify can detect the
-/// tip moving mid-sweep and treat it as an invariant failure.
 async fn capture_live_window_target<S>(source: &S) -> Result<BitcoinCoreBackboneTip>
 where
     S: BitcoinCoreBackboneSource,
@@ -115,12 +89,9 @@ where
         .context("fetch Bitcoin Core live backbone window target tip")
 }
 
-/// Run the live-window repair sweep at most once per `interval`, returning the
-/// updated timestamp and whether it is safe to proceed with the ordinary batch.
-/// On a transient capture or repair failure it stamps "now" and returns false,
-/// preventing the strict ordinary guard from racing ahead of a repair retry. A
-/// successful repair is followed by invariant verification and acceptance of
-/// the pinned target; a structural breach propagates to fail-stop.
+/// Run the live-window repair sweep at most once per `interval`. On transient
+/// failure, stamps `Instant::now()` and returns `false` so the strict ordinary
+/// guard does not race ahead of a repair retry.
 async fn repair_near_tip_backbone_if_due<S>(
     client: &mut Client,
     source: &S,
@@ -228,10 +199,9 @@ async fn try_record_retryable_repair_message(
         .transaction()
         .await
         .context("begin retryable Bitcoin Core repair status update")?;
-    // The upsert locks the sync-state row. Check the queue and status ownership in
-    // a separate READ COMMITTED statement so a writer that held the row first
-    // is visible after this transaction waits for it. Retry bookkeeping may
-    // replace a retry-owned status, but never masks another producer failure.
+    // `load_or_init_sync_state` locks the sync-state row. Recheck queue and status
+    // ownership in a separate READ COMMITTED statement so a writer that held the
+    // row first is visible; retry bookkeeping never masks another producer failure.
     let state = load_or_init_sync_state(&txn, source_id).await?;
     let may_record_retry: bool = txn
         .query_one(
@@ -298,11 +268,6 @@ pub async fn record_retryable_repair_failure_for_test(
     .await
 }
 
-/// Classify a repair sweep's outcome into "verify the window now" (`Ok(true)`)
-/// versus "retry later" (`Ok(false)`), or propagate a fail-stop. An integrity
-/// error is re-raised so the live producer exits. A transient error is logged and
-/// retried. A success that still left `coinbase_failed > 0` returns `false` so
-/// window verification is deferred until a later, clean repair.
 fn handle_near_tip_repair_result(
     tip_height: i32,
     result: Result<BitcoinCoreSyncStats>,
@@ -336,8 +301,6 @@ fn handle_near_tip_repair_result(
     }
 }
 
-/// Emit an info log for a repair sweep only when it did real work (filled a hole
-/// or hit a coinbase failure), so a steady-state no-op sweep stays quiet.
 fn log_near_tip_repair_stats(tip_height: i32, stats: &BitcoinCoreSyncStats) {
     if stats.completed > 0 || stats.coinbase_failed > 0 {
         tracing::info!(
@@ -366,7 +329,6 @@ fn wait_after_live_tick(
         );
     }
     if outcome.progressed {
-        // Still catching up: loop immediately, but stay shutdown-aware.
         Ok(Duration::ZERO)
     } else {
         Ok(follow_interval)
@@ -391,9 +353,6 @@ impl<'a, S> BitcoinCoreLiveProducer<'a, S>
 where
     S: BitcoinCoreBackboneSource,
 {
-    /// Normalize the follow config and ensure the `bitcoin_core_sync_state` row
-    /// exists before the first cursor read, which fails on a freshly migrated
-    /// database without it. The daemon and the finite test tick both start here.
     async fn start(
         client: &'a mut Client,
         source: &'a S,
@@ -461,9 +420,6 @@ fn bookkeeping_failure_outcome_from(
     }
 }
 
-/// Return whether follow mode can continue this tick after refreshing the
-/// derived Core-header cache. Cache transport and database failures are retried
-/// like the backbone batch; typed cache or backbone integrity failures fail-stop.
 fn handle_header_cache_refresh_result(result: Result<()>) -> Result<bool> {
     match result {
         Ok(()) => Ok(true),
@@ -522,14 +478,9 @@ where
             .await?;
         if !repair_succeeded {
             return Ok(TickOutcome {
-                // A partial gap/suffix commit is not safe progress until the
-                // complete repair, queue drain, verification, and target
-                // acceptance sequence succeeds. Waiting one interval also
-                // makes the scheduled repair due again on the next tick.
+                // Only a completed repair + queue drain + verification + target
+                // acceptance sequence counts as safe progress or idle-at-target.
                 progressed: false,
-                // Height equality is insufficient on a same-height fork. A
-                // target is idle only after its hash has been accepted by a
-                // successful repair/verification pass.
                 idle_at_target: false,
             });
         }
@@ -619,20 +570,11 @@ where
     }
 }
 
-/// Continuous catch-up-then-follow-tip producer wrapping the one-shot
-/// `run_sync_bitcoin_core` batch. Catches the contiguous-complete cursor up to
-/// the Bitcoin Core tip, then follows the tip as new blocks arrive. Installs its
-/// own SIGINT/SIGTERM handler so the live-test manager can stop it cleanly and
-/// the public signature stays free of any shutdown type.
+/// Continuous catch-up-then-follow-tip producer.
 ///
-/// Error policy: a transient batch error (Core/DB fetch failure) is logged and
-/// retried after `follow_interval`, but it counts toward the stall streak so a
-/// PERSISTENT transient failure below tip fail-stops after
-/// `FOLLOW_STALL_EXIT_THRESHOLD` consecutive batches rather than retrying
-/// forever behind a healthy-looking status. A backbone integrity error
-/// outside the bounded repair window is propagated immediately so the producer
-/// exits and alerts the operator. A recent fork with a matching anchor inside
-/// the window is switched atomically before the strict ordinary batch runs.
+/// Transient batch errors are retried up to `FOLLOW_STALL_EXIT_THRESHOLD`
+/// consecutive below-tip stalls; backbone integrity errors outside the bounded
+/// repair window fail-stop immediately.
 pub async fn run_sync_bitcoin_core_follow<S>(
     client: &mut Client,
     source: &S,
@@ -649,12 +591,8 @@ where
     .await
 }
 
-/// Execute one finite follow tick with a deliberately fresh repair timestamp.
-///
-/// This db-integration seam exercises the control-flow race in which the
-/// scheduled sweep is throttled but the ordinary batch discovers a fork and
-/// must force an immediate bounded repair. The returned pair is
-/// `(progressed, idle_at_target)`.
+/// Execute one finite follow tick with a fresh repair timestamp so the
+/// scheduled sweep is throttled and any fork forces an immediate repair.
 #[cfg(any(test, feature = "db-integration"))]
 #[doc(hidden)]
 pub async fn run_bitcoin_core_follow_tick_for_test<S>(
@@ -676,7 +614,6 @@ where
     .await
 }
 
-/// Execute the first finite follow tick, including its scheduled startup repair.
 #[cfg(any(test, feature = "db-integration"))]
 #[doc(hidden)]
 pub async fn run_bitcoin_core_initial_follow_tick_for_test<S>(
@@ -722,9 +659,6 @@ where
     Ok((outcome.progressed, outcome.idle_at_target))
 }
 
-/// Read the current follow-loop progress for the source. The loop calls this
-/// before/after each batch to detect forward progress and distinguish healthy
-/// idle-at-tip from a stuck-below-tip stall.
 async fn load_follow_progress(client: &Client, source_id: i64) -> Result<FollowProgress> {
     let row = client
         .query_one(
@@ -742,21 +676,14 @@ async fn load_follow_progress(client: &Client, source_id: i64) -> Result<FollowP
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    // Integrity-error helpers live in the parent module (used by its guards);
-    // the classification test exercises them here.
     use super::super::{BackboneIntegrityError, integrity_error};
+    use super::*;
     use anyhow::anyhow;
 
     #[test]
     fn follow_stall_step_exact_boundary_and_resets() {
-        // Caught up at tip: healthy idle, reset regardless of progress.
         assert_eq!(follow_stall_step(true, false, 4), (0, false));
-        // Forward progress below tip: reset, no exit.
         assert_eq!(follow_stall_step(false, true, 4), (0, false));
-        // Stuck (no progress, not caught up): an Ok no-progress batch below tip
-        // OR a transient Err (caller passes caught_up=false, progressed=false).
-        // Increments, and exits EXACTLY at the threshold.
         assert_eq!(follow_stall_step(false, false, 0), (1, false));
         assert_eq!(
             follow_stall_step(false, false, FOLLOW_STALL_EXIT_THRESHOLD - 2),

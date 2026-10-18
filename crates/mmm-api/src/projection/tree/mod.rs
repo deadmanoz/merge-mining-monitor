@@ -1,5 +1,4 @@
-//! Tree projection: the `/api/v1/tree` entry, payload DTOs, and the
-//! tree-only serde helpers.
+//! `/api/v1/tree` entry, payload DTOs, and mode routing.
 
 mod anchor;
 mod build;
@@ -39,27 +38,16 @@ use super::shared::{
 use crate::normalize::Classification;
 use crate::query::TreeQuery;
 
-/// Hard cap on null-height (unheighted) unknown nodes in one `/tree` response, and
-/// the anchor-strip neighbor budget. Over this, mod.rs returns `unheighted_count_error`
-/// rather than emit an unbounded null-height set the buildless frontend cannot lay out.
+/// Hard cap on null-height unknown nodes in one `/tree` response and anchor-strip neighbor budget.
 pub(super) const UNHEIGHTED_NODE_LIMIT: usize = 250;
 pub(super) const TREE_NODE_LIMIT: usize = reduction::NODE_LIMIT;
 
-/// Default tip-window span in BTC heights: the tip plus the 15 heights below it.
-/// Bounds `ResolvedTreeWindow::for_tip` and the contiguous/sparse tip SQL so the
-/// no-param `/tree` view is a fixed-width strip ending at the canonical tip.
+/// Default tip-window span in BTC heights (tip plus 15 heights below it).
 pub(super) const DEFAULT_TREE_WINDOW_HEIGHTS: i32 = 16;
 
-/// How far back the sparse tip strategy scans for a clean DEFAULT_TREE_WINDOW_HEIGHTS
-/// run of single-block complete canonical heights when the contiguous tip fails.
-/// Caps the window-function island scan so a long gappy backbone cannot blow up
-/// the default-tip query.
+/// Max backward scan height span for the sparse clean-island tip strategy.
 pub(super) const DEFAULT_TREE_SPARSE_SCAN_HEIGHTS: i32 = 2048;
 
-/// True when a projection's parent header time falls inside the request's
-/// `unheighted_from..=unheighted_to` date window (UTC date compare). Gates which
-/// null-height unknowns enter the windowed `include_unheighted` view; returns
-/// false when either bound is unset.
 pub(super) fn unheighted_in_range(
     projection: &ParentProjection,
     query: &TreeQuery,
@@ -76,11 +64,6 @@ pub(super) fn unheighted_in_range(
     Ok(date >= from && date <= to)
 }
 
-/// `/api/v1/tree` success payload (pinned by fixtures `tree.json` and
-/// `tree-unheighted-anchor.json`). `window` echoes the resolved bounds; `nodes`
-/// and `edges` are the reduced graph; `branches` groups stale/orphan forks;
-/// `legend` lists the kind/edge vocabularies the frontend renders. Field names
-/// are the locked JSON contract.
 #[derive(Debug, Clone, Serialize)]
 pub struct TreePayload {
     pub window: TreeWindow,
@@ -90,11 +73,6 @@ pub struct TreePayload {
     pub legend: TreeLegend,
 }
 
-/// Resolved-window echo in the tree payload (wire contract; tree fixtures).
-/// `defaulted_to_tip` flags the no-param tip default; `empty_reason` carries the
-/// machine string when no window resolved (`no_canonical_tip`,
-/// `no_complete_canonical_at_or_before_time`); `hidden_linear_block_count` is the
-/// total collapsed by the `hidden` edges.
 #[derive(Debug, Clone, Serialize)]
 pub struct TreeWindow {
     pub btc_height_min: Option<i32>,
@@ -105,68 +83,40 @@ pub struct TreeWindow {
     pub hidden_linear_block_count: u64,
 }
 
-/// One block in the tree graph (wire contract; tree fixtures). `id`/`prev_id` are
-/// response-local ids assigned by `materialize_tree`, not stored columns; `hash`
-/// is display (reversed) hex. `placement_height`/`placement_approx` appear only on
-/// anchor-mode orphan forks (serde-skipped otherwise).
 #[derive(Debug, Clone, Serialize)]
 pub struct TreeNode {
     pub id: usize,
     pub hash: String,
     pub height: Option<i32>,
     pub kind: &'static str,
-    /// Derived refinement of `kind='unknown'` (see `block.btc_orphan_class`):
-    /// `strict_btc_orphan` / `weak_btc_orphan` / `excluded`, or `null`
-    /// for canonical/stale/error-block nodes and for pending/never-Core-checked
-    /// unknowns.
     pub btc_orphan_class: Option<String>,
     pub prev_id: Option<usize>,
     pub prev_hash: String,
     pub bitcoin_miner_pool: PoolObject,
-    /// Best-available miner for the node label: equals `bitcoin_miner_pool` when
-    /// `display_miner_basis` is `bitcoin_coinbase`, otherwise the chain-agnostic
-    /// child-inferred pool (or the unknown sentinel). The strict
-    /// `bitcoin_miner_pool` fact is never overridden.
     pub display_miner_pool: PoolObject,
-    /// `bitcoin_coinbase` | `child_inferred` | `unknown` (see
-    /// `DisplayMinerBasis`).
     pub display_miner_basis: &'static str,
     pub source_summary: SourceSummary,
     pub child_chain_evidence: Vec<ChildChainEvidence>,
     pub branch: Option<TreeNodeBranch>,
     pub proof_state: ProofState,
     pub competition: Option<TreeCompetition>,
-    /// Anchor-mode fork placement (see `anchor_projection`). A derived layout
-    /// height for an orphan node whose stored `btc_height` is NULL, so the
-    /// navigator can dangle it off the canonical chain at its own height. Present
-    /// ONLY on a placed orphan node (serde-skipped elsewhere); it is a layout
-    /// hint, not a stored block column.
+    /// Derived layout height for an anchor-mode orphan node (absent elsewhere).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub placement_height: Option<i32>,
-    /// True when `placement_height` is an approximation (the timestamp-selected
-    /// DAA-epoch height for weak/excluded/pending orphans) rather than a validated
-    /// strict BIP34 height. Drives the `~` label prefix. Serde-skipped when false.
+    /// True when `placement_height` is an epoch approximation rather than strict BIP34.
     #[serde(skip_serializing_if = "is_false")]
     pub placement_approx: bool,
 }
 
-/// serde `skip_serializing_if` predicate: a `false` bool serializes to nothing,
-/// so `placement_approx` appears only on an approximately-placed orphan node.
 pub(super) fn is_false(value: &bool) -> bool {
     !*value
 }
 
-/// Per-node branch membership tag (wire contract). Carries the `branch_id` that
-/// ties a node to its `TreeBranch` (`stale-<height>-<root>` or `orphan-<root>`).
 #[derive(Debug, Clone, Serialize)]
 pub struct TreeNodeBranch {
     pub branch_id: String,
 }
 
-/// One directed `prev -> node` edge in the tree graph (wire contract; tree
-/// fixtures). `edge_kind` is from the legend vocabulary (canonical/stale_entry/
-/// stale/hidden, plus orphan/orphan_approx in anchor mode);
-/// `hidden_count` is present only on a `hidden` collapse edge.
 #[derive(Debug, Clone, Serialize)]
 pub struct TreeEdge {
     pub from_hash: String,
@@ -176,11 +126,6 @@ pub struct TreeEdge {
     pub edge_kind: &'static str,
 }
 
-/// A stale or orphan fork as a unit (wire contract; tree fixtures), assembled by
-/// `build_branches`. `btc_height_min`/`max` rank by real `btc_height` for stale
-/// branches and by derived `placement_height` for orphan branches; `depth` is the
-/// member count; `canonical_competitor_hashes` are the canonical winners each
-/// member competed against.
 #[derive(Debug, Clone, Serialize)]
 pub struct TreeBranch {
     pub branch_id: String,
@@ -193,10 +138,6 @@ pub struct TreeBranch {
     pub canonical_competitor_hashes: Vec<String>,
 }
 
-/// Render vocabularies echoed in every tree payload (wire contract; tree
-/// fixtures): the node `kinds` and the `edge_kinds` the frontend knows how to draw.
-/// Anchor mode extends `edge_kinds` with `orphan`/`orphan_approx` when an orphan
-/// fork is placed.
 #[derive(Debug, Clone, Serialize)]
 pub struct TreeLegend {
     pub kinds: Vec<&'static str>,
@@ -237,10 +178,7 @@ fn orphan_tree_legend() -> TreeLegend {
     legend
 }
 
-/// `/api/v1/tree` projection entry and mode router. Dispatches in precedence
-/// order: `unheighted_anchor` -> anchor mode (orphan-fork placement, no Core
-/// hydration); `context=compact` -> the compact context tree; otherwise resolve
-/// the height window and run the shared windowed projection. Read-only.
+/// Dispatch `/api/v1/tree` by precedence: `unheighted_anchor`, `context=compact`, then windowed.
 pub async fn tree(client: &Client, query: &TreeQuery) -> Result<TreePayload, ProjectionError> {
     if let Some(anchor) = query.unheighted_anchor.as_deref() {
         return anchor_tree(client, query, anchor).await;
@@ -252,9 +190,6 @@ pub async fn tree(client: &Client, query: &TreeQuery) -> Result<TreePayload, Pro
     tree_projection(client, query, window).await
 }
 
-/// The three hash sets that keep a node renderable regardless of the
-/// kind/min-sources filters: stale-branch members, their canonical attach
-/// parents, and their canonical competitors.
 struct NodeProtection {
     stale_branch_members: HashSet<String>,
     protected_stale_attach_parents: HashSet<String>,
@@ -262,12 +197,6 @@ struct NodeProtection {
     protected_context: HashSet<String>,
 }
 
-/// Select the window's renderable candidates: canonical spine rows (with
-/// protection for stale attach parents and competitors), in-branch stales,
-/// block-backed unheighted unknowns inside the date window, and - when
-/// include_unheighted is on - the direct-event projections gated by the
-/// pending classification contract. Returns the candidates and the
-/// unheighted count for the node-limit check.
 fn select_tree_candidates(
     query: &TreeQuery,
     projections: Vec<super::materialize::ParentProjection>,
@@ -321,13 +250,8 @@ fn select_tree_candidates(
     }
 
     if query.include_unheighted {
-        // A direct-event projection has no `block` read-model row, so it carries no
-        // `btc_orphan_class` (pending by construction). Gate direct unknowns on the
-        // classification filter so the include_unheighted view honors the same
-        // orphan-class contract as the block-row path (`load_blocks_for_tree`):
-        // under the default strict+weak filter they are excluded, and they appear
-        // only when the caller asks for `pending`. Direct `near` projections, which
-        // are not an orphan class, are unaffected.
+        // Direct-event unknowns have no `block` row (pending by construction); only emit
+        // them when `pending` is in `query.classification`.
         let include_pending_unknowns = query.classification.contains(&Classification::Pending);
         let direct = project_direct_events(all_events, direct_projection_hashes)?;
         for mut projection in direct {
@@ -350,8 +274,6 @@ fn select_tree_candidates(
     Ok((candidates, unheighted_count))
 }
 
-/// Reduce the candidate set, materialize nodes/edges, and assemble the
-/// payload with the window echo and legend.
 fn reduce_and_assemble_tree(
     mut candidates: Vec<super::materialize::ParentProjection>,
     window: ResolvedTreeWindow,
@@ -388,12 +310,6 @@ fn reduce_and_assemble_tree(
     })
 }
 
-/// Default windowed `/tree` projection over an already-resolved height window:
-/// ensure backbone coverage, load blocks + active events/proofs/sources/derived
-/// competitions, seed the direct-projection de-dup so a classification-
-/// filtered unknown is never re-leaked as pending, select protected candidates,
-/// enforce the unheighted cap and the every-stale-has-a-competition invariant,
-/// then reduce and assemble.
 async fn tree_projection(
     client: &Client,
     query: &TreeQuery,
@@ -417,12 +333,8 @@ async fn tree_projection(
         direct_projection_hashes.insert(competition.canonical_hash.clone());
         direct_projection_hashes.insert(competition.stale_hash.clone());
     }
-    // Exclude EVERY block-backed unheighted unknown in the window from direct
-    // projection, not only those that passed the orphan-class filter in
-    // `load_blocks_for_tree`. Otherwise a classified (strict/weak/excluded) block
-    // that a narrower `classification` (e.g. pending-only) filtered out of `blocks`
-    // would be re-materialized from its active events as a class-less (pending)
-    // direct projection, leaking a classified row as pending.
+    // Exclude all block-backed unheighted unknowns in the window from direct projection so
+    // rows filtered out by `classification` are not re-materialized from events as pending.
     if query.include_unheighted {
         let from = query.unheighted_from.map(epoch_start_of_day).unwrap_or(0);
         let to = query

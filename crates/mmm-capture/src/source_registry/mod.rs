@@ -1,35 +1,12 @@
-//! Source Lifecycle Registry: the single definition of every
-//! `source` row.
+//! Source Lifecycle Registry: canonical definition of every `source` row.
 //!
-//! Source id, code, chain, kind, and lifecycle all live here
-//! exactly once; per-chain presentation (display config, by-line, modal help,
-//! editorial profiles) lives in `data/sources/chain_profiles.json`. Everything else in
-//! the repo is derived from this list or drift-checked against it:
-//!
-//! - API source-filter validation reads [`SOURCE_REGISTRY`] and [`SourceKind::ALL`].
-//! - the producer-facing `*_SOURCE_CODE` constants are OWNED here; every caller
-//!   imports them directly from this module.
-//! - the source-seed SQL (`migrations/0002_seed_sources.sql`) and the frontend
-//!   metadata (`www/js/source-registry.generated.js`) are GENERATED from
-//!   [`SOURCE_REGISTRY`] by `gen-source-artifacts` (see [`generate`]).
-//! - DB integration tests check the seeded `source` rows against
-//!   [`SOURCE_REGISTRY`]; API fixture tests check that fixture source codes are
-//!   registered.
-//!
-//! Source ids are explicit, permanent, and never reused. The array is kept in
-//! ascending-id order for readability, but its position does not define identity.
-//! Retired ids remain absent from the registry (currently id 32). See the unit
-//! tests below.
+//! Per-chain presentation and editorial profiles live in `data/sources/chain_profiles.json`.
+//! Source ids are permanent and never reused (id 32 is retired).
 
 #[cfg(any(test, feature = "artifact-generation"))]
 pub mod generate;
 
-// ---------------------------------------------------------------------------
-// Vocabulary enums (the DB CHECK domains for `source`).
-// ---------------------------------------------------------------------------
-
 /// The `<kind>` segment of a source code, and the `source.kind` CHECK domain.
-/// Distinct from the parent-classification kind in `api::normalize::ParentKind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceKind {
     Auxpow,
@@ -37,14 +14,8 @@ pub enum SourceKind {
 }
 
 impl SourceKind {
-    /// The full source-kind vocabulary, in DB CHECK order.
     pub const ALL: [SourceKind; 2] = [SourceKind::Auxpow, SourceKind::LiveChaintip];
 
-    /// The exact `source.kind` CHECK token, and the `<kind>` segment of a source
-    /// code. The unit tests bind it: every registry `code` must decompose so
-    /// segment 0 equals `kind.as_str()`. Emitted into the seed SQL and frontend
-    /// generators and used by the API source-filter validation, so these strings
-    /// are a persisted wire contract: never reword without a migration.
     pub const fn as_str(self) -> &'static str {
         match self {
             SourceKind::Auxpow => "auxpow",
@@ -53,13 +24,7 @@ impl SourceKind {
     }
 }
 
-/// The source-class axis. Registry-derived display metadata; `Live` covers the
-/// active producers and the Bitcoin classifier; `Historical` covers recovered
-/// datasets without a live Monitor producer; `Partial` covers an ingestible
-/// recovered subset whose full child chain remains unavailable; `Surveyed`
-/// covers a recovered and reviewed chain that yielded no admissible Bitcoin
-/// evidence; `Catalogued`
-/// covers chains known to have BTC-merge-mined but with no recovered data.
+/// Source lifecycle class emitted into `SOURCE_LIFECYCLE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceLifecycle {
     Live,
@@ -70,10 +35,6 @@ pub enum SourceLifecycle {
 }
 
 impl SourceLifecycle {
-    /// The lifecycle token emitted into the frontend `SOURCE_LIFECYCLE` dict,
-    /// keyed by exact source code (not chain), so live and historical AuxPoW rows
-    /// separate even though both use kind=auxpow. Consumed by `render_frontend_js`;
-    /// the buildless www/ frontend reads these strings, so they are a wire value.
     pub const fn as_str(self) -> &'static str {
         match self {
             SourceLifecycle::Live => "live",
@@ -86,21 +47,15 @@ impl SourceLifecycle {
 }
 
 /// Where a child chain serializes the target its Bitcoin parent must meet.
-///
-/// This belongs in the shared source registry because historical imports use
-/// the same child-evidence contract as live producers. `PowData` is the
-/// Xaya-style envelope: its pure 80-byte header deliberately has zero `nBits`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChildTargetLocation {
     HeaderNbits,
     PowData,
 }
 
-/// One source definition. `code` is `<kind>:<chain>[:instance]`;
-/// the unit tests assert `code` decomposes to exactly `kind`/`chain`/`instance`.
+/// One source definition (`code` is `<kind>:<chain>[:instance]`).
 #[derive(Debug, Clone, Copy)]
 pub struct SourceDefinition {
-    /// Permanent database identity. Values may have gaps and are never reused.
     pub id: i64,
     pub code: &'static str,
     pub chain: &'static str,
@@ -109,13 +64,6 @@ pub struct SourceDefinition {
     pub lifecycle: SourceLifecycle,
     pub child_target_location: ChildTargetLocation,
 }
-
-// ---------------------------------------------------------------------------
-// Source codes. Every caller (producers, read-model,
-// API, tests) imports these directly from `mmm_capture::source_registry`. These
-// are the canonical `source.code` strings; changing a code here is a migration +
-// a frontend regen + a SOURCE_REGISTRY row edit, never a literal swap.
-// ---------------------------------------------------------------------------
 
 pub const NAMECOIN_SOURCE_CODE: &str = "auxpow:namecoin";
 pub const RSK_SOURCE_CODE: &str = "auxpow:rsk";
@@ -127,7 +75,6 @@ pub const TERRACOIN_SOURCE_CODE: &str = "auxpow:terracoin";
 pub const QBIT_SOURCE_CODE: &str = "auxpow:qbit";
 pub const BITCOIN_SOURCE_CODE: &str = "live-chaintip:bitcoin:core";
 
-/// A live AuxPoW producer source.
 const fn live_auxpow(id: i64, code: &'static str, chain: &'static str) -> SourceDefinition {
     SourceDefinition {
         id,
@@ -140,7 +87,6 @@ const fn live_auxpow(id: i64, code: &'static str, chain: &'static str) -> Source
     }
 }
 
-/// A recovered AuxPoW dataset without a live Monitor producer.
 const fn historical_auxpow(id: i64, code: &'static str, chain: &'static str) -> SourceDefinition {
     SourceDefinition {
         id,
@@ -153,8 +99,6 @@ const fn historical_auxpow(id: i64, code: &'static str, chain: &'static str) -> 
     }
 }
 
-/// A historical source whose effective target is serialized in a PowData
-/// envelope, with a zero `nBits` field in its pure child header.
 const fn historical_powdata_auxpow(
     id: i64,
     code: &'static str,
@@ -166,7 +110,6 @@ const fn historical_powdata_auxpow(
     }
 }
 
-/// An ingestible recovered subset whose full child chain is still unavailable.
 const fn partial_auxpow(id: i64, code: &'static str, chain: &'static str) -> SourceDefinition {
     SourceDefinition {
         id,
@@ -179,7 +122,6 @@ const fn partial_auxpow(id: i64, code: &'static str, chain: &'static str) -> Sou
     }
 }
 
-/// A recovered and reviewed chain with no admissible Bitcoin evidence rows.
 const fn surveyed_auxpow(id: i64, code: &'static str, chain: &'static str) -> SourceDefinition {
     SourceDefinition {
         id,
@@ -192,9 +134,6 @@ const fn surveyed_auxpow(id: i64, code: &'static str, chain: &'static str) -> So
     }
 }
 
-/// A catalogued source: a chain known to have BTC-merge-mined but with no
-/// recovered data in this monitor. No producer, no evidence; kind=auxpow is the
-/// merge-mining catch-all (as for the live RSK/Hathor rows).
 const fn catalogued_auxpow(id: i64, code: &'static str, chain: &'static str) -> SourceDefinition {
     SourceDefinition {
         id,
@@ -207,9 +146,8 @@ const fn catalogued_auxpow(id: i64, code: &'static str, chain: &'static str) -> 
     }
 }
 
-/// The source list, in ascending permanent-id order. Array position is not an id.
+/// The source list, in ascending permanent-id order.
 pub const SOURCE_REGISTRY: &[SourceDefinition] = &[
-    // -- live (ids 1..7, preserving the historical seed identities) --
     live_auxpow(1, NAMECOIN_SOURCE_CODE, "namecoin"),
     live_auxpow(2, RSK_SOURCE_CODE, "rsk"),
     SourceDefinition {
@@ -225,7 +163,6 @@ pub const SOURCE_REGISTRY: &[SourceDefinition] = &[
     live_auxpow(5, FRACTAL_SOURCE_CODE, "fractal"),
     live_auxpow(6, HATHOR_SOURCE_CODE, "hathor"),
     live_auxpow(7, ELASTOS_SOURCE_CODE, "elastos"),
-    // -- historical (recovered) AuxPoW sources (ids 8..23) --
     historical_auxpow(8, "auxpow:argentum", "argentum"),
     historical_auxpow(9, "auxpow:bitcoin-vault", "bitcoin-vault"),
     historical_auxpow(10, "auxpow:bitmark", "bitmark"),
@@ -242,7 +179,6 @@ pub const SOURCE_REGISTRY: &[SourceDefinition] = &[
     live_auxpow(21, TERRACOIN_SOURCE_CODE, "terracoin"),
     historical_auxpow(22, "auxpow:unobtanium", "unobtanium"),
     historical_powdata_auxpow(23, "auxpow:xaya", "xaya"),
-    // -- recovery candidates and recovered datasets --
     partial_auxpow(24, "auxpow:vcash", "vcash"),
     historical_auxpow(25, "auxpow:lyncoin", "lyncoin"),
     catalogued_auxpow(26, "auxpow:jax-network", "jax-network"),
@@ -251,18 +187,13 @@ pub const SOURCE_REGISTRY: &[SourceDefinition] = &[
     surveyed_auxpow(29, "auxpow:doichain", "doichain"),
     catalogued_auxpow(30, "auxpow:fusioncoin", "fusioncoin"),
     catalogued_auxpow(31, "auxpow:jincoin", "jincoin"),
-    // id 32 is retired. Mazacoin was removed after its source audit found no AuxPoW.
+    // id 32 is retired (Mazacoin).
     catalogued_auxpow(33, "auxpow:bitcoin-stash", "bitcoin-stash"),
     historical_auxpow(34, "auxpow:elcash", "elcash"),
     historical_powdata_auxpow(35, "auxpow:rod", "rod"),
     live_auxpow(36, QBIT_SOURCE_CODE, "qbit"),
 ];
 
-// ---------------------------------------------------------------------------
-// Helpers.
-// ---------------------------------------------------------------------------
-
-/// Look up a definition by exact source code.
 pub fn by_code(code: &str) -> Option<&'static SourceDefinition> {
     SOURCE_REGISTRY.iter().find(|s| s.code == code)
 }

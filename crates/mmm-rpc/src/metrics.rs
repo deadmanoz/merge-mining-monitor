@@ -1,32 +1,14 @@
-//! Cheap, `Clone`-able RPC transport counters.
+//! Atomic RPC transport counters (`attempts`, `elements`, `retries`, `failures`, and latency).
 //!
-//! Production sits hundreds of milliseconds from every remote node, and every
-//! chain client already retries transient failures under a shared HTTP
-//! transport policy (see the module docs on [`crate::build_rpc_client`] and
-//! [`crate::post_json_rpc`]). Without visibility, a loop that quietly starts
-//! making one remote call per row looks identical to a healthy one until it
-//! stalls a poller tick or a backfill. [`RpcMetrics`] is a plain counter
-//! handle threaded through each client so callers can log attempts, retries,
-//! failures, and latency without changing any retry/timeout/ordering
-//! behavior. The counters live at two levels: an attempt is one dispatched
-//! HTTP request, counted when it is dispatched and timed from dispatch to the
-//! consumed response body, so a window that dispatched a call still in flight
-//! at its end shows the attempt and the window the call completes in carries
-//! its latency, averaged over the attempts completed there; a retry and a
-//! failure belong to the caller's retry loop, which alone knows when a failed
-//! attempt is followed by another and when a call has given up.
-//!
-//! `rpc_elements` counts JSON-RPC calls carried by the HTTP attempts recorded
-//! so far; it equals `http_attempts` today because every attempt carries
-//! exactly one call, and will differ once a client batches several JSON-RPC
-//! calls into one HTTP POST.
+//! Attempts are counted at HTTP dispatch and timed on [`AttemptTimer`] drop (pairing
+//! latency with `completed` attempts in each window). Retries and terminal failures
+//! are recorded by the caller's retry loop.
 
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-/// A cheap (`Arc`-backed) handle to one client's RPC transport counters.
 #[derive(Debug, Clone)]
 pub struct RpcMetrics(Arc<Inner>);
 
@@ -37,16 +19,12 @@ struct Inner {
     rpc_elements: AtomicU64,
     retries: AtomicU64,
     failures: AtomicU64,
-    /// Attempts whose latency has been recorded, so a mean over a window
-    /// pairs each latency with its own attempt.
     completed: AtomicU64,
     latency_total_nanos: AtomicU64,
     latency_max_nanos: AtomicU64,
 }
 
 impl RpcMetrics {
-    /// Create a fresh, zeroed counter set labeled for display (e.g. `"core"`,
-    /// `"rsk"`, `"hathor"`, `"elastos"`, a bitcoind-family chain name).
     pub fn new(label: &'static str) -> Self {
         Self(Arc::new(Inner {
             label,
@@ -64,12 +42,7 @@ impl RpcMetrics {
         self.0.label
     }
 
-    /// Count one dispatched HTTP attempt carrying `elements` JSON-RPC calls
-    /// and start timing it. Its latency is recorded when the timer drops, so
-    /// a request the caller's future abandons mid-flight (a cancelled fetch
-    /// pipeline) is timed with the time it was given. Start it only for a
-    /// request that reaches the transport: local waiting (a semaphore slot, a
-    /// backoff sleep) is not an attempt.
+    /// Count one dispatched HTTP attempt carrying `elements` JSON-RPC calls; records latency on drop.
     pub fn attempt(&self, elements: u32) -> AttemptTimer<'_> {
         self.record_dispatch(elements);
         AttemptTimer {
@@ -78,8 +51,6 @@ impl RpcMetrics {
         }
     }
 
-    /// Count one HTTP attempt at the moment it is dispatched, before its
-    /// outcome is known, so the window that paid for it sees it.
     fn record_dispatch(&self, elements: u32) {
         self.0.http_attempts.fetch_add(1, Ordering::Relaxed);
         self.0
@@ -87,8 +58,6 @@ impl RpcMetrics {
             .fetch_add(u64::from(elements), Ordering::Relaxed);
     }
 
-    /// Record the latency of an attempt counted by [`Self::record_dispatch`],
-    /// once its response is consumed or the caller abandons it.
     fn record_latency(&self, latency: Duration) {
         self.0.completed.fetch_add(1, Ordering::Relaxed);
         let nanos = u64::try_from(latency.as_nanos()).unwrap_or(u64::MAX);
@@ -98,28 +67,19 @@ impl RpcMetrics {
         self.0.latency_max_nanos.fetch_max(nanos, Ordering::Relaxed);
     }
 
-    /// Record one retry: the retry loop issued another iteration after a
-    /// failure. Called by the loop when it actually retries, so the last
-    /// iteration of an exhausted budget is never miscounted as a retry.
     pub fn record_retry(&self) {
         self.0.retries.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Record one failed call: the caller's retry policy gave up (a permanent
-    /// error, or a transient error whose retries are exhausted), whether or
-    /// not its last iteration reached the transport.
     pub fn record_failure(&self) {
         self.0.failures.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// A closure rendering this client's cumulative line when called, for a
-    /// job summary that is logged when the job ends.
     pub fn summary(&self) -> impl Fn() -> String + Send + Sync + 'static {
         let metrics = self.clone();
         move || metrics.snapshot().to_string()
     }
 
-    /// A point-in-time, `Copy`able read of the counters.
     pub fn snapshot(&self) -> RpcMetricsSnapshot {
         RpcMetricsSnapshot {
             label: self.0.label,
@@ -134,8 +94,7 @@ impl RpcMetrics {
     }
 }
 
-/// One dispatched, already counted attempt in flight; records its latency
-/// on drop.
+/// Guard for an in-flight attempt; records latency on drop.
 pub struct AttemptTimer<'a> {
     metrics: &'a RpcMetrics,
     start: Instant,
@@ -147,7 +106,6 @@ impl Drop for AttemptTimer<'_> {
     }
 }
 
-/// A plain, `Copy`able snapshot of [`RpcMetrics`] at one point in time.
 #[derive(Debug, Clone, Copy)]
 pub struct RpcMetricsSnapshot {
     pub label: &'static str,
@@ -155,21 +113,16 @@ pub struct RpcMetricsSnapshot {
     pub rpc_elements: u64,
     pub retries: u64,
     pub failures: u64,
-    /// Attempts whose latency is in `latency_total`.
     pub completed: u64,
     pub latency_total: Duration,
     pub latency_max: Duration,
 }
 
 impl RpcMetricsSnapshot {
-    /// Mean latency per completed HTTP attempt; zero when none has completed.
     pub fn latency_avg(&self) -> Duration {
         mean_latency(self.latency_total, self.completed)
     }
 
-    /// What happened between `earlier` and this snapshot: the counters'
-    /// differences, for a per-tick line. The window's maximum latency is not
-    /// derivable from two cumulative maxima, so a delta carries none.
     pub fn since(&self, earlier: &RpcMetricsSnapshot) -> RpcMetricsDelta {
         RpcMetricsDelta {
             label: self.label,
@@ -190,7 +143,6 @@ fn mean_latency(total: Duration, completed: u64) -> Duration {
     }
 }
 
-/// The counters' movement between two snapshots of one client.
 #[derive(Debug, Clone, Copy)]
 pub struct RpcMetricsDelta {
     pub label: &'static str,
@@ -198,14 +150,11 @@ pub struct RpcMetricsDelta {
     pub rpc_elements: u64,
     pub retries: u64,
     pub failures: u64,
-    /// Attempts that completed in the window, whether or not they were
-    /// dispatched in it; `latency_total` is theirs.
     pub completed: u64,
     pub latency_total: Duration,
 }
 
 impl RpcMetricsDelta {
-    /// Mean latency per attempt completed in the window; zero when none did.
     pub fn latency_avg(&self) -> Duration {
         mean_latency(self.latency_total, self.completed)
     }
@@ -225,8 +174,6 @@ impl fmt::Display for RpcMetricsDelta {
     }
 }
 
-/// The counters every line shares: `label: attempts= elements= retries=
-/// failures= latency_avg_ms=`.
 fn write_counters(
     f: &mut fmt::Formatter<'_>,
     label: &str,

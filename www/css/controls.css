@@ -257,9 +257,6 @@ input[type="checkbox"] {
   padding: 0;
 }
 
-/* Top-level view switcher. Rendered from the view-shell registry and hidden
-   while only one view is registered, so it costs nothing until a second view
-   exists. */
 .view-switcher {
   display: inline-flex;
   gap: 2px;

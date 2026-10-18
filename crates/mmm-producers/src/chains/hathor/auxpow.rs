@@ -1,19 +1,9 @@
 //! Hathor RFC 0006 split-header AuxPoW reconstruction.
 //!
-//! Unlike the Namecoin family, Hathor does not attach a CAuxPow blob to an
-//! 80-byte child header. Its `aux_pow` field stores only 36 + 12 of the 80 BTC
-//! parent-header bytes; the merkle-root middle (offsets 36..68) is
-//! RECONSTRUCTED from the parent coinbase plus a merkle path plus the Hathor
-//! block's own funds/graph bytes (the `raw` prefix before `aux_pow`). The
-//! commitment marker is `"Hath"` in a coinbase OP_RETURN, not `0xfabe6d6d`, so
-//! this parses entirely in its own module (the `mmm_capture::auxpow` internals are
-//! private and assume a CAuxPow blob) and never touches `auxpow.rs`.
-//!
-//! The reconstruction is self-verifying: the assembled header is accepted only
-//! when its block hash equals the Hathor block hash the API reported, so a
-//! wrong funds|graph split can never be accepted. Byte orders must match exactly
-//! and were proven byte-exact against the live API and the research fixtures
-//! (see `fixtures/hathor/`).
+//! Hathor's `aux_pow` field stores only bytes `0..36` and `68..80` of the 80-byte
+//! BTC parent header; the merkle root (`36..68`) is reconstructed from the parent
+//! coinbase (`"Hath"` commitment), merkle path, and the child block's `funds || graph`
+//! prefix, accepted only when the assembled header hashes to the Hathor block hash.
 
 use anyhow::{Context, Result, bail, ensure};
 use bitcoin::BlockHash;
@@ -21,62 +11,38 @@ use bitcoin::block::Header;
 use bitcoin::consensus::deserialize;
 use bitcoin::hashes::{Hash as _, sha256, sha256d};
 
-/// The `"Hath"` merge-mining commitment magic that terminates `cb_head`.
 const HATH_MAGIC: [u8; 4] = *b"Hath";
-
-/// A real CAuxPow blob is ~1 KB; cap untrusted REST input well above that.
 const MAX_AUX_POW_LEN: usize = 16 * 1024;
-
-/// The funds+graph prefix is ~150 bytes in practice; bound the brute-force
-/// search space against a hostile `raw`.
 const MAX_FUNDS_GRAPH_LEN: usize = 64 * 1024;
-
-/// The BTC coinbase merkle path is ~12-14 deep; reject absurd counts before
-/// allocation. A depth this large is structurally impossible for a real proof.
 const MAX_MERKLE_COUNT: usize = 32;
 
-/// Parsed RFC 0006 split-header AuxPoW blob.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HathorAuxPow {
-    /// BTC header bytes 0..36 (version + previous-block hash).
     head_36: [u8; 36],
-    /// BTC parent coinbase up to and including the `"Hath"` marker; the 32-byte
-    /// `aux_block_hash` is spliced immediately after this.
+    /// BTC parent coinbase up to and including `"Hath"`, before the 32-byte `aux_block_hash`.
     cb_head: Vec<u8>,
-    /// BTC parent coinbase after the spliced `aux_block_hash` to the end.
     cb_tail: Vec<u8>,
     /// Coinbase-to-merkle-root sibling hashes, stored display-order in the blob.
     merkle_path: Vec<[u8; 32]>,
-    /// BTC header bytes 68..80 (nTime + nBits + nNonce).
     tail_12: [u8; 12],
 }
 
-/// A successful, self-verified reconstruction.
 #[derive(Debug, Clone)]
 pub struct HathorReconstruction {
-    /// The reassembled 80-byte BTC parent header (hash equals the Hathor block).
     pub header: Header,
-    /// The reassembled full BTC parent coinbase transaction bytes.
     pub full_coinbase: Vec<u8>,
-    /// The funds|graph split offset (stored in the sidecar for O(1) re-verify).
     pub funds_graph_split: usize,
-    /// Length of the funds+graph prefix in `raw` (i.e. the `aux_pow` start
-    /// offset), so callers reuse it instead of re-scanning `raw` for `aux_pow`.
     pub funds_graph_len: usize,
 }
 
-/// Single SHA-256, internal byte order (the funds/graph leaf hash inputs).
 fn sha(b: &[u8]) -> [u8; 32] {
     sha256::Hash::hash(b).to_byte_array()
 }
 
-/// Double SHA-256, internal byte order (the BTC merkle/coinbase hash primitive).
 fn dsha(b: &[u8]) -> [u8; 32] {
     sha256d::Hash::hash(b).to_byte_array()
 }
 
-/// Decode the RFC 0006 `aux_pow` binary layout, bounding every untrusted length
-/// before allocation. Requires the blob to be consumed exactly.
 fn parse_hathor_aux_pow(blob: &[u8]) -> Result<HathorAuxPow> {
     ensure!(
         blob.len() <= MAX_AUX_POW_LEN,
@@ -120,14 +86,7 @@ fn parse_hathor_aux_pow(blob: &[u8]) -> Result<HathorAuxPow> {
     })
 }
 
-/// The funds+graph bytes are the `raw` block prefix that precedes the `aux_pow`
-/// subsequence. Returns that prefix, or an error if `aux_pow` is not found.
-///
-/// `find_subsequence` takes the first occurrence. A coincidental earlier match
-/// would yield a too-short prefix and drop the block as malformed, never a wrong
-/// accept: the caller re-derives the BTC header from this prefix and requires
-/// `sha256d(header) == tx.hash`. The collision is astronomically unlikely because
-/// `aux_pow` begins with the 36-byte high-entropy BTC version + prev-block hash.
+/// Extract the `funds || graph` prefix preceding `aux_pow` in `raw`.
 fn funds_graph_from_raw<'a>(raw: &'a [u8], aux_pow: &[u8]) -> Result<&'a [u8]> {
     let idx = find_subsequence(raw, aux_pow)
         .context("aux_pow blob not found within the raw Hathor block")?;
@@ -141,9 +100,6 @@ fn funds_graph_from_raw<'a>(raw: &'a [u8], aux_pow: &[u8]) -> Result<&'a [u8]> {
     Ok(prefix)
 }
 
-/// Require `cb_head` to end with the `"Hath"` commitment magic, immediately
-/// before the spliced `aux_block_hash`. Covers both the OP_RETURN
-/// (`6a 24 "Hath"`) and the reference-coordinator scriptSig variants.
 fn verify_commitment_marker(cb_head: &[u8]) -> Result<()> {
     ensure!(
         cb_head.len() >= HATH_MAGIC.len()
@@ -153,9 +109,8 @@ fn verify_commitment_marker(cb_head: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Reconstruct the 80-byte BTC parent header per RFC 0006, brute-forcing the
-/// funds|graph split and accepting the first split whose assembled header hashes
-/// to `expected_block_hash` (the smoking-gun identity that makes this safe).
+/// Reconstruct the 80-byte BTC parent header per RFC 0006, accepting the first
+/// `funds | graph` split whose assembled header hashes to `expected_block_hash`.
 fn reconstruct_btc_header(
     aux: &HathorAuxPow,
     funds_graph: &[u8],
@@ -185,16 +140,14 @@ fn reconstruct_btc_header(
     bail!("no funds|graph split reconstructs to the expected Hathor block hash")
 }
 
-/// Assemble the BTC parent header and full coinbase for one funds|graph split:
-/// `aux_block_hash = sha256d(sha256(funds) || sha256(graph))` spliced into the
-/// coinbase, its txid folded up the merkle path, and the header reassembled
-/// around the resulting root. `None` when the bytes do not form a header.
+/// Assemble the BTC parent header and full coinbase for one `funds | graph` split:
+/// `aux_block_hash = sha256d(sha256(funds) || sha256(graph))` (display-reversed)
+/// spliced into the coinbase and folded up the merkle path.
 fn assemble_btc_header(
     aux: &HathorAuxPow,
     funds_graph: &[u8],
     split: usize,
 ) -> Option<(Header, Vec<u8>)> {
-    // aux_block_hash is embedded in display (byte-reversed) order.
     let mut pair = Vec::with_capacity(64);
     pair.extend_from_slice(&sha(&funds_graph[..split]));
     pair.extend_from_slice(&sha(&funds_graph[split..]));
@@ -206,9 +159,7 @@ fn assemble_btc_header(
     full_coinbase.extend_from_slice(&abh);
     full_coinbase.extend_from_slice(&aux.cb_tail);
 
-    // Fold the coinbase txid up the merkle path. The coinbase is index 0
-    // (always the left leaf); siblings are stored display-order, so reverse
-    // each before hashing.
+    // Siblings are stored display-order; reverse each before hashing.
     let mut cur = dsha(&full_coinbase);
     for sib in &aux.merkle_path {
         let mut node = Vec::with_capacity(64);
@@ -228,11 +179,7 @@ fn assemble_btc_header(
         .map(|header| (header, full_coinbase))
 }
 
-/// A self-consistent block that declares `weight` in place of the real one:
-/// the graph field is rewritten and the parent header reassembled, so the
-/// reconstruction identity still holds for the new hash. Test-only: it is
-/// what a fabricated response looks like, real block bytes with the work they
-/// claim taken away. Returns the forged `raw` bytes and their block hash.
+/// Test helper: rewrite the declared graph weight and reassemble a self-consistent header.
 #[cfg(any(test, feature = "db-integration"))]
 pub fn forge_with_weight(
     raw: &[u8],
@@ -254,8 +201,6 @@ pub fn forge_with_weight(
     Ok((funds_graph, hash))
 }
 
-/// Convenience entry point: parse `aux_pow`, derive the funds+graph prefix from
-/// `raw`, and reconstruct + self-verify the BTC parent header in one call.
 pub fn reconstruct_from_blobs(
     raw: &[u8],
     aux_pow: &[u8],
@@ -266,10 +211,6 @@ pub fn reconstruct_from_blobs(
     reconstruct_btc_header(&aux, funds_graph, expected_block_hash)
 }
 
-/// Index of the first occurrence of `needle` in `haystack`, or `None`. First
-/// occurrence is intentional: a too-early match only ever fails the downstream
-/// hash identity (a malformed skip), never a wrong accept (see
-/// [`funds_graph_from_raw`]).
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || needle.len() > haystack.len() {
         return None;
@@ -279,8 +220,6 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-/// Forward-only byte cursor over an untrusted blob, bounds-checking every read
-/// so a truncated `aux_pow` errors instead of panicking.
 struct Cursor<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -291,7 +230,6 @@ impl<'a> Cursor<'a> {
         Self { buf, pos: 0 }
     }
 
-    /// Take exactly `n` bytes, erroring if the blob ends early.
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
         ensure!(
             self.pos
@@ -304,13 +242,10 @@ impl<'a> Cursor<'a> {
         Ok(slice)
     }
 
-    /// Take one byte.
     fn read_u8(&mut self) -> Result<u8> {
         Ok(self.take(1)?[0])
     }
 
-    /// Read a Bitcoin-style compact-size varint (0xFD/0xFE/0xFF prefixes for
-    /// u16/u32/u64), erroring if the value exceeds `usize`.
     fn read_varint(&mut self) -> Result<usize> {
         let first = self.read_u8()?;
         let value = match first {
@@ -322,8 +257,6 @@ impl<'a> Cursor<'a> {
         usize::try_from(value).context("aux_pow varint exceeds usize")
     }
 
-    /// Bytes not yet consumed; the parser requires this to be 0 at the end
-    /// (the blob must be consumed exactly).
     fn remaining(&self) -> usize {
         self.buf.len() - self.pos
     }

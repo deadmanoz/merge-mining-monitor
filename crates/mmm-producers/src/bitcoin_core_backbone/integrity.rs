@@ -1,11 +1,5 @@
-//! Backbone integrity guards: the structural fail-stop checks the contiguous
-//! sync and the live producer share. They detect same-height canonical
-//! conflicts, broken parent links, and target-tip reorgs, record the error on
-//! `bitcoin_core_sync_state`, and return a typed [`BackboneIntegrityError`]
-//! marker the live adapter downcasts to tell a structural fail-stop apart from a
-//! transient fetch error. The SQL helpers (`load_canonical_rows_at_height`,
-//! `update_sync_error`) stay in the parent module; the guards reach them as
-//! private parent items via `super::`.
+//! Backbone integrity guards: structural fail-stop checks shared by contiguous
+//! sync and follow mode.
 
 use anyhow::{Result, anyhow};
 use bitcoin::BlockHash;
@@ -16,11 +10,8 @@ use tokio_postgres::GenericClient;
 
 use super::{CanonicalHeightRow, load_canonical_rows_at_height, update_sync_error};
 
-/// Marker attached (via `anyhow` context) to the backbone integrity-guard
-/// errors a live producer must NOT retry: they require operator recovery, so a
-/// live producer fail-stops on them rather than masquerading as healthy. The
-/// live adapter downcasts to this to separate a structural fail-stop from a
-/// transient fetch error.
+/// Marker attached to structural backbone errors that live mode must fail-stop
+/// on rather than retry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BackboneIntegrityError {
     HeightConflict,
@@ -43,10 +34,6 @@ impl std::fmt::Display for BackboneIntegrityError {
 
 impl std::error::Error for BackboneIntegrityError {}
 
-/// Structured structural failure that can be persisted again after an
-/// in-transaction validation rolls back. The wrapped `BackboneIntegrityError`
-/// remains in the anyhow chain so live mode still distinguishes fail-stop
-/// invariants from transient transport errors.
 #[derive(Debug, Clone)]
 pub(super) struct BackboneIntegrityFailure {
     kind: BackboneIntegrityError,
@@ -96,16 +83,10 @@ impl BackboneIntegrityFailure {
     }
 }
 
-/// True when `err` carries a `BackboneIntegrityError` marker anywhere in its
-/// chain (a structural fail-stop, not a transient fetch error).
 pub(crate) fn is_backbone_integrity_error(err: &anyhow::Error) -> bool {
     err.downcast_ref::<BackboneIntegrityError>().is_some()
 }
 
-/// Build a structural integrity error: the descriptive `message` stays the
-/// top-level display (so existing operator-facing messages and their tests are
-/// unchanged) while the typed `kind` marker remains downcastable for the live
-/// adapter's transient-vs-structural classification.
 pub(crate) fn integrity_error(kind: BackboneIntegrityError, message: String) -> anyhow::Error {
     anyhow::Error::new(kind).context(message)
 }

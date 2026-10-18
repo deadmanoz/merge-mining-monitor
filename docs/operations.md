@@ -13,23 +13,12 @@ just test
 ```
 
 Copy `.env.example` to `.env` and adjust endpoints before running live pollers
-or Bitcoin Core classification. A synced Bitcoin Core node is required for every
-capture, import, and reconciliation command, including database-only
-maintenance modes. Each drains committed Core-suffix reconciliation before
-refreshing the sparse `bitcoin_core_header` cache through the current synced tip.
-`serve` reads that cache from Postgres and makes no Core RPC calls.
-
-The current retarget boundary is marked final only after Core re-reads it at 100
-blocks behind that tip. Cache refreshes verify that Core's tip did not change
-while the sparse header snapshot was read. A shallow replacement reclassifies
-existing orphan rows before the cache lock is released, while settled epoch
-history is retained.
-
-After applying migration `0010`, configure and sync a **Bitcoin mainnet** Core
-node before running any command that writes or rebuilds monitor data, including
-`just rebuild-source-health`. There is intentionally no database-only bypass:
-the node is an operational requirement, while the API remains available from the
-persisted cache.
+or Bitcoin Core classification. A synced **Bitcoin mainnet** Core node is
+required for every capture, import, and reconciliation command, including
+database-only maintenance modes (`just rebuild-source-health`): each drains
+committed Core-suffix reconciliation before refreshing the sparse
+`bitcoin_core_header` cache through the current synced tip. `serve` reads that
+persisted cache from Postgres and makes no Core RPC calls.
 
 ## Serving
 
@@ -57,91 +46,37 @@ Do not run raw migration commands against a persistent database.
 
 ### Scheduled unknown-parent rechecks
 
-A change that can alter unknown-parent verdicts schedules a recheck on the
-Core-header cache state instead of running one: a cache refresh that finds a
-shallow reorg, a retarget boundary inside existing coverage, or an empty cache
-(those revisit already classified orphans), a plain horizon advance (pending
-rows only), or a migration that changes a classifier rule (`0019` scheduled
-the Hathor strict BIP34 recheck). Each trigger increments the pending
-generation and widens the pending scope; no producer does the work at
-startup or inside a tick. Producers log that a recheck is pending.
-
-Consume it with the job:
+Changes that can alter unknown-parent verdicts (a shallow Core reorg, a retarget
+boundary inside existing coverage, an empty cache, a horizon advance, or a
+classifier-rule migration) record a pending recheck on the Core-header cache
+state rather than scanning inside producer startup or a poll tick. Consume
+pending rechecks with:
 
 ```bash
 just reclassify-unknown-parents --scheduled
 ```
 
-The job binds a pass to the pending generation, consuming the pending scope,
-and processes one page per exclusive cache-lock hold, so live capture
-interleaves with it, and persists its cursor after every page, so a kill at
-any point resumes where it stopped. Triggers differ in what they do to a pass
-in flight. A shallow reorg, a boundary inside coverage, an empty cache, or a
-migration can change verdicts already given: those clear the pass and fold
-its scope back into the pending scope, so the next page binds a new pass
-that starts over with the merged scope and candidates behind the old cursor
-are seen again under the new state. A plain horizon advance, which live producers record on every
-Bitcoin block, is additive: the pass keeps its cursor, and the advance
-accumulates for a follow-up pass that runs after the bound generation is
-acknowledged and normally covers only rows still without a verdict. Each page
-begins with the same recovery handoff the refresh uses (one batch of the
-committed Core suffix cascade, and no page while that queue is not empty),
-and a page reconciles nothing itself: it enqueues its candidates as durable
-primaries of that cascade in the transaction that advances the cursor, and
-the following holds drain them (a strict reconcile, then durable dependent
-expansion), so a kill between a promoted parent's commit and its
-descendants' reconciliation leaves the rest in `bitcoin_core_reconcile_queue`
-rather than in process memory. A Core RPC failure fails the run with the pass
-still bound and the queue still holding the work, to be rerun.
-The job exits when nothing is pending. Run it after every migration-bearing
-release (the deploy repository runs it as a oneshot after `just migrate`) and
-whenever a producer reports a pending recheck.
-
-A migration that needs a recheck schedules it the way `0027` documents in
-`migrations/README.md`: increment `recheck_pending_generation` and widen the
-pending scope on `bitcoin_core_header_cache_state`, and, when the rule change
-can alter verdicts already given, clear the bound pass and fold its scope
-into the pending scope. The manual form
-`just reclassify-unknown-parents` (optionally `--recheck-orphans`) still scans
-by hand, without a persisted cursor; prefer the scheduled job.
+The job processes one page per exclusive cache-lock hold so live capture can
+interleave, persists its cursor after every page so an interrupted run resumes
+where it stopped, and exits when nothing is pending. Run it after every
+migration-bearing release and whenever a producer logs a pending recheck. The
+manual form `just reclassify-unknown-parents` (optionally `--recheck-orphans`)
+scans without a persisted cursor; prefer `--scheduled` (see `migrations/README.md`
+for how migrations schedule a recheck).
 
 ### Hathor displacement repair (0024)
 
-Migration `0024` restores every Hathor event revoked as `hathor_superseded` or
-`hathor_voided` and records its displacement by the block that replaced it. A
-restored event changes its parent's read model, which the migration cannot
-reconcile itself. Apply it with the runtime stopped, as for any release, then,
-with the new release binary and the configured Core RPC, run:
+When applying historical repair migrations (`0019`, `0024`, `0025`), follow a
+stop/migrate/start rollout: stop `poll-hathor` before `just db-migrate-deploy`,
+then after `0024` / `0025` reconcile the restored events and refresh source
+health before restarting the poller:
 
 ```bash
 just reconcile-read-model --all --source auxpow:hathor
-```
-
-```bash
 just rebuild-source-health
 ```
 
-The migration prints the counts it found and changed as notices; keep them
-with the deployment record. Migration `0025` then drops the retired
-`supersede` marker columns of `poll_pending_reconcile`, which an older binary
-reads, so no older binary may run after it.
-
-Migration 0007 preserves existing event values while making child evidence
-nullable. Its publication cutover is a separate, explicit operation. Stop live
-pollers, back up, apply the migration, and run `just import-all`; authoritative
-historical sources then remove obsolete rows, while live sources remain
-additive. See `docs/historical-ingest.md`.
-
-Migration 0009 removes the RSK reclassification watermark used by older
-`reclassify-pools` binaries. Activate the watermark-free application package
-and confirm that no older or in-flight `reclassify-pools` process remains
-before running the backup-first migration. The new binary works both before
-and after the table is dropped. A binary-only rollback to an older release is
-not valid after 0009: recreate the empty singleton table (the old command will
-populate it) or restore the pre-migration backup before activating the old
-binary.
-
-Before applying 0007 to an existing database, audit the exact child identities:
+Before applying `0007` to an existing database (duplicate-identity audit query):
 
 ```sql
 SELECT s.code,
@@ -155,11 +90,6 @@ GROUP BY s.code, e.child_block_hash
 HAVING count(*) > 1
 ORDER BY s.code, child_block_hash;
 ```
-
-The result must be empty. Migration 0007 repeats this check and aborts before
-altering the schema if it finds a conflict. Resolve each conflict against the
-authenticated child-chain evidence; do not automatically keep or delete a row
-based on height, activity, or insertion order.
 
 ## Cleanup And Local Reset
 
@@ -191,6 +121,7 @@ just poll-fractal
 just poll-hathor
 just poll-elastos
 just poll-qbit
+just poll-terracoin
 ```
 
 Bounded backfills use:
@@ -203,38 +134,20 @@ just backfill-fractal START END
 just backfill-hathor START END
 just backfill-elastos START END
 just backfill-qbit START END
+just backfill-terracoin START END
 ```
 
-The first `poll-qbit` run against a database that already holds the imported
-Qbit historical publication must set `QBIT_START_HEIGHT` at or below that
-publication's final height (80,986 for the pinned generation) and remove it
-once the cursor is persisted. Without it the poller seeds its cursor at the
-node's current tip, and every height between the publication boundary and
-that tip is never captured, although `/api/v1/sources` still reports the
-source as live. The same applies after any controlled cursor reset.
-
-Every poll tick, whether it processed a window, found none, or failed, logs
-one `poll tick` line with the cursor, tip, the heights rescanned and new (as
-far as a failed tick got), whether any height answered with a hold, how many
-child blocks the lineage gate refused for a parent from another chain
-(`non_bitcoin`, never stored; `docs/capture.md`, "Bitcoin Lineage Gate"), the
-duration of the whole tick (Core-cache refresh, pending work, tip
-fetch, capture and cursor persistence), and each RPC client's counters as
-deltas over that tick, the child chain's and Bitcoin Core's, for example
-`rpc="namecoin: attempts=53 elements=53 retries=0 failures=0 latency_avg_ms=341; core: attempts=4 ..."`.
-Every batch job (a backfill, a reconcile, the scheduled recheck, a queue
-drain) logs progress with done, total, rate and ETA at most every thirty
-seconds and ends, whether it finished or aborted on an error, with a
-`job ended` line and one cumulative line per client, which adds
-`latency_max_ms`. An attempt is one dispatched HTTP request, counted when it
-is dispatched and timed through its interpreted response; `latency_avg_ms`
-is the mean over the attempts that completed in the window, so a Bitcoin
-Core call the outer timeout detached is counted in the tick that dispatched
-it and its latency shows in the tick it completed in, even one with no
-attempts of its own. Retries and failures are the client's retry loop's own,
-and a failure is a call that gave up. From the production host every remote
-call costs about 340 ms, so `attempts` per tick or per height is the first
-number to read when a job is slower than expected.
+Every poll tick logs one `poll tick` line with the cursor, tip, rescanned and
+new height counts, whether any height held, how many non-Bitcoin parents the
+lineage gate refused (`non_bitcoin`, never stored; see `docs/capture.md`), tick
+duration, and per-tick RPC deltas (`attempts`, `elements`, `retries`,
+`failures`, `latency_avg_ms`) for the child chain and Bitcoin Core. Batch jobs
+(backfills, reconciles, scheduled rechecks, queue drains) log progress (`done`,
+`total`, `rate`, `ETA`) at most every 30 seconds through `ProgressReporter` and
+always finish with a `job ended` summary plus cumulative per-client metrics
+including `latency_max_ms`. Because production round-trip latency is ~340 ms per
+remote call, `attempts` per tick or per height is the primary diagnostic when a
+job is slower than expected.
 
 Accept a newly activated live source by its parent mix, not only by its
 cursor. The first ticks should show `non_bitcoin` counts in line with the
@@ -246,14 +159,34 @@ overlapping heights. Unknown or near counts that grow where Research records
 none for the same heights mean parents are being stored that should not be:
 stop the poller before they spread and investigate.
 
-A Qbit backfill exits non-zero when any height in the range holds an unresolved
-capture error. The written evidence and the read-model repair still complete;
-the non-zero exit says the range is not fully covered. Inspect the open heights
-with `SELECT height, error_kind, detail FROM capture_error WHERE source_id =
-(SELECT id FROM source WHERE code = 'auxpow:qbit') ORDER BY height;`, then
-re-run the range once the node can serve them. `/api/v1/sources` reports the
+A hold-policy backfill (`qbit`, `terracoin`) exits non-zero when any height in
+the range holds an unresolved capture error. The written evidence and the
+read-model repair still complete; the non-zero exit says the range is not fully
+covered. Inspect the open heights with:
+
+```sql
+SELECT height, error_kind, detail
+FROM capture_error
+WHERE source_id = (SELECT id FROM source WHERE code = 'auxpow:qbit')
+ORDER BY height;
+```
+
+Re-run the range once the node can serve them. `/api/v1/sources` reports the
 earliest unresolved height as `sync.error_code = auxpow_capture_error` until
 each held height is reprocessed successfully.
+
+### Activating Or Resetting A Live Source After Historical Import
+
+When first starting a live poller (`poll-qbit`, `poll-terracoin`, etc.) against
+a database that already holds the source's imported Research publication — or
+after a controlled cursor reset — seed `<PREFIX>_START_HEIGHT` at or below the
+publication's proven contiguous coverage tip `C` (for example `C + 1 - reorg_depth`
+so the initial overlap tick live-captures `C` and populates `child_chain_head`).
+Without `<PREFIX>_START_HEIGHT`, the poller seeds its cursor at `tip - reorg_depth`
+on the live node, leaving an uncaptured gap above `C` while `/api/v1/sources`
+still reports `live`. Remove `<PREFIX>_START_HEIGHT` from `.env` only after `C`
+has been recorded in `child_chain_head` with no open `capture_error` rows, then
+restart for normal cursor-based resume.
 
 ## Bitcoin Core Backbone
 
@@ -269,67 +202,16 @@ just sync-bitcoin-core --from-height <start> --to-height <end> --missing-only  #
 just sync-bitcoin-core --follow                                 # long-lived catch-up-then-follow daemon
 ```
 
-In follow mode, each batch also refreshes the sparse Core header cache, even
-when no child-chain poller is running. A transient Core or database failure
-retries on the next interval without discarding backbone progress from that
-batch. A non-mainnet Core node or inconsistent persisted cache is an integrity
-failure and stops follow mode for operator repair.
-
-`--to-height` and `--limit` are mutually exclusive, so range and page semantics
-stay unambiguous. Follow mode keeps a contiguous local cursor and, during each
-interval, repairs a bounded near-tip window so sparse Core-attested rows cannot
-leave the Live tip view stale. That window defaults to 64 heights and is
-tunable with `BITCOIN_CORE_SYNC_LIVE_WINDOW_HEIGHTS` (minimum 16). The producer
-pins one Core tip, walks headers backward through the window plus one
-common-ancestor anchor, and rechecks that target after taking the exclusive
-canonical-view barrier and again immediately before commit. Missing or
-incomplete matching rows use the ordinary `missing_only` fill. A conflicting
-suffix inside the window is replaced in one transaction after every
-replacement coinbase has been fetched. If an in-flight classifier commits a
-same-height conflict after the initial scan but before the ordinary fill takes
-the canonical-view barrier, the repair reloads the pinned view and plan once so
-that conflict follows the suffix-replacement path.
-
-After a long outage, the contiguous cursor can sit below that live-tip window.
-If the cursor hash no longer matches Core, the next scheduled repair sweep
-captures one additional view ending at the cursor and uses the same configured
-window depth to find a complete matching ancestor. It replaces only the short
-divergent suffix through the cursor. The ordinary paged follow loop then catches
-up the potentially much larger distance to the live tip; that lag is not folded
-into one replacement transaction.
-
-The suffix transaction promotes the active Core headers, retains each displaced
-header as a Core-attested `stale` block pointing at its same-height canonical
-competitor, updates active AuxPoW event classifications and source health, and
-advances the contiguous cursor only when the replacement joins the already
-proven prefix. It also writes every changed parent to
-`bitcoin_core_reconcile_queue`. Follow mode drains that queue after the commit,
-and before later sync or cache-refresh work, including process bootstrap and the
-first follow tick after a restart. The suffix takes the shared cache lock before
-the exclusive canonical-view barrier, so a concurrent cache refresh either
-drains its committed queue or finishes before the suffix can commit.
-Each row persists both the parent reconcile and the later expansion that
-discovers deeper dependents, so a process exit or bounded-drain stop cannot lose
-the cascade frontier. Parent replay uses strict live Core classification, so a
-new child made inferably stale by the replacement is not completed as unknown
-after a transient classification failure. While durable work remains,
-`/api/v1/sources` reports `backbone_reorg_reconcile_pending` instead of treating
-the Bitcoin source as healthy. If that pending marker temporarily covers an
-unrelated or out-of-range producer failure, the exact prior error tuple is
-restored after the queue drains. A same-height or link conflict inside the
-committed replacement suffix is consumed because that transaction resolved it.
-
-Repair-only statuses are cleared after the producer accepts a verified live
-target, but they never replace an unrelated persisted producer failure. This
-keeps an incomplete lower cursor visible after a temporary repair failure has
-resolved.
-
-After either gap fill or suffix replacement, the producer verifies the window
-against Core: every expected height must have exactly one complete canonical
-row, prev-hash links must be contiguous, and the local tip hash must match the
-captured Core target. One-shot and explicit historical sync commands retain
-their strict same-height and link-conflict guards; automatic suffix replacement
-is a follow-mode near-tip operation only.
+`--to-height` and `--limit` are mutually exclusive. In `--follow` mode, each
+interval refreshes the sparse Core header cache and repairs a bounded near-tip
+window (`BITCOIN_CORE_SYNC_LIVE_WINDOW_HEIGHTS`, default 64, minimum 16). If a
+long outage leaves a divergent contiguous cursor below the live-tip window,
+follow mode first repairs the short divergent suffix ending at the cursor and
+then catches up to the tip in bounded pages. Replaced suffixes atomically
+promote the active Core chain, retain displaced blocks as Core-attested `stale`
+evidence, and enqueue affected hashes in `bitcoin_core_reconcile_queue` (reporting
+`backbone_reorg_reconcile_pending` on `/api/v1/sources` until drained). One-shot
+and historical sync commands do not perform automatic suffix replacement.
 
 The tree endpoint never hydrates Core on demand. `/api/v1/tree` returns HTTP 409
 `backbone_unsynced` for heights that have not been synced yet, and
@@ -391,19 +273,6 @@ It is appropriate after deploying a newly supported live consensus rule such
 as `time_below_mtp`; it does not run a database migration or contact production
 unless the command is explicitly run against that environment.
 
-After applying migration 0008, run the following unbounded full scan without
-child-height bounds:
-
-```bash
-just reconcile-read-model --all --batch-size 1000 --max-iterations 100000
-```
-
-The 1,286,403-row publication plus live-producer rows exceeds the default
-budget, so this uses the deployment smoke test's full-scan ceiling. It revisits
-captured headers, records catalogue matches as `error_block`, and rebuilds
-source health. Error blocks are neither stale nor orphan evidence, so no orphan
-reclassification is required.
-
 `just import-known-stales --csv PATH --source-label LABEL` loads the operator
 known-stale membership (`known_stale_block`) from an upstream
 `stale-blocks.csv`-shaped dataset. Load it once per database, after migrations
@@ -418,17 +287,10 @@ contaminated strict/weak rows to `excluded` in the same transaction, maintaining
 available to repeat that repair independently. See
 `docs/historical-ingest.md` for the full fresh-database ordering.
 
-Reviewed body-invalid parents are imported through the unified error catalogue
-and `import-all`. Stop the old service, apply migration `0029` through
-`just db-migrate-deploy` (automatic backup required), then start the updated
-binary and run `import-all`. The migration drops the obsolete annotation table;
-child witnesses and their provenance remain in the normal evidence tables.
-The former annotation command and response fields are removed.
-
 ## Historical Publication
 
-Materialize the pinned research Git LFS objects, then import the whole
-publication:
+Materialize the pinned research Git LFS objects, then import the complete
+publication and refresh pool attributions:
 
 ```bash
 git -C "$MERGE_MINING_RESEARCH_DIR" lfs pull \
@@ -437,28 +299,9 @@ just import-all
 just reclassify-pools
 ```
 
-`import-all` verifies all 31 publication artifacts before the first database
-mutation: 29 per-chain event files, the stale-descendant aggregate, and the
-error-observation file. It then compares normalized publication-owned fields
-with stored non-operator provenance and base events across research pins. Matching files
-skip classification, writes, and authoritative reconciliation before the
-Bitcoin Core lock is taken. Changed files reuse compatible Core-attested
-canonical or structurally complete stale classifications already proven in the
-derived `block` state. Event-only canonical, unknown, or incompatible parents
-still require strict live Core classification. The dedicated error-observation
-aggregate also retains its Core-plus-catalogue check. Historical and partial
-sources require an exact base-event set, live sources permit additional rows,
-retained error observations use subset semantics, and Doichain is an explicit
-surveyed zero-row source. Database-only enrichment is accepted when the
-publication omitted that field.
-
-Pending historical queue, source-health, or published-stale work produces a
-finalization-only run instead of replaying source files. Each mismatched chain
-commits atomically. Parent read-model work drains from the durable historical
-queue in bounded transactions, retaining cascade seeds until dependent work
-succeeds. Stop live pollers during a production cutover and retain the backup
-until event totals, block details, orphan exclusions, and poller health are
-verified.
+See `docs/historical-ingest.md` for manifest preflight, state comparison across
+research pins, lifecycle replacement semantics, and single-chain diagnostic
+imports (`just import-dataset CHAIN`).
 
 ## Live Test Deployment
 
@@ -477,62 +320,3 @@ just live-test-classify
 just live-test-reconcile-all
 just live-test-smoke
 ```
-
-## Terracoin activation
-
-Historical Terracoin coverage comes from the Research publication, not from a
-production backfill. Before activation, Research regenerates the Terracoin
-publication to a pinned child tip on the child-chain VM (where the node is
-local) and records C, its proven contiguous coverage tip, with hash(C). C is
-never the publication's maximum event height: the last event says nothing
-about which heights were scanned.
-
-Activate in this order, through the backup-first release workflow:
-
-1. Refresh the pins with `just gen-research-publication-pins --repo-dir
-   "$MERGE_MINING_RESEARCH_DIR" --source-commit <commit>`, where `<commit>` is
-   the Research main commit that carries the regenerated publication (see
-   Historical Publication), and take C and hash(C) from its coverage receipt.
-   The pinned manifest is compiled into the binary, so the refresh must be on
-   main before the release is cut and ships in the same release that registers
-   source 21 as Live. Terracoin is listed as a Live source that has not
-   started from that release until the poller starts in step 4; releasing the
-   Live registration ahead of the refresh would need a second release and
-   stretch that window across both.
-2. Deploy that release and apply migration 0030 with `just db-migrate-deploy`.
-   Migration 0030 extends capture-error kinds to per-height operational
-   failures; source 21 already exists and needs no new identity row. The
-   lifecycle comes from the shared registry.
-3. Import the publication with `just import-all` (see Historical Publication);
-   unchanged artifacts are skipped. Once source 21 is Live the Terracoin
-   import is additive, so verify that no Terracoin event was removed and that
-   the reconcile queues drained. An import made before the Live release is
-   authoritative and can delete rows, so never run an old Historical importer
-   over later live events.
-4. Prove hash(C) on the node (`getblockhash C`) against the receipt, then start
-   the poller once with `TERRACOIN_START_HEIGHT=max(833000,C+1-64)` and
-   `TERRACOIN_REORG_DEPTH=64`. The poller seeds its cursor at start-1, the
-   override is also the rescan floor, and the first processed height is C-63,
-   so the overlap replays C. hash(C) appears in `child_chain_head` only after
-   the overlap tick that live-captures C; historical import writes no heads,
-   so a missing head straight after the import is not an import failure.
-5. Remove the override only after hash(C) has appeared in `child_chain_head`
-   (the overlap tick captured C) and no `capture_error` rows are open; the
-   cursor is not that proof. Then restart and verify normal cursor-based
-   resume. Accept the source by its parent mix (see Live Capture). A first
-   start without the override seeds at the node tip and leaves
-   a gap no counter shows, and a pre-existing high cursor cannot prove the
-   overlap ran, because cursor persistence uses GREATEST.
-
-Run the wallet-disabled Terracoin node on the child-chain VM with private,
-authenticated RPC. Set `TERRACOIN_RPC_URL`, `TERRACOIN_RPC_USER` and
-`TERRACOIN_RPC_PASSWORD`, and use `just poll-terracoin` for continuous
-collection. `just backfill-terracoin START END` is a bounded repair tool for
-heights with open `capture_error` rows, not the recovery path; it does not
-advance the poll cursor. Judge coverage by successful heights and unresolved
-`capture_error` rows, not by the latest event or the node tip.
-
-On failure, stop capture and preserve the database and raw evidence. Retain
-source-host copies until the target, an independent backup and production
-acceptance are in place, then retire only the separately approved exact
-inventory.

@@ -69,10 +69,6 @@ function orphanStepperState(
   };
 }
 
-// Height-anchored single-block readout: "#123,456 · 1 of 33". Shared by every
-// target whose items are individual blocks on the height axis (stale, error
-// block), as opposed to the branch and orphan readouts which report a span or a
-// date.
 function heightAnchorStepperState(
   { anchor = null, item = null, total = null, hasOlder = false, hasNewer = false } = {},
 ) {
@@ -200,7 +196,6 @@ export function applyNavigatorPayload(state, targetId, payload, item) {
   slot.hasOlder = !!payload?.next_cursor;
   slot.hasNewer = !!payload?.prev_cursor;
   if (targetId === "stale" || targetId === "errorBlock") {
-    // Height-axis single-block targets share the anchor shape their readout reads.
     slot.anchor = selected ? {
       btc_height: selected.position?.max,
       hash: selected.primary_hash,
@@ -270,9 +265,6 @@ export function navigatorItemView(item) {
 export function navigatorStepperState(state, targetId) {
   const slot = targetState(state, targetId);
   if (!slot) return { olderEnabled: false, newerEnabled: false, readout: "" };
-  // Every arm below is explicit: the final `return` is the orphan-branch
-  // readout, so an unhandled target would silently render a date/depth line
-  // rather than its own.
   if (targetId === "stale" || targetId === "errorBlock") {
     return heightAnchorStepperState({
       anchor: slot.anchor,

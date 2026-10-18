@@ -1,6 +1,4 @@
-//! The bounded backfill for bitcoind-family chains: tip validation, the
-//! spec-driven below-floor warning, the per-height capture loop over the
-//! shared runner, and the post-backfill repair under the spec's scope.
+//! Bounded backfill for bitcoind-family chains.
 
 use super::*;
 use crate::chains::backfill::{
@@ -8,7 +6,6 @@ use crate::chains::backfill::{
     lineage_pending_error, run_delayed_backfill_range,
 };
 
-/// Registry-dispatched backfill entry point for bitcoind-family chains.
 pub(crate) async fn backfill(rt: ProducerRuntime, config: BackfillConfig) -> Result<()> {
     let spec = config.spec;
     let rpc_config = crate::chains::config::bitcoind_rpc_config(spec)?;
@@ -16,9 +13,6 @@ pub(crate) async fn backfill(rt: ProducerRuntime, config: BackfillConfig) -> Res
     run_auxpow_backfill(rt, rpc, config).await
 }
 
-/// Run a bounded backfill for a bitcoind-family chain: tip validation, the
-/// spec-driven below-floor warning, classifier warning, the per-height capture
-/// loop, and post-backfill repair under the spec's scope.
 pub(crate) async fn run_auxpow_backfill(
     rt: ProducerRuntime,
     rpc: BitcoindRpcClient,
@@ -106,17 +100,11 @@ pub(crate) async fn run_auxpow_backfill(
     )
     .await?;
 
-    // Everything captured in the range is written and reconciled; the run
-    // itself is still not a success. Reporting completion over a hole is the
-    // failure this policy exists to prevent.
     ensure_backfill_complete(spec, &config, &summary)?;
     progress.finish();
     Ok(())
 }
 
-/// The bounded-backfill completion verdict. A range that left any held
-/// malformed proof is incomplete and must exit non-zero, whatever else it
-/// captured; the operator re-runs the range once the capture errors clear.
 fn ensure_backfill_complete(
     spec: &ChainSpec,
     config: &BackfillConfig,
@@ -154,8 +142,6 @@ mod tests {
     use super::*;
     use crate::chains::spec::{ChainId, by_id};
 
-    /// A bounded backfill over a range containing a held malformed proof must
-    /// fail the run, naming the range, rather than logging completion.
     #[test]
     fn backfill_over_a_held_height_is_reported_incomplete() {
         let spec = by_id(ChainId::Qbit);
@@ -184,9 +170,6 @@ mod tests {
         );
     }
 
-    /// The malformed-outcome to backfill-counter mapping keeps the two policies
-    /// in separate columns, so a held height can never be tallied as a skip,
-    /// and a pending parent stops the run rather than being tallied at all.
     #[test]
     fn backfill_effects_keep_held_and_skipped_separate() {
         let spec = by_id(ChainId::Namecoin);

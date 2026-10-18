@@ -74,9 +74,6 @@ fn orphan_edges(payload: &TreePayload) -> Vec<&TreeEdge> {
 #[tokio::test]
 async fn anchor_tree_orphan_filter_excludes_pending_and_excluded() -> Result<()> {
     crate::run_db_test!(client, {
-        // The anchor (strict) and a weak neighbor are in the default strict+weak
-        // view; an excluded and a pending neighbor are NOT and must be filtered
-        // out of the anchor strip.
         let pending = hash_bytes(0x0a01);
         let excluded = hash_bytes(0x0a02);
         let anchor = hash_bytes(0x0a03);
@@ -92,12 +89,9 @@ async fn anchor_tree_orphan_filter_excludes_pending_and_excluded() -> Result<()>
         set_orphan_class(&client, &anchor, "strict_btc_orphan").await?;
         set_orphan_class(&client, &weak, "weak_btc_orphan").await?;
         set_orphan_class(&client, &excluded, "excluded").await?;
-        // `pending` keeps its NULL class.
 
         let payload = project_unheighted_anchor_tree(&client, &anchor).await?;
 
-        // Default strict+weak: only the anchor (strict) and the weak neighbor,
-        // ascending by header time; the excluded and pending neighbors are gone.
         assert_eq!(
             payload
                 .nodes
@@ -144,13 +138,9 @@ async fn anchor_tree_not_found_for_absent_or_non_unknown_anchor() -> Result<()> 
             .await?;
         let unknown = hash_bytes(0x0a01);
         insert_unknown_block(&client, &unknown, &canonical, 1_300_000_500).await?;
-        // The genuine unknown is classified so it resolves under the default
-        // strict+weak anchor filter; the husk stays pending (pow_validated=false).
         set_orphan_class(&client, &unknown, "strict_btc_orphan").await?;
         attach_strict_bip34_event(&client, &unknown, &canonical, 1_300_000_500).await?;
 
-        // A canonical, a revocation husk, and a never-inserted hash are all not
-        // PoW-valid unknowns, so an anchor on any of them is `not_found`.
         for absent in [
             display_hash(&canonical),
             display_hash(&husk),
@@ -165,8 +155,6 @@ async fn anchor_tree_not_found_for_absent_or_non_unknown_anchor() -> Result<()> 
             );
         }
 
-        // A real PoW-valid unknown anchor resolves and is placed as a fork in the
-        // canonical window: its verified BIP34 height gives it an exact placement.
         let payload = project_unheighted_anchor_tree(&client, &unknown).await?;
         assert!(
             payload
@@ -185,7 +173,6 @@ async fn anchor_tree_not_found_for_absent_or_non_unknown_anchor() -> Result<()> 
 #[tokio::test]
 async fn anchor_tree_renders_whole_orphan_component_with_member_edges_and_branch() -> Result<()> {
     crate::run_db_test!(client, {
-        // Canonical context so the component's verified root placement has a spine.
         let canonical = seed_canonical_chain(
             &client,
             (BIP34_PLACEMENT_HEIGHT - 1)..=(BIP34_PLACEMENT_HEIGHT + 2),
@@ -199,8 +186,6 @@ async fn anchor_tree_renders_whole_orphan_component_with_member_edges_and_branch
             .get(&(BIP34_PLACEMENT_HEIGHT - 1))
             .expect("canonical predecessor seeded");
 
-        // A 2-member orphan component: root -> tip. root forks from the canonical
-        // predecessor; tip carries only the component link and remains weak.
         let root = hash_bytes(0x0a10);
         let tip = hash_bytes(0x0a11);
         insert_orphan(
@@ -214,11 +199,8 @@ async fn anchor_tree_renders_whole_orphan_component_with_member_edges_and_branch
         insert_orphan(&client, &tip, &root, 1_300_000_501, "weak_btc_orphan").await?;
         attach_strict_bip34_event(&client, &root, root_prev, 1_300_000_500).await?;
 
-        // Anchoring on the TIP must render the WHOLE component, not just the tip.
         let payload = project_unheighted_anchor_tree(&client, &tip).await?;
 
-        // Both members are placed unknown nodes carrying placement_height and, since
-        // the component is depth >= 2, the orphan branch id.
         let branch_id = format!("orphan-{}", display_hash(&root));
         let member_count = payload
             .nodes
@@ -244,7 +226,6 @@ async fn anchor_tree_renders_whole_orphan_component_with_member_edges_and_branch
             );
         }
 
-        // The proven prev_hash link root -> tip is a SOLID `orphan` edge.
         assert!(
             payload
                 .edges
@@ -254,8 +235,6 @@ async fn anchor_tree_renders_whole_orphan_component_with_member_edges_and_branch
                     && edge.edge_kind == "orphan"),
             "the proven member-to-member link is a solid orphan edge"
         );
-        // The root attaches to the canonical spine (solid orphan or dashed
-        // orphan_approx), so the component is never left dangling.
         assert!(
             payload
                 .edges
@@ -265,8 +244,6 @@ async fn anchor_tree_renders_whole_orphan_component_with_member_edges_and_branch
             "the root attaches to the canonical spine"
         );
 
-        // The /tree branches[] array carries the orphan branch (placement-height
-        // bounds, no competition).
         let branch = payload
             .branches
             .iter()
@@ -287,9 +264,6 @@ async fn anchor_tree_renders_whole_orphan_component_with_member_edges_and_branch
 #[tokio::test]
 async fn anchor_tree_places_weak_orphan_in_canonical_window() -> Result<()> {
     crate::run_db_test!(client, {
-        // A weak orphan places by its timestamp-selected Core-cache epoch height,
-        // dangling off the nearest
-        // in-window canonical via the approximate edge.
         let orphan_time = 1_240_000_000i64;
         let ph = mmm_store::load_bitcoin_core_nbits_table(&client)
             .await?
@@ -348,11 +322,8 @@ async fn anchor_tree_places_weak_orphan_in_canonical_window() -> Result<()> {
 #[tokio::test]
 async fn anchor_tree_places_strict_orphan_with_verified_solid_edge() -> Result<()> {
     crate::run_db_test!(client, {
-        // A strict orphan places by its validated BIP34 coinbase height with a solid
-        // `orphan` edge to the canonical at placement_height - 1, because its stored
-        // prev_hash matches that block.
         let ph = BIP34_PLACEMENT_HEIGHT;
-        let prev = hash_bytes(ph as u32 - 1); // the canonical at ph-1
+        let prev = hash_bytes(ph as u32 - 1);
         seed_canonical_chain(
             &client,
             (ph - 1)..=(ph + 1),

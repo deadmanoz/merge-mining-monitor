@@ -1,5 +1,5 @@
-//! Tree-only payload building: competition decoration, stale-branch
-//! membership, node ordering, materialization, and branch assignment.
+//! Tree payload building: competition decoration, stale-branch membership, node ordering,
+//! materialization, and branch assignment.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -15,10 +15,6 @@ use super::{TreeBranch, TreeEdge, TreeNode, TreeNodeBranch};
 use crate::normalize::ParentKind;
 use crate::query::{TreeQuery, kind_as_str, kind_selected};
 
-/// Derive competition relationships touching any of `block_hashes` (as stale OR
-/// canonical side), with both miner pools joined. Feeds `attach_competitions`;
-/// read-only SELECT, no ordering contract (results are matched by hash, not
-/// order).
 pub(super) async fn load_competitions_for_hashes(
     client: &Client,
     block_hashes: &[Vec<u8>],
@@ -37,10 +33,6 @@ pub(super) async fn load_competitions_for_hashes(
     Ok(rows.iter().map(CompetitionCore::from_row).collect())
 }
 
-/// Decorate each stale projection with its `TreeCompetition` (the canonical it
-/// lost to, both pools, timing deltas). Only stale nodes get a competition;
-/// `ensure_emitted_stale_competitions` later asserts none is missing. Pinned by
-/// the competition fields in fixtures/api/tree.json.
 pub(super) fn attach_competitions(
     projections: &mut [ParentProjection],
     competitions: &[CompetitionCore],
@@ -77,10 +69,7 @@ pub(super) fn attach_competitions(
     }
 }
 
-/// Expand every selected, sufficiently-sourced stale into its full branch:
-/// walk to the branch root then include all descendants, so a stale subtree is
-/// rendered whole rather than as a disconnected node. The protected stale set
-/// fed into NodeProtection.
+/// Expand every selected, sufficiently-sourced stale into its full branch (root and all descendants).
 pub(super) fn stale_branch_members_to_include(
     projections: &[ParentProjection],
     query: &TreeQuery,
@@ -127,9 +116,6 @@ pub(super) fn stale_branch_members_to_include(
     include
 }
 
-/// Walk prev_hash links up the stale chain to the branch root, guarding against
-/// cycles with a seen-set. The root anchors both branch membership expansion and
-/// the `stale-{height}-{root}` branch id.
 fn stale_branch_root(hash: &str, prev_by_hash: &HashMap<String, String>) -> String {
     let mut root = hash.to_owned();
     let mut seen = HashSet::new();
@@ -142,9 +128,6 @@ fn stale_branch_root(hash: &str, prev_by_hash: &HashMap<String, String>) -> Stri
     root
 }
 
-/// DFS from a stale branch root adding every reachable descendant to `include`,
-/// cycle-guarded. Pairs with `stale_branch_root` to materialize a complete stale
-/// subtree from any one selected member.
 fn include_stale_descendants(
     root: &str,
     children_by_hash: &HashMap<String, Vec<String>>,
@@ -163,9 +146,7 @@ fn include_stale_descendants(
     }
 }
 
-/// Canonical blocks a stale branch hangs off of (a member's prev is canonical and
-/// outside the branch). Protected so the stale-entry edge always has its canonical
-/// attach point visible even when filters would drop it.
+/// Canonical blocks that a stale branch attaches to (protected from context stripping).
 pub(super) fn stale_attach_parent_hashes(
     projections: &[ParentProjection],
     stale_branch_members: &HashSet<String>,
@@ -185,9 +166,7 @@ pub(super) fn stale_attach_parent_hashes(
         .collect()
 }
 
-/// Invariant guard: every emitted stale MUST carry a derivable competition (it
-/// lost to some canonical). A missing one is a read-model integrity bug, surfaced as a
-/// projection_invariant_error rather than a malformed payload.
+/// Fail closed if any emitted stale block lacks a competition relationship.
 pub(super) fn ensure_emitted_stale_competitions(projections: &[ParentProjection]) -> Result<()> {
     for projection in projections
         .iter()
@@ -204,9 +183,7 @@ pub(super) fn ensure_emitted_stale_competitions(projections: &[ParentProjection]
     Ok(())
 }
 
-/// Order projections height-bearing first, then by ascending height, then by hash
-/// for determinism. Establishes the node id assignment order materialize_tree
-/// relies on, so the serialized node `id`s are stable (fixtures/api/tree.json).
+/// Order projections height-bearing first, then by ascending height, then by hash.
 pub(super) fn sort_nodes(nodes: &mut [ParentProjection]) {
     nodes.sort_by(|a, b| {
         a.height
@@ -217,11 +194,6 @@ pub(super) fn sort_nodes(nodes: &mut [ParentProjection]) {
     });
 }
 
-/// Turn ordered projections into `TreeNode`s and `TreeEdge`s: assign 1-based ids
-/// in input order, emit a real edge to a visible predecessor or a `hidden` edge
-/// (with hidden_count) over an omitted canonical span via `ancestry_by_hash`,
-/// then assign branches and sort edges by destination id. Returns nodes, edges,
-/// total hidden count. Shared by default, anchor, and compact tree paths.
 pub(super) fn materialize_tree(
     projections: Vec<ParentProjection>,
     ancestry_by_hash: &HashMap<String, String>,
@@ -245,10 +217,6 @@ pub(super) fn materialize_tree(
             .then(|| projection.prev_hash.clone());
         let (prev_id, edge) = if let Some(prev_hash) = visible_prev_hash {
             let prev_id = id_by_hash.get(&prev_hash).copied();
-            // The node always keeps its predecessor `prev_id`; the drawable edge is
-            // emitted only when the transition classifies to an edge kind (a
-            // canonical/stale link), so non-canonical-to-canonical and Unknown/Near
-            // transitions carry the predecessor pointer without a drawn edge.
             let edge = prev_id
                 .zip(visible_edge_kind(&prev_hash, &projection, &kind_by_hash))
                 .map(|(_, edge_kind)| TreeEdge {
@@ -296,9 +264,6 @@ pub(super) fn materialize_tree(
             branch: None,
             proof_state: projection.proof_state,
             competition: projection.competition,
-            // Spine/context nodes are never fork-placed; only the grafted orphan
-            // component members in `anchor_component_projection` carry a placement
-            // height.
             placement_height: None,
             placement_approx: false,
         });
@@ -309,10 +274,6 @@ pub(super) fn materialize_tree(
     Ok((nodes, edges, hidden_total))
 }
 
-/// Sort `edges` by destination node id (absent ids first, matching the frontend
-/// prev->node layout), ties broken by source hash. `id_of` resolves a hash to its
-/// node id; the full and compact materializers key their ids in different map
-/// types, so the lookup is passed as a closure rather than a concrete map.
 pub(super) fn sort_edges_by_destination_id(
     edges: &mut [TreeEdge],
     id_of: impl Fn(&str) -> Option<usize>,
@@ -324,10 +285,6 @@ pub(super) fn sort_edges_by_destination_id(
     });
 }
 
-/// Canonical-competitor hashes for the stale branch members in `projections` (the
-/// canonical winner each stale member competed against), used to protect those
-/// canonical nodes from context stripping. Shared by the full and compact tree
-/// paths.
 pub(super) fn stale_member_competitor_hashes(
     projections: &[ParentProjection],
     stale_branch_members: &HashSet<String>,
@@ -344,12 +301,6 @@ pub(super) fn stale_member_competitor_hashes(
         .collect()
 }
 
-/// Classify a visible parent->child edge: stale->stale = `stale`, anything->stale
-/// = `stale_entry`, canonical->canonical = `canonical`. Any other visible
-/// transition (an ErrorBlock/Unknown/Near child, or a canonical child with a
-/// non-canonical predecessor) draws no edge and returns `None`; the node still keeps its
-/// `prev_id`/`prev_hash`. The non-`None` `edge_kind` strings are part of the wire
-/// contract (legend.edge_kinds).
 fn visible_edge_kind(
     prev_hash: &str,
     projection: &ParentProjection,
@@ -370,10 +321,6 @@ fn visible_edge_kind(
     }
 }
 
-/// Follow `ancestry_by_hash` from a node's prev_hash through omitted canonical
-/// interiors until a visible ancestor is found, counting the hidden hops. Returns
-/// the visible ancestor and hidden_count (>0), or None if the chain dead-ends or
-/// no block was actually hidden. Cycle-guarded.
 fn hidden_predecessor(
     projection: &ParentProjection,
     id_by_hash: &BTreeMap<String, usize>,
@@ -395,9 +342,6 @@ fn hidden_predecessor(
     None
 }
 
-/// Stamp each stale node with its `stale-{root_height}-{root_hash}` branch id by
-/// walking prev_hash to the branch root within the visible stale set. Drives the
-/// node.branch field and the branches grouping in build_branches.
 fn assign_branches(nodes: &mut [TreeNode]) {
     let stale_hashes = nodes
         .iter()
@@ -429,15 +373,9 @@ fn assign_branches(nodes: &mut [TreeNode]) {
     }
 }
 
-/// Group stale and orphan nodes by branch_id into `TreeBranch` summaries (root,
-/// tip, members, height span, depth, canonical competitors), ranking by
-/// `height` and falling back to `placement_height` for orphan branches. Sorted
-/// by min height then root hash. Pinned by the branches array in
-/// fixtures/api/tree.json.
+/// Group stale and orphan nodes by `branch_id` into `TreeBranch` summaries, ranking by
+/// `height` or `placement_height`.
 pub(super) fn build_branches(nodes: &[TreeNode]) -> Vec<TreeBranch> {
-    // Stale branches carry a real `btc_height`; orphan branches (the anchor-view
-    // twin) carry NULL `btc_height` and a derived `placement_height`. Both group by
-    // `branch.branch_id` and rank by height; orphans fall back to placement height.
     let mut by_branch: BTreeMap<String, Vec<&TreeNode>> = BTreeMap::new();
     for node in nodes
         .iter()

@@ -18,29 +18,7 @@ merge-mined chain shares, so `current.json` has no chain coupling.
   IDENTITY); an upstream filename rename must not silently mint a new slug. Only
   genuine remaps live here (`ocean -> ocean-xyz`, `braiins -> braiins-pool`);
   new pools default to their upstream filename stem.
-- `child-identities/rsk_miner_registry.json` - the RSK miner-address identity
-  registry (separate attribution path; see `docs/attribution.md`).
-- `child-identities/namecoin_payout_address_registry.json` - the Namecoin payout
-  address identity registry.
-- `child-identities/syscoin_payout_address_registry.json` - the Syscoin payout
-  address identity registry.
-- `child-identities/fractal_reward_address_registry.json` - the Fractal reward
-  address identity registry.
-- `child-identities/hathor_reward_registry.json` - the Hathor reward-address identity registry.
-  Entries are promoted only after local candidates are corroborated by external
-  Hathor reward-output evidence and external Bitcoin coinbase tag evidence.
-- `child-identities/elastos_reward_address_registry.json` - the Elastos reward
-  address identity registry.
-- `child-identities/elastos_minerinfo_registry.json` - the Elastos minerinfo
-  identity registry. A label is promoted only when it is itself a documented
-  Bitcoin coinbase signature for the pool the same-event BTC parent reconciled
-  to (the identity is RPC-decoded, not AuxPoW-authenticated). See
-  `docs/attribution.md`.
-
-All child identity registries share the generic
-validator in `crates/mmm-capture/src/identity_registry.rs` (schema version,
-non-empty/whitespace, duplicate identifier, slug-canonical consistency); only the
-per-chain identifier-format check differs.
+- `child-identities/*.json` - per-chain child identity registries (`rsk_miner_registry.json`, `namecoin_payout_address_registry.json`, `syscoin_payout_address_registry.json`, `fractal_reward_address_registry.json`, `qbit_payout_address_registry.json`, `hathor_reward_registry.json`, `elastos_reward_address_registry.json`, `elastos_minerinfo_registry.json`), validated by `crates/mmm-capture/src/identity_registry.rs`. See `docs/attribution.md`.
 
 ## Regenerating
 

@@ -9,9 +9,4 @@ body-invalid Bitcoin parents from merge-mining-research commit
 `body-invalid-parents.json` selects the distinct parent headers, heights,
 hashes and rejection reasons for import and classification assertions.
 
-The database regression imports these witnesses, restores their former stale
-state and ordinary publication provenance, then repeats the normal
-error-observation import followed by authoritative snapshot cleanup. It checks event
-identity and evidence preservation, promotion of all ten parents, API exclusion
-from stale competition, removal of the annotation schema, and idempotent replay. Core verdicts are scripted;
-body-rule verification remains the pinned Research admission's responsibility.
+Used by DB integration tests to verify error-observation import, promotion of all ten parents to `error_block`, exclusion from stale competition, and idempotent snapshot cleanup with scripted Core verdicts.

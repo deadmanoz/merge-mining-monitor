@@ -85,10 +85,6 @@ pub async fn hathor_sidecar_graph_heads_at_height<C: GenericClient>(
     Ok(rows.iter().map(|row| row.get(0)).collect())
 }
 
-/// One active (non-revoked) Hathor sidecar row for DB-only reward-address replay:
-/// carries the raw `funds_graph` blob to re-parse plus the pre-aggregated set of
-/// existing child-block reward attributions in this namespace, so the replay can
-/// apply `ExistingAttributionSet` write-policy without a second round trip.
 #[derive(Debug, Clone)]
 pub struct HathorRewardReplayRow {
     pub event_id: i64,
@@ -98,12 +94,8 @@ pub struct HathorRewardReplayRow {
     pub existing_attributions: serde_json::Value,
 }
 
-/// Page through active Hathor events for reward-address replay: keyset pagination
-/// on `event_id` (pass the last row's id back as `cursor_event_id`, `None` to
-/// start), capped at `batch_size`. Skips revoked events and LEFT JOINs the
-/// existing `child_block` reward attributions for `namespace` limited to
-/// `sources`, aggregating them per event (empty array when none) so the caller
-/// never re-queries attributions per row.
+/// Keyset-paginated active Hathor events (`e.id > cursor_event_id`) with pre-aggregated
+/// existing `child_block` reward attributions for `namespace` and `sources`.
 pub async fn load_hathor_reward_replay_batch<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -170,10 +162,7 @@ pub async fn load_hathor_reward_replay_batch<C: GenericClient>(
         .collect())
 }
 
-/// Refresh the `reward_output_details` / `reward_addresses` audit columns on a
-/// Hathor evidence row. Idempotent and change-detecting: the `IS DISTINCT FROM`
-/// guard makes a no-op write touch zero rows, and the bool return (rows > 0) lets
-/// the caller count only rows it actually changed.
+/// Update `reward_output_details` and `reward_addresses` when changed (`IS DISTINCT FROM`).
 pub async fn update_hathor_reward_audit<C: GenericClient>(
     client: &C,
     event_id: i64,

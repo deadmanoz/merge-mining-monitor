@@ -145,15 +145,9 @@ async fn terracoin_replay_failure_recovery_and_displacement() -> Result<()> {
     })
 }
 
-/// A `BitcoindRpc` serving one scripted block per height, so the runner's
-/// per-height path runs end to end against a fixture the way `FixtureHathorRpc`
-/// drives the Hathor path. Each tick of a test builds a new chain state.
 struct FixtureBitcoindRpc {
     blocks: HashMap<i32, Vec<u8>>,
-    /// Override the node's claimed hash to exercise native identity rejection.
     hashes: HashMap<i32, BlockHash>,
-    /// `getblockhash` and `getblock` calls served, so a test can pin what a
-    /// rescan costs at the node: one hash lookup for an unchanged height.
     hash_calls: AtomicUsize,
     block_calls: AtomicUsize,
 }
@@ -181,7 +175,6 @@ impl FixtureBitcoindRpc {
             .unwrap_or_else(|| block_hash_of(raw))
     }
 
-    /// `(getblockhash calls, getblock calls)` served so far.
     fn calls(&self) -> (usize, usize) {
         (
             self.hash_calls.load(Ordering::SeqCst),
@@ -218,15 +211,12 @@ impl BitcoindRpc for FixtureBitcoindRpc {
     }
 }
 
-/// The child block hash of a raw Namecoin block: the hash of its first 80
-/// bytes, which is what `getblockhash` reports for it.
 fn block_hash_of(raw: &[u8]) -> BlockHash {
     deserialize::<Header>(&raw[..80])
         .expect("fixture block starts with an 80-byte header")
         .block_hash()
 }
 
-/// Full native Qbit control at height 78058, within the seeded Core epoch history.
 fn qbit_positive_control() -> (i32, Vec<u8>, BlockHash) {
     let raw = hex::decode(include_str!("../../../../fixtures/qbit/78058.hex").trim())
         .expect("Qbit raw block hex");
@@ -238,8 +228,6 @@ fn qbit_positive_control() -> (i32, Vec<u8>, BlockHash) {
     (78_058, raw, hash)
 }
 
-/// A raw block whose header version lacks the AuxPoW bit, so the runner
-/// classifies it as non-AuxPoW and writes no event for it.
 fn non_auxpow_block() -> Vec<u8> {
     let mut raw = Vec::with_capacity(81);
     raw.extend_from_slice(&0x2000_0000i32.to_le_bytes());
@@ -252,12 +240,6 @@ fn non_auxpow_block() -> Vec<u8> {
     raw
 }
 
-/// Real Terracoin blocks from the live start whose AuxPoW parents belong to
-/// other SHA-256 chains (a Bitcoin Cash share and block, a Fractal-like block)
-/// write no event and no block, record their block as settled, and reach no
-/// Bitcoin Core call; the Bitcoin share beside them is still written. The
-/// production Core classifier points at a port nothing serves, and its
-/// transport counters pin zero requests.
 #[tokio::test]
 async fn terracoin_parents_from_other_chains_write_nothing_and_cost_no_core_call() -> Result<()> {
     crate::run_mut_db_test!(client, {
@@ -300,8 +282,6 @@ async fn terracoin_parents_from_other_chains_write_nothing_and_cost_no_core_call
             let head = if bitcoin { "captured" } else { "recorded" };
             assert_eq!(row.get::<_, String>(1), head, "{parent}");
         }
-        // Foreign parents are refused before classification, and the Bitcoin
-        // share is near, which needs no Core answer.
         assert_eq!(core_metrics.snapshot().http_attempts, 0);
         let blocks: i64 = client
             .query_one("SELECT count(*) FROM block", &[])
@@ -329,7 +309,6 @@ async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_on
         let block_n = non_auxpow_block();
         let hash = |raw: &[u8]| block_hash_of(raw).to_byte_array().to_vec();
 
-        // Tick 1: the chain carries A. Its event is written and current.
         let rpc = FixtureBitcoindRpc::carrying(HEIGHT, block_a.clone());
         let outcome = process_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
         assert_eq!(outcome, AuxpowHeightOutcome::AuxpowWritten);
@@ -339,8 +318,6 @@ async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_on
         );
         assert_eq!(advisory_locks_held(&client).await?, 0);
 
-        // Tick 2: a reorg replaces A with B at the same height. B is written
-        // and current, A is displaced by B, and nothing is revoked.
         let rpc = FixtureBitcoindRpc::carrying(HEIGHT, block_b.clone());
         let outcome = process_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
         assert_eq!(outcome, AuxpowHeightOutcome::AuxpowWritten);
@@ -351,7 +328,6 @@ async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_on
         expected.sort();
         assert_eq!(displacement_at(&client, source_id, HEIGHT).await?, expected);
 
-        // Tick 3: the chain flips back to A. A is restored, B is displaced.
         let rpc = FixtureBitcoindRpc::carrying(HEIGHT, block_a.clone());
         process_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
         let mut expected = vec![
@@ -361,9 +337,6 @@ async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_on
         expected.sort();
         assert_eq!(displacement_at(&client, source_id, HEIGHT).await?, expected);
 
-        // Tick 4: a block with no AuxPoW takes the height. No event is written
-        // for it, but it is still recorded as the chain's block, so A is
-        // displaced by it and the height has no current event.
         let rpc = FixtureBitcoindRpc::carrying(HEIGHT, block_n.clone());
         let outcome = process_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
         assert_eq!(outcome, AuxpowHeightOutcome::NonAuxpowSkipped);
@@ -381,7 +354,6 @@ async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_on
     })
 }
 
-/// The `(outcome, observed_at)` of the `child_chain_head` row at `HEIGHT`.
 async fn head_at_height(client: &Client, source_id: i64) -> Result<Option<(String, i64)>> {
     let row = client
         .query_opt(
@@ -407,9 +379,6 @@ async fn rescan_of_an_unchanged_height_costs_one_hash_lookup() -> Result<()> {
         let block_a = load_raw_namecoin_fixture("500000-valid-parent");
         let hash = |raw: &[u8]| block_hash_of(raw).to_byte_array().to_vec();
 
-        // A captured height: the first observation fetches the block; the
-        // rescan of the unchanged chain fetches only the hash and writes no
-        // event, so the capture path (and the classifier behind it) never runs.
         let rpc = FixtureBitcoindRpc::carrying(HEIGHT, block_a.clone());
         process_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
         assert_eq!(rpc.calls(), (1, 1));
@@ -425,9 +394,6 @@ async fn rescan_of_an_unchanged_height_costs_one_hash_lookup() -> Result<()> {
         );
         assert_eq!(advisory_locks_held(&client).await?, 0);
 
-        // The unchanged path keeps the generation the capture was derived
-        // under: a verdict-changing cache replacement committed between the
-        // head check and the write must still make the next rescan capture.
         client
             .execute(
                 "UPDATE bitcoin_core_header_cache_state \
@@ -442,8 +408,6 @@ async fn rescan_of_an_unchanged_height_costs_one_hash_lookup() -> Result<()> {
         );
         assert_eq!(rpc.calls(), (3, 2));
 
-        // A block with no AuxPoW leaves no event row, but its head row makes
-        // the next rescan just as cheap.
         let rpc = FixtureBitcoindRpc::carrying(HEIGHT, non_auxpow_block());
         let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
         assert_eq!(
@@ -481,9 +445,6 @@ async fn rescan_with_a_matching_hash_still_displaces_an_imported_sibling() -> Re
         let rpc = FixtureBitcoindRpc::carrying(HEIGHT, block_a);
         process_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
 
-        // A write that bypasses observation (a historical publication import
-        // for a live chain) adds another block's event at the height with no
-        // displacement recorded.
         let sibling_hash = [0x5b; 32];
         let sibling = exact_observation("500001-near-parent", HEIGHT, sibling_hash, 2_030)?;
         upsert_merge_mining_event(&client, source_id, &sibling).await?;
@@ -494,8 +455,6 @@ async fn rescan_with_a_matching_hash_still_displaces_an_imported_sibling() -> Re
                 .all(|row| row.1.is_none())
         );
 
-        // The chain still carries A, so the rescan skips the capture, and the
-        // displacement maintenance it keeps marks the sibling displaced by A.
         let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
         assert_eq!(outcome, RescanOutcome::Unchanged);
         assert_eq!(rpc.calls(), (2, 1));
@@ -519,8 +478,6 @@ async fn rescan_of_a_non_final_record_captures_the_height_again() -> Result<()> 
             ConfiguredParentClassifier::Disabled,
         )
         .await?;
-        // A proof that did not parse leaves an unverified record, so the same
-        // block is fetched and examined again on every rescan.
         let rpc =
             FixtureBitcoindRpc::carrying(HEIGHT, load_raw_namecoin_fixture("500003-malformed"));
         let outcome = process_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
@@ -547,12 +504,6 @@ async fn a_provisional_classification_leaves_the_height_to_be_retried() -> Resul
     crate::run_mut_db_test!(client, {
         let (_, _, source_id, parsed) = namecoin_fixture(&client).await?;
         let header = parsed.parent_header.header;
-        // The first capture's Core lookup is cut short by a tolerated failure
-        // and the retry finds Core without the block at the height (the
-        // poller can reach Core before Core has the Bitcoin block the child
-        // names): both verdicts are provisional, so the record is not final
-        // and the next rescan captures the height again, whatever orphan
-        // class the parent carries; once the verdict settles the record is.
         let fake = FakeParentClassifier::new_sequence([
             ParentClassification::incomplete_unknown(&header),
             ParentClassification {
@@ -616,13 +567,6 @@ async fn an_open_capture_error_takes_the_full_capture_despite_a_final_head() -> 
             ConfiguredParentClassifier::Disabled,
         )
         .await?;
-        // The state a process leaves when it records a capture error and stops
-        // before replacing the height's final head, or between committing a
-        // final head for a recovered height and clearing its error row. Either
-        // way the error says the height was not reprocessed successfully, so
-        // the rescan fetches and validates the block again; the normal path
-        // then clears the error. The block is the mainnet Qbit control whose
-        // proof parses, served under the hash its extended header carries.
         let (height, raw, hash) = qbit_positive_control();
         let wrong =
             FixtureBitcoindRpc::carrying_with_hash(height, raw.clone(), BlockHash::all_zeros());
@@ -684,11 +628,9 @@ async fn an_open_capture_error_takes_the_full_capture_despite_a_final_head() -> 
         );
         steps.expect("Qbit recovered capture", 2, 0);
         assert_qbit_child_evidence(&client, source_id).await?;
-        // With the error cleared the next rescan takes the fast path.
         let outcome = rescan_auxpow_height(&mut client, &rpc, &context, height).await?;
         assert_eq!(outcome, RescanOutcome::Unchanged);
         steps.expect("Qbit unchanged final rescan", 1, 0);
-        // Reproduce a legacy header-only row, then enrich it through capture.
         let existing_id: i64 = client.query_one("UPDATE merge_mining_event SET child_coinbase_txid=NULL, child_coinbase_script=NULL, child_coinbase_outputs=NULL WHERE source_id=$1 RETURNING id", &[&source_id]).await?.get(0);
         for _ in 0..2 {
             process_auxpow_height(&mut client, &rpc, &context, height).await?;
@@ -718,14 +660,8 @@ async fn an_open_capture_error_takes_the_full_capture_despite_a_final_head() -> 
     })
 }
 
-/// Terracoin's per-height remote cost, counted where it is spent: the real
-/// `BitcoindRpcClient` against a scripted endpoint, so `RpcMetrics` sees every
-/// dispatched request. A new height costs `getblockhash` plus raw `getblock`,
-/// an unchanged final rescan one `getblockhash`, and the genesis check one
-/// call per poller start or backfill run. A failed rescan records
-/// `height_capture_failed`, and the next rescan takes the full capture and
-/// clears it. Set `MMM_TEST_RPC_DELAY_MS=340` and run with `--nocapture` to
-/// time each step at the production round trip.
+/// Pins Terracoin's per-height RPC round-trip budget at the transport boundary
+/// (`MMM_TEST_RPC_DELAY_MS` times each step when run with `--nocapture`).
 #[tokio::test]
 async fn terracoin_round_trips_are_pinned_at_the_transport_boundary() -> Result<()> {
     crate::run_mut_db_test!(client, {
@@ -797,7 +733,6 @@ async fn terracoin_round_trips_are_pinned_at_the_transport_boundary() -> Result<
     })
 }
 
-/// `(height, error_kind)` of every open Terracoin capture error.
 async fn capture_error_kinds(client: &Client) -> Result<Vec<(i32, String)>> {
     let rows = client
         .query(
@@ -808,9 +743,6 @@ async fn capture_error_kinds(client: &Client) -> Result<Vec<(i32, String)>> {
     Ok(rows.iter().map(|row| (row.get(0), row.get(1))).collect())
 }
 
-/// Asserts each step's transport deltas and, when a delay is configured,
-/// prints its wall time: the receipt `docs/testing.md` asks for. Reads the
-/// client's `RpcMetrics` counters as `(http_attempts, failures, retries)`.
 struct BudgetSteps<F: Fn() -> (u64, u64, u64)> {
     counters: F,
     last: (u64, u64, u64),
@@ -850,7 +782,6 @@ impl<F: Fn() -> (u64, u64, u64)> BudgetSteps<F> {
     }
 }
 
-/// The optional per-response delay for production round-trip measurement.
 fn rpc_delay() -> std::time::Duration {
     let millis = std::env::var("MMM_TEST_RPC_DELAY_MS")
         .map(|value| value.parse::<u64>().expect("integer MMM_TEST_RPC_DELAY_MS"))
@@ -858,11 +789,6 @@ fn rpc_delay() -> std::time::Duration {
     std::time::Duration::from_millis(millis)
 }
 
-/// A scripted bitcoind-family endpoint on a loopback socket: genesis at
-/// height 0, one scripted block per other height, raw `getblock` by hash, one
-/// request per connection (the client sees `Connection: close`), each
-/// response delayed by [`rpc_delay`]. The next `getblockhash` can be made to
-/// fail with HTTP 503.
 struct ScriptedBitcoindEndpoint {
     addr: std::net::SocketAddr,
     fail_next_hash: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -914,7 +840,6 @@ impl ScriptedBitcoindEndpoint {
     }
 }
 
-/// Read one JSON-RPC request and build the HTTP response for it.
 fn scripted_reply(
     stream: &mut std::net::TcpStream,
     hashes: &HashMap<i32, String>,
@@ -953,7 +878,6 @@ fn scripted_reply(
     )
 }
 
-/// One HTTP request body, read until its `Content-Length` is complete.
 fn read_json_request(stream: &mut std::net::TcpStream) -> Option<serde_json::Value> {
     let mut data = Vec::new();
     let mut chunk = [0u8; 4096];

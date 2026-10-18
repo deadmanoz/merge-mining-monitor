@@ -1,6 +1,3 @@
-// Pure layout for the Bitcoin header tree. This module only assigns stable x/y
-// coordinates so the geometry is testable without a browser DOM.
-
 export const DEFAULT_TREE_LAYOUT = {
   minWidth: 520,
   minHeight: 340,
@@ -24,12 +21,6 @@ export function layoutTreeNodes(payload, size = {}, config = {}) {
   }
 
   const nodesByHash = new Map(nodes.map((node) => [node.hash, node]));
-  // A fork-placed anchor orphan carries a null `btc_height` but a derived
-  // `placement_height`, so it ranks at its placement column (beside the
-  // same-height canonical) and dangles into a fork slot below the spine, rather
-  // than falling into the flat null lane. The edge to its canonical predecessor
-  // joins it to the spine component, so it shares that lane's y and the existing
-  // `fanOutTreeSlots` stacks it under the same-height canonical.
   const rankHeightOf = (node) => {
     const value = node.height ?? node.placement_height;
     return value === null || value === undefined ? null : Number(value);
@@ -48,12 +39,6 @@ export function layoutTreeNodes(payload, size = {}, config = {}) {
   const xStep = Math.max(layout.blockPitchX, (width - layout.margin.left - layout.margin.right) / Math.max(1, rankCount - 1));
   const yStep = Math.max(layout.blockPitchY, (height - layout.margin.top - layout.margin.bottom) / Math.max(1, laneCount));
 
-  // Heighted (and fork-placed) nodes rank by height. Truly height-less nodes (a
-  // few direct near/unknown nodes, or the flat-strip fallback) spread
-  // left-to-right by payload order into their own lane, rather than piling at a
-  // single rank/lane, so such a view lays out as a navigable time strip instead
-  // of one stacked column. The backend returns those in (btc_header_time,
-  // btc_header_hash) order, so payload order is time order.
   const heightedRanks = occupiedHeights.length;
   let nullIndex = 0;
   nodes.forEach((node) => {
@@ -104,14 +89,7 @@ function fanOutTreeSlots(nodes, branches, nodesByHash, yStep) {
       unit.members.forEach((node) => {
         node.y = rowY;
       });
-      // Fork lanes: a forked branch (e.g. two orphans off one parent) places more
-      // than one member at the same rank/x; they must lane apart. Lanes are
-      // ANCESTRY-aware so an arm of a forked component stays on ONE row: a node's
-      // first child (by hash) inherits its lane, and each additional child (a fork
-      // sibling) opens a new lane that ITS descendants inherit. So a continuing fork
-      // (root -> {a, b}, b -> b2) keeps b2 on b's lane rather than collapsing back to
-      // the root row and drawing a backtracking edge. A linear branch uses lane 0
-      // only, so this is a no-op and the existing stale-branch layout is unchanged.
+      // First child inherits its parent's lane; each additional fork child opens a new lane.
       const byHash = new Map(unit.members.map((node) => [node.hash, node]));
       const childrenOf = new Map();
       unit.members.forEach((node) => {

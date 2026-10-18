@@ -350,9 +350,6 @@ test("Latest stale uses unified navigator endpoint", async ({ page }) => {
 
 test("stale node with child-inferred miner labels the pool instead of unknown", async ({ page }) => {
   await stubApi(page, []);
-  // Override the tree route (LIFO: this handler wins) with a single stale node
-  // whose Bitcoin coinbase miner is unknown but whose display miner is the
-  // RSK-child-inferred F2Pool: the label must read the pool, not "unknown miner".
   await page.route("**/api/v1/tree?**", async (route) => {
     const url = new URL(route.request().url());
     const fixture = treeEnvelope(url.searchParams);
@@ -445,9 +442,6 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
   });
 
   await stubApi(page, treeRequests, {
-    // Render the error block the requested window is centred on. Without it the
-    // node never exists, centering silently falls back to the tip, and
-    // request/URL/readout assertions would still pass over a broken jump.
     treePayload: (query) => {
       const from = Number(query.get("from_height") || 0);
       const [hash, height] = from === olderHeight - 16
@@ -463,15 +457,10 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
       });
     },
     navigatorRequests,
-    // Serve the newest row for latest/anchor modes and the older row once a
-    // cursor page is requested, so a step actually changes the readout.
     navigator: (url) => {
       if (url.searchParams.get("direction") === "older") {
         return errorEnvelope([errorRow(olderHash, olderHeight)], "page");
       }
-      // Anchor mode must honour the requested hash. Always returning the newest
-      // row would let selection-driven hydration overwrite the stepped-to state,
-      // and the readout assertion below could then pass on a transient value.
       const anchor = url.searchParams.get("anchor_hash");
       if (anchor) {
         const row = anchor === olderHash
@@ -491,7 +480,6 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
   await expect(page.getByRole("heading", { name: "Bitcoin Header Tree" })).toBeVisible();
   await expect.poll(() => treeRequests.length).toBeGreaterThan(0);
 
-  // The menu option must be labelled, which is what a missing optionLabel breaks.
   await expect(
     page.locator('#nav-goto option[value="errorBlock"]'),
   ).toHaveText("Latest error block");
@@ -502,7 +490,6 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
     url.pathname.endsWith("/api/v1/navigator/error-block")
       && url.searchParams.get("limit") === "1"
   ))).toBe(true);
-  // The target must not send the orphan-only classification axis.
   expect(
     navigatorRequests
       .filter((url) => url.pathname.endsWith("/api/v1/navigator/error-block"))
@@ -514,29 +501,22 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
       && url.searchParams.get("to_height") === String(errorHeight + 16)
   ))).toBe(true);
 
-  // The jump must land ON the block, not merely request its window.
   await expect(
     page.locator(`g.tree-node[aria-label*="error_block ${errorHeight}"]`),
   ).toHaveCount(1);
   await expect(page).toHaveURL(new RegExp(`selected=${errorHash}`));
-  // Selection also hydrates the target through anchor mode.
   await expect.poll(() => navigatorRequests.some((url) => (
     url.pathname.endsWith("/api/v1/navigator/error-block")
       && url.searchParams.get("anchor_hash") === errorHash
   ))).toBe(true);
 
-  // Height-plus-place readout, not the branch/orphan date-and-depth form.
   await expect(page.locator("#nav-readout")).toContainText("#946,213 · 1 of 33");
 
-  // A cursor-backed older step moves to the next catalogued block.
   await page.locator("#nav-older").click();
   await expect.poll(() => navigatorRequests.some((url) => (
     url.pathname.endsWith("/api/v1/navigator/error-block")
       && url.searchParams.get("direction") === "older"
   ))).toBe(true);
-  // Assert the SETTLED state: selection-driven anchor hydration also fires
-  // here, so a readout check alone could pass on a transient value before
-  // hydration resolves. Wait for the tree window and URL to agree with it too.
   await expect.poll(() => treeRequests.some((url) => (
     url.searchParams.get("from_height") === String(olderHeight - 16)
       && url.searchParams.get("to_height") === String(olderHeight + 16)
@@ -550,10 +530,6 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
 });
 
 test("a shared link to an error block adopts that navigator target", async ({ page }) => {
-  // Direct selection, not the menu: restoring `?selected=<error block>` must
-  // switch the navigator away from whatever target it would otherwise settle
-  // on, populate the error-block readout, and leave stepping usable. The
-  // menu-driven test cannot cover this, because it locks the target first.
   const treeRequests = [];
   const navigatorRequests = [];
   const errorHash = "e".repeat(64);
@@ -665,17 +641,14 @@ test("a shared link to an error block adopts that navigator target", async ({ pa
   await page.goto(`/?tree_height=${errorHeight}&selected=${errorHash}`);
   await expect(page.getByRole("heading", { name: "Bitcoin Header Tree" })).toBeVisible();
 
-  // Selection alone hydrates the target through anchor mode.
   await expect.poll(() => navigatorRequests.some((url) => (
     url.pathname.endsWith("/api/v1/navigator/error-block")
       && url.searchParams.get("anchor_hash") === errorHash
   ))).toBe(true);
 
-  // The Go-to select names the adopted target, and the readout is populated.
   await expect(page.locator("#nav-goto option[value='']")).toHaveText("Error blocks");
   await expect(page.locator("#nav-readout")).toContainText("#946,213 · 1 of 33");
 
-  // Stepping is enabled and works from the deep-linked block.
   await expect(page.locator("#nav-older")).toBeEnabled();
   await page.locator("#nav-older").click();
   await expect.poll(() => navigatorRequests.some((url) => (

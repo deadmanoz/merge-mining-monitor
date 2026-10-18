@@ -79,8 +79,6 @@ async fn proof_is_active(client: &Client, parent_hash: &[u8], source_id: i64) ->
         .get(0))
 }
 
-/// The shared setup of the mutation tests, whose parents are crafted easy-bits
-/// headers in the synthetic fixture history.
 async fn mutation_pool_snapshot(client: &mut Client) -> Result<(DefaultPoolSnapshot, i64)> {
     crate::support::seed_synthetic_fixture_history(client).await?;
     rebuild_source_health(client).await?;
@@ -101,8 +99,6 @@ fn apply_canonical_proof(payload: &mut MergeMiningEventPayload, height: i32) -> 
     )
 }
 
-// Mutation tests pass easy-bits parent headers here so they can synthesize
-// chained Core/cascade scenarios without real chain fixtures.
 fn crafted_unknown_payload(
     parent_header: Header,
     child_height: i32,
@@ -136,9 +132,7 @@ fn crafted_unknown_payload(
 }
 
 fn catalogued_error_block_header() -> Result<Header> {
-    // Header for the `time_below_mtp` entry at height 946,213. The compact
-    // catalogue only carries its identity and rejection reason; this fixture
-    // exercises the full capture and read-model path against the exact header.
+    // Header for the `time_below_mtp` entry at height 946,213.
     Ok(deserialize(&hex::decode(
         "00a0032bb223f1aad55892df75d0ff4712f0543959c5065ab89d000000000000000000005eba715327fc82c765fa651bd6226c4b4a6a846cd60197bcd76d47ada0611cfce335df696913021725806e70",
     )?)?)
@@ -170,10 +164,6 @@ async fn error_block_state(
         .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
         .map_err(Into::into)
 }
-
-// These tests exercise read_model::mutation transaction entry points: capture,
-// revoke/restore, Core writes, and event-pool cascade updates. Each scenario
-// pairs table assertions with the source_health recompute oracle.
 
 #[tokio::test]
 async fn mutation_catalogued_error_block_is_never_stale_or_unknown() -> Result<()> {
@@ -282,8 +272,6 @@ async fn targeted_repair_persists_a_live_error_block_without_catalogue_membershi
             )
         );
 
-        // A Core-off rebuild may replay a live verdict already persisted in
-        // Postgres, but must not invent one for an unclassified header.
         let repaired = run_reconcile_read_model(
             &mut client,
             &ConfiguredParentClassifier::Disabled,
@@ -558,8 +546,6 @@ async fn mutation_capture_changed_then_unchanged_is_idempotent() -> Result<()> {
         let sh_first = read_source_health_semantic(&client).await?;
         assert_source_health_matches_recompute(&client, "after changed capture").await?;
 
-        // A byte-identical replay must return the same event and leave derived
-        // block/source_health projections unchanged.
         let mut replay = build()?;
         let replay_id =
             capture_test_payload(&mut client, fixture.source_id, &classifier, &mut replay).await?;
@@ -585,8 +571,6 @@ async fn mutation_capture_changed_then_unchanged_is_idempotent() -> Result<()> {
     })
 }
 
-// Revoke/restore should demote and recover the parent read model, including
-// proof activity and source_health, while remaining idempotent at both edges.
 #[tokio::test]
 async fn mutation_revoke_and_restore_roundtrip_block_proof_source_health() -> Result<()> {
     crate::run_mut_db_test!(client, {
@@ -668,8 +652,6 @@ async fn mutation_revoke_and_restore_roundtrip_block_proof_source_health() -> Re
     })
 }
 
-// A transient classifier unknown is weaker than an already proven canonical
-// parent; replay must preserve the existing block and event classification.
 #[tokio::test]
 async fn mutation_classifier_transient_unknown_preserves_canonical() -> Result<()> {
     crate::run_mut_db_test!(client, {
@@ -678,7 +660,6 @@ async fn mutation_classifier_transient_unknown_preserves_canonical() -> Result<(
         let parent_hash = fixture.parsed.parent_header.hash().to_byte_array().to_vec();
         let height = 500_000;
 
-        // First response proves canonical; the replay response is unknown.
         let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new_sequence([
             canonical_verdict(&parent_header, height),
             unknown_verdict(&parent_header),
@@ -727,8 +708,6 @@ async fn assert_core_write_bracket_parity(
     namecoin: i64,
     classifier: &ConfiguredParentClassifier,
 ) -> Result<()> {
-    // Part 1 (bracket parity): an event-backed unknown parent flips to
-    // canonical when Core attests it; the bracket must move the buckets.
     let core_header = header_meeting_bits_with_prev(
         0x207f_ffff,
         1_700_000_100,
@@ -792,8 +771,6 @@ async fn assert_core_write_cascade_repairs_dependent(
     namecoin: i64,
     classifier: &ConfiguredParentClassifier,
 ) -> Result<()> {
-    // Part 2 (cascade repair): a dependent event whose parent block row is
-    // missing is rebuilt by the token's cascade after the Core write.
     let core_two = header_meeting_bits_with_prev(
         0x207f_ffff,
         1_700_000_200,
@@ -805,9 +782,6 @@ async fn assert_core_write_cascade_repairs_dependent(
     let dependent_hash = dependent_parent.block_hash().to_byte_array().to_vec();
     let mut dependent = crafted_unknown_payload(dependent_parent, 710_011, 0x52, 300)?;
     capture_test_payload(client, namecoin, classifier, &mut dependent).await?;
-    // Simulate the unreconciled-dependent state: strip the derived rows
-    // (the parent contribution is unchanged: an active unknown event keeps
-    // current_kind = 'unknown' with or without the block row).
     client
         .execute(
             "DELETE FROM attestation_proof WHERE btc_header_hash = $1",
@@ -853,8 +827,6 @@ async fn assert_core_write_cascade_repairs_dependent(
     Ok(())
 }
 
-// Covers both source_health bracket parity and the historical cascade format
-// where a Core write must rebuild dependent event-backed rows.
 #[tokio::test]
 async fn mutation_write_core_canonical_bracket_and_cascade() -> Result<()> {
     crate::run_mut_db_test!(client, {
@@ -940,7 +912,6 @@ async fn seed_canonical_parent_p(
     namecoin: i64,
     height: i32,
 ) -> Result<(Header, Vec<u8>, i64)> {
-    // Canonical parent P (pool unattributed) via producer proof.
     let p_header = header_meeting_bits_with_prev(
         0x207f_ffff,
         1_700_001_000,
@@ -967,7 +938,6 @@ async fn seed_stale_competitor_s(
     p_header: Header,
     p_hash: Vec<u8>,
 ) -> Result<Vec<u8>> {
-    // Stale competitor S whose canonical competitor is P (Fake classifier).
     let s_header = header_meeting_bits_with_prev(
         0x207f_ffff,
         1_700_001_100,
@@ -1007,8 +977,6 @@ async fn derived_competition_canonical_pool(
         .get(0))
 }
 
-// Event-level btc_parent attribution is provenance. It must not overwrite the
-// Bitcoin block miner fields, which come only from Bitcoin block evidence.
 #[tokio::test]
 async fn mutation_update_parent_events_btc_parent_attribution_does_not_drive_block_miner()
 -> Result<()> {
@@ -1025,7 +993,6 @@ async fn mutation_update_parent_events_btc_parent_attribution_does_not_drive_blo
             seed_stale_competitor_s(&mut client, namecoin, height, p_header, p_hash.clone())
                 .await?;
 
-        // A btc_parent attribution row through the mutation entry point.
         update_parent_events(
             &mut client,
             &ConfiguredParentClassifier::Disabled,

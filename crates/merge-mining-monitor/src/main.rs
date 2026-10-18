@@ -160,9 +160,6 @@ async fn cmd_sync_bitcoin_core(args: std::env::Args) -> Result<()> {
     let rpc = bitcoin_core_rpc_for_command("sync-bitcoin-core")?;
     let (mut pg_client, classifier) = mmm_producers::connect_core_required_from_env().await?;
     if config.follow {
-        // Long-lived managed-service daemon: catch up to tip then follow
-        // it, with its own SIGINT/SIGTERM handling. Returns only on a
-        // clean shutdown or a fatal backbone integrity error.
         mmm_producers::run_sync_bitcoin_core_follow(&mut pg_client, &rpc, &classifier, config)
             .await?;
     } else {
@@ -182,8 +179,8 @@ async fn cmd_sync_bitcoin_core(args: std::env::Args) -> Result<()> {
 
 async fn cmd_reconcile_read_model(args: std::env::Args) -> Result<()> {
     let config = mmm_read_model::ReconcileReadModelConfig::from_args(args)?;
-    // Core is deliberately mandatory even for source-health-only maintenance:
-    // bootstrap keeps the persisted cache current before read-model maintenance.
+    // Core is mandatory even for source-health-only maintenance so bootstrap
+    // refreshes the persisted epoch-header cache first.
     let (mut pg_client, classifier) = mmm_producers::connect_core_required_from_env().await?;
     let count =
         mmm_read_model::run_reconcile_read_model(&mut pg_client, &classifier, config).await?;
@@ -231,9 +228,6 @@ async fn cmd_restore_merge_mining_event(mut args: std::env::Args) -> Result<()> 
     Ok(())
 }
 
-/// Log the Bitcoin Core classifier's RPC transport metrics as the batch job's
-/// final line, when the classifier is Core-backed (always true for the
-/// commands that call this: they connect via `connect_core_required_from_env`).
 fn log_core_rpc_metrics(
     job: &'static str,
     classifier: &mmm_bitcoin_core::ConfiguredParentClassifier,

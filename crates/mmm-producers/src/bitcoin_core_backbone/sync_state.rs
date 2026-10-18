@@ -14,7 +14,6 @@ use super::{
     TARGET_TIP_CHANGED_ERROR_CODE, guard_existing_link, target_stability_failure,
 };
 
-/// In-memory mirror of the `bitcoin_core_sync_state` cursor row for one batch.
 #[derive(Debug, Clone)]
 pub(super) struct SyncState {
     pub(super) target_tip_height: Option<i32>,
@@ -26,7 +25,6 @@ pub(super) struct SyncState {
     pub(super) preserve_error: bool,
 }
 
-/// Minimal canonical-row projection used by the backbone topology walk.
 #[derive(Debug, Clone)]
 pub(super) struct CanonicalHeightRow {
     pub(super) hash: Vec<u8>,
@@ -54,7 +52,6 @@ pub(super) async fn guard_no_pending_core_reconcile<C: GenericClient>(
     Ok(())
 }
 
-/// Idempotently create or read the contiguous sync-state row.
 pub(super) async fn load_or_init_sync_state<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -80,7 +77,6 @@ pub(super) async fn load_or_init_sync_state<C: GenericClient>(
     })
 }
 
-/// Pin or re-confirm a one-shot sync target.
 pub(super) async fn verify_or_set_target_tip<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -127,8 +123,8 @@ pub(super) async fn verify_or_set_target_tip<C: GenericClient>(
 }
 
 /// Accept a repaired live target only while it still matches Core and no
-/// suffix reconciliation remains pending. Clear repair-owned telemetry while
-/// preserving an unrelated producer failure.
+/// suffix reconciliation remains pending, clearing repair-owned telemetry while
+/// preserving unrelated producer failures.
 pub(super) async fn accept_live_repaired_target<S>(
     client: &mut Client,
     source: &S,
@@ -199,7 +195,6 @@ where
     result
 }
 
-/// Point lookup of every canonical row at one height.
 pub(super) async fn load_canonical_rows_at_height<C: GenericClient>(
     client: &C,
     height: i32,
@@ -224,7 +219,6 @@ pub(super) async fn load_canonical_rows_at_height<C: GenericClient>(
         .collect())
 }
 
-/// Return whether a skipped complete row still has an unresolved dependent.
 pub(super) async fn skipped_complete_has_missing_dependents<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -248,7 +242,6 @@ pub(super) async fn skipped_complete_has_missing_dependents<C: GenericClient>(
     Ok(row.get(0))
 }
 
-/// Advance the high-water mark over the complete, linked canonical prefix.
 pub(super) async fn advance_contiguous_complete_prefix<C: GenericClient>(
     client: &C,
     source_id: i64,

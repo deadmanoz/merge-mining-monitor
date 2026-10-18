@@ -61,19 +61,8 @@ impl HeightSource {
     }
 }
 
-/// Persisted state stored on `block.kind`. Looks like a near-duplicate of
-/// `mmm_capture::capture::ParentKind`, but the two model different DB CHECK
-/// domains, not the same vocabulary twice: `block.kind` (this enum) allows
-/// all BTC-PoW-valid states, while `merge_mining_event.
-/// btc_parent_kind` (`ParentKind`) additionally allows `'near'`, because a
-/// `block` row only ever tracks a real BTC-PoW-valid header (a `Near` header
-/// is a child-chain artifact, never persisted as `block` state).
-/// `mmm-read-model::classify` is the translation boundary that folds
-/// `ParentKind::Near` into `BlockKind::Unknown`. Keep both: collapsing them
-/// would either let `Near` typecheck where the schema forbids it, or push a
-/// runtime disallow-`Near` check onto every call site here that currently
-/// relies on exhaustive 3-way matching (see the `unreachable!()` arms in
-/// `core.rs` and `mmm-read-model::classify`).
+/// Persisted state on `block.kind` (BTC-PoW-valid headers only; excludes `ParentKind::Near`,
+/// which `mmm_read_model::classify` folds into `BlockKind::Unknown`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockKind {
     Canonical,
@@ -124,9 +113,7 @@ pub struct ClassifiedHeader {
     pub header: Header,
     pub height: i32,
     pub coinbase: Option<BitcoinCoreBlockCoinbase>,
-    /// The coinbase fetch failed for a reason a retry may clear (not a body
-    /// Core will never hold). Enrichment is optional, so the header is still
-    /// usable; a verdict built on it is marked incomplete.
+    /// Transient coinbase fetch failure; marks dependent verdicts provisional for retry.
     pub coinbase_unavailable: bool,
 }
 
@@ -141,28 +128,13 @@ pub struct ParentClassification {
     pub canonical_competitor_hash: Option<Vec<u8>>,
     pub coinbase: Option<BitcoinCoreBlockCoinbase>,
     pub difficulty_epoch_ok: Option<bool>,
-    /// Primary Bitcoin consensus rejection token for a live or catalogued
-    /// `error_block` classification.
     pub rejection_reason: Option<String>,
     pub live_observed: bool,
     pub core_attested: bool,
-    /// True only when Bitcoin Core was consulted and returned the candidate
-    /// header as not-found (provably absent from Core's main chain and stale
-    /// set), so the resulting `unknown` is a genuine BTC-orphan candidate rather
-    /// than a never-checked (Disabled) or transient-RPC-error unknown. It is set
-    /// only on candidate-absent paths that did not stop at an incomplete or
-    /// unavailable live consensus check; the read-model reconciler gates
-    /// strict/weak orphan classification on it. Absence is a point-in-time
-    /// observation (a live capture can reach Core before Core has the block
-    /// at that height), so [`Self::to_proof`] marks the verdict provisional.
+    /// Candidate was provably absent from Core and all consensus checks completed;
+    /// gates strict/weak orphan derivation and marks the proof provisional.
     pub core_absence_attested: bool,
-    /// True when a Core lookup the lenient live policy tolerated cut the
-    /// classification short (a predecessor, competitor or ancestor lookup, or
-    /// the coinbase fetch of an indexed block). With `core_absence_attested`
-    /// this makes the verdict provisional: a capture that stores it must stay
-    /// eligible for a retry (a non-final child-chain head) whatever orphan
-    /// class the parent already carries, because the routine rechecks skip
-    /// classified rows.
+    /// A tolerated RPC lookup failed mid-classification; marks the proof provisional for retry.
     pub incomplete: bool,
 }
 
@@ -186,8 +158,6 @@ impl ParentClassification {
         }
     }
 
-    /// An `unknown` a tolerated Core lookup failure cut short: provisional,
-    /// so the capture that stores it stays eligible for a retry.
     pub fn incomplete_unknown(header: &Header) -> Self {
         Self {
             incomplete: true,
@@ -195,9 +165,6 @@ impl ParentClassification {
         }
     }
 
-    /// Classification supplied by either the pinned error-block registry or
-    /// a live Core-backed consensus check. It never claims Core attestation or
-    /// a canonical competitor because the invalid candidate is not in Core.
     pub fn error_block(
         header: &Header,
         height: i32,
@@ -264,8 +231,6 @@ impl ConfiguredParentClassifier {
         }
     }
 
-    /// Build the production classifier. Mutating monitor commands require a
-    /// healthy Bitcoin Core source rather than degrading evidence to unknown.
     pub fn from_env_required() -> Result<Self> {
         match Self::from_env()? {
             Self::Disabled => {
@@ -288,9 +253,7 @@ impl ConfiguredParentClassifier {
             .await
     }
 
-    /// Historical publication imports fail on exhausted classification RPCs
-    /// rather than persisting an operational failure as evidence. Optional
-    /// coinbase enrichment remains best-effort.
+    /// Strict variant that fails on classification RPC errors (optional coinbase remains best-effort).
     pub async fn classify_parent_strict(
         &self,
         header: &Header,
@@ -306,9 +269,7 @@ impl ConfiguredParentClassifier {
         }
     }
 
-    /// Defer loading read-model predecessor context until the Core-backed
-    /// classifier proves the candidate header is absent. Test fakes retain the
-    /// established eager behavior.
+    /// Defer `preflight` lookup until Core proves the candidate header is absent.
     pub async fn classify_parent_deferred<F>(
         &self,
         header: &Header,
@@ -327,8 +288,6 @@ impl ConfiguredParentClassifier {
         }
     }
 
-    /// Strict historical-import variant of [`Self::classify_parent_deferred`].
-    /// Classification RPCs fail explicitly; coinbase enrichment is optional.
     pub async fn classify_parent_deferred_strict<F>(
         &self,
         header: &Header,
@@ -349,8 +308,6 @@ impl ConfiguredParentClassifier {
         }
     }
 
-    /// Maximum useful number of in-flight classifications for this backend.
-    /// The Core RPC client enforces the same limit at the transport boundary.
     pub fn max_concurrency(&self) -> usize {
         match self {
             Self::Disabled => 1,
@@ -360,8 +317,6 @@ impl ConfiguredParentClassifier {
         }
     }
 
-    /// The synced Core tip with its freshness (see [`SyncedTip`]). `Disabled`
-    /// reports no tip, so the header-cache refresh refuses monitor work.
     pub async fn synced_tip(&self) -> Result<Option<SyncedTip>> {
         match self {
             Self::Disabled => Ok(None),
@@ -371,9 +326,6 @@ impl ConfiguredParentClassifier {
         }
     }
 
-    /// Bitcoin Core RPC transport counters, when this classifier is backed by a
-    /// real Core client. `None` for `Disabled` and the test `Fake` classifier,
-    /// which make no RPC calls to count.
     pub fn metrics(&self) -> Option<mmm_rpc::RpcMetrics> {
         match self {
             Self::Disabled => None,
@@ -383,8 +335,6 @@ impl ConfiguredParentClassifier {
         }
     }
 
-    /// Resolve a canonical Bitcoin header by height for the durable Core header
-    /// cache. A disabled classifier cannot service mutating monitor commands.
     pub async fn canonical_header(&self, height: i32) -> Result<CoreHeader> {
         match self {
             Self::Disabled => {

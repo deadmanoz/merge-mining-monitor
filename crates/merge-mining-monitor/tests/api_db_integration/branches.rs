@@ -511,12 +511,6 @@ async fn stale_branches_indexes_production_reconciled_stale_chain() -> Result<()
         crate::support::seed_synthetic_fixture_history(&client).await?;
         let ts = day_epoch(2026, Month::May, 10);
 
-        // Read-model scenario: canonical spine A100 <- A101 <- A102 written
-        // through the Core backbone mutation path, and a two-block stale
-        // branch B101 <- B102 forking off A100, captured as child evidence
-        // from two different sources with stale verdicts naming their
-        // canonical competitors. block rows are reconciler-derived, never
-        // hand-inserted.
         let a100 = header_meeting_bits(0x207f_ffff, ts as u32, 0xA100);
         let a101 =
             header_meeting_bits_with_prev(0x207f_ffff, ts as u32 + 1, 0xA101, a100.block_hash());

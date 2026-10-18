@@ -1,28 +1,5 @@
-//! Shared HTTP transport and envelope policy for the reqwest-based JSON-RPC clients.
-//!
-//! The Namecoin, RSK, and Syscoin clients all talk to remote nodes over HTTP,
-//! frequently across idle/contended SSH tunnels. A bare `reqwest::Client::new()`
-//! has no request timeout and uses default idle keep-alive pooling, so an idle
-//! pooled socket can go stale; the next request then hangs (no timeout) or
-//! errors on the dead socket, which stalls the live poller's `chain_tip` fetch
-//! every tick while a fresh `curl` returns instantly.
-//!
-//! [`build_rpc_client`] centralizes the transport fix so all clients share one
-//! tested HTTP policy:
-//!
-//! - an explicit whole-request `timeout` (operator-configurable per chain),
-//! - an explicit `connect_timeout` (capped at the request timeout),
-//! - a short `pool_idle_timeout` so a stale pooled socket is dropped before the
-//!   next long-interval live tick reuses it, while still letting a tight
-//!   backfill loop reuse the connection across its sub-second call gaps, and
-//! - TCP keepalive so a half-open connection used mid-request is detected.
-//!
-//! [`RpcMetrics`] is the companion counter handle: every chain client owns
-//! one and threads it through its calls (directly, for clients with their own
-//! retry loop, or via [`post_json_rpc_call`] and
-//! [`post_required_json_rpc_call`] for clients without one) so attempts,
-//! retries, failures, and latency are visible without changing any
-//! retry/timeout/ordering behavior.
+//! Shared HTTP transport, JSON-RPC envelope decoding, and [`RpcMetrics`] counters
+//! for reqwest-based node clients over potentially idle SSH tunnels.
 
 use std::future::Future;
 use std::time::Duration;
@@ -39,10 +16,7 @@ pub use metrics::{AttemptTimer, RpcMetrics, RpcMetricsDelta, RpcMetricsSnapshot}
 /// Default whole-request timeout when `<PREFIX>_RPC_TIMEOUT_SECS` is unset.
 pub const DEFAULT_RPC_TIMEOUT_SECS: u64 = 15;
 
-/// Upper bound on the connect (TCP/TLS) phase. The effective connect timeout is
-/// `min(request_timeout, DEFAULT_CONNECT_TIMEOUT)` so lowering the request
-/// timeout below this never leaves a connect budget larger than the whole
-/// request budget.
+/// Upper bound on TCP/TLS connect (`min(request_timeout, DEFAULT_CONNECT_TIMEOUT)`).
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// How long an idle pooled connection may live before it is dropped. Kept well
@@ -51,13 +25,9 @@ const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// gaps inside a backfill loop so historical replays keep connection reuse.
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// TCP keepalive probe interval, so the OS detects a half-open connection that
-/// is being used mid-request.
 const TCP_KEEPALIVE: Duration = Duration::from_secs(60);
 
-/// Build a reqwest client with the shared RPC transport policy described in the
-/// module docs. `request_timeout` is the whole-request deadline; the connect
-/// timeout is derived as `min(request_timeout, DEFAULT_CONNECT_TIMEOUT)`.
+/// Build a reqwest client with explicit request/connect timeouts, short idle pooling, and TCP keepalive.
 pub fn build_rpc_client(request_timeout: Duration) -> Result<Client> {
     let connect_timeout = request_timeout.min(DEFAULT_CONNECT_TIMEOUT);
     Client::builder()
@@ -69,9 +39,7 @@ pub fn build_rpc_client(request_timeout: Duration) -> Result<Client> {
         .context("build RPC HTTP client")
 }
 
-/// Send one JSON-RPC HTTP POST, attaching basic auth only when both credentials
-/// are present. Status interpretation is deliberately left to the caller so
-/// public-endpoint clients can classify 429/5xx as retryable.
+/// Send one JSON-RPC HTTP POST, leaving status interpretation to the caller.
 pub async fn post_json_rpc(
     http: &Client,
     url: &str,
@@ -92,25 +60,13 @@ pub async fn post_json_rpc(
         .with_context(|| format!("send {label} RPC method {method}"))
 }
 
-/// The HTTP client plus its [`RpcMetrics`] handle, bundled so
-/// [`post_json_rpc_call`] stays under clippy's argument-count lint.
 pub struct RpcTransport<'a> {
     pub http: &'a Client,
     pub metrics: &'a RpcMetrics,
 }
 
-/// One JSON-RPC call whose `result` may be JSON `null`: send the POST, require
-/// a successful HTTP status, read the whole body, and interpret the envelope.
-/// This is the metered boundary for clients with no retry loop of their own
-/// (the bitcoind-family and RSK clients): the attempt is timed from dispatch
-/// to the consumed body, since a block download is mostly body, and recorded
-/// on `transport.metrics` whatever the result; any error, a transport
-/// failure, a bad status, an undecodable body, or an RPC error object, is one
-/// failed call, terminal here because the caller does not retry. Clients that
-/// classify failures as retryable and drive their own retry loop (Elastos,
-/// Hathor) instrument themselves around the bare [`post_json_rpc`] instead,
-/// so they can call [`RpcMetrics::record_retry`] and decide when the call has
-/// failed.
+/// Metered single-attempt JSON-RPC POST whose `result` may be `null`.
+/// Clients with custom retry loops instrument around [`post_json_rpc`] directly.
 pub async fn post_json_rpc_call<T>(
     transport: &RpcTransport<'_>,
     url: &str,
@@ -132,8 +88,7 @@ where
     .await
 }
 
-/// [`post_json_rpc_call`] for a method whose result must be present and
-/// non-null; a `null` result is a failed call too.
+/// [`post_json_rpc_call`] requiring a non-null `result`.
 pub async fn post_required_json_rpc_call<T>(
     transport: &RpcTransport<'_>,
     url: &str,
@@ -155,9 +110,6 @@ where
     .await
 }
 
-/// Count one call as an attempt at dispatch, time it through its consumed
-/// and interpreted response (or until the caller abandons it mid-flight),
-/// and count an error as one failed call.
 async fn metered<T>(metrics: &RpcMetrics, call: impl Future<Output = Result<T>>) -> Result<T> {
     let _attempt = metrics.attempt(1);
     let result = call.await;
@@ -183,7 +135,6 @@ async fn post_json_rpc_envelope(
     read_json_rpc_envelope(label, method, response).await
 }
 
-/// Read a JSON-RPC response body as its envelope.
 pub async fn read_json_rpc_envelope(
     label: &str,
     method: &str,
@@ -195,7 +146,6 @@ pub async fn read_json_rpc_envelope(
         .with_context(|| format!("decode {label} RPC response for method {method}"))
 }
 
-/// Decode a JSON-RPC response whose result must be present and non-null.
 pub async fn decode_required_json_rpc_response<T>(
     label: &str,
     method: &str,
@@ -208,7 +158,6 @@ where
     decode_required_json_rpc_envelope(label, method, &envelope)
 }
 
-/// Interpret a JSON-RPC envelope whose result must be present and non-null.
 pub fn decode_required_json_rpc_envelope<T>(
     label: &str,
     method: &str,
@@ -221,10 +170,8 @@ where
         .ok_or_else(|| anyhow::anyhow!("{label} RPC method {method} returned no result"))
 }
 
-/// Interpret a JSON-RPC envelope into a typed result, explicit null, or error.
-///
-/// A response missing both `result` and `error` is treated as a protocol
-/// violation rather than silently becoming absence.
+/// Interpret a JSON-RPC envelope into `Ok(Some(T))`, `Ok(None)` on null, or `Err`
+/// (including when both `result` and `error` are absent).
 pub fn decode_json_rpc_envelope<T>(label: &str, method: &str, envelope: &Value) -> Result<Option<T>>
 where
     T: DeserializeOwned,
@@ -254,19 +201,13 @@ where
     Ok(Some(value))
 }
 
-/// JSON-RPC `error` object, surfaced verbatim in the caller's error context.
 #[derive(Debug, Deserialize)]
 struct JsonRpcError {
     code: i64,
     message: String,
 }
 
-/// Pure timeout parser driven by an arbitrary lookup. Returns the default when
-/// the key is unset; otherwise parses the value as `u64` seconds and requires it
-/// to be `> 0` (a zero/blank timeout would mean "no timeout", which defeats the
-/// purpose of setting one). Callers that read the process environment pass
-/// `|key| std::env::var(key).ok()`; unit tests drive a map so they never mutate
-/// the global (and in Rust 2024 `unsafe`) process environment.
+/// Parse a positive timeout in seconds from `lookup(name)`, or return `default_secs`.
 pub fn parse_timeout_secs_from_lookup<F>(
     name: &str,
     default_secs: u64,

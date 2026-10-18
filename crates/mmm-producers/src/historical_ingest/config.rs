@@ -1,8 +1,4 @@
 //! CLI configuration and source-registry resolution for monitor-evidence import.
-//!
-//! Historical import has one input contract: the normalized per-chain
-//! `results/monitor-evidence/<chain>_monitor_evidence.csv` publication. Source
-//! lifecycle controls reconciliation behavior, never CSV shape.
 
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -32,7 +28,6 @@ pub(super) const DEFAULT_MANIFEST_PATH: &str = "data/historical/historical-sourc
 const RESEARCH_ROOT_ENV: &str = "MERGE_MINING_RESEARCH_DIR";
 const DEFAULT_BATCH_SIZE: usize = 500;
 
-/// Registry-backed source metadata for one published per-chain artifact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct HistoricalChainSpec {
     pub(super) source_id: i64,
@@ -82,7 +77,6 @@ pub(super) fn is_historical_import_chain(chain: &str) -> bool {
     historical_chain_spec(chain).is_some_and(|spec| spec.lifecycle != SourceLifecycle::Surveyed)
 }
 
-/// Resolved parameters for one normalized per-chain import.
 #[derive(Debug, Clone)]
 pub struct HistoricalImportConfig {
     pub chain: String,
@@ -92,11 +86,9 @@ pub struct HistoricalImportConfig {
     pub require_pinned_checkout: bool,
     pub batch_size: usize,
     pub limit: Option<usize>,
-    /// Allows a deliberately membership-free diagnostic database.
     pub allow_empty_known_stales: bool,
 }
 
-/// Resolved options for the manifest-driven full publication import.
 #[derive(Debug, Clone)]
 pub struct HistoricalImportAllConfig {
     pub manifest_path: PathBuf,
@@ -107,9 +99,8 @@ pub struct HistoricalImportAllConfig {
 }
 
 impl HistoricalImportConfig {
-    /// Build an additive fixture/operator override. The CSV must still use the
-    /// normalized schema, but publication digest, count checks, and
-    /// authoritative removal are intentionally absent.
+    /// Additive fixture/operator CSV override (no manifest digest/count checks
+    /// or authoritative removal).
     pub fn for_csv(chain: impl Into<String>, csv_path: impl Into<PathBuf>) -> Self {
         Self {
             chain: chain.into(),
@@ -139,12 +130,6 @@ impl HistoricalImportConfig {
         self.manifest_path.is_some() && self.limit.is_none()
     }
 
-    /// Parse `import-dataset <chain> [flags...]`.
-    ///
-    /// Without `--csv`, the monitor-owned publication manifest selects the
-    /// artifact beneath `MERGE_MINING_RESEARCH_DIR` or `--artifact-root`.
-    /// An explicitly supplied artifact root is accepted by content identity;
-    /// an environment-selected git checkout must itself be at the pinned merge.
     pub fn from_args(mut args: std::env::Args) -> Result<Self> {
         let chain = args
             .next()

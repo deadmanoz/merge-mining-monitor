@@ -27,17 +27,12 @@
   padding-top: 0;
 }
 
-/* The AuxPoW proof (and the undecoded fallback) is a child of one auxiliary
-   block, not a sibling chain. Indent it with a tree-line so its chevron sits
-   under the chain, not aligned with the other auxiliary blocks. */
 .event-block > details.collapse {
   margin-left: 28px;
   padding-left: 10px;
   border-left: 1px solid var(--line);
 }
 
-/* Collapsible detail rows (event cards, raw header) use native <details>. Make
-   the summary line a clear target, with a large chevron box for state. */
 .detail-section summary {
   position: relative;
   cursor: pointer;
@@ -130,16 +125,10 @@
   overflow-wrap: anywhere;
 }
 
-/* The auxiliary stamp's offset from the Bitcoin header time. Muted like the
-   relative-time label it sits beside: it is context for the value, not a
-   second value. */
 .child-time-offset {
   color: var(--muted);
 }
 
-/* A value that doubles as a cross-link. Styled as a link rather than a button,
-   because it sits inline in a definition list where a button chrome would read
-   as a separate control rather than as the value itself. */
 .kv-link {
   padding: 0;
   border: 0;

@@ -1,10 +1,3 @@
-/* Findings view: the rail filter groups it adds, the feed cards, the article,
-   and the evidence figures. Class selectors only: an ID selector would outrank
-   the [data-view-scope] hide rule in layout.css and leave the inactive panel
-   laid out over the tree (see delta-view.css for the precedent note). Shared
-   primitives (tokens, cards, fieldsets, sd-cite/sd-sources citation styling)
-   come from the sheets loaded before this one. */
-
 .findings-main {
   display: grid;
 }
@@ -23,12 +16,6 @@
   overflow-y: auto;
   padding: 14px;
   display: grid;
-  /* One centered content column. Without the drawer track the canvas spans
-     the whole viewport on wide screens, and unbounded feed cards (or a
-     left-hugging article) read terribly there. A single minmax column keeps
-     every child on a shared left edge inside a centered, bounded column;
-     elements with their own narrower caps (article prose, figures) align to
-     that edge rather than centering individually. */
   grid-template-columns: minmax(0, 900px);
   justify-content: center;
   gap: 10px;

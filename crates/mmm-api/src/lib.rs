@@ -1,6 +1,8 @@
-//! The release read API behind the `serve` subcommand: axum routing, shared
-//! application state, success/error envelopes, query normalization, DB-backed
-//! JSON handlers, and `ServeDir` static serving for `www/`.
+//! Read-only HTTP API (`serve` subcommand): axum routing, envelopes, query normalization,
+//! DB-backed JSON projections, and `ServeDir` static serving for `www/`.
+//!
+//! Deliberately owns a read-only copy of `load_strict_bip34_height` (`projection/shared/mod.rs`)
+//! so `mmm-api` never depends on `mmm-read-model`.
 
 mod envelope;
 mod error;
@@ -40,33 +42,24 @@ use mmm_pg::PgConfig;
 #[cfg(feature = "db-integration")]
 pub use error::ApiError;
 
-/// The schema version echoed in every envelope.
 pub const SCHEMA_VERSION: &str = "v1";
-
-/// The application SemVer compiled from the workspace package version.
 pub const APPLICATION_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Shared application state. Cloned per request; `deadpool_postgres::Pool` is an
-/// `Arc` internally, so cloning is cheap.
 #[derive(Clone)]
 pub struct AppState {
     pool: Pool,
 }
 
 impl AppState {
-    /// Build state around the lazily-connecting DB pool.
     pub fn new(pool: Pool) -> Self {
         Self { pool }
     }
 
-    /// Borrow the connection pool. Read handlers call this to check out a
-    /// pooled client.
     pub(crate) fn pool(&self) -> &Pool {
         &self.pool
     }
 }
 
-/// `serve` subcommand configuration, sourced from the environment.
 pub struct ServeConfig {
     pub pg: PgConfig,
     pub bind_addr: SocketAddr,
@@ -75,8 +68,6 @@ pub struct ServeConfig {
 }
 
 impl ServeConfig {
-    /// Read the serve configuration from the environment.
-    /// `SERVE_DB_POOL_SIZE` defaults to 8, `SERVE_BIND_ADDR` to 127.0.0.1:8080.
     pub fn from_env() -> Result<Self> {
         let bind_addr =
             std::env::var("SERVE_BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".to_owned());
@@ -101,8 +92,6 @@ impl ServeConfig {
     }
 }
 
-/// Build a `deadpool_postgres::Pool` WITHOUT connecting (deadpool connects
-/// lazily on first checkout), reusing `PgConfig::to_tokio_config`.
 pub fn build_pool(pg: &PgConfig, max_size: usize) -> Result<Pool> {
     let manager = Manager::from_config(
         pg.to_tokio_config(),
@@ -117,8 +106,6 @@ pub fn build_pool(pg: &PgConfig, max_size: usize) -> Result<Pool> {
         .context("build Postgres connection pool")
 }
 
-/// Assemble the axum router: the `/api/v1` routes plus a `ServeDir` static
-/// fallback for `www/`, wrapped in a request-tracing layer.
 pub fn router(state: AppState, www_dir: impl AsRef<Path>) -> Router {
     let serve_dir = ServeDir::new(www_dir.as_ref()).append_index_html_on_directories(true);
 

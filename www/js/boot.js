@@ -17,16 +17,8 @@ async function reloadAll() {
   syncUrl();
   clearStoredTreeTransform();
   renderDrawer();
-  // Sources are view-independent (the topbar freshness indicator), so they load
-  // alongside whichever view is being activated rather than inside it. The view
-  // itself owns what else it needs; activateView falls back to the tree when the
-  // URL names a view that is not registered.
   state.treeDirty = true;
   await Promise.all([loadSources(), activateView(state.query.view)]);
-  // Shared-link restore: when the URL pinned a window, center the camera on the
-  // focus block (the tree tip-anchors by default). The focus is the selection if
-  // any, else the orphan anchor, so a deselected orphan-strip URL still centers
-  // on its anchor. A bare ?selected= with no explicit window stays tip-anchored.
   const focus = state.selectedHash
     || (hasUnheightedAnchorView() ? state.query.unheightedAnchor : null);
   if (state.query.view === "tree" && hasExplicitTreeView() && focus) {
@@ -34,49 +26,25 @@ async function reloadAll() {
   }
 }
 
-// Skip guard shared by both refresh entry points. A navigator jump in flight
-// must not be overtaken: a refresh's loadTree() uses the still-committed
-// (pre-jump) state.query and shares the "tree" seq key, so it would abort the
-// jump. The jump is sub-second; the next tick refreshes. A pressed pointer on
-// the tree is also excluded, because a re-render between a node press and its
-// click would orphan the clicked <g> and drop the selection.
 function refreshBlocked() {
   return anyNavTargetBusy(state) || state.treePointerActive;
 }
 
-// The manual Refresh button: reload sources, then force-reload whichever view
-// is active. Forcing preserves the stored pan/zoom, so the camera never moves.
-// "Live tip" stays the explicit re-anchor.
 async function manualRefresh() {
   if (refreshBlocked()) return;
-  // Concurrent, not sequential. Awaiting sources first would leave a window in
-  // which a navigator jump starts, and then this refresh's tree load runs after
-  // it: loadTree is sequence-guarded, so the later refresh would supersede the
-  // user's jump and restore the pre-jump window.
   await Promise.all([loadSources(), activateView(state.query.view, { force: true })]);
   refreshRelativeTimes();
 }
 
-// The auto-refresh timer. Deliberately NOT the same path as the button: only
-// tree data ages on a minute-to-minute scale, so a tick refreshes sources (the
-// topbar freshness indicator, which every view shows) and the tree, and leaves
-// other views to their own load-once-on-activation policy.
 async function scheduledRefresh() {
   if (refreshBlocked()) return;
-  // Same concurrency requirement as manualRefresh, and the same shape the
-  // single softRefresh had before the split.
   const pending = [loadSources()];
   if (state.query.view === "tree") {
     pending.push(loadTree(), refreshActiveNavigatorTarget());
   } else {
-    // Skipping the tree while another view is active means the cached tree is
-    // now older than the refresh interval. Without this the view's own loader
-    // sees `state.tree` present and not dirty, so switching back would show a
-    // tree that never refreshes for as long as the tab stays open.
     state.treeDirty = true;
   }
   await Promise.all(pending);
-  // Advance the open block detail's "how long ago" labels too.
   refreshRelativeTimes();
 }
 
@@ -98,8 +66,6 @@ function wireAboutDialog() {
   wireReleaseNotesAccordion(dialog);
 
   open.addEventListener("click", () => {
-    // Always open on the explainer Overview tab (first screen) so the modal
-    // reads as a walkthrough; Release notes is one click away.
     resetScreens();
     activateModalTab(dialog, "overview");
     showDialog(dialog);
@@ -116,9 +82,6 @@ function setReleaseExpanded(head, expand) {
   if (body) body.hidden = !expand;
 }
 
-// Keep the Expand all / Collapse all label in step with the actual section
-// state, so it stays correct after per-section toggles (not just bulk clicks)
-// and after each version render. The label names the toggle's next action.
 function syncToggleAllLabel(toggleAll, body) {
   const heads = body ? $all(".rel-head", body) : [];
   if (!toggleAll || !heads.length) return;
@@ -126,8 +89,6 @@ function syncToggleAllLabel(toggleAll, body) {
   toggleAll.textContent = anyCollapsed ? "Expand all" : "Collapse all";
 }
 
-// Per-release accordion: delegated on the persistent notes body (its children are
-// re-rendered each version load), plus an Expand all / Collapse all toggle.
 function wireReleaseNotesAccordion(dialog) {
   const body = $("#about-release-notes-body", dialog);
   const toggleAll = $("#about-notes-toggle-all", dialog);
@@ -167,10 +128,6 @@ function releaseTag(release, index, latestReleasedIndex) {
   return "";
 }
 
-// One collapsible release section. The newest section (index 0) opens by default
-// so the latest changes are visible without a click; older sections start
-// collapsed. `item_count` is the section's true bullet total; `items` may be a
-// prefix if a future hard cap truncates it, hence the dormant "N more" footnote.
 function renderReleaseSection(release, index, source, latestReleasedIndex) {
   const items = release.items || [];
   const open = index === 0;
@@ -196,9 +153,6 @@ function renderReleaseSection(release, index, source, latestReleasedIndex) {
   </section>`;
 }
 
-// Render the Release notes tab: a scrollable stack of collapsible release
-// sections, a subhead count, and a dormant truncation footnote. Reveals the tab
-// (hidden until now) only when there is at least one section to show.
 function renderReleaseNotes(payload) {
   const tablist = $("#about-tablist");
   const tab = $("#about-tab-notes");
@@ -248,13 +202,10 @@ async function loadVersionInfo() {
     const payload = await response.json().catch(() => null);
     if (response.ok && payload && !payload.error) renderVersionInfo(payload);
   } catch {
-    // Version metadata is auxiliary. Leave the static credit visible if it fails.
+    // Version metadata is auxiliary.
   }
 }
 
-// Stepper for the About-modal explainer: prev/next buttons, dot navigation, and
-// left/right arrow keys cycle the four SVG screens. Returns a reset function the
-// open handler calls so the modal always lands on screen one.
 function wireAboutScreens(dialog) {
   const screens = $all(".explainer-screen", dialog);
   if (!screens.length) return () => {};
@@ -272,8 +223,6 @@ function wireAboutScreens(dialog) {
       if (i === index) dot.setAttribute("aria-current", "true");
       else dot.removeAttribute("aria-current");
     });
-    // Restart the fade so each switch animates (a plain hidden toggle would not
-    // re-trigger the CSS animation); the reduced-motion guard disables it.
     const active = screens[index];
     active.classList.remove("is-entering");
     void active.offsetWidth;
@@ -290,8 +239,6 @@ function wireAboutScreens(dialog) {
   dots.forEach((dot, i) => dot.addEventListener("click", () => go(i)));
   dialog.addEventListener("keydown", (event) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    // Tab-strip arrows navigate tabs (wireModalTabs); the carousel only steps
-    // while its Overview pane is the active tab.
     if (event.target.closest(".modal-tab")) return;
     const overview = $("#about-overview", dialog);
     if (overview && overview.hidden) return;
@@ -303,14 +250,10 @@ function wireAboutScreens(dialog) {
   return () => go(0);
 }
 
-// Wire one INFO_DIALOGS descriptor: delegate info-button clicks to openInfoDialog
-// and wire the close button + backdrop. Replaces the per-dialog wire functions.
 function wireInfoDialog(descriptor) {
   const dialog = $(`#${descriptor.id}`);
   const close = $(`#${descriptor.closeId}`);
   if (!dialog || !close) return;
-  // auxpow info buttons live in the re-rendered drawer, so its descriptor
-  // delegates from document; the others from a fixed controls container.
   const container = descriptor.delegateFromDocument ? document : $(descriptor.controlsSelector);
   if (!container) return;
 
@@ -386,22 +329,12 @@ function commitTreeLookup({ field }) {
   if (value === "" && siblingValue !== "") return false;
   if (value === "" && !hasManualTreeLookup()) return false;
 
-  // Center on the committed lookup once its window is rendered: a height lands on
-  // that height's canonical block; a date/time lands on the window's mid-height
-  // (approximate "go to roughly this date", which is the lookup's intent).
   const recenter = field === "height"
     ? () => centerCameraOnHeight(value)
     : () => centerCameraOnWindowMidHeight();
 
   if (isRedundantTreeLookupCommit(field, value, siblingValue)) {
-    // The query is unchanged, but re-entering the active lookup recenters on it
-    // (the user may have panned away). Bump the epoch first so this nav gesture
-    // cancels any in-flight jump, exactly like the non-redundant path below.
     state.navEpoch += 1;
-    // Recenter without a refetch only when the matching window is already
-    // rendered; otherwise (absent / still loading / errored) reload - the new load
-    // captures the bumped epoch and supersedes any in-flight load - and center only
-    // after it applies, so we never center against a stale/null tree.
     const rendered = !state.errors.tree && (field === "height"
       ? (state.tree?.query?.at_height != null && Number(state.tree.query.at_height) === Number(value))
       : (state.tree?.query?.at_time != null && state.tree.query.at_time === state.query.treeTime));
@@ -419,7 +352,6 @@ function commitTreeLookup({ field }) {
     reconcileNavFromSelected();
   }
   refreshNavControls();
-  // A fresh height or date/time commit centers on its target once the load applies.
   loadTree().then((applied) => { if (applied) recenter(); });
   return true;
 }
@@ -474,24 +406,14 @@ function wireEvents() {
     if (event.target && (event.target.name === "treeHeight" || event.target.name === "treeTime")) return;
     readForm({ source: "filter-change" });
     syncUrl();
-    // Source and kind toggles are client-side highlights: restyle in place
-    // without refetching or moving the view. Every other control refetches.
     if (event.target && (event.target.name === "source" || event.target.name === "kind")) {
       if (event.target.name === "source") updateSourceGroupSelectedMarkers();
-      // Source is the one filter shared across views, and each view applies it
-      // differently: the tree dims non-matching nodes in place, while other
-      // views re-derive from the filtered set. Re-render the active view rather
-      // than assuming the tree is on screen.
       if (state.query.view === "tree") {
         applyTreeHighlight($("#tree-svg"), state.query.sources, state.query.kinds, state.query.classification, state.selectedHash);
       } else {
         activateView(state.query.view);
       }
     } else if (event.target && event.target.name === "classification") {
-      // The orphan-class filter is a SERVER-side filter for the navigator/anchor,
-      // not a client highlight: re-drive the navigator so it lands on and steps
-      // through the newly-selected classes. Compact tree views also reload,
-      // because orphan grafts are server-filtered by this control.
       handleClassificationFilterChange();
     }
   });
@@ -503,10 +425,7 @@ function wireEvents() {
   wireSourceStatusPopover();
   renderNavTargetOptions();
   $("#nav-goto")?.addEventListener("change", (event) => {
-    // The select is a momentary action menu, not a target indicator: reset to the
-    // "..." prompt so re-choosing the already-selected action (Live tip after a
-    // manual tree lookup, or Latest X after stepping away from the latest) still
-    // fires. The active target is conveyed by the readout, not the select value.
+    // Reset to the hidden prompt so re-picking the same action still fires.
     const target = event.target.value;
     event.target.value = "";
     if (target) goTo(target);
@@ -525,8 +444,6 @@ function wireEvents() {
   $("#drawer-reopen").addEventListener("click", () => setRailCollapsed(RAILS.drawer, false));
   $("#filters-collapse").addEventListener("click", () => setRailCollapsed(RAILS.filters, true));
   $("#filters-reopen").addEventListener("click", () => setRailCollapsed(RAILS.filters, false));
-  // The drawer is re-rendered from HTML strings on every selection, so its
-  // cross-link is delegated rather than bound per render.
   document.addEventListener("click", (event) => {
     if (!event.target.closest('[data-action="delta"]')) return;
     prepareFocus();
@@ -553,9 +470,6 @@ async function initApp() {
   hydrateFormFromUrl();
   registerDeltaView(registerView);
   registerFindingsView(registerView);
-  // Stamp the view scope before anything paints. reloadAll's activateView does
-  // this too, but only after its first await; until data-view is set, neither
-  // scope rule matches and both view panels occupy the same grid slot.
   applyViewScopes(state.query.view);
   renderKindControls();
   renderInfoDialogs();
@@ -566,9 +480,6 @@ async function initApp() {
   wireRailResize(RAILS.filters);
   wireRailResize(RAILS.drawer);
   loadVersionInfo();
-  // Filters default expanded (they are the primary controls); the drawer starts
-  // collapsed unless a block is preselected or it was expanded last session, so
-  // the empty panel does not waste space on a fresh load.
   setRailCollapsed(RAILS.filters, localStorage.getItem(RAILS.filters.collapsedKey) === "1", {
     persist: false,
     rerender: false,

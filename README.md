@@ -76,59 +76,28 @@ Core supplying canonical context:
   (2011), Syscoin (2016), RSK (2018), Elastos (2018), Hathor (2020), Fractal
   Bitcoin (2024), Qbit (2026), and Terracoin. Bitcoin Core supplies the canonical
   backbone and classifies every header, bringing the total to 9 live sources.
-- **Recovered datasets** (19 chains) are historical AuxPoW records from chains with
-  no live producer, ingested from recovered evidence: Argentum, Bitcoin Vault,
-  Bitmark, CoiledCoin, Crown, Devcoin, Electric Cash, Emercoin, Geistgeld,
-  Groupcoin, Huntercoin, i0coin, Ixcoin, Lyncoin, Myriadcoin, SixEleven,
-  SpaceXpanse ROD, Unobtanium, and Xaya. Lyncoin is complete from
-  genesis through the last SHA-256d block at height 260,499 (11 canonical
-  Bitcoin parents);
-  SixEleven is complete through its available tip at height 999,406 (seven),
-  and ROD's sealed full-chain scan through height 4,127,689 found one canonical
-  Bitcoin witness.
-  The recovered dataset production artefacts live in the companion
-  [`merge-mining-research`](https://github.com/deadmanoz/merge-mining-research)
-  repository; this monitor commits the provenance manifest and derived runtime
-  data it needs to import and serve them.
-- **Recovered subsets** contains VCash. Archived vcash.tech pages preserve 767
-  child-to-parent mappings. Bitcoin Core confirms 68 parent hashes as canonical
-  and supplies their full Bitcoin headers and coinbases. Those 68 rows are
-  usable evidence, but they are not the VCash blockchain (the other 699
-  mappings remain unresolved).
-- **Recovered surveys** contains Doichain. The complete review through height
-  430,684 found 429,401 AuxPoW commitments but no canonical or stale Bitcoin
-  block winner, so a successful recovery correctly produces zero rows.
+- **Recovered datasets** (19 chains) are historical AuxPoW records ingested from
+  the companion [`merge-mining-research`](https://github.com/deadmanoz/merge-mining-research)
+  repository: Argentum, Bitcoin Vault, Bitmark, CoiledCoin, Crown, Devcoin,
+  Electric Cash, Emercoin, Geistgeld, Groupcoin, Huntercoin, i0coin, Ixcoin,
+  Lyncoin, Myriadcoin, SixEleven, SpaceXpanse ROD, Unobtanium, and Xaya.
+- **Recovered subsets** contains VCash (68 canonical parent mappings recovered from
+  archived explorer pages and completed by Bitcoin Core).
+- **Recovered surveys** contains Doichain (a complete 430,684-block survey whose
+  429,401 AuxPoW commitments produced zero Bitcoin block winners).
 - **Catalogued (not recovered)** (5 chains) are known Bitcoin-merge-mined chains
   with no ingested data yet, listed for completeness: Bitcoin Stash, BLAST,
   Fusioncoin, Jax.Network, and Jincoin.
-
-Mazacoin is no longer in the catalogue. Its consensus source contains no AuxPoW
-implementation, so treating it as a Bitcoin merge-mined recovery target was
-incorrect.
 
 Namecoin, the first merge-mined chain, is the largest single contributor, but the
 picture is cross-chain: a single Bitcoin block is often merge-mined by many
 independent chains at once.
 
-If you can help fill the gaps, get in touch on X
-([@ozdeadman](https://x.com/ozdeadman)) or Nostr
-([deadmanoz on Primal](https://primal.net/deadmanoz)): the full VCash chain would
-replace a 68-row sample, and chain data for any of the five remaining catalogue
-entries, or a better archive for an existing source, would extend the record.
+If you can help fill the gaps, get in touch on X ([@ozdeadman](https://x.com/ozdeadman)) or Nostr ([deadmanoz on Primal](https://primal.net/deadmanoz)): the full VCash chain, chain data for any of the five catalogued entries, or a better archive for an existing source would extend the record.
 
 ## Recovering stale and orphan blocks
 
-Bitcoin keeps no durable, network-wide record of the blocks its active chain
-drops. A node that received one as a competing tip may still hold it, but that
-copy is local and lost to a prune or a resync. Merge-mined chains record it
-regardless: the commitment in each child block carries the Bitcoin header its
-miner hashed, stale ones included. Every stale block shown here is recovered from
-those child-chain records, not from watching the Bitcoin network. A live fork
-observer such as [fork-observer](https://fork.observer) can only capture a stale
-block if one of its nodes sees it at the tip in real time, so its record starts
-when the observer does; this monitor reconstructs stales after the fact from the
-child chains, which is why the evidence reaches back to 2011, long before anyone
-was systematically recording fork activity on the Bitcoin network.
+Bitcoin keeps no durable, network-wide record of the blocks its active chain drops. Merge-mined chains record them regardless: each child block's commitment carries the Bitcoin header its miner hashed, stale ones included. While a live observer such as [fork-observer](https://fork.observer) can only capture stales its nodes see at the tip in real time, this monitor reconstructs stales after the fact from child-chain records reaching back to 2011.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/stale-block-detail-dark.png" />
@@ -139,29 +108,17 @@ was systematically recording fork activity on the Bitcoin network.
 USA's block at the same height. Four merge-mined chains recorded its header, so
 it survives here as proven stale evidence, one of 2,204 such blocks.*
 
-The monitor checks every recovered header against Bitcoin Core and classifies it by
-where it attaches to the canonical chain. If the block, or the block it builds on,
-links to the chain, its place in Bitcoin's history is fixed: a valid header that
-connects to the chain but sits off the active one, beaten by a competitor at its
-height, is **stale**. A valid header whose previous-block hash matches nothing
-Bitcoin Core knows is **unknown**: Bitcoin Core cannot yet say where it belongs.
-When Core positively attests that such a header is absent from its chain and the
-evidence admits it, it becomes a BTC **orphan**, the harder case. Orphans split by
-how well their height can still be pinned: a **strict orphan** carries the real
-Bitcoin coinbase, so BIP34 fixes its height and an nBits check confirms the
-difficulty epoch; a **weak orphan** has no trustworthy coinbase height, so placement
-falls back to its header timestamp and the expected nBits. Unknown headers that pass
-neither gate stay unknown rather than being overclaimed, and a header already
-catalogued as a known stale is excluded from orphan classification outright. Stale
-competition is not always a single block, so the tree also renders multi-block stale
-and orphan branches.
-
-Some headers meet Bitcoin's proof-of-work target but are mechanically known to
-violate a Bitcoin consensus rule. The monitor derives supported rules from
-Bitcoin Core and retains a pinned catalogue as a fallback, preserving the
-rejection reason without misstating the block as stale or orphan evidence. The
-navigator steps through these error blocks like any other target, and the block
-detail names the rule it breaks and explains why it has no canonical competitor.
+The monitor checks every recovered header against Bitcoin Core and classifies it
+by where it attaches to the canonical chain (see
+[`docs/data-model.md`](docs/data-model.md)). A valid header that connects to the
+canonical chain—directly or through a multi-block branch—but sits off the active
+chain is **stale**. A valid header whose previous-block hash is unknown to
+Bitcoin Core is **unknown**, or a **strict** / **weak BTC orphan** when Core
+attests its absence and its height can be pinned by BIP34 coinbase height or
+header timestamp against Bitcoin's difficulty epochs. Headers that meet
+Bitcoin's proof-of-work target but violate a Bitcoin consensus rule are recorded
+separately as **error blocks** with their rejection reason, never as stale or
+orphan evidence.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/stale-branch-dark.png" />
@@ -201,23 +158,7 @@ adrift, and every outlier links back to its block detail.
 
 *The distribution around zero: races the canonical header timestamped first in
 blue, races the stale header timestamped first in red, and the off-scale racers
-stacked in the hatched gutters.*
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/img/header-time-delta-coverage-dark.png" />
-  <img alt="The Coverage tab: a cumulative curve answering what share of races landed within T seconds, annotated at the 50, 90, and 99 percent marks" src="docs/img/header-time-delta-coverage.png" />
-</picture>
-
-*The Coverage tab answers "what share of races landed within T seconds": half
-inside ±33s, 90% within ±12m, 99% within ±5.1d.*
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/img/header-time-delta-table-dark.png" />
-  <img alt="The Table tab: the same distribution as a text table of bins with counts, shares, and cumulative percentages" src="docs/img/header-time-delta-table.png" />
-</picture>
-
-*The Table tab carries the same distribution as text: per-bin counts, shares,
-and cumulative coverage.*
+stacked in the hatched gutters (with cumulative Coverage and Table tabs alongside).*
 
 ## Where the idea comes from
 
@@ -236,32 +177,12 @@ walks through the mechanism step by step.
 
 ## How it works
 
-`merge-mining-monitor` is a Postgres-backed Rust service. Producers write
-authenticated child-chain observations to `merge_mining_event`; a read-model
-reconciler derives the deduplicated `block` tree, attributing pools and
-classifying each Bitcoin parent header against Bitcoin Core. Live evidence is
-additive, while recovered historical and partial sources can be reconciled as
-authoritative publication snapshots. A read-only API (`serve`) projects that
-read model to the static frontend. Derived state is rebuildable, and bad live
-evidence can be revoked and recomputed without losing proven observations.
-
-See [`docs/architecture.md`](docs/architecture.md) for the crate boundaries and
-data flow.
+`merge-mining-monitor` is a Postgres-backed Rust service (see [`docs/architecture.md`](docs/architecture.md)). Producers write authenticated child-chain observations to `merge_mining_event`; a read-model reconciler derives the deduplicated `block` tree, attributing pools and classifying each Bitcoin parent header against Bitcoin Core, and a read-only API (`serve`) projects that read model to the static frontend. Live evidence is additive, recovered historical and partial sources reconcile as authoritative publication snapshots, and bad live evidence can be revoked and recomputed without losing proven observations.
 
 ## Documentation
 
-Human-focused documentation lives in [`docs/`](docs/README.md):
-
-- [architecture.md](docs/architecture.md) - system structure, crates, and data flow.
-- [capture.md](docs/capture.md) - how each source is fetched, verified, and stored.
-- [data-model.md](docs/data-model.md) - schema, read model, migrations, and classification.
-- [attribution.md](docs/attribution.md) - pool attribution and child-chain identity.
-- [operations.md](docs/operations.md) - setup, migrations, serving, and operator commands.
-- [historical-ingest.md](docs/historical-ingest.md) - importing recovered AuxPoW datasets.
-- [configuration.md](docs/configuration.md) - environment variables.
-- [api-contract.md](docs/api-contract.md), [product-brief.md](docs/product-brief.md), [ui-model.md](docs/ui-model.md) - API, product, and UI contracts.
-- [tree-semantics.md](docs/tree-semantics.md) - implementation notes for deriving `/api/v1/tree` and orphan navigator responses.
-- [testing.md](docs/testing.md) - test surfaces and fixtures.
+Architecture, data model, source capture, attribution, historical ingest,
+operations, and API/UI contracts live in [`docs/README.md`](docs/README.md).
 
 ## Related projects
 

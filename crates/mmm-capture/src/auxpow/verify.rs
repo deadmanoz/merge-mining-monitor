@@ -2,30 +2,16 @@
 
 use super::*;
 
-/// Verify the Elastos CAuxPow commitment for a parsed AuxPoW block whose child block
-/// hash is `child_block_hash` and merged-mining chain id is `chain_id`.
-///
-/// This is the trust boundary for capturing against a configurable (possibly
-/// third-party) RPC: the own-node producers get this from their validating node,
-/// but Elastos may run against the public endpoint, so it is enforced before any
-/// write. Ports the Namecoin/Bitcoin `CAuxPow::check` invariants:
-///
-/// 1. the parent coinbase scriptSig carries EXACTLY ONE `fabe6d6d` marker,
-///    immediately followed by `[aux_merkle_root:32][tree_size:4][nonce:4]`;
-/// 2. `tree_size == 1 << chain_branch_len` (overflow-safe; depth < 32);
-/// 3. both branch indices are non-negative and the coinbase branch index is 0;
-/// 4. the chain branch index equals the deterministic LCG slot for `chain_id`;
-/// 5. the parent coinbase txid folds up the coinbase branch to the parent header
-///    merkle root (wire byte order);
-/// 6. the child block hash folds up the chain branch to the committed aux merkle
-///    root (Elastos's reversal: the reversed leaf folds to the reversed
-///    committed root). Pinned against ELA 360062 / 1500000 / 2000000.
+/// Verify the Elastos `CAuxPow` commitment: single `fabe6d6d` marker with
+/// `[aux_merkle_root:32][tree_size:4][nonce:4]`, `tree_size == 1 << branch_len`
+/// (`branch_len < 32`), coinbase branch index 0, deterministic LCG slot for
+/// `chain_id`, wire-order coinbase merkle proof, and Elastos's reversed-leaf /
+/// reversed-root chain merkle proof.
 pub fn verify_auxpow_commitment(
     parsed: &ParsedAuxpowBlock,
     child_block_hash: BlockHash,
     chain_id: u32,
 ) -> Result<()> {
-    // 1. Exactly one fabe6d6d marker, with room for the 40-byte commitment.
     let script = parsed.parent_coinbase_script.as_slice();
     let mut markers = script
         .windows(AUXPOW_MAGIC.len())
@@ -48,7 +34,6 @@ pub fn verify_auxpow_commitment(
     let tree_size = u32::from_le_bytes(script[after + 32..after + 36].try_into().unwrap());
     let nonce = u32::from_le_bytes(script[after + 36..after + 40].try_into().unwrap());
 
-    // 2. tree_size == 1 << branch_len, overflow-safe.
     let branch_len = parsed.proof.chain_branch.hashes.len();
     ensure!(
         branch_len < 32,
@@ -62,7 +47,6 @@ pub fn verify_auxpow_commitment(
         "AuxPoW tree size {tree_size} != 1 << {branch_len}"
     );
 
-    // 3. Non-negative indices; coinbase is the first parent transaction.
     ensure!(
         parsed.proof.coinbase_branch.index >= 0,
         "negative parent coinbase merkle branch index"
@@ -77,7 +61,6 @@ pub fn verify_auxpow_commitment(
         parsed.proof.coinbase_branch.index
     );
 
-    // 4. Deterministic chain slot (cannot be forged into an arbitrary position).
     let expected_slot = auxpow_expected_index(nonce, chain_id, branch_len);
     let chain_index = u32::try_from(parsed.proof.chain_branch.index).unwrap();
     ensure!(
@@ -85,8 +68,6 @@ pub fn verify_auxpow_commitment(
         "AuxPoW chain slot {chain_index} != deterministic slot {expected_slot} for chain id {chain_id}"
     );
 
-    // 5. Coinbase merkle proof (wire order): parent coinbase txid -> parent header
-    //    merkle root.
     let coinbase_root = fold_merkle_branch(
         parsed.parent_coinbase_txid.to_byte_array(),
         &parsed.proof.coinbase_branch,
@@ -96,8 +77,7 @@ pub fn verify_auxpow_commitment(
         "parent coinbase merkle proof does not reach the parent header merkle root"
     );
 
-    // 6. Chain merkle proof (AuxPoW reversal): the reversed child block hash folds
-    //    to the reversed committed aux merkle root.
+    // Elastos reverses both the child leaf and the committed aux merkle root.
     let mut child_leaf = child_block_hash.to_byte_array();
     child_leaf.reverse();
     let chain_root = fold_merkle_branch(child_leaf, &parsed.proof.chain_branch);
@@ -111,20 +91,12 @@ pub fn verify_auxpow_commitment(
     Ok(())
 }
 
-/// The deepest chain Merkle branch classic `CAuxPow::check` accepts.
 const CLASSIC_MAX_CHAIN_BRANCH: usize = 30;
-
-/// The furthest into the parent coinbase scriptSig a markerless (legacy) chain
-/// root may start under classic `CAuxPow::check`.
 const CLASSIC_MARKERLESS_ROOT_WINDOW: usize = 20;
 
-/// Verify a classic Namecoin-family commitment, porting the classic
-/// `CAuxPow::check` that Terracoin inherits. Its Merkle leaf is the child hash
-/// in wire order (Elastos's wrapper uses a reversed leaf). Unlike the Elastos
-/// check it locates the committed chain root itself, as consensus does: with a
-/// `fabe6d6d` marker there must be exactly one, immediately before the first
-/// occurrence of the root; without one, the root must start within the first
-/// 20 bytes. The chain branch may be at most 30 levels deep.
+/// Verify a classic Namecoin-family `CAuxPow::check` commitment: wire-order child
+/// leaf, display-order committed root in coinbase (immediately after a single
+/// `fabe6d6d` marker, or within the first 20 bytes if markerless), and branch depth <= 30.
 pub fn verify_classic_auxpow_commitment(
     parsed: &ParsedAuxpowBlock,
     child_block_hash: BlockHash,
@@ -171,12 +143,8 @@ pub fn verify_classic_auxpow_commitment(
     Ok(())
 }
 
-/// Locate the display-order chain root in a parent coinbase scriptSig and
-/// return its `[tree_size:4][nonce:4]` footer, following classic
-/// `CAuxPow::check` placement (shared by the classic family and Qbit): the
-/// first occurrence of the root counts; a `fabe6d6d` marker, when present,
-/// must occur once and sit immediately before it; without a marker the root
-/// must start within the first 20 bytes.
+/// Locate the display-order chain root in `script` and return its `(tree_size, nonce)` footer
+/// per classic `CAuxPow::check` placement rules.
 pub(crate) fn read_commitment_footer(script: &[u8], display_root: &[u8; 32]) -> Result<(u32, u32)> {
     let root_pos = find_subslice(script, display_root)
         .context("display-order chain commitment missing from the parent coinbase scriptSig")?;
@@ -206,18 +174,13 @@ pub(crate) fn read_commitment_footer(script: &[u8], display_root: &[u8; 32]) -> 
     Ok((tree_size, nonce))
 }
 
-/// Index of the first occurrence of `needle` in `haystack`.
 pub(crate) fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
 }
 
-/// The deterministic AuxPoW chain slot: a fixed LCG over the parent coinbase
-/// `nonce` and the merged-mining `chain_id`, modulo the tree size
-/// (`1 << branch_len`). All arithmetic is u32-wrapping; ported from the
-/// merged-mining spec. `branch_len` must be < 32 so `1 << branch_len` fits a u32
-/// (the caller enforces this).
+/// Deterministic AuxPoW chain slot: u32-wrapping LCG over `(nonce, chain_id)` modulo `1 << branch_len`.
 pub fn auxpow_expected_index(nonce: u32, chain_id: u32, branch_len: usize) -> u32 {
     debug_assert!(branch_len < 32);
     let mut rand = nonce;
@@ -227,9 +190,6 @@ pub fn auxpow_expected_index(nonce: u32, chain_id: u32, branch_len: usize) -> u3
     rand % (1u32 << branch_len)
 }
 
-/// Fold a 32-byte leaf up a [`MerkleBranch`] to its root, combining each sibling
-/// in the branch `index` side order as `sha256d(left || right)`, all wire byte
-/// order. The caller verifies `branch.index >= 0` before calling.
 pub(crate) fn fold_merkle_branch(leaf: [u8; 32], branch: &MerkleBranch) -> [u8; 32] {
     let mut acc = leaf;
     let mut index = branch.index as u32;
@@ -245,9 +205,6 @@ pub(crate) fn fold_merkle_branch(leaf: [u8; 32], branch: &MerkleBranch) -> [u8; 
     acc
 }
 
-/// Double-SHA256 of `left || right` (the two 32-byte hashes concatenated into 64
-/// bytes, wire byte order in and out). The merkle-fold primitive behind
-/// [`fold_merkle_branch`]; output is `to_byte_array` order with no reversal.
 pub(crate) fn sha256d_pair(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
     let mut data = [0u8; 64];
     data[..32].copy_from_slice(left);
@@ -259,12 +216,8 @@ pub fn pow_validates_target(header: &Header) -> bool {
     validates_target(header.block_hash(), header.bits)
 }
 
-/// Decode a compact `nBits`, rejecting the malformed encodings
-/// `Target::from_compact` would happily decode: sign bit, zero mantissa,
-/// zero exponent, exponent > 32. Without this guard a corrupt nBits could
-/// spuriously satisfy a low decoded target and mis-classify a parent header
-/// as PoW-valid. Shared by [`validates_target`] and the Qbit child-target
-/// gate (which adds its own pow-limit bound on top).
+/// Decode compact `nBits`, rejecting sign bit, zero mantissa, zero exponent, or exponent > 32
+/// before calling `Target::from_compact`.
 pub(crate) fn well_formed_compact_target(bits: CompactTarget) -> Option<Target> {
     let raw_bits = bits.to_consensus();
     let exponent = (raw_bits >> 24) as usize;

@@ -35,9 +35,6 @@ fn api_fixture_examples_are_listed_and_parse() {
     }
 }
 
-/// Shared navigator-item shape, plus the error-block target's specifics. Every
-/// item must carry a target-matching `kind` and exactly one of `view` /
-/// `view_error`, so a client is never left without either a window or a reason.
 fn assert_navigator_fixture_contract(file: &str, fixture: &Value) {
     let target = string_field(&fixture["query"], "target");
     assert_eq!(
@@ -64,8 +61,6 @@ fn assert_navigator_fixture_contract(file: &str, fixture: &Value) {
             "{file}: item cursor must be non-empty"
         );
 
-        // Runtime derives every id from a hash, so an id whose embedded hash
-        // disagrees with the item's own is a payload that cannot be emitted.
         if let Some(branch) = item["branch"].as_object() {
             let root = string_field(&item["branch"], "root_hash");
             assert_lower_hex(root, 64, file, "branch.root_hash");
@@ -108,9 +103,7 @@ fn assert_navigator_fixture_contract(file: &str, fixture: &Value) {
                 "{file}: an error block is never a branch member or an orphan"
             );
         }
-        // The fixture deliberately shows two blocks at ONE height, ordered by
-        // stored (reversed display) bytes, because that tie-break is what makes
-        // paging return every member of a same-height group exactly once.
+        // Same-height items tie-break by ascending stored (reversed display) hash bytes.
         let heights = items
             .iter()
             .map(|item| item["position"]["max"].as_i64().expect("height"))
@@ -214,8 +207,6 @@ fn assert_block_fixture_contract(file: &str, fixture: &Value) {
     }
 }
 
-/// One `event_details[]` entry: the nullable child evidence fields and the
-/// child-side displacement pair.
 fn assert_event_detail_fixture_contract(file: &str, event: &Value) {
     let object = event
         .as_object()
@@ -248,8 +239,6 @@ fn assert_event_detail_fixture_contract(file: &str, event: &Value) {
             "{file} event detail must include nullable {field}"
         );
     }
-    // Child-side displacement is set and cleared as a pair: a time with
-    // the displacing block hash, or both null.
     match (
         event["child_displaced_at"].as_i64(),
         event["child_displaced_by"].as_str(),
@@ -277,14 +266,6 @@ fn assert_lower_hex(value: &str, len: usize, file: &str, field: &str) {
     );
 }
 
-/// The version fixture must track the workspace release: its top-level
-/// version and newest release-note section both pin `CARGO_PKG_VERSION`, the
-/// projection's own counters agree with the payload shape, and the whole
-/// `version` + `release_notes` projection is deep-equal to what the code
-/// actually serves (`mmm_api::version_payload_json`, which parses the
-/// embedded `RELEASE_NOTES.md`). A release bump, a notes edit, or a parser
-/// change therefore cannot land without regenerating this fixture (and, via
-/// the shared manifest walk above, its manifest scenario).
 fn assert_version_fixture_contract(fixture: &Value) {
     let workspace_version = env!("CARGO_PKG_VERSION");
     assert_eq!(
@@ -315,10 +296,6 @@ fn assert_version_fixture_contract(fixture: &Value) {
         "item_count must match the items array"
     );
 
-    // Deep equality against the served projection: the fixture is a capture of
-    // /api/v1/version minus the envelope, so `version` and the entire
-    // `release_notes` subtree (dates and item prose included) must match the
-    // code's own payload byte for byte.
     let served = mmm_api::version_payload_json();
     assert_eq!(
         fixture["version"], served["version"],
@@ -389,9 +366,6 @@ fn assert_fixture_envelope(file: &str, fixture: &Value) {
     }
 }
 
-/// The competitions fixture pins the wire contract the delta view reads: the
-/// documented ordering, the nullable delta, and source lists that agree with
-/// what the tree and block projections report for the same block.
 fn assert_competitions_fixture_contract(fixture: &Value) {
     let competitions = fixture["competitions"]
         .as_array()
@@ -401,9 +375,6 @@ fn assert_competitions_fixture_contract(fixture: &Value) {
         "competitions fixture must exercise more than one row"
     );
 
-    // Ordering: ascending btc_height, then lexicographic stale_hash. The
-    // fixture deliberately carries two stales at one height so the tie-break is
-    // pinned, not merely implied.
     let keys = competitions
         .iter()
         .map(|row| {
@@ -435,9 +406,7 @@ fn assert_competitions_fixture_contract(fixture: &Value) {
     let mut saw_bitcoin_source = false;
     let mut saw_auxpow_only = false;
     for row in competitions {
-        // Absence of the key, not a null value: indexing a missing key yields
-        // Value::Null, so an is_null() check would also accept a fixture that
-        // added "canonical_hash": null and quietly broke the documented shape.
+        // Test key absence rather than `is_null()`, which also passes on `"canonical_hash": null`.
         assert!(
             !row.as_object()
                 .expect("competition row is an object")
@@ -465,11 +434,7 @@ fn assert_competitions_fixture_contract(fixture: &Value) {
             .iter()
             .map(|value| value.as_str().expect("source code is a string").to_owned())
             .collect::<Vec<_>>();
-        // Deliberately NOT asserting a non-empty list: a competition whose only
-        // proof has been revoked is still a competition, and
-        // competitions_sources_match_block_evidence_semantics pins that it is
-        // served with sources: []. Requiring evidence here would contradict the
-        // runtime contract and teach clients to assume something untrue.
+        // `sources` may be empty when a competition's only proof has been revoked.
         let mut sorted_sources = sources.clone();
         sorted_sources.sort();
         sorted_sources.dedup();
@@ -529,7 +494,6 @@ fn assert_sources_fixture_contract(fixture: &Value) {
             );
         }
     }
-    // Terracoin is registered Live; the fixture shows it catching up.
     let terracoin = sources
         .iter()
         .find(|source| source["code"] == "auxpow:terracoin")
@@ -541,9 +505,6 @@ fn assert_sources_fixture_contract(fixture: &Value) {
         terracoin["sync"]["progress_height"].as_i64().unwrap()
             < terracoin["sync"]["target_height"].as_i64().unwrap()
     );
-    // The live AuxPoW capture-error class: the wire code, the reduced height,
-    // and precedence over the ordinary live/stale verdict even while the cursor
-    // is fresh and already past the gap.
     let qbit = sources
         .iter()
         .find(|source| source["code"] == "auxpow:qbit")
@@ -560,8 +521,6 @@ fn assert_sources_fixture_contract(fixture: &Value) {
     );
     assert_eq!(qbit["status"], "fresh", "evidence freshness is independent");
 
-    // Every other live AuxPoW source stays free of the error fields, so the
-    // class is per-source and not a payload-wide flag.
     for source in sources {
         if source["sync"]["mode"] != "live" || source["code"] == "auxpow:qbit" {
             continue;

@@ -475,13 +475,8 @@ fn event_write_outcome(
     EventWriteOutcome::new(event_id, disposition, parent_read_model_changed)
 }
 
-/// Upsert the event row, then apply a COMPLETE pool-attribution snapshot for it:
-/// [`upsert_merge_mining_event`] followed by [`upsert_event_pool_attributions`]
-/// (which prunes now-absent rows per source). This is the normal producer capture
-/// path (auxpow family, historical ingest), where `payload.pool_attributions` is
-/// the full set. When you only hold a partial set, call the plain upsert plus
-/// [`upsert_event_pool_attributions_without_stale_cleanup`] instead. Returns the
-/// store-owned event identity and write disposition.
+/// Upsert the event row, its complete pool-attribution snapshot (pruning absent rows per source),
+/// and optional historical provenance.
 pub async fn upsert_merge_mining_event_with_attributions<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -561,10 +556,8 @@ async fn upsert_historical_event_provenance<C: GenericClient>(
     Ok(())
 }
 
-/// A catalogue witness may be republished at a new pinned ref, but its archive
-/// coordinate must continue to identify the same stored event. Normal
-/// historical snapshots remain keyed by their publication ref and are allowed
-/// to replace rows independently.
+/// Ensure an error-observation coordinate `(chain, source_path, source_row_number)` continues
+/// to identify the same `event_id` across pinned publication refs.
 async fn ensure_error_observation_coordinate_identity<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -600,13 +593,8 @@ async fn ensure_error_observation_coordinate_identity<C: GenericClient>(
     Ok(())
 }
 
-/// Apply a COMPLETE pool-attribution snapshot for an event: prune rows whose
-/// `(side, source, namespace, matched_value)` keys are absent from `attributions`
-/// (per source, with child-payout sources unioned across the side), upsert the
-/// supplied rows, then refresh the denormalized child-miner pool. Use this when
-/// the caller owns the full set for the touched sources; use
-/// [`upsert_event_pool_attributions_without_stale_cleanup`] when it only holds a
-/// partial add/upgrade set. `observed_at` is the first/last-seen timestamp.
+/// Apply a complete pool-attribution snapshot for an event (pruning absent keys per touched source,
+/// unioning child-payout sources) and refresh `child_miner_pool_id`.
 pub async fn upsert_event_pool_attributions<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -618,10 +606,7 @@ pub async fn upsert_event_pool_attributions<C: GenericClient>(
     refresh_event_child_miner_pool_id(client, event_id).await
 }
 
-/// Upsert attribution rows without deleting absent rows for the same source.
-///
-/// Historical repair commands use this when they have a partial set of rows to
-/// add or upgrade, not a complete source snapshot for the event.
+/// Upsert attribution rows without deleting absent rows for the same source, then refresh `child_miner_pool_id`.
 pub async fn upsert_event_pool_attributions_without_stale_cleanup<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -632,12 +617,8 @@ pub async fn upsert_event_pool_attributions_without_stale_cleanup<C: GenericClie
     refresh_event_child_miner_pool_id(client, event_id).await
 }
 
-/// Upsert one `event_pool_attribution` row per attribution, idempotent on
-/// `(event_id, side, namespace, matched_value)`. On conflict an unknown-pool
-/// (`pool_id IS NULL`) re-capture never clobbers an existing known-pool row: the
-/// match/source/confidence/details/identity columns are kept from the known side,
-/// while `last_seen_at` advances monotonically (`GREATEST`). Shared write half of
-/// both attribution entry points; the stale-pruning policy lives in the callers.
+/// Upsert `event_pool_attribution` rows without letting an unknown (`pool_id IS NULL`) re-capture
+/// overwrite an existing known-pool row.
 async fn upsert_event_pool_attribution_rows<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -721,11 +702,7 @@ async fn upsert_event_pool_attribution_rows<C: GenericClient>(
     Ok(())
 }
 
-/// Recompute and persist `merge_mining_event.child_miner_pool_id` from the
-/// event's `child_block` attribution rows. This is the single writer of that
-/// denormalized column: every attribution write/delete entry point calls it,
-/// so the per-event child miner is always the projection of the current rows
-/// (one distinct known pool, else NULL).
+/// Recompute `merge_mining_event.child_miner_pool_id` (unique known `child_block` pool, else `NULL`).
 async fn refresh_event_child_miner_pool_id<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -750,14 +727,6 @@ async fn refresh_event_child_miner_pool_id<C: GenericClient>(
     Ok(())
 }
 
-/// Prune `event_pool_attribution` rows for the event whose `(side, source)` is
-/// present in `attributions` but whose `(namespace, matched_value)` key is no
-/// longer retained, i.e. enforce the supplied set as the complete snapshot for
-/// each touched source. Child-payout sources
-/// (`CHILD_COINBASE_OUTPUT_SOURCE`/`CHILD_PAYOUT_REGISTRY_SOURCE`) share a
-/// keep-set across the side so a multi-source payout set is pruned as one.
-/// Sources absent from `attributions` are left untouched. The cleanup half of
-/// [`upsert_event_pool_attributions`].
 async fn delete_stale_event_pool_attributions_for_sources<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -825,8 +794,6 @@ async fn delete_stale_event_pool_attributions_for_sources<C: GenericClient>(
     Ok(())
 }
 
-/// True for the child-payout attribution sources whose rows are pruned as a
-/// single cross-source keep-set (coinbase output + payout registry).
 fn is_child_payout_source(source: &str) -> bool {
     matches!(
         source,
@@ -834,11 +801,7 @@ fn is_child_payout_source(source: &str) -> bool {
     )
 }
 
-/// Delete ALL `event_pool_attribution` rows for one `(event_id, side, source)`,
-/// then refresh the denormalized child-miner pool. An unconditional clear of a
-/// whole source on a side (unlike the snapshot-prune in
-/// [`upsert_event_pool_attributions`]); reclassify-pools uses it to drop a stale
-/// pool-snapshot-sourced attribution before re-upserting the new one.
+/// Delete all `event_pool_attribution` rows for `(event_id, side, source)` and refresh `child_miner_pool_id`.
 pub async fn delete_event_pool_attributions_for_source<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -860,9 +823,6 @@ pub async fn delete_event_pool_attributions_for_source<C: GenericClient>(
     Ok(())
 }
 
-/// Whether a source holds any event for one child block, identified as in
-/// [`delete_child_block_events`]. Lets a capture that writes nothing skip the
-/// parent locks when there is nothing to remove.
 pub async fn has_child_block_events<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -889,12 +849,7 @@ pub async fn has_child_block_events<C: GenericClient>(
         .get(0))
 }
 
-/// Delete a source's events for one child block, revoked or not, with their
-/// sidecars and attributions: the exact row for its hash, plus a hashless
-/// historical row at the height whose Bitcoin parent is the block's parent
-/// (the identity partial promotion uses). Never another block's event at the
-/// height. The caller holds the parent's advisory lock and rebuilds its
-/// derived rows in the same transaction.
+/// Delete events for one child block (exact hash match or hashless partial match on `btc_parent_header_hash`).
 pub async fn delete_child_block_events<C: GenericClient>(
     client: &C,
     source_id: i64,

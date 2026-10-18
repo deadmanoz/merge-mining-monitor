@@ -701,40 +701,25 @@ fn coinbase_fetch(result: Result<BitcoinCoreBlockCoinbase>, hash: BlockHash) -> 
     }
 }
 
-/// The outcome of a coinbase fetch for a Core-indexed block.
 enum CoinbaseFetch {
     Found(BitcoinCoreBlockCoinbase),
-    /// Core does not hold the block body.
     Missing,
-    /// The fetch failed for a reason a retry may clear.
     Unavailable,
 }
 
-/// The outcome of the eleven-header median-time-past check.
 enum MtpCheck {
     Passes(bool),
-    /// Core lacks one of the linked ancestors.
     AncestorMissing,
-    /// A fetch failed and the lenient policy tolerated it.
     Unavailable,
 }
 
-/// The outcome of a same-height competitor lookup.
 enum Competitor {
     Found(Box<ClassifiedHeader>),
-    /// Core has no block at that height.
     Absent,
-    /// The lookup failed and the lenient policy tolerated it: nothing about
-    /// Core's chain at that height was observed.
     Unavailable,
 }
 
-/// An `unknown` for a candidate Core proved absent, once every further
-/// consensus check either completed or found nothing: the read model may
-/// classify it as a BTC-orphan candidate. A check that stopped at a tolerated
-/// RPC failure returns the plain, unattested `unknown` instead, so the row
-/// stays pending for the next recheck rather than carrying a verdict that a
-/// recovered lookup could have promoted to an inferred stale.
+/// Candidate proved absent from Core after all consensus checks completed; eligible for orphan derivation.
 fn core_absence_unknown(header: &Header) -> ParentClassification {
     ParentClassification {
         core_absence_attested: true,

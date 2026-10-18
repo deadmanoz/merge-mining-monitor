@@ -1,10 +1,4 @@
 //! Stale-vs-canonical competition projection for `/api/v1/competitions`.
-//!
-//! Unlike the tree and block projections, which read competitions keyed by a
-//! handful of hashes, this one returns every derivable competition in one
-//! read. The set is small and slow-growing (low thousands, tens per year), so
-//! serving it unaggregated lets a client bin, window and filter it without a
-//! round trip per interaction.
 
 use anyhow::{Context, Result};
 use mmm_capture::source_registry::BITCOIN_SOURCE_CODE;
@@ -17,37 +11,23 @@ use super::shared::{
     display_hash, load_sources, pool_from_columns,
 };
 
-/// `/api/v1/competitions` success payload (fixture:
-/// fixtures/api/competitions.json). Wire contract: `competitions` is ordered by
-/// `btc_height` ascending, then by stored stale hash.
 #[derive(Debug, Clone, Serialize)]
 pub struct CompetitionsPayload {
     pub competitions: Vec<CompetitionRecord>,
 }
 
-/// One stale-vs-canonical competition. Every field name is the locked JSON wire
-/// contract.
-///
-/// `canonical_hash` is deliberately absent: it is reachable from `btc_height`
-/// through `/api/v1/tree`, and carrying a second 64-character hash per row
-/// roughly doubles the payload for a value no client of this endpoint needs.
 #[derive(Debug, Clone, Serialize)]
 pub struct CompetitionRecord {
     pub btc_height: i32,
     pub stale_hash: String,
-    /// `canonical.btc_header_time - stale.btc_header_time`. Positive means the
-    /// stale block carries the earlier timestamp. `null` when the difference
-    /// falls outside i32; consumers must treat that as unavailable, never zero.
+    /// `canonical.btc_header_time - stale.btc_header_time` (`null` when outside `i32`).
     pub header_time_delta_s: Option<i32>,
     pub stale_header_time: i64,
     pub stale_bitcoin_miner_pool: PoolObject,
     pub canonical_bitcoin_miner_pool: PoolObject,
-    /// Active evidence source codes for the stale block, sorted and unique.
     pub sources: Vec<String>,
 }
 
-/// Every stale block with a derivable canonical competitor, pool-joined and
-/// evidence-summarised.
 pub async fn competitions(client: &Client) -> Result<CompetitionsPayload, ProjectionError> {
     let registry = load_sources(client).await?;
     let bitcoin_source = registry
@@ -62,12 +42,8 @@ async fn load_competition_records(
     client: &Client,
     bitcoin_source: Option<&str>,
 ) -> Result<Vec<CompetitionRecord>> {
-    // Ordering is applied in Rust, not SQL, so the tie-break is on the DISPLAY
-    // hash exactly like `tree.nodes` (projection/tree/reduction.rs). Stored
-    // bytea order is the reverse of display order, so an `ORDER BY
-    // btc_header_hash` would satisfy "deterministic" while contradicting the
-    // documented "lexicographic hash" contract. Height alone is not enough:
-    // mainnet height 153,211 alone carries 18 stale competitions.
+    // Sort in Rust by `(btc_height, stale_hash)` so tie-breaking uses reversed display hex
+    // rather than stored `bytea` order.
     let sql = format!(
         "SELECT stale.btc_height, stale.btc_header_hash, \
                 {COMPETITION_DELTA_SQL} AS header_time_delta_s, \

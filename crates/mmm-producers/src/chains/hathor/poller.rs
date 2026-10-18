@@ -1,7 +1,4 @@
-//! The Hathor live poller: the [`ChainPoller`] impl that drives
-//! [`process_hathor_height`] each tick and maps its outcomes to the driver's
-//! progress. Split out of `capture` to keep the state-machine file within the
-//! size gate.
+//! Hathor live [`ChainPoller`] implementation.
 
 use anyhow::Result;
 use tokio_postgres::Client;
@@ -15,9 +12,6 @@ use crate::poller::{ChainPoller, ChainPollerState, HeightProgress, RescanOutcome
 use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_store::upsert_pending_reconcile;
 
-/// Hathor live capture chain. Maps the rich [`HathorHeightOutcome`] to the
-/// driver's [`HeightProgress`]: best-effort holds enqueue a durable reconcile
-/// row and `Hold`, and a pending parent lineage holds.
 pub(crate) struct HathorChainPoller {
     state: ChainPollerState,
     rpc: HathorRpcClient,
@@ -25,8 +19,6 @@ pub(crate) struct HathorChainPoller {
 }
 
 impl HathorChainPoller {
-    /// Bundle the owned DB client, REST client, and capture context the poller
-    /// driver borrows each tick.
     pub(crate) fn new(client: Client, rpc: HathorRpcClient, context: HathorCaptureContext) -> Self {
         Self {
             state: ChainPollerState::new(by_id(ChainId::Hathor), context.source_id(), client),
@@ -91,8 +83,6 @@ impl ChainPoller for HathorChainPoller {
 }
 
 impl HathorChainPoller {
-    /// Map a capture outcome to the driver's progress, queueing a durable retry
-    /// for the best-effort holds.
     async fn progress_for(
         &mut self,
         height: i32,
@@ -101,13 +91,8 @@ impl HathorChainPoller {
         Ok(match outcome {
             HathorHeightOutcome::LineagePending => HeightProgress::Hold,
             HathorHeightOutcome::AbsentHold | HathorHeightOutcome::TransientHold => {
-                // Best-effort hold: enqueue a durable reconcile row so a replay
-                // hold (dropped by the replay sub-range) is still retried via the
-                // drain, regardless of which sub-range surfaced it. For a new-tip
-                // height the cursor is gated by the new sub-range's break on Hold
-                // and the row re-enqueues each tick until the height resolves, so
-                // the queue's aging-out is what matters mainly for replay holds,
-                // which the replay range otherwise drops without blocking.
+                // Enqueue a durable reconcile row so replay holds dropped by the
+                // replay sub-range are still retried via `drain_pending`.
                 upsert_pending_reconcile(
                     &self.state.client,
                     self.context.source_id(),

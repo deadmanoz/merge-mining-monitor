@@ -1,16 +1,12 @@
-//! The block/proof upsert writers and their coinbase helpers.
+//! Block and proof upsert writers and coinbase helpers.
 
 use std::sync::LazyLock;
 
 use super::*;
 
-/// Effective wrong-epoch evidence for the block row: the live classifier
-/// result wins, falling back to the event rollup's `difficulty_epoch_ok`. The
-/// fallback preserves a previously-proven `false` across a transient
-/// `--recheck-orphans` pass (the rollup COALESCEs it in `apply_event_classification`),
-/// so a momentary `None` classification never erases a proven STRICT-orphan gate.
-/// Caller feeds the same value to the block column and the orphan-class gate so
-/// the two cannot disagree.
+/// Effective wrong-epoch evidence: live classifier result wins, falling back
+/// to the event rollup's `difficulty_epoch_ok` so a transient `None` does not
+/// erase a proven STRICT-orphan gate.
 pub(crate) fn merge_difficulty(
     rollup_difficulty: Option<bool>,
     classification: &ParentClassification,
@@ -18,11 +14,6 @@ pub(crate) fn merge_difficulty(
     classification.difficulty_epoch_ok.or(rollup_difficulty)
 }
 
-/// Project a resolved Core coinbase into the block's `btc_coinbase_*` columns.
-/// Present coinbase -> `Complete` with txid/script/outputs; absent -> the
-/// `Default` (`NotAttempted`, all NULL). This is
-/// the only producer of the `complete` status fed into the monotonic
-/// `btc_coinbase_status` merge in both write modes.
 pub(crate) fn coinbase_columns(coinbase: Option<&BitcoinCoreBlockCoinbase>) -> CoreCoinbaseColumns {
     match coinbase {
         Some(coinbase) => CoreCoinbaseColumns {
@@ -35,12 +26,7 @@ pub(crate) fn coinbase_columns(coinbase: Option<&BitcoinCoreBlockCoinbase>) -> C
     }
 }
 
-/// Resolve a Bitcoin miner `pool.id` from a raw Core coinbase script (+ outputs)
-/// against the embedded pool snapshot and the live `pool` slug->id map. Returns
-/// `None` when the script is absent or matches no known pool. The shared coinbase
-/// resolver behind both Core-attested attribution (the `resolve_core_*` wrapper)
-/// and persisted/event-derived attribution; never erases an existing pool id on
-/// a no-match (callers gate on `Some`).
+/// Resolve a Bitcoin miner `pool.id` from a raw coinbase script and outputs.
 pub(crate) async fn resolve_bitcoin_miner_pool_id_from_coinbase<C: GenericClient>(
     client: &C,
     script: Option<&[u8]>,
@@ -55,10 +41,6 @@ pub(crate) async fn resolve_bitcoin_miner_pool_id_from_coinbase<C: GenericClient
     Ok(resolution.pool_id)
 }
 
-/// Resolve the Bitcoin miner `pool.id` for a `BitcoinCoreBlockCoinbase`,
-/// unpacking its script/outputs onto `resolve_bitcoin_miner_pool_id_from_coinbase`.
-/// Used by the synthesized/Core path and by `resolve_effective_bitcoin_miner_pool_id`
-/// to prefer fresh Core coinbase evidence over event-derived attribution.
 pub(crate) async fn resolve_core_coinbase_pool_id<C: GenericClient>(
     client: &C,
     coinbase: Option<&BitcoinCoreBlockCoinbase>,
@@ -71,9 +53,6 @@ pub(crate) async fn resolve_core_coinbase_pool_id<C: GenericClient>(
     .await
 }
 
-/// Load the live `pool` slug->id map used to translate a resolver pool match
-/// into the stored `bitcoin_miner_pool_id`. Read against the same client/txn as
-/// the write so an in-flight pool insert is visible.
 pub(crate) async fn load_pool_ids_by_slug<C: GenericClient>(
     client: &C,
 ) -> Result<HashMap<String, i64>> {
@@ -87,10 +66,8 @@ pub(crate) async fn load_pool_ids_by_slug<C: GenericClient>(
         .collect())
 }
 
-/// Upsert a Bitcoin Core-attested canonical block row. Internal building block
-/// of [`mutation::write_core_canonical`], which adds the parent advisory lock,
-/// the source-health bracket, and the post-commit dependent cascade; mutation
-/// callers must enter through that command rather than call this directly.
+/// Upsert a Bitcoin Core-attested canonical block row (internal building block
+/// of [`mutation::write_core_canonical`]).
 pub(crate) async fn upsert_core_canonical_header_with_coinbase<C: GenericClient>(
     client: &C,
     header: &Header,
@@ -108,15 +85,7 @@ pub(crate) async fn upsert_core_canonical_header_with_coinbase<C: GenericClient>
     upsert_synthesized_canonical(client, &classified).await
 }
 
-/// Upsert a synthesized/Core-canonical block via `BlockWriteMode::SynthesizedCore`:
-/// resolve the Core coinbase pool, project the coinbase columns, and write a
-/// fully Core-attested `Canonical` row (live/core/pow all true,
-/// `difficulty_epoch_ok = true`, no orphan class). The `SynthesizedCore` merge
-/// preserves any richer event-derived state on conflict and only promotes
-/// kind/height on a Core-attested canonical promotion. This is the shared write
-/// body behind both the reconciler's synthesized sibling
-/// (`upsert_synthesized_sibling`) and the backbone's Core header upsert; the
-/// source-health bracket and cascade live in the callers, not here.
+/// Upsert a synthesized or Core-canonical block via `BlockWriteMode::SynthesizedCore`.
 pub(crate) async fn upsert_synthesized_canonical<C: GenericClient>(
     client: &C,
     header: &ClassifiedHeader,
@@ -148,17 +117,12 @@ pub(crate) async fn upsert_synthesized_canonical<C: GenericClient>(
         difficulty_epoch_ok: Some(true),
         first_attested_at: None,
         last_attested_at: None,
-        // Synthesized canonical blocks are never unknown, so they carry no orphan
-        // class; the SynthesizedCore write mode also clears it on a conflicting
-        // unknown.
         btc_orphan_class: None,
     };
     upsert_block_row(client, &block, BlockWriteMode::SynthesizedCore).await
 }
 
-/// The byte-identical coinbase merge the two write modes share: Core
-/// coinbase evidence only ever upgrades (COALESCE), and the status state
-/// machine is monotonic (complete wins; failed only overwrites non-complete).
+/// Monotonic coinbase merge: `complete` wins; `failed` only overwrites non-`complete`.
 const COINBASE_MERGE_SET: &str = "btc_coinbase_txid = COALESCE(EXCLUDED.btc_coinbase_txid, block.btc_coinbase_txid), \
                 btc_coinbase_script = COALESCE(EXCLUDED.btc_coinbase_script, block.btc_coinbase_script), \
                 btc_coinbase_outputs = COALESCE(EXCLUDED.btc_coinbase_outputs, block.btc_coinbase_outputs), \
@@ -168,7 +132,6 @@ const COINBASE_MERGE_SET: &str = "btc_coinbase_txid = COALESCE(EXCLUDED.btc_coin
                     ELSE block.btc_coinbase_status \
                 END";
 
-/// The matching change-detection clauses for [`COINBASE_MERGE_SET`].
 const COINBASE_MERGE_WHERE: &str = "block.btc_coinbase_txid IS DISTINCT FROM COALESCE(EXCLUDED.btc_coinbase_txid, block.btc_coinbase_txid) \
                 OR block.btc_coinbase_script IS DISTINCT FROM COALESCE(EXCLUDED.btc_coinbase_script, block.btc_coinbase_script) \
                 OR block.btc_coinbase_outputs IS DISTINCT FROM COALESCE(EXCLUDED.btc_coinbase_outputs, block.btc_coinbase_outputs) \
@@ -178,9 +141,8 @@ const COINBASE_MERGE_WHERE: &str = "block.btc_coinbase_txid IS DISTINCT FROM COA
                     ELSE block.btc_coinbase_status \
                 END";
 
-/// Synthesized/Core writes only replace the effective Bitcoin miner when Core
-/// coinbase evidence resolved to a concrete pool. A present-but-unmatched Core
-/// coinbase script enriches the row without erasing event-derived attribution.
+/// Replace the effective Bitcoin miner only when Core coinbase evidence
+/// resolved to a concrete pool.
 const SYNTHESIZED_BITCOIN_MINER_POOL_MERGE: &str = "CASE \
                     WHEN EXCLUDED.btc_coinbase_script IS NOT NULL \
                          AND EXCLUDED.bitcoin_miner_pool_id IS NOT NULL \
@@ -188,8 +150,6 @@ const SYNTHESIZED_BITCOIN_MINER_POOL_MERGE: &str = "CASE \
                     ELSE block.bitcoin_miner_pool_id \
                 END";
 
-/// The 23 shared insert columns (the event-rollup mode appends
-/// `btc_orphan_class` as $24).
 const BLOCK_INSERT_COLUMNS: &str = "btc_header_hash, btc_prev_header_hash, btc_height, btc_height_source, kind, \
                 btc_header_bytes, btc_header_time, bitcoin_miner_pool_id, btc_coinbase_txid, \
                 btc_coinbase_script, btc_coinbase_outputs, btc_coinbase_status, \
@@ -198,29 +158,15 @@ const BLOCK_INSERT_COLUMNS: &str = "btc_header_hash, btc_prev_header_hash, btc_h
                 core_attested, pow_validated, difficulty_epoch_ok, first_attested_at, \
                 last_attested_at, error_block_reason";
 
-/// Which conflict-update contract a block write follows. BOTH modes carry
-/// and write the Core coinbase columns (the synthesized/Core-canonical path
-/// is precisely the one persisting coinbase evidence); what differs is the
-/// merge policy for everything else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BlockWriteMode {
-    /// The reconciler rebuild from the event rollup: every
-    /// derived column is overwritten from the rollup, including the orphan
-    /// class.
+    /// Overwrite derived columns from the event rollup while merging Core coinbase monotonically.
     EventRollup,
-    /// A synthesized predecessor/competitor or Core-canonical observation:
-    /// preserves event-derived state (heights/kind/counters) unless a
-    /// Core-attested canonical promotion applies, OR-merges the
-    /// live/core/pow flags, and clears the orphan class for re-derivation.
+    /// Preserve event-derived state unless a Core-attested canonical promotion
+    /// applies, OR-merge live/core/pow flags, and clear `btc_orphan_class` for re-derivation.
     SynthesizedCore,
 }
 
-/// `BlockWriteMode::EventRollup` upsert: rebuild from the event
-/// rollup. Every derived column (including `btc_orphan_class`, the $24 column)
-/// is overwritten from EXCLUDED; only the Core coinbase columns deviate, using
-/// the monotonic `COINBASE_MERGE_SET`. The WHERE guard is the column-by-column
-/// DISTINCT-FROM set so an unchanged rollup is a no-op (no `updated_at` churn,
-/// no spurious cascade enqueue).
 static EVENT_ROLLUP_UPSERT_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
         "INSERT INTO block ( \
@@ -276,17 +222,6 @@ static EVENT_ROLLUP_UPSERT_SQL: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
-/// `BlockWriteMode::SynthesizedCore` upsert: preserve event-derived state on
-/// conflict. height/height_source/kind/canonical_competitor_hash are kept unless
-/// a Core-attested canonical promotion fires (EXCLUDED.core_attested AND
-/// EXCLUDED.kind='canonical' AND block.kind<>'canonical'), which adopts the Core
-/// height and clears the competitor; an `unknown` block also adopts the incoming
-/// kind. live_observed/core_attested are ORed together across both sides (kept in
-/// lockstep per `ensure_live_core_lockstep`), pow_validated ORs, difficulty and
-/// the Core coinbase only upgrade (COALESCE / `COINBASE_MERGE_SET`). `btc_orphan_class`
-/// is unconditionally cleared to NULL so the next event-rollup reconcile
-/// re-derives it. The WHERE guard mirrors each clause so an unchanged write is a
-/// no-op.
 static SYNTHESIZED_CORE_UPSERT_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
         "INSERT INTO block ( \
@@ -342,9 +277,6 @@ static SYNTHESIZED_CORE_UPSERT_SQL: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
-/// The one block writer. Replaces the upsert_block / upsert_synthesized_block
-/// twins; the column-by-column contract of each mode is documented on
-/// [`BlockWriteMode`] and pinned by the DB integration suites.
 pub(crate) async fn upsert_block_row<C: GenericClient>(
     client: &C,
     block: &BlockInput,
@@ -393,12 +325,7 @@ pub(crate) async fn upsert_block_row<C: GenericClient>(
     Ok(())
 }
 
-/// Invariant guard: a local read-model block must observe `live_observed ==
-/// core_attested` (this deployment treats live Bitcoin observation and Core
-/// attestation as the same signal; the `SynthesizedCore` merge keeps them in
-/// lockstep by ORing all four flags into both columns). Bail before any write
-/// if a caller hands in drifted flags, so a logic bug surfaces here rather than
-/// as silently inconsistent derived state.
+/// Invariant guard: local read-model blocks must satisfy `live_observed == core_attested`.
 pub(crate) fn ensure_live_core_lockstep(block: &BlockInput) -> Result<()> {
     if block.live_observed != block.core_attested {
         bail!(
@@ -411,16 +338,9 @@ pub(crate) fn ensure_live_core_lockstep(block: &BlockInput) -> Result<()> {
     Ok(())
 }
 
-/// Rebuild the per-source `attestation_proof` rows for a parent from the
-/// `merge_mining_event` rollup (idempotency key `(btc_header_hash, source_id,
-/// 'auxpow')`, non-`near` events only). Per source: if any events are active
-/// (`revoked_at IS NULL`) the proof reflects the active set (active confirmed_at,
-/// OR of pow_validates_btc_target, not revoked); if all are revoked the proof is
-/// retained from the historical set and marked revoked with the latest
-/// revocation reason; a source that never had a proof and has no revocation is
-/// skipped. `contributing_event_ids` records the exact event ids that built the
-/// proof. The DISTINCT-FROM guard suppresses no-op updates so unchanged proofs
-/// do not churn `updated_at`/the cascade.
+/// Rebuild per-source `attestation_proof` rows for `hash` from non-`near` events.
+/// Active sources reflect the active set; all-revoked sources retain historical
+/// evidence marked with the latest revocation.
 pub(crate) async fn rebuild_auxpow_proofs<C: GenericClient>(client: &C, hash: &[u8]) -> Result<()> {
     let rows = client
         .query(
@@ -513,8 +433,6 @@ pub(crate) async fn rebuild_auxpow_proofs<C: GenericClient>(client: &C, hash: &[
     delete_proofs_without_evidence(client, hash).await
 }
 
-/// Delete a parent's proofs from sources that no longer hold any non-near
-/// event on it, so a proof never names deleted evidence.
 async fn delete_proofs_without_evidence<C: GenericClient>(client: &C, hash: &[u8]) -> Result<()> {
     client
         .execute(

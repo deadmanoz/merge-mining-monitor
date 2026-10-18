@@ -1,7 +1,4 @@
-// Native <dialog> open/close primitives, shared by boot.js (dialog wiring) and
-// controls.js (the info-dialog openers). A leaf module with no imports of its
-// own: extracting it here breaks the only controls -> boot import cycle, so the
-// module graph is acyclic apart from genuine peer cycles.
+// Native <dialog> open/close and ARIA modal tab primitives.
 
 export function showDialog(dialog) {
   if (typeof dialog.showModal === "function") {
@@ -19,11 +16,6 @@ export function closeDialog(dialog) {
   }
 }
 
-// Shared modal tab primitive: a `.modal-tablist` of `.modal-tab` buttons, each
-// pointing at its panel via `aria-controls`, plus matching tab panels. Used by
-// the source modal (panels rendered into the body) and the About modal (static
-// panels). Resolving the panel from `aria-controls` keeps this agnostic to the
-// per-dialog id scheme.
 function modalTabPanel(root, tab) {
   const id = tab.getAttribute("aria-controls");
   return id ? root.querySelector(`#${CSS.escape(id)}`) : null;
@@ -40,8 +32,6 @@ export function activateModalTab(root, tabId) {
   });
 }
 
-// Delegated once on the dialog element so it survives body innerHTML replacement.
-// Click selects a tab; Left/Right/Home/End move focus per the ARIA tabs pattern.
 export function wireModalTabs(dialog) {
   if (!dialog) return;
   dialog.addEventListener("click", (event) => {

@@ -1,21 +1,9 @@
-//! RSK-side capture path. Mirrors `src/chains/auxpow_family.rs` for the RSK
-//! producer.
+//! RSK canonical + uncle capture path.
 //!
-//! The structure/capture slice deliberately scopes itself to raw evidence
-//! ingestion:
-//!
-//! - Walk canonical RSK blocks and their uncles via the RSK RPC client.
-//! - Convert each block into a [`NormalizedEventEvidence`] +
-//!   [`RskEvidencePayload`] pair.
-//! - Write both rows and the initial parent read-model reconcile inside a
-//!   single Postgres transaction, so `merge_mining_event`,
-//!   `rsk_merge_mining_evidence`, and the parent read-model row never disagree
-//!   on whether the captured row exists.
-//!
-//! `btc_parent_kind` for RSK rows is computed exactly as for Namecoin:
-//! `near` when the embedded 80-byte BTC parent header fails its own
-//! `nBits`, `unknown` when it passes but no further chain context is
-//! available.
+//! Converts each RSK block into a [`NormalizedEventEvidence`] +
+//! [`RskEvidencePayload`] pair and writes `merge_mining_event`,
+//! `rsk_merge_mining_evidence`, and the parent read-model reconciliation inside
+//! a single Postgres transaction.
 
 use std::collections::HashMap;
 
@@ -39,34 +27,21 @@ use mmm_capture::source_registry::RSK_SOURCE_CODE;
 use mmm_read_model::CaptureOutcome;
 use mmm_store::{upsert_rsk_only_pools, upsert_rsk_pool_identities, write_rsk_capture_in_txn};
 
-/// Startup-resolved state shared by every RSK capture: the embedded
-/// `rsk_miner_address` registry, the `miner_hex -> pool_identity.id` lookup it
-/// seeds, and the base [`ProducerContext`] (source id, pool-id-by-slug map,
-/// parent classifier). Built once per poll/backfill run, then read-only.
 #[derive(Debug)]
 pub struct RskCaptureContext {
     registry: PoolIdentityRegistry,
-    /// Lower-case, unprefixed miner hex -> `pool_identity.id`, keyed identically
-    /// to the registry's normalized form so a resolved miner maps straight to
-    /// its sidecar identity row.
+    /// Lower-case, unprefixed miner hex -> `pool_identity.id`.
     identity_ids_by_address: HashMap<String, i64>,
     base: ProducerContext,
 }
 
 impl RskCaptureContext {
-    /// Bootstrap the context: seed the BTC pool snapshot first (so RSK miners
-    /// mapping to existing slugs reuse those pool rows), then upsert RSK-only
-    /// slugs and the per-miner `pool_identity` rows. `parent_classifier` is
-    /// threaded through so live capture can attest BTC parent absence.
+    /// Bootstrap RSK capture context: seed the BTC pool snapshot first, then
+    /// upsert RSK-only slugs and per-miner `pool_identity` rows.
     pub async fn new_with_classifier(
         client: &Client,
         parent_classifier: ConfiguredParentClassifier,
     ) -> Result<Self> {
-        // Load the BTC pool snapshot first so RSK miners that map to
-        // existing pool slugs (f2pool, antpool, viabtc, ...) resolve straight
-        // to the snapshot's pool rows. RSK-only slugs (btc-com, poolin,
-        // secpool today) get created with empty BTC fields and are reachable
-        // exclusively via pool_identity.
         let resolver = PoolResolver::from_default_snapshot()?;
         let mut base =
             ProducerContext::bootstrap_with(client, RSK_SOURCE_CODE, &resolver, parent_classifier)
@@ -84,21 +59,14 @@ impl RskCaptureContext {
         })
     }
 
-    /// `source.id` for the RSK source row, stamped on every `merge_mining_event`
-    /// this context writes.
     pub fn source_id(&self) -> i64 {
         self.base.source_id()
     }
 
-    /// The BTC parent classifier for this run, passed to `capture_in_txn` so an
-    /// enabled classifier can attest Core-absence and set `btc_orphan_class`.
     pub fn parent_classifier(&self) -> &ConfiguredParentClassifier {
         self.base.parent_classifier()
     }
 
-    /// Test constructor: build a context from its constituent parts so unit and
-    /// integration tests can exercise [`prepare_rsk_capture`] (and downstream
-    /// transactional writes) without standing up the full startup flow.
     #[cfg(any(test, feature = "db-integration"))]
     #[doc(hidden)]
     pub fn from_parts(
@@ -116,8 +84,6 @@ impl RskCaptureContext {
         )
     }
 
-    /// As [`from_parts`](Self::from_parts) but with an explicit classifier, so a
-    /// test can exercise the enabled-classifier path without the startup flow.
     #[cfg(any(test, feature = "db-integration"))]
     #[doc(hidden)]
     pub fn from_parts_with_classifier(
@@ -135,40 +101,23 @@ impl RskCaptureContext {
     }
 }
 
-/// Per-block capture outcome. Aggregated by callers into a height-level
-/// summary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockOutcome {
-    /// Block decoded cleanly and its `(event, evidence)` pair committed.
     Written,
     /// Block carries no complete 80-byte BTC parent header (absent, empty, or
-    /// a shorter pre-Orchid/RSKIP-92 fallback signature), so nothing is written.
-    /// Retryable-clean, not an error.
+    /// shorter pre-Orchid/RSKIP-92 fallback signature).
     NoParentHeaderSkipped,
-    /// A merge-mining field was undecodable (bad hex, wrong byte length, height
-    /// overflow). Skipped so one bad block never aborts the backfill.
     MalformedSkipped,
-    /// The BTC parent header is another chain's (the lineage gate in
-    /// `mmm_read_model::capture_in_txn`); nothing written.
     NonBitcoinParent,
-    /// The parent's lineage waits on a Bitcoin epoch the Core header cache
-    /// has not reached; nothing written, and the height is retried.
     LineagePending,
 }
 
-/// Inputs ready for transactional RSK capture. Produced by
-/// [`prepare_rsk_capture`] when the block parses cleanly and carries a
-/// complete 80-byte BTC parent header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RskCaptureInputs {
     pub payload: MergeMiningEventPayload,
     pub evidence: RskEvidencePayload,
 }
 
-/// Decision produced by [`prepare_rsk_capture`]. Either the block is ready
-/// to write (with its `(payload, evidence)` pair) or a structural property
-/// of the RPC response prevents writing (no complete 80-byte BTC parent
-/// header, or malformed fields).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureDecision {
     Ready(Box<RskCaptureInputs>),
@@ -176,27 +125,19 @@ pub enum CaptureDecision {
     MalformedSkipped,
 }
 
-/// Per-height summary the bounded backfill rolls up into its grand totals.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct HeightOutcome {
-    /// Whether a canonical block existed at this height. `false` (the default)
-    /// drives `Hold` in the live poller so the height is retried, not skipped.
+    /// `false` drives `Hold` in the live poller so the height is retried.
     pub canonical_present: bool,
-    /// The canonical block's outcome, `None` only when its RSK number could not
-    /// be decoded to i32 (uncle traversal is then abandoned for the height).
     pub canonical: Option<BlockOutcome>,
     pub uncles_seen: usize,
     pub uncles_written: usize,
     pub uncles_no_parent_header: usize,
     pub uncles_malformed: usize,
     pub uncles_non_bitcoin: usize,
-    /// Whether the canonical block or an uncle has a parent whose lineage is
-    /// pending; the live poller then holds the height.
     pub lineage_pending: bool,
 }
 
-/// Live-poll path: fetch one height's bundle over RPC and write it on the same
-/// connection, stamping each written block with [`now_epoch_seconds`].
 pub async fn process_rsk_height(
     client: &mut Client,
     rpc: &RskRpcClient,
@@ -207,17 +148,9 @@ pub async fn process_rsk_height(
     write_rsk_bundle(client, context, bundle, &now_epoch_seconds).await
 }
 
-/// Write one prefetched [`RskHeightBundle`] on the single DB connection, in
-/// strict canonical-then-uncles order. `observed_at` is an observed-time
-/// PROVIDER invoked once per written block (canonical and each uncle), so
-/// production passes [`now_epoch_seconds`] (byte-identical to the historical
-/// per-block timestamp behavior) and tests pass a constant provider for
-/// determinism.
-///
-/// A listed uncle the source returned `null` for (`Ok(None)`) is counted as
-/// `uncles_seen` + `uncles_malformed`, matching the serial path. A captured
-/// uncle fetch `Err(e)` returns `e` AFTER the canonical and prior uncles are
-/// committed, mirroring `process_rsk_height`'s historical `?` on a uncle fetch.
+/// Write one prefetched [`RskHeightBundle`] in canonical-then-uncles order.
+/// A listed uncle that returned `Ok(None)` is counted as `uncles_malformed`;
+/// an uncle fetch error is surfaced after the canonical and prior uncles commit.
 pub(crate) async fn write_rsk_bundle<F>(
     client: &mut Client,
     context: &RskCaptureContext,
@@ -667,18 +600,12 @@ pub fn prepare_rsk_capture(
     })))
 }
 
-/// Decode `0x`-prefixed hex and accept it only at exactly `expected_len` bytes.
-/// `None` (bad hex or wrong length) maps to a malformed skip at the call site,
-/// guarding the fixed-width hash (32) and miner (20) columns.
 fn validated_byte_length(raw_hex: &str, expected_len: usize) -> Option<Vec<u8>> {
     decode_hex_bytes(raw_hex)
         .ok()
         .filter(|bytes| bytes.len() == expected_len)
 }
 
-/// Decode an optional `0x`-prefixed hex string into bytes, propagating decode
-/// errors so callers can convert them to [`CaptureDecision::MalformedSkipped`]
-/// rather than aborting backfill.
 fn decode_optional_hex(raw: Option<&str>) -> Result<Option<Vec<u8>>> {
     raw.map(decode_hex_bytes).transpose()
 }
@@ -686,9 +613,6 @@ fn decode_optional_hex(raw: Option<&str>) -> Result<Option<Vec<u8>>> {
 use crate::chains::spec::{ChainId, by_id};
 use crate::poller::{ChainPoller, ChainPollerState, HeightProgress};
 
-/// RSK live capture chain. An absent canonical block, or a block whose parent
-/// lineage is pending, yields `Hold` so the height is retried rather than
-/// skipped.
 pub(crate) struct RskChainPoller {
     state: ChainPollerState,
     rpc: RskRpcClient,
@@ -696,8 +620,6 @@ pub(crate) struct RskChainPoller {
 }
 
 impl RskChainPoller {
-    /// Bind the single DB connection, the RPC client, and the startup-resolved
-    /// capture context into the poller the registry drives.
     pub(crate) fn new(client: Client, rpc: RskRpcClient, context: RskCaptureContext) -> Self {
         Self {
             state: ChainPollerState::new(by_id(ChainId::Rsk), context.source_id(), client),
@@ -955,13 +877,6 @@ mod tests {
         // i32::MAX + 1.
         assert_mutated_canonical_skips(|block| block.number = "0x80000000".to_owned());
     }
-
-    // ── Fetch-stage (fetch_rsk_height_bundle) unit tests ─────────────────────
-    //
-    // These exercise the prefetch stage format + ordering with a deterministic
-    // in-memory `RskBlockSource`; no DB. The persisted-row behavior of
-    // `write_rsk_bundle` (including the canonical+prior-uncles-before-error
-    // ordering) is covered DB-backed in `tests/db_integration.rs`.
 
     use std::collections::HashMap;
 }

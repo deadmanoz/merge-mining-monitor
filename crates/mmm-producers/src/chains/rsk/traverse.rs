@@ -1,6 +1,4 @@
-//! RSK canonical + uncle traversal: fetching height bundles from an RSK
-//! block source, order-preserving and error-capturing, ready for the capture
-//! writer in `super::capture`.
+//! RSK canonical + uncle height-bundle prefetching.
 
 use anyhow::{Context, Result};
 use futures::future::try_join_all;
@@ -9,25 +7,8 @@ use tracing::warn;
 use crate::chains::rsk::rpc::{RskBlock, RskRpcClient, decode_quantity_i64};
 
 #[allow(async_fn_in_trait)]
-/// Async block-source trait over the RSK RPC client.
-///
-/// The bounded backfill prefetch pipeline ([`fetch_rsk_height_bundle`]) drives
-/// this trait so a deterministic in-memory fake can exercise the fetch stage
-/// without a live node. It stays crate-private; integration tests exercise the
-/// public capture APIs rather than the traversal source abstraction.
-///
-/// `Clone` is a supertrait so the pipeline can clone the source per height
-/// (`source.clone()`); `RskRpcClient` is a cheap `Arc`-backed clone.
-//
-// `async fn` in this trait yields non-`Send` futures, which is fine: the
-// `buffered(K)` stream is polled within the single backfill task (never
-// `tokio::spawn`ed across threads), so no `Send` bound is required. This mirrors
-// the `ChainPoller` trait in `src/poller.rs`.
 pub(crate) trait RskBlockSource: Clone {
-    /// Canonical block at `height`, or `Ok(None)` when absent.
     async fn block_by_number(&self, height: i64) -> Result<Option<RskBlock>>;
-    /// Uncle at canonical `height` and listed `idx`, or `Ok(None)` when the node
-    /// no longer serves that listed uncle.
     async fn uncle_by_index(&self, height: i64, idx: i32) -> Result<Option<RskBlock>>;
 }
 
@@ -41,47 +22,22 @@ impl RskBlockSource for RskRpcClient {
     }
 }
 
-/// One fetched uncle within a height bundle. The `result` preserves the listed
-/// uncle's fetch outcome verbatim so the sequential write stage can mirror the
-/// serial path: `Ok(Some)` is a fetched uncle block, `Ok(None)` is a listed
-/// uncle the source returned `null` for (counted as malformed by the writer),
-/// and `Err(..)` is a fetch error captured here rather than raised during the
-/// fetch stage, so the writer can commit the canonical and prior uncles before
-/// surfacing it.
 #[derive(Debug)]
 pub(crate) struct RskFetchedUncle {
-    /// Listed uncle index on the canonical block, also the
-    /// `eth_getUncleByBlockNumberAndIndex` argument.
     pub index: i32,
-    /// Fetch outcome captured verbatim (see the type doc): `Ok(Some)` fetched,
-    /// `Ok(None)` listed-but-null, `Err` deferred to the write stage.
+    /// `Ok(Some)` fetched, `Ok(None)` listed-but-null, `Err` deferred to the write stage.
     pub result: Result<Option<RskBlock>>,
 }
 
-/// Network-bound prefetch result for one RSK height: the canonical block (if
-/// present) plus one [`RskFetchedUncle`] per uncle index listed on the
-/// canonical block, in listed order. No DB access.
 #[derive(Debug)]
 pub(crate) struct RskHeightBundle {
-    /// The canonical block, or `None` when the height has no canonical block.
     pub canonical: Option<RskBlock>,
-    /// One entry per uncle listed on the canonical block, in listed order; empty
-    /// when the canonical was absent or its number failed to decode to i32.
     pub uncles: Vec<RskFetchedUncle>,
 }
 
-/// Fetch the canonical block at `height` and, when its RSK number decodes
-/// cleanly, fetch each listed uncle. This is the parallelizable, DB-free stage
-/// of the bounded backfill pipeline.
-///
-/// Only RPC transport/protocol errors on the canonical fetch propagate via `?`.
-/// A null canonical is `Ok(RskHeightBundle { canonical: None, .. })`. A
-/// malformed/overflowing canonical `number` is non-fatal (matching
-/// [`process_rsk_height`]): keep `canonical: Some(block)`, skip uncle fetching
-/// (empty `uncles`), and do NOT error. Each listed uncle's fetch outcome is
-/// captured into [`RskFetchedUncle::result`] (including fetch errors) so the
-/// write stage can preserve serial ordering. Uncles for one height are fetched
-/// concurrently.
+/// Fetch the canonical block at `height` and concurrently fetch its listed uncles.
+/// Uncle fetch errors are captured in [`RskFetchedUncle::result`] so the write
+/// stage can commit the canonical and prior uncles before surfacing an error.
 pub(crate) async fn fetch_rsk_height_bundle<S: RskBlockSource>(
     source: S,
     height: i64,
@@ -100,10 +56,6 @@ pub(crate) async fn fetch_rsk_height_bundle<S: RskBlockSource>(
         }
     };
 
-    // The only hard requirement to walk uncles is decoding the canonical's RSK
-    // height for the `eth_getUncleByBlockNumberAndIndex` call. A malformed or
-    // i32-overflowing block.number must not abort the bounded backfill: keep the
-    // canonical block and skip uncle traversal (matching `process_rsk_height`).
     let canonical_height_i64 = match decode_quantity_i64(&canonical.number) {
         Ok(n) => n,
         Err(err) => {
@@ -131,9 +83,6 @@ pub(crate) async fn fetch_rsk_height_bundle<S: RskBlockSource>(
         });
     }
 
-    // Fetch all listed uncles concurrently. Each fetch outcome is captured into
-    // the bundle (errors included) rather than raised, so the write stage can
-    // commit the canonical + prior uncles before surfacing an error.
     let uncle_fetches = canonical.uncles.iter().enumerate().map(|(index, _hash)| {
         let source = source.clone();
         let index = index as i32;

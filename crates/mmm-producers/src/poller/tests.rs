@@ -1,11 +1,7 @@
-//! Poller driver tests (moved verbatim; bodies byte-identical).
-
 use super::*;
 use std::cell::Cell;
 use std::collections::HashMap;
 
-/// Build the in-memory env map a `from_lookup` test passes as its `lookup`
-/// closure, so tests never touch the real (Rust 2024 `unsafe`) process env.
 fn lookup_from(pairs: &[(&str, &str)]) -> HashMap<String, String> {
     pairs
         .iter()
@@ -13,11 +9,6 @@ fn lookup_from(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         .collect()
 }
 
-/// Minimal `ChainPoller` for tip-fetch retry tests. Only `chain_tip` and
-/// `name` are exercised; the cursor-seeding and capture methods are never
-/// reached by `fetch_tip_with_retry_inner`, so they `unimplemented!()`.
-/// `chain_tip` fails its first `fail_first` calls (returning an error), then
-/// returns `tip` on every subsequent call.
 struct FlakyTipChain {
     fail_first: u32,
     calls: Cell<u32>,
@@ -62,9 +53,6 @@ impl ChainPoller for FlakyTipChain {
 
 #[tokio::test]
 async fn fetch_tip_with_retry_recovers_after_transient_failures() -> Result<()> {
-    // Fails the first 3 attempts, succeeds on the 4th (within the 5-attempt
-    // budget). The no-op sleeper keeps the test instant despite the helper's
-    // real linear backoff in production.
     let chain = FlakyTipChain::new(3, 140_050);
     let tip = fetch_tip_with_retry_inner(&chain, |_attempt| async {}).await?;
     assert_eq!(tip, 140_050);
@@ -74,8 +62,6 @@ async fn fetch_tip_with_retry_recovers_after_transient_failures() -> Result<()> 
 
 #[tokio::test]
 async fn fetch_tip_with_retry_exhausts_attempts_and_errors() {
-    // Always fails: all 5 attempts are spent, then a neutral (no "startup")
-    // error surfaces so the message reads correctly from poll_tick too.
     let chain = FlakyTipChain::new(u32::MAX, 0);
     let err = fetch_tip_with_retry_inner(&chain, |_attempt| async {})
         .await
@@ -92,9 +78,6 @@ async fn fetch_tip_with_retry_exhausts_attempts_and_errors() {
     );
 }
 
-/// Arbitrary non-zero defaults the `from_lookup` tests fall back to when a key
-/// is unset, chosen distinct from any override value so assertions can tell a
-/// default apart from a parsed override.
 const TEST_DEFAULTS: PollerDefaults = PollerDefaults {
     poll_interval_seconds: 30,
     batch_size: 100,
@@ -105,7 +88,6 @@ const TEST_DEFAULTS: PollerDefaults = PollerDefaults {
 fn from_lookup_unset_start_height_means_no_override() -> Result<()> {
     let map: HashMap<String, String> = HashMap::new();
     let config = PollerConfig::from_lookup("RSK", TEST_DEFAULTS, |key| map.get(key).cloned())?;
-    // Unset START_HEIGHT now means tip-anchored / resume, not a floor default.
     assert_eq!(config.start_height_override, None);
     assert_eq!(config.poll_interval, Duration::from_secs(30));
     assert_eq!(config.batch_size, 100);
@@ -131,7 +113,6 @@ fn from_lookup_reads_prefixed_overrides() -> Result<()> {
 
 #[test]
 fn from_lookup_is_prefix_scoped() -> Result<()> {
-    // A NAMECOIN_* override must not bleed into an RSK_* lookup.
     let map = lookup_from(&[("NAMECOIN_BATCH_SIZE", "7")]);
     let config = PollerConfig::from_lookup("RSK", TEST_DEFAULTS, |key| map.get(key).cloned())?;
     assert_eq!(config.batch_size, 100);
@@ -161,7 +142,6 @@ fn effective_start_uses_floor_without_override() {
 
 #[test]
 fn effective_start_lifts_override_to_floor() {
-    // Override below the activation floor is lifted to the floor.
     assert_eq!(effective_start(Some(0), 139_999), 139_999);
 }
 
@@ -172,27 +152,21 @@ fn effective_start_honors_override_above_floor() {
 
 #[test]
 fn seed_clamp_lifts_empty_source_below_floor() {
-    // RSK start configured at 0 (below floor): a cold seed below the activation
-    // floor is clamped to effective_start - 1 = 139_998.
     assert_eq!(effective_seed_cursor(-1, 139_999), 139_998);
 }
 
 #[test]
 fn seed_clamp_lifts_persisted_max_below_raised_start() {
-    // Existing rows up to height 500; START_HEIGHT raised to 1_000.
-    // The clamp lifts the seed to 999 instead of trusting the lower max.
     assert_eq!(effective_seed_cursor(500, 1_000), 999);
 }
 
 #[test]
 fn seed_clamp_is_noop_when_persisted_max_above_start() {
-    // Common case: persisted max (5_000) above the configured start (1_000).
     assert_eq!(effective_seed_cursor(5_000, 1_000), 5_000);
 }
 
 #[test]
 fn window_cold_start_at_floor() {
-    // Empty RSK source: cursor = effective_start - 1 = 139_998.
     let window = compute_tick_window(139_999, 139_998, 140_050, 64, 100).unwrap();
     assert_eq!(window.rescan_start, 139_999);
     assert_eq!(window.end, 140_050);
@@ -200,21 +174,18 @@ fn window_cold_start_at_floor() {
 
 #[test]
 fn window_empty_when_tip_not_advanced() {
-    // cursor at tip, no reorg depth: nothing to do.
     assert_eq!(compute_tick_window(0, 500, 500, 0, 100), None);
 }
 
 #[test]
 fn window_clamped_by_batch_size() {
     let window = compute_tick_window(0, 1_000, 100_000, 16, 100).unwrap();
-    assert_eq!(window.rescan_start, 985); // 1000 + 1 - 16
-    assert_eq!(window.end, 1_100); // 1000 + 100
+    assert_eq!(window.rescan_start, 985);
+    assert_eq!(window.end, 1_100);
 }
 
 #[test]
 fn window_cold_start_above_floor_begins_at_start() {
-    // RSK_START_HEIGHT = 729_000, reorg_depth = 64, cold seed cursor 728_999.
-    // The first window begins exactly at 729_000, not 728_936.
     let window = compute_tick_window(729_000, 728_999, 740_000, 64, 100).unwrap();
     assert_eq!(window.rescan_start, 729_000);
     assert_eq!(window.end, 729_099);
@@ -222,11 +193,9 @@ fn window_cold_start_above_floor_begins_at_start() {
 
 #[test]
 fn window_cursor_ahead_of_tip_caps_at_tip() {
-    // The node rolled back: cursor (1_000) is ahead of tip (980), but the
-    // tip is still inside the reorg window. The window must cap at the tip.
     let window = compute_tick_window(0, 1_000, 980, 64, 100).unwrap();
-    assert_eq!(window.rescan_start, 937); // 1000 + 1 - 64
-    assert_eq!(window.end, 980); // min(tip=980, 1000+100)
+    assert_eq!(window.rescan_start, 937);
+    assert_eq!(window.end, 980);
 }
 
 #[tokio::test]
@@ -271,7 +240,6 @@ async fn tick_policy_preserves_partial_progress_on_new_height_error() -> Result<
     )
     .await;
     assert!(result.is_err());
-    // Heights 5 and 6 completed; the cursor reflects them, 8/9 never ran.
     assert_eq!(seen, vec![5, 6, 7]);
     assert_eq!(cursor, 6);
     Ok(())
@@ -279,7 +247,6 @@ async fn tick_policy_preserves_partial_progress_on_new_height_error() -> Result<
 
 #[tokio::test]
 async fn tick_policy_replay_failure_does_not_starve_tip() -> Result<()> {
-    // cursor is ahead; the trailing window replays 3..=5 and adds new 6..=7.
     let mut cursor = 5;
     let mut seen = Vec::new();
     let processed = run_tick_policy(
@@ -291,17 +258,14 @@ async fn tick_policy_replay_failure_does_not_starve_tip() -> Result<()> {
         async |height, _kind| {
             seen.push(height);
             if height == 4 {
-                // A replayed (already-processed) height fails.
                 anyhow::bail!("replay boom at {height}");
             }
             Ok(HeightProgress::Advance)
         },
     )
     .await?;
-    // The failed replay height 4 did not block the new heights 6 and 7.
     assert_eq!(seen, vec![3, 4, 5, 6, 7]);
     assert_eq!(cursor, 7);
-    // 3, 5 (replay successes) + 6, 7 (new) = 4 processed; 4 failed.
     assert_eq!(processed, 4);
     Ok(())
 }
@@ -326,18 +290,14 @@ async fn tick_policy_hold_stops_without_advancing() -> Result<()> {
         },
     )
     .await?;
-    // 5 advanced; 6 held and stopped the range; 7/8 never ran.
     assert_eq!(seen, vec![5, 6]);
     assert_eq!(cursor, 5);
     assert_eq!(processed, 1);
     Ok(())
 }
 
-/// Replay is best-effort by contract: a `Hold` in the ALREADY-processed
-/// sub-range does not stop the tick and does not lower the monotonic cursor.
-/// The shared AuxPoW runner relies on this, which is why a held Qbit height
-/// also persists a durable `capture_error` row: the hold alone is invisible
-/// once the cursor is past the height.
+/// Replay `Hold` does not stop the tick or lower the monotonic cursor, which is
+/// why held Qbit heights persist a durable `capture_error` row.
 #[tokio::test]
 async fn tick_policy_replay_hold_continues_without_lowering_the_cursor() -> Result<()> {
     let mut cursor = 6;
@@ -358,7 +318,6 @@ async fn tick_policy_replay_hold_continues_without_lowering_the_cursor() -> Resu
         },
     )
     .await?;
-    // The held replay height 5 did not stop heights 6, 7 and 8.
     assert_eq!(seen, vec![4, 5, 6, 7, 8]);
     assert_eq!(cursor, 8, "a replay hold never lowers the cursor");
     assert_eq!(processed, 5);
@@ -367,8 +326,6 @@ async fn tick_policy_replay_hold_continues_without_lowering_the_cursor() -> Resu
 
 #[tokio::test]
 async fn tick_policy_cursor_ahead_of_tip_only_replays() -> Result<()> {
-    // cursor (1_000) ahead of tip; window ends at tip (980). Only the
-    // replay sub-range runs, capped at the tip; no new heights requested.
     let mut cursor = 1_000;
     let mut seen = Vec::new();
     let processed = run_tick_policy(
@@ -384,7 +341,7 @@ async fn tick_policy_cursor_ahead_of_tip_only_replays() -> Result<()> {
     )
     .await?;
     assert_eq!(seen, vec![978, 979, 980]);
-    assert_eq!(cursor, 1_000); // unchanged: never requested above the tip
+    assert_eq!(cursor, 1_000);
     assert_eq!(processed, 3);
     Ok(())
 }

@@ -1,10 +1,5 @@
-//! The shared thin JSON-RPC client for bitcoind-family chains.
-//!
-//! Namecoin, Syscoin, Fractal, Qbit, and Terracoin expose Bitcoin Core-style RPC; the
-//! only per-chain differences are configuration (endpoint, auth mode, timeout)
-//! and which proof-fetch method the capture path calls, so ONE client serves
-//! all five. The chain label parameterizes error contexts; auth material arrives
-//! resolved from `chains::config` (this module never reads process env).
+//! Shared thin JSON-RPC 1.0 client for bitcoind-family chains (Namecoin, Syscoin,
+//! Fractal, Qbit, Terracoin).
 
 use std::str::FromStr;
 use std::time::Duration;
@@ -18,22 +13,13 @@ use serde_json::{Value, json};
 use mmm_rpc as rpc_http;
 use rpc_http::{RpcMetrics, build_rpc_client};
 
-/// Resolved transport configuration for a bitcoind-family endpoint. Built by
-/// `chains::config::bitcoind_rpc_config`; carries values, never env var names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BitcoindRpcConfig {
-    /// Full JSON-RPC endpoint URL (scheme, host, port).
     pub url: String,
-    /// HTTP basic-auth user, paired with `password`; both `None` for an
-    /// unauthenticated endpoint (auth header sent only when both are present).
     pub user: Option<String>,
-    /// HTTP basic-auth password, paired with `user`.
     pub password: Option<String>,
-    /// Whole-request timeout for the HTTP transport. Defaults to
-    /// `<PREFIX>_RPC_TIMEOUT_SECS` (15s) and prevents a stale tunnel socket
-    /// from hanging the live poller's tip fetch indefinitely.
     pub request_timeout: Duration,
-    /// Older daemons require boolean false rather than numeric zero.
+    /// Older daemons require boolean `false` rather than numeric `0` for `getblock`.
     pub raw_block_boolean_verbose: bool,
 }
 
@@ -101,27 +87,16 @@ mod tests {
     }
 }
 
-/// The Bitcoin Core-style calls the bitcoind-family capture path makes. The
-/// live client implements it over HTTP; tests implement it over fixtures so
-/// `process_auxpow_height` can be driven end to end (the `HathorRpc` pattern).
 #[allow(async_fn_in_trait)]
 pub trait BitcoindRpc {
-    /// Current chain height via `getblockcount`, the poller's tip bound.
     async fn get_block_count(&self) -> Result<i32>;
-    /// Canonical block hash at `height` via `getblockhash`.
     async fn get_block_hash(&self, height: i32) -> Result<BlockHash>;
-    /// Full raw block via `getblock <hash> 0`.
     async fn get_block_raw(&self, hash: &BlockHash) -> Result<Vec<u8>>;
-    /// `[child header][CAuxPow]` bytes via `getblockheader <hash> false true`.
     async fn get_header_with_auxpow(&self, hash: &BlockHash) -> Result<Vec<u8>>;
 }
 
-/// Thin JSON-RPC client over a shared reqwest transport. One instance serves
-/// any bitcoind-family chain; the chain `label` only colors error contexts.
 #[derive(Debug, Clone)]
 pub struct BitcoindRpcClient {
-    /// Chain label for error contexts ("Namecoin", "Syscoin", "Fractal", "Qbit",
-    /// "Terracoin").
     label: &'static str,
     config: BitcoindRpcConfig,
     http: Client,
@@ -129,9 +104,6 @@ pub struct BitcoindRpcClient {
 }
 
 impl BitcoindRpcClient {
-    /// Build the client, materializing the reqwest transport with the config's
-    /// request timeout. `label` is folded into every later error context and
-    /// used as the [`RpcMetrics`] label.
     pub fn new(label: &'static str, config: BitcoindRpcConfig) -> Result<Self> {
         let http = build_rpc_client(config.request_timeout)?;
         Ok(Self {
@@ -142,18 +114,10 @@ impl BitcoindRpcClient {
         })
     }
 
-    /// Transport counters for this client (attempts, retries, failures,
-    /// latency). This client has no retry loop of its own, so `retries` is
-    /// always zero.
     pub fn metrics(&self) -> RpcMetrics {
         self.metrics.clone()
     }
 
-    /// Issue one JSON-RPC 1.0 call and deserialize the `result`. Layers error
-    /// contexts at each failure stage (send, HTTP status, body decode), surfaces
-    /// a JSON-RPC `error` object as a labeled bail, and treats a `null` result
-    /// as a hard error. Basic auth is attached only when both user and password
-    /// are configured.
     async fn call<T>(&self, method: &str, params: Vec<Value>) -> Result<T>
     where
         T: DeserializeOwned,
@@ -178,21 +142,15 @@ impl BitcoindRpcClient {
 }
 
 impl BitcoindRpc for BitcoindRpcClient {
-    /// Current chain height via `getblockcount`, the poller's tip bound.
     async fn get_block_count(&self) -> Result<i32> {
         self.call("getblockcount", vec![]).await
     }
 
-    /// Canonical block hash at `height` via `getblockhash`. Parses the RPC hex
-    /// through the rust-bitcoin newtype, which reverses display order back to
-    /// internal byte order on the way in.
     async fn get_block_hash(&self, height: i32) -> Result<BlockHash> {
         let hash: String = self.call("getblockhash", vec![json!(height)]).await?;
         BlockHash::from_str(&hash).with_context(|| format!("parse {} block hash", self.label))
     }
 
-    /// Fetch the full raw block via `getblock <hash> 0` (carries the CAuxPow
-    /// inline for Namecoin/Syscoin).
     async fn get_block_raw(&self, hash: &BlockHash) -> Result<Vec<u8>> {
         let raw_hex: String = self
             .call(
@@ -210,10 +168,7 @@ impl BitcoindRpc for BitcoindRpcClient {
         hex::decode(&raw_hex).with_context(|| format!("decode {} raw block hex", self.label))
     }
 
-    /// Fetch the `[child header][CAuxPow]` bytes via `getblockheader <hash>
-    /// false true` (verbose=false returns hex; the trailing `true` includes the
-    /// AuxPoW tail). Fractal's `getblock 0` does NOT carry the CAuxPow, so this
-    /// is its merge-mining proof source.
+    /// Fetch `[child header][CAuxPow]` via `getblockheader <hash> false true` (Fractal).
     async fn get_header_with_auxpow(&self, hash: &BlockHash) -> Result<Vec<u8>> {
         let raw_hex: String = self
             .call(

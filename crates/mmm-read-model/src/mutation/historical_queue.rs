@@ -20,10 +20,8 @@ use crate::{
 
 const CANONICAL_BULK_RECONCILE_BATCH_SIZE: i64 = 10_000;
 
-/// Replace normal Research provenance inside a complete chain transaction.
-/// Independent operator/error claims and Live base observations remain intact.
-/// Save prior stale attestations before deletion; after replacement rows are
-/// written, enqueue only parents whose attestation gate actually changed.
+/// Save prior Research stale attestations into a temp table and delete non-operator,
+/// non-error-observation provenance for `chain`.
 pub async fn clear_authoritative_historical_provenance_in_transaction(
     txn: &Transaction<'_>,
     chain: &str,
@@ -35,8 +33,6 @@ pub async fn clear_authoritative_historical_provenance_in_transaction(
     )
     .await
     .context("create prior historical attestation snapshot")?;
-    // Lock old events before ordinary writes and queue rows, preserving the
-    // writer's event -> queue order. No parent advisory locks span this import.
     txn.execute(
         "WITH locked_events AS MATERIALIZED ( \
              SELECT e.id, e.btc_parent_header_hash, e.revoked_at \
@@ -73,10 +69,7 @@ pub async fn clear_authoritative_historical_provenance_in_transaction(
     Ok(())
 }
 
-/// Queue only changed stale-attestation gates after the complete replacement.
-/// Base evidence changes and event removals have their own durable queue paths.
-/// This set-based comparison adds no per-row SQL or RPC calls. It shares the
-/// chain transaction with the earlier snapshot, delete and replacement writes.
+/// Enqueue parents whose Research stale-attestation gate changed across the snapshot replacement.
 pub async fn enqueue_changed_historical_attestations_in_transaction(
     txn: &Transaction<'_>,
     chain: &str,
@@ -118,17 +111,8 @@ pub async fn enqueue_changed_historical_attestations_in_transaction(
     Ok(())
 }
 
-/// Drain durable historical parent work to completion.
-///
-/// Each primary parent rebuild commits independently. Its exact changed-hash
-/// seeds are stored in the queue in the same transaction before the dependent
-/// cascade runs. The queue row is deleted only after that cascade succeeds, so
-/// rerunning an interrupted import resumes either the primary rebuild or the
-/// already-recorded cascade without relying on an idempotent rebuild to emit the
-/// same change a second time. `classifications` supplies verdicts authenticated
-/// during this import; each cached verdict is reused only while the
-/// barrier-protected local Core view still supports it. Queue entries left by
-/// an interrupted earlier run fall back to the configured classifier.
+/// Drain `historical_reconcile_queue`: commit each primary parent rebuild and its
+/// `changed_hashes` seeds first, then delete the queue row only after the dependent cascade succeeds.
 pub async fn drain_historical_reconcile_queue(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -138,7 +122,7 @@ pub async fn drain_historical_reconcile_queue(
         .await
 }
 
-/// Drain historical work against one supplied Core-cache snapshot.
+/// Drain historical work against a caller-supplied `NbitsTable` snapshot.
 pub async fn drain_historical_reconcile_queue_with_nbits_table(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -255,14 +239,8 @@ async fn drain_historical_reconcile_queue_with_budget(
     }
 }
 
-/// Rebuild one bounded batch of queue entries whose canonical classification is
-/// already proven by the local Core-backed `block` row.
-///
-/// These parents need no per-header RPC or classification work. The publication
-/// import holds the exclusive Core-cache barrier while draining this queue, so a
-/// set-based transaction can safely refresh their event rollups and AuxPoW proofs.
-/// Any parent with inconsistent event classification/header evidence, or any
-/// non-canonical parent, remains on the strict per-parent path below.
+/// Set-based bulk refresh of event rollups and AuxPoW proofs for queue entries whose
+/// canonical classification is already proven by the local Core-attested `block` row.
 #[allow(
     clippy::too_many_lines,
     reason = "the canonical bulk reconcile is one auditable SQL statement"

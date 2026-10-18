@@ -1,19 +1,7 @@
-//! Per-chain capture evidence sidecar payloads and revocation-reason constants.
-//!
-//! These are the chain-specific data shapes that the otherwise chain-agnostic
-//! [`capture`](super) core carries: the 1:1 evidence sidecar rows (RSK, Hathor)
-//! that do not fit the shared `merge_mining_event` row, and the per-chain
-//! automatic revocation reasons. They are re-exported from `capture` so callers
-//! reference them at the unchanged `capture::*` paths.
+//! Per-chain 1:1 capture evidence sidecar payloads (RSK, Hathor).
 
-/// Sidecar evidence for the RSK structure/capture slice. Persisted as a 1:1
-/// row in `rsk_merge_mining_evidence` per `merge_mining_event`.
-///
-/// `pool_identity_id` is the late-fill provenance reference: NULL when the
-/// RSK miner address is not yet in the embedded registry, populated once the
-/// registry resolves it. `proof_format` is a discriminator; the initial slice
-/// stores all proofs as the opaque RSK-RPC byte stream until RSKj source
-/// resolves the era boundaries precisely.
+/// 1:1 `rsk_merge_mining_evidence` payload. `pool_identity_id` is NULL until
+/// the RSK miner address resolves in the embedded identity registry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RskEvidencePayload {
     pub rsk_block_hash: Vec<u8>,
@@ -29,16 +17,10 @@ pub struct RskEvidencePayload {
     pub proof_format: &'static str,
 }
 
-/// `proof_format` discriminator for `RskEvidencePayload`: the opaque RSK-RPC
-/// byte stream stored verbatim until RSKj source resolves the era boundaries.
-/// Persisted literal in the rsk sidecar; matched by store/producers.
 pub const RSK_PROOF_FORMAT_OPAQUE: &str = "rskj_rpc_opaque";
 
-/// Hathor-specific evidence sidecar payload. Carries the RFC 0006 proof bytes
-/// that do not fit `merge_mining_event` (the `aux_pow` blob, the `funds_graph`
-/// prefix, the brute-forced split offset) and the parsed reward outputs. There
-/// is no `is_voided` field: capture only writes non-voided blocks, and a
-/// replaced block is recorded as displacement.
+/// 1:1 `hathor_merge_mining_evidence` payload (RFC 0006 `aux_pow` blob,
+/// `funds_graph` prefix, brute-forced split offset, and parsed reward outputs).
 #[derive(Debug, Clone, PartialEq)]
 pub struct HathorEvidencePayload {
     pub hathor_block_hash: Vec<u8>,
@@ -51,7 +33,4 @@ pub struct HathorEvidencePayload {
     pub proof_format: &'static str,
 }
 
-/// `proof_format` discriminator for `HathorEvidencePayload`: RFC 0006
-/// merge-mining proof layout (aux_pow blob + funds_graph prefix + brute-forced
-/// split offset). Persisted literal in the hathor sidecar.
 pub const HATHOR_PROOF_FORMAT_RFC0006: &str = "hathor_rfc0006";

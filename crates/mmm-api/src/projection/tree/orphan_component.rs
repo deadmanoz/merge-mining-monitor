@@ -1,6 +1,4 @@
-//! The orphan-component placement engine for anchor mode: BFS the proven
-//! `prev_hash`-linked orphan component, derive a pinned placement height for it,
-//! and graft its members onto a canonical spine as a placed fork.
+//! Orphan-component BFS, placement height derivation, and canonical-spine grafting for anchor mode.
 
 use std::collections::HashMap;
 
@@ -19,16 +17,10 @@ use super::{BLOCK_ROW_SELECT, TreeEdge, TreeNode, TreeNodeBranch};
 use crate::normalize::{Classification, ParentKind};
 use crate::query::TreeQuery;
 
-/// Half-width of the canonical context window an anchored orphan is placed into.
 pub(super) const ANCHOR_PLACEMENT_RADIUS: i32 = 16;
 
-/// Derive a fork placement height for an anchor orphan, gated by its class:
-/// `strict_btc_orphan` places by its validated BIP34 coinbase height (exact);
-/// `weak_btc_orphan` / `excluded` / pending place by the
-/// timestamp-selected DAA-epoch first-block height (approximate, `~`). The epoch
-/// lookup is monotonic and reads the persisted Core-derived cache, so the API
-/// stays RPC-free. Returns `(height, approx)`, or `None` when no height can be
-/// derived (the caller then falls back to the flat strip).
+/// Derive fork placement height for an anchor orphan: exact BIP34 height for `strict_btc_orphan`,
+/// or approximate DAA-epoch height from the persisted Core header cache for weak/excluded/pending.
 pub(super) async fn anchor_placement_height(
     client: &Client,
     orphan: &BlockRow,
@@ -47,20 +39,15 @@ pub(super) async fn anchor_placement_height(
             return Ok(None);
         }
     };
-    // Above the persisted Core cache horizon the table genuinely cannot place the
-    // orphan (the same condition that makes it pending, not excluded). Leave it
-    // unplaced (the caller falls back to the flat strip) rather than guessing it
-    // near the local tip via the below-table fallback below.
+    // Above the persisted Core cache horizon the table cannot place the orphan; return None
+    // rather than falling back to the local nearest-time query below.
     if orphan.header_time > table.horizon_time() {
         return Ok(None);
     }
     if let Some(height) = table.epoch_height_for_time(orphan.header_time) {
         return Ok(Some((height, true)));
     }
-    // Defensive fallback ONLY for a timestamp BELOW the Core cache's first epoch
-    // (a degenerate pre-2009 time; above-horizon already returned None): the local
-    // nearest-time canonical block, if any. Sparse local rows make this a last
-    // resort, not the primary weak source.
+    // Pre-2009 timestamp below the Core cache's first epoch: fall back to nearest-time canonical block.
     let row = client
         .query_opt(
             "SELECT btc_height FROM block \
@@ -76,8 +63,6 @@ pub(super) async fn anchor_placement_height(
         .map(|height| (height, true)))
 }
 
-/// The canonical context window a placed orphan component spans: every member's
-/// `placement_height`, padded by `ANCHOR_PLACEMENT_RADIUS` on each side.
 pub(super) fn component_placement_window(min_height: i32, max_height: i32) -> ResolvedTreeWindow {
     ResolvedTreeWindow::explicit(
         (min_height - ANCHOR_PLACEMENT_RADIUS).max(0),
@@ -85,18 +70,9 @@ pub(super) fn component_placement_window(min_height: i32, max_height: i32) -> Re
     )
 }
 
-/// Backstop on orphan-component members for the anchor view. Chosen so the worst
-/// case (a linear component spanning one height per member) stays well under the
-/// tree's node budget: at most `2 * CAP + 2 * ANCHOR_PLACEMENT_RADIUS` nodes
-/// (members plus the canonical placement window), i.e. ~288 at CAP = 128. A
-/// component that hits the cap is log-warned AND the anchor view degrades to the
-/// flat strip, rather than rendering a partial branch presented as the whole one.
+/// Cap on orphan-component members before anchor mode degrades to the flat strip.
 pub(super) const ORPHAN_COMPONENT_CAP: usize = 128;
 
-/// A placed orphan component: every member's derived `placement_height`, the
-/// in-component parent links (a member hash -> the member whose hash is its
-/// `prev_hash`, for the solid `orphan` member edges), the root, and whether
-/// placement is approximate (true iff no member is a strict orphan).
 pub(super) struct ComponentPlacement {
     pub(super) placements: HashMap<Vec<u8>, i32>,
     pub(super) parent_in_set: HashMap<Vec<u8>, Vec<u8>>,
@@ -106,12 +82,8 @@ pub(super) struct ComponentPlacement {
     pub(super) max_height: i32,
 }
 
-/// BFS the proven `prev_hash`-linked orphan component containing `anchor`, over the
-/// orphan candidate set (`kind='unknown' AND pow_validated`, in the classification
-/// set - matching `resolve_anchor_orphan` / `/orphans`, so revoked husks and
-/// out-of-class rows are excluded). Each round expands both directions: a child (a
-/// candidate whose `prev_hash` is a known member) and a parent (a candidate whose
-/// hash is a member's `prev_hash`). Bounded by `ORPHAN_COMPONENT_CAP`.
+/// Bidirectional BFS over `prev_hash`-linked PoW-valid `unknown` blocks matching `classification`,
+/// bounded by `ORPHAN_COMPONENT_CAP`.
 pub(super) async fn load_orphan_component(
     client: &Client,
     anchor: &BlockRow,
@@ -167,12 +139,9 @@ pub(super) async fn load_orphan_component(
     Ok((members.into_values().collect(), capped))
 }
 
-/// Place an orphan component as a unit. The proven `prev_hash` path gives exact
-/// relative heights (+1 per link), so pin ONE absolute anchor and derive every
-/// member as `anchor + path_offset`. The anchor is exact when any member is a strict
-/// orphan (its validated BIP34 height, offset back to the root); otherwise it is the
-/// root's timestamp-selected DAA-epoch height (approximate). Returns `None` when no
-/// height can be derived (caller falls back to the flat strip).
+/// Pin the component root height and derive every member as `root_abs + path_offset`.
+/// Exact when strict members agree on implied root height; degrades to approximate at `min` on
+/// conflict, or uses the root's approximate DAA-epoch height when no strict member exists.
 pub(super) async fn place_orphan_component(
     client: &Client,
     members: &[BlockRow],
@@ -193,10 +162,6 @@ pub(super) async fn place_orphan_component(
                 .push(m.hash.clone());
         }
     }
-    // The root is the unique member whose prev is not a member (each member has <=1
-    // in-set parent and the chain is acyclic). A fork off a shared ABSENT parent
-    // never lands in one component (the absent parent is not a member, so siblings
-    // are not prev-linked through the member set), so a single root holds.
     let mut roots = members
         .iter()
         .filter(|m| !by_hash.contains_key(m.prev_hash.as_slice()))
@@ -212,7 +177,6 @@ pub(super) async fn place_orphan_component(
         );
     }
 
-    // Offsets along the proven path: root = 0, each child = parent + 1.
     let mut offset: HashMap<Vec<u8>, i32> = HashMap::new();
     offset.insert(root.hash.clone(), 0);
     let mut stack = vec![root.hash.clone()];
@@ -228,14 +192,6 @@ pub(super) async fn place_orphan_component(
         }
     }
 
-    // Pin the absolute root height. A strict member at offset k implies a root
-    // height of (its BIP34 height) - k. Strict members MUST AGREE: consistent strict
-    // evidence pins the component EXACTLY (`placement_approx = false`). Conflicting
-    // strict heights (corrupt or inconsistent evidence) cannot be exact, so the
-    // component degrades to APPROXIMATE placement at the lowest implied height
-    // (the `~` label and a dashed root edge) rather than silently rendering at a
-    // height that contradicts a member. With no strict member, the root's
-    // timestamp-selected DAA-epoch height is the approximate pin.
     let mut implied_roots: Vec<i32> = Vec::new();
     for m in members {
         if m.btc_orphan_class.as_deref() == Some("strict_btc_orphan")
@@ -284,11 +240,7 @@ pub(super) async fn place_orphan_component(
     }))
 }
 
-/// A full-bypass query for loading the canonical context window: empty source
-/// filter, all kinds, `min_sources = 1`, no unheighted/anchor recursion. Preserves
-/// the anchor-mode contract that `source`/`kinds`/`min_sources` never filter the
-/// canonical spine (only `classification` gates anchor eligibility, applied in
-/// `resolve_anchor_orphan`).
+/// Full-bypass `TreeQuery` for loading the canonical context window in anchor mode.
 pub(super) fn bypass_window_query(
     query: &TreeQuery,
     from_height: i32,
@@ -318,9 +270,6 @@ pub(super) fn bypass_window_query(
     }
 }
 
-/// Read-only inputs for rendering one placed orphan component's members onto an
-/// already-materialized spine: the placement, the member ids, the per-member
-/// projections, and the branch tag.
 pub(super) struct MemberRender<'a> {
     pub(super) ordered: &'a [&'a BlockRow],
     pub(super) projection_by_hash: &'a HashMap<Vec<u8>, ParentProjection>,
@@ -369,11 +318,8 @@ pub(super) fn prepare_ordered_member_render<'a>(
     })
 }
 
-/// Emit each placed component member as a `TreeNode` plus its incoming edge: a
-/// proven member-to-member link is a solid `orphan` edge; the root attaches to the
-/// spine with a solid `orphan` edge when it is a strict root whose stored
-/// `prev_hash` is the canonical at `placement-1`, else a dashed `orphan_approx`
-/// edge to the nearest in-window canonical. Keeps `prev_id`/`prev_hash` truthful.
+/// Emit each placed component member as a `TreeNode` and attach its incoming `orphan` or
+/// `orphan_approx` edge while keeping `prev_id`/`prev_hash` truthful.
 pub(super) fn push_member_nodes(
     render: &MemberRender<'_>,
     nodes: &mut Vec<TreeNode>,
@@ -397,9 +343,6 @@ pub(super) fn push_member_nodes(
         let id = member_id[&member.hash];
         let placement_height = placement.placements.get(&member.hash).copied();
 
-        // A proven member-to-member link is a solid `orphan` edge; the component root
-        // attaches to the spine (solid for a verified strict root, else dashed to the
-        // nearest in-window canonical), keeping `prev_hash` truthful.
         let (prev_id, edge) = if let Some(parent_hash) = placement.parent_in_set.get(&member.hash) {
             let parent_display = display_hash(parent_hash)?;
             let prev_id = member_id.get(parent_hash).copied();
@@ -482,9 +425,6 @@ pub(super) fn push_member_nodes(
     Ok(())
 }
 
-/// Hydrate every component member from its own evidence and project it, keyed
-/// by stored hash. Anchor mode passes an empty source filter for its documented
-/// bypass.
 pub(super) async fn load_member_projections(
     client: &Client,
     members: &[BlockRow],

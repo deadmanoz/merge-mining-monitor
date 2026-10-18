@@ -1,8 +1,5 @@
 //! Bounded RSK historical backfill: order-preserving concurrent prefetch of
 //! canonical + uncle bundles, written serially in ascending height order.
-//! Intentionally divergent from the shared family runner (i64 tip, bundle
-//! pipeline, RSK-specific summary); arg parsing is the shared
-//! `BackfillConfig`.
 
 use std::time::Instant;
 
@@ -19,17 +16,9 @@ use crate::chains::rsk::traverse::fetch_rsk_height_bundle;
 use crate::producer_runtime::{ProducerRuntime, run_post_backfill_repair};
 use mmm_capture::capture::now_epoch_seconds;
 
-/// Default bounded prefetch concurrency for the RSK historical backfill. Each
-/// in-flight slot is one `eth_getBlockByNumber` round-trip (plus its uncle
-/// fetches); conservative by default to respect RSKj's JSON-RPC thread pool.
-/// Override with `RSK_BACKFILL_FETCH_CONCURRENCY` (clamped to `>= 1`).
+/// Default bounded prefetch concurrency (`RSK_BACKFILL_FETCH_CONCURRENCY` overrides, clamped to `>= 1`).
 pub(crate) const RSK_DEFAULT_BACKFILL_FETCH_CONCURRENCY: usize = 16;
 
-/// Grand totals a backfill run folds [`HeightOutcome`](crate::chains::rsk::capture::HeightOutcome)s
-/// into, via `accumulate_rsk_summary`.
-/// Canonical counts partition by outcome (written / no parent header / malformed /
-/// non-Bitcoin parent / missing); uncle counts sum across all heights. Logged at
-/// run end.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct RskBackfillSummary {
     pub(crate) heights_processed: usize,
@@ -45,7 +34,6 @@ pub(crate) struct RskBackfillSummary {
     pub(crate) uncles_non_bitcoin: usize,
 }
 
-/// Registry-dispatched live-poll entry point for RSK.
 pub(crate) async fn poll(
     spec: &'static crate::chains::spec::ChainSpec,
     rt: ProducerRuntime,
@@ -63,21 +51,14 @@ pub(crate) async fn poll(
     poller.run_forever().await
 }
 
-/// Registry-dispatched backfill entry point for RSK.
 pub(crate) async fn backfill(rt: ProducerRuntime, config: BackfillConfig) -> Result<()> {
     let rpc_config = crate::chains::config::rsk_rpc_config()?;
     let rpc = RskRpcClient::new(rpc_config)?;
     run_rsk_backfill(rt, rpc, config).await
 }
 
-/// Run the bounded RSK backfill over `[start_height, end_height]`. Bails if the
-/// requested end exceeds the observed tip; warns (but does not stop) when the
-/// start precedes the RSK acquisition floor. The network-bound bundle prefetch runs
-/// `fetch_concurrency`-wide while a single `&mut Client` writer consumes bundles
-/// in strict ascending height order; the lowest-height fetch error surfaces
-/// first via `?` because `buffered` yields in input order. The backfill never
-/// moves the live `poll_cursor`. Runs post-backfill repair before returning the
-/// summary.
+/// Prefetches bundles `fetch_concurrency`-wide via `.buffered` while writing in
+/// strict ascending height order; never moves `poll_cursor`.
 pub(crate) async fn run_rsk_backfill(
     rt: ProducerRuntime,
     rpc: RskRpcClient,
@@ -116,13 +97,6 @@ pub(crate) async fn run_rsk_backfill(
         "starting bounded RSK AuxPoW backfill"
     );
 
-    // Bounded order-preserving prefetch: the network-bound canonical+uncle fetch
-    // runs `fetch_concurrency`-wide while the single `&mut Client` writer
-    // consumes bundles in strict ascending height order via `.buffered`. A fetch
-    // error fails the chunk through `?` (the lowest-height error surfaces first
-    // because `buffered` yields in input order), matching the serial path's
-    // persisted end-state; the `.tmp/live-test-deployment` chunk driver retries a
-    // failed chunk.
     let started = Instant::now();
     let mut summary = RskBackfillSummary::default();
     let progress = crate::chains::backfill::backfill_progress(

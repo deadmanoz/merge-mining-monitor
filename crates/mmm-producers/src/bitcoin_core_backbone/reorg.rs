@@ -29,8 +29,6 @@ use super::{
     update_sync_error,
 };
 
-/// Finite test seam for exercising follow-mode near-tip repair without
-/// starting the process-lifetime live loop.
 #[cfg(any(test, feature = "db-integration"))]
 pub async fn repair_near_tip_backbone_for_test<S>(
     client: &mut Client,
@@ -101,11 +99,8 @@ enum CursorRepairOutcome {
     Replaced(BitcoinCoreSyncStats),
 }
 
-/// Repair the captured near-tip target without allowing the ordinary
-/// contiguous guard to encounter a known fork first. A conflicting suffix is
-/// switched atomically; a window containing only gaps or incomplete matching
-/// rows uses the existing missing-only fill so fresh and sparse databases keep
-/// their established behavior.
+/// Atomically replaces any conflicting near-tip suffix, then fills remaining
+/// gaps via `repair_near_tip_gaps_to_target`.
 pub(crate) async fn repair_near_tip_backbone_to_target<S>(
     client: &mut Client,
     source: &S,
@@ -139,9 +134,7 @@ where
         )
         .await?;
 
-        // The normal view start is purely height-derived. Check and repair a
-        // stale lower cursor before fetching that view, otherwise recovery
-        // would pay for the same bounded live-window RPC walk twice.
+        // Check and repair a stale lower cursor before fetching the live-tip view.
         let view_start = core_view_start_height(target.height, window_heights);
         match repair_cursor_before_view(
             client,
@@ -155,9 +148,6 @@ where
             CursorRepairOutcome::NotNeeded => {}
             CursorRepairOutcome::Replan => {
                 if may_replan_after_cursor_race {
-                    // Another writer may have repaired the cursor between the
-                    // direct divergence check and this bounded planning read.
-                    // Reload all state once rather than acting on mixed views.
                     may_replan_after_cursor_race = false;
                     continue;
                 }
@@ -188,11 +178,9 @@ where
             let gap_result =
                 repair_near_tip_gaps_to_target(client, source, target, delay, window_heights).await;
             if may_replan_after_gap_conflict && is_height_conflict(&gap_result) {
-                // The gap writer takes the exclusive canonical-view barrier. A
-                // classifier that was still committing during the unlocked scan
-                // can therefore become visible only after this plan was made.
-                // Reload every planning input once so the committed conflict is
-                // routed through the bounded suffix replacement path.
+                // A classifier commit during the unlocked scan can surface a
+                // conflict only once the gap writer takes the canonical barrier;
+                // replan once to route it through suffix replacement.
                 may_replan_after_gap_conflict = false;
                 continue;
             }

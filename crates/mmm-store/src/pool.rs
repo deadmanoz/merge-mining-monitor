@@ -143,16 +143,7 @@ pub(crate) async fn upsert_pool_identities_for_namespace_with_policy(
     Ok(identity_ids)
 }
 
-/// Seed a chain's identity registry end-to-end from already-validated neutral
-/// triples: ensure each referenced pool exists (registry-only, so existing BTC
-/// attribution is preserved), then upsert one `pool_identity` row per entry under
-/// `namespace` with the given remap policy. The single entry point new chains'
-/// seed wrappers call. `registry_label` names the registry in pool-seed error
-/// context; `conflict_hint` is surfaced when a non-remapping seed meets an
-/// identity already mapped to a different pool (RSK `--overwrite` passes
-/// `remap_existing = true`; everyone else `false`). Returns the
-/// identifier -> pool_identity.id map and extends `pool_ids_by_slug` with any
-/// newly created slugs.
+/// Ensure `pool` rows exist for registry-only slugs and upsert `pool_identity` entries under `namespace`.
 pub async fn upsert_identity_registry(
     client: &Client,
     registry_label: &str,
@@ -179,10 +170,7 @@ pub async fn upsert_identity_registry(
     .await
 }
 
-/// Load all `pool_identity` rows for the given namespaces into a lookup keyed by
-/// `(namespace, identifier)`. Generic over `GenericClient` so capture paths can
-/// call it inside their own transaction. The read-only lookup helper producers use to
-/// resolve a child miner / reward address to its pool before writing attributions.
+/// Load `pool_identity` rows for `namespaces` into a `(namespace, identifier)` lookup.
 pub async fn load_pool_identities_by_namespace<C: GenericClient>(
     client: &C,
     namespaces: &[&str],

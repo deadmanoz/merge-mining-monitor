@@ -4,12 +4,12 @@
     {
       "file": "tree.json",
       "endpoint_family": "/api/v1/tree",
-      "scenario": "Explicit tree window with canonical context, AuxPoW-referenced canonical nodes, stale forks, child-chain evidence, unknown, near, branch, and hidden edge examples"
+      "scenario": "Explicit tree window with canonical context, stale forks, child evidence, and edge variants"
     },
     {
       "file": "tree-unheighted-anchor.json",
       "endpoint_family": "/api/v1/tree",
-      "scenario": "Anchor mode (unheighted_anchor): the orphan-block navigator landing, a strict orphan dangling as a fork off the canonical chain at its validated BIP34 height within a +/-16 canonical window, with placement_height on the orphan node, a solid orphan edge to its verified predecessor, and the orphan/orphan_approx edge kinds"
+      "scenario": "Unheighted anchor window placing a strict BIP34 orphan off its verified canonical parent"
     },
     {
       "file": "block-one-block-stale.json",
@@ -19,27 +19,27 @@
     {
       "file": "block-multi-block-stale-branch.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "Multi-block stale branch root detail with nullable authenticated child header and nBits evidence; one event detail shows child-side displacement (child_displaced_at and child_displaced_by set, the rest null)"
+      "scenario": "Multi-block stale branch root detail including child-side displacement evidence"
     },
     {
       "file": "block-rsk-near.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "RSK canonical evidence plus Namecoin evidence for the same near parent, including nullable authenticated child header and nBits evidence"
+      "scenario": "RSK canonical and Namecoin evidence for the same near parent"
     },
     {
       "file": "block-stale-rsk-inferred.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "RSK-only stale block with nullable authenticated child header and nBits evidence and no recoverable Bitcoin coinbase: bitcoin_miner_pool is Unknown while display_miner_pool resolves the merge-miner from the RSK miner address (display_miner_basis child_inferred)"
+      "scenario": "RSK-only stale block with child_inferred display miner pool from RSK miner address"
     },
     {
       "file": "block-error-block.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "Catalogued Bitcoin consensus-invalid error block with its non-null rejection reason and no stale competition or branch"
+      "scenario": "Catalogued consensus-invalid error block with rejection reason and no stale branch"
     },
     {
       "file": "block-rsk-uncle-near.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "RSK uncle evidence for a near parent with nullable authenticated child header and nBits evidence"
+      "scenario": "RSK uncle evidence for a near parent with nullable child header and nBits"
     },
     {
       "file": "block-body-invalid-error.json",
@@ -49,42 +49,42 @@
     {
       "file": "navigator-stale.json",
       "endpoint_family": "/api/v1/navigator/stale",
-      "scenario": "Unified navigator stale target: height-keyed stale items with per-item newest-first index, opaque cursors, and tree-window view metadata"
+      "scenario": "Height-keyed stale navigator page with newest-first index, cursors, and tree-window metadata"
     },
     {
       "file": "navigator-stale-branch.json",
       "endpoint_family": "/api/v1/navigator/stale-branch",
-      "scenario": "Unified navigator stale-branch target: multi-block stale branch item with per-item newest-first index, branch metadata, opaque cursor, and tree-window view metadata"
+      "scenario": "Multi-block stale-branch navigator page with branch metadata, cursor, and tree-window view"
     },
     {
       "file": "navigator-error-block.json",
       "endpoint_family": "/api/v1/navigator/error-block",
-      "scenario": "Unified navigator error-block target: an older-direction page landing inside a same-height group of catalogued consensus-invalid full-PoW blocks, ordered by stored hash bytes, with per-item newest-first index, opaque cursors, and tree-window view metadata"
+      "scenario": "Same-height error-block navigator group ordered by stored hash bytes"
     },
     {
       "file": "navigator-orphan.json",
       "endpoint_family": "/api/v1/navigator/orphan",
-      "scenario": "Unified navigator orphan target: time-keyed BTC-orphan items with per-item newest-first index, orphan class facets, opaque cursors, and unheighted-anchor view metadata"
+      "scenario": "Time-keyed BTC-orphan navigator page with orphan class facets and unheighted-anchor view"
     },
     {
       "file": "navigator-orphan-branch.json",
       "endpoint_family": "/api/v1/navigator/orphan-branch",
-      "scenario": "Unified navigator orphan-branch target: anchor-hash locate mode for a time-bounded orphan branch with per-item newest-first index and unheighted-anchor view metadata"
+      "scenario": "Anchor-hash locate mode for a time-bounded orphan branch with unheighted-anchor view"
     },
     {
       "file": "sources.json",
       "endpoint_family": "/api/v1/sources",
-      "scenario": "Source registry with evidence freshness, operational progress, per-source counts including strict/weak BTC-orphan sub-counts, live and historical sources including recovered Lyncoin, SixEleven and ROD, a partial VCash subset, a surveyed Doichain recovery, a catalogued Bitcoin Stash source, and a live Terracoin source catching up independently of evidence freshness, and a live Qbit source held in the AuxPoW capture-error state with its earliest unresolved height"
+      "scenario": "Source registry across live, historical, partial, surveyed, catalogued, catching-up, and capture-error states"
     },
     {
       "file": "competitions.json",
       "endpoint_family": "/api/v1/competitions",
-      "scenario": "Every derivable stale-vs-canonical competition: the three tree.json competitions plus a second stale at height 700,005 pinning the height-then-lexicographic-stale_hash tie-break, an AuxPoW-only source list beside Core-attested lists carrying the synthetic live-chaintip:bitcoin:core source, an Unknown miner pool on each side, and a null header_time_delta_s for a timestamp difference outside i32"
+      "scenario": "Stale-vs-canonical competitions covering tie-breaks, AuxPoW-only and Core sources, Unknown pools, and null delta"
     },
     {
       "file": "version.json",
       "endpoint_family": "/api/v1/version",
-      "scenario": "Runtime application SemVer v0.9.3 plus the complete RELEASE_NOTES.md release-note projection for the About dialog"
+      "scenario": "Runtime SemVer v0.9.3 and RELEASE_NOTES.md projection for the About dialog"
     },
     {
       "file": "error-backbone-conflict.json",

@@ -42,9 +42,6 @@ impl NavigatorTarget {
         }
     }
 
-    /// Only the orphan targets carry an orphan-class facet. An error block is a
-    /// catalogue membership, not a refinement of `unknown`, so it has no
-    /// classification axis and rejects the parameter.
     pub fn accepts_classification(self) -> bool {
         matches!(self, Self::Orphan | Self::OrphanBranch)
     }
@@ -163,10 +160,7 @@ impl NavigatorCursor {
                 }),
             ));
         }
-        // Height-axis bounds are compared against `block.btc_height`, an int4.
-        // The cursor is attacker-supplied `i64`, so reject anything that cannot
-        // round-trip here rather than letting a downstream `as i32` wrap it into
-        // a negative height and silently return a wrong page.
+        // Reject `i64` cursor bounds that overflow `block.btc_height` (`int4`).
         if cursor.axis == NavigatorAxis::Height
             && (i32::try_from(cursor.min).is_err() || i32::try_from(cursor.max).is_err())
         {

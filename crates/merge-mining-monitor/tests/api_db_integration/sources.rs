@@ -347,11 +347,7 @@ async fn insert_poll_cursor(
     Ok(())
 }
 
-/// The seeded `source` table EXACTLY equals the Source Lifecycle Registry,
-/// including each explicit permanent id and any retired gaps. This is the
-/// seed<->registry drift guard for all registered sources: it catches a typo, omission,
-/// or extra row in the generated `0002_seed_sources.sql` relative to the Rust
-/// `SOURCE_REGISTRY`, in either direction.
+/// Verifies `0002_seed_sources.sql` matches `SOURCE_REGISTRY`.
 #[tokio::test]
 async fn source_table_matches_registry() -> Result<()> {
     crate::run_mut_db_test!(client, {
@@ -412,8 +408,6 @@ async fn sources_projection_maps_strict_and_weak_orphan_counts() -> Result<()> {
         let rsk = get_source_id(&client, RSK_SOURCE_CODE).await?;
         let ts = day_epoch(2026, Month::May, 10);
 
-        // A strict and a weak orphan parent (PoW-valid kind='unknown' blocks), plus
-        // a near parent (no block row).
         let strict_parent = hash_bytes(0xA001);
         let weak_parent = hash_bytes(0xA002);
         let near_parent = hash_bytes(0xA003);
@@ -434,7 +428,6 @@ async fn sources_projection_maps_strict_and_weak_orphan_counts() -> Result<()> {
         )
         .await?;
 
-        // namecoin attests all three; rsk shares the strict parent.
         for (i, (parent, kind, pow_ok)) in [
             (&strict_parent, "unknown", true),
             (&weak_parent, "unknown", true),
@@ -496,8 +489,6 @@ async fn sources_projection_maps_strict_and_weak_orphan_counts() -> Result<()> {
         assert_eq!(namecoin_row.counts.canonical, 0);
         assert_eq!(namecoin_row.counts.stale, 0);
 
-        // Parent-level: RSK shares the strict-classified parent, so it counts as a
-        // strict orphan for RSK too even though RSK is weak-only eligible.
         let rsk_row = source_row(&payload, RSK_SOURCE_CODE);
         assert_eq!(
             rsk_row.counts.strict_orphan, 1,
@@ -515,12 +506,8 @@ async fn capture_errors_reduce_to_the_earliest_gap_and_outrank_live_status() -> 
     crate::run_mut_db_test!(client, {
         let qbit_source_id = get_source_id(&client, QBIT_SOURCE_CODE).await?;
 
-        // The cursor is fresh and already ABOVE both malformed heights: the
-        // replay case. Nothing in poll_cursor can express the hole.
         upsert_poll_cursor_with_target(&client, qbit_source_id, 78_100, Some(78_100)).await?;
-        // `poll_cursor.updated_at` is server `now()`, so anchor the reference
-        // clock to it: the point of this test is the error precedence, not the
-        // one-hour capture-progress staleness window.
+        // Anchor `now` to `poll_cursor.updated_at` so cursor staleness does not mask error precedence.
         let cursor_updated_at: i64 = client
             .query_one(
                 "SELECT EXTRACT(EPOCH FROM updated_at)::BIGINT FROM poll_cursor \
@@ -568,8 +555,6 @@ async fn capture_errors_reduce_to_the_earliest_gap_and_outrank_live_status() -> 
         );
         assert_eq!(qbit.sync.progress_height, Some(78_100));
 
-        // Re-observing a height refreshes last_seen_at and preserves
-        // first_seen_at, so the row keeps showing how long the gap has been open.
         record_capture_error(
             &client,
             qbit_source_id,
@@ -590,7 +575,6 @@ async fn capture_errors_reduce_to_the_earliest_gap_and_outrank_live_status() -> 
             .map(|row| (row.get(0), row.get(1)))?;
         assert_eq!(seen, (now - 300, now));
 
-        // Clearing the earliest gap promotes the next one, not the normal state.
         assert!(clear_capture_error(&client, qbit_source_id, 78_058).await?);
         let payload = projection::sources(&client, now as u64)
             .await
@@ -599,7 +583,6 @@ async fn capture_errors_reduce_to_the_earliest_gap_and_outrank_live_status() -> 
         assert_eq!(qbit.sync.state, "error");
         assert_eq!(qbit.sync.error_height, Some(78_064));
 
-        // Only when the LAST one clears does the source read normally again.
         assert!(clear_capture_error(&client, qbit_source_id, 78_064).await?);
         assert!(
             !clear_capture_error(&client, qbit_source_id, 78_064).await?,
@@ -613,7 +596,6 @@ async fn capture_errors_reduce_to_the_earliest_gap_and_outrank_live_status() -> 
         assert_eq!(qbit.sync.error_code, None);
         assert_eq!(qbit.sync.error_height, None);
 
-        // Every other source is unaffected by Qbit's capture errors.
         let namecoin = source_row(&payload, NAMECOIN_SOURCE_CODE);
         assert_eq!(namecoin.sync.error_code, None);
         assert_eq!(namecoin.sync.error_height, None);

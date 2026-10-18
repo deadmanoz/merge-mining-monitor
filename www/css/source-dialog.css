@@ -1,7 +1,3 @@
-/* Source modal: tabbed body (General | Technical | Capture), the monitor /
-   chain-status chips, and the notable list. Split out of dialogs.css so neither
-   file exceeds the arch-lint size budget. Tokens are shared with dialogs.css. */
-
 .modal-tabs {
   display: grid;
   gap: 12px;

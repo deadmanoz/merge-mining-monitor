@@ -96,7 +96,8 @@ Response fields:
 - `release_notes.releases[].truncated`: true when `items` omits later entries
   from that section; currently always `false`.
 
-Example:
+Example (truncated to 2 release entries; see `fixtures/api/version.json` for
+the complete machine-checked payload):
 
 ```json
 {
@@ -121,294 +122,12 @@ Example:
         "version": "0.9.2",
         "date": "2026-10-07",
         "items": [
-          "Use the more complete Huntercoin and Xaya evidence recovered from Daniel Kraft's native blockchain dumps. Xaya observations use authenticated native block heights.",
-          "Refresh historical Research claims while preserving independent live observations and separately imported operator evidence. Matching imports skip records that are already current.",
+          "Use the expanded Huntercoin and Xaya evidence recovered from Daniel Kraft's native blockchain dumps, including authenticated native Xaya block heights.",
+          "Refresh historical Research claims while preserving independent live observations and separately imported operator evidence.",
           "Update the error catalogue to 53 Bitcoin parents and 121 child-chain observations, and explain errors inherited from an invalid predecessor.",
           "Keep the About dialog's release-note rows readable when the list scrolls."
         ],
         "item_count": 4,
-        "truncated": false
-      },
-      {
-        "version": "0.9.1",
-        "date": "2026-09-29",
-        "items": [
-          "Merge-mined parents from other SHA-256 chains, mostly Bitcoin Cash, are no longer counted as Bitcoin evidence. Every live capture now checks a parent against Bitcoin's difficulty history before storing it: another chain's parent is skipped and counted as `non_bitcoin` on the poll tick, and one whose difficulty epoch the Bitcoin Core header cache has not reached yet holds the height until it has. The more than 52,000 `unknown` blocks and their events that earlier captures stored for other chains' parents are removed at deploy.",
-          "A Bitcoin block that no evidence attests any longer is removed together with its AuxPoW proofs instead of staying as an empty `unknown` block.",
-          "Orphan classification uses the same rule. A header on a known Bitcoin block whose difficulty is not that height's is never an orphan, and a historical import that carries one stops instead of storing it.",
-          "Migration `0031` drops the Hathor sidecar's `expected_btc_nbits`, which only the replaced Hathor check wrote, through the backup-first workflow."
-        ],
-        "item_count": 4,
-        "truncated": false
-      },
-      {
-        "version": "0.9.0",
-        "date": "2026-09-29",
-        "items": [
-          "Terracoin is a live source. Once the poller is first started with `TERRACOIN_START_HEIGHT` at or below 3,202,526, 64 blocks below 3,202,589 where its historical publication ends, its merge-mined blocks are tracked continuously. Each raw block is authenticated against the requested hash and height, and a height that fails to capture keeps a capture error until that same height succeeds (migration `0030`).",
-          "Block details show Terracoin's chain ID, slot and proof for captured events, and a Bitcoin block seen only through Terracoin now shows its merge-mining commitment."
-        ],
-        "item_count": 2,
-        "truncated": false
-      },
-      {
-        "version": "0.8.2",
-        "date": "2026-09-22",
-        "items": [
-          "Ten reviewed body-invalid Bitcoin parents now appear as error blocks, with their rejection reasons, instead of stales. The unified Research catalogue covers 49 invalid parents and 107 child-chain observations.",
-          "Historical imports preserve observation identities and evidence when a parent moves into the error catalogue. A single-chain import refuses cleanup until the required error observations have been imported with `import-all`.",
-          "Remove the separate body-invalid annotation API fields and importer. API consumers use `kind=error_block` and `error_block_reason`; migration `0029` removes the obsolete annotation table through the backup-first workflow."
-        ],
-        "item_count": 3,
-        "truncated": false
-      },
-      {
-        "version": "0.8.1",
-        "date": "2026-09-21",
-        "items": [
-          "A rescanned height behind the poll cursor costs one block-hash lookup at the child node when the chain still carries the block last recorded there (migration `0026` adds `child_chain_head`); only a changed hash, or a record whose verdict may still change, takes the full capture again. Elastos and RSK are unchanged.",
-          "The unknown-parent recheck no longer runs inside producer startup or the per-tick Bitcoin Core cache refresh. A trigger records it as pending and `reclassify-unknown-parents --scheduled` consumes it a page at a time from a persisted cursor, releasing the Core-cache lock between pages (migrations `0027` and `0028`). Run it after migrating: the first run still covers the sweep migration `0019` scheduled, in the background, and resumes if killed.",
-          "Every poll tick logs a `poll tick` line with the heights it rescanned and captured, its duration and each RPC client's call counts, and every batch job logs progress (done, total, rate, ETA) and ends with a per-client summary."
-        ],
-        "item_count": 3,
-        "truncated": false
-      },
-      {
-        "version": "0.8.0",
-        "date": "2026-09-16",
-        "items": [
-          "Qbit is a live source. Once its historical publication is imported and the poller is first started with `QBIT_START_HEIGHT` at or below 80,986, where that publication ends, its merge-mined blocks are tracked continuously.",
-          "A child-chain reorg no longer revokes the replaced block's event. Every live producer except RSK records which block the child chain carries at each height; a displaced event keeps its Bitcoin-side evidence and shows `child_displaced_at` and `child_displaced_by` in block event details. Hathor's superseded and voided revocations are retired: migration restores those rows and records displacement only where the replacing block can be identified.",
-          "The trailing rescan depth is a per-chain deployment setting; the compiled defaults are unchanged.",
-          "For Qbit, a proof that will not decode no longer counts a capture interval as complete: the height is recorded in `capture_error` and surfaced on `/api/v1/sources`.",
-          "Bounded RSK backfills below the 139,999 live acquisition floor capture complete Bitcoin parent-header evidence, evaluating each uncle independently against the Bitcoin proof-of-work target."
-        ],
-        "item_count": 5,
-        "truncated": false
-      },
-      {
-        "version": "0.7.13",
-        "date": "2026-09-09",
-        "items": [
-          "Support importing the complete historical Research publication, including ROD's authenticated evidence and corrected external-target handling for Xaya.",
-          "Mark i0coin's current chain status as Unknown because March 2026 snapshot timestamps establish an evidence boundary, not current network availability."
-        ],
-        "item_count": 2,
-        "truncated": false
-      },
-      {
-        "version": "0.7.12",
-        "date": "2026-09-03",
-        "items": [
-          "Annotate the two F2Pool `bad-blk-sigops` stale blocks (heights 783426 and 784121) as body-invalid without changing their kind. Those blocks show a Body validity row with the rule's help and an evidence link, and remain ordinary stales."
-        ],
-        "item_count": 1,
-        "truncated": false
-      },
-      {
-        "version": "0.7.11",
-        "date": "2026-09-02",
-        "items": [
-          "Bulk-reconcile historical parents whose canonical status and event evidence already agree with Bitcoin Core, retaining strict reconciliation for ambiguous or conflicting evidence."
-        ],
-        "item_count": 1,
-        "truncated": false
-      },
-      {
-        "version": "0.7.10",
-        "date": "2026-09-02",
-        "items": [
-          "Preserve existing observation times during historical publication refreshes and skip parent reconciliation when only provenance or presentation text changed."
-        ],
-        "item_count": 1,
-        "truncated": false
-      },
-      {
-        "version": "0.7.9",
-        "date": "2026-09-02",
-        "items": [
-          "Refresh canonical parent coinbase-output text during historical imports while keeping binary outputs and full coinbase transactions fail closed."
-        ],
-        "item_count": 1,
-        "truncated": false
-      },
-      {
-        "version": "0.7.8",
-        "date": "2026-09-02",
-        "items": [
-          "Reuse compatible, proven parent classifications during historical imports, avoiding redundant Bitcoin Core header and full-block RPCs while retaining strict live validation for unknown, incomplete, or incompatible evidence."
-        ],
-        "item_count": 1,
-        "truncated": false
-      },
-      {
-        "version": "0.7.7",
-        "date": "2026-09-01",
-        "items": [
-          "Import Research's canonical publication: 1,037,005 ordinary events, 21 stale-descendant summaries, and 86 authenticated error observations covering 39 consensus-invalid Bitcoin parents. The four ancestry-recovered BIP34 mismatches become error blocks rather than orphans.",
-          "Verify all 29 publication artifacts before database mutation, including parent-only Namecoin counts, and refresh the historical manifest and compact error catalogue from the same Research commit."
-        ],
-        "item_count": 2,
-        "truncated": false
-      },
-      {
-        "version": "0.7.6",
-        "date": "2026-08-29",
-        "items": [
-          "Import pinned error observations that use the legacy `median_time_past_violation` reason when Bitcoin Core reports the equivalent current `time_below_mtp` verdict. Preserve the pinned reason in publication evidence and keep every other reason and height check strict."
-        ],
-        "item_count": 1,
-        "truncated": false
-      },
-      {
-        "version": "0.7.5",
-        "date": "2026-08-29",
-        "items": [
-          "Let `import-all` detect already-loaded historical files by comparing their publication-owned state with stored provenance and events across research pins, so an empty receipt cache no longer triggers a replay.",
-          "Remove receipt seeding and the retired receipt table. Matching publications return before the Bitcoin Core lock, while pending derived work can complete without replaying source rows."
-        ],
-        "item_count": 2,
-        "truncated": false
-      },
-      {
-        "version": "0.7.4",
-        "date": "2026-08-28",
-        "items": [
-          "Pin the historical publication and error-block catalogue to research `c26e86c`: 78 observations across 35 parents in the 34-column monitor union.",
-          "Skip unchanged historical publication artifacts on `import-all`. Seed receipts from the last imported pin only when event provenance already matches; a single-chain `import-dataset` clears that skip."
-        ],
-        "item_count": 2,
-        "truncated": false
-      },
-      {
-        "version": "0.7.3",
-        "date": "2026-08-28",
-        "items": [
-          "Show which Go-to item the stepper is on (`n of N`) while walking stales, stale branches, error blocks, orphans, and orphan branches.",
-          "Refresh from the Updated stamp, or Retry when a view has not loaded. Data still reloads every 60s; the Auto interval picker is gone.",
-          "Pin the error-block catalogue and historical publication to 35 parents and 78 observations, including Hathor-witnessed 649674 and the 2026 F2Pool `time_below_mtp` twin at 957780. Historical events are now 580,320."
-        ],
-        "item_count": 3,
-        "truncated": false
-      },
-      {
-        "version": "0.7.2",
-        "date": "2026-08-27",
-        "items": [
-          "Clear a recovered Bitcoin Core link error after revalidating the cached block and its predecessor link, including when no new rows need importing."
-        ],
-        "item_count": 1,
-        "truncated": false
-      },
-      {
-        "version": "0.7.1",
-        "date": "2026-08-27",
-        "items": [
-          "Recover a shallow Bitcoin Core fork even when a long outage leaves the persisted cursor below the normal near-tip repair window, then resume bounded paged catch-up without holding a database lock across the lag."
-        ],
-        "item_count": 1,
-        "truncated": false
-      },
-      {
-        "version": "0.7.0",
-        "date": "2026-08-25",
-        "items": [
-          "Require a synced Bitcoin Core node and persist a sparse canonical-header cache, so the monitor can evaluate difficulty and timestamp rules from Core-derived evidence instead of a compiled epoch table.",
-          "Repair bounded near-tip Bitcoin reorgs as one durable suffix replacement, retaining displaced blocks as stale evidence and completing dependent reconciliation after a restart.",
-          "Import 73 recovered child-chain witnesses for all 33 catalogued Bitcoin consensus-invalid error blocks, preserving their archive provenance and making them available in the error-block navigator."
-        ],
-        "item_count": 3,
-        "truncated": false
-      },
-      {
-        "version": "0.6.0",
-        "date": "2026-08-15",
-        "items": [
-          "Read each finding through a visual form matched to its evidence. The Foundry stories now separate the shared start from the shared exit and show the full 14-month RSK and Fractal weekly history through the zero tail.",
-          "Reclassify the current RSK attribution corpus on every pool-resolution run. Migration `0009` removes the obsolete skip watermark that continuous capture normally invalidated on the next block."
-        ],
-        "item_count": 2,
-        "truncated": false
-      },
-      {
-        "version": "0.5.0",
-        "date": "2026-08-09",
-        "items": [
-          "Step through catalogued error blocks from the Go to menu, like stale blocks and orphans. They were visible in the tree but unreachable without already knowing a height or hash.",
-          "Name the Bitcoin consensus rule an error block breaks in plain language, with help explaining the rule, and say why the block has no canonical competitor instead of leaving the panel simply absent."
-        ],
-        "item_count": 2,
-        "truncated": false
-      },
-      {
-        "version": "0.4.2",
-        "date": "2026-07-30",
-        "items": [
-          "Make the RSK pool-reclassification pass complete in minutes instead of days."
-        ],
-        "item_count": 1,
-        "truncated": false
-      },
-      {
-        "version": "0.4.1",
-        "date": "2026-07-29",
-        "items": [
-          "Bound and center the Findings feed and article on wide screens."
-        ],
-        "item_count": 1,
-        "truncated": false
-      },
-      {
-        "version": "0.4.0",
-        "date": "2026-07-29",
-        "items": [
-          "Add the Findings view: evidence-backed stories the monitor's own data surfaces, presented as a month-grouped feed of cited articles with data-drawn evidence figures and anchors that jump to the header tree or open source details.",
-          "Seed six findings: the September 2025 Foundry stale cluster that no observer recorded (20 full-difficulty blocks, roughly 46.9 BTC foregone), Hathor's June 2026 merge-mining hashrate collapse, Foundry USA's single-block entry and exit from RSK and Fractal merge mining, the Elastos July 2026 exploit halt, and Terracoin's May 2026 full-difficulty win."
-        ],
-        "item_count": 2,
-        "truncated": false
-      },
-      {
-        "version": "0.3.0",
-        "date": "2026-07-28",
-        "items": [
-          "Add the Header Time Delta view: how far apart each stale block and the canonical block that beat it timestamped their headers, with a focus window, outlier gutters, coverage and table tabs, and block-detail links.",
-          "Never label a catalogued known stale as a strict or weak BTC orphan: the monitor imports the `bitcoin-data/stale-blocks` membership, excludes its members from orphan classification, and retroactively corrects rows classified before the membership existed.",
-          "Match the published research vocabulary: the broad evidence state is `unknown`, and the excluded orphan-class token is now `excluded`.",
-          "Accept recovered historical evidence for the six live chains, with exact child identity required and RSK sidecar support.",
-          "Add Open Graph social cards for link sharing."
-        ],
-        "item_count": 5,
-        "truncated": false
-      },
-      {
-        "version": "0.2.1",
-        "date": "2026-07-13",
-        "items": [
-          "Correct the source rail and source profiles for nine catalogued or recovered chains, adding historical date ranges, concise key facts, and citations in the source dialog."
-        ],
-        "item_count": 1,
-        "truncated": false
-      },
-      {
-        "version": "0.2.0",
-        "date": "2026-07-11",
-        "items": [
-          "Recover every Lyncoin Bitcoin-merge-mined header through height 260,499 and all 999,407 available SixEleven blocks. Bitcoin Core classified 11 Lyncoin parents and 7 SixEleven parents as canonical; neither chain produced a stale winner.",
-          "Keep the recovery limits visible: VCash contributes 68 explorer mappings confirmed as canonical and completed with block evidence by Bitcoin Core (not the VCash blockchain), while Doichain is a completed zero-row survey after 429,401 AuxPoW commitments produced no Bitcoin block winner.",
-          "Make source IDs permanent and retire ID 32. Mazacoin is removed because its consensus source contains no AuxPoW implementation, so it is not a Bitcoin merge-mined source."
-        ],
-        "item_count": 3,
-        "truncated": false
-      },
-      {
-        "version": "0.1.0",
-        "date": "2026-07-02",
-        "items": [
-          "Release the first source distribution of `merge-mining-monitor`.",
-          "Include the Rust workspace, Postgres schema baseline, capture/reconciliation pipeline, read API, static frontend, fixtures, provenance manifests, and local operator tooling needed to build, test, and run the monitor."
-        ],
-        "item_count": 2,
         "truncated": false
       }
     ]
@@ -418,74 +137,23 @@ Example:
 
 ## Source Codes
 
-Source codes use `<kind>:<chain>` or `<kind>:<chain>:<instance>`.
-
-Syntax:
+Source codes use `<kind>:<chain>` or `<kind>:<chain>:<instance>`:
 
 ```text
 ^[a-z][a-z0-9]*(-[a-z0-9]+)*(:[a-z][a-z0-9]*(-[a-z0-9]+)*){1,2}$
 ```
 
-Reserved source codes:
+| Lifecycle | Source Codes | Notes |
+|---|---|---|
+| `live` | `auxpow:namecoin`, `auxpow:rsk`, `auxpow:syscoin`, `auxpow:fractal`, `auxpow:hathor`, `auxpow:elastos`, `auxpow:qbit`, `auxpow:terracoin` | Active AuxPoW child-chain pollers and backfills. |
+| `bitcoin-core-backbone` | `live-chaintip:bitcoin:core` | Bitcoin Core backbone and parent classifier source. |
+| `historical` | `auxpow:argentum`, `auxpow:bitcoin-vault`, `auxpow:bitmark`, `auxpow:coiledcoin`, `auxpow:crown`, `auxpow:devcoin`, `auxpow:emercoin`, `auxpow:geistgeld`, `auxpow:groupcoin`, `auxpow:huntercoin`, `auxpow:i0coin`, `auxpow:ixcoin`, `auxpow:lyncoin`, `auxpow:myriadcoin`, `auxpow:rod`, `auxpow:sixeleven`, `auxpow:unobtanium`, `auxpow:xaya`, `auxpow:elcash` | Complete in-scope recovered AuxPoW datasets; no live producer. |
+| `partial` | `auxpow:vcash` | Ingestible recovered evidence subset; complete child chain unavailable. |
+| `surveyed` | `auxpow:doichain` | Child chain recovered and reviewed; zero admissible Bitcoin evidence rows. |
+| `catalogued` | `auxpow:jax-network`, `auxpow:blast`, `auxpow:fusioncoin`, `auxpow:jincoin`, `auxpow:bitcoin-stash` | Known BTC-merge-mined chains with no recovered data, no producer, no `poll_cursor` or `source_health` row, and zero evidence counts. |
 
-- `auxpow:namecoin`
-- `auxpow:rsk`
-- `auxpow:syscoin`
-- `auxpow:fractal`
-- `auxpow:hathor`
-- `auxpow:elastos`
-- `auxpow:qbit`
-- `auxpow:terracoin`
-- `live-chaintip:bitcoin:core`
-
-Reserved historical (recovered) AuxPoW source codes (defined in the Source
-Lifecycle Registry with lifecycle `historical`; no live producer):
-
-- `auxpow:argentum`
-- `auxpow:bitcoin-vault`
-- `auxpow:bitmark`
-- `auxpow:coiledcoin`
-- `auxpow:crown`
-- `auxpow:devcoin`
-- `auxpow:emercoin`
-- `auxpow:geistgeld`
-- `auxpow:groupcoin`
-- `auxpow:huntercoin`
-- `auxpow:i0coin`
-- `auxpow:ixcoin`
-- `auxpow:lyncoin`
-- `auxpow:myriadcoin`
-- `auxpow:rod`
-- `auxpow:sixeleven`
-- `auxpow:unobtanium`
-- `auxpow:xaya`
-- `auxpow:elcash`
-
-Reserved partial recovered AuxPoW source codes (lifecycle `partial`; evidence
-is ingestible, but the complete child blockchain remains unavailable):
-
-- `auxpow:vcash`
-
-Reserved surveyed AuxPoW source codes (lifecycle `surveyed`; child-chain data
-was recovered and reviewed, but no admissible Bitcoin evidence rows were found):
-
-- `auxpow:doichain`
-
-Reserved catalogued (not recovered) AuxPoW source codes (defined in the Source
-Lifecycle Registry with lifecycle `catalogued`; chains known to have
-BTC-merge-mined but with no recovered chain data, hence no producer, no
-poll-cursor, no source_health row, and zero evidence counts):
-
-- `auxpow:jax-network`
-- `auxpow:blast`
-- `auxpow:fusioncoin`
-- `auxpow:jincoin`
-- `auxpow:bitcoin-stash`
-
-Source ids are permanent and never reused, so retired ids remain as gaps. Id 32
-is the first such gap: Mazacoin was removed after its consensus source showed no
-AuxPoW implementation. No Mazacoin row or source code remains in the API
-registry.
+Source ids are permanent and never reused (id 32 was retired when Mazacoin was
+removed for having no consensus AuxPoW implementation).
 
 The `source` query parameter accepts comma-delimited source codes. Response
 echoes use `query.sources`, sorted and deduplicated. Normalization trims ASCII
@@ -547,77 +215,31 @@ Response arrays use stable ordering:
 
 ## Core Entities
 
-`merge_mining_event`
-: One AuxPoW child-chain block that commits to a Bitcoin parent header.
+See `docs/data-model.md` for base tables (`merge_mining_event`, chain sidecars,
+`event_pool_attribution`), parent classification kinds (`near`, `unknown`,
+`canonical`, `stale`, `error_block`), and the Bitcoin lineage gate (`docs/capture.md`,
+"Bitcoin Lineage Gate": non-Bitcoin SHA-256 headers are refused at capture and
+never stored). For `near` and `unknown`, the API projects directly from active
+`merge_mining_event` rows; for `canonical`, `stale`, and `error_block`, it reads
+the reconciled `block` / `attestation_proof` model.
 
-`rsk_evidence`
-: The API view of `rsk_merge_mining_evidence`, exposed as `event_details[].rsk`
-  for `auxpow:rsk` rows and `null` for other rows.
+API-computed miner and branch entities:
 
-`event_pool_attribution`
-: Event-level pool match provenance exposed as
-  `event_details[].pool_attributions`, split into `btc_parent` and
-  `child_block` arrays.
-
-`bitcoin_miner_pool`
-: The miner/pool resolved from Bitcoin block coinbase evidence for a Bitcoin
-  parent. It does not use child-chain miner evidence.
-
-`child_miner_pool`
-: The miner/pool resolved for one child-chain event from that child chain's
-  block evidence. Unknown is represented directly when the child event does not
-  resolve to one known pool.
-
-`display_miner_pool`
-: The best-available miner/pool for display labelling, a presentation-layer
-  fallback that never overrides the strict `bitcoin_miner_pool` fact. It equals
-  `bitcoin_miner_pool` when the Bitcoin coinbase miner is known. When the strict
-  Bitcoin coinbase miner is Unknown (for example an RSK-only stale block whose
-  compressed AuxPoW proof carries no recoverable Bitcoin coinbase), it falls
-  back to the single distinct known child miner pool across the parent's active
-  merge-mining events (the merge-miner of the child block is the miner of the
-  Bitcoin parent). Zero or conflicting known child pools resolve to Unknown. It
-  is chain-agnostic (any merge-mined child chain can supply it) and is present
-  on tree nodes and on the block detail.
-
-`display_miner_basis`
-: How `display_miner_pool` was resolved: `bitcoin_coinbase` (strict coinbase
-  miner) | `child_inferred` (single distinct known child miner pool) |
-  `unknown` (no strict pool and zero or conflicting child pools). Near/unknown
-  direct-projected parents are not validated Bitcoin blocks and are never
-  child-inferred.
-
-`block`
-: The API representation of one Bitcoin parent header. For `near` and
-  `unknown`, the API reads directly from active `merge_mining_event` rows. For
-  `canonical` and `stale`, later read-model work reads from the reconciled
-  block/proof/observation model.
-
-`parent_kind`
-: One of `near`, `unknown`, `canonical`, or `stale`.
-
-`near`
-: A Bitcoin share: the parent is a Bitcoin header that satisfies the
-  child-chain AuxPoW target but fails its own target.
-
-`unknown`
-: A Bitcoin header that meets its own target, but Bitcoin-chain proof has
-  not yet classified it as canonical or stale.
-
-`canonical`
-: Parent header is on the active Bitcoin chain.
-
-`stale`
-: Parent header is Bitcoin-valid but not on the active chain.
-
-Every parent the API serves is a Bitcoin header. A parent from another SHA-256
-chain (a Bitcoin Cash block or share, for instance) is refused at capture and
-never stored, so it appears in no count or projection (`docs/capture.md`,
-"Bitcoin Lineage Gate").
-
-`stale_branch`
-: One or more stale blocks linked by parent-child edges, with branch depth,
-  member hashes, and canonical competitor references.
+- `bitcoin_miner_pool`: miner/pool resolved strictly from Bitcoin parent coinbase
+  evidence (never child-chain evidence).
+- `child_miner_pool`: miner/pool resolved for one child-chain event from that
+  child chain's block evidence (`Unknown` when unresolved).
+- `display_miner_pool`: presentation-layer best-available miner/pool on tree
+  nodes and block details (never overrides `bitcoin_miner_pool`). Equals
+  `bitcoin_miner_pool` when known; when `bitcoin_miner_pool` is `Unknown` (e.g.,
+  an RSK-only stale block with no recoverable Bitcoin coinbase), falls back to
+  the single distinct known `child_miner_pool` across active events for the
+  parent (zero or conflicting known child pools resolve to `Unknown`).
+- `display_miner_basis`: how `display_miner_pool` was resolved:
+  `bitcoin_coinbase` | `child_inferred` | `unknown`. Direct-projected
+  `near`/`unknown` parents are never child-inferred.
+- `stale_branch`: one or more stale blocks linked by parent-child edges, with
+  branch depth, member hashes, and canonical competitor references.
 
 ## Pool Objects
 
@@ -683,175 +305,66 @@ Query:
 GET /api/v1/tree?at_height&at_time&context=compact&from_height&to_height&kinds=near,unknown,canonical,stale,error_block&classification=strict_btc_orphan,weak_btc_orphan&source=auxpow:namecoin,auxpow:rsk,auxpow:syscoin,auxpow:fractal,auxpow:hathor&include_near=true&include_unheighted=true&unheighted_from=2026-05-01&unheighted_to=2026-05-26&min_sources=1
 ```
 
-`at_height`, `at_time`, `from_height` / `to_height`, and `unheighted_anchor` are
-mutually exclusive tree lookup modes. `at_height` selects one exact Bitcoin
-height and resolves to the existing single-height tree window `H..H`. `at_time`
-is a UTC RFC3339 timestamp in `YYYY-MM-DDTHH:MM:SSZ` form. It resolves to the
-complete canonical block with the nearest `btc_header_time` at or before the
-timestamp, using deterministic ordering
-`btc_header_time DESC, btc_height DESC, btc_header_hash ASC`, then renders that
-row's height as a single-height tree. If no complete canonical block exists at
-or before the timestamp, the response is an empty non-tip lookup window with
-`empty_reason = "no_complete_canonical_at_or_before_time"`.
+#### Lookup Modes (Mutually Exclusive)
 
-`context` defaults to `"exact"` for direct API callers. `context=compact` is
-accepted only with `at_height` or `at_time`; it returns the requested target plus
-nearby blocks that explain relevant forks. It does not accept raw
-caller-supplied ranges: `context=compact` with `from_height` / `to_height`,
-`unheighted_anchor`, `include_unheighted=true`, `unheighted_from`, or
-`unheighted_to` is `invalid_query`. The manual UI always uses compact context
-for Height and Date/Time lookups; its shared links store only frontend
-`tree_height` / `tree_time` parameters and map them to backend `at_height` /
-`at_time` plus `context=compact`.
+| Mode (`query.window_mode`) | Parameters | Behavior & Constraints |
+|---|---|---|
+| `"tip"` (default) | omit all lookup bounds | Returns a 16-block canonical window ending at the highest complete contiguous canonical backbone window (not raw `MAX(block.btc_height)`). If no complete canonical backbone height exists, returns an empty tree with nullable window bounds and `empty_reason = "no_canonical_tip"`. |
+| `"height"` | `at_height` (optional `context=compact`) | Exact single-height lookup `H..H` (or bounded fork-explaining context when `context=compact`). Manual UI `tree_height` maps to `at_height&context=compact`. |
+| `"time"` | `at_time` (`YYYY-MM-DDTHH:MM:SSZ`, optional `context=compact`) | Resolves to the complete canonical block at or before `at_time` using deterministic ordering `btc_header_time DESC, btc_height DESC, btc_header_hash ASC`, then renders its height. If none exists, returns an empty non-tip window with `empty_reason = "no_complete_canonical_at_or_before_time"`. Manual UI `tree_time` maps to `at_time&context=compact`. |
+| `"explicit"` | `from_height` and `to_height` | Legacy/internal explicit height range (max 2,016 heights) for direct API callers and backend-generated navigator `tree_window=generated` links (`tree_from`/`tree_to`). Both bounds are required together; supplying only one is `invalid_query`. |
+| `"unheighted_anchor"` | `unheighted_anchor` (64-char hex hash) | Anchor-centered BTC-orphan view: renders the proven `prev_hash`-linked orphan component containing the anchor against a local `±16` canonical context window (`tip_height = null`, `defaulted_to_tip = false`, `empty_reason = null`). The anchor must be an existing PoW-valid `unknown` block in the active `classification` set (else `not_found`). Ignores `kinds`, `source`, and `min_sources`. Falls back to a flat time-ordered strip (250-node cap, null window bounds) when no placement height or in-window canonical attachment exists. See `docs/tree-semantics.md`. |
 
-Compact context represents uneventful canonical runs as `hidden` edges while
-preserving the requested target, stale rows, canonical competitors, and
-branch/root/tip context. Backbone integrity guarantees apply inside the rendered
-window exactly as for explicit ranges (`backbone_unsynced` / `backbone_conflict`).
-Compact mode does not automatically attach BTC orphan branches: use
-`/api/v1/navigator/orphan` to find orphan candidates and
-`/api/v1/tree?unheighted_anchor=<hash>` to render the placed orphan fork. The
-adaptive-shrinking mechanics are described in `docs/tree-semantics.md`.
+#### Query Modifiers And Backbone Integrity
 
-`from_height` and `to_height` are legacy/internal API range bounds and remain
-optional as a pair. Supplying exactly one is `invalid_query`. They are available
-for direct API callers, but the frontend no longer exposes or preserves range
-state from manual controls. The manual UI writes `tree_height` and `tree_time`
-parameters that map to backend `at_height` and `at_time`. Backend-generated
-navigator links may use the frontend-only marker `tree_window=generated` with
-`tree_from` / `tree_to`; the frontend then calls this endpoint with bounded
-`from_height` / `to_height`.
-When all lookup modes are omitted, the backend defaults to a tip-focused 16-block
-canonical Bitcoin window ending at the highest complete covered canonical
-backbone window, not raw `MAX(block.btc_height)`.
-The request path does not fetch Bitcoin Core. Every canonical height in the
-resolved tree window must already be present as a single `kind = 'canonical'`
-`block` row with `btc_coinbase_status = 'complete'`, normally populated by
-`sync-bitcoin-core`. This requirement is independent of `kinds` and
-`classification` filters: stale and orphan-focused projections still use
-canonical rows as the displayed Bitcoin spine and branch attachment context. If
-the window is missing rows or has incomplete coinbase evidence, the endpoint
-returns HTTP 409 `backbone_unsynced`. If duplicate canonical rows or broken
-prev-hash links are present, it returns HTTP 409 `backbone_conflict`. If the DB
-has no complete canonical backbone height, the response is an empty tree with
-nullable window bounds and
-`empty_reason = "no_canonical_tip"`.
-Existing deployments can have canonical rows that predate Core coinbase
-persistence, or rows where a best-effort coinbase fetch failed. Those rows are
-treated as incomplete backbone rows until `sync-bitcoin-core` repairs the
-affected heights. A failed coinbase fetch does not stop later hash-linked
-heights in the requested sync page from being written, but the
-contiguous-complete cursor remains pinned before the failed height. Clients
-should show the 409 action rather than retrying the tree request in a loop.
-`first_missing_height` in `backbone_unsynced` means the first not-fully-covered
-height in the requested window; that includes absent canonical rows and rows
-with incomplete or failed Core coinbase evidence.
+| Parameter / Rule | Contract |
+|---|---|
+| `context` | `"exact"` (default) or `"compact"`. `context=compact` is accepted only with `at_height` or `at_time`; combining it with `from_height`/`to_height`, `unheighted_anchor`, `include_unheighted=true`, `unheighted_from`, or `unheighted_to` is `invalid_query`. Collapses uneventful canonical spans into `hidden` edges while preserving the requested target, stale rows, canonical competitors, and branch/root/tip context. Does not auto-attach BTC orphan branches (use `/api/v1/navigator/orphan` and `unheighted_anchor`). |
+| `classification` | Comma-delimited filter over orphan classes (`strict_btc_orphan`, `weak_btc_orphan`, `excluded`, `pending`; default `strict_btc_orphan,weak_btc_orphan`). Separate from `kinds`: orphan classes refine `kind='unknown'` (`block.btc_orphan_class`) and are never passed through `kinds`. Scopes the `unknown` population in `unheighted_anchor` and `include_unheighted` modes; inert in height-window and tip modes. Unknown members return `invalid_query`. |
+| `include_unheighted`, `unheighted_from`, `unheighted_to` | Direct-projected `near` and `unknown` nodes have `height = null` and are excluded from height windows unless `include_unheighted=true` with required inclusive UTC date bounds `unheighted_from`..`unheighted_to` (capped to 31 UTC calendar days; returns `range_too_large` if `> 250` unheighted nodes survive filters). Block-backed unknowns are filtered by `block.btc_orphan_class`; direct-evidence unknowns with no `block` row are treated as `pending`. |
+| Backbone integrity (`backbone_unsynced` / `backbone_conflict`) | The request path never calls Bitcoin Core. Every canonical height in the resolved window must exist as a single `kind = 'canonical'` row with `btc_coinbase_status = 'complete'` (populated by `sync-bitcoin-core`), independent of `kinds` and `classification` filters. Missing rows or incomplete/failed Core coinbase evidence return HTTP 409 `backbone_unsynced` (`first_missing_height` names the first uncovered or partial height; the contiguous-complete cursor stays pinned before any failed coinbase height). Duplicate canonical rows or broken `prev_hash` links return HTTP 409 `backbone_conflict`. Clients should surface the 409 action rather than retrying in a loop. |
 
-`unheighted_anchor` selects the anchor-centered BTC-orphan view (the orphan-block
-navigator landing): a 64-character hex hash of a PoW-valid `unknown` block whose
-`btc_orphan_class` is in the active `classification` set. It is mutually
-exclusive with `at_height`, `at_time`, `from_height` / `to_height`, and with the
-`include_unheighted` date-window mode (supplying either combination is
-`invalid_query`), and an anchor hash that is not an existing PoW-valid orphan in
-that set is `not_found` (so the navigator never lands on a pending or excluded
-block in the default strict+weak view). Anchor mode renders the whole proven
-prev_hash-linked orphan component that contains the anchor, placed against the
-canonical `±16` context window read from local canonical rows only (it does not
-fetch Bitcoin Core during the request). The `kinds`, `source`, and `min_sources`
-filters are ignored (only `classification` decides eligibility), so the
-canonical blocks used for placement are never filtered away and the jump always
-lands. Run
-`sync-bitcoin-core` for historical heights before relying on dense orphan
-placement. The query echo reports `window_mode = "unheighted_anchor"` and echoes
-`unheighted_anchor`; the `window` reports the `±16` placement bounds in
-`btc_height_min` / `btc_height_max` (null `tip_height`,
-`defaulted_to_tip = false`, `empty_reason = null`). When no placement height can
-be derived, or a placement height was derived but the window holds no canonical
-block to attach to, anchor mode falls back to a flat time-ordered strip of the
-anchor plus its nearest-in-time orphan neighbors (250-node cap, null window
-bounds). The placement-height derivation and `orphan` / `orphan_approx` edge
-attachment rules are described in `docs/tree-semantics.md`.
+#### Response Envelope
 
-`classification` is a comma-delimited filter over the orphan classes
-(`strict_btc_orphan`, `weak_btc_orphan`, `excluded`, `pending`),
-defaulting to `strict_btc_orphan,weak_btc_orphan`. It is a SEPARATE parameter from
-`kinds` (the structural parent kinds): the orphan classes are the derived
-refinement of `kind='unknown'` (see `block.btc_orphan_class`) and are never
-smuggled through `kinds`. It scopes the unknown population in anchor mode and in
-the `include_unheighted` date-window mode; the height-window and tip modes select
-no time-located unknown nodes, so it is inert there. An unknown member is
-`invalid_query`.
+- `query`: echoes `from_height`, `to_height`, `at_height`, `at_time`,
+  `window_mode` (`"tip"` | `"explicit"` | `"height"` | `"time"` |
+  `"unheighted_anchor"`), `context` (`"exact"` | `"compact"`), `include_near`,
+  `include_unheighted`, `unheighted_from`, `unheighted_to`, and
+  `unheighted_anchor`.
+- `window`: nullable `btc_height_min`, nullable `btc_height_max`, nullable
+  `tip_height`, `defaulted_to_tip`, nullable `empty_reason`, and
+  `hidden_linear_block_count`.
+- `nodes[]`: sorted by height then hash (in `unheighted_anchor` mode, placed
+  orphan members sort by `placement_height` then hash).
+- `edges[]`: drawn-edge graph including `hidden` edges for collapsed canonical
+  context.
+- `branches[]`: stale-branch and multi-block orphan-branch summaries.
+- `legend`: `kinds` and `edge_kinds`.
 
-Response fields:
+#### Tree Node Fields
 
-- `query`, including `include_near`, `include_unheighted`, and any
-  `unheighted_from` / `unheighted_to` bounds or `unheighted_anchor`. The query
-  echo includes `from_height`, `to_height`, `at_height`, `at_time`, and
-  `window_mode = "tip"` for omitted lookup bounds, `"explicit"` for legacy
-  caller-supplied range bounds, `"height"` for exact-height lookup, `"time"` for
-  datetime lookup, and `"unheighted_anchor"` for anchor mode. It also echoes
-  `context = "exact"` or `"compact"`;
-- `window` with nullable `btc_height_min`, nullable `btc_height_max`, nullable
-  `tip_height`, `defaulted_to_tip`, nullable `empty_reason`,
-  and `hidden_linear_block_count`;
-- `nodes[]` sorted by height then hash (anchor-component orphan members, all
-  null-height, by `placement_height` then hash);
-- `edges[]` including `hidden` edges for collapsed canonical context;
-- `branches[]` for stale-branch summaries;
-- `legend` with `kinds` and `edge_kinds`.
+| `nodes[]` Field | Contract |
+|---|---|
+| `id` | Response-local integer layout ID. |
+| `hash`, `height`, `kind` | Parent header display hash, nullable Bitcoin height (`null` for direct-projected `near`/`unknown` and placed orphans), and structural parent kind. |
+| `prev_id`, `prev_hash` | Layout ID of visible predecessor and stored parent `prev_hash`. A `hidden` edge may make `node.prev_hash` differ from the visible `prev_id` node's hash. |
+| `btc_orphan_class` | Derived refinement of `kind='unknown'` (`strict_btc_orphan` / `weak_btc_orphan` / `excluded`), or `null` for canonical/stale/error-block nodes and pending unknowns. Per-node detail field, not a `kind`. |
+| `pool` | Best-available display miner pool object (`display_miner_pool`). |
+| `source_summary` | Evidence source summary for the parent header. |
+| `child_chain_evidence[]` | Grouped by active AuxPoW `source` and `child_chain`, with event count and child-height min/max. |
+| `proof_state` | `{ has_auxpow_evidence, has_live_observation }`. |
+| `competition` | Paired canonical competitor details for `stale` nodes, else `null`. |
+| `branch` | `{ "branch_id": "<id>" }` for stale members (`stale-<btc_height_min>-<root_hash>`) and multi-block orphan component members (`orphan-<root_hash>`), else `null`. Orphan `TreeBranch` entries in `tree.branches[]` use placement heights for `btc_height_min`/`btc_height_max` and `canonical_competitor_hashes: []`. |
+| `placement_height` | Optional; present on placed orphan nodes in `unheighted_anchor` mode only (omitted elsewhere and on `/api/v1/block/:hash`). Derived layout height (`btc_height` stays `null`). |
+| `placement_approx` | Optional; present with `placement_height`. `true` when placement is approximate rather than a validated strict BIP34 height (UI prefixes `~`). See `docs/tree-semantics.md`. |
 
-Each tree node has:
+#### Tree Edge Kinds
 
-- `id`: response-local integer layout ID;
-- `hash`, `height`, `kind`, `prev_id`, `prev_hash`;
-- `btc_orphan_class`: the derived refinement of `kind='unknown'`
-  (`strict_btc_orphan` / `weak_btc_orphan` / `excluded`), or `null` for
-  canonical/stale/error-block nodes and for pending/never-Core-checked unknowns.
-  `kind` stays
-  the structural evidence state; `btc_orphan_class` is the refinement the UI
-  renders. It is a per-node detail field, not a navigable bucket;
-- `pool`;
-- `source_summary`;
-- `child_chain_evidence[]`, grouped by active AuxPoW `source` and
-  `child_chain`, with event count and child-height min/max for child chains
-  that referred to this Bitcoin header;
-- `proof_state` with `has_auxpow_evidence` and `has_live_observation`;
-- `competition`, null except for stale nodes with a paired competitor;
-- `branch`, null for non-stale/non-orphan-branch nodes and `{ "branch_id": "<id>" }`
-  for stale members and for multi-block orphan component members;
-- `placement_height` (optional) and `placement_approx` (optional): the orphan
-  fork placement, present on placed orphan nodes in anchor mode only (both
-  omitted elsewhere). `placement_height` is the derived layout height the orphan
-  dangles at (its stored `btc_height` stays `null`); `placement_approx` is `true`
-  when that height is an approximation rather than a validated strict BIP34
-  height, and the UI prefixes the label with `~`. They are layout hints, not
-  stored block columns, and are not exposed on `/api/v1/block/:hash`. See
-  `docs/tree-semantics.md` for how placement is derived;
-
-`height` is `null` for direct-projected near and unknown nodes because current
-AuxPoW producers do not prove Bitcoin parent height. The height window selects
-height-backed canonical/stale/error-block/context nodes
-only. Null-height nodes are
-excluded unless `include_unheighted = true`; in that mode
-`unheighted_from` and `unheighted_to` are required UTC date bounds applied to
-the parent header time carried by active direct evidence rows, and the
-`classification` filter (default strict+weak) further scopes the unheighted
-unknown rows to the requested orphan classes. A block-backed unknown is filtered
-by its `block.btc_orphan_class`; a direct-evidence unknown with no `block`
-read-model row carries no class and is treated as `pending`, so it appears only
-when `classification` includes `pending`. These bounds are
-inclusive, capped to 31 UTC calendar days, and the endpoint returns
-`range_too_large` if more than 250 unheighted nodes survive filters. Null-height
-nodes sort after height-backed nodes, then by hash.
-
-Clients must derive hidden context from `edges[]`. A hidden
-edge may make `node.prev_hash` differ from the visible `prev_id` node's hash.
-`edges[]` is the drawn-edge graph: a node may carry `prev_id`/`prev_hash` for a
-visible predecessor without a matching `edges[]` entry when that transition has
-no drawable edge kind (an error-block, unknown, or near child, or a canonical child with a
-non-canonical predecessor).
-
-Edge fields are `from_hash`, `to_hash`, and `edge_kind`. Allowed edge kinds:
+Clients must derive hidden context from `edges[]`. `edges[]` is the drawn-edge
+graph: a node may carry `prev_id`/`prev_hash` for a visible predecessor without a
+matching `edges[]` entry when that transition has no drawable edge kind (an
+error-block, unknown, or near child, or a canonical child with a non-canonical
+predecessor).
 
 | `edge_kind` | Meaning | Extra fields |
 |---|---|---|
@@ -862,149 +375,35 @@ Edge fields are `from_hash`, `to_hash`, and `edge_kind`. Allowed edge kinds:
 | `orphan` | anchor-mode fork edge from a verified strict root to its canonical predecessor (`placement_height - 1`), or a proven orphan-to-orphan prev_hash link inside a multi-block component | none |
 | `orphan_approx` | anchor-mode fork edge for an approximate placement (weak/excluded/pending root, or a strict root whose predecessor is absent/mismatched), to the nearest in-window canonical | none |
 
-Branch IDs use `stale-<btc_height_min>-<root_hash>` for stale branches and
-`orphan-<root_hash>` for orphan branches. Orphan branch `root_hash` is the stable
-component identity (the oldest member whose prev_hash is not in the component);
-orphans have no stable height, so the branch id contains no height segment.
-`tree.branches` for orphan branches use the same `TreeBranch` object
-(`branch_id`, `root_hash`, `tip_hash`, `member_hashes`, `btc_height_min`,
-`btc_height_max`) with height bounds set to the placement heights and
-`canonical_competitor_hashes` empty (orphans have no competition).
-
-Tree reduction is deterministic: a given range, filter set, and dataset always
-yield the same response. Only the fields in the response are guaranteed:
-collapsed canonical context is represented by `hidden` edges carrying
-`hidden_count` and summarized by `window.hidden_linear_block_count`; clients
-should read `edges[]` to find hidden context; and the response returns at most
-500 nodes, yielding `range_too_large` (HTTP 422) when the required nodes cannot
-fit within that cap. The specific reduction procedure the backend uses is
-documented as an implementation note in `docs/tree-semantics.md`, not part of
-the API contract.
+Tree reduction is deterministic: collapsed canonical context is represented by
+`hidden` edges with `hidden_count` and summarized by
+`window.hidden_linear_block_count`. Responses return at most 500 nodes, yielding
+`range_too_large` (HTTP 422) when required nodes cannot fit within that cap (see
+`docs/tree-semantics.md`).
 
 ### `/api/v1/block/:hash`
 
 Purpose: fetch details for a selected parent header.
 
-The hash path parameter may be uppercase or mixed-case when valid hex. The API
-normalizes valid hashes to lowercase before lookup. Invalid hash syntax returns
-`invalid_hash`.
+The hash path parameter may be uppercase or mixed-case when valid hex; the API
+normalizes valid hashes to lowercase before lookup and returns `invalid_hash`
+for invalid syntax. Direct `near` and `unknown` projections group active
+non-revoked `merge_mining_event` rows by `btc_parent_header_hash` (kind
+precedence: canonical/stale/error-block read model first, then `unknown`, then
+`near`). Core-only backbone rows represent Core provenance on `block` and
+`block.source_summary` without a separate observation payload.
 
-Response fields:
-
-- `block` with `hash`, nullable `height`, `kind`, nullable `btc_orphan_class`
-  (the derived refinement of `kind='unknown'`: `strict_btc_orphan` /
-  `weak_btc_orphan` / `excluded`, else `null`), nullable
-  `error_block_reason` (the live classifier or pinned fallback catalogue's
-  primary consensus-rejection token for `kind = 'error_block'`, otherwise
-  `null`), nullable `coinbase_tag`
-  (for Core-attested canonical rows with stored Core coinbase
-  evidence, extracted from `block.btc_coinbase_script`; otherwise extracted
-  from the representative Bitcoin coinbase script in
-  `commitment.parent_coinbase_script_hex`; else `null`), `header`,
-  `bitcoin_miner_pool`, `display_miner_pool` + `display_miner_basis` (the
-  best-available display miner; see the glossary), and `source_summary`.
-  Direct-projected near/unknown blocks (no read-model row) carry
-  `btc_orphan_class: null` and `error_block_reason: null`;
-- `proofs`;
-- `event_details`;
-- `competition`;
-- `stale_branch`;
-- `commitment`.
-
-Core-only backbone rows represent Core provenance through the canonical `block`
-row and `block.source_summary`; there is no separate per-header observation
-payload.
-
-`commitment` is the parent-level AuxPoW merge-mining commitment, or `null`
-(matching `competition` / `stale_branch`) when the block has no recognized
-AuxPoW-format event. When present it carries `format`
-(`namecoin-aux` / `qbit-aux` / `rsk-opaque` / `hathor-rfc0006`, chosen by
-family priority: any Namecoin-family event wins, else Qbit, else RSK, else
-Hathor), `parent_coinbase_txid`, `parent_coinbase_script_hex`, and `marker`.
-Namecoin-family and Qbit events both persist the real parent coinbase, so
-both formats carry the txid and script. `marker` is non-null only for a
-Namecoin-family or Qbit parent whose coinbase scriptSig yields a `0xfabe6d6d`
-marker (Qbit mainnet also accepts the legacy no-marker placement, so a Qbit
-commitment with a null marker is normal); it carries `magic_present`,
-`aux_merkle_root`, `merkle_size`, and `merkle_nonce`.
-`aux_merkle_root` is always emitted in the standard display order, like every
-other API hash, but how that relates to the raw scriptSig bytes depends on the
-format: for `namecoin-aux` the scriptSig commits the root in wire order, so
-the field is the reverse of those 32 bytes; for `qbit-aux` the scriptSig
-already commits the display-order root, so the field is those 32 bytes as-is.
-A client verifying a commitment against the raw script must apply the rule
-for its `format`, not reverse unconditionally. RSK and
-Hathor are never scanned for the marker, so their commitment is format-only with
-a null marker and null coinbase fields. The marker is decoded in Rust from the
-already-stored parent coinbase bytes; no `aux_target` value is surfaced (only the
-`event_details[].pow_validates_child_target` check), and that value remains a
-documented follow-up.
-
-For Core-attested canonical blocks with stored Bitcoin Core coinbase evidence,
-`block.coinbase_tag` is derived from the `block.btc_coinbase_script` on the
-Bitcoin block row, even when child-chain event details exist. This Core path
-prefers the BTC pool resolver's matched coinbase tag and then falls back to the
-normalized printable run with surrounding `/` delimiters trimmed. When no Core
-tag is available, event-backed blocks derive `block.coinbase_tag` from the same
-commitment representative row as `commitment.parent_coinbase_script_hex`, not
-from an arbitrary contributing event. The raw extraction keeps printable ASCII
-bytes (`0x20..=0x7e`), splits on every other byte, trims kept runs of four or
-more characters, and joins multiple runs with a single space. RSK and Hathor
-commitments therefore report `coinbase_tag: null` because their representative
-commitment intentionally has no recoverable Bitcoin coinbase script.
-
-`event_details[]` additionally carry `chain_id` (the reference AuxPoW chain id;
-cite-or-null, Namecoin = 1, Elastos = 1224, Qbit = 47, Terracoin = 50, `null`
-for not-yet-cited chains and non-AuxPoW families) and `slot_index` (this
-chain's slot in the parent's aux merkle tree, decoded from the stored proof
-blob). Both are selected per proof
-format from the chain slug — classic CAuxPow for the Namecoin family, Qbit's
-native format for `qbit`, never sniffed from stored bytes — and are `null` for
-every other family; `slot_index` is additionally gated on the blob's embedded
-parent header matching the event's `btc_parent_header_hash`, so a
-parseable-but-mismatched blob never surfaces a foreign slot.
-
-`event_details[].aux_proof` is the decoded merge-mining merkle proof (the human
-breakdown the UI renders in place of the opaque proof-byte hex): the redundant
-`hash_block` (`CAuxPow::hashBlock`, conventionally all-zero and not the real
-parent hash) plus `coinbase_branch` (coinbase txid up to the parent transaction
-merkle root) and `blockchain_branch` (aux block hash up to the committed
-`aux_merkle_root`), each with an `index` (side-mask; the `blockchain_branch`
-index is the slot) and display-order `siblings`. `hash_block` is a
-classic-CAuxPow wire field: always present for Namecoin-family proofs and
-absent for qbit-format proofs, whose wire format has no such field. Same gate
-as `slot_index` (per-format selection, parent-header match), `null` otherwise.
-The raw `aux_merkle_proof_hex` stays in the payload for programmatic use.
-
-For direct `near` and `unknown` projections, group active non-revoked
-`merge_mining_event` rows by `btc_parent_header_hash`. Current kind precedence
-is canonical/stale/error-block read model first, then any `unknown` event, then any `near`
-event.
-
-`proofs[].evidence.contributing_event_ids` is the durable proof evidence for
-AuxPoW-derived proofs. `/api/v1/block/:hash` hydrates those IDs into sibling
-`event_details[]` for UI convenience. Canonical and stale block fixtures must
-have exact set equality between proof IDs and hydrated event detail IDs.
-
-`proofs[].source` is a `source_ref` object. `event_details[].source` is a
-source-code string.
-
-Competition fields:
-
-- `btc_height`;
-- `stale_hash`;
-- `canonical_hash`;
-- `stale_bitcoin_miner_pool`;
-- `canonical_bitcoin_miner_pool`;
-- `header_time_delta_s`;
-- `propagation_delta_s`.
-
-`propagation_delta_s` is nullable while the underlying observation data is
-absent.
-
-Stale branch positions are `root`, `interior`, `tip`, and `root_and_tip`.
-`root_and_tip` requires `depth = 1`; `root` has no parent and at least one child;
-`tip` has a parent and no children.
+| Response Field | Contract |
+|---|---|
+| `block` | `hash`, nullable `height`, `kind`, nullable `btc_orphan_class` (`strict_btc_orphan` / `weak_btc_orphan` / `excluded` for classified `unknown`, else `null`), nullable `error_block_reason` (primary consensus-rejection token for `kind = 'error_block'`, else `null`), nullable `coinbase_tag`, `header`, `bitcoin_miner_pool`, `display_miner_pool`, `display_miner_basis`, and `source_summary`. Direct-projected near/unknown blocks carry `btc_orphan_class: null` and `error_block_reason: null`. |
+| `block.coinbase_tag` | For Core-attested canonical blocks with stored `block.btc_coinbase_script`, derived from the Core block row (even when child events exist), preferring the BTC pool resolver's matched tag and falling back to the normalized printable run with surrounding `/` delimiters trimmed. When no Core tag exists, derived from `commitment.parent_coinbase_script_hex` (printable ASCII `0x20..=0x7e`, split on other bytes, trimmed runs of `>= 4` chars joined by a single space). `null` for RSK and Hathor commitments. |
+| `commitment` | Parent-level AuxPoW commitment, or `null` when no recognized AuxPoW-format event exists. Carries `format` (chosen by family priority: `namecoin-aux` > `qbit-aux` > `rsk-opaque` > `hathor-rfc0006`), `parent_coinbase_txid`, `parent_coinbase_script_hex`, and `marker`. `namecoin-aux` and `qbit-aux` persist the parent coinbase and populate txid/script; `rsk-opaque` and `hathor-rfc0006` are format-only with `null` coinbase fields and `marker: null`. |
+| `commitment.marker` | Non-null only for `namecoin-aux` or `qbit-aux` parents whose coinbase scriptSig yields a `0xfabe6d6d` marker (Qbit mainnet also accepts legacy no-marker placement, where `marker` is `null`). Carries `magic_present`, display-order `aux_merkle_root`, `merkle_size`, and `merkle_nonce`. For `namecoin-aux` the scriptSig commits wire order (reversed for display); for `qbit-aux` the scriptSig commits display order as-is. |
+| `proofs[]` | Derived AuxPoW proofs (`proofs[].source` is a `source_ref` object). `proofs[].evidence.contributing_event_ids` hydrates into sibling `event_details[]` (canonical and stale fixtures require exact set equality between proof IDs and hydrated event detail IDs). |
+| `event_details[]` | Hydrated per-child events (`event_details[].source` is a source-code string). Includes `chain_id` (reference AuxPoW chain ID: Namecoin = 1, Elastos = 1224, Qbit = 47, Terracoin = 50, else `null`) and `slot_index` (slot in the parent's aux merkle tree, selected by chain slug format — classic CAuxPow for Namecoin family, Qbit native format for `qbit` — and gated on the blob's embedded parent header matching `btc_parent_header_hash`). |
+| `event_details[].aux_proof` | Decoded merge-mining merkle proof (`null` when absent or failing the `slot_index` format/parent-match gate): `hash_block` (`CAuxPow::hashBlock`, present for classic CAuxPow and absent for `qbit`), `coinbase_branch`, and `blockchain_branch`, each with `index` (side-mask; `blockchain_branch.index` is the slot) and display-order `siblings`. Raw `aux_merkle_proof_hex` remains alongside it. |
+| `competition` | Nullable object (`null` except for paired `stale` blocks): `btc_height`, `stale_hash`, `canonical_hash`, `stale_bitcoin_miner_pool`, `canonical_bitcoin_miner_pool`, `header_time_delta_s`, and nullable `propagation_delta_s`. |
+| `stale_branch` | Nullable branch summary. Positions are `root` (no parent, `>= 1` child), `interior`, `tip` (parent, no children), and `root_and_tip` (requires `depth = 1`). |
 
 ### `/api/v1/navigator/{target}`
 
@@ -1022,13 +421,6 @@ targets are:
 | `error-block` | `height` | consensus-invalid full-PoW blocks | `tree_window` |
 | `orphan` | `time` | BTC-orphan blocks | `unheighted_anchor` |
 | `orphan-branch` | `time` | multi-block BTC-orphan branches | `unheighted_anchor` |
-
-`error-block` items are single blocks with `kind = "error-block"`, ordered
-newest-first by height and then by stored hash bytes. The hash tie-break is
-load-bearing rather than cosmetic: error blocks are not one block per height, so
-paging on height alone would skip or repeat members of a same-height group. Items
-never carry `branch` or `orphan`, because an error block never raced and so is
-neither a branch member nor an orphan.
 
 All targets use the same modes:
 
@@ -1106,7 +498,7 @@ Ordering is stable and target-specific:
 - `error-block`: `btc_height` descending, then stored header hash bytes
   ascending. The hash tie-break is required rather than cosmetic: the catalogue
   carries more than one block at some heights, so paging on height alone would
-  skip or repeat members of a group.
+  skip or repeat members of a group (`branch` and `orphan` are always `null`).
 - `orphan`: `btc_header_time` descending, then stored header hash bytes
   descending.
 - `orphan-branch`: `btc_header_time_max` descending, then
@@ -1120,91 +512,37 @@ include only proven prev_hash-linked orphan components with `depth >= 2`;
 one-block orphan components remain single `orphan` items. Branch endpoints
 intentionally omit member lists, pool detail, and placement heights; the tree
 and `/api/v1/block/:hash` endpoints expose those when a branch is selected.
-
-The orphan classes (`btc_orphan_class`) appear across the navigator, tree,
-block, and sources endpoints as documented per endpoint above. See
-`docs/tree-semantics.md` for where BTC orphan classes appear.
+See `docs/tree-semantics.md` for where `btc_orphan_class` appears across endpoints.
 
 ### `/api/v1/sources`
 
 Purpose: drive source filters and health panels.
 
-The source fixture includes ROD (`auxpow:rod`, permanent id 35) as a
-historical capture with one canonical observation and no live-poller progress.
-Its native chain can remain active independently of the capture lifecycle.
-
 Response fields:
 
 - `sources[]` sorted by `id`.
+- `status`: evidence freshness only (`fresh`, `stale`, or `not_started`;
+  `not_started` requires derived `last_seen_at = null`).
+- `sync`: source capture progress, tracked separately from evidence freshness.
 
-`status` describes evidence freshness only. Values are `fresh`, `stale`, or
-`not_started`; `not_started` requires derived `last_seen_at = null`.
+| `sync` Field | Contract |
+|---|---|
+| `sync.mode` | `live`, `bitcoin-core-backbone`, `historical`, `partial`, `surveyed`, `catalogued`, or `unknown`. |
+| `sync.state` | `live`, `catching_up`, `stale`, `error`, `not_started`, `historical`, `partial`, `surveyed`, `catalogued`, or `unknown`. |
+| `sync.progress_height` | Generalized progress height for live AuxPoW producers or the Bitcoin Core contiguous backbone, else `null`. Present iff `progress_updated_at` is present. |
+| `sync.progress_updated_at` | Unix seconds when the progress row was last seeded or advanced, else `null`. `poll_cursor.updated_at` is the cursor seed/advance time, not a producer heartbeat; a caught-up source with no recent cursor advance can age into `stale` without the poller being down. |
+| `sync.target_height` | Observed AuxPoW chain tip for live AuxPoW sources or current Bitcoin Core backbone target tip height, else `null`. |
+| `sync.latest_evidence_at` | Newest AuxPoW evidence timestamp observed for a live AuxPoW source (independent of cursor progress and may lag or lead `progress_updated_at`), else `null`. |
+| `sync.error_code` | Current capture error, else `null`. For `live-chaintip:bitcoin:core`, the latest backbone error code from `bitcoin_core_sync_state`. For live AuxPoW sources, `auxpow_capture_error` when at least one unresolved `capture_error` height exists. |
+| `sync.error_height` | Height associated with `sync.error_code`, else `null` (Bitcoin height for the backbone; lowest unresolved child height from `capture_error` for live AuxPoW sources, bounding trustworthy coverage). |
 
-`sync` describes source capture progress separately from evidence freshness:
+| `sync.mode` | `sync.state` Derivation Rules |
+|---|---|
+| `live` (AuxPoW) | `error` whenever `sync.error_code` is set (ahead of all other verdicts; clears only when each held height is reprocessed, while progress fields continue reporting the monotonic cursor). Otherwise uses a 1-hour cursor-age window: missing cursor -> `not_started`; cursor older than 1 hour -> `stale`; fresh cursor below `target_height` -> `catching_up` (including transiently over the reorg window after tip-anchored seed); fresh cursor with no target or `>= target_height` -> `live`. |
+| `bitcoin-core-backbone` | Derived from `bitcoin_core_sync_state`: no row -> `not_started`; `last_error_code` set -> `error`; row older than 1 hour -> `stale`; fresh row with no target or no contiguous progress -> `not_started`; fresh row below target -> `catching_up`; fresh row at/beyond target -> `live`. |
+| `historical`, `partial`, `surveyed`, `catalogued` | Reports the lifecycle token as both `sync.mode` and `sync.state` with `null` progress fields. |
 
-- `sync.mode`: `live`, `bitcoin-core-backbone`, `historical`, `partial`,
-  `surveyed`, `catalogued`, or `unknown`.
-- `sync.state`: `live`, `catching_up`, `stale`, `error`, `not_started`,
-  `historical`, `partial`, `surveyed`, `catalogued`, or `unknown`.
-- `sync.progress_height`: the generalized progress height for live AuxPoW
-  producers or the Bitcoin Core contiguous backbone, else JSON `null`.
-- `sync.progress_updated_at`: Unix seconds for the progress row's last seed or
-  advancement time, else JSON `null`.
-- `sync.target_height`: the observed AuxPoW chain tip for live AuxPoW sources
-  or the current Bitcoin Core backbone target tip height, else JSON `null`.
-- `sync.latest_evidence_at`: latest AuxPoW evidence time for live AuxPoW
-  sources, else JSON `null`.
-- `sync.error_code`: the source's current capture error, else JSON `null`. Two
-  independent classes use this field. For the Bitcoin Core live-chaintip source
-  it is the latest backbone error code from `bitcoin_core_sync_state`. For a
-  live AuxPoW source it is `auxpow_capture_error`, meaning the producer holds at
-  least one unresolved height it could not capture.
-- `sync.error_height`: the height associated with `sync.error_code`, else JSON
-  `null`. For the backbone that is a Bitcoin height; for a live AuxPoW source it
-  is the CHILD height of the earliest unresolved capture error, which is the
-  bound on trustworthy coverage for that source. A source holding several
-  unresolved heights still reports exactly one record, carrying the lowest.
-
-`progress_height` and `progress_updated_at` are both present or both null. Live
-AuxPoW sources report `error` whenever `sync.error_code` is set, ahead of every
-other verdict: the poll cursor is monotonic, so it can be fresh and already past
-a height the producer never captured. Otherwise they use a capture-specific
-1-hour cursor-age window: a missing
-cursor is `not_started`, an old cursor is `stale`, a fresh cursor below a known
-`target_height` is `catching_up`, and a fresh cursor with no target or at or
-above target is `live`. The `error` state clears only when the producer
-reprocesses each held height successfully; progress fields keep reporting the
-real cursor throughout. A fresh AuxPoW source can transiently report
-`catching_up` over its configured reorg window after the initial tip-anchored
-seed. Historical, partial, surveyed, and catalogued sources report their
-lifecycle token as both mode and state with null progress fields.
-Bitcoin Core live-chaintip sources report
-`bitcoin-core-backbone` from `bitcoin_core_sync_state`: no row is `not_started`,
-`last_error_code` is `error`, a row older than one hour is `stale`, a fresh row
-with no target or no real contiguous progress is `not_started`, a fresh row
-below target is `catching_up`, and a fresh row at or beyond target is `live`.
-`poll_cursor.updated_at` is NOT a producer heartbeat; it is the time that cursor
-row was seeded or advanced. A stale capture state means the cursor has not
-advanced within the window; a caught-up AuxPoW source with no recent cursor
-advance can age into `stale`, and that does not, by itself, prove that the
-poller is down. `latest_evidence_at` is separate from cursor progress: it is
-the newest AuxPoW evidence timestamp observed for that source and can lag or
-lead the cursor update time depending on source behavior and ingest history.
-Future live non-AuxPoW source kinds must define their own sync semantics before
-they should be registered.
-
-Per-source counts (`counts.events`, the distinct-parent `near`/`unknown`/
-`canonical`/`stale`/`error_block`, and the strict/weak orphan sub-counts `strict_orphan`/
-`weak_orphan`) are served from the precomputed `source_health` table
-(O(sources)), not recomputed per request. This endpoint FAILS CLOSED (the shared
-`internal_error` envelope, HTTP 500) rather than returning zeros when the
-`source_health` table has not yet been built: the operator must run
-`reconcile-read-model --rebuild-source-health` after first creating the
-`source_health` table (the baseline defaults `source_health_ready` to false so the
-endpoint fails closed until the rebuild populates the counters) and after bulk
-backfills before `/sources` is trusted. The
-same internal-error guard fires if any active unknown parent fails its Bitcoin
-target (a corrupt invariant).
+Per-source `counts` (`counts.events`, distinct-parent `near`/`unknown`/`canonical`/`stale`/`error_block`, and `strict_orphan`/`weak_orphan`) are served from precomputed `source_health` (O(sources)). This endpoint **fails closed** (HTTP 500 `internal_error`) rather than returning zeros when `source_health_ready` is false (run `reconcile-read-model --rebuild-source-health` after initial schema creation or bulk backfills) or if any active `unknown` parent fails its Bitcoin target.
 
 ### `/api/v1/competitions`
 
@@ -1286,115 +624,36 @@ Every event detail includes source, child evidence, parent hash, event-parent
 kind, generic AuxPoW fields, `child_miner_pool`, pool identity objects, target
 flags, event lifecycle fields, and `pool_attributions`. `child_height`,
 `child_block_hash`, `child_header_hex`, `child_block_time`, and `child_nbits`
-are nullable independent evidence fields. Missing source evidence is JSON
-`null`, never zero or a placeholder. `child_nbits`, when present, is an
-eight-character lowercase hexadecimal compact target. Rows sort by
-`event_confirmed_at`, then `source`, then nullable child height and hash with
-nulls last, then `id`.
+(8-character lowercase hex compact target when present) are nullable independent
+evidence fields; missing source evidence is JSON `null`, never zero or a
+placeholder. Rows sort by `event_confirmed_at`, `source`, nullable
+`child_height` and `child_block_hash` (nulls last), then `id`.
 
-`child_displaced_at` and `child_displaced_by` are the child-side displacement
-pair: the epoch second a producer observed the child chain no longer carrying
-this event's block at `child_height`, and the hash of the block carried there
-instead, in the same display order as `child_block_hash`. They are always set
-or cleared together. A null pair means no displacement has been recorded for
-the event, not that the event is the chain's current block at that height.
-Every live producer (Namecoin, Syscoin, Fractal, Qbit, Terracoin, Elastos and Hathor)
-records it for the heights it processes, so Hathor events carry non-null
-values from the release that ships it; an event written without a chain
-observation (a historical import for a live chain, or Hathor's archive cache
-ingest) stays null until the height is observed again. Displacement is child-side only: a
-displaced event
-still contributes to every Bitcoin-side field (`block`, proofs, source
-summaries, source health) exactly as before, and is distinct from revocation
-(`event_revoked_at`), which marks bad evidence.
-
-`event_details[].pool_attributions` is always present with `btc_parent` and
-`child_block` arrays. Each array contains zero or more provenance objects:
-
-- `namespace`
-- `match_kind`
-- `matched_value`
-- `pool`
-- `pool_identity`
-- `source`
-- `confidence`
-- `details`
-
-The current source labels are `btc_pool_snapshot`,
-`btc_pool_snapshot_legacy_child_script`, `child_payout_registry`,
-`child_coinbase_output`, `rsk_miner_registry`, and `rsk_rpc_miner`.
-`child_payout_registry` marks a Namecoin/Syscoin/Qbit child payout address
-or Fractal/Hathor child reward address resolved through `pool_identity`;
-`child_coinbase_output` marks an observed chain-native child payout/reward
-address that remains unresolved. `confidence` is one of `high`, `medium`, or
-`low`.
-
-Qbit payouts use namespace `qbit_payout_address` and `match_kind: "payout_address"`.
-The curated F2Pool mapping emits `high` confidence; SECPOOL/Luxor emit `medium`.
-An unmapped `qb` address remains visible through `child_coinbase_output` with
-an Unknown pool and null identity. Native child tags remain separate rows;
-matching tag/payout pools collapse to one child miner, conflicting known pools
-to Unknown. The Bitcoin-parent pool remains independent.
-
-`event_details[].child_miner_pool` is the child-chain miner fact for that one
-event. It is derived from child-chain evidence and is not inferred by clients
-from `pool_attributions.child_block`.
-
-For `source = "auxpow:rsk"`, `event_details[].rsk` is required and includes:
-
-- `block_hash`
-- `height`
-- `is_uncle`
-- `uncle_index`
-- `uncle_referencing_height`
-- `miner_address`
-- `pool_identity`
-- `merge_mining_hash`
-- `merkle_proof_hex`
-- `coinbase_tail_hex`
-- `proof_format`
-
-`miner_address` and `pool_identity.identifier` use lowercase 40-character hex
-without `0x`. `proof_format` is currently `rskj_rpc_opaque`. `uncle_index` and
-`uncle_referencing_height` are both non-null iff `is_uncle = true`.
-`child_height` equals `rsk.height`; for uncle rows, `uncle_referencing_height`
-is the canonical RSK block height that referenced the uncle. The current RSK
-sidecar stores this value in the producer-facing `uncle_parent_height` column,
-but the API uses the clearer wire name.
-
-RSK rows set Namecoin-only generic fields to `null`: parent coinbase txid,
-parent coinbase script, parent coinbase outputs, child coinbase txid, child
-coinbase script, `aux_merkle_proof_hex`, and `pow_validates_child_target`.
-Fractal rows use the generic AuxPoW fields, but their child coinbase fields are
-only populated after the paired full child block has been captured or replayed.
-The raw CAuxPoW proof still comes from `getblockheader <hash> false true`; the
-child coinbase txid/script/output fields and any `fractal_reward_address`
-attribution come from full `getblock <hash> 0` bytes whose transaction merkle
-root matched the child header.
-
-Hathor rows use the generic parent evidence fields and expose reward identity
-only through `event_details[].pool_attributions.child_block`. Standard HTR
-outputs decoded from the Hathor sidecar's persisted `funds_graph` bytes appear
-as `hathor_reward_address`; child coinbase fields and `aux_merkle_proof_hex`
-remain `null`.
+| Field / Object | Contract |
+|---|---|
+| `child_displaced_at`, `child_displaced_by` | Child-side displacement pair: the epoch second a producer observed the child chain no longer carrying this event's block at `child_height`, and the replacement block's display-order hash. Always set or cleared together (`null` when no displacement has been observed; historical imports and Hathor archive-cache rows stay `null` until the height is observed again). Recorded by every live producer except RSK. Displacement is child-side only: a displaced event still contributes to all Bitcoin-side fields (`block`, proofs, source summaries, source health) and is distinct from `event_revoked_at`. |
+| `pool_attributions` | Always present with `btc_parent` and `child_block` arrays of provenance objects (`namespace`, `match_kind`, `matched_value`, `pool`, `pool_identity`, `source`, `confidence` in `high`/`medium`/`low`, `details`). Source labels: `btc_pool_snapshot`, `btc_pool_snapshot_legacy_child_script`, `child_payout_registry` (Namecoin/Syscoin/Qbit child payout or Fractal/Hathor/Elastos child reward address resolved via `pool_identity`), `child_coinbase_output` (unresolved observed chain-native child address), `rsk_miner_registry`, and `rsk_rpc_miner`. Qbit payouts use `qbit_payout_address` / `payout_address` (curated F2Pool emits `high` confidence, SECPOOL/Luxor emit `medium`, unmapped `qb` addresses emit `child_coinbase_output` with an Unknown pool; matching tag/payout pools collapse to one child miner, conflicting known pools to Unknown). |
+| `child_miner_pool` | Child-chain miner fact for that single event, derived from child-chain evidence (not inferred by clients from `pool_attributions.child_block`). |
+| `rsk` | Required for `source = "auxpow:rsk"` (`null` otherwise). Fields: `block_hash`, `height` (equals `child_height`), `is_uncle`, `uncle_index` and `uncle_referencing_height` (both non-null iff `is_uncle = true`; `uncle_referencing_height` is the canonical RSK height that referenced the uncle, stored as `uncle_parent_height`), 40-char lowercase hex `miner_address` and `pool_identity.identifier` (without `0x`), `merge_mining_hash`, `merkle_proof_hex`, `coinbase_tail_hex`, and `proof_format` (`"rskj_rpc_opaque"`). RSK rows set generic parent/child coinbase fields, `aux_merkle_proof_hex`, and `pow_validates_child_target` to `null`. |
+| Fractal & Hathor notes | Fractal rows populate `aux_merkle_proof_hex` from `getblockheader <hash> false true`, and populate child coinbase fields plus `fractal_reward_address` attributions only after full `getblock <hash> 0` capture/replay verifies the child transaction merkle root. Hathor rows use generic parent evidence fields and expose `hathor_reward_address` in `pool_attributions.child_block` from persisted `funds_graph` bytes; child coinbase fields and `aux_merkle_proof_hex` remain `null`. |
 
 ## Event Detail Field Availability
 
-| Field family | Namecoin/Syscoin | Fractal Bitcoin | RSK | Hathor |
-|---|---|---|---|---|
-| Identity and source | populated from `merge_mining_event` | populated from `merge_mining_event` | populated from `merge_mining_event` | populated from `merge_mining_event` |
-| Parent coinbase fields | populated when parsed | populated when parsed | `null` | populated when reconstructed |
-| Child coinbase fields | populated when parsed | populated when full child block capture/replay has run | `null` | `null` |
-| `aux_merkle_proof_hex` | raw Namecoin-family AuxPoW bytes | raw Fractal CAuxPow bytes | `null` | `null` |
-| `aux_proof` | decoded branches when the blob parses, else `null` | decoded branches when the blob parses, else `null` | `null` | `null` |
-| `chain_id` / `slot_index` | `chain_id` cited-or-null (Namecoin = 1); `slot_index` when the blob parses and its parent matches | same rules | `null` | `null` |
-| `rsk` | `null` | `null` | required object | `null` |
-| `child_miner_pool` | populated with a known pool or Unknown | populated with a known pool or Unknown | populated with a known pool or Unknown | populated with a known pool or Unknown |
-| `pool_attributions` | always present, BTC parent matches, legacy child script tags, and chain-native child payout addresses when matched or observed | always present, BTC parent matches and `fractal_reward_address` rows when matched or observed | always present, child `rsk_miner_address` when observed | always present, BTC parent matches and `hathor_reward_address` rows when observed |
-| `pow_validates_btc_target` | populated | populated | populated | populated |
-| `pow_validates_child_target` | populated | populated | `null` | `null` |
-| `difficulty_epoch_ok` | `true` when Core placed the parent, else `null` | same | same | same |
-| Lifecycle fields | populated | populated | populated | populated |
+| Field family | Namecoin / Syscoin / Terracoin | Fractal Bitcoin | Qbit | Elastos | RSK | Hathor |
+|---|---|---|---|---|---|---|
+| Identity and source | populated from `merge_mining_event` | populated | populated | populated | populated | populated |
+| Parent coinbase fields | populated when parsed | populated when parsed | populated when parsed | populated when parsed | `null` | populated when reconstructed |
+| Child coinbase fields | populated when parsed | populated after full child block capture/replay | populated when full child body verifies | `null` | `null` | `null` |
+| `aux_merkle_proof_hex` | raw classic CAuxPow bytes | raw Fractal CAuxPow bytes | raw Qbit extended-header proof bytes | raw Elastos AuxPoW bytes | `null` | `null` |
+| `aux_proof` | decoded branches (`hash_block` present) when blob parses, else `null` | same | decoded branches (`hash_block` absent) when blob parses, else `null` | decoded branches (`hash_block` present) when blob parses, else `null` | `null` | `null` |
+| `chain_id` / `slot_index` | `chain_id` cited-or-null (Namecoin=1, Terracoin=50); `slot_index` when blob parses and parent matches | `chain_id: null`; `slot_index` when blob parses and parent matches | `chain_id = 47`; `slot_index` when blob parses and parent matches | `chain_id = 1224`; `slot_index` when blob parses and parent matches | `null` | `null` |
+| `rsk` | `null` | `null` | `null` | `null` | required object | `null` |
+| `child_miner_pool` | known pool or `Unknown` | known pool or `Unknown` | known pool or `Unknown` | known pool or `Unknown` | known pool or `Unknown` | known pool or `Unknown` |
+| `pool_attributions` | BTC parent matches, legacy child script tags, and chain-native child payout addresses | BTC parent matches and `fractal_reward_address` rows | BTC parent matches and verified Qbit child coinbase tag matches | BTC parent matches and `elastos_reward_address` / `elastos_minerinfo` rows | child `rsk_miner_address` when observed | BTC parent matches and `hathor_reward_address` rows from `funds_graph` |
+| `pow_validates_btc_target` | populated | populated | populated | populated | populated | populated |
+| `pow_validates_child_target` | populated | populated | populated | populated | `null` | `null` |
+| `difficulty_epoch_ok` | `true` when Core placed the parent, else `null` | same | same | same | same | same |
+| Lifecycle fields | populated | populated | populated | populated | populated | populated |
 
 ## Proof Lifecycle
 
@@ -1482,15 +741,7 @@ opaque strings and send them back unchanged. Clients narrow the query after
 
 ## Fixture Coverage
 
-`fixtures/api/manifest.json` defines machine-readable fixture coverage. It
-lists every `fixtures/api/*.json` file except
-`manifest.json` itself. Error fixtures use `endpoint_family = "errors"`.
-
-`tests/api_fixture_contract.rs` smoke-checks the manifest, parses every fixture,
-and verifies the minimal response envelope. Endpoint behavior is covered by the
-endpoint and route tests rather than by field-by-field fixture assertions.
-
-The sources fixture includes Terracoin (source 21) as Live and catching up.
-Its progress and target heights describe collection separately from evidence
-freshness. Per-height transport failures use the existing public
-`auxpow_capture_error` code, just as malformed proofs do.
+`fixtures/api/manifest.json` defines machine-readable fixture coverage and lists
+every `fixtures/api/*.json` file except `manifest.json` itself (error fixtures
+use `endpoint_family = "errors"`). `tests/api_fixture_contract.rs` smoke-checks
+the manifest, parses every fixture, and verifies the minimal response envelope.

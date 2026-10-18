@@ -1,6 +1,5 @@
-//! Shared bounded-backfill argument parsing, summary counting, and simple
-//! delayed range driving. Protocol-specific validation and outcome policy stay
-//! in the chain modules.
+//! Shared bounded-backfill argument parsing, summary counting, and delayed
+//! range driving.
 
 use std::time::Duration;
 
@@ -9,21 +8,14 @@ use anyhow::{Context, Result, ensure};
 use crate::chains::spec::ChainSpec;
 use mmm_capture::progress::ProgressReporter;
 
-/// Shared bounded-backfill argument config. Usage strings and validation
-/// errors are byte-identical to the historical per-chain configs.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BackfillConfig {
     pub(crate) spec: &'static ChainSpec,
-    /// Inclusive first height to capture.
     pub(crate) start_height: i32,
-    /// Inclusive last height to capture.
     pub(crate) end_height: i32,
 }
 
 impl BackfillConfig {
-    /// Parse the two positional CLI args against process env. Thin wrapper over
-    /// `from_args_with_lookup` using the real env lookup; tests use the
-    /// injectable variant to keep the range-cap check off process env.
     pub(crate) fn from_args<I, S>(spec: &'static ChainSpec, args: I) -> Result<Self>
     where
         I: IntoIterator<Item = S>,
@@ -32,9 +24,7 @@ impl BackfillConfig {
         Self::from_args_with_lookup(spec, args, crate::chains::config::env_lookup)
     }
 
-    /// Lookup-injectable variant so range-cap tests never depend on process
-    /// env (the cap check runs at PARSE time, before any DB or RPC bootstrap,
-    /// preserving the historical usage-error-without-Postgres ordering).
+    /// Cap check runs at parse time before DB or RPC bootstrap.
     pub(crate) fn from_args_with_lookup<I, S, F>(
         spec: &'static ChainSpec,
         args: I,
@@ -77,9 +67,6 @@ impl BackfillConfig {
         Ok(config)
     }
 
-    /// Reject a range that runs past the live tip. Runs after RPC bootstrap (the
-    /// tip is fetched), so unlike the range cap this cannot be checked at parse
-    /// time. The error string is part of the CLI contract (asserted in tests).
     pub(crate) fn validate_against_tip(&self, chain_tip: i32) -> Result<()> {
         if self.end_height > chain_tip {
             anyhow::bail!(
@@ -92,8 +79,6 @@ impl BackfillConfig {
         Ok(())
     }
 
-    /// Non-negative start and `end >= start`. Error strings are part of the CLI
-    /// contract (asserted in tests verbatim).
     fn validate_range(&self) -> Result<()> {
         ensure!(self.start_height >= 0, "start-height must be non-negative");
         ensure!(
@@ -104,38 +89,25 @@ impl BackfillConfig {
     }
 }
 
-/// Parse one height arg to `i32`. `label` names the field in the error so the
-/// "start-height must be a valid i32 height" contract message identifies which
-/// arg failed.
 pub(crate) fn parse_height(label: &'static str, value: &str) -> Result<i32> {
     value
         .parse()
         .with_context(|| format!("{label} must be a valid i32 height"))
 }
 
-/// Tally of a bounded backfill for the final log line. `processed` equals the
-/// sum of the five outcome counters.
+/// Tally of a bounded backfill (`processed` equals the sum of the five outcome counters).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct BackfillSummary {
-    /// Heights visited (every height in the requested inclusive range).
     pub processed: usize,
-    /// Heights that produced a `merge_mining_event` upsert.
     pub auxpow_written: usize,
-    /// Heights skipped as non-AuxPoW or failing the version gate.
     pub non_auxpow_skipped: usize,
-    /// Heights whose AuxPoW parent is another chain's header, refused by the
-    /// lineage gate and not written.
     pub non_bitcoin_parent: usize,
-    /// Heights skipped as malformed-but-claimed-AuxPoW (logged, not written)
-    /// under `CaptureFailurePolicy::SkipMalformedProof`.
     pub malformed_skipped: usize,
     /// Heights that failed to decode under `CaptureFailurePolicy::HoldMalformedProof`.
-    /// Each one persisted a `capture_error` row, and a non-zero count makes
-    /// the whole range incomplete: the caller must not report success.
+    /// Each persisted a `capture_error` row; a non-zero count makes the range incomplete.
     pub malformed_held: usize,
 }
 
-/// Per-height contribution to a [`BackfillSummary`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BackfillHeightEffect {
     AuxpowWritten,
@@ -145,9 +117,6 @@ pub(crate) enum BackfillHeightEffect {
     MalformedHeld,
 }
 
-/// The error a bounded backfill stops with at a height whose AuxPoW parent
-/// lineage waits on a Bitcoin epoch the Core header cache has not reached: a
-/// range is never reported complete over a height it could not decide.
 pub(crate) fn lineage_pending_error(spec: &ChainSpec, height: i32) -> anyhow::Error {
     anyhow::anyhow!(
         "{} backfill stopped at height {height}: its AuxPoW parent needs a Bitcoin epoch \
@@ -170,11 +139,8 @@ impl BackfillSummary {
     }
 }
 
-/// Drive an inclusive backfill range with an optional per-height delay, folding
-/// each chain-specific outcome into the shared summary format and advancing
-/// `progress` per height. The caller owns the reporter and marks it finished
-/// only once its repair and completion verdict succeed, so the summary logged
-/// on drop names the outcome of the whole backfill.
+/// Drive an inclusive backfill range with an optional per-height delay.
+/// The caller marks `progress` finished only once post-backfill repair and completion succeed.
 pub(crate) async fn run_delayed_backfill_range<F>(
     config: &BackfillConfig,
     delay_ms: u64,
@@ -194,8 +160,6 @@ where
     Ok(summary)
 }
 
-/// A backfill's progress reporter, sized to `config`'s range, with every RPC
-/// client's counters in its final summary.
 pub(crate) fn backfill_progress(
     job: &'static str,
     config: &BackfillConfig,
@@ -218,9 +182,6 @@ async fn sleep_backfill_delay(delay_ms: u64) {
 mod tests {
     use super::*;
     use crate::chains::spec::{ChainId, by_id};
-
-    // Ported from the historical NamecoinBackfillConfig tests: assertion
-    // bodies unchanged, the call adapted to the spec-driven config.
 
     #[test]
     fn accepts_a_valid_range() {

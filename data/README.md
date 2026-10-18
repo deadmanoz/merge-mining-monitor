@@ -13,12 +13,7 @@ directories.
 - `pools/child-identities/` - curated child-chain identity registries used for
   pool attribution. See `pools/README.md`.
 - `consensus/error_blocks.csv` - compact mirror of the pinned
-  `merge-mining-research` error-block catalogue. It classifies a captured,
-  full-proof-of-work invalid Bitcoin parent as `error_block`, never as stale or an
-  orphan. The catalogue header pin must match
-  `historical/historical-source-manifest.json` `source_repo_commit`; the
-  generator refuses a `--source-commit` that disagrees. Refresh both pins
-  with `just gen-research-publication-pins --source-commit <research-sha>`.
+  `merge-mining-research` error-block catalogue (`kind=error_block`); its commit pin must match `historical/historical-source-manifest.json` (`just gen-research-publication-pins`).
 - `sources/chain_profiles.json` - hand-authored source profile data used by
   `just gen-source-artifacts`.
 - `findings/` - hand-authored evidence-backed findings, one JSON file per

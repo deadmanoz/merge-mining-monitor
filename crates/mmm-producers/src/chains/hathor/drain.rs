@@ -1,6 +1,4 @@
-//! The durable `poll_pending_reconcile` drain for the Hathor producer: a
-//! best-effort per-tick retry of held heights. Split out of `capture` to keep
-//! the per-height state-machine file within the size gate.
+//! Durable `poll_pending_reconcile` drain for Hathor held heights.
 
 use anyhow::Result;
 use tokio_postgres::Client;
@@ -14,12 +12,8 @@ use mmm_store::{
     PendingReconcileRow, bump_pending_attempts, delete_pending_reconcile, list_pending_reconcile,
 };
 
-/// Cap on best-effort reconcile retries before a stuck height ages out loudly,
-/// so a permanent transient failure never starves the live tip.
 const MAX_PENDING_ATTEMPTS: i32 = 20;
 
-/// Drain the durable `poll_pending_reconcile` queue for this source (best-effort,
-/// each tick): every row is a held height that is re-run.
 pub(crate) async fn drain_pending(
     client: &mut Client,
     rpc: &impl HathorRpc,
@@ -27,9 +21,6 @@ pub(crate) async fn drain_pending(
 ) -> Result<()> {
     let pending = list_pending_reconcile(client, context.source_id()).await?;
     for row in pending {
-        // Best-effort per row: a single poisoned row (a height that hard-errors
-        // in process_hathor_height) must not abort the drain of the others. The
-        // row stays queued and is retried next tick.
         if let Err(err) = drain_reconcile(client, rpc, context, &row).await {
             warn!(
                 row_id = row.id,
@@ -42,10 +33,6 @@ pub(crate) async fn drain_pending(
     Ok(())
 }
 
-/// Re-run a held height. A pending parent lineage leaves the row queued (it
-/// resolves once a later tick refreshes the Core cache); a best-effort hold
-/// bumps the attempt count and ages the row out past [`MAX_PENDING_ATTEMPTS`];
-/// any definitive resolution deletes the row.
 async fn drain_reconcile(
     client: &mut Client,
     rpc: &impl HathorRpc,
@@ -55,8 +42,6 @@ async fn drain_reconcile(
     let outcome = process_hathor_height(client, rpc, context, row.height).await?;
     match outcome {
         HathorHeightOutcome::LineagePending => Ok(()),
-        // Still a best-effort hold: bump attempts; age out loudly past the cap so
-        // a permanently-stuck rescan never accumulates forever.
         HathorHeightOutcome::AbsentHold | HathorHeightOutcome::TransientHold => {
             let attempts = bump_pending_attempts(client, row.id).await?;
             if attempts >= MAX_PENDING_ATTEMPTS {
@@ -68,7 +53,6 @@ async fn drain_reconcile(
             }
             Ok(())
         }
-        // Any definitive resolution (written or skipped) clears the row.
         _ => delete_pending_reconcile(client, row.id).await,
     }
 }

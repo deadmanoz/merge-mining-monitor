@@ -1,31 +1,14 @@
 //! Lightweight progress reporting for long-running batch jobs (backfills,
-//! reconciliation passes, queue drains).
-//!
-//! Lives here rather than in `mmm-store` because `mmm-capture` is the
-//! strictly lower of the two crates every batch-job caller (`mmm-read-model`,
-//! `mmm-producers`) depends on directly: `mmm-store` itself depends on
-//! `mmm-capture`. The reporter also needs no I/O beyond `tracing`, matching
-//! this crate's "pure offline evidence" contract (no tokio-postgres, reqwest,
-//! or corepc in its normal dependency graph); putting it in the SQL-writing
-//! `mmm-store` instead would add nothing but a false coupling to that crate's
-//! database concerns. Summary lines are registered as closures that render a
-//! `String` rather than as typed RPC-metrics handles, so this crate never
-//! needs to depend on `mmm-rpc`: callers capture an `RpcMetrics` handle and
-//! render its snapshot's `Display` impl themselves, at the moment the job
-//! ends.
+//! reconciliation passes, queue drains) with closure-rendered RPC metrics summaries.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-/// Interval between progress log lines from [`ProgressReporter::advance`].
 const LOG_INTERVAL: Duration = Duration::from_secs(30);
 
-/// Tracks completed-unit counts and elapsed time for one batch job, logging a
-/// progress line at most once per interval and always a final summary: the
-/// summary is logged when the reporter drops, so a job that propagates an
-/// error still reports what it did and what its clients cost, marked aborted.
-/// Cheap to share: `advance` and `finish` take `&self`.
+/// Tracks completed units and elapsed time for a batch job, logging progress at most once
+/// per [`LOG_INTERVAL`] and emitting a final summary on drop (`finished` or `aborted`).
 pub struct ProgressReporter {
     job: &'static str,
     total: Option<u64>,
@@ -37,7 +20,6 @@ pub struct ProgressReporter {
 }
 
 impl ProgressReporter {
-    /// A reporter that logs progress at most once every 30 seconds.
     pub fn new(job: &'static str, total: Option<u64>) -> Self {
         let now = Instant::now();
         Self {
@@ -51,31 +33,22 @@ impl ProgressReporter {
         }
     }
 
-    /// Attach a discovered total without resetting the timer or counters, so
-    /// callers can create the reporter before a fallible count query.
     #[must_use]
     pub fn with_total(mut self, total: u64) -> Self {
         self.total = Some(total);
         self
     }
 
-    /// Register a line the final summary renders when the job ends, however
-    /// it ends (typically an RPC client's metrics snapshot via its `Display`
-    /// impl, captured by handle so it reflects the job's last call).
     #[must_use]
     pub fn with_summary(mut self, render: impl Fn() -> String + Send + Sync + 'static) -> Self {
         self.summaries.push(Box::new(render));
         self
     }
 
-    /// Units of work completed so far.
     pub fn done(&self) -> u64 {
         self.done.load(Ordering::Relaxed)
     }
 
-    /// Record `n` more completed units. Logs one progress line if at least
-    /// [`LOG_INTERVAL`] has elapsed since the last progress log (never on every
-    /// call, so a tight per-row loop cannot flood the log).
     pub fn advance(&self, n: u64) {
         let done = self.done.fetch_add(n, Ordering::Relaxed) + n;
         let now = Instant::now();
@@ -102,17 +75,12 @@ impl ProgressReporter {
         );
     }
 
-    /// Mark the job complete. The summary itself is logged when the reporter
-    /// drops, so an error path that never reaches this call still logs one,
-    /// marked aborted.
     pub fn finish(&self) {
         self.finished.store(true, Ordering::Relaxed);
     }
 }
 
 impl Drop for ProgressReporter {
-    /// Log the final summary (elapsed time, done count, rate, whether the job
-    /// finished or aborted), then one line per registered summary source.
     fn drop(&mut self) {
         let done = self.done();
         let elapsed = self.start.elapsed();
@@ -143,8 +111,6 @@ fn rate_per_s(done: u64, elapsed: Duration) -> f64 {
     if secs <= 0.0 { 0.0 } else { done as f64 / secs }
 }
 
-/// Estimated remaining seconds at the current rate, or `None` when the rate is
-/// not yet known (zero) or the job is already complete.
 fn eta_secs(done: u64, total: u64, rate: f64) -> Option<u64> {
     if rate <= 0.0 || done >= total {
         return None;

@@ -2,13 +2,7 @@
 
 use super::*;
 
-/// Load the `ParentPreflight` for a candidate parent: the persisted state of
-/// its BTC predecessor (`prev_hash`), if `block` already holds one. The
-/// classifier in `mmm-bitcoin-core` uses `known_prev` to short-circuit a Core
-/// round-trip when the predecessor is an established canonical/stale block.
-/// Returns `known_prev: None` when the predecessor is unseen, leaving the
-/// classifier to consult Core. Maps the row through `KnownBlockContextCompat`
-/// so the DB columns stay decoupled from the classifier's input type.
+/// Load the persisted `block` context for `prev_hash` to short-circuit Core RPC preflight when possible.
 pub async fn load_parent_preflight<C: GenericClient>(
     client: &C,
     prev_hash: &[u8],
@@ -45,12 +39,6 @@ pub async fn load_parent_preflight<C: GenericClient>(
     Ok(ParentPreflight { known_prev })
 }
 
-/// Row-shaped staging struct for one `block` row, converted via `From` into
-/// `mmm_bitcoin_core::KnownBlockContext`. Exists so
-/// `load_parent_preflight` can build the classifier input field-by-field from
-/// the SQL projection (with fallible `BlockKind`/`HeightSource` parsing) before
-/// crossing the crate boundary, keeping the column decode out of the
-/// mmm-bitcoin-core type.
 pub(crate) struct KnownBlockContextCompat {
     kind: BlockKind,
     btc_height: Option<i32>,
@@ -71,10 +59,8 @@ impl From<KnownBlockContextCompat> for mmm_bitcoin_core::KnownBlockContext {
     }
 }
 
-/// Combine a live Core verdict with the pinned catalogue. The catalogue remains
-/// the fallback for rules the monitor cannot derive live yet. For the MTP rule,
-/// a live canonical/stale verdict contradicts the catalogue and is a hard
-/// integrity error rather than a silent preference for either source.
+/// Combine a live Core verdict with the pinned error-block catalogue, failing closed
+/// if a live canonical/stale verdict contradicts an MTP catalogue entry.
 pub fn resolve_parent_classification(
     header: &Header,
     live: Option<ParentClassification>,
@@ -119,17 +105,8 @@ pub fn resolve_parent_classification(
     Ok(catalogue_classification)
 }
 
-/// First mutation of a reconcile pass: roll the freshly resolved
-/// `ParentClassification` into every active `merge_mining_event` row sharing
-/// this parent header. Three guards in the WHERE clause are required for correctness:
-/// `revoked_at IS NULL` (revoked evidence is inert), `btc_parent_kind <> 'near'`
-/// (near parents are out of scope and never reclassified), and
-/// `($2 <> 'unknown' OR btc_parent_kind IN ('unknown', 'error_block'))` so a transient
-/// `unknown` never demotes a previously-proven canonical/stale row. Error-block membership
-/// is the exception: a catalogue correction must demote a no-longer-listed entry. Bails if a
-/// canonical/stale/error-block result carries no
-/// height. The `COALESCE` on `difficulty_epoch_ok` preserves a proven
-/// wrong-epoch `false` across a transient re-resolve (see the inline note).
+/// Update active non-`near` `merge_mining_event` rows for this parent header without
+/// demoting proven canonical/stale rows on a transient `unknown`.
 pub(crate) async fn apply_event_classification<C: GenericClient>(
     client: &C,
     event: &MergeMiningEvent,
@@ -151,14 +128,8 @@ pub(crate) async fn apply_event_classification<C: GenericClient>(
         );
     }
 
-    // COALESCE difficulty_epoch_ok so a transient NULL never erases a stored value.
-    // Only the unknown path supplies NULL here (canonical/stale/error-block always resolve a
-    // concrete value); difficulty_epoch_ok is a fixed property of the header and
-    // its resolved height, so a later run that could not re-resolve it (e.g. a
-    // --recheck-orphans pass whose inferred-stale competitor lookup was transiently
-    // missing) must preserve a previously-proven wrong-epoch `false` rather than
-    // clobber it. This keeps the event rollup, the block column, and the orphan
-    // class consistent so the missing-only repair scanner does not churn.
+    // COALESCE difficulty_epoch_ok so a transient NULL on the unknown path never erases
+    // a previously proven value (such as wrong-epoch `false`).
     client
         .execute(
             "UPDATE merge_mining_event \
@@ -181,16 +152,8 @@ pub(crate) async fn apply_event_classification<C: GenericClient>(
     Ok(())
 }
 
-/// Rebuild every derived row keyed on one parent header from its current event
-/// rollup: the `block` row and AuxPoW `attestation_proof` rows. `classification`
-/// distinguishes the two entry forms: `Some` (a live reconcile) runs the result
-/// through `effective_classification`; `None` (a dependent-cascade rebuild)
-/// falls back to `persisted_classification_from_block`, else `unknown`. When no
-/// active event remains for the hash its derived rows are retired via
-/// `retire_zero_active_block`. Core adds one
-/// to `distinct_sources` and forces `pow_validated` when `core_attested`. The
-/// orphan class is computed before the upsert so `kind` and `btc_orphan_class`
-/// land in one CHECK-safe statement.
+/// Rebuild the `block` row and AuxPoW `attestation_proof` rows for `hash` from its current
+/// event rollup, or retire derived rows when no active events remain.
 pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -254,13 +217,7 @@ pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
     };
 
     let core_source_count = if classification.core_attested { 1 } else { 0 };
-    // The current classifier result merged with the event rollup, which
-    // COALESCEs a stored value across a transient recheck (see
-    // apply_event_classification), so the block column and the event rollup
-    // agree and the missing-only repair scanner sees no drift.
     let difficulty_epoch_ok = merge_difficulty(rollup.difficulty_epoch_ok, &classification);
-    // Compute before building the block so the orphan class is written in the same
-    // upsert statement as `kind` (CHECK-safe).
     let btc_orphan_class =
         compute_block_orphan_class(client, hash, kind, &classification, &header, nbits_table)
             .await?;
@@ -300,13 +257,7 @@ pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
     Ok(())
 }
 
-/// Resolve `block.bitcoin_miner_pool_id` with a precedence ladder: (1) Core's
-/// own coinbase for a freshly Core-attested canonical/stale parent, (2) the
-/// pool already persisted from a prior Core attestation when the block is
-/// canonical or Core-attested stale (so a Core-off replay does not lose it),
-/// (3) the AuxPoW event's reported parent coinbase. Core evidence wins over
-/// event-reported coinbase because the event coinbase can be spoofed by the
-/// child-chain submitter.
+/// Resolve `block.bitcoin_miner_pool_id`: fresh Core coinbase -> persisted Core coinbase -> AuxPoW event coinbase.
 async fn resolve_effective_bitcoin_miner_pool_id<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -342,15 +293,7 @@ async fn resolve_effective_bitcoin_miner_pool_id<C: GenericClient>(
     .await
 }
 
-/// Resolve the classification actually written, preserving proven state under a
-/// transient `unknown`. A bare `unknown` (e.g. Core off or an RPC failure) must
-/// not erase a real verdict, so the fallback order is: persisted
-/// canonical/stale from `block`, then the event's own canonical claim
-/// (`classification_from_event`), then for an event already marked stale an
-/// `unknown` that still carries the incoming `difficulty_epoch_ok`. Any
-/// non-unknown result passes through unchanged. Operators clear bad
-/// canonical/stale evidence by explicit revoke; a catalogue correction demotes
-/// an error block during a full rescan.
+/// Preserve proven canonical/stale/catalogued-error state across a transient `unknown` classification.
 pub(crate) async fn effective_classification<C: GenericClient>(
     client: &C,
     event: &MergeMiningEvent,
@@ -358,8 +301,6 @@ pub(crate) async fn effective_classification<C: GenericClient>(
     classification: ParentClassification,
 ) -> Result<ParentClassification> {
     if classification.kind == ParentKind::Unknown {
-        // Unknown can mean a transient RPC failure. Preserve the prior proven
-        // state; operators can explicitly revoke bad evidence and rerun repair.
         if let Some(classification) =
             persisted_classification_from_block(client, event, header).await?
         {
@@ -377,15 +318,7 @@ pub(crate) async fn effective_classification<C: GenericClient>(
     Ok(classification)
 }
 
-/// Event-derived classification: reconstruct a `ParentClassification` from the
-/// `merge_mining_event` row's own columns, with no Core or `block` lookup. Only
-/// the canonical case is reconstructable (height plus an implied
-/// `HeightSource::BitcoinCore`); returns `None` for any non-canonical event
-/// because stale/unknown need competitor and absence evidence the event row
-/// does not carry. The result is Core-free (`core_attested`,
-/// `core_absence_attested`, `live_observed` all false). Used by
-/// `effective_classification` as the middle rung of its preserve-on-unknown
-/// ladder.
+/// Reconstruct a canonical `ParentClassification` from the `merge_mining_event` row when `block` is absent.
 pub(crate) fn classification_from_event(
     event: &MergeMiningEvent,
     header: &Header,
@@ -411,16 +344,8 @@ pub(crate) fn classification_from_event(
     })
 }
 
-/// Persisted-form classification: reconstruct a `ParentClassification` from the
-/// already-derived `block` row(s), used to hold proven state across a transient
-/// `unknown`. Canonical/stale blocks qualify; an error block qualifies only
-/// while its hash remains in the pinned catalogue (unknown returns `None`). For
-/// a stale block the competitor must still resolve to a persisted canonical
-/// block, else `None` so a half-rebuilt stale relationship is not re-asserted.
-/// `core_attested`/`live_observed` are carried from the persisted row but
-/// `core_absence_attested` is false: this is replay of stored evidence, not a
-/// fresh Core absence consultation, so it must not retrigger orphan
-/// reclassification.
+/// Reconstruct a proven `ParentClassification` from the persisted `block` row (canonical,
+/// stale with an intact canonical competitor, or still-catalogued error block).
 pub(crate) async fn persisted_classification_from_block<C: GenericClient>(
     client: &C,
     event: &MergeMiningEvent,
@@ -429,16 +354,7 @@ pub(crate) async fn persisted_classification_from_block<C: GenericClient>(
     persisted_classification_from_hash(client, &event.btc_parent_header_hash, header).await
 }
 
-/// Reuse a proven derived classification for an exact parent header.
-///
-/// Historical publication updates commonly attach new provenance to parents
-/// that the read model has already classified. Core-attested canonical state
-/// and structurally complete stale state are reusable by the ordinary
-/// publication path. A stale verdict may be inferred rather than Core-attested;
-/// its caller must still match it to stale publication evidence, and the stored
-/// canonical-competitor relationship must remain intact. Event-only canonical,
-/// error, unknown, and orphan state is not returned because those cases require
-/// their existing strict checks.
+/// Load a reusable Core-attested canonical or structurally complete stale classification from `block`.
 pub async fn load_proven_parent_classification<C: GenericClient>(
     client: &C,
     header: &Header,

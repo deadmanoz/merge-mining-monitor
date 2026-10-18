@@ -1,24 +1,16 @@
-//! Shared query-parameter primitives: date/int/hash/bool parsing and
-//! kind/classification normalization.
+//! Shared query-parameter primitives: date/int/hash/bool parsing and kind/classification normalization.
 
 use super::*;
 use crate::normalize::lowercase_hex_64;
 
-/// Render a `Date` as the `YYYY-MM-DD` string used in the unheighted-window
-/// query echo (the tree.json wire form).
 pub(crate) fn date_string(date: Date) -> String {
     date.to_string()
 }
 
-/// Convert a unix epoch (a block's `btc_header_time`) to its UTC calendar
-/// `Date`. Used by the unheighted-anchor projection to locate the anchor's day.
 pub(crate) fn date_from_epoch(epoch: i64) -> anyhow::Result<Date> {
     Ok(OffsetDateTime::from_unix_timestamp(epoch)?.date())
 }
 
-/// The unix epoch at UTC midnight starting `date`. Used to translate the
-/// unheighted date window into the inclusive `[start, start+86_399]`
-/// btc_header_time bounds in the tree window SQL.
 pub fn epoch_start_of_day(date: Date) -> i64 {
     date.with_hms(0, 0, 0)
         .expect("midnight is valid")
@@ -26,9 +18,6 @@ pub fn epoch_start_of_day(date: Date) -> i64 {
         .unix_timestamp()
 }
 
-/// The serialized parent-`kind` string (canonical/error_block/near/stale/unknown) emitted
-/// in tree and block payloads; byte-locked by fixtures/api/tree.json and
-/// block-*.json.
 pub(crate) fn kind_as_str(kind: ParentKind) -> &'static str {
     match kind {
         ParentKind::Canonical => "canonical",
@@ -39,22 +28,14 @@ pub(crate) fn kind_as_str(kind: ParentKind) -> &'static str {
     }
 }
 
-/// Map the selected parent kinds to their wire strings for the `kinds` array in
-/// the tree.json query echo.
 pub(crate) fn kind_strings(kinds: &[ParentKind]) -> Vec<&'static str> {
     kinds.iter().copied().map(kind_as_str).collect()
 }
 
-/// Whether `kind` is in the request's selected parent-kind filter. The tree
-/// projection uses it to decide whether a row is included or rendered as trimmed
-/// context.
 pub(crate) fn kind_selected(kinds: &[ParentKind], kind: ParentKind) -> bool {
     kinds.contains(&kind)
 }
 
-/// Map the resolved orphan-class filter to its wire strings for the
-/// `classification` array echoed in tree.json and the orphan navigator
-/// fixture payloads.
 pub(crate) fn classification_strings(classifications: &[Classification]) -> Vec<&'static str> {
     classifications
         .iter()
@@ -63,9 +44,7 @@ pub(crate) fn classification_strings(classifications: &[Classification]) -> Vec<
         .collect()
 }
 
-/// Decode a query string into a key->value map, rejecting an undecodable string
-/// or any key not in `accepted` as invalid_query. The strict allowlist gate
-/// every endpoint parser runs first, so unknown params fail before DB checkout.
+/// Decode a query string into a key->value map, rejecting malformed syntax or unknown keys.
 pub(crate) fn parse_params(
     raw: Option<&str>,
     accepted: &[&str],
@@ -89,8 +68,6 @@ pub(crate) fn parse_params(
     Ok(params)
 }
 
-/// Fetch and parse a required `YYYY-MM-DD` date param; a missing key is
-/// invalid_query. Used for the unheighted-window bounds.
 pub(crate) fn required_date(
     params: &BTreeMap<String, String>,
     key: &str,
@@ -101,9 +78,6 @@ pub(crate) fn required_date(
     parse_date_param(key, raw)
 }
 
-/// Parse a strict `YYYY-MM-DD` calendar date: fixed-position dash check,
-/// two-digit month/day, year 1..=9998, and real-calendar validity. Any failure
-/// is invalid_query via `invalid_date`.
 pub(crate) fn parse_date_param(key: &str, raw: &str) -> Result<Date, ApiError> {
     let valid_shape = raw.len() == 10
         && raw.as_bytes()[4] == b'-'
@@ -131,8 +105,6 @@ pub(crate) fn parse_date_param(key: &str, raw: &str) -> Result<Date, ApiError> {
     Date::from_calendar_date(year, month, day).map_err(|_| invalid_date(key, raw))
 }
 
-/// Build the invalid_query error for a malformed date param, echoing the
-/// offending value under its key.
 pub(crate) fn invalid_date(key: &str, raw: &str) -> ApiError {
     ApiError::invalid_query(
         format!("{key} must be a UTC date in YYYY-MM-DD form"),
@@ -140,8 +112,6 @@ pub(crate) fn invalid_date(key: &str, raw: &str) -> ApiError {
     )
 }
 
-/// Parse an optional base-10 `i32` param (height fields); a non-integer value is
-/// invalid_query. Absent key yields `None`.
 pub(crate) fn optional_i32(
     params: &BTreeMap<String, String>,
     key: &str,
@@ -157,8 +127,6 @@ pub(crate) fn optional_i32(
     })
 }
 
-/// Parse an optional base-10 `usize` param (limit, min_sources); a non-integer
-/// value is invalid_query. The caller enforces the lower/upper bounds.
 pub(crate) fn optional_usize(
     params: &BTreeMap<String, String>,
     key: &str,
@@ -174,9 +142,6 @@ pub(crate) fn optional_usize(
     })
 }
 
-/// Validate a query-param hash as 64 lowercase-normalized hex. Unlike
-/// `normalize::normalize_hash` (which yields `invalid_hash` for the path-hash
-/// route), a malformed query parameter is `invalid_query`.
 pub(crate) fn validate_hash_param(key: &str, raw: &str) -> Result<String, ApiError> {
     lowercase_hex_64(raw).ok_or_else(|| {
         ApiError::invalid_query(
@@ -186,9 +151,6 @@ pub(crate) fn validate_hash_param(key: &str, raw: &str) -> Result<String, ApiErr
     })
 }
 
-/// Parse an optional strict `true`/`false` param (include_near,
-/// include_unheighted); any other value is invalid_query. Absent key yields
-/// `None`.
 pub(crate) fn optional_bool(
     params: &BTreeMap<String, String>,
     key: &str,
@@ -206,9 +168,6 @@ pub(crate) fn optional_bool(
     }
 }
 
-/// Resolve the `kinds=` filter: absent or empty defaults to all five parent
-/// kinds, then dedup into a deterministic name order. Mirrors
-/// `normalized_classifications`.
 pub(crate) fn normalized_kinds(raw: Option<&str>) -> Result<Vec<ParentKind>, ApiError> {
     let parsed = parse_kinds(raw)?;
     let values = if parsed.is_empty() {
@@ -234,10 +193,8 @@ pub(crate) fn normalized_kinds(raw: Option<&str>) -> Result<Vec<ParentKind>, Api
     .collect())
 }
 
-/// Default the orphan-class filter to the navigable signal (strict+weak) when the
-/// `classification=` param is absent, else keep the requested members. The result
-/// is deduplicated into a deterministic order (strict, weak, excluded, pending),
-/// mirroring `normalized_kinds`.
+/// Default the orphan-class filter to `strict+weak` when `classification=` is absent,
+/// deduplicated in fixed order `(strict, weak, excluded, pending)`.
 pub(crate) fn normalized_classifications(
     raw: Option<&str>,
 ) -> Result<Vec<Classification>, ApiError> {
@@ -261,15 +218,10 @@ pub(crate) fn normalized_classifications(
     .collect())
 }
 
-/// The `sources` value for the query echo: the normalized filter when a
-/// `source=` param was present, else an empty array. Keeps an absent filter and
-/// an explicit empty filter distinguishable in the echoed block.
 pub(crate) fn query_sources(raw_source: Option<&str>, source_filter: &[String]) -> Vec<String> {
     raw_source.map_or_else(Vec::new, |_| source_filter.to_vec())
 }
 
-/// Inclusive day count between two dates (both endpoints counted). Used to
-/// enforce the unheighted-window day limit.
 pub(crate) fn inclusive_day_span(from: Date, to: Date) -> u64 {
     (to.to_julian_day() - from.to_julian_day() + 1) as u64
 }

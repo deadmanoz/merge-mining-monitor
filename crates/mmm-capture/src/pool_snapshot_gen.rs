@@ -1,22 +1,7 @@
-//! Pure, unit-testable generator for `data/pools/current.json`.
+//! Pure generator for `data/pools/current.json` from upstream `bitcoin-data/mining-pools`.
 //!
-//! Reads the upstream `bitcoin-data/mining-pools` per-pool JSON files and emits
-//! the embedded `current.json` snapshot in [`PoolRecord`](crate::pool_resolver::PoolRecord)
-//! format.
-//!
-//! The field-mapping, slug-remap, ordering, JSON-formatting, and
-//! snapshot-diff logic all live here as pure functions over in-memory inputs so
-//! they are covered by `cargo test` with no filesystem or network dependency.
-//! The thin `src/bin/gen_pool_snapshot.rs` binary only does IO (read upstream
-//! files, verify git cleanliness, write outputs) and delegates the logic to
-//! this module.
-//!
-//! Determinism contract (so the same registry inputs reproduce `current.json`
-//! byte-for-byte given the same `generated_at`):
-//!
-//! - pools are sorted by slug;
-//! - JSON uses 2-space indent, a fixed key order, and a trailing newline;
-//! - `generated_at` is an explicit caller-supplied value, never wall-clock.
+//! Determinism contract: pools are sorted by slug, JSON uses 2-space indent
+//! with a trailing newline, and `generated_at` is caller-supplied.
 
 use std::collections::BTreeMap;
 
@@ -24,11 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::pool_resolver::PoolSnapshot;
 
-/// One upstream `bitcoin-data/mining-pools` per-pool record (`pools/<slug>.json`).
-///
-/// The upstream `id` is intentionally captured but NEVER written to the
-/// snapshot: the DB keys pools on slug only (`pool.slug` UNIQUE), so the
-/// upstream id is irrelevant for our stable-key contract.
+/// Upstream `bitcoin-data/mining-pools` per-pool record (`pools/<slug>.json`).
+/// `id` is ignored by the snapshot because the DB keys pools on `pool.slug`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpstreamPool {
     #[serde(default)]
@@ -42,18 +24,13 @@ pub struct UpstreamPool {
     pub link: Option<String>,
 }
 
-/// An upstream pool paired with its source filename stem (e.g. `spiderpool`
-/// for `pools/spiderpool.json`). The filename stem is the default slug for new
-/// pools and the lookup key into the pinned slug map.
 #[derive(Debug, Clone)]
 pub struct UpstreamPoolFile {
     pub filename_stem: String,
     pub pool: UpstreamPool,
 }
 
-/// The pinned slug map (`data/pools/slug-map.json`): upstream filename stem ->
-/// repo slug. Only genuine remaps live here; new pools default to their
-/// filename stem.
+/// Pinned slug map (`data/pools/slug-map.json`): upstream filename stem -> repo slug.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SlugMap {
     #[serde(default)]
@@ -61,15 +38,10 @@ pub struct SlugMap {
 }
 
 impl SlugMap {
-    /// Parse the pinned slug map JSON (`data/pools/slug-map.json`). Parse errors
-    /// are wrapped as [`GeneratorError::InvalidSlugMap`] so the binary surfaces a
-    /// generator error, not a raw serde error.
     pub fn from_json_str(json: &str) -> Result<Self, GeneratorError> {
         serde_json::from_str(json).map_err(|err| GeneratorError::InvalidSlugMap(err.to_string()))
     }
 
-    /// Resolve the stable repo slug for an upstream filename stem: the pinned
-    /// remap target if one exists, otherwise the filename stem itself.
     pub fn resolve<'a>(&'a self, filename_stem: &'a str) -> &'a str {
         self.remap
             .get(filename_stem)
@@ -78,9 +50,6 @@ impl SlugMap {
     }
 }
 
-/// A generated pool record in snapshot (`PoolRecord`) format. Serialized with a
-/// fixed key order so the JSON is byte-stable. `source_id` is deliberately
-/// dropped (the DB keys on slug only) and `link` is omitted when absent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GeneratedPool {
     pub slug: String,
@@ -91,9 +60,6 @@ pub struct GeneratedPool {
     pub link: Option<String>,
 }
 
-/// The `source` provenance block written into `current.json`. The
-/// `embedded_current_json_is_byte_stable` test pins its serialized contents
-/// (license, name, notes, upstream_url) through the embedded file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GeneratedSource {
     pub name: String,
@@ -102,7 +68,6 @@ pub struct GeneratedSource {
     pub notes: String,
 }
 
-/// The full generated snapshot, serialized to `current.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GeneratedSnapshot {
     pub schema_version: u32,
@@ -112,37 +77,21 @@ pub struct GeneratedSnapshot {
     pub pools: Vec<GeneratedPool>,
 }
 
-/// Upstream registry URL recorded in the snapshot `source` block
-/// (`bitcoin-data/mining-pools`).
 pub const UPSTREAM_URL: &str = "https://github.com/bitcoin-data/mining-pools";
-/// Upstream registry license recorded in the snapshot `source` block (MIT).
 pub const UPSTREAM_LICENSE: &str = "MIT";
-/// Human-readable `scope` string recorded in the snapshot: this registry
-/// covers only BTC-coinbase pool attribution for the shared Bitcoin parent.
 pub const SNAPSHOT_SCOPE: &str = "BTC-coinbase pool registry for shared Bitcoin parent attribution";
-/// Provenance note recorded in the snapshot `source` block: reproducible
-/// generator output, slugs governed by `data/pools/slug-map.json`.
 pub const SNAPSHOT_NOTES: &str = "Resolves the shared Bitcoin parent pool for every merge-mined chain. Generated by \
      `gen-pool-snapshot` from public mining-pool registry records. Pool slugs are project-stable \
      identifiers governed by data/pools/slug-map.json.";
 
-/// Errors the pure generator can return: malformed slug-map JSON, a slug-map
-/// collision (two upstream files resolving to one slug), or a serialization
-/// failure. The binary wraps these into `anyhow` at the IO boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GeneratorError {
-    /// `slug-map.json` failed to parse (serde error message carried inline).
     InvalidSlugMap(String),
-    /// Two upstream files resolved to the same slug (a slug-map
-    /// misconfiguration). Carries the colliding `slug` plus the two filename
-    /// stems so the operator can fix the map; `map_pools` rejects rather than
-    /// silently merging or splitting a pool.
     DuplicateSlug {
         slug: String,
         first_stem: String,
         duplicate_stem: String,
     },
-    /// `serde_json` failed to render the generated snapshot to pretty JSON.
     Serialize(String),
 }
 
@@ -166,16 +115,8 @@ impl std::fmt::Display for GeneratorError {
 
 impl std::error::Error for GeneratorError {}
 
-/// Map upstream pool files to deterministic [`GeneratedPool`] records.
-///
-/// - field map: `canonical_name<-name`, `coinbase_tags<-tags`,
-///   `payout_addresses<-addresses`, `link` (empty/missing -> omitted);
-/// - slug: the pinned slug-map target, defaulting to the filename stem;
-/// - the upstream `id` and `source_id` are dropped;
-/// - pools are sorted by slug for a byte-stable output.
-///
-/// Rejects two upstream files that resolve to the same slug (a slug-map
-/// misconfiguration that would otherwise split or collide a pool).
+/// Map upstream pool files to slug-sorted [`GeneratedPool`] records, rejecting
+/// slug collisions.
 pub fn map_pools(
     files: &[UpstreamPoolFile],
     slug_map: &SlugMap,
@@ -207,14 +148,9 @@ pub fn map_pools(
             });
         }
     }
-    // BTreeMap iteration is already slug-sorted; collect just the records.
     Ok(by_slug.into_values().map(|(_, pool)| pool).collect())
 }
 
-/// Wrap mapped pools with the fixed snapshot envelope (`schema_version` 1,
-/// scope, and the `source` provenance block). `generated_at` is supplied by the
-/// caller and never read from wall-clock, so the same inputs reproduce
-/// `current.json` byte-for-byte.
 pub fn build_snapshot(pools: Vec<GeneratedPool>, generated_at: &str) -> GeneratedSnapshot {
     GeneratedSnapshot {
         schema_version: 1,
@@ -230,8 +166,6 @@ pub fn build_snapshot(pools: Vec<GeneratedPool>, generated_at: &str) -> Generate
     }
 }
 
-/// Project a committed resolver snapshot back into generator pool records for
-/// diffing or byte-stability checks.
 pub fn generated_pools_from_snapshot(snapshot: &PoolSnapshot) -> Vec<GeneratedPool> {
     snapshot
         .pools
@@ -246,10 +180,7 @@ pub fn generated_pools_from_snapshot(snapshot: &PoolSnapshot) -> Vec<GeneratedPo
         .collect()
 }
 
-/// Civil date (`YYYY-MM-DD`, UTC) from a Unix timestamp in seconds, using
-/// Howard Hinnant's civil-from-days algorithm. Pure and unit-tested so the
-/// date arithmetic the interactive `--generated-at` default depends on is
-/// covered (reproducible / `--check` paths never call wall-clock).
+/// Civil date (`YYYY-MM-DD`, UTC) from Unix seconds via Howard Hinnant's algorithm.
 pub fn civil_date_utc(unix_secs: u64) -> String {
     let days = (unix_secs / 86_400) as i64;
     let z = days + 719_468;
@@ -265,9 +196,6 @@ pub fn civil_date_utc(unix_secs: u64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
-/// Today's civil date in UTC (`YYYY-MM-DD`). Convenience default for
-/// interactive regeneration when `--generated-at` is omitted; pin
-/// `--generated-at` for reproducible builds.
 pub fn today_utc() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
@@ -277,9 +205,6 @@ pub fn today_utc() -> String {
     civil_date_utc(secs)
 }
 
-/// Serialize a value to pretty 2-space-indented JSON with a trailing newline,
-/// matching the committed `current.json` formatting exactly so the generator
-/// output is byte-stable.
 pub fn to_pretty_json<T: Serialize>(value: &T) -> Result<String, GeneratorError> {
     let mut out = serde_json::to_string_pretty(value)
         .map_err(|err| GeneratorError::Serialize(err.to_string()))?;
@@ -287,34 +212,23 @@ pub fn to_pretty_json<T: Serialize>(value: &T) -> Result<String, GeneratorError>
     Ok(out)
 }
 
-/// Render the snapshot JSON bytes (the exact `current.json` contents).
 pub fn render_snapshot_json(snapshot: &GeneratedSnapshot) -> Result<String, GeneratorError> {
     to_pretty_json(snapshot)
 }
 
-/// A reviewable diff of a regenerated snapshot vs the committed one.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SnapshotDiff {
     pub added: Vec<String>,
     pub removed: Vec<String>,
-    /// Slugs whose canonical_name, coinbase_tags, payout_addresses, or link
-    /// changed.
     pub changed: Vec<String>,
 }
 
 impl SnapshotDiff {
-    /// True when the regenerated snapshot is identical to the committed one (no
-    /// added, removed, or changed slugs). The binary's `--check` path keys its
-    /// exit status on this.
     pub fn is_empty(&self) -> bool {
         self.added.is_empty() && self.removed.is_empty() && self.changed.is_empty()
     }
 }
 
-/// Diff a regenerated pool set against the committed one so churn (added,
-/// removed, changed slugs) is explicit and reviewable before commit. Removed
-/// pools are flagged but not deleted: `upsert_pool_snapshot` never DELETEs, so
-/// their DB rows and historical FKs remain as tombstones.
 pub fn diff_pools(committed: &[GeneratedPool], regenerated: &[GeneratedPool]) -> SnapshotDiff {
     let committed_by_slug: BTreeMap<&str, &GeneratedPool> =
         committed.iter().map(|p| (p.slug.as_str(), p)).collect();

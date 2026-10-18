@@ -1,29 +1,19 @@
-//! Shared query-parameter normalization for the read API. These helpers are the
-//! shared implementation of the cross-cutting 4xx contracts (invalid_query,
-//! unsupported_source, invalid_hash) that every source-filtered endpoint
-//! reuses. See `docs/api-contract.md` (Source Codes, Errors).
+//! Shared query-parameter normalization for `source`, `:hash`, `kinds`, and `classification`.
 
 use serde_json::json;
 
 use super::error::ApiError;
 use mmm_capture::source_registry;
 
-/// Normalize the `source` filter per the contract's three-tier rejection ladder:
-///
-/// 1. `None` -> no filter (empty vec).
-/// 2. empty members (after splitting on `,` and trimming) -> invalid_query.
-/// 3. malformed / non-lowercase syntax -> invalid_query.
-/// 4. unknown source-code kind -> invalid_query.
-/// 5. well-formed, known-kind, but unregistered -> unsupported_source.
-///
-/// The surviving members are deduplicated and sorted lexicographically.
+/// Normalize `source=` into sorted, deduplicated registered source codes, rejecting empty
+/// members, malformed syntax, or unknown kinds as `invalid_query` and unregistered codes as
+/// `unsupported_source`.
 pub(crate) fn normalize_sources(raw: Option<&str>) -> Result<Vec<String>, ApiError> {
     let Some(raw) = raw else {
         return Ok(Vec::new());
     };
 
     let mut members: Vec<String> = Vec::new();
-    // Split FIRST, then trim, so empty members are detected and never dropped.
     for member in raw.split(',') {
         let member = member.trim();
         if member.is_empty() {
@@ -59,7 +49,6 @@ pub(crate) fn normalize_sources(raw: Option<&str>) -> Result<Vec<String>, ApiErr
     Ok(members)
 }
 
-/// Normalize a 64-hex block hash to lowercase, or reject as invalid_hash.
 pub(crate) fn normalize_hash(raw: &str) -> Result<String, ApiError> {
     lowercase_hex_64(raw).ok_or_else(|| ApiError::invalid_hash(raw))
 }
@@ -69,8 +58,6 @@ pub(crate) fn lowercase_hex_64(raw: &str) -> Option<String> {
         .then(|| raw.to_ascii_lowercase())
 }
 
-/// The parent-kind enum used by `kinds=` filters. Distinct from the source-code
-/// `kind` enum in `source_registry::SourceKind`. Shared by first-wave endpoints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParentKind {
     Near,
@@ -80,8 +67,6 @@ pub enum ParentKind {
     ErrorBlock,
 }
 
-/// Parse a comma-delimited `kinds=` value into the parent-kind enum. An unknown
-/// member is invalid_query.
 pub(crate) fn parse_kinds(raw: Option<&str>) -> Result<Vec<ParentKind>, ApiError> {
     let Some(raw) = raw else {
         return Ok(Vec::new());
@@ -106,12 +91,8 @@ pub(crate) fn parse_kinds(raw: Option<&str>) -> Result<Vec<ParentKind>, ApiError
     Ok(kinds)
 }
 
-/// The BTC-orphan classification enum used by the `classification=` filter. This
-/// is the derived refinement of `kind='unknown'` (see `block.btc_orphan_class`),
-/// NOT a structural parent kind, so it is deliberately a SEPARATE parameter from
-/// `kinds=` and never smuggled through [`ParentKind`]. `Pending` is the
-/// `btc_orphan_class IS NULL` transient (never Core-checked, or beyond the
-/// persisted Core-cache horizon).
+/// BTC-orphan classification (`classification=` parameter, distinct from structural `kinds=`).
+/// `Pending` corresponds to `block.btc_orphan_class IS NULL`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Classification {
     StrictBtcOrphan,
@@ -121,8 +102,6 @@ pub enum Classification {
 }
 
 impl Classification {
-    /// The wire/query value, equal to the `block.btc_orphan_class` DB string for
-    /// the three concrete classes and `"pending"` for the NULL transient.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::StrictBtcOrphan => "strict_btc_orphan",
@@ -132,8 +111,6 @@ impl Classification {
         }
     }
 
-    /// The `block.btc_orphan_class` DB value for the three concrete classes;
-    /// `None` (SQL NULL) for `Pending`. Used to build the orphan-class SQL filter.
     pub fn as_db_str(self) -> Option<&'static str> {
         match self {
             Self::StrictBtcOrphan => Some("strict_btc_orphan"),
@@ -144,9 +121,6 @@ impl Classification {
     }
 }
 
-/// Parse a comma-delimited `classification=` value into the orphan-class enum. An
-/// unknown member is invalid_query. Distinct from [`parse_kinds`]: the orphan
-/// classes are not structural parent kinds and travel on their own parameter.
 pub(crate) fn parse_classifications(raw: Option<&str>) -> Result<Vec<Classification>, ApiError> {
     let Some(raw) = raw else {
         return Ok(Vec::new());
@@ -170,20 +144,15 @@ pub(crate) fn parse_classifications(raw: Option<&str>) -> Result<Vec<Classificat
     Ok(classifications)
 }
 
-/// The contract source-code syntax:
-/// `^[a-z][a-z0-9]*(-[a-z0-9]+)*(:[a-z][a-z0-9]*(-[a-z0-9]+)*){1,2}$`.
-/// Implemented directly to avoid pulling in a regex dependency.
+/// Validate `^[a-z][a-z0-9]*(-[a-z0-9]+)*(:[a-z][a-z0-9]*(-[a-z0-9]+)*){1,2}$`.
 fn is_valid_source_syntax(code: &str) -> bool {
     let segments: Vec<&str> = code.split(':').collect();
-    // <kind>:<chain> or <kind>:<chain>:<instance> => 2 or 3 segments.
     if segments.len() < 2 || segments.len() > 3 {
         return false;
     }
     segments.iter().all(|segment| is_valid_segment(segment))
 }
 
-/// One segment: `[a-z][a-z0-9]*(-[a-z0-9]+)*` (lowercase, no leading digit, no
-/// leading/trailing/double hyphen).
 fn is_valid_segment(segment: &str) -> bool {
     let bytes = segment.as_bytes();
     if bytes.is_empty() || !bytes[0].is_ascii_lowercase() {
@@ -194,8 +163,6 @@ fn is_valid_segment(segment: &str) -> bool {
         match byte {
             b'a'..=b'z' | b'0'..=b'9' => prev_hyphen = false,
             b'-' => {
-                // No double hyphen and no trailing hyphen. A leading hyphen is
-                // already excluded because the first byte must be [a-z].
                 if prev_hyphen || i == bytes.len() - 1 {
                     return false;
                 }
@@ -289,7 +256,6 @@ mod tests {
 
     #[test]
     fn all_registered_codes_validate() {
-        // Every registered source code must pass the full filter ladder.
         let input = source_registry::SOURCE_REGISTRY
             .iter()
             .map(|source| source.code)
@@ -302,7 +268,6 @@ mod tests {
             .collect();
         expected.sort();
         assert_eq!(got, expected);
-        // Spot-check both axes: a live producer code and a historical one.
         assert!(got.iter().any(|c| c == "auxpow:namecoin"));
         assert!(got.iter().any(|c| c == "auxpow:devcoin"));
     }
@@ -347,8 +312,6 @@ mod tests {
             vec![Classification::BtcStaleExcluded, Classification::Pending]
         );
         assert_eq!(parse_classifications(None).unwrap(), Vec::new());
-        // A structural kind is NOT a classification member: the two parameters
-        // are deliberately disjoint.
         assert_eq!(
             code(&parse_classifications(Some("unknown")).unwrap_err()),
             "invalid_query"

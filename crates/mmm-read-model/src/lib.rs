@@ -1,14 +1,7 @@
-//! Synchronous local read-model reconciliation.
+//! Derived read-model reconciliation (`block`, `attestation_proof`, and `source_health`).
 //!
-//! Producers own `merge_mining_event` (and RSK's sidecar). This module derives
-//! the local `block` and `attestation_proof` rows from committed base evidence
-//! plus Bitcoin Core classifier results.
-//!
-//! Parent-level base-evidence mutations (producer capture, revoke/restore,
-//! pool reclassification, Core canonical writes) enter through root-level
-//! mutation facades backed by the private `mutation` command module, which owns
-//! lock ordering, classifier preclassification, source-health snapshot brackets,
-//! retry policy, and post-commit dependent cascades.
+//! Base-evidence mutations enter through root-level mutation helpers that enforce
+//! advisory lock ordering, preclassification, source-health brackets, and dependent cascades.
 
 mod cli_args;
 mod known_stale_reclassify;
@@ -86,9 +79,7 @@ const DEFAULT_MAX_ITERATIONS: usize = 100;
 const DEFAULT_CASCADE_BUDGET: usize = 10_000;
 pub(crate) const RECONCILE_LOCK_SET_RETRY_LIMIT: usize = 3;
 
-/// In-memory projection of one `merge_mining_event` parent row used as the
-/// reconciler's classification input. Hash/byte fields hold internal
-/// (`to_byte_array`) order; not reversed. Loaded via `event_from_row` in queries.rs.
+/// In-memory projection of one `merge_mining_event` row (hashes in internal byte order).
 #[derive(Debug, PartialEq, Eq)]
 struct MergeMiningEvent {
     id: i64,
@@ -110,11 +101,7 @@ impl MergeMiningEvent {
     }
 }
 
-/// A classification handed to the reconciler ahead of the parent header it applies
-/// to. `for_event` pins `expected_parent_hash` so the reconcile can detect the
-/// header shifting under it (lock-set change); `trusted` carries no expected hash
-/// for callers that already hold the correct parent (e.g. capture's own preclassify).
-/// Strict tokens require the barrier-time revalidation to propagate Core errors.
+/// Precomputed parent classification passed into the reconciler.
 #[derive(Debug, Clone)]
 struct PreclassifiedParent {
     expected_parent_hash: Option<Vec<u8>>,
@@ -144,10 +131,7 @@ impl PreclassifiedParent {
     }
 }
 
-/// The full set of derived `block` column values assembled by classify.rs before a
-/// single-statement upsert in writers.rs. Built so `kind`, `btc_orphan_class`, and
-/// the coinbase columns are written together and never transiently violate the
-/// row's CHECK constraints.
+/// Derived `block` column values assembled for a single-statement upsert.
 #[derive(Debug)]
 struct BlockInput {
     hash: Vec<u8>,
@@ -173,18 +157,11 @@ struct BlockInput {
     difficulty_epoch_ok: Option<bool>,
     first_attested_at: Option<i64>,
     last_attested_at: Option<i64>,
-    /// Derived orphan refinement for kind='unknown' blocks; NULL (None) for
-    /// canonical/stale/error-block and for pending/unclassified unknowns. Written in the same
-    /// statement as `kind` so the `btc_orphan_class IS NULL OR kind='unknown'`
-    /// CHECK is never transiently violated.
+    /// Derived orphan refinement for `kind='unknown'` blocks; `None` otherwise.
     btc_orphan_class: Option<String>,
 }
 
-/// Persisted lifecycle of a block's Bitcoin Core coinbase fetch, written to
-/// `block.btc_coinbase_status`. Monotonic in practice: a `Complete` fetch is
-/// never demoted back to `NotAttempted`/`Failed` by a later reconcile that
-/// could not reach Core, so a transient classifier outage cannot blank an
-/// already-resolved coinbase.
+/// Monotonic lifecycle of `block.btc_coinbase_status` (`Complete` is never demoted).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum CoreCoinbaseStatus {
     #[default]
@@ -194,8 +171,6 @@ pub(crate) enum CoreCoinbaseStatus {
 }
 
 impl CoreCoinbaseStatus {
-    /// DB token for `block.btc_coinbase_status`. The three strings are the CHECK
-    /// constraint domain; do not change them without a migration.
     pub(crate) fn as_db_str(self) -> &'static str {
         match self {
             Self::NotAttempted => "not_attempted",
@@ -205,9 +180,7 @@ impl CoreCoinbaseStatus {
     }
 }
 
-/// Aggregate evidence across all live attestations of one parent header
-/// (attestation/source/auxpow-chain counts, PoW + difficulty-epoch flags, attested
-/// timestamps), computed in queries.rs and folded into the derived `block` row.
+/// Aggregate evidence across all live attestations of one parent header.
 #[derive(Debug)]
 struct ParentRollup {
     total_attestations: i32,
@@ -219,9 +192,7 @@ struct ParentRollup {
     last_attested_at: Option<i64>,
 }
 
-/// The block-table coinbase columns derived from one Core `getblock` coinbase
-/// (txid/script/outputs plus the `CoreCoinbaseStatus`).
-/// `Default` is the not-attempted state. Built by `coinbase_columns` in writers.rs.
+/// Block-table coinbase columns derived from one Core `getblock` coinbase.
 #[derive(Debug, Default)]
 struct CoreCoinbaseColumns {
     txid: Option<Vec<u8>>,
@@ -230,10 +201,7 @@ struct CoreCoinbaseColumns {
     status: CoreCoinbaseStatus,
 }
 
-/// Snapshot of the derived `block` fields that, if they change, must enqueue
-/// dependent reconciles (stale competitor rows, descendant blocks). Equality on this
-/// struct is the cascade's change detector: a parent reconcile compares before/after
-/// and only fans out when the snapshot differs.
+/// Derived `block` fields whose change triggers dependent cascades.
 #[derive(Debug, PartialEq, Eq)]
 struct BlockCascadeState {
     kind: BlockKind,
@@ -246,24 +214,14 @@ struct BlockCascadeState {
     btc_coinbase_script: Option<Vec<u8>>,
 }
 
-/// Count of rows touched by one reconcile call, split by grain. `parents_reconciled`
-/// is the changed parent headers; `descendants_reconciled` is the dependent
-/// cascade fanout (descendant events, derived child blocks, stale competitors)
-/// drained after the parent change. Returned so callers can log cascade size and
-/// spot runaway fanout.
+/// Count of parent headers and cascaded dependents touched by one reconcile call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReconcileStats {
     pub parents_reconciled: usize,
     pub descendants_reconciled: usize,
 }
 
-/// Config for the `run_reconcile_read_model` driver. `missing_only` (the default)
-/// scans only rows whose derived state is absent/stale and iterates to a fixpoint;
-/// `--all` does a bounded full rescan from a height/source window. A child-height
-/// bound selects only rows with an authenticated child height; exact events with
-/// `NULL` height participate only in an unbounded or source-only scan.
-/// `batch_size` and `max_iterations` bound work per pass and overall; exhausting
-/// them raises `ReconcileBudgetExhausted` rather than looping forever.
+/// Config for `run_reconcile_read_model`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReconcileReadModelConfig {
     pub missing_only: bool,
@@ -272,9 +230,7 @@ pub struct ReconcileReadModelConfig {
     pub source_code: Option<String>,
     pub batch_size: i64,
     pub max_iterations: usize,
-    /// Rebuild `source_health` from base tables before
-    /// the read-model scan. This is the post-migration / drift-repair step for
-    /// the per-source `/sources` counters; it sets `source_health_ready = TRUE`.
+    /// Rebuild `source_health` from base tables and set `source_health_ready = TRUE`.
     pub rebuild_source_health: bool,
 }
 
@@ -293,10 +249,6 @@ impl Default for ReconcileReadModelConfig {
 }
 
 impl ReconcileReadModelConfig {
-    /// Parse `reconcile-read-model` CLI flags via the shared `cli_args` flag-walk.
-    /// `--rebuild-source-health` is a dedicated mode that runs ONLY the source_health
-    /// recompute (see `run_reconcile_read_model`), not a scan. Rejects non-positive
-    /// `--batch-size`/`--max-iterations` so the driver's budget invariants hold.
     pub fn from_args<I, S>(args: I) -> Result<Self>
     where
         I: IntoIterator<Item = S>,
@@ -350,13 +302,7 @@ impl ReconcileReadModelConfig {
     }
 }
 
-/// Reconcile the derived rows for one event's parent header, then drain the
-/// post-commit dependent cascade under `DEFAULT_CASCADE_BUDGET`. `preclassified`
-/// supplies a trusted offline classification when the classifier is disabled;
-/// an enabled classifier re-resolves it after taking the shared Core-view
-/// barrier. `None` lets the reconciler classify from event-derived evidence.
-/// This is the parent-grain repair entry the reconcile/reclassify drivers loop
-/// over.
+/// Reconcile derived rows for one event's parent header and drain its dependent cascade.
 pub async fn reconcile_from_merge_mining_event(
     client: &mut Client,
     event_id: i64,
@@ -373,11 +319,7 @@ pub async fn reconcile_from_merge_mining_event(
     .await
 }
 
-/// Reconcile the one active parent evidence set identified by its Bitcoin
-/// header hash. This is the narrow operator repair path for a newly-supported
-/// consensus rule; it delegates to the normal event reconciler so it takes the
-/// Core-view barrier, applies source-health diffs, and drains dependents exactly
-/// as capture and bulk repair do.
+/// Strictly reclassify and reconcile one active parent header by hash.
 pub async fn run_reclassify_parent(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -460,12 +402,7 @@ async fn reconcile_by_block_hash_with_nbits_table(
     .await
 }
 
-/// Classify a payload's parent header against Core. No-ops when PoW does not
-/// validate the BTC target or the classifier is disabled (returns `None`). On
-/// success it folds the classification proof back into `payload` and returns
-/// the classification for lock-set computation. Live capture calls this after
-/// taking its shared canonical-view barrier but before any per-parent locks;
-/// other repair paths may still preclassify before opening their transaction.
+/// Classify `payload`'s parent header against Core and fold the proof into `payload`.
 pub(crate) async fn classify_payload_parent<C: GenericClient>(
     client: &C,
     payload: &mut MergeMiningEventPayload,
@@ -493,13 +430,7 @@ pub(crate) async fn classify_payload_parent<C: GenericClient>(
     Ok(Some(classification))
 }
 
-/// Acquire, in sorted order, every advisory lock the in-txn reconcile of this
-/// payload's parent will need: the parent hash, its prev hash, any classification
-/// lock hashes, and the persisted `canonical_competitor_hash`. Sorting+dedup gives
-/// a global lock ordering so concurrent mutations cannot deadlock. No-ops for
-/// `near` parents and target-failing PoW (nothing derived). Pre-locking the full
-/// set is what lets the reconcile detect a lock-set change and retry instead of
-/// taking locks mid-reconcile.
+/// Acquire in sorted order every advisory lock needed to reconcile `payload`'s parent.
 pub(crate) async fn lock_payload_parent_read_model_in_txn<C: GenericClient>(
     client: &C,
     payload: &MergeMiningEventPayload,
@@ -527,14 +458,7 @@ pub(crate) async fn lock_payload_parent_read_model_in_txn<C: GenericClient>(
     lock_block_hashes(client, &hashes).await
 }
 
-/// Top-level read-model driver. Three disjoint modes: (1) `rebuild_source_health`
-/// runs ONLY the source_health recompute and returns 0 (kept
-/// separate so `just rebuild-source-health` cannot trip an unrelated
-/// reconcile-budget or classifier failure after `source_health_ready` is set);
-/// (2) `!missing_only` does a bounded full rescan over a height/source window;
-/// (3) the default missing-only mode iterates the candidate scan to a fixpoint.
-/// Returns the repaired count, or `ReconcileBudgetExhausted` when the
-/// batch/iteration budget runs out before convergence.
+/// Run the read-model reconciliation driver (`--rebuild-source-health`, `--all`, or `--missing-only`).
 pub async fn run_reconcile_read_model(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -543,18 +467,9 @@ pub async fn run_reconcile_read_model(
     if config.rebuild_source_health {
         crate::source_health_sql::rebuild_source_health(client).await?;
         tracing::info!("rebuilt source_health from base tables");
-        // Dedicated operation: a rebuild does NOT also run the read-model scan, so
-        // `just rebuild-source-health` cannot unexpectedly repair unrelated rows,
-        // run long, or fail on an unrelated reconcile-budget/classifier issue
-        // after source_health_ready has already been set. Run a separate
-        // reconcile-read-model invocation when a read-model scan is also wanted.
         return Ok(0);
     }
 
-    // Degraded-state guard: a Core-enabled scan assigns btc_orphan_class, and an
-    // empty known-stale membership means the exclusion gate cannot fire, so a
-    // catalogued stale could be labelled strict/weak. Warn once per run (only
-    // when Core is enabled: a Core-off reconcile does not fresh-classify).
     if classifier.is_enabled() && mmm_store::count_known_stale_blocks(client).await? == 0 {
         tracing::warn!(
             "reconcile-read-model: known_stale_block is EMPTY; known stales cannot be excluded \
@@ -570,9 +485,6 @@ pub async fn run_reconcile_read_model(
     run_reconcile_missing_read_model(client, classifier, &config, None).await
 }
 
-/// `--missing-only` mode: repeatedly scan for missing/stale derived rows until
-/// no candidates remain. Each scan is capped by `batch_size`; convergence before
-/// `max_iterations` means the read model reached a fixpoint.
 async fn run_reconcile_missing_read_model(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -618,10 +530,6 @@ async fn run_reconcile_missing_read_model(
     Err(reconcile_budget_exhausted(config))
 }
 
-/// A progress reporter for a batch job that classifies against Core, with the
-/// classifier's transport metrics in its final summary when it is Core-backed.
-/// The reporter takes a rendering closure rather than the handle, so
-/// `mmm-capture` never depends on `mmm-rpc`.
 pub(crate) fn classifier_progress(
     job: &'static str,
     total: Option<u64>,
@@ -634,12 +542,7 @@ pub(crate) fn classifier_progress(
     }
 }
 
-/// `--all` mode: bounded full rescan of every non-`near` event in the optional
-/// height/source window, keyset-paginated by `(child_height, id)` and reconciled
-/// one event at a time. Any child-height bound deliberately excludes events
-/// whose authenticated child height is unavailable; an unbounded/source-only
-/// scan includes them after height-bearing rows. Raises `ReconcileBudgetExhausted`
-/// if `max_iterations` pages are consumed without draining the window.
+/// Keyset-paginated full rescan of non-`near` events within the optional height/source window.
 async fn run_reconcile_all_read_model(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -716,11 +619,6 @@ fn reconcile_budget_exhausted(config: &ReconcileReadModelConfig) -> anyhow::Erro
     .into()
 }
 
-/// Raised when `run_reconcile_read_model`/`run_reconcile_all_read_model` consume
-/// `max_iterations` batches without converging. Distinct from the per-change
-/// cascade overflow `ReconcileCascadeBudgetExhausted`. Callers downcast via
-/// `is_reconcile_budget_exhausted`; producers treat it as a soft 'retry with a
-/// bigger budget' signal rather than a hard error.
 #[derive(Debug)]
 pub(crate) struct ReconcileBudgetExhausted {
     max_iterations: usize,
@@ -739,10 +637,7 @@ impl fmt::Display for ReconcileBudgetExhausted {
 
 impl std::error::Error for ReconcileBudgetExhausted {}
 
-/// True if `err` is a reconcile-budget overflow: EITHER the iteration-budget
-/// `ReconcileBudgetExhausted` OR the per-change cascade overflow
-/// `ReconcileCascadeBudgetExhausted`. Producers match on this to downgrade a
-/// non-convergent reconcile to a retriable warning instead of failing the poll.
+/// True if `err` is `ReconcileBudgetExhausted` or `ReconcileCascadeBudgetExhausted`.
 pub fn is_reconcile_budget_exhausted(err: &anyhow::Error) -> bool {
     err.downcast_ref::<ReconcileBudgetExhausted>().is_some()
         || err
@@ -750,11 +645,6 @@ pub fn is_reconcile_budget_exhausted(err: &anyhow::Error) -> bool {
             .is_some()
 }
 
-/// Raised when the post-commit dependent cascade for a SINGLE change exceeds its
-/// budget (default `DEFAULT_CASCADE_BUDGET`), guarding against an unbounded fanout
-/// of descendant events / derived blocks / stale competitors. Recovery is a
-/// `reconcile-read-model --missing-only` rerun (per the Display text). Folded into
-/// `is_reconcile_budget_exhausted`.
 #[derive(Debug)]
 pub(crate) struct ReconcileCascadeBudgetExhausted {
     budget: usize,
@@ -772,13 +662,7 @@ impl fmt::Display for ReconcileCascadeBudgetExhausted {
 
 impl std::error::Error for ReconcileCascadeBudgetExhausted {}
 
-/// Raised inside the in-txn reconcile when the set of advisory locks actually
-/// needed turns out to differ from the set pre-acquired by
-/// `lock_payload_parent_read_model_in_txn` (e.g. classification or competitor hash
-/// shifted under concurrency). The mutation/reconcile retry loops catch it via
-/// `is_reconcile_lock_set_changed` and re-run the txn with the corrected lock set,
-/// up to `RECONCILE_LOCK_SET_RETRY_LIMIT`. Crate-visible because it crosses the
-/// reconcile/mutation module boundary as an Error.
+/// Raised when required advisory locks shifted after initial pre-locking.
 #[derive(Debug)]
 pub(crate) struct ReconcileLockSetChanged {
     event_id: i64,
@@ -796,9 +680,6 @@ impl fmt::Display for ReconcileLockSetChanged {
 
 impl std::error::Error for ReconcileLockSetChanged {}
 
-/// True if `err` is `ReconcileLockSetChanged`. The bounded retry loops in
-/// `mutation` and `reconcile` match on this to re-run the txn with the corrected
-/// advisory-lock set rather than surfacing the error.
 pub(crate) fn is_reconcile_lock_set_changed(err: &anyhow::Error) -> bool {
     err.downcast_ref::<ReconcileLockSetChanged>().is_some()
 }

@@ -1,16 +1,8 @@
-//! Elastos identity re-resolution for `reclassify-pools` (no RPC).
+//! Offline Elastos identity re-resolution for `reclassify-pools`.
 //!
-//! Elastos events do not persist the decoded child transaction vector, so fresh
-//! identity discovery happens in the capture/backfill path. But once an
-//! attribution row exists, its `matched_value` (the minerinfo label or reward
-//! address) is persisted. So a registry addition can be applied to existing rows
-//! WITHOUT re-fetching the chain: this promotes registry-matchable yet unresolved
-//! Elastos child attributions (`pool_id IS NULL` but `(namespace, matched_value)`
-//! now has a `pool_identity`) by re-emitting them with the pool attached, through
-//! the shared `upsert_event_pool_attributions_without_stale_cleanup` (which
-//! refreshes `merge_mining_event.child_miner_pool_id`). This is the Elastos
-//! analogue of the Hathor reward-address replay tail: keyset-paginated,
-//! idempotent, no RPC.
+//! Promotes unresolved Elastos child attributions (`pool_id IS NULL`) whose
+//! persisted `(namespace, matched_value)` now matches a `pool_identity`,
+//! refreshing `merge_mining_event.child_miner_pool_id` without re-fetching blocks.
 
 use anyhow::{Context, Result};
 use tokio_postgres::Client;
@@ -29,12 +21,6 @@ use mmm_store::{
     upsert_event_pool_attributions_without_stale_cleanup,
 };
 
-/// Promote registry-matchable yet unresolved Elastos child identity attributions
-/// for both Elastos namespaces, keyset-paginated by `event_id`. Each loaded
-/// attribution is already joined to its `pool_identity`, so this re-emits it with
-/// the pool attached and the source upgraded to the registry source; the upsert
-/// refreshes the derived `child_miner_pool_id`. Idempotent (a re-run finds no
-/// remaining `pool_id IS NULL` matchable rows). Bumps `stats.elastos_identity_updates`.
 pub(crate) async fn reresolve_elastos_identity_attributions(
     client: &Client,
     config: &ReclassifyPoolsConfig,
@@ -87,12 +73,6 @@ pub(crate) async fn reresolve_elastos_identity_attributions(
     Ok(())
 }
 
-/// Rebuild the promoted [`EventPoolAttribution`] rows from the loader's JSON array.
-/// Each entry carries the stored `(namespace, match_kind, matched_value, details)`
-/// plus the joined `pool_id`/`pool_identity_id`; the pool is attached and the
-/// source upgraded to [`CHILD_PAYOUT_REGISTRY_SOURCE`]. Confidence stays Medium
-/// (Elastos identities are RPC-decoded, unverified by AuxPoW). An unknown namespace
-/// is skipped rather than guessed.
 fn promoted_attributions(attributions: &serde_json::Value) -> Result<Vec<EventPoolAttribution>> {
     let entries = attributions
         .as_array()
@@ -138,9 +118,6 @@ fn promoted_attributions(attributions: &serde_json::Value) -> Result<Vec<EventPo
     Ok(promoted)
 }
 
-/// Map a stored Elastos identity namespace to its `&'static` namespace + match_kind
-/// (the `EventPoolAttribution` fields are `&'static str`). Mirrors the match_kinds
-/// emitted by `resolve_elastos_identity_attributions`.
 fn elastos_identity_static(namespace: &str) -> Option<(&'static str, &'static str)> {
     match namespace {
         ELASTOS_MINERINFO_NAMESPACE => Some((ELASTOS_MINERINFO_NAMESPACE, "minerinfo")),

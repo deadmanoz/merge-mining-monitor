@@ -55,8 +55,6 @@ async fn core_absence_sets_orphan_class_and_canonical_promotion_clears_it() -> R
             "Core-disabled unknown must stay pending (NULL), never promoted"
         );
 
-        // Core-absent classification sets the orphan class while kind remains
-        // unknown.
         reconcile_from_merge_mining_event(
             &mut client,
             fixture.event_id,
@@ -82,8 +80,6 @@ async fn core_absence_sets_orphan_class_and_canonical_promotion_clears_it() -> R
             "Core-attested-absent unknown must be classified, got {orphan_class:?}"
         );
 
-        // Promote to canonical: kind and btc_orphan_class must change in the same
-        // statement so the CHECK is never violated, leaving the class NULL.
         reconcile_from_merge_mining_event(
             &mut client,
             fixture.event_id,
@@ -117,9 +113,6 @@ async fn assert_recheck_corrects_stale_class(
     parent_hash: Vec<u8>,
     class_after_first: String,
 ) -> Result<()> {
-    // Simulate a prior run that recorded a DIFFERENT class, then recheck: the
-    // parent is re-included AND the corrected verdict is a real change, so it is
-    // counted (proving --recheck-orphans does re-evaluate, not just skip).
     let stale_class = if class_after_first == "weak_btc_orphan" {
         "strict_btc_orphan"
     } else {
@@ -168,7 +161,6 @@ async fn reclassify_skips_classified_orphans_unless_recheck() -> Result<()> {
             orphan_candidate_verdict(&fixture.header),
         ));
 
-        // First pass classifies the orphan (NULL -> non-NULL counts as progress).
         let first = run_reclassify_unknown_parents(
             &mut client,
             &absent_classifier,
@@ -189,7 +181,6 @@ async fn reclassify_skips_classified_orphans_unless_recheck() -> Result<()> {
             .get(0);
         let class_after_first = class_after_first.expect("first pass set an orphan class");
 
-        // Default rerun skips the already-classified parent (no rescan).
         let second = run_reclassify_unknown_parents(
             &mut client,
             &absent_classifier,
@@ -205,10 +196,6 @@ async fn reclassify_skips_classified_orphans_unless_recheck() -> Result<()> {
             "default pass skips already orphan-classified parents"
         );
 
-        // --recheck-orphans RE-INCLUDES the parent, but with the same classifier the
-        // verdict is unchanged, so it must NOT count as progress: count=0 keeps
-        // meaning "no scanned parent changed", and repeated rechecks do not churn a
-        // nonzero count forever.
         let recheck_unchanged = run_reclassify_unknown_parents(
             &mut client,
             &absent_classifier,
@@ -264,11 +251,8 @@ async fn insert_unknown_parent_event(client: &Client) -> Result<UnknownParentFix
     })
 }
 
-/// Two distinct target-validating unknown parents (the Namecoin valid-parent
-/// and wrong-chain-parent fixtures) at consecutive child heights, plus the
-/// cache coverage their reconcile needs. The cache's time horizon falls
-/// between the two, and the second carries no coinbase height, so its orphan
-/// class stays pending until the cache reaches its time.
+/// Seeds two target-validating unknown parents straddling the cache time horizon
+/// (the second without a coinbase height, so its orphan class stays pending).
 async fn insert_two_unknown_parents(client: &Client) -> Result<()> {
     let (_, _, source_id, parsed) = namecoin_fixture(client).await?;
     let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
@@ -293,9 +277,6 @@ async fn insert_two_unknown_parents(client: &Client) -> Result<()> {
     Ok(())
 }
 
-/// Two unknown Namecoin parents and a fake classifier that attests Core's
-/// absence, so every candidate a pass visits costs a counted call and leaves
-/// an orphan class behind.
 async fn two_unknown_parents_and_a_classifier(
     client: &Client,
 ) -> Result<(FakeParentClassifier, ConfiguredParentClassifier)> {
@@ -311,8 +292,6 @@ async fn scheduled_recheck_resumes_from_its_cursor_across_an_additive_trigger() 
         let (fake, classifier) = two_unknown_parents_and_a_classifier(&client).await?;
         let generation = schedule_core_recheck(&client, &RecheckScope::everything(), true).await?;
 
-        // One page of one candidate, then the process dies: the pass stays
-        // bound with its cursor after the first parent.
         let first = run_scheduled_recheck_pages_for_test(&mut client, &classifier, 1, 1).await?;
         assert_eq!(first.candidates, 1);
         assert_eq!(first.acknowledged, None);
@@ -322,9 +301,6 @@ async fn scheduled_recheck_resumes_from_its_cursor_across_an_additive_trigger() 
         assert!(pass.cursor.is_some());
         assert_eq!(fake.call_count().await, 1);
 
-        // A horizon advance between pages (what live producers do every
-        // Bitcoin block) is additive: a new process resumes behind the cursor,
-        // the second parent is classified, the first is not seen again.
         let advanced = schedule_core_recheck(&client, &RecheckScope::pending_rows(), false).await?;
         assert_eq!(advanced, generation + 1);
         let second = run_scheduled_recheck_pages_for_test(&mut client, &classifier, 1, 1).await?;
@@ -334,10 +310,6 @@ async fn scheduled_recheck_resumes_from_its_cursor_across_an_additive_trigger() 
         assert_eq!(continued.pass.map(|pass| pass.generation), Some(generation));
         assert_eq!(continued.pending_scope, RecheckScope::pending_rows());
 
-        // The empty page acknowledges the bound generation, and the advance
-        // accumulated since the bind runs as a follow-up pass over rows still
-        // without a verdict: the one parent whose verdict is still pending,
-        // not the one already classified, and nothing stays pending after.
         let still_pending: i64 = client
             .query_one(
                 "SELECT count(*) FROM block WHERE kind = 'unknown' AND btc_orphan_class IS NULL",
@@ -366,11 +338,6 @@ async fn an_invalidating_trigger_restarts_the_pass_with_the_merged_scope() -> Re
         assert_eq!(first.candidates, 1);
         assert_eq!(fake.call_count().await, 1);
 
-        // A trigger that can change verdicts already given arrives mid-pass,
-        // scoped to Hathor witnesses: the next page starts over with that
-        // scope merged into the cut-short pass's, so both Namecoin parents are
-        // seen again under the new state, and only the new generation is
-        // acknowledged.
         let hathor = RecheckScope {
             orphans: true,
             sources: Some(vec!["auxpow:hathor".to_owned()]),
@@ -404,15 +371,10 @@ async fn a_scoped_pass_finishes_and_a_later_trigger_runs_as_a_follow_up() -> Res
     crate::run_mut_db_test!(client, {
         let (fake, classifier) = two_unknown_parents_and_a_classifier(&client).await?;
 
-        // Consume what seeding the cache scheduled, so the scopes below are
-        // exactly the triggers this test issues.
         let state = load_scheduled_recheck(&client).await?;
         let seeded = bind_recheck_pass(&client, state.pending_scope).await?;
         acknowledge_recheck_pass(&client, seeded.generation).await?;
 
-        // A migration-style schedule scoped to Hathor witnesses, with a pass
-        // already bound to it (a job was mid-way when the process died). The
-        // bind consumed the pending scope.
         let hathor = RecheckScope {
             orphans: true,
             sources: Some(vec!["auxpow:hathor".to_owned()]),
@@ -426,16 +388,12 @@ async fn a_scoped_pass_finishes_and_a_later_trigger_runs_as_a_follow_up() -> Res
         assert_eq!(consumed.pending_scope.sources, Some(Vec::new()));
         assert!(!consumed.pending_scope.orphans);
 
-        // A refresh-style advance for every source accumulates behind it.
         let widened = schedule_core_recheck(&client, &RecheckScope::pending_rows(), false).await?;
         let pending = load_scheduled_recheck(&client).await?;
         assert_eq!(pending.pending_generation, widened);
         assert_eq!(pending.pending_scope, RecheckScope::pending_rows());
         assert_eq!(pending.pass.map(|pass| pass.generation), Some(scoped));
 
-        // The job finishes the Hathor-only pass (no Namecoin candidate), then
-        // the follow-up pass over every source classifies both parents and
-        // acknowledges the later generation.
         let report = run_scheduled_recheck(&mut client, &classifier, 10).await?;
         assert_eq!(report.candidates, 2);
         assert_eq!(report.acknowledged, Some(widened));
@@ -447,14 +405,12 @@ async fn a_scoped_pass_finishes_and_a_later_trigger_runs_as_a_follow_up() -> Res
     })
 }
 
-/// The canonical competitor `stale_with_competitor` synthesizes for `header`.
 fn synthesized_competitor(header: &Header) -> Header {
     let mut competitor = *header;
     competitor.nonce = competitor.nonce.wrapping_add(1);
     competitor
 }
 
-/// A stale verdict for `header` at `height`, with a synthesized competitor.
 fn stale_with_competitor(header: &Header, height: i32) -> mmm_bitcoin_core::ParentClassification {
     let competitor = synthesized_competitor(header);
     let competitor_hash = competitor.block_hash().to_byte_array().to_vec();
@@ -474,8 +430,6 @@ async fn event_parent_kind(client: &Client, event_id: i64) -> Result<String> {
 #[tokio::test]
 async fn an_interrupted_cascade_survives_in_the_durable_queue() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // An unknown parent and its descendant (the descendant's parent header
-        // links to it), with the descendant sorting first in the pass.
         let fixture = NamecoinEventFixture::new(&client).await?;
         let parent = fixture
             .insert_event(&client, 500_001, ClassificationProof::default(), 2_100)
@@ -495,12 +449,6 @@ async fn an_interrupted_cascade_survives_in_the_durable_queue() -> Result<()> {
             .await?;
         let generation = schedule_core_recheck(&client, &RecheckScope::everything(), true).await?;
 
-        // The page queues both; the drain leaves the descendant unknown as a
-        // candidate, promotes the parent to stale, and the parent's durable
-        // expansion re-enqueues the descendant, whose second classification
-        // dies: the interruption between the parent's commit and its
-        // descendant's reconciliation. Verdicts are per header, so the order
-        // the queue visits them in does not matter.
         let interrupted = ConfiguredParentClassifier::Fake(
             FakeParentClassifier::new(unknown_verdict(&descendant.header))
                 .with_verdicts_for(
@@ -535,9 +483,6 @@ async fn an_interrupted_cascade_survives_in_the_durable_queue() -> Result<()> {
             .get(0);
         assert_eq!(queued, 1, "the descendant waits in the durable queue");
 
-        // A rerun drains the queue before touching the pass: the descendant
-        // is reconciled under its stale predecessor, the cursor already past
-        // it, and the pass acknowledges with nothing left behind.
         let recovered = ConfiguredParentClassifier::Fake(
             FakeParentClassifier::new(stale_with_competitor(&descendant.header, 720_001))
                 .with_verdicts_for(
@@ -561,9 +506,6 @@ async fn an_interrupted_cascade_survives_in_the_durable_queue() -> Result<()> {
 #[tokio::test]
 async fn a_synthesized_competitor_reaches_its_dependents_through_the_durable_queue() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // An unknown parent whose stale verdict will synthesize a canonical
-        // competitor, and an unknown event whose parent header links to that
-        // competitor; the dependent sorts first in the pass.
         let fixture = NamecoinEventFixture::new(&client).await?;
         let parent = fixture
             .insert_event(&client, 500_001, ClassificationProof::default(), 2_100)
@@ -584,12 +526,6 @@ async fn a_synthesized_competitor_reaches_its_dependents_through_the_durable_que
             .await?;
         let generation = schedule_core_recheck(&client, &RecheckScope::everything(), true).await?;
 
-        // The dependent is classified once as a candidate (unknown) and the
-        // parent's verdict writes the competitor. The competitor's expansion,
-        // persisted in the parent's own transaction, brings back both blocks
-        // that depend on it: the parent, as the stale block it competes with
-        // (an idempotent replay), and the dependent, whose second
-        // classification promotes it.
         let fake = FakeParentClassifier::new(unknown_verdict(&dependent.header))
             .with_verdicts_for(
                 &parent.header,
@@ -618,9 +554,6 @@ async fn a_synthesized_competitor_reaches_its_dependents_through_the_durable_que
     })
 }
 
-/// Two canonical successors of `head` already in the read model, as events
-/// at child heights `first_child` and `first_child + 1`: the second links to
-/// the first, the first to `head`.
 async fn seed_canonical_successors(
     client: &mut Client,
     fixture: &NamecoinEventFixture,
@@ -676,9 +609,6 @@ async fn queue_len(client: &Client) -> Result<i64> {
 #[tokio::test]
 async fn the_scheduled_cascade_stops_at_an_unchanged_descendant() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // An unknown parent with two canonical successors already in the read
-        // model: a promotion re-examines the first successor, which does not
-        // change, and the cascade stops there rather than walking the chain.
         let fixture = NamecoinEventFixture::new(&client).await?;
         let parent = fixture
             .insert_event(&client, 500_000, ClassificationProof::default(), 2_100)
@@ -686,9 +616,6 @@ async fn the_scheduled_cascade_stops_at_an_unchanged_descendant() -> Result<()> 
         let (first, second) =
             seed_canonical_successors(&mut client, &fixture, &parent.header, 500_001).await?;
 
-        // Only the parent is a candidate. Its promotion expands to the first
-        // successor, whose strict reconcile confirms it unchanged; the second
-        // successor is never classified.
         let generation = schedule_core_recheck(&client, &RecheckScope::everything(), true).await?;
         let fake = FakeParentClassifier::new(canonical_verdict(&parent.header, 720_000))
             .with_verdicts_for(
@@ -711,11 +638,6 @@ async fn the_scheduled_cascade_stops_at_an_unchanged_descendant() -> Result<()> 
 #[tokio::test]
 async fn a_candidate_changed_by_another_candidate_expands_once_without_walking_on() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // Two unknown candidates in one page: a stale parent and the canonical
-        // competitor its verdict synthesizes, itself witnessed as an event with
-        // two canonical successors. Whichever order the queue visits them in,
-        // the competitor's expansion reaches its first successor at most, and
-        // the cascade stops there: the second successor is never classified.
         let fixture = NamecoinEventFixture::new(&client).await?;
         let parent = fixture
             .insert_event(&client, 500_000, ClassificationProof::default(), 2_100)

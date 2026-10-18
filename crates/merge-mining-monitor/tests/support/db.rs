@@ -1,26 +1,8 @@
-//! Shared Postgres test harness for the DB integration binaries.
-//!
-//! One copy of the schema/migration lifecycle that `tests/db_integration.rs`
-//! and `tests/api_db_integration.rs` previously duplicated word-for-word:
-//! every test runs in its own throwaway schema, applies the full `migrations/`
-//! directory in-process, and drops the schema on the way out (pass or fail).
-//!
-//! The standard prelude/teardown pair is `new_test_db` + `teardown_test_db`:
-//!
-//! ```ignore
-//! let (mut client, schema) = new_test_db().await?;
-//!
-//! let test_result = async { /* test body */ }.await;
-//!
-//! teardown_test_db(&client, &schema, test_result).await
-//! ```
-//!
-//! The client and schema are handed over OWNED, not behind references,
-//! because the `mmm-store` row helpers are generic over
-//! `tokio_postgres::GenericClient` and generic call sites do not deref-coerce
-//! a `&&mut Client` the way concrete `&Client` parameters do - owned locals
-//! keep every existing test body compiling unchanged.
-//!
+//! Shared Postgres test harness: each test runs in an isolated throwaway
+//! schema with all `migrations/` applied and Bitcoin's epoch-header history
+//! seeded, then drops the schema on teardown regardless of test outcome.
+//! Returns owned `(Client, String)` so `GenericClient` helpers need no reborrow.
+
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -29,8 +11,6 @@ use mmm_pg::{PgConfig, connect};
 use mmm_store::{BitcoinCoreHeader, record_bitcoin_core_header};
 use tokio_postgres::Client;
 
-/// Standard test prelude: connect from env (`PgConfig::from_env`), create a
-/// unique schema, apply every migration, and hand both back owned.
 pub async fn new_test_db() -> Result<(Client, String)> {
     let client = connect(&PgConfig::from_env()?).await?;
     let schema = unique_schema();
@@ -39,18 +19,11 @@ pub async fn new_test_db() -> Result<(Client, String)> {
     Ok((client, schema))
 }
 
-/// Standard teardown: drop the schema, then propagate the body result.
-///
-/// Matches the original inline sequence exactly - the schema is dropped even
-/// when the body failed, and a drop error surfaces (taking precedence, as
-/// `drop_schema(...).await?;` did before).
 pub async fn teardown_test_db(client: &Client, schema: &str, result: Result<()>) -> Result<()> {
     drop_schema(client, schema).await?;
     result
 }
 
-/// Run a DB-backed test body in a freshly migrated throwaway schema, always
-/// dropping the schema before propagating the body result.
 #[macro_export]
 macro_rules! run_db_test {
     ($client:ident, $body:block) => {{
@@ -65,8 +38,6 @@ macro_rules! run_db_test {
     }};
 }
 
-/// Mutable variant for tests that pass the client into APIs requiring
-/// `&mut Client`.
 #[macro_export]
 macro_rules! run_mut_db_test {
     ($client:ident, $body:block) => {{
@@ -81,8 +52,6 @@ macro_rules! run_mut_db_test {
     }};
 }
 
-/// Open an additional connection with the search path already pointing at an
-/// existing test schema (spawned tasks, fake chain pollers).
 pub async fn connect_to_schema(schema: &str) -> Result<Client> {
     let client = connect(&PgConfig::from_env()?).await?;
     client
@@ -91,8 +60,6 @@ pub async fn connect_to_schema(schema: &str) -> Result<Client> {
     Ok(client)
 }
 
-/// Create `schema`, point the session's search path at it, and create the
-/// in-schema `schema_migrations` bookkeeping table.
 pub async fn create_schema(client: &Client, schema: &str) -> Result<()> {
     client
         .batch_execute(&format!(
@@ -107,7 +74,6 @@ pub async fn create_schema(client: &Client, schema: &str) -> Result<()> {
     Ok(())
 }
 
-/// Sorted `.sql` migration paths from the repo's `migrations/` directory.
 fn migration_paths() -> Result<Vec<std::path::PathBuf>> {
     migration_paths_from(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations"))
 }
@@ -121,8 +87,6 @@ fn migration_paths_from(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>
     Ok(migrations)
 }
 
-/// Create `schema` and apply every migration into it, recording versions in
-/// the in-schema `schema_migrations` table (the standard full prelude).
 pub async fn apply_migrations(client: &Client, schema: &str) -> Result<()> {
     create_schema(client, schema).await?;
 
@@ -134,13 +98,8 @@ pub async fn apply_migrations(client: &Client, schema: &str) -> Result<()> {
     Ok(())
 }
 
-/// Seed Bitcoin's real retarget history (`fixtures/bitcoin/epoch-headers.json`:
-/// every epoch boundary plus the tip at 967,961) as the Core header cache, so
-/// every test captures against the difficulty history production decides
-/// lineage by. A real Bitcoin fixture parent passes the lineage gate; a
-/// synthetic one has to look like Bitcoin (a placed prev, or its epoch's
-/// bits), or the capture refuses it. The rows carry synthetic hashes: the
-/// fixture records heights, times and bits only.
+/// Seed `fixtures/bitcoin/epoch-headers.json` into `bitcoin_core_header` so
+/// tests capture against production difficulty history.
 async fn seed_bitcoin_epoch_history(client: &Client) -> Result<()> {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -189,9 +148,6 @@ async fn seed_bitcoin_epoch_history(client: &Client) -> Result<()> {
     Ok(())
 }
 
-/// Empty the Core header cache the harness seeds, for tests of the cache
-/// machinery itself and tests whose fake Core chain the cache refresh
-/// follows.
 pub async fn clear_bitcoin_history(client: &Client) -> Result<()> {
     client
         .batch_execute(
@@ -202,12 +158,8 @@ pub async fn clear_bitcoin_history(client: &Client) -> Result<()> {
         .context("clear the seeded Bitcoin history")
 }
 
-/// Replace the seeded Bitcoin history with a synthetic one, for tests whose
-/// fixture parents are synthetic: a header that meets its own target can only
-/// be built with easy bits, so in this history every epoch from genesis to a
-/// horizon at `horizon_height` and `horizon_time` carries `bits`. Genesis has
-/// the all-zero hash the synthetic fixtures build on, so a fixture parent on
-/// it has a placed prev.
+/// Replace the seeded Bitcoin history with synthetic easy-target epochs for
+/// tests whose fixture parents use synthetic headers.
 pub async fn seed_synthetic_bitcoin_history(
     client: &Client,
     horizon_height: i32,
@@ -277,7 +229,6 @@ async fn apply_migration_paths(
     Ok(())
 }
 
-/// Drop the test schema and everything in it.
 pub async fn drop_schema(client: &Client, schema: &str) -> Result<()> {
     client
         .batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE;"))
@@ -285,7 +236,6 @@ pub async fn drop_schema(client: &Client, schema: &str) -> Result<()> {
     Ok(())
 }
 
-/// Collision-proof schema name: PID + nanoseconds + per-process counter.
 pub fn unique_schema() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -297,9 +247,6 @@ pub fn unique_schema() -> String {
     format!("test_{}_{}_{}", std::process::id(), nanos, counter)
 }
 
-/// `(child_block_hash, child_displaced_by, revoked_at)` for every event at
-/// the height, ordered by hash: the child-side state a displacement test
-/// checks after each observation.
 pub async fn displacement_at(
     client: &Client,
     source_id: i64,
@@ -320,7 +267,6 @@ pub async fn displacement_at(
         .collect())
 }
 
-/// Advisory locks this session still holds: zero after a processed height.
 pub async fn advisory_locks_held(client: &Client) -> Result<i64> {
     Ok(client
         .query_one(

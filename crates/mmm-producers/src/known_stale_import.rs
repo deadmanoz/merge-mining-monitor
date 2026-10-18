@@ -1,13 +1,5 @@
-//! `import-known-stales`: load the upstream stale-blocks dataset into the
-//! `known_stale_block` membership table.
-//!
-//! The membership is consulted at `block.btc_orphan_class` derivation so a known
-//! stale is excluded, never labelled strict/weak. This importer reads a
-//! stale-blocks.csv-shaped file (`height,hash,header`; the upstream
-//! bitcoin-data/stale-blocks schema) and records each hash keyed in rust-bitcoin
-//! internal byte order to match `block.btc_header_hash`. Only the `hash` column
-//! is authoritative here: the upstream dataset leaves `header` empty for many
-//! rows, so the hash (not a re-derivation from the header) is the membership key.
+//! `import-known-stales`: load the upstream stale-blocks dataset into
+//! `known_stale_block` keyed in internal byte order.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -21,27 +13,17 @@ use mmm_store::upsert_known_stale_block;
 use tokio_postgres::Client;
 use tracing::info;
 
-/// Progress-log cadence (rows) when `--batch-size` is omitted.
 const DEFAULT_BATCH_SIZE: usize = 5_000;
 
-/// Resolved parameters for one `import-known-stales` run.
 #[derive(Debug, Clone)]
 pub struct KnownStaleImportConfig {
     pub csv_path: PathBuf,
-    /// Provenance recorded on every imported row (e.g. a dataset name plus
-    /// commit), required so the membership's origin is auditable.
     pub source_label: String,
-    /// Progress-log cadence in rows processed.
     pub batch_size: usize,
-    /// When set, tally malformed rows as skips and import the valid subset.
-    /// Default: any malformed row is fatal, so a corrupt or wrong dataset can
-    /// never initialize a partial membership.
     pub skip_malformed: bool,
 }
 
 impl KnownStaleImportConfig {
-    /// Parse `import-known-stales --csv PATH --source-label LABEL [--batch-size N]`.
-    /// Both `--csv` and `--source-label` are required.
     pub fn from_args(mut args: std::env::Args) -> Result<Self> {
         let mut csv_path = None;
         let mut source_label = None;
@@ -100,10 +82,6 @@ fn usage_message() -> &'static str {
     "usage: import-known-stales --csv PATH --source-label LABEL [--batch-size N] [--skip-malformed]"
 }
 
-/// Running tallies for one `import-known-stales` run. `rows_seen` counts every
-/// CSV record; `inserted` new membership rows; `already_present` idempotent
-/// re-imports; `skipped` malformed/empty-hash rows. Counters reconcile:
-/// rows_seen = inserted + already_present + skipped.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct KnownStaleImportSummary {
     pub rows_seen: u64,
@@ -113,7 +91,6 @@ pub struct KnownStaleImportSummary {
 }
 
 impl KnownStaleImportSummary {
-    /// Print the one-line operator-facing summary to stdout.
     pub fn print(&self) {
         println!(
             "import-known-stales: rows_seen={} inserted={} already_present={} skipped={}",
@@ -122,24 +99,9 @@ impl KnownStaleImportSummary {
     }
 }
 
-/// Read the stale-blocks CSV and upsert every hash into `known_stale_block`
-/// in one transaction, repairing any existing strict/weak classifications
-/// before the membership becomes visible.
-///
-/// Malformed rows (missing/unparseable `hash`) are FATAL by default, as are a
-/// missing `hash` column and a file with no usable row: downstream guards
-/// only test membership emptiness, so a corrupt or wrong dataset must never
-/// count as initialized while silently omitting known stales.
-/// `--skip-malformed` opts into tallying malformed rows as skips and
-/// importing the valid subset. The membership write and derived repair are
-/// atomic: all parsed rows commit together while holding the per-parent
-/// advisory locks (acquired through the read-model's sorted, deduped
-/// `lock_block_hashes`, honoring the global lock
-/// order), so the import serializes with any in-flight classification of the
-/// same hashes AND a mid-import failure records nothing, never a partial
-/// membership that downstream empty-membership guards would treat as
-/// complete. Idempotent: a re-run records every already-present hash under
-/// `already_present` and inserts none.
+/// Upsert every stale-blocks CSV hash into `known_stale_block` and demote any
+/// existing strict/weak classifications atomically under sorted per-parent
+/// advisory locks. Malformed rows fail the import unless `--skip-malformed` is set.
 pub async fn run_import_known_stales(
     client: &mut Client,
     config: &KnownStaleImportConfig,
@@ -158,7 +120,6 @@ pub async fn run_import_known_stales(
     let imported_at = now_epoch_seconds()?;
     let mut summary = KnownStaleImportSummary::default();
 
-    // Pass 1: parse every row up front so the write below can be all-or-nothing.
     let mut rows = Vec::new();
     for row in reader.deserialize::<BTreeMap<String, String>>() {
         summary.rows_seen += 1;
@@ -195,7 +156,6 @@ pub async fn run_import_known_stales(
         );
     }
 
-    // Pass 2: one transaction for the whole membership write.
     let txn = client
         .transaction()
         .await
@@ -232,15 +192,8 @@ pub async fn run_import_known_stales(
     Ok(summary)
 }
 
-/// Parse one row into `(hash_internal_bytes, height)`. The `hash` column is the
-/// display (reversed) hex block hash; `BlockHash::from_str` parses that form and
-/// `to_byte_array` yields internal byte order, matching `block.btc_header_hash`.
-/// `height` is advisory when present (`None` when the column is absent or
-/// empty), but a NON-EMPTY unparseable height makes the whole row malformed
-/// (`None` return) rather than silently degrading to no height: the strict
-/// default documents that any malformed row aborts the import, and corrupt
-/// provenance must not be quietly dropped. Returns `None` for a missing or
-/// malformed hash as well.
+/// Parse display-hex `hash` into internal byte order and optional `height`
+/// (a non-empty unparseable height rejects the row).
 fn parse_row(row: &BTreeMap<String, String>) -> Option<(Vec<u8>, Option<i32>)> {
     let hash_str = row
         .get("hash")
@@ -267,8 +220,6 @@ mod tests {
 
     #[test]
     fn parses_display_hash_to_internal_order() {
-        // Real stale block 363736: its display hash reverses to this internal
-        // byte order, which is what block.btc_header_hash stores.
         let mut row = BTreeMap::new();
         row.insert("height".to_string(), "363736".to_string());
         row.insert(

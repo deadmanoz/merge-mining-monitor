@@ -6,31 +6,13 @@ const {
   treeEnvelope,
 } = require("./support/api-stubs");
 
-// Regression coverage for tree camera/selection behaviour:
-//  1. "Live tip" re-centers on the tip even when a block was selected (the
-//     drawer-collapse rAF must not lock a stale transform).
-//  2. A block click with a sub-pixel micro-drag still selects (d3-zoom
-//     clickDistance), and now also centers.
-//  3. centerCameraOnNode anchors the tip (not a stale camera) when the focus block
-//     is absent from the rendered window.
-//  4. The explicit focus gestures center the focal block: a node click, an entered
-//     tree height (canonical-first when a stale shares the height, no refetch on a
-//     redundant re-entry), and the orphan/unknown empty-anchor fallback.
-
 const TIP_HEIGHT = 800000;
-const STALE_650K = "0".repeat(64); // a same-height stale hash that sorts before the canonical's
+const STALE_650K = "0".repeat(64); // same-height stale hash that sorts before the canonical's
 
 function hashFor(height) {
   return String(height).padStart(64, "0");
 }
 
-// The rendered window depends on the at_height lookup so each test gets the
-// geometry it needs:
-//   tip (no at_height) -> one canonical node at TIP_HEIGHT
-//   700000             -> three canonical nodes (distinct ranks)
-//   650000             -> a canonical block plus a same-height stale competitor
-//                         whose hash sorts BEFORE the canonical's (tie-break)
-//   600000             -> a single unknown-kind node (orphan fallback)
 function treeFixture(query) {
   const atHeight = query.has("at_height") ? Number(query.get("at_height")) : null;
   const atTime = query.has("at_time") ? query.get("at_time") : null;
@@ -47,8 +29,6 @@ function treeFixture(query) {
       { from_hash: hashFor(650000), to_hash: hashFor(649999), edge_kind: "canonical", hidden_count: 0 },
       { from_hash: STALE_650K, to_hash: hashFor(649999), edge_kind: "stale_entry", hidden_count: 0 },
     ];
-    // A branch entry lanes the stale below the canonical so the two are not
-    // stacked at the same point and a wrong (stale) center is observable.
     branches = [{ member_hashes: [STALE_650K], root_hash: STALE_650K }];
   } else if (atHeight === 600000) {
     nodes = [makeNode(hashFor(600000), 600000, hashFor(599999), "unknown")];
@@ -64,9 +44,6 @@ function treeFixture(query) {
       { from_hash: hashFor(700000), to_hash: hashFor(699999), edge_kind: "canonical", hidden_count: 0 },
     ];
   } else if (atTime != null) {
-    // A date/time lookup resolves to a canonical block and the backend builds the
-    // compact window around it. Return a small canonical window so mid-height
-    // centering lands on the middle block (450002).
     nodes = [
       makeNode(hashFor(450000), 450000, hashFor(449999)),
       makeNode(hashFor(450001), 450001, hashFor(450000)),
@@ -124,9 +101,6 @@ async function stubApi(page, treeRequests, options = {}) {
 const centerX = (box) => box.x + box.width / 2;
 const centerY = (box) => box.y + box.height / 2;
 
-// Drag an empty corner of the canvas to pan the camera (a >4px move is a pan, not
-// a background deselect), so a focal block ends up off-center before a gesture
-// that must recenter it.
 async function panCanvas(page, dx, dy) {
   const svg = await page.locator("#tree-svg").boundingBox();
   const sx = svg.x + 40;
@@ -137,7 +111,6 @@ async function panCanvas(page, dx, dy) {
   await page.mouse.up();
 }
 
-// Poll a node's distance (px) from the SVG viewport center (both axes summed).
 function distanceFromCenter(page, node) {
   return (async () => {
     const svg = await page.locator("#tree-svg").boundingBox();
@@ -153,15 +126,11 @@ test("Live tip re-anchors the camera on the tip after a block was selected", asy
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Bitcoin Header Tree" })).toBeVisible();
 
-  // Initial tip render: one node, drawer collapsed. Capture where the tip block
-  // sits so we can assert Live tip returns the camera to exactly here.
   const tipNode = page.locator(`g.tree-node[aria-label*="${TIP_HEIGHT}"]`);
   await expect(tipNode).toHaveCount(1);
   await expect(page.locator(".workspace")).toHaveAttribute("data-drawer-collapsed", "true");
   const initialTipX = centerX(await tipNode.boundingBox());
 
-  // Navigate to a height window (different geometry). Entering a height now centers
-  // on that block, so click the centered block to open the drawer before Live tip.
   await page.locator('input[name="treeHeight"]').fill("700000");
   await page.locator('input[name="treeHeight"]').press("Enter");
   const heightNode = page.locator('g.tree-node[aria-label*="700000"]');
@@ -169,15 +138,12 @@ test("Live tip re-anchors the camera on the tip after a block was selected", asy
   await heightNode.click();
   await expect(page.locator(".workspace")).toHaveAttribute("data-drawer-collapsed", "false");
 
-  // Live tip: must re-anchor on the tip (drawer collapses, tip view re-renders).
   await page.selectOption("#nav-goto", "tip");
   await expect(page.locator(".workspace")).toHaveAttribute("data-drawer-collapsed", "true");
   const tipAfter = page.locator(`g.tree-node[aria-label*="${TIP_HEIGHT}"]`);
   await expect(tipAfter).toHaveCount(1);
   await expect(page.locator("g.tree-node")).toHaveCount(1);
 
-  // The tip block must land back at its original anchored position. A stale
-  // transform (the bug) would leave it offset by a full window's worth of pitch.
   const finalTipX = centerX(await tipAfter.boundingBox());
   expect(Math.abs(finalTipX - initialTipX)).toBeLessThan(6);
 });
@@ -192,10 +158,7 @@ test("a block click with a small micro-drag still selects and opens the drawer",
   await expect(node).toHaveCount(1);
   await expect(page.locator(".workspace")).toHaveAttribute("data-drawer-collapsed", "true");
 
-  // Press, drift ~3.6px (sqrt(3^2 + 2^2)), release: that displacement sits under
-  // the clickDistance(4) threshold, so the gesture stays a click. Under d3-zoom's
-  // default clickDistance(0) any drift is classified as a pan and the click is
-  // swallowed.
+  // ~3.6px drift stays under d3-zoom clickDistance(4).
   const box = await node.boundingBox();
   const cx = centerX(box);
   const cy = centerY(box);
@@ -216,9 +179,6 @@ test("a shared-link restore whose focus block is absent from the window anchors 
   });
   await stubApi(page, treeRequests);
 
-  // Explicit height window (3 nodes at 699998..700000); the ?selected hash is NOT
-  // one of them, so centerCameraOnNode cannot find its focus. It must report the
-  // miss (and anchor the tip) rather than leaving a stale camera with no signal.
   const absent = "f".repeat(64);
   await page.goto(`/?tree_height=700000&selected=${absent}`);
   await expect(page.getByRole("heading", { name: "Bitcoin Header Tree" })).toBeVisible();
@@ -228,8 +188,6 @@ test("a shared-link restore whose focus block is absent from the window anchors 
     .poll(() => warnings.some((w) => w.includes("absent from rendered window")))
     .toBe(true);
 
-  // The tip block (highest in the window) is anchored at the viewport center on
-  // both axes (the same fallback position a fresh render uses), not a stale camera.
   const svgBox = await page.locator("#tree-svg").boundingBox();
   const tipBox = await page.locator('g.tree-node[aria-label*="700000"]').boundingBox();
   expect(Math.abs(centerX(tipBox) - centerX(svgBox))).toBeLessThan(6);
@@ -240,16 +198,12 @@ test("clicking a near-edge block recenters it", async ({ page }) => {
   const treeRequests = [];
   await stubApi(page, treeRequests);
 
-  // Start with the drawer open (shared link) and the block centered so the click
-  // does not reflow and the edge check runs on stable geometry.
   await page.goto(`/?selected=${hashFor(TIP_HEIGHT)}`);
   await expect(page.getByRole("heading", { name: "Bitcoin Header Tree" })).toBeVisible();
   const node = page.locator("g.tree-node").first();
   await expect(node).toHaveCount(1);
   await expect(page.locator(".workspace")).toHaveAttribute("data-drawer-collapsed", "false");
 
-  // Pan the block hard toward the right edge (to ~90% of the width), then click it:
-  // a near-edge click recenters.
   const svg = await page.locator("#tree-svg").boundingBox();
   await panCanvas(page, Math.round(svg.width * 0.4), 0);
   expect(await distanceFromCenter(page, node)).toBeGreaterThan(40);
@@ -267,13 +221,11 @@ test("clicking an in-view block leaves the camera put", async ({ page }) => {
   await expect(node).toHaveCount(1);
   await expect(page.locator(".workspace")).toHaveAttribute("data-drawer-collapsed", "false");
 
-  // Pan the block a little so it is off-center but comfortably in view (not near an
-  // edge), then click it: a routine in-view click must NOT jerk the camera.
   await panCanvas(page, 70, 50);
   expect(await distanceFromCenter(page, node)).toBeGreaterThan(40);
   const before = await node.boundingBox();
   await node.click();
-  await page.waitForTimeout(150); // let the post-click rAF run; it must not center
+  await page.waitForTimeout(150);
   const after = await node.boundingBox();
   expect(Math.abs(centerX(after) - centerX(before))).toBeLessThan(4);
   expect(Math.abs(centerY(after) - centerY(before))).toBeLessThan(4);
@@ -295,10 +247,7 @@ test("entering a height centers the canonical block, not a same-height stale", a
   await expect(canonical).toHaveCount(1);
   await expect(stale).toHaveCount(1);
 
-  // The CANONICAL at the height is centered (canonical-first tie-break) even though
-  // the stale competitor's hash sorts before it.
   await expect.poll(() => distanceFromCenter(page, canonical)).toBeLessThan(8);
-  // The stale (same height, laned below) is therefore NOT at the vertical center.
   const svgBox = await page.locator("#tree-svg").boundingBox();
   const staleBox = await stale.boundingBox();
   expect(Math.abs(centerY(staleBox) - centerY(svgBox))).toBeGreaterThan(20);
@@ -312,7 +261,6 @@ test("re-entering the active height recenters without refetching", async ({ page
   await expect(page.getByRole("heading", { name: "Bitcoin Header Tree" })).toBeVisible();
   await expect(page.locator("g.tree-node")).toHaveCount(1);
 
-  // Enter a height: loads the window and centers on the canonical at that height.
   await page.locator('input[name="treeHeight"]').fill("700000");
   await page.locator('input[name="treeHeight"]').press("Enter");
   const target = page.locator('g.tree-node[aria-label*="700000"]');
@@ -321,7 +269,6 @@ test("re-entering the active height recenters without refetching", async ({ page
   await expect.poll(() => distanceFromCenter(page, target)).toBeLessThan(8);
   const requestsAfterLoad = treeRequests.length;
 
-  // Pan away, then re-enter the SAME height: it must recenter WITHOUT a refetch.
   await panCanvas(page, 150, 90);
   expect(await distanceFromCenter(page, target)).toBeGreaterThan(40);
   await page.locator('input[name="treeHeight"]').press("Enter");
@@ -339,9 +286,6 @@ test("clicking an orphan/unknown node opens it via the empty-anchor fallback", a
   const unknown = page.locator('g.tree-node[aria-label*="unknown 600000"]');
   await expect(unknown).toHaveCount(1);
 
-  // The unknown node routes through the orphan navigator, whose stub returns no
-  // item; the loadBlockThenCenter fallback must still select it and open the
-  // drawer (its recenter is edge-conditional, covered by the click tests above).
   await unknown.click();
 
   await expect(page.locator(".workspace")).toHaveAttribute("data-drawer-collapsed", "false");
@@ -378,18 +322,13 @@ test("a catalogued error block is a standalone tree node with its rejection reas
 
   await errorNode.click();
   await expect(page.locator("#drawer")).toContainText("Consensus rejection");
-  // The rule renders in prose, not as the raw catalogue token.
   await expect(page.locator("#drawer")).toContainText(
     "Block time at or below median-time-past",
   );
   await expect(page.locator("#drawer")).not.toContainText("time_below_mtp");
   await expect(page.locator("#drawer")).not.toContainText("Orphan class");
-
-  // An error block never raced, so the absent Competition panel is explained
-  // rather than simply missing.
   await expect(page.locator("#drawer")).toContainText("never raced");
 
-  // The rule's help control opens the consensus-rule dialog with its body.
   await page
     .locator('#drawer button[data-consensus-rule-info="time_below_mtp"]')
     .click();
@@ -399,9 +338,6 @@ test("a catalogued error block is a standalone tree node with its rejection reas
 });
 
 test("an unmapped consensus rule token falls back to the raw value with no help control", async ({ page }) => {
-  // The research classifier's rule vocabulary can grow ahead of the frontend
-  // map, so an unrecognised token must stay legible rather than rendering blank
-  // or offering a control that opens an empty dialog.
   const errorHash = "e".repeat(64);
   const errorBlock = {
     ...makeNode(errorHash, 946213, null, "error_block"),
@@ -441,8 +377,6 @@ test("entering a date centers the era roughly on the window mid-height", async (
   await page.locator('input[name="treeTime"]').fill("2017-01-01T00:00");
   await page.locator('input[name="treeTime"]').press("Enter");
 
-  // The date resolves to a canonical window (450000..450004); approximate centering
-  // lands the mid-height block (450002) at the viewport center.
   const mid = page.locator('g.tree-node[aria-label*="450002"]');
   await expect(mid).toHaveCount(1);
   await expect.poll(() => distanceFromCenter(page, mid)).toBeLessThan(8);
@@ -464,7 +398,6 @@ test("re-entering the active date recenters without refetching", async ({ page }
   await expect.poll(() => distanceFromCenter(page, mid)).toBeLessThan(8);
   const requestsAfterLoad = treeRequests.length;
 
-  // Pan away, then re-enter the SAME date: it must recenter WITHOUT a refetch.
   await panCanvas(page, 150, 90);
   expect(await distanceFromCenter(page, mid)).toBeGreaterThan(40);
   await page.locator('input[name="treeTime"]').press("Enter");

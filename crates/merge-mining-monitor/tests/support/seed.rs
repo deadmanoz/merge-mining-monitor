@@ -1,15 +1,4 @@
-//! Shared table-level row builders for the DB integration binaries.
-//!
-//! Direct-SQL seeds for the read-model tables, deliberately bypassing the
-//! production write paths: tests that assert table-level behavior (projection
-//! layout, pagination, filters) seed exactly the rows they mean to observe.
-//! Tests that exercise the production mutation/capture flow use the scenario
-//! layer instead.
-//!
-//! Everything here is `pub` (including seed-struct fields, which are
-//! constructed with struct literals at call sites); the per-binary
-//! `#![allow(dead_code)]` blanket in `tests/support/mod.rs` covers helpers a
-//! given binary does not use.
+//! Direct-SQL row builders for table-layout and projection integration tests.
 
 use std::collections::BTreeMap;
 
@@ -42,8 +31,6 @@ pub async fn pool_id_for_slug(client: &Client, slug: &str) -> Result<i64> {
         .get(0))
 }
 
-/// Insert a `pool_identity` row mapping `identifier` in `namespace` to
-/// `pool_id`, returning its id.
 pub async fn insert_pool_identity(
     client: &Client,
     pool_id: i64,
@@ -61,8 +48,6 @@ pub async fn insert_pool_identity(
         .get(0))
 }
 
-/// Read the child-block attribution rows for `event_id` in `namespace`, ordered
-/// by matched value. Shared by the Fractal and Hathor reward-replay binaries.
 pub async fn child_reward_rows(
     client: &Client,
     event_id: i64,
@@ -194,13 +179,8 @@ pub async fn insert_block(
     Ok(())
 }
 
-/// Seed a catalogued error block.
-///
-/// `insert_block` cannot express this kind: `chk_block_kind_height` requires
-/// `btc_height_source = 'error-block-catalog'` for it, and
-/// `chk_block_error_block_reason` requires a reason exactly when the kind is
-/// `error_block`. Both are absent from the generic helper's canonical/stale
-/// height-source map.
+/// Seed a catalogued error block (`btc_height_source = 'error-block-catalog'`
+/// with a required `error_block_reason`).
 pub async fn insert_error_block(
     client: &Client,
     hash: &[u8],
@@ -221,9 +201,6 @@ pub async fn insert_error_block(
     .await
 }
 
-/// As `insert_error_block`, with an explicit distinct-source count. A catalogued
-/// error block is witnessed by definition, so the default is 1; pass 0 to build
-/// the sourceless row that `/tree` filters out under `min_sources`.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_error_block_with_sources(
     client: &Client,
@@ -273,9 +250,6 @@ pub async fn block_kind(client: &Client, hash: &[u8]) -> Result<String> {
         .get(0))
 }
 
-// Insert a PoW-valid `kind='unknown'` BTC orphan (height NULL) with the given
-// btc_orphan_class. insert_block sets pow_validated=TRUE; the migration CHECK does
-// not enforce a class on pow_validated, so the class is set in a follow-up UPDATE.
 pub async fn insert_orphan(
     client: &Client,
     hash: &[u8],

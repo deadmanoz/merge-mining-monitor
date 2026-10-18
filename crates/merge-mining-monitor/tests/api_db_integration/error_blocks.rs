@@ -35,16 +35,12 @@ async fn fetch_error_block_navigator(
 /// value while the display form reverses the bytes and keys on the low byte
 /// first. A regression to display-hex ordering flips the groups and fails.
 struct SeededCatalogue {
-    /// Every catalogued hash, in the order the navigator must return them
-    /// (height descending, then stored bytes ascending).
     expected: Vec<Vec<u8>>,
 }
 
 async fn seed_catalogue(client: &Client) -> Result<SeededCatalogue> {
     let ts = day_epoch(2026, Month::May, 10);
 
-    // Canonical context above every catalogued height so navigation views
-    // resolve instead of reporting a target beyond the complete canonical tip.
     insert_block(
         client,
         &hash_bytes(0x9000),
@@ -56,7 +52,6 @@ async fn seed_catalogue(client: &Client) -> Result<SeededCatalogue> {
     )
     .await?;
 
-    // Height 300: a single error block.
     let h300 = hash_bytes(0x0301);
     insert_error_block(
         client,
@@ -68,8 +63,6 @@ async fn seed_catalogue(client: &Client) -> Result<SeededCatalogue> {
     )
     .await?;
 
-    // Height 200: a six-member collision group, the shape that makes a
-    // height-only cursor skip or repeat members at a page boundary.
     let group200 = [0x0201, 0x0300, 0x0402, 0x0501, 0x0600, 0x0703]
         .map(hash_bytes)
         .to_vec();
@@ -85,7 +78,6 @@ async fn seed_catalogue(client: &Client) -> Result<SeededCatalogue> {
         .await?;
     }
 
-    // Height 100: a two-member group.
     let group100 = [0x1102, 0x1200].map(hash_bytes).to_vec();
     for (index, hash) in group100.iter().enumerate() {
         insert_error_block(
@@ -99,7 +91,6 @@ async fn seed_catalogue(client: &Client) -> Result<SeededCatalogue> {
         .await?;
     }
 
-    // Height descending, then stored bytes ascending within each height.
     let mut expected = vec![h300];
     let mut g200 = group200;
     g200.sort();
@@ -111,8 +102,6 @@ async fn seed_catalogue(client: &Client) -> Result<SeededCatalogue> {
     Ok(SeededCatalogue { expected })
 }
 
-/// Guard the guard: if stored-byte and display-hex order happened to agree, the
-/// tie-break assertions would pass under a display-ordering regression too.
 fn assert_stored_not_display_order(expected: &[Vec<u8>]) {
     let by_display = {
         let mut displayed = expected.iter().map(|h| display_hash(h)).collect::<Vec<_>>();
@@ -160,8 +149,6 @@ async fn error_block_navigator_orders_by_height_then_stored_hash() -> Result<()>
             .collect::<Vec<_>>();
         assert_eq!(returned, expected);
 
-        // Each item is a single-height span carrying the catalogue kind, and
-        // never a branch or orphan: an error block cannot be either.
         for (offset, item) in full.items.iter().enumerate() {
             assert_eq!(item.index, offset as u64 + 1);
         }
@@ -171,11 +158,6 @@ async fn error_block_navigator_orders_by_height_then_stored_hash() -> Result<()>
         assert!(full.items[0].branch.is_none());
         assert!(full.items[0].orphan.is_none());
 
-        // Every item resolves to exactly one of a renderable window or an
-        // explicit reason it has none, so a client is never left guessing.
-        // Which one it is depends on canonical backbone density, whose readiness
-        // rules live in shared code (`navigation_for_span`) already covered by
-        // the stale navigator's tests.
         for item in &full.items {
             assert_ne!(
                 item.view.is_some(),
@@ -198,9 +180,6 @@ async fn error_block_navigator_pages_through_a_same_height_group_exactly_once() 
             .map(|hash| display_hash(hash))
             .collect::<Vec<_>>();
 
-        // Walk the whole catalogue older-ward in pages of two. Page boundaries
-        // land INSIDE the six-member height-200 group, which is exactly where a
-        // height-only cursor would repeat or skip members.
         let mut walked: Vec<String> = Vec::new();
         let mut page = fetch_error_block_navigator(&client, "limit=2").await?;
         assert!(page.prev_cursor.is_none(), "first page has nothing newer");
@@ -244,10 +223,8 @@ async fn error_block_navigator_pages_through_a_same_height_group_exactly_once() 
             "a full older-ward walk must return every catalogued block exactly once, in order"
         );
 
-        // And back: stepping newer from the last page must revisit the whole
-        // catalogue. Each newer-ward page is itself returned newest-first, so
-        // the reconstruction reverses the PAGE order and keeps each page's
-        // internal order, rather than reversing the flattened list.
+        // Each newer-ward page is returned newest-first, so reverse page order
+        // while preserving each page's internal order.
         let mut back_pages: Vec<Vec<String>> = Vec::new();
         loop {
             back_pages.push(
@@ -267,10 +244,6 @@ async fn error_block_navigator_pages_through_a_same_height_group_exactly_once() 
         }
         back_pages.reverse();
         let back: Vec<String> = back_pages.into_iter().flatten().collect();
-        // Uniqueness alone would still pass if the walk skipped blocks or
-        // stopped early, so assert the full reconstruction: newer-ward paging
-        // visits every block in catalogue order and terminates only once it has
-        // reached the newest edge.
         assert_eq!(
             back, expected,
             "a newer-ward walk must reconstruct the whole catalogue"
@@ -283,8 +256,6 @@ async fn error_block_navigator_pages_through_a_same_height_group_exactly_once() 
     })
 }
 
-/// Seed a complete canonical backbone over `[1, to_height]` in one statement.
-/// Hashes are derived from the height so they are unique and reproducible.
 async fn seed_canonical_backbone(client: &Client, to_height: i32, ts: i64) -> Result<()> {
     client
         .execute(
@@ -324,11 +295,6 @@ async fn error_block_navigator_projects_a_complete_target_window() -> Result<()>
             "time_below_mtp",
         )
         .await?;
-        // A catalogued error block is witnessed by definition. The tree derives
-        // a node's source count from events, not from the block rollup column,
-        // so without a real witnessing event it renders as sourceless, is
-        // dropped under the default `min_sources`, and the round-trip below
-        // cannot pass.
         witness_error_block(&client, &target, &hash_bytes(0x7776), 50, ts + 1).await?;
 
         let payload = fetch_error_block_navigator(&client, "limit=1").await?;
@@ -340,8 +306,6 @@ async fn error_block_navigator_projects_a_complete_target_window() -> Result<()>
             item.view_error
         );
 
-        // NAVIGATION_PADDING is 16 either side, clamped to the complete tip, and
-        // the widest fitting window wins.
         let view = serde_json::to_value(item.view.as_ref().expect("renderable window"))?;
         assert_eq!(view["mode"], "tree_window");
         assert_eq!(view["target_height"], 50);
@@ -349,9 +313,6 @@ async fn error_block_navigator_projects_a_complete_target_window() -> Result<()>
         assert_eq!(view["tree_to"], 66);
         assert_eq!(view["select_hash"], display_hash(&target));
 
-        // Round-trip the emitted window through the real tree projection: the
-        // navigator must not advertise a view whose tree response omits the
-        // block it selects, which would leave the UI falling back to the tip.
         let tree = project_tree(
             &client,
             Some(&format!(
@@ -374,11 +335,7 @@ async fn error_block_navigator_projects_a_complete_target_window() -> Result<()>
     })
 }
 
-/// Attach a real witnessing event to a catalogued error block.
-///
-/// The tree derives a node's source count from events rather than the block
-/// rollup column, so a catalogue row without one renders as sourceless, is
-/// dropped under the default `min_sources`, and never appears in a window.
+/// Attach a witnessing event so `/tree` counts a source for the error block.
 async fn witness_error_block(
     client: &Client,
     hash: &[u8],
@@ -406,8 +363,7 @@ async fn witness_error_block(
     Ok(())
 }
 
-/// Fill heights 34..=66 with 468 witnessed error blocks, pushing that window
-/// past `TREE_NODE_LIMIT` (500) so the navigator must narrow it.
+/// Fill heights 34..=66 with 468 witnessed error blocks to exceed `TREE_NODE_LIMIT` (500).
 async fn crowd_window_with_error_blocks(client: &Client, ts: i64) -> Result<()> {
     let namecoin = get_source_id(client, NAMECOIN_SOURCE_CODE).await?;
     client
@@ -472,8 +428,6 @@ async fn error_blocks_count_against_the_tree_node_budget() -> Result<()> {
         witness_error_block(&client, &target, &hash_bytes(0x7776), 50, ts + 1).await?;
         crowd_window_with_error_blocks(&client, ts).await?;
 
-        // Guard against a vacuous test: the full padded window MUST be one the
-        // tree refuses, otherwise nothing here exercises the cap at all.
         assert!(
             project_tree(&client, Some("from_height=34&to_height=66"))
                 .await
@@ -481,8 +435,6 @@ async fn error_blocks_count_against_the_tree_node_budget() -> Result<()> {
             "fixture must put the full padded window beyond what /tree will render"
         );
 
-        // Anchor on the height-50 target specifically: `limit=1` alone would
-        // return the NEWEST catalogued block, which the crowd above supplies.
         let payload = fetch_error_block_navigator(
             &client,
             &format!("anchor_hash={}&limit=1", display_hash(&target)),
@@ -494,10 +446,6 @@ async fn error_blocks_count_against_the_tree_node_budget() -> Result<()> {
         let tree_from = view["tree_from"].as_i64().expect("tree_from");
         let tree_to = view["tree_to"].as_i64().expect("tree_to");
 
-        // The navigator degrades to a narrower window rather than refusing, so
-        // the contract is that whatever window it advertises, `/tree` actually
-        // serves. Round-trip it rather than recounting rows, which is what makes
-        // this catch a budget that disagrees with tree visibility.
         let tree = project_tree(
             &client,
             Some(&format!("from_height={tree_from}&to_height={tree_to}")),
@@ -539,11 +487,6 @@ async fn sourceless_error_blocks_do_not_consume_the_tree_node_budget() -> Result
         .await?;
         witness_error_block(&client, &target, &hash_bytes(0x7776), 50, ts + 1).await?;
 
-        // Crowd the target's window past the 500-node cap with error blocks that
-        // carry NO event. The tree never renders them, so they must not narrow
-        // the advertised window. Without the eligibility predicate in the budget
-        // query these invisible rows would push it over the cap and force a
-        // narrower window than the tree actually needs.
         client
             .execute(
                 "INSERT INTO block ( \
@@ -575,8 +518,6 @@ async fn sourceless_error_blocks_do_not_consume_the_tree_node_budget() -> Result
                 .as_ref()
                 .expect("invisible rows must not deny a window"),
         )?;
-        // The full padded window, unnarrowed: 33 heights plus one visible error
-        // block, well inside the cap once the 600 invisible rows are excluded.
         assert_eq!(view["tree_from"], 34);
         assert_eq!(view["tree_to"], 66);
         project_tree(&client, Some("from_height=34&to_height=66")).await?;
@@ -590,11 +531,6 @@ async fn error_block_navigator_skips_rows_the_tree_would_filter_out() -> Result<
         let ts = day_epoch(2026, Month::May, 10);
         seed_canonical_backbone(&client, 100, ts).await?;
 
-        // Genuinely witnessed: the rollup column AND an active event, which is
-        // what `/tree` actually counts. Seeding the column alone would make this
-        // control indistinguishable from `sourceless` to the tree, and the test
-        // would then only prove the navigator's own predicate rather than the
-        // renderability parity it claims.
         let witnessed = hash_bytes(0x4001);
         insert_error_block(
             &client,
@@ -606,9 +542,6 @@ async fn error_block_navigator_skips_rows_the_tree_would_filter_out() -> Result<
         )
         .await?;
         witness_error_block(&client, &witnessed, &hash_bytes(0x4000), 50, ts + 1).await?;
-        // No active source at all: `/tree` drops this under the default
-        // min_sources of 1, so offering it would advertise a window whose tree
-        // response omits the block it selects.
         let sourceless = hash_bytes(0x4002);
         insert_error_block_with_sources(
             &client,
@@ -626,8 +559,6 @@ async fn error_block_navigator_skips_rows_the_tree_would_filter_out() -> Result<
         assert_eq!(payload.items.len(), 1);
         assert_eq!(payload.items[0].primary_hash, display_hash(&witnessed));
 
-        // Parity: the block the navigator DOES offer must actually render, and
-        // the one it withholds must actually be absent.
         let item = &payload.items[0];
         let view = serde_json::to_value(item.view.as_ref().expect("renderable window"))?;
         let tree = project_tree(
@@ -654,7 +585,6 @@ async fn error_block_navigator_skips_rows_the_tree_would_filter_out() -> Result<
             "the withheld block must indeed be one the tree filters out"
         );
 
-        // Anchor mode agrees, so a deep link cannot reach it either.
         let anchored = fetch_error_block_navigator(
             &client,
             &format!("anchor_hash={}&limit=1", display_hash(&sourceless)),
@@ -670,7 +600,6 @@ async fn error_block_navigator_skips_rows_the_tree_would_filter_out() -> Result<
 async fn error_block_navigator_anchors_on_a_catalogued_hash() -> Result<()> {
     crate::run_db_test!(client, {
         let seeded = seed_catalogue(&client).await?;
-        // Anchor on a middle member of the six-block group.
         let anchor = display_hash(&seeded.expected[3]);
         let payload =
             fetch_error_block_navigator(&client, &format!("anchor_hash={anchor}&limit=10")).await?;

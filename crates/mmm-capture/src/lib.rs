@@ -1,9 +1,5 @@
-//! Pure offline evidence: parse, normalize, classify.
-//!
-//! Compiles with no tokio-postgres, no reqwest, and no corepc in its normal
-//! dependency graph (mechanically checked with `cargo tree -e normal`).
-//! Everything that touches a database, a node, or the network lives in the
-//! crates built on top of this one.
+//! Pure offline evidence parsing, normalization, and classification (`cargo tree -e normal`
+//! has no database, HTTP, or Core RPC dependencies).
 
 pub mod attribution_policy;
 pub mod auxpow;

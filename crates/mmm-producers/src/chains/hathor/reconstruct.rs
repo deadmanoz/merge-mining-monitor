@@ -19,19 +19,13 @@ pub(crate) struct HathorReconstructedParent {
     pub(crate) work: DeclaredWork,
 }
 
-/// What a block says about its own work: the weight its hash was checked
-/// against, and the block it builds on, both read from the graph struct.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DeclaredWork {
-    /// See [`declared_weight`].
     pub(crate) weight: f64,
-    /// See [`declared_parent_block`].
     pub(crate) parent_block: Option<[u8; 32]>,
 }
 
 impl DeclaredWork {
-    /// Read the declared work from the graph struct that starts at
-    /// `graph_at` in `bytes`; `None` when no weight is readable there.
     pub(crate) fn read(bytes: &[u8], graph_at: usize) -> Option<Self> {
         Some(Self {
             weight: declared_weight(bytes, graph_at)?,
@@ -40,19 +34,9 @@ impl DeclaredWork {
     }
 }
 
-/// What a version-3 block's proof establishes.
 pub(crate) enum HathorParentReconstruction {
-    /// The reconstruction identity holds, the hash meets the block's own
-    /// Hathor target, and the parent meets BTC's target: a BTC-difficulty
-    /// parent to capture.
     BtcValid(HathorReconstructedParent),
-    /// The identity holds and the hash meets the block's own target, but the
-    /// parent misses BTC's target: a real Hathor block whose parent is a near
-    /// template. The common case for a merge-mined block; no event. Carries
-    /// the work the block declares.
     Near(DeclaredWork),
-    /// The proof is malformed or inconsistent, or the hash does not meet the
-    /// block's own target: nothing trustworthy.
     Malformed,
 }
 
@@ -62,12 +46,8 @@ struct HathorReconstructionInputs {
     expected: BlockHash,
 }
 
-/// Decode + reconstruct the BTC parent from a version-3 transaction, then
-/// check the block's own proof of work: the hash must meet the target the
-/// block's declared weight sets. The identity alone costs nothing to
-/// fabricate over the untrusted REST API, and so does the weight, which is
-/// why the caller holds a declared weight against the weight of the blocks
-/// captured at the height before it may displace them.
+/// Reconstruct the BTC parent from a version-3 transaction and verify that the
+/// hash meets the block's declared Hathor weight target.
 pub(crate) fn reconstruct_or_skip(
     height: i32,
     tx: &HathorTransaction,
@@ -87,8 +67,6 @@ pub(crate) fn reconstruct_or_skip(
         error!(height, "Hathor block declares no readable weight; skipping");
         return Ok(HathorParentReconstruction::Malformed);
     };
-    // The reconstruction identity already proved the header hashes to the
-    // block hash the response named.
     if !meets_hathor_target(inputs.expected, work.weight) {
         error!(
             height,
@@ -99,10 +77,6 @@ pub(crate) fn reconstruct_or_skip(
     }
 
     if !pow_validates_target(&recon.header) {
-        // The common case: the embedded BTC header only met Hathor's (easier)
-        // target, not BTC's, so it is a `near` template, not a real BTC block.
-        // Expected for ~all merge-mined blocks; debug, not error, so a healthy
-        // poller does not flood the log.
         debug!(
             height,
             "reconstructed Hathor parent fails its own PoW target; skipping (near)"
@@ -144,8 +118,7 @@ fn decode_reconstruction_inputs(
     }))
 }
 
-/// The block's declared weight: the first graph field, a big-endian IEEE-754
-/// double immediately after the funds|graph split.
+/// First graph field: big-endian IEEE-754 `f64` weight immediately after `funds_graph_split`.
 fn declared_weight(raw: &[u8], funds_graph_split: usize) -> Option<f64> {
     let bytes: [u8; 8] = raw
         .get(funds_graph_split..funds_graph_split + 8)?
@@ -154,9 +127,7 @@ fn declared_weight(raw: &[u8], funds_graph_split: usize) -> Option<f64> {
     Some(f64::from_be_bytes(bytes))
 }
 
-/// The block the block builds on: the first of the parents listed after the
-/// weight and timestamp in the graph struct (a block's first parent is its
-/// parent block). `None` when the graph lists no parent.
+/// First parent hash listed after the 8-byte weight and 4-byte timestamp in the graph struct.
 fn declared_parent_block(raw: &[u8], funds_graph_split: usize) -> Option<[u8; 32]> {
     let count_at = funds_graph_split + 8 + 4;
     if *raw.get(count_at)? == 0 {
@@ -165,24 +136,17 @@ fn declared_parent_block(raw: &[u8], funds_graph_split: usize) -> Option<[u8; 32
     raw.get(count_at + 1..count_at + 1 + 32)?.try_into().ok()
 }
 
-/// Hathor's proof-of-work rule: the hash, read as a 256-bit number, is below
-/// `2^(256 - weight)`.
 fn meets_hathor_target(hash: BlockHash, weight: f64) -> bool {
     hathor_target(weight).is_some_and(|target| target.is_met_by(hash))
 }
 
-/// `2^(256 - weight)` as a 256-bit target, `None` for a weight outside
-/// `(0, 256)` (a NaN included). The weight is a double, so the target carries
-/// a 53-bit mantissa placed at the integer power of two; a difference at that
-/// precision cannot separate real work from none.
+/// `2^(256 - weight)` as a 256-bit target (`None` outside `(0, 256)`).
 fn hathor_target(weight: f64) -> Option<Target> {
     if !(weight > 0.0 && weight < 256.0) {
         return None;
     }
     let exponent = 256.0 - weight;
     let integer = exponent.floor();
-    // 2^fraction in [1, 2) with 52 fractional bits: the target is
-    // `mantissa * 2^(integer - 52)`.
     let mantissa = ((exponent - integer).exp2() * (1u64 << 52) as f64) as u64;
     let shift = integer as i32 - 52;
     let mut bytes = [0u8; 32];

@@ -1,13 +1,4 @@
-//! Shared write-decision policy for keyed child-side attribution replays.
-//!
-//! The child reward/identity replays (Fractal reward, Elastos reward+minerinfo,
-//! and reclassify-pools child payout) all load the existing
-//! `event_pool_attribution` rows for an event as a JSON array, key them by
-//! `(namespace, matched_value)`, and decide per candidate whether to
-//! (over)write. The keying, JSON parsing, and full-tuple equality check were
-//! duplicated byte-for-byte across those modules; this owns them once. The
-//! per-replay conflict rule (overwrite-gated vs promote-only) is the only thing
-//! that varies, expressed as [`WritePolicy`]. Pure: no I/O, no DB.
+//! Shared write-decision policy for keyed `(namespace, matched_value)` child-side attribution replays.
 
 use std::collections::HashMap;
 
@@ -15,29 +6,20 @@ use serde_json::{Value, json};
 
 use crate::capture::EventPoolAttribution;
 
-/// How an existing row gates a candidate write once the candidate is neither
-/// new (unseen key) nor an exact match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WritePolicy {
-    /// Child-payout / reward replay: an existing resolved row is kept unless
-    /// `overwrite` is set, and a candidate may never demote a resolved row to
-    /// NULL.
+    /// Keep an existing resolved row unless `overwrite` is set; never demote resolved to NULL.
     ChildPayout { overwrite: bool },
-    /// Identity replay (Elastos): never remap a resolved row to a different
-    /// pool, and never demote it; only promote NULL to resolved.
+    /// Promote NULL to resolved only; never remap or demote an existing resolved row.
     IdentityPromoteOnly,
 }
 
-/// Existing child-side attribution rows for one event, keyed by
-/// `(namespace, matched_value)`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ExistingAttributionSet {
     by_key: HashMap<(String, String), KeyedAttributionRow>,
 }
 
 impl ExistingAttributionSet {
-    /// Parse the `jsonb_agg` array produced by the replay loaders. Rows missing
-    /// any required string field are skipped (preserving prior behavior).
     pub fn from_json(value: &Value) -> Self {
         let mut by_key = HashMap::new();
         let Some(rows) = value.as_array() else {
@@ -77,9 +59,6 @@ impl ExistingAttributionSet {
         Self { by_key }
     }
 
-    /// Whether `attribution` should be written, given the existing rows and the
-    /// per-replay `policy`. An unseen key always writes; an exact match never
-    /// rewrites; the policy decides the remaining conflict cases.
     pub fn should_write(&self, attribution: &EventPoolAttribution, policy: WritePolicy) -> bool {
         let key = (
             attribution.namespace.to_owned(),
@@ -117,10 +96,6 @@ impl ExistingAttributionSet {
     }
 }
 
-/// One existing `event_pool_attribution` row, reduced to the fields that
-/// participate in the full-tuple equality check (`matches`). Stored per
-/// `(namespace, matched_value)` key inside [`ExistingAttributionSet`]; the key
-/// fields themselves live in the map key, not here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct KeyedAttributionRow {
     source: String,
@@ -132,12 +107,6 @@ struct KeyedAttributionRow {
 }
 
 impl KeyedAttributionRow {
-    /// Full-tuple equality against a candidate: source, match_kind, pool_id,
-    /// pool_identity_id, confidence (compared via `as_db_str`, the persisted
-    /// form), and the `details` JSON. A match means the row already encodes this
-    /// exact attribution, so `should_write` returns false. Any persisted field
-    /// added to `EventPoolAttribution` MUST be added here too, or replays will
-    /// spuriously rewrite unchanged rows.
     fn matches(&self, attribution: &EventPoolAttribution) -> bool {
         self.source == attribution.source
             && self.match_kind == attribution.match_kind

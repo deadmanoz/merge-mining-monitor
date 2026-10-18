@@ -76,100 +76,14 @@ remote-call count per item use these counters; `FakeParentClassifier`'s call
 count measures how often the classifier is invoked, not how many requests it
 makes, and is kept for that purpose only.
 
-`strict_import_classification_rpc_budget` pins the strict aggregate-import
-classification profile at 15 requests per uncached parent with a locally known
-predecessor, or 18 without one, including the eleven-header MTP walk. It covers
-ten distinct parents per profile and asserts both client and server counters.
-Run its optional latency measurement with
-`MMM_TEST_RPC_DELAY_MS=340 cargo test -p mmm-bitcoin-core strict_import_classification_rpc_budget -- --nocapture`.
-On 2026-09-22, the local scripted transport measured 150 requests in 52.172
-seconds and 180 requests in 62.537 seconds respectively, with no retries.
-Each profile recorded ten expected Core not-found responses. This measures
-classification with a 340 ms response delay, not a complete database import or
-real Core block-download throughput. The current error aggregate contains 121
-witnesses for 53 parents. A changed aggregate can classify all 53 parents again:
-its conservative no-retry bound is 954 requests, about 324 seconds of round-trip
-latency, before database and other import work.
-
-`terracoin_round_trips_are_pinned_at_the_transport_boundary` (the
-`db_integration` `auxpow_family` module) drives the Terracoin capture path
-through the real `BitcoindRpcClient` against a scripted endpoint and pins its
-per-height cost at `RpcMetrics`: two requests for a new height (`getblockhash`
-and raw `getblock`), one for an unchanged final rescan height, one for the
-genesis check a poller start or backfill run makes, and no retries. A failed
-rescan records `height_capture_failed`, and the next rescan takes the full
-capture (two requests) and clears it. The per-tick `getblockcount` and the
-shared Core cache refresh are outside this test. Time it with
-`MMM_TEST_RPC_DELAY_MS=340 cargo test -p merge-mining-monitor --features db-integration --test db_integration terracoin_round_trips_are_pinned_at_the_transport_boundary -- --test-threads=1 --nocapture`
-against the integration database. On 2026-09-25 the genesis check took 0.35
-seconds, a new AuxPoW and a new non-AuxPoW height 0.81 and 0.72 seconds, each
-unchanged rescan 0.36 seconds, a failed rescan 0.36 seconds and the capture
-that cleared it 0.78 seconds, with no retries. This measures RPC round trips
-through the real client at 340 ms, not database work or node throughput.
-
-Batch operations log progress through `ProgressReporter` and end, finished
-or aborted, with a `job ended` summary and one line per RPC client. Before a
-change to a batch operation ships, it is timed at the production round-trip
-time: the development VM with that latency injected on traffic to Core and
-the child nodes, against the production-copy database (the rehearsal target
-that automates this is planned for the next release; until it lands, the
-timing is taken by hand on that VM). The receipt (items, round trips, wall
-time) goes in the PR beside its `Round-trip budget:` line.
-
-The Qbit scenario
-`an_open_capture_error_takes_the_full_capture_despite_a_final_head` also uses
-the real transport. It covers child coinbase attribution, legacy evidence
-enrichment, malformed-body recovery and native hash rejection. Run it with
-`MMM_TEST_RPC_DELAY_MS=340` using the same integration-test command above,
-substituting that test name. On 2026-10-17 the dev VM measured one genesis
-request in 0.343 seconds, recovered capture in two requests/0.806 seconds,
-unchanged rescan in one request/0.460 seconds, and body recovery in two
-requests/0.827 seconds, with no retries. These are scenario intervals,
-including intervening DB/API checks, with a 340 ms fixture response delay.
-They do not measure production block-download throughput.
-
-Qbit attribution adds no child-node RPC calls. A recognized child tag adds
-two local SQL statements per captured event: source-scoped attribution cleanup
-and attribution upsert. Read-only production query plans on 2026-10-17 used
-indexes beginning with `(event_id, side)` for cleanup and pool collapse;
-the planner estimated roughly 23 million events and 25 million attribution
-rows. No new scan across stored events or producer startup job is added.
-
-Qbit payout attribution adds no node RPC calls. With the currently observed
-single reward address, live capture adds one payout upsert and one source
-cleanup DELETE; existing child-pool refreshes are unchanged. Stored-output
-replay adds one payout upsert and uses the existing two child-pool refresh
-UPDATEs per changed event, plus existing per-parent transaction and lock work.
-The CLI's existing Core-cache startup is a separate cost. An unchanged replay
-makes no attribution writes.
-
-The main replay query now materializes its bounded candidate page before
-loading attribution details. On 2026-10-18, read-only plans on the dev dataset
-(planner estimates 23,257,826 events and 24,895,572 attribution rows) used
-source and event/side indexes. Each of the three detail aggregates ran 500
-times for a 500-event page, rather than 13,463 times before the change. A
-same-statement comparison found identical values for all 500 returned rows.
-Observed first-page execution was 4,248 ms before and 226 ms after, with cache
-warming uncontrolled; this is not a complete replay or production benchmark.
-Eligibility still depends on the remaining source rows. No index was added.
-Progress reporting adds one initial COUNT query per main scan, using the same
-eligibility predicate without provenance hydration, and no per-event statement.
-On the same dev dataset, its source-indexed plan counted 13,463 Qbit candidates
-in 235 ms; cache conditions were uncontrolled. The remapped page parameters
-still returned identical values for 500 rows. A transient integration check
-delayed four payout inserts by 11 seconds each: the reporter logged done=3/4,
-rate and ETA at 33 seconds, then finished at 4/4. A no-op repeat finished at
-4/4; an injected insert failure logged aborted at 0/4. The instrumentation was
-removed before the full suite, with no permanent test hook.
-A separate count-query failure injection reproduced the missing abort summary
-before the reporter was moved ahead of setup; afterward it logged aborted at
-0 events with the total still unknown. That instrumentation was also removed.
-
-The payout-aware Qbit transport scenario also passed with a 340 ms response
-delay on 2026-10-18: genesis 1 request/342 ms, recovered capture 2/787 ms,
-unchanged rescan 1/363 ms, repeated capture 2/745 ms and 2/742 ms, and body
-recovery 2/752 ms, with no retries or failures. These scenario intervals include
-database/API checks and do not measure production block-download throughput.
+Batch operations log progress through `ProgressReporter` and end (finished or
+aborted) with a `job ended` summary and one line per RPC client. Before a
+change to a remote or batch operation ships, pin its per-item request count at
+the transport boundary and time it at the 340 ms production round-trip latency
+using `MMM_TEST_RPC_DELAY_MS=340` (for example against
+`strict_import_classification_rpc_budget` in `mmm-bitcoin-core` or the
+transport-boundary capture tests in `db_integration`), recording the receipt
+(items, round trips, wall time) beside `Round-trip budget:` in the PR.
 
 ## Frontend Tests
 

@@ -1,19 +1,4 @@
-//! Mining-pool resolution from the embedded registries.
-//!
-//! The resolver is pure and offline: callers supply coinbase bytes or
-//! chain-native identity strings and get pool verdicts back, with no database
-//! or network I/O.
-//!
-//! The module is split by concern:
-//!
-//! - `btc` handles BTC-coinbase pool resolution from the embedded
-//!   `data/pools/current.json` snapshot.
-//! - `identity` handles RSK miner-address attribution from the embedded
-//!   `data/pools/child-identities/rsk_miner_registry.json` registry.
-//! - `error` holds the shared [`PoolResolverError`] enum.
-//!
-//! The submodules are private; the public API is the set of items
-//! re-exported below, which matches the pre-split file's API exactly.
+//! Offline mining-pool resolution from the embedded BTC snapshot and RSK miner registry.
 
 mod btc;
 mod error;

@@ -53,14 +53,10 @@ async fn seed_competition(
 #[tokio::test]
 async fn competitions_require_a_same_height_canonical_competitor() -> Result<()> {
     crate::run_db_test!(client, {
-        // Included: a stale whose competitor really is canonical.
         let (_, stale) = seed_competition(&client, 1, 2, 800_000, BASE_TS + 25, BASE_TS).await?;
 
-        // Excluded: a stale whose competitor row exists but is not canonical.
-        // The plan's original "competitor absent" case is unrepresentable -
-        // chk_block_kind_height forces every stale to carry a non-null
-        // competitor and the column is a foreign key - so the reachable
-        // exclusion is a competitor of the wrong kind.
+        // chk_block_kind_height enforces a non-null competitor FK on stale rows;
+        // test exclusion of non-canonical and different-height competitors.
         let unknown = hash_bytes(3);
         insert_block(
             &client,
@@ -84,10 +80,6 @@ async fn competitions_require_a_same_height_canonical_competitor() -> Result<()>
         )
         .await?;
 
-        // Excluded: a stale whose competitor IS canonical but sits at another
-        // height. Nothing in the schema forbids it (the column is a plain FK
-        // with a not-self check), only the classifier's same-height rule, and
-        // two blocks at different heights never raced.
         let far_canonical = hash_bytes(5);
         insert_block(
             &client,

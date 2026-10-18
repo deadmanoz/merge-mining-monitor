@@ -8,14 +8,6 @@ use tokio_postgres::Client;
 
 use crate::support::db::connect_to_schema;
 
-// ---------------------------------------------------------------------------
-// poll_cursor: live-poll cursor decoupled from merge_mining_event.
-// ---------------------------------------------------------------------------
-
-/// Minimal `ChainPoller` for driving `Poller::new`/`poll_tick` against the test
-/// schema. It owns its own search-path-scoped connection (the poller takes the
-/// chain by value), advances every height up to `fail_above`, and errors past
-/// it so partial-progress persistence can be asserted.
 struct FakeChain {
     state: ChainPollerState,
     tip: i32,
@@ -24,8 +16,6 @@ struct FakeChain {
 }
 
 impl ChainPoller for FakeChain {
-    // Keep a fake name for log clarity; spec, source id, and DB access come
-    // from `state`.
     fn name(&self) -> &'static str {
         "FakeChain"
     }
@@ -74,9 +64,6 @@ async fn explicit_overlap_handoff_covers_moving_tip_and_restart() -> Result<()> 
     crate::run_db_test!(client, schema, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         let processed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        // Coverage is proven through C=1000 (for Terracoin, the regenerated
-        // publication's coverage tip). The child tip advances before
-        // activation. START_HEIGHT is C+1-D, not C+1 (the override is a floor).
         let config = PollerConfig {
             start_height_override: Some(997),
             ..monotonic_poll_config(4)
@@ -103,8 +90,6 @@ async fn explicit_overlap_handoff_covers_moving_tip_and_restart() -> Result<()> 
             (1_000..=1_005).collect::<Vec<_>>()
         );
 
-        // A pre-existing high cursor is not proof that the explicit replay
-        // succeeded. Keep the override after an error until coverage passes.
         upsert_poll_cursor_with_target(&client, source_id, 1_050, None).await?;
         processed.lock().unwrap().clear();
         let mut failing = fake_chain(&schema, 1_050, Some(1_001)).await?;
@@ -162,15 +147,12 @@ async fn poll_cursor_target_updates_do_not_refresh_progress_time() -> Result<()>
         upsert_poll_cursor_with_target(&client, source_id, 1_000, Some(1_100)).await?;
         let (_, _, inserted_at) = load_poll_cursor_row(&client, source_id).await?;
 
-        // A lower replay may update the observed target, but must not downgrade
-        // progress or refresh the progress timestamp.
         upsert_poll_cursor_with_target(&client, source_id, 500, Some(900)).await?;
         assert_eq!(
             load_poll_cursor_row(&client, source_id).await?,
             (1_000, Some(900), inserted_at)
         );
 
-        // A targetless progress write must preserve the last observed target.
         upsert_poll_cursor_with_target(&client, source_id, 1_500, None).await?;
         let (cursor, target, _) = load_poll_cursor_row(&client, source_id).await?;
         assert_eq!((cursor, target), (1_500, Some(900)));
@@ -184,20 +166,14 @@ async fn poller_seeds_fresh_at_tip_then_resumes() -> Result<()> {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         let config = monotonic_poll_config(0);
 
-        // Fresh source (no row, no override), zero-reorg, tip 1000: seed at the
-        // tip and persist it immediately so the empty first tick cannot lose it.
         let chain = fake_chain(&schema, 1_000, None).await?;
         let _poller = Poller::new(chain, config).await?;
         assert_eq!(load_poll_cursor(&client, source_id).await?, Some(1_000));
 
-        // Rebuild after the tip moved to 1500: must RESUME from 1000, not
-        // re-anchor to the newer tip. The resume path leaves the seed unchanged.
         let chain2 = fake_chain(&schema, 1_500, None).await?;
         let mut poller2 = Poller::new(chain2, config).await?;
         assert_eq!(load_poll_cursor(&client, source_id).await?, Some(1_000));
 
-        // One tick advances a batch from 1001 (resumed), proving it did not skip
-        // to the tip.
         poller2.poll_tick().await?;
         assert_eq!(load_poll_cursor(&client, source_id).await?, Some(1_100));
         Ok::<_, anyhow::Error>(())
@@ -208,18 +184,14 @@ async fn poller_seeds_fresh_at_tip_then_resumes() -> Result<()> {
 async fn poller_persists_partial_progress_on_tick_error() -> Result<()> {
     crate::run_db_test!(client, schema, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
-        // Pre-seed the live cursor so the build resumes from 1000.
         upsert_poll_cursor_with_target(&client, source_id, 1_000, None).await?;
 
-        // Tip 1010; process_height errors above 1005. The tick advances
-        // 1001..=1005 then fails at 1006.
         let chain = fake_chain(&schema, 1_010, Some(1_005)).await?;
         let mut poller = Poller::new(chain, monotonic_poll_config(0)).await?;
 
         let result = poller.poll_tick().await;
         assert!(result.is_err(), "tick should propagate the height error");
 
-        // The completed heights are persisted, not discarded.
         assert_eq!(load_poll_cursor(&client, source_id).await?, Some(1_005));
         Ok::<_, anyhow::Error>(())
     })
@@ -264,16 +236,10 @@ async fn poller_override_seeds_fresh_and_does_not_downgrade_on_replay() -> Resul
             reorg_depth: 0,
         };
 
-        // First deploy: explicit override with no prior row seeds at start - 1
-        // and persists it immediately (this is what the first-deploy rollout
-        // relies on to bootstrap poll_cursor).
         let chain = fake_chain(&schema, 5_000, None).await?;
         let _poller = Poller::new(chain, override_config).await?;
         assert_eq!(load_poll_cursor(&client, source_id).await?, Some(999));
 
-        // Raise the persisted cursor, then a lower override replay must NOT
-        // downgrade it (build takes the override path, persist_seed is false
-        // because a row exists, and any later persist is monotonic).
         upsert_poll_cursor_with_target(&client, source_id, 5_000, None).await?;
         let chain2 = fake_chain(&schema, 5_000, None).await?;
         let _poller2 = Poller::new(chain2, override_config).await?;

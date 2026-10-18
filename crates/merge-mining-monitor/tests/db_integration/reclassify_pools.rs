@@ -169,8 +169,6 @@ async fn reclassify_pools_fills_parent_pool_from_tag_and_outputs() -> Result<()>
 
     crate::run_mut_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
-        // SpiderPool is intentionally outside older seed sets; reclassify
-        // should self-seed the expanded snapshot before resolving this tag.
         let script = b"\x03\x01\x02\x03/SpiderPool/837/\x00\x00".to_vec();
         let tag_event_id = insert_namecoin_event(
             &client,
@@ -181,8 +179,7 @@ async fn reclassify_pools_fills_parent_pool_from_tag_and_outputs() -> Result<()>
         )
         .await?;
 
-        // `btc-nuggets` is an address-only (tag-less) upstream pool; it resolves
-        // only via a stored payout address in btc_parent_coinbase_outputs.
+        // `btc-nuggets` is an address-only (tag-less) upstream pool.
         let payout = "1BwZeHJo7b7M2op7VDfYnsmcpXsUYEcVHm";
         let script_pubkey = Address::from_str(payout)?
             .require_network(bitcoin::Network::Bitcoin)?
@@ -192,8 +189,6 @@ async fn reclassify_pools_fills_parent_pool_from_tag_and_outputs() -> Result<()>
             script_pubkey,
         }];
         let outputs_bytes = serialize(&outputs);
-        // A coinbase script that matches no pool tag, so resolution must fall
-        // through to the payout-address path.
         let script = b"\x03\xde\xad\xbe/no-such-pool-tag/".to_vec();
         let outputs_event_id = insert_namecoin_event(
             &client,
@@ -233,8 +228,6 @@ async fn reclassify_pools_overwrite_reattributes_existing_btc_coinbase_pool() ->
         let antpool_id = pool_id_for_slug(&client, "antpool").await?;
         let spiderpool_id = pool_id_for_slug(&client, "spiderpool").await?;
 
-        // A row whose coinbase resolves to SpiderPool but is currently attributed
-        // (a BTC-coinbase-derived pool) to antpool, e.g. after a prior tag fix.
         let event_id = insert_namecoin_event(
             &client,
             NamecoinEventSeed {
@@ -245,10 +238,7 @@ async fn reclassify_pools_overwrite_reattributes_existing_btc_coinbase_pool() ->
         )
         .await?;
 
-        // A second upgraded row already points at the resolved pool through the
-        // current source, but its provenance tuple is stale. Since the API
-        // exposes the tuple, `--overwrite` must refresh it even when `pool_id`
-        // itself is unchanged.
+        // Same resolved pool, but stale provenance tuple (`test_seed` vs `coinbase_tag`).
         let stale_same_pool_event_id = insert_namecoin_event(
             &client,
             NamecoinEventSeed {
@@ -259,8 +249,6 @@ async fn reclassify_pools_overwrite_reattributes_existing_btc_coinbase_pool() ->
         )
         .await?;
 
-        // Fill-missing mode must not move an existing attribution, even when
-        // the script now resolves elsewhere.
         let fill = run_reclassify_pools(&mut client, ReclassifyPoolsConfig::default()).await?;
         assert_eq!(fill.parent_pool_updates, 0);
         let after_fill = attribution_pool_id(&client, event_id, "btc_parent", None).await?;
@@ -268,8 +256,6 @@ async fn reclassify_pools_overwrite_reattributes_existing_btc_coinbase_pool() ->
         let stale_before = parent_snapshot_attribution(&client, stale_same_pool_event_id).await?;
         assert_eq!(stale_before.0, "test_seed");
 
-        // --overwrite re-attributes the existing source-scoped row to the
-        // freshly resolved SpiderPool and refreshes stale same-pool provenance.
         let overwrite = run_reclassify_pools_overwrite(&mut client).await?;
         assert_eq!(overwrite.parent_pool_updates, 2);
         let after_overwrite = attribution_pool_id(&client, event_id, "btc_parent", None).await?;
@@ -371,14 +357,10 @@ async fn reclassify_pools_fills_child_tag_and_payout_from_outputs() -> Result<()
 #[tokio::test]
 async fn reclassify_pools_never_alters_rsk_miner_address_attribution() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // Seed the pool table so we have a real pool_id to attach. RSK
-        // attribution comes from the child miner address, not coinbase.
         default_pool_snapshot(&client).await?;
         let f2pool_id = pool_id_for_slug(&client, "f2pool").await?;
 
         let rsk_source_id = get_source_id(&client, "auxpow:rsk").await?;
-        // An RSK event: NULL coinbase scripts, child pool from miner-address
-        // attribution. Insert directly so we control the NULL coinbase columns.
         let parent_hash: Vec<u8> = vec![0xb1; 32];
         let prev_hash: Vec<u8> = vec![0xb0; 32];
         let header_bytes: Vec<u8> = vec![0x00; 80];
@@ -427,8 +409,6 @@ async fn reclassify_pools_never_alters_rsk_miner_address_attribution() -> Result
         )
         .await?;
 
-        // Even with overwrite, coinbase reclassification must skip RSK
-        // miner-address rows.
         let stats = run_reclassify_pools(
             &mut client,
             ReclassifyPoolsConfig {
@@ -461,8 +441,6 @@ async fn source_filter_scopes_main_scan_to_one_source() -> Result<()> {
         let syscoin = get_source_id(&client, SYSCOIN_SOURCE_CODE).await?;
         let spiderpool_id = pool_id_for_slug(&client, "spiderpool").await?;
 
-        // Two events under different sources, each with a parent coinbase tag
-        // that resolves to SpiderPool.
         let namecoin_event_id = insert_namecoin_event(
             &client,
             NamecoinEventSeed {
@@ -480,8 +458,6 @@ async fn source_filter_scopes_main_scan_to_one_source() -> Result<()> {
         )
         .await?;
 
-        // `--only main --source <namecoin>` bounds the candidate scan to the
-        // Namecoin source: only the Namecoin event is re-attributed.
         let stats = run_reclassify_pools(
             &mut client,
             ReclassifyPoolsConfig {

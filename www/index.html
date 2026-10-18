@@ -55,8 +55,6 @@
           </div>
         </div>
         <div class="topbar-actions">
-          <!-- Buttons are rendered from the view-shell registry, one per
-               registered view, so adding a view adds no markup here. -->
           <div id="view-switcher" class="view-switcher" role="tablist" aria-label="View" hidden></div>
           <button id="last-updated" class="last-updated" type="button" aria-live="polite" aria-label="Retry; refresh now" title="Retry; refresh now">Retry</button>
           <div class="source-status-shell">
@@ -126,11 +124,6 @@
               <div class="tree-nav" role="group" aria-label="Tree navigation">
                 <label class="nav-goto-label" for="nav-goto">Go to</label>
                 <select id="nav-goto" class="nav-goto" aria-label="Go to navigation target">
-                  <!-- Hidden, selected prompt whose text refreshNavControls sets to the
-                       active target (Live tip / Stale / Branch / Orphans), so the select
-                       shows WHAT is being stepped. It stays the resting value so picking
-                       any rendered action (even the current target) always fires change.
-                       Action options are rendered from the navigator target registry. -->
                   <option value="" hidden selected>Live tip</option>
                 </select>
                 <button id="nav-coarse-older" class="icon-button" type="button" aria-label="Jump older" title="Older (x100)" disabled>&laquo;</button>
@@ -184,19 +177,17 @@
           </div>
           <div id="about-overview" class="about-panel about-explainer" role="tabpanel" aria-labelledby="about-tab-overview">
           <p class="about-lede">
-            Bitcoin occasionally mines two valid blocks at the same height. The
-            network keeps one and discards the other. Modern monitors can log
-            many recent stales as they happen, but that is a recent practice,
-            and the active Bitcoin chain keeps no durable record of the losing
-            branch. Merge-mined chains preserve their own independent evidence,
-            reaching back to before anyone was watching. Here is how.
+            Bitcoin keeps no active-chain record of discarded stale blocks, and
+            live monitoring is recent. Merge-mined child chains preserve
+            independent evidence of those blocks reaching back to before anyone
+            was watching.
           </p>
 
           <div class="explainer" role="group" aria-roledescription="carousel" aria-label="How merge mining reveals Bitcoin stale and orphan evidence">
             <ol class="explainer-screens">
               <li class="explainer-screen" data-screen="0" role="group" aria-roledescription="slide" aria-label="Step 1 of 4: forks happen, stales vanish">
                 <div class="screen-figure">
-                  <svg viewBox="0 0 460 150" role="img" aria-label="At one block height Bitcoin produces two blocks. One is kept on the active chain as canonical, the other becomes a discarded stale block with no durable active-chain record.">
+                  <svg viewBox="0 0 460 150" role="img" aria-label="Bitcoin fork discarding a stale block">
                     <rect class="blk k-base" x="20" y="58" width="58" height="32" rx="5" />
                     <text class="mm-t" x="49" y="78" text-anchor="middle">N&#8722;1</text>
                     <path class="edge e-canonical" d="M78 74 C 116 64, 132 50, 168 50" />
@@ -217,17 +208,15 @@
                 </div>
                 <h3 class="screen-title">1. Forks happen, stales vanish</h3>
                 <p class="screen-copy">
-                  Two miners can find a valid block at the same height at almost
-                  the same moment. Consensus keeps just one as canonical and
-                  drops the other. The dropped block is "stale". The active
-                  chain keeps no durable record of that losing branch, and before
-                  dedicated monitoring existed, most stales simply vanished.
+                  When two miners find a valid block at the same height,
+                  consensus keeps one on the canonical chain and discards the
+                  losing stale block.
                 </p>
               </li>
 
               <li class="explainer-screen" data-screen="1" role="group" aria-roledescription="slide" aria-label="Step 2 of 4: merge mining stamps a copy" hidden>
                 <div class="screen-figure">
-                  <svg viewBox="0 0 460 175" role="img" aria-label="A merge-mined child block embeds, via its merge-mining proof, an exact copy of the Bitcoin header its miner was hashing.">
+                  <svg viewBox="0 0 460 175" role="img" aria-label="Child block embedding a Bitcoin header">
                     <text class="mm-lane" x="18" y="33">Bitcoin</text>
                     <rect class="blk k-base" x="150" y="14" width="56" height="30" rx="5" />
                     <text class="mm-t" x="178" y="33" text-anchor="middle">N&#8722;1</text>
@@ -256,15 +245,13 @@
                   Merge-mined chains reuse Bitcoin's proof of work. Each child
                   block carries a
                   <a href="https://deadmanoz.xyz/posts/2026/merge-mining" target="_blank" rel="noopener noreferrer">merge-mining proof</a>
-                  that embeds the exact Bitcoin header the miner was hashing at
-                  that instant, even when that header is one Bitcoin will not
-                  keep.
+                  embedding the exact Bitcoin header the miner was hashing.
                 </p>
               </li>
 
               <li class="explainer-screen" data-screen="2" role="group" aria-roledescription="slide" aria-label="Step 3 of 4: child chains never forget" hidden>
                 <div class="screen-figure">
-                  <svg viewBox="0 0 460 180" role="img" aria-label="Bitcoin drops the stale block from its active chain, but the merge-mined child chain durably records its embedded copy of that stale header.">
+                  <svg viewBox="0 0 460 180" role="img" aria-label="Child chain preserving a stale header">
                     <text class="mm-lane" x="18" y="31">Bitcoin</text>
                     <rect class="blk k-base" x="92" y="12" width="56" height="30" rx="5" />
                     <text class="mm-t" x="120" y="31" text-anchor="middle">N&#8722;1</text>
@@ -296,17 +283,15 @@
                 </div>
                 <h3 class="screen-title">3. Child chains never forget</h3>
                 <p class="screen-copy">
-                  Bitcoin drops the stale block from its active chain, but the
-                  child chain durably records its own history. The embedded
-                  Bitcoin header becomes independent, permanent evidence of a
-                  block Bitcoin no longer builds on,
-                  <strong>including stales from before anyone was monitoring</strong>.
+                  When Bitcoin drops a losing block, any child block that
+                  committed to it keeps that embedded header permanently in its
+                  own chain history.
                 </p>
               </li>
 
               <li class="explainer-screen" data-screen="3" role="group" aria-roledescription="slide" aria-label="Step 4 of 4: recover and classify" hidden>
                 <div class="screen-figure">
-                  <svg viewBox="0 0 460 180" role="img" aria-label="Scraping several merge-mined child chains extracts their embedded Bitcoin headers, which are checked against Bitcoin Core and shown as canonical, stale, strict orphan, and weak orphan evidence.">
+                  <svg viewBox="0 0 460 180" role="img" aria-label="Extracted headers classified against Bitcoin Core">
                     <rect class="blk k-base" x="14" y="18" width="54" height="22" rx="4" />
                     <text class="mm-s" x="41" y="33" text-anchor="middle">NMC</text>
                     <rect class="blk k-base" x="14" y="48" width="54" height="22" rx="4" />
@@ -346,13 +331,10 @@
                 </div>
                 <h3 class="screen-title">4. Recover and classify</h3>
                 <p class="screen-copy">
-                  This monitor scrapes the child chains, extracts every embedded
-                  Bitcoin header, and checks each one against Bitcoin Core. A
-                  header with valid Bitcoin proof of work that is not on the
-                  active chain is recovered off-chain Bitcoin evidence. Known
-                  off-chain branches are shown as stale; Core-absent candidates
-                  become strict orphans with matching BIP34 height evidence, or
-                  weak orphans with matching timestamp-selected nBits evidence.
+                  Scraping child chains and checking their embedded headers
+                  against Bitcoin Core classifies each parent as canonical,
+                  stale, strict orphan (matching BIP34 height and nBits), or
+                  weak orphan (matching timestamp nBits).
                 </p>
               </li>
             </ol>
@@ -376,20 +358,13 @@
           <footer class="about-credit">
             <p class="about-credit-kicker">Origins &amp; credit</p>
             <p>
-              The idea behind this monitor originates with
+              Based on research by
               <a href="https://www.sba-research.org/team/nicholas-stifter/" target="_blank" rel="noopener noreferrer">Nicholas Stifter</a>
-              (SBA Research, Vienna) and colleagues: that merge-mined chains
-              durably record the Bitcoin headers their miners hashed, stale ones
-              included. It builds directly on their 2018 paper
+              (SBA Research, Vienna) and colleagues in
               <a href="https://eprint.iacr.org/2018/1134.pdf" target="_blank" rel="noopener noreferrer">Echoes of the Past: Recovering Blockchain Metrics From Merged Mining</a>
-              and the earlier
+              (2018) and
               <a href="https://eprint.iacr.org/2017/791.pdf" target="_blank" rel="noopener noreferrer">Merged Mining: Curse or Cure?</a>
-            </p>
-            <p class="about-credit-impl">
-              This implementation ingests evidence from several merge-mined
-              chains, classifies the embedded headers with Bitcoin Core, and
-              renders canonical, stale, strict orphan, and weak orphan evidence in
-              one header tree.
+              (2017).
             </p>
             <div class="about-credit-by">
               <div class="about-credit-line about-credit-source">

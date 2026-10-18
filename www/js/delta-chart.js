@@ -1,10 +1,3 @@
-// SVG rendering for the header-time-delta view: the linear core histogram with
-// its off-scale gutters, the coverage curve, and the full-range symmetric-log
-// strip with its brush and per-record rug.
-//
-// Every entry point takes an explicit `view` object (window, bin width, count
-// scale, selection) and returns nothing; state lives in delta-view.js.
-
 import {
   SYM_TICKS,
   clamp,
@@ -44,10 +37,6 @@ function clear(svg) {
   svg.replaceChildren(svg.querySelector("title"));
 }
 
-// ── Tooltip ─────────────────────────────────────────────────────────────────
-
-/// `point` is anything carrying viewport clientX/clientY: a pointer event, or
-/// the anchor a focused element stands in for.
 function showTip(point, container, html) {
   const tooltip = document.querySelector("#delta-tooltip");
   if (!tooltip || !container) return;
@@ -59,7 +48,6 @@ function showTip(point, container, html) {
   tooltip.style.top = `${clamp(point.clientY - rect.top + 14, 6, Math.max(6, rect.height - tooltip.offsetHeight - 6))}px`;
 }
 
-/// Where a keyboard focus "points": the middle of the focused element.
 function anchorOf(node) {
   const box = node.getBoundingClientRect();
   return { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 };
@@ -70,18 +58,12 @@ function hideTip() {
   if (tooltip) tooltip.hidden = true;
 }
 
-/// Attach the same hover/focus tooltip to a hit rect, so keyboard users get
-/// what pointer users get.
 function wireTip(hit, container, html) {
   hit.addEventListener("pointerenter", (event) => showTip(event, container, html));
-  // A FocusEvent carries no clientX/clientY, so forwarding it produced `NaNpx`
-  // offsets and left the tooltip wherever the pointer had last put it.
   hit.addEventListener("focus", () => showTip(anchorOf(hit), container, html));
   hit.addEventListener("pointerleave", hideTip);
   hit.addEventListener("blur", hideTip);
 }
-
-// ── Histogram ───────────────────────────────────────────────────────────────
 
 function renderHistogram(svg, container, view, binning) {
   const { bins, below, above, w, edgeLo, edgeHi } = binning;
@@ -119,10 +101,6 @@ function renderHistogram(svg, container, view, binning) {
   const GAP = 2;
   for (const bin of bins) {
     if (!bin.count) continue;
-    // Geometry from the bin's real bounds, not a uniform width around its
-    // centre: the outermost bins are clipped to the window (commonly to half
-    // width), so a uniform rectangle would overhang the declared window and
-    // overlap its neighbour while the table reported the clipped range.
     const x0 = x(bin.lo);
     const x1 = x(bin.hi);
     const barW = Math.max(1, x1 - x0 - GAP);
@@ -175,11 +153,6 @@ function renderHistogram(svg, container, view, binning) {
   svg.appendChild(g);
 }
 
-/**
- * Off-scale gutter: everything past a window edge, on the same count axis so it
- * stays comparable, hatched so it never reads as a real bin, and flat-topped
- * with an always-visible count when it overflows the axis.
- */
 function drawGutter(svg, g, container, gx, top, plotH, count, domainMax, view, side, edge) {
   ensureHatch(svg);
   const frac = countScale(count, domainMax, view.yscale);
@@ -196,7 +169,6 @@ function drawGutter(svg, g, container, gx, top, plotH, count, domainMax, view, s
     rx: 3,
   }));
   if (frac > 1) {
-    // A stepped cap reads as "this bar is truncated" without inventing a scale.
     for (let i = 0; i < 3; i += 1) {
       g.appendChild(el("line", {
         class: "axis-line",
@@ -243,13 +215,6 @@ function ensureHatch(svg) {
   svg.appendChild(defs);
 }
 
-// ── Coverage curve ──────────────────────────────────────────────────────────
-
-/**
- * Share of competitions whose |delta| is within T, for T from 1s to the widest
- * extreme on a log axis. This is the honest tail view: the curve reaches 100%
- * by construction, so how late it gets there IS the outlier story.
- */
 function renderCoverage(svg, container, view, rows) {
   const { width, height } = sizeOf(svg);
   const m = { top: 18, right: 20, bottom: 38, left: 52 };
@@ -293,21 +258,12 @@ function renderCoverage(svg, container, view, rows) {
   g.appendChild(el("path", { class: "coverage-area", d: `${path}L${x(Math.pow(10, logHi))},${y(0)}L${m.left},${y(0)}Z` }));
   g.appendChild(el("path", { class: "coverage-line", d: path }));
 
-  // Labels flip to the left of their dot near the right edge so they never clip.
   const place = (px, text) => (px + 7 + text.length * 5.6 > width - m.right
     ? { x: px - 7, anchor: "end" }
     : { x: px + 7, anchor: "start" });
   for (const target of [0.5, 0.9, 0.99]) {
-    // A log axis cannot separate 0 from 1: x() folds them onto one coordinate,
-    // and the curve is sampled from 1s up. Take the threshold, its coverage and
-    // its label all from the plotted value, or a 0s percentile among 1s records
-    // would sit below the very curve drawn at its own x.
     const t = Math.max(abs[clamp(Math.ceil(target * n) - 1, 0, n - 1)], 1);
     const px = x(t);
-    // Plot the dot at the coverage the threshold ACTUALLY reaches, not at the
-    // nominal percentile. Duplicate absolute deltas make the two differ: if
-    // every delta is equal, the curve jumps straight to 100% at that x, and
-    // dots pinned to 50/90/99% would float below their own curve.
     const reached = coverage(t);
     const py = y(reached);
     g.appendChild(el("line", { class: "annot-line", x1: m.left, x2: px, y1: py, y2: py }));
@@ -356,8 +312,6 @@ function renderCoverage(svg, container, view, rows) {
   svg.appendChild(g);
 }
 
-// ── Full-range symlog strip ─────────────────────────────────────────────────
-
 function renderContext(svg, container, view, rows, binning, handlers) {
   const { width, height } = sizeOf(svg);
   const m = { top: 10, right: 16, bottom: 30, left: 52 };
@@ -367,23 +321,13 @@ function renderContext(svg, container, view, rows, binning, handlers) {
   clear(svg);
   svg.querySelector("title").textContent =
     "Full range of header time deltas on a symmetric log axis, with the focus window highlighted.";
-  // No `!rows.length` guard: the domain is anchored on zero and both focus
-  // edges regardless of data, so an empty filter still draws a usable axis and
-  // brush, and a selection the filters exclude still gets its marker.
   if (plotW <= 0 || barsH <= 0) return;
 
-  // The domain must cover more than the filtered data. Zero is the axis the
-  // whole view is about; both focus edges have to be drawable or the brush
-  // handles land off-canvas; and a selection the filters exclude still gets a
-  // marker. A single positive row would otherwise give symLo === symHi, padded
-  // the same direction, putting zero and both handles outside the SVG.
   const anchors = rows.map((row) => row.header_time_delta_s);
   anchors.push(0, -view.half, view.half);
   if (view.selectedDelta != null) anchors.push(view.selectedDelta);
   const lo = symlog(Math.min(...anchors));
   const hi = symlog(Math.max(...anchors));
-  // Pad outward from each end rather than scaling, so a domain that is already
-  // symmetric about zero does not collapse.
   const pad = Math.max((hi - lo) * 0.03, 0.15);
   const symLo = lo - pad;
   const symHi = hi + pad;
@@ -400,8 +344,6 @@ function renderContext(svg, container, view, rows, binning, handlers) {
   const maxC = Math.max(1, ...counts);
   const g = el("g");
 
-  // Log counts here: the strip's job is presence-of-mass across seven decades,
-  // not magnitude, and a linear count would erase every single-record bin.
   const bw = plotW / NBINS;
   for (let b = 0; b < NBINS; b += 1) {
     if (!counts[b]) continue;
@@ -417,9 +359,6 @@ function renderContext(svg, container, view, rows, binning, handlers) {
     }));
   }
 
-  // Per-record rug for everything the window excludes: a lone 78-day outlier is
-  // one pixel of histogram but an unmissable tick here. The selected tick is
-  // appended last so it paints over its neighbours in a dense stretch.
   let selectedTick = null;
   for (const row of binning.outside) {
     const px = x(row.header_time_delta_s);
@@ -447,8 +386,6 @@ function renderContext(svg, container, view, rows, binning, handlers) {
     "text-anchor": "middle",
   }, `±${fmtTick(view.half)}`));
 
-  // A selection hidden by the active filters still gets its marker, mirroring
-  // the tree, which exempts the selected node from source dimming.
   if (selectedTick) g.appendChild(selectedTick);
   else if (view.selectedDelta != null) {
     const px = x(view.selectedDelta);
@@ -472,8 +409,6 @@ function renderContext(svg, container, view, rows, binning, handlers) {
   }
   g.appendChild(el("text", { class: "axis-title", x: 8, y: m.top + 8 }, "log n"));
 
-  // One hover handler beats a listener per rug tick and keeps sparse ticks
-  // reachable.
   const hover = el("rect", { class: "bar-hit", x: m.left, y: m.top, width: plotW, height: barsH + 14 });
   const nearest = (px) => {
     const target = symlog(xInv(px));
@@ -516,8 +451,6 @@ function outlierTip(row) {
     + `<span>${esc(row.stale_bitcoin_miner_pool.name)} (stale) vs ${esc(row.canonical_bitcoin_miner_pool.name)} (canonical)</span>`;
 }
 
-/// Draggable focus window. The window is always symmetric about zero, so both
-/// the edge handles and the band itself resize rather than pan.
 function addBrush(svg, g, { bLo, bHi, top, height, left, plotW, xInv, half, handlers }) {
   const body = el("rect", { class: "brush-body", x: bLo, y: top, width: Math.max(1, bHi - bLo), height });
   g.appendChild(body);
@@ -545,10 +478,6 @@ function addBrush(svg, g, { bLo, bHi, top, height, left, plotW, xInv, half, hand
     g.appendChild(handle);
   }
   body.addEventListener("pointerdown", (event) => {
-    // Scale from the half-width captured at pointerdown, not from the current
-    // one. Applying a factor to the live value compounds it on every
-    // pointermove, so a few pixels of drag run the window away by orders of
-    // magnitude.
     const startX = event.clientX;
     const startHalf = half;
     startDrag(svg, event, (_px, clientX) => {
