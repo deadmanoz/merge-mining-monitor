@@ -30,7 +30,7 @@ Both probes send `Cache-Control: no-store`.
 Successful `/api/v1/*` responses send short public cache headers suitable for a reverse proxy or CDN.
 The JSON envelope includes a wall-clock `generated_at`, so conditional JSON requests must be keyed on read-model freshness if they are added later, not on a body hash.
 
-The static frontend is buildless and not fingerprinted: `index.html` uses a short edge TTL, hand-authored `www/` assets use moderate TTLs with revalidation, and only the vendored versioned D3 file is marked immutable.
+The static frontend is buildless on disk (`www/`): `mmm-api` serves `/` and `/index.html` with a short edge TTL and release-prefixed `/v/<semver>/...` asset URLs, hand-authored `www/` assets use moderate TTLs with revalidation, and only the vendored versioned D3 file is marked immutable.
 Error responses and probe responses are not cached.
 
 ## Common Envelope
@@ -73,37 +73,35 @@ Response fields:
 - `release_notes.releases[].item_count`: total top-level bullet count in that release-note section.
 - `release_notes.releases[].truncated`: true when `items` omits later entries from that section; currently always `false`.
 
-Example (truncated to 2 release entries; see `fixtures/api/version.json` for the complete machine-checked payload):
+Illustrative example (2 release entries; see `fixtures/api/version.json` for the current release's complete machine-checked payload):
 
 ```json
 {
   "schema_version": "v1",
-  "generated_at": 1792333752,
-  "version": "0.9.3",
+  "generated_at": 1783792800,
+  "version": "0.2.0",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 30,
+    "release_count": 2,
     "truncated": false,
     "releases": [
       {
-        "version": "0.9.3",
-        "date": "2026-10-18",
+        "version": "0.2.0",
+        "date": "2026-07-11",
         "items": [
-          "Show Qbit miner attribution from authenticated child coinbase tags, independently of the Bitcoin parent miner."
+          "Add complete Lyncoin (11 canonical parents) and SixEleven (7 canonical parents) recoveries, VCash's 68 canonical explorer mappings, and Doichain's completed zero-row survey.",
+          "Make source IDs permanent and remove Mazacoin after verifying its source contains no AuxPoW implementation."
         ],
-        "item_count": 1,
+        "item_count": 2,
         "truncated": false
       },
       {
-        "version": "0.9.2",
-        "date": "2026-10-07",
+        "version": "0.1.0",
+        "date": "2026-07-02",
         "items": [
-          "Use the expanded Huntercoin and Xaya evidence recovered from Daniel Kraft's native blockchain dumps, including authenticated native Xaya block heights.",
-          "Refresh historical Research claims while preserving independent live observations and separately imported operator evidence.",
-          "Update the error catalogue to 53 Bitcoin parents and 121 child-chain observations, and explain errors inherited from an invalid predecessor.",
-          "Keep the About dialog's release-note rows readable when the list scrolls."
+          "Initial source release of `merge-mining-monitor`, including the Rust workspace, Postgres schema, capture and reconciliation pipeline, read API, and static frontend."
         ],
-        "item_count": 4,
+        "item_count": 1,
         "truncated": false
       }
     ]

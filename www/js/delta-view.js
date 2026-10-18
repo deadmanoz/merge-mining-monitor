@@ -1,7 +1,7 @@
-import { loadBlock, loadCompetitions } from "./api-client.js?v=0.9.3";
-import { clearSelection, updateSourceGroupSelectedMarkers } from "./controls.js?v=0.9.3";
-import { renderContext, renderCoverage, renderHistogram } from "./delta-chart.js?v=0.9.3";
-import { applyOutliersOpen, forgetScroll, renderOutliers, revealFocusedRow } from "./delta-outliers.js?v=0.9.3";
+import { loadBlock, loadCompetitions } from "./api-client.js";
+import { clearSelection, updateSourceGroupSelectedMarkers } from "./controls.js";
+import { renderContext, renderCoverage, renderHistogram } from "./delta-chart.js";
+import { applyOutliersOpen, forgetScroll, renderOutliers, revealFocusedRow } from "./delta-outliers.js";
 import {
   binKeyFor,
   clamp,
@@ -13,10 +13,10 @@ import {
   fmtTick,
   partitionByDelta,
   quantile,
-} from "./delta-scales.js?v=0.9.3";
-import { $, esc, matchesSourceFilter, parseEra, state } from "./frontend-state.js?v=0.9.3";
-import { syncUrl } from "./tree-query-state.js?v=0.9.3";
-import { showInTree } from "./tree-jump.js?v=0.9.3";
+} from "./delta-scales.js";
+import { $, esc, matchesSourceFilter, parseEra, state } from "./frontend-state.js";
+import { syncUrl } from "./tree-query-state.js";
+import { showInTree } from "./tree-jump.js";
 
 const PRESETS = [
   { label: "±10s", half: 10 },

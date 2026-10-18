@@ -3,22 +3,68 @@
 use axum::Json;
 use axum::extract::rejection::PathRejection;
 use axum::extract::{OriginalUri, Path, RawQuery, State};
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
+use axum::http::header::{ETAG, IF_NONE_MATCH};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{Html, IntoResponse, Response};
 use deadpool_postgres::Object;
 use serde::Serialize;
 use serde_json::Value;
+use std::io::ErrorKind;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing::error;
 
-use super::AppState;
 use super::envelope::{SuccessEnvelope, now_epoch_secs};
 use super::error::{ApiError, internal_error_response};
 use super::normalize::normalize_hash;
 use super::projection::{self, ProjectionError};
 use super::query::{NavigatorTarget, parse_navigator_query, parse_tree_query};
 use super::version;
+use super::{APPLICATION_VERSION, AppState, FRONTEND_ASSET_PREFIX};
+
+pub(crate) async fn index_html(headers: HeaderMap, index_path: Arc<std::path::Path>) -> Response {
+    match tokio::fs::read_to_string(&index_path).await {
+        Ok(raw) => {
+            let css_attr = format!("href=\"{FRONTEND_ASSET_PREFIX}/css/");
+            let js_attr = format!("src=\"{FRONTEND_ASSET_PREFIX}/js/");
+            let rendered = raw
+                .replace("href=\"/css/", &css_attr)
+                .replace("src=\"/js/", &js_attr);
+            let etag = index_etag(&rendered);
+            if if_none_match_matches(&headers, &etag) {
+                return ([(ETAG, etag)], StatusCode::NOT_MODIFIED).into_response();
+            }
+            ([(ETAG, etag)], Html(rendered)).into_response()
+        }
+        Err(err) if err.kind() == ErrorKind::NotFound => StatusCode::NOT_FOUND.into_response(),
+        Err(err) => {
+            error!(error = %err, path = %index_path.display(), "failed to read index.html");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+fn index_etag(rendered: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &byte in rendered.as_bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("\"{APPLICATION_VERSION}-{hash:016x}\"")
+}
+
+fn if_none_match_matches(headers: &HeaderMap, etag: &str) -> bool {
+    headers
+        .get_all(IF_NONE_MATCH)
+        .iter()
+        .filter_map(|val| val.to_str().ok())
+        .flat_map(|raw| raw.split(','))
+        .map(str::trim)
+        .any(|candidate| {
+            candidate == "*" || candidate.strip_prefix("W/").unwrap_or(candidate) == etag
+        })
+}
 
 pub(crate) async fn tree(State(state): State<AppState>, RawQuery(query): RawQuery) -> Response {
     respond("tree", tree_response(&state, query).await)

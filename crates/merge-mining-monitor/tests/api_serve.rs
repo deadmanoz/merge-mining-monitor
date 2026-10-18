@@ -2,7 +2,7 @@
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::header::{CACHE_CONTROL, IF_MODIFIED_SINCE, LAST_MODIFIED};
+use axum::http::header::{CACHE_CONTROL, ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED};
 use axum::http::{HeaderMap, Request, StatusCode};
 use mmm_api::{self as api, AppState};
 use mmm_pg::PgConfig;
@@ -11,7 +11,7 @@ use tower::ServiceExt;
 
 const SOURCE_FILTERED_ROUTES: [&str; 1] = ["/api/v1/tree"];
 
-const FRONTEND_CSS_FILES: [&str; 15] = [
+const FRONTEND_CSS_FILES: [&str; 16] = [
     "www/css/tokens.css",
     "www/css/shell.css",
     "www/css/dialogs.css",
@@ -26,6 +26,7 @@ const FRONTEND_CSS_FILES: [&str; 15] = [
     "www/css/chart.css",
     "www/css/delta-view.css",
     "www/css/findings.css",
+    "www/css/findings-figures.css",
     "www/css/responsive.css",
 ];
 
@@ -100,7 +101,7 @@ fn assert_frontend_stylesheet_order(html: &str) {
         let href = file
             .strip_prefix("www")
             .expect("frontend css path is under www");
-        let expected_href = format!("{href}?v={}", env!("CARGO_PKG_VERSION"));
+        let expected_href = format!("{}{href}", api::FRONTEND_ASSET_PREFIX);
         let needle = format!(r#"<link rel="stylesheet" href="{expected_href}" />"#);
         let index = html.find(&needle).unwrap_or_else(|| {
             panic!("expected stylesheet link {needle:?} in HTML");
@@ -280,17 +281,26 @@ async fn static_index_is_served() {
     assert!(html.contains(r#"id="about-release-notes""#));
     assert!(html.contains(r#"name="treeHeight""#));
     assert!(html.contains(r#"name="treeTime""#));
-    let app_src = format!("/js/app.js?v={}", env!("CARGO_PKG_VERSION"));
+    let app_src = format!("{}/js/app.js", api::FRONTEND_ASSET_PREFIX);
     assert!(html.contains(&app_src));
     assert!(html.contains("/vendor/d3.v7.min.js"));
 }
 
 #[test]
-fn frontend_module_imports_pin_the_release_version() {
-    let js_dir = test_www_dir().join("js");
-    let expected_pin = format!("?v={}", env!("CARGO_PKG_VERSION"));
+fn frontend_sources_use_unversioned_specifiers() {
+    let www_dir = test_www_dir();
+    let index_html = std::fs::read_to_string(www_dir.join("index.html")).expect("read index.html");
+    assert!(
+        !index_html.contains("?v="),
+        "www/index.html on disk must not hardcode ?v= query strings; mmm-api injects /v/<version> at serve time"
+    );
+    assert!(
+        index_html.contains(r#"<script type="module" src="/js/app.js"></script>"#),
+        "www/index.html must reference /js/app.js without a query string on disk"
+    );
 
-    for entry in std::fs::read_dir(js_dir).expect("read frontend module directory") {
+    let js_dir = www_dir.join("js");
+    for entry in std::fs::read_dir(&js_dir).expect("read frontend module directory") {
         let path = entry.expect("read frontend module entry").path();
         if path.extension().and_then(|value| value.to_str()) != Some("js") {
             continue;
@@ -309,11 +319,21 @@ fn frontend_module_imports_pin_the_release_version() {
                     continue;
                 }
                 assert!(
-                    specifier.ends_with(&expected_pin),
-                    "{}:{} local specifier {specifier:?} is not pinned to release {}",
+                    !specifier.contains("?v="),
+                    "{}:{} local specifier {specifier:?} must not contain a hardcoded ?v= query string",
                     path.display(),
                     index + 1,
-                    env!("CARGO_PKG_VERSION"),
+                );
+                let rel = specifier
+                    .strip_prefix("./")
+                    .expect("local specifier starts with ./");
+                let target = js_dir.join(rel);
+                assert!(
+                    target.is_file(),
+                    "{}:{} local specifier {specifier:?} does not resolve to an existing file ({})",
+                    path.display(),
+                    index + 1,
+                    target.display(),
                 );
             }
         }
@@ -343,13 +363,25 @@ async fn cache_headers_match_public_launch_policy() {
         assert!(cache.contains("must-revalidate"), "{uri}: {cache}");
     }
 
-    let (status, headers, _) = request("/js/app.js").await;
-    assert_eq!(status, StatusCode::OK);
-    let cache = cache_control(&headers);
-    assert!(cache.contains("max-age=300"), "{cache}");
-    assert!(cache.contains("s-maxage=3600"), "{cache}");
-    assert!(cache.contains("stale-while-revalidate=86400"), "{cache}");
-    assert!(!cache.contains("immutable"), "{cache}");
+    let versioned_js = format!("{}/js/app.js", api::FRONTEND_ASSET_PREFIX);
+    let versioned_css = format!("{}/css/tokens.css", api::FRONTEND_ASSET_PREFIX);
+    for uri in [
+        versioned_js.as_str(),
+        versioned_css.as_str(),
+        "/v/0.0.0-previous/js/app.js",
+        "/js/app.js",
+    ] {
+        let (status, headers, _) = request(uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+        let cache = cache_control(&headers);
+        assert!(cache.contains("max-age=300"), "{uri}: {cache}");
+        assert!(cache.contains("s-maxage=3600"), "{uri}: {cache}");
+        assert!(
+            cache.contains("stale-while-revalidate=86400"),
+            "{uri}: {cache}"
+        );
+        assert!(!cache.contains("immutable"), "{uri}: {cache}");
+    }
 
     let (status, headers, _) = request("/vendor/d3.v7.min.js").await;
     assert_eq!(status, StatusCode::OK);
@@ -370,22 +402,54 @@ async fn cache_headers_match_public_launch_policy() {
 
 #[tokio::test]
 async fn conditional_static_revalidation_keeps_cache_policy() {
-    let (status, headers, _) = request("/js/app.js").await;
-    assert_eq!(status, StatusCode::OK);
-    let last_modified = headers
-        .get(LAST_MODIFIED)
-        .expect("Last-Modified header on static asset")
-        .to_str()
-        .expect("Last-Modified is valid ASCII")
-        .to_owned();
+    for index_uri in ["/", "/index.html"] {
+        let (status, headers, _) = request(index_uri).await;
+        assert_eq!(status, StatusCode::OK, "{index_uri}");
+        let etag = headers
+            .get(ETAG)
+            .expect("ETag header on index HTML")
+            .to_str()
+            .expect("ETag is valid ASCII")
+            .to_owned();
+        assert!(
+            etag.contains(env!("CARGO_PKG_VERSION")),
+            "{index_uri} ETag {etag:?} must embed the release version"
+        );
 
-    let (status, headers, body) = request_if_modified_since("/js/app.js", &last_modified).await;
-    assert_eq!(status, StatusCode::NOT_MODIFIED);
-    assert!(body.is_empty());
-    let cache = cache_control(&headers);
-    assert!(cache.contains("max-age=300"), "{cache}");
-    assert!(cache.contains("s-maxage=3600"), "{cache}");
-    assert!(!cache.contains("no-store"), "{cache}");
+        let (status, headers, body) = send(
+            Request::builder()
+                .uri(index_uri)
+                .header(IF_NONE_MATCH, &etag)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_MODIFIED, "{index_uri}");
+        assert!(body.is_empty(), "{index_uri}");
+        let cache = cache_control(&headers);
+        assert!(cache.contains("max-age=0"), "{index_uri}: {cache}");
+        assert!(cache.contains("must-revalidate"), "{index_uri}: {cache}");
+    }
+
+    let versioned_js = format!("{}/js/app.js", api::FRONTEND_ASSET_PREFIX);
+    for uri in [versioned_js.as_str(), "/js/app.js"] {
+        let (status, headers, _) = request(uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+        let last_modified = headers
+            .get(LAST_MODIFIED)
+            .expect("Last-Modified header on static asset")
+            .to_str()
+            .expect("Last-Modified is valid ASCII")
+            .to_owned();
+
+        let (status, headers, body) = request_if_modified_since(uri, &last_modified).await;
+        assert_eq!(status, StatusCode::NOT_MODIFIED, "{uri}");
+        assert!(body.is_empty(), "{uri}");
+        let cache = cache_control(&headers);
+        assert!(cache.contains("max-age=300"), "{uri}: {cache}");
+        assert!(cache.contains("s-maxage=3600"), "{uri}: {cache}");
+        assert!(!cache.contains("no-store"), "{uri}: {cache}");
+    }
 }
 
 #[tokio::test]

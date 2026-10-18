@@ -13,8 +13,8 @@ Release tags use `v<SemVer>`, for example `v0.1.0`.
 
 1. Move release-note entries into `## [X.Y.Z] - YYYY-MM-DD`.
 2. Set root `Cargo.toml` `[workspace.package].version` to `X.Y.Z` and update the workspace package entries in `Cargo.lock`.
-3. Update `CHANGELOG.md` and replace every static `?v=<old-version>` import and stylesheet cache key under `www/` with `?v=<new-version>`.
-4. Regenerate `fixtures/api/version.json` from the actual `/api/v1/version` response after editing `RELEASE_NOTES.md`, update the 2-entry `/api/v1/version` example in `docs/api-contract.md`, and update the `fixtures/api/manifest.json` scenario when the runtime version or release projection changes.
+3. Update `CHANGELOG.md` (`www/` uses unversioned relative module specifiers on disk; `mmm-api` serves `/v/<version>/...` asset URLs automatically from `CARGO_PKG_VERSION`).
+4. Run `just gen-source-artifacts` to refresh `fixtures/api/version.json` from the compile-time `/api/v1/version` projection.
 5. Run the quality gates: `just lint`, `just test`, `just test-integration`.
 6. Build from the same commit.
 7. Tag the commit as `vX.Y.Z`.

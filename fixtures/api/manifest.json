@@ -84,7 +84,7 @@
     {
       "file": "version.json",
       "endpoint_family": "/api/v1/version",
-      "scenario": "Runtime SemVer v0.9.3 and RELEASE_NOTES.md projection for the About dialog"
+      "scenario": "Runtime SemVer and RELEASE_NOTES.md projection for the About dialog"
     },
     {
       "file": "error-backbone-conflict.json",

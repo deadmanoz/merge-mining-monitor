@@ -59,4 +59,4 @@ Any loop over rows, heights, or candidates that performs a remote call or per-it
 ## Documentation
 
 Human-facing documentation is indexed in `docs/README.md` and task-specific agent docs in `agent_docs/README.md`.
-When API fixtures change, update `fixtures/api/manifest.json`, `docs/api-contract.md`, and `crates/merge-mining-monitor/tests/api_fixture_contract.rs` together (for a release bump, regenerating `fixtures/api/version.json` from `/api/v1/version` is sufficient because the contract test asserts deep equality against `mmm_api::version_payload_json`).
+When API fixtures change, update `fixtures/api/manifest.json`, `docs/api-contract.md`, and `crates/merge-mining-monitor/tests/api_fixture_contract.rs` together (for a release bump, regenerating `fixtures/api/version.json` via `just gen-source-artifacts` is sufficient because the contract test asserts deep equality against `mmm_api::version_payload_json`).

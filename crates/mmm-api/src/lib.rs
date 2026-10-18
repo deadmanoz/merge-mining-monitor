@@ -17,10 +17,13 @@ pub mod query;
 #[cfg(not(feature = "db-integration"))]
 mod query;
 mod version;
-pub use version::payload_json as version_payload_json;
+pub use version::{
+    payload_json as version_payload_json, render_fixture_json as render_version_fixture_json,
+};
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::Router;
@@ -44,6 +47,7 @@ pub use error::ApiError;
 
 pub const SCHEMA_VERSION: &str = "v1";
 pub const APPLICATION_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const FRONTEND_ASSET_PREFIX: &str = concat!("/v/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Clone)]
 pub struct AppState {
@@ -107,9 +111,23 @@ pub fn build_pool(pg: &PgConfig, max_size: usize) -> Result<Pool> {
 }
 
 pub fn router(state: AppState, www_dir: impl AsRef<Path>) -> Router {
+    let index_path: Arc<Path> = Arc::from(www_dir.as_ref().join("index.html"));
     let serve_dir = ServeDir::new(www_dir.as_ref()).append_index_html_on_directories(true);
+    let versioned_serve_dir =
+        ServeDir::new(www_dir.as_ref()).append_index_html_on_directories(false);
 
     Router::new()
+        .route(
+            "/",
+            get({
+                let index_path = Arc::clone(&index_path);
+                move |headers: HeaderMap| handlers::index_html(headers, index_path)
+            }),
+        )
+        .route(
+            "/index.html",
+            get(move |headers: HeaderMap| handlers::index_html(headers, index_path)),
+        )
         .route("/api/v1/tree", get(handlers::tree))
         .route("/api/v1/block/{hash}", get(handlers::block))
         .route("/api/v1/navigator/{target}", get(handlers::navigator))
@@ -118,6 +136,7 @@ pub fn router(state: AppState, www_dir: impl AsRef<Path>) -> Router {
         .route("/api/v1/version", get(handlers::version_metadata))
         .route("/health", get(handlers::health))
         .route("/ready", get(handlers::ready))
+        .nest_service("/v/{version}", versioned_serve_dir)
         .fallback_service(serve_dir)
         .layer(
             ServiceBuilder::new()

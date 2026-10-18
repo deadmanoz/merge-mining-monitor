@@ -1,6 +1,6 @@
-import { blockExplorer } from "./explorer-links.js?v=0.9.3";
-import { fmtDelta } from "./delta-scales.js?v=0.9.3";
-import { $, chainDisplayName, CLASSIFICATION_META, esc, formatEpoch, formatScalar, formatSourceList, formatSourceRef, state } from "./frontend-state.js?v=0.9.3";
+import { blockExplorer } from "./explorer-links.js";
+import { fmtDelta } from "./delta-scales.js";
+import { $, chainDisplayName, CLASSIFICATION_META, esc, formatEpoch, formatScalar, formatSourceList, formatSourceRef, state } from "./frontend-state.js";
 
 
 // Contextual help topics for AuxPoW fields in the block-detail drawer.
