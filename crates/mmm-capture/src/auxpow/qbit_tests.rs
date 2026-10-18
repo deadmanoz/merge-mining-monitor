@@ -542,3 +542,38 @@ fn full_block_authenticates_child_body_and_native_height() {
         assert!(error.contains(reason), "expected {reason}: {error}");
     }
 }
+
+#[test]
+fn full_block_accepts_child_height_above_bitcoin_acquisition_ceiling() {
+    let raw = hex::decode(include_str!("../../../../fixtures/qbit/135331.hex").trim()).unwrap();
+    let prefix = qbit_extended_header_prefix(&raw, 135_331).unwrap();
+    let mut child_bytes = raw[..Header::SIZE].to_vec();
+    child_bytes.extend_from_slice(&raw[prefix.len()..]);
+    let mut child: Block = deserialize(&child_bytes).unwrap();
+    child.txdata[0].input[0].script_sig = bitcoin::ScriptBuf::builder()
+        .push_int(2_000_001)
+        .into_script();
+    child.header.merkle_root = child.compute_merkle_root().unwrap();
+    child.header.bits = CompactTarget::from_consensus(0x1f00_ffff);
+
+    // Recommit the changed child and mine an easy parent so the complete
+    // proof/body remains valid and only the height decoder distinguishes it.
+    let mut block = prefix.to_vec();
+    block[..Header::SIZE].copy_from_slice(&serialize(&child.header));
+    let off = offsets(&block);
+    let marker = marker_pos(&block, off.tx_end);
+    let mut root = fold_merkle_branch(child.header.block_hash().to_byte_array(), &off.chain_branch);
+    root.reverse();
+    block[marker + 4..marker + 36].copy_from_slice(&root);
+    repair_parent_merkle_root(&mut block);
+    let mut parent: Header = deserialize(&block[off.parent_header_pos..]).unwrap();
+    parent.nonce = 0;
+    while !validates_target(parent.block_hash(), child.header.bits) {
+        parent.nonce = parent.nonce.checked_add(1).unwrap();
+    }
+    block[off.parent_header_pos..].copy_from_slice(&serialize(&parent));
+    block.extend_from_slice(&serialize(&child.txdata));
+
+    let parsed = parse_qbit_block(&block, 2_000_001).unwrap().unwrap();
+    assert_eq!(parsed.coinbase.child_height, Some(2_000_001));
+}

@@ -288,5 +288,6 @@ and successful same-height clearing. Strict classic parsing lives in
 `mmm-capture::auxpow::parse_verified_classic_block`; producers supply expected
 identity and own endpoint checks and persistence, without decoding wire layouts.
 Legacy parsing and Qbit/Elastos proof semantics remain unchanged. Qbit also authenticates the
-child transaction body against its merkle root and checks the coinbase height
-before retaining child coinbase evidence and matching pool tags.
+child transaction body against its merkle root and checks the chain-native
+coinbase height without Bitcoin's acquisition ceiling before retaining child
+coinbase evidence and matching pool tags.

@@ -7,6 +7,7 @@ This changelog starts with the initial release.
 ## [Unreleased]
 
 - Attribute Qbit child miners from coinbase tags authenticated against the child block header.
+- Decode Qbit child coinbase heights without Bitcoin's acquisition ceiling.
 
 ## [0.9.2] - 2026-10-07
 

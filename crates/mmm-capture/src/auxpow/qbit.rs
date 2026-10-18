@@ -118,7 +118,7 @@ pub fn parse_qbit_block(raw: &[u8], child_height: u32) -> Result<Option<ParsedQb
     // AuxPoW does. Reuse the body verifier after removing that exact region.
     let mut child_bytes = raw[..Header::SIZE].to_vec();
     child_bytes.extend_from_slice(&raw[prefix.len()..]);
-    let coinbase = parse_child_block_coinbase(&child_bytes)?;
+    let coinbase = parse_child_block_coinbase_with_height(&child_bytes, parse_child_bip34_height)?;
     let native_height =
         i32::try_from(child_height).context("Qbit native height exceeds signed range")?;
     ensure!(
