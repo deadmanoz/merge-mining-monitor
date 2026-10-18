@@ -97,6 +97,40 @@ pub struct ParsedQbitAuxpow {
     pub auxpow_bytes: Vec<u8>,
 }
 
+/// A verified Qbit proof paired with its header-authenticated child coinbase.
+/// Header-only consumers continue to use `ParsedQbitAuxpow`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedQbitAuxpowBlock {
+    pub proof: ParsedQbitAuxpow,
+    pub coinbase: ParsedChildBlockCoinbase,
+}
+
+/// Authenticate a full native Qbit block's proof and child transaction body.
+/// Direct-mined blocks return `None` after the existing header/PoW checks;
+/// their transaction bodies are not needed for merge-mining evidence.
+/// Native hash and genesis placement remain the caller's responsibility.
+pub fn parse_qbit_block(raw: &[u8], child_height: u32) -> Result<Option<ParsedQbitAuxpowBlock>> {
+    let prefix = qbit_extended_header_prefix(raw, child_height)?;
+    let ParsedQbitBlock::Auxpow(proof) = parse_qbit_extended_header(prefix, child_height)? else {
+        return Ok(None);
+    };
+    // The proof interrupts ordinary block serialization, just as classic
+    // AuxPoW does. Reuse the body verifier after removing that exact region.
+    let mut child_bytes = raw[..Header::SIZE].to_vec();
+    child_bytes.extend_from_slice(&raw[prefix.len()..]);
+    let coinbase = parse_child_block_coinbase_with_height(&child_bytes, parse_child_bip34_height)?;
+    let native_height =
+        i32::try_from(child_height).context("Qbit native height exceeds signed range")?;
+    ensure!(
+        coinbase.child_height == Some(native_height),
+        "Qbit child coinbase height does not match native height"
+    );
+    Ok(Some(ParsedQbitAuxpowBlock {
+        proof: *proof,
+        coinbase,
+    }))
+}
+
 /// Parse and envelope-verify one exact Qbit extended header (no trailing
 /// bytes accepted). `child_height` is the caller-claimed native height and
 /// feeds only the version-cadence gate. Checks run in the reference

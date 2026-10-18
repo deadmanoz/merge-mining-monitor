@@ -1,0 +1,9 @@
+{
+  "height": 135331,
+  "hash": "ce1bf600ca526a814cddc626dc091e040978e96d8d2d0f3d900dc50fe9c8ff67",
+  "coinbase_txid": "86b25edbe60c916f39b4d6eec28da7cdb1dcfd366ff76a9a12c10a84aaa2ea08",
+  "coinbase_tag": "七彩神仙鱼",
+  "pool_slug": "f2pool",
+  "reward_address": "qb1zpyh3ygrlnrdzk5nrz0wh9usmeex2tfanq89p5yyvqj3pj4tuzlgs4hc5uh",
+  "provenance": "Full raw getblock <hash> 0 from the retained self-hosted Qbit mainnet archive; acquired 2026-10-17 America/Los_Angeles. Hash and coinbase fields independently checked with getblock <hash> 2. The payout address is recorded evidence, not an identity mapping."
+}

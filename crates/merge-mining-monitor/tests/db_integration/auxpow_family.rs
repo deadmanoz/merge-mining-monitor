@@ -147,8 +147,7 @@ async fn terracoin_replay_failure_recovery_and_displacement() -> Result<()> {
 /// drives the Hathor path. Each tick of a test builds a new chain state.
 struct FixtureBitcoindRpc {
     blocks: HashMap<i32, Vec<u8>>,
-    /// The hash `getblockhash` reports for a height whose block does not
-    /// start with a plain 80-byte header (a Qbit extended header).
+    /// Override the node's claimed hash to exercise native identity rejection.
     hashes: HashMap<i32, BlockHash>,
     /// `getblockhash` and `getblock` calls served, so a test can pin what a
     /// rescan costs at the node: one hash lookup for an unchanged height.
@@ -224,29 +223,16 @@ fn block_hash_of(raw: &[u8]) -> BlockHash {
         .block_hash()
 }
 
-/// The mainnet Qbit control whose merged proof parses (Qbit 78,058): its
-/// height, the raw extended header the node serves, and the block hash the
-/// explorer and `getblockhash` report for it.
+/// Full native Qbit control at height 78058, within the seeded Core epoch history.
 fn qbit_positive_control() -> (i32, Vec<u8>, BlockHash) {
-    let controls: serde_json::Value = serde_json::from_str(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../fixtures/qbit/qbit_controls.json"
-    )))
-    .expect("parse qbit controls fixture");
-    let control = controls["controls"]
-        .as_array()
-        .expect("controls array")
-        .iter()
-        .find(|control| control["parent_self_pow"].as_bool() == Some(true))
-        .expect("positive control present");
-    let height = i32::try_from(control["height"].as_u64().expect("height")).expect("height fits");
-    let raw = hex::decode(control["header_hex"].as_str().expect("header hex")).expect("hex");
-    let hash: BlockHash = control["hash"]
-        .as_str()
-        .expect("hash")
-        .parse()
-        .expect("block hash");
-    (height, raw, hash)
+    let raw = hex::decode(include_str!("../../../../fixtures/qbit/78058.hex").trim())
+        .expect("Qbit raw block hex");
+    let hash = block_hash_of(&raw);
+    assert_eq!(
+        hash.to_string(),
+        "f2c1b37777ac0407ece840495347d3481d998b411bfd8796308d387526a10f42"
+    );
+    (78_058, raw, hash)
 }
 
 /// A raw block whose header version lacks the AuxPoW bit, so the runner
@@ -635,6 +621,12 @@ async fn an_open_capture_error_takes_the_full_capture_despite_a_final_head() -> 
         // then clears the error. The block is the mainnet Qbit control whose
         // proof parses, served under the hash its extended header carries.
         let (height, raw, hash) = qbit_positive_control();
+        let wrong =
+            FixtureBitcoindRpc::carrying_with_hash(height, raw.clone(), BlockHash::all_zeros());
+        let error = process_auxpow_height(&mut client, &wrong, &context, height)
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("but was returned for"));
         let hash_bytes = hash.to_byte_array().to_vec();
         record_child_chain_block_in_own_transaction(
             &mut client,
@@ -661,29 +653,64 @@ async fn an_open_capture_error_takes_the_full_capture_despite_a_final_head() -> 
         )
         .await?;
 
-        let rpc = FixtureBitcoindRpc::carrying_with_hash(height, raw, hash);
+        let endpoint = ScriptedBitcoindEndpoint::spawn(
+            "0000000000004d60aa5d46013991d0a0e2995d89ee98e53068ae196d763e79f2",
+            &[(height, raw.clone())],
+        );
+        let rpc = BitcoindRpcClient::new(
+            "Qbit",
+            BitcoindRpcConfig {
+                url: endpoint.url(),
+                user: None,
+                password: None,
+                request_timeout: std::time::Duration::from_secs(30),
+                raw_block_boolean_verbose: false,
+            },
+        )?;
+        let metrics = rpc.metrics();
+        let mut steps = BudgetSteps::new(move || {
+            let snap = metrics.snapshot();
+            (snap.http_attempts, snap.failures, snap.retries)
+        });
+        ensure_mainnet_endpoint(&rpc, by_id(ChainId::Qbit).family.as_ref().unwrap()).await?;
+        steps.expect("Qbit genesis", 1, 0);
         let outcome = rescan_auxpow_height(&mut client, &rpc, &context, height).await?;
         assert_eq!(
             outcome,
             RescanOutcome::Captured(AuxpowHeightOutcome::AuxpowWritten)
         );
-        assert_eq!(rpc.calls(), (1, 1));
-        let errors: i64 = client
-            .query_one(
-                "SELECT count(*) FROM capture_error WHERE source_id = $1 AND height = $2",
-                &[&source_id, &height],
-            )
-            .await?
-            .get(0);
-        assert_eq!(
-            errors, 0,
-            "a successful reprocessing clears the capture error"
-        );
-
+        steps.expect("Qbit recovered capture", 2, 0);
+        assert_qbit_child_evidence(&client, source_id).await?;
         // With the error cleared the next rescan takes the fast path.
         let outcome = rescan_auxpow_height(&mut client, &rpc, &context, height).await?;
         assert_eq!(outcome, RescanOutcome::Unchanged);
-        assert_eq!(rpc.calls(), (2, 1));
+        steps.expect("Qbit unchanged final rescan", 1, 0);
+        // Reproduce a legacy header-only row, then enrich it through capture.
+        let existing_id: i64 = client.query_one("UPDATE merge_mining_event SET child_coinbase_txid=NULL, child_coinbase_script=NULL, child_coinbase_outputs=NULL WHERE source_id=$1 RETURNING id", &[&source_id]).await?.get(0);
+        for _ in 0..2 {
+            process_auxpow_height(&mut client, &rpc, &context, height).await?;
+            steps.expect("Qbit repeated capture", 2, 0);
+        }
+        let stored = client.query_one("SELECT count(*), bool_and(child_coinbase_script IS NOT NULL), min(id) FROM merge_mining_event WHERE source_id=$1", &[&source_id]).await?;
+        assert_eq!(stored.get::<_, i64>(0), 1);
+        assert!(stored.get::<_, bool>(1));
+        assert_eq!(stored.get::<_, i64>(2), existing_id);
+        let child_rows: i64 = client.query_one("SELECT count(*) FROM event_pool_attribution a JOIN merge_mining_event e ON e.id=a.event_id WHERE e.source_id=$1 AND a.side='child_block'", &[&source_id]).await?.get(0);
+        assert_eq!(child_rows, 1);
+        assert_qbit_body_held(&mut client, &context, source_id, height, &raw).await?;
+        process_auxpow_height(&mut client, &rpc, &context, height).await?;
+        steps.expect("Qbit body recovery", 2, 0);
+        assert_eq!(
+            client
+                .query_one(
+                    "SELECT count(*) FROM capture_error WHERE source_id=$1",
+                    &[&source_id]
+                )
+                .await?
+                .get::<_, i64>(0),
+            0
+        );
+        assert_eq!(endpoint.served(), steps.total_attempts());
         Ok::<_, anyhow::Error>(())
     })
 }
@@ -713,7 +740,8 @@ async fn terracoin_round_trips_are_pinned_at_the_transport_boundary() -> Result<
             hex::decode(fixture["rawblock"].as_str().unwrap())?,
         );
         let plain = (auxpow.0 + 1, non_auxpow_block());
-        let endpoint = ScriptedTerracoinEndpoint::spawn(&[auxpow.clone(), plain.clone()]);
+        let endpoint =
+            ScriptedBitcoindEndpoint::spawn(TERRACOIN_GENESIS, &[auxpow.clone(), plain.clone()]);
         let rpc = BitcoindRpcClient::new(
             "Terracoin",
             BitcoindRpcConfig {
@@ -805,7 +833,7 @@ impl<F: Fn() -> (u64, u64, u64)> BudgetSteps<F> {
         assert_eq!(now.2 - self.last.2, 0, "{step}: retries");
         if rpc_delay() > std::time::Duration::ZERO {
             eprintln!(
-                "terracoin rpc budget: {step}: {attempts} round trips in {:?}",
+                "auxpow rpc budget: {step}: {attempts} round trips in {:?}",
                 self.started.elapsed()
             );
         }
@@ -827,12 +855,12 @@ fn rpc_delay() -> std::time::Duration {
     std::time::Duration::from_millis(millis)
 }
 
-/// A scripted Terracoin JSON-RPC endpoint on a loopback socket: genesis at
+/// A scripted bitcoind-family endpoint on a loopback socket: genesis at
 /// height 0, one scripted block per other height, raw `getblock` by hash, one
 /// request per connection (the client sees `Connection: close`), each
 /// response delayed by [`rpc_delay`]. The next `getblockhash` can be made to
 /// fail with HTTP 503.
-struct ScriptedTerracoinEndpoint {
+struct ScriptedBitcoindEndpoint {
     addr: std::net::SocketAddr,
     fail_next_hash: std::sync::Arc<std::sync::atomic::AtomicBool>,
     served: std::sync::Arc<AtomicUsize>,
@@ -840,9 +868,9 @@ struct ScriptedTerracoinEndpoint {
 
 const TERRACOIN_GENESIS: &str = "00000000804bbc6a621a9dbb564ce469f492e1ccf2d70f8a6b241e26a277afa2";
 
-impl ScriptedTerracoinEndpoint {
-    fn spawn(blocks: &[(i32, Vec<u8>)]) -> Self {
-        let mut hashes = HashMap::from([(0, TERRACOIN_GENESIS.to_owned())]);
+impl ScriptedBitcoindEndpoint {
+    fn spawn(genesis: &str, blocks: &[(i32, Vec<u8>)]) -> Self {
+        let mut hashes = HashMap::from([(0, genesis.to_owned())]);
         let mut raws = HashMap::new();
         for (height, raw) in blocks {
             let hash = block_hash_of(raw).to_string();
@@ -900,7 +928,9 @@ fn scripted_reply(
         Some("getblockhash") => params[0]
             .as_i64()
             .and_then(|height| hashes.get(&i32::try_from(height).ok()?)),
-        Some("getblock") if params[1] == serde_json::json!(false) => {
+        Some("getblock")
+            if params[1] == serde_json::json!(false) || params[1] == serde_json::json!(0) =>
+        {
             params[0].as_str().and_then(|hash| raws.get(hash))
         }
         _ => None,
@@ -942,4 +972,95 @@ fn read_json_request(stream: &mut std::net::TcpStream) -> Option<serde_json::Val
         }
         data.extend_from_slice(&chunk[..read]);
     }
+}
+
+async fn assert_qbit_child_evidence(client: &Client, source_id: i64) -> Result<()> {
+    let row = client
+        .query_one(
+            "SELECT e.child_coinbase_txid IS NOT NULL, e.child_coinbase_script IS NOT NULL, \
+             e.child_coinbase_outputs IS NOT NULL, p.slug FROM merge_mining_event e \
+             LEFT JOIN pool p ON p.id=e.child_miner_pool_id WHERE e.source_id=$1",
+            &[&source_id],
+        )
+        .await?;
+    assert!(row.get::<_, bool>(0) && row.get::<_, bool>(1) && row.get::<_, bool>(2));
+    assert_eq!(row.get::<_, Option<String>>(3).as_deref(), Some("f2pool"));
+    let parent = client
+        .query_one(
+            "SELECT btc_parent_header_hash FROM merge_mining_event WHERE source_id=$1",
+            &[&source_id],
+        )
+        .await?
+        .get::<_, Vec<u8>>(0);
+    let mut display_parent = parent;
+    display_parent.reverse();
+    let projected = mmm_api::projection::block(client, &hex::encode(display_parent))
+        .await
+        .map_err(|err| anyhow::anyhow!("block projection: {err:?}"))?;
+    let payload = serde_json::to_value(projected)?;
+    assert_eq!(
+        payload["event_details"][0]["child_miner_pool"]["slug"],
+        "f2pool"
+    );
+    assert_eq!(
+        payload["event_details"][0]["pool_attributions"]["child_block"][0]["matched_value"],
+        "七彩神仙鱼"
+    );
+    let errors: i64 = client
+        .query_one(
+            "SELECT count(*) FROM capture_error WHERE source_id = $1",
+            &[&source_id],
+        )
+        .await?
+        .get(0);
+    assert_eq!(
+        errors, 0,
+        "a successful reprocessing clears the capture error"
+    );
+
+    Ok(())
+}
+
+async fn assert_qbit_body_held(
+    client: &mut Client,
+    context: &AuxpowCaptureContext,
+    source_id: i64,
+    height: i32,
+    raw: &[u8],
+) -> Result<()> {
+    // A corrupted child body is held without deleting the earlier witness.
+    let mut corrupt = raw.to_vec();
+    let tag = "七彩神仙鱼".as_bytes();
+    let offset = corrupt
+        .windows(tag.len())
+        .rposition(|part| part == tag)
+        .unwrap();
+    corrupt[offset] ^= 1;
+    let bad = FixtureBitcoindRpc::carrying(height, corrupt);
+    assert_eq!(
+        process_auxpow_height(client, &bad, context, height).await?,
+        AuxpowHeightOutcome::MalformedHeld
+    );
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT count(*) FROM capture_error WHERE source_id=$1",
+                &[&source_id]
+            )
+            .await?
+            .get::<_, i64>(0),
+        1
+    );
+    let witnesses: i64 = client
+        .query_one(
+            "SELECT count(*) FROM merge_mining_event WHERE source_id=$1",
+            &[&source_id],
+        )
+        .await?
+        .get(0);
+    assert_eq!(
+        witnesses, 1,
+        "a malformed body retains the earlier valid witness"
+    );
+    Ok(())
 }

@@ -31,7 +31,8 @@ publication-artifact script checks. That workspace test includes the
 - `fixtures/elastos/` - Elastos RPC and AuxPoW samples.
 - `fixtures/terracoin/` - pre-activation, activation, five June refresh candidates and the August 2026 canonical control, with RPC provenance.
 - `fixtures/qbit/` - Qbit mainnet extended-header controls and a native
-  synthetic-parent proof.
+  synthetic-parent proof, plus native full blocks 78058 and 135331 for child
+  coinbase authentication and attribution.
 - `fixtures/xaya/` - pinned Xaya publication row used to check PowData
   parent-work acceptance (zero header `nBits`, non-zero effective target).
 - `fixtures/rod/` - pinned ROD publication sample for the same PowData
@@ -114,6 +115,25 @@ the child nodes, against the production-copy database (the rehearsal target
 that automates this is planned for the next release; until it lands, the
 timing is taken by hand on that VM). The receipt (items, round trips, wall
 time) goes in the PR beside its `Round-trip budget:` line.
+
+The Qbit scenario
+`an_open_capture_error_takes_the_full_capture_despite_a_final_head` also uses
+the real transport. It covers child coinbase attribution, legacy evidence
+enrichment, malformed-body recovery and native hash rejection. Run it with
+`MMM_TEST_RPC_DELAY_MS=340` using the same integration-test command above,
+substituting that test name. On 2026-10-17 the dev VM measured one genesis
+request in 0.343 seconds, recovered capture in two requests/0.806 seconds,
+unchanged rescan in one request/0.460 seconds, and body recovery in two
+requests/0.827 seconds, with no retries. These are scenario intervals,
+including intervening DB/API checks, with a 340 ms fixture response delay.
+They do not measure production block-download throughput.
+
+Qbit attribution adds no child-node RPC calls. A recognized child tag adds
+two local SQL statements per captured event: source-scoped attribution cleanup
+and attribution upsert. Read-only production query plans on 2026-10-17 used
+indexes beginning with `(event_id, side)` for cleanup and pool collapse;
+the planner estimated roughly 23 million events and 25 million attribution
+rows. No new scan across stored events or producer startup job is added.
 
 ## Frontend Tests
 

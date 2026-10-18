@@ -43,6 +43,13 @@ it is stable enough to be useful and has evidence beyond a single coincidental
 same-event Bitcoin parent tag. Ambiguous, rotating, or spoofable identifiers
 stay unresolved.
 
+Qbit child coinbase tags use the same embedded pool snapshot as the other
+Bitcoin-style child blocks. Capture verifies the full child transaction merkle
+root and native coinbase height before storing its txid, script, and outputs.
+A recognized tag records a child-side declaration independently of the Bitcoin
+parent pool; an unrecognized tag stays unresolved. No Qbit payout-address
+registry is currently configured.
+
 ## Reclassification
 
 `just reclassify-pools` replays attribution from stored evidence and the

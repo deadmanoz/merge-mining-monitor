@@ -132,6 +132,9 @@ concurrent tasks inside each locking test.
 - Do not copy a sibling chain module to add a Namecoin-family source. Extend
   the shared source registry, chain spec, config, AuxPoW-family parser, poller,
   and write paths.
+- Qbit full-block capture authenticates the child body merkle root and coinbase
+  height before child tag attribution. Header-only Qbit proof decoding remains
+  body-independent; child and Bitcoin-parent pool attribution stay separate.
 - Strict classic full-block authentication belongs in `mmm-capture::auxpow`,
   not producers. Each family's RPC verbosity, proof authentication and
   capture-failure policy are explicit spec facts; recording a capture error and

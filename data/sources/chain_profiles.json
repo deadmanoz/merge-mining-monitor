@@ -2333,7 +2333,7 @@
     "byline": "2026 · ~1 min blocks",
     "help": {
       "data": "Qbit extended headers carrying a merged-mining proof: the Bitcoin parent header, its non-witness coinbase, and both merkle branches",
-      "pool": "BTC parent coinbase tags and payout addresses when the pool resolver recognizes them; Qbit publishes no child payout registry"
+      "pool": "Bitcoin parent coinbase tags and payout addresses, and independently authenticated Qbit child coinbase tags, when the resolver recognizes them; no child payout-address registry is configured"
     },
     "display": {
       "name": "Qbit",
@@ -2349,7 +2349,7 @@
     "technical": {
       "mechanism": "A merged Qbit block serializes: pure 80-byte child header, non-witness Bitcoin parent coinbase transaction, parent merkle branch (one count byte plus 32-byte siblings) and signed `i32` index, chain merkle branch and signed `i32` index, then the 80-byte Bitcoin parent header.[^1]",
       "uniqueness": "Two things separate Qbit from classic Namecoin-family AuxPoW. There is no `hashBlock` field between the coinbase transaction and the parent branch, and the chain-commitment fold runs in internal byte order while the coinbase scriptSig commits the reversed, display-order root. Classic proofs fold the reversed leaf and commit wire order, so the two conventions are not interchangeable.[^1]",
-      "capture": "The monitor polls a self-hosted Qbit node over Bitcoin Core-style RPC. Each height is read with `getblockhash` then `getblock <hash> 0`, and only the exact extended-header prefix of that raw block is handed to the decoder; the block body is never reinterpreted. The producer authenticates native placement itself by requiring the decoded child header hash to equal the height's `getblockhash` result and by pinning the mainnet genesis hash at height zero. Bitcoin Core then places the parent as canonical or stale, and Core-absent parents continue into the usual orphan checks.",
+      "capture": "The monitor polls a self-hosted Qbit node over Bitcoin Core-style RPC. Each height is read with `getblockhash` then `getblock <hash> 0`, and the dedicated decoder verifies the extended-header proof and authenticates the child transaction body against its merkle root. The child coinbase height must match the native height before its tags supply child-miner attribution. The producer authenticates native placement itself by requiring the decoded child header hash to equal the height's `getblockhash` result and by pinning the mainnet genesis hash at height zero. Bitcoin Core then places the parent as canonical or stale, and Core-absent parents continue into the usual orphan checks.",
       "bitcoin_relevance": "Qbit is the newest live AuxPoW source in this monitor and its youngest chain: it has only existed since July 2026, so every observation it contributes is recent. At roughly one-minute blocks with about one in five carrying a proof, it yields a Bitcoin parent header every few minutes, which is sparser than Fractal or RSK but still a steady independent witness for recent stale-block and pool-attribution evidence.",
       "notable": [
         "The child's effective target is always its own pure-header `nBits`. The Bitcoin parent hash must meet the CHILD target, and the parent's own `nBits` is never consulted for proof validity.",
