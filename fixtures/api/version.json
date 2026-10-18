@@ -1,12 +1,23 @@
 {
   "schema_version": "v1",
   "generated_at": 1792333752,
-  "version": "0.9.3",
+  "version": "0.9.4",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 30,
+    "release_count": 31,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.9.4",
+        "date": "2026-10-18",
+        "items": [
+          "Identify Qbit payouts to F2Pool, SECPOOL and Luxor while keeping tag and payout evidence separate.",
+          "Correct the historical child identities for error block 957,780.",
+          "Version frontend assets automatically with each release."
+        ],
+        "item_count": 3,
+        "truncated": false
+      },
       {
         "version": "0.9.3",
         "date": "2026-10-18",

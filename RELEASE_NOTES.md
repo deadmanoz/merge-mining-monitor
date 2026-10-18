@@ -1,5 +1,11 @@
 # Release Notes
 
+## [0.9.4] - 2026-10-18
+
+- Identify Qbit payouts to F2Pool, SECPOOL and Luxor while keeping tag and payout evidence separate.
+- Correct the historical child identities for error block 957,780.
+- Version frontend assets automatically with each release.
+
 ## [0.9.3] - 2026-10-18
 
 - Show Qbit miner attribution from authenticated child coinbase tags, independently of the Bitcoin parent miner.
