@@ -92,6 +92,11 @@ unchanged attributions. Existing resolved payout rows retain the normal
 from the offline replay loop. No native-block replay or one-off repair script
 is required.
 
+The main scan counts eligible events once at startup, then reports completed
+events, rate and ETA through the shared progress reporter at 30-second
+intervals, with a final summary on completion or failure. The initial total is
+an estimate while producers add evidence; no snapshot lock spans the replay.
+
 ## Operator Clusters
 
 Child-chain payout addresses show that merge-mining operations can be more

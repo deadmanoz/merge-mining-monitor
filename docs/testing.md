@@ -151,8 +151,16 @@ times for a 500-event page, rather than 13,463 times before the change. A
 same-statement comparison found identical values for all 500 returned rows.
 Observed first-page execution was 4,248 ms before and 226 ms after, with cache
 warming uncontrolled; this is not a complete replay or production benchmark.
-Eligibility still depends on the remaining source rows. No index or additional
-query was added.
+Eligibility still depends on the remaining source rows. No index was added.
+Progress reporting adds one initial COUNT query per main scan, using the same
+eligibility predicate without provenance hydration, and no per-event statement.
+On the same dev dataset, its source-indexed plan counted 13,463 Qbit candidates
+in 235 ms; cache conditions were uncontrolled. The remapped page parameters
+still returned identical values for 500 rows. A transient integration check
+delayed four payout inserts by 11 seconds each: the reporter logged done=3/4,
+rate and ETA at 33 seconds, then finished at 4/4. A no-op repeat finished at
+4/4; an injected insert failure logged aborted at 0/4. The instrumentation was
+removed before the full suite, with no permanent test hook.
 
 The payout-aware Qbit transport scenario also passed with a 340 ms response
 delay on 2026-10-18: genesis 1 request/342 ms, recovered capture 2/787 ms,
