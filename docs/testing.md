@@ -161,6 +161,9 @@ delayed four payout inserts by 11 seconds each: the reporter logged done=3/4,
 rate and ETA at 33 seconds, then finished at 4/4. A no-op repeat finished at
 4/4; an injected insert failure logged aborted at 0/4. The instrumentation was
 removed before the full suite, with no permanent test hook.
+A separate count-query failure injection reproduced the missing abort summary
+before the reporter was moved ahead of setup; afterward it logged aborted at
+0 events with the total still unknown. That instrumentation was also removed.
 
 The payout-aware Qbit transport scenario also passed with a 340 ms response
 delay on 2026-10-18: genesis 1 request/342 ms, recovered capture 2/787 ms,

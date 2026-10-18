@@ -593,6 +593,7 @@ async fn run_main_candidate_scan(
     config: &ReclassifyPoolsConfig,
     stats: &mut ReclassifyPoolsStats,
 ) -> Result<()> {
+    let progress = ProgressReporter::new("reclassify-pools-main", None);
     // Optional `--source` filter resolves to a `source_id` and bounds the
     // candidate scan to that one source; the tails are already source-scoped.
     let source_filter = match &config.source {
@@ -616,7 +617,7 @@ async fn run_main_candidate_scan(
         "reclassify-pools: starting main candidate scan"
     );
     let total = count_candidates(client, config.overwrite, source_filter).await?;
-    let progress = ProgressReporter::new("reclassify-pools-main", Some(total));
+    let progress = progress.with_total(total);
     let mut cursor: Option<i64> = None;
     let mut batch_index: u64 = 0;
 
