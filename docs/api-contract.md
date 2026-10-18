@@ -101,13 +101,22 @@ Example:
 ```json
 {
   "schema_version": "v1",
-  "generated_at": 1791327433,
-  "version": "0.9.2",
+  "generated_at": 1792333752,
+  "version": "0.9.3",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 29,
+    "release_count": 30,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.9.3",
+        "date": "2026-10-18",
+        "items": [
+          "Show Qbit miner attribution from authenticated child coinbase tags, independently of the Bitcoin parent miner."
+        ],
+        "item_count": 1,
+        "truncated": false
+      },
       {
         "version": "0.9.2",
         "date": "2026-10-07",
