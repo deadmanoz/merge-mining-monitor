@@ -6,6 +6,7 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Serve frontend assets under a `/v/<version>` path prefix derived from `CARGO_PKG_VERSION` instead of hand-maintained `?v=` query strings across `www/`, and regenerate `fixtures/api/version.json` via `just gen-source-artifacts`.
 - Attribute Qbit payouts to F2Pool at high confidence and SECPOOL/Luxor at medium confidence, retaining separate child tags and leaving the shared wallet unmapped.
 - Enrich stored Qbit payout evidence through source-scoped pool replay with progress reporting and no additional node calls.
 

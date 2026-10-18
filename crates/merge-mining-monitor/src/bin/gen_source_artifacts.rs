@@ -6,7 +6,6 @@
 use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use mmm_capture::findings_registry::{
     FINDINGS_DATA_DIR, FINDINGS_JS_PATH, load_findings, render_findings_js,
@@ -15,26 +14,14 @@ use mmm_capture::source_registry::generate::{
     FRONTEND_JS_PATH, SEED_SQL_PATH, render_frontend_js, render_seed_sql,
 };
 const VERSION_FIXTURE_PATH: &str = "fixtures/api/version.json";
+const DEFAULT_VERSION_FIXTURE_GENERATED_AT: u64 = 1_792_333_752;
 
 fn render_version_fixture() -> String {
-    let payload = mmm_api::version_payload_json();
-    let existing = fs::read_to_string(VERSION_FIXTURE_PATH)
+    let generated_at = fs::read_to_string(VERSION_FIXTURE_PATH)
         .ok()
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
-    let generated_at = existing
-        .as_ref()
-        .filter(|prev| {
-            prev.get("schema_version").and_then(|v| v.as_str()) == Some(mmm_api::SCHEMA_VERSION)
-                && prev.get("version") == payload.get("version")
-                && prev.get("release_notes") == payload.get("release_notes")
-        })
-        .and_then(|prev| prev.get("generated_at").and_then(|v| v.as_u64()))
-        .unwrap_or_else(|| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0)
-        });
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|prev| prev.get("generated_at").and_then(serde_json::Value::as_u64))
+        .unwrap_or(DEFAULT_VERSION_FIXTURE_GENERATED_AT);
     mmm_api::render_version_fixture_json(generated_at)
 }
 

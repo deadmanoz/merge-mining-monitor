@@ -73,25 +73,26 @@ Response fields:
 - `release_notes.releases[].item_count`: total top-level bullet count in that release-note section.
 - `release_notes.releases[].truncated`: true when `items` omits later entries from that section; currently always `false`.
 
-Illustrative example (truncated to 2 release entries; see `fixtures/api/version.json` for the current release's complete machine-checked payload):
+Illustrative example (2 release entries; see `fixtures/api/version.json` for the current release's complete machine-checked payload):
 
 ```json
 {
   "schema_version": "v1",
-  "generated_at": 1792333752,
-  "version": "<X.Y.Z>",
+  "generated_at": 1783792800,
+  "version": "0.2.0",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 30,
+    "release_count": 2,
     "truncated": false,
     "releases": [
       {
-        "version": "<X.Y.Z>",
-        "date": "2026-10-18",
+        "version": "0.2.0",
+        "date": "2026-07-11",
         "items": [
-          "Current release-note summary item."
+          "Add complete Lyncoin (11 canonical parents) and SixEleven (7 canonical parents) recoveries, VCash's 68 canonical explorer mappings, and Doichain's completed zero-row survey.",
+          "Make source IDs permanent and remove Mazacoin after verifying its source contains no AuxPoW implementation."
         ],
-        "item_count": 1,
+        "item_count": 2,
         "truncated": false
       },
       {
