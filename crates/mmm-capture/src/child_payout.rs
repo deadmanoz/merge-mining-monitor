@@ -8,8 +8,11 @@ use std::collections::HashMap;
 
 use bitcoin::bech32::{Hrp, segwit};
 use bitcoin::{Script, TxOut, base58};
+use serde::Deserialize;
 
-use crate::source_registry::{FRACTAL_SOURCE_CODE, NAMECOIN_SOURCE_CODE, SYSCOIN_SOURCE_CODE};
+use crate::source_registry::{
+    FRACTAL_SOURCE_CODE, NAMECOIN_SOURCE_CODE, QBIT_SOURCE_CODE, SYSCOIN_SOURCE_CODE,
+};
 
 /// Per-chain address-encoding parameters for formatting an AuxPoW child
 /// coinbase output as a chain-native address (NOT a Bitcoin address). Carries
@@ -20,9 +23,19 @@ use crate::source_registry::{FRACTAL_SOURCE_CODE, NAMECOIN_SOURCE_CODE, SYSCOIN_
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChildPayoutParams {
     pub namespace: &'static str,
-    pub p2pkh_version: u8,
-    pub p2sh_version: u8,
+    pub p2pkh_version: Option<u8>,
+    pub p2sh_version: Option<u8>,
     pub bech32_hrp: &'static str,
+    /// Restrict witness outputs to this (version, program length), when set.
+    pub witness_program: Option<(u8, usize)>,
+}
+
+impl ChildPayoutParams {
+    /// Shared by script formatting and curated-address validation.
+    pub fn accepts_witness_program(self, version: u8, length: usize) -> bool {
+        self.witness_program
+            .is_none_or(|expected| expected == (version, length))
+    }
 }
 
 /// `event_pool_attribution.namespace` for a Namecoin child coinbase payout
@@ -38,15 +51,18 @@ pub const SYSCOIN_PAYOUT_ADDRESS_NAMESPACE: &str = "syscoin_payout_address";
 /// migration. (Fractal pays the reward to a standard bc1 address, hence the
 /// reward rather than payout wording.)
 pub const FRACTAL_REWARD_ADDRESS_NAMESPACE: &str = "fractal_reward_address";
+/// Qbit native P2MR payout address, kept separate from Bitcoin parent evidence.
+pub const QBIT_PAYOUT_ADDRESS_NAMESPACE: &str = "qbit_payout_address";
 
 /// Namecoin mainnet address parameters: base58 P2PKH version 52 (`M...`), P2SH
 /// version 13, bech32 HRP `nc`. Verified against the formatting test vectors in
 /// this file.
 pub const NAMECOIN_CHILD_PAYOUT_PARAMS: ChildPayoutParams = ChildPayoutParams {
     namespace: NAMECOIN_PAYOUT_ADDRESS_NAMESPACE,
-    p2pkh_version: 52,
-    p2sh_version: 13,
+    p2pkh_version: Some(52),
+    p2sh_version: Some(13),
     bech32_hrp: "nc",
+    witness_program: None,
 };
 
 /// Syscoin mainnet address parameters: base58 P2PKH version 63 (`S...`), P2SH
@@ -54,9 +70,10 @@ pub const NAMECOIN_CHILD_PAYOUT_PARAMS: ChildPayoutParams = ChildPayoutParams {
 /// vectors in this file.
 pub const SYSCOIN_CHILD_PAYOUT_PARAMS: ChildPayoutParams = ChildPayoutParams {
     namespace: SYSCOIN_PAYOUT_ADDRESS_NAMESPACE,
-    p2pkh_version: 63,
-    p2sh_version: 5,
+    p2pkh_version: Some(63),
+    p2sh_version: Some(5),
     bech32_hrp: "sys",
+    witness_program: None,
 };
 
 /// Fractal Bitcoin address parameters, identical to Bitcoin mainnet: base58
@@ -65,10 +82,30 @@ pub const SYSCOIN_CHILD_PAYOUT_PARAMS: ChildPayoutParams = ChildPayoutParams {
 /// public mempool block samples in this file's tests.
 pub const FRACTAL_CHILD_REWARD_PARAMS: ChildPayoutParams = ChildPayoutParams {
     namespace: FRACTAL_REWARD_ADDRESS_NAMESPACE,
-    p2pkh_version: 0,
-    p2sh_version: 5,
+    p2pkh_version: Some(0),
+    p2sh_version: Some(5),
     bech32_hrp: "bc",
+    witness_program: None,
 };
+
+/// Qbit mainnet pays witness-v2, 32-byte P2MR programs under HRP `qb`.
+pub const QBIT_CHILD_PAYOUT_PARAMS: ChildPayoutParams = ChildPayoutParams {
+    namespace: QBIT_PAYOUT_ADDRESS_NAMESPACE,
+    p2pkh_version: None,
+    p2sh_version: None,
+    bech32_hrp: "qb",
+    witness_program: Some((2, 32)),
+};
+
+/// Curated payout association confidence. Omitted registry values preserve the
+/// existing medium rating; high requires corroborating child-native evidence.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ChildPayoutConfidence {
+    High,
+    #[default]
+    Medium,
+}
 
 /// Resolved pool identity for a child payout/reward address: the database
 /// `pool_id` plus the specific `pool_identity_id` (the address-level identity
@@ -78,6 +115,8 @@ pub const FRACTAL_CHILD_REWARD_PARAMS: ChildPayoutParams = ChildPayoutParams {
 pub struct PoolIdentityRef {
     pub pool_id: i64,
     pub pool_identity_id: i64,
+    /// Used by payout attribution only; other identity paths keep their policy.
+    pub payout_confidence: ChildPayoutConfidence,
 }
 
 /// Map from `(namespace, identifier)` to a resolved [`PoolIdentityRef`], built
@@ -88,7 +127,7 @@ pub type PoolIdentityLookup = HashMap<(String, String), PoolIdentityRef>;
 
 /// Map a `source_registry` source code to its [`ChildPayoutParams`], or `None`
 /// for chains with no child payout/reward attribution. The match arms key off
-/// the canonical NAMECOIN/SYSCOIN/FRACTAL source codes, keeping this in step
+/// the canonical child source codes, keeping this in step
 /// with the source registry. The `None` arm is the explicit no-child-payout
 /// signal, not an error.
 pub fn params_for_source_code(source_code: &str) -> Option<ChildPayoutParams> {
@@ -96,6 +135,7 @@ pub fn params_for_source_code(source_code: &str) -> Option<ChildPayoutParams> {
         NAMECOIN_SOURCE_CODE => Some(NAMECOIN_CHILD_PAYOUT_PARAMS),
         SYSCOIN_SOURCE_CODE => Some(SYSCOIN_CHILD_PAYOUT_PARAMS),
         FRACTAL_SOURCE_CODE => Some(FRACTAL_CHILD_REWARD_PARAMS),
+        QBIT_SOURCE_CODE => Some(QBIT_CHILD_PAYOUT_PARAMS),
         _ => None,
     }
 }
@@ -137,13 +177,20 @@ pub fn child_output_addresses(outputs: &[TxOut], params: ChildPayoutParams) -> V
 pub fn format_child_script_address(script: &Script, params: ChildPayoutParams) -> Option<String> {
     let bytes = script.as_bytes();
     if script.is_p2pkh() {
-        return Some(base58_address(params.p2pkh_version, &bytes[3..23]));
+        return params
+            .p2pkh_version
+            .map(|version| base58_address(version, &bytes[3..23]));
     }
     if script.is_p2sh() {
-        return Some(base58_address(params.p2sh_version, &bytes[2..22]));
+        return params
+            .p2sh_version
+            .map(|version| base58_address(version, &bytes[2..22]));
     }
     if let Some(version) = script.witness_version() {
         let program = &bytes[2..];
+        if !params.accepts_witness_program(version.to_num(), program.len()) {
+            return None;
+        }
         let hrp = Hrp::parse(params.bech32_hrp).ok()?;
         return segwit::encode(hrp, version.to_fe(), program).ok();
     }
@@ -178,6 +225,47 @@ mod tests {
 
     fn p2sh_script(hash: [u8; 20]) -> ScriptBuf {
         ScriptBuf::new_p2sh(&ScriptHash::from_slice(&hash).unwrap())
+    }
+
+    #[test]
+    fn formats_native_qbit_p2mr_addresses_and_skips_unsupported_outputs() {
+        // Independent native decodescript vectors, captured 2026-10-18.
+        for (script, address) in [
+            (
+                "5220092f12207f98da2b526313dd72f21bce4ca5a7b301ca1a108c04a219557c17d1",
+                "qb1zpyh3ygrlnrdzk5nrz0wh9usmeex2tfanq89p5yyvqj3pj4tuzlgs4hc5uh",
+            ),
+            (
+                "5220435c094ddfe9d8b877e564b16210ddacfe7a43d4301547649a64deba3f5faddc",
+                "qb1zgdwqjnwla8vtsal9vjckyyxa4nl85s75xq25wey6vn0t506l4hwqy0p2u9",
+            ),
+            (
+                "5220419c3df36e130967cbae0f9e7cf57e7b44d1dc823bc078b08109467c4bd92f30",
+                "qb1zgxwrmumwzvyk0jawp708eat70dzdrhyz80q83vypp9r8cj7e9ucqlwfe8r",
+            ),
+            (
+                "5220b03468bcf890af33db25ad082d971ca912b29c68b3340451f368e0d2550dfbd4",
+                "qb1zkq6x308cjzhn8ke945yzm9cu4yft98rgkv6qg50ndrsdy4gdl02qzvytm3",
+            ),
+        ] {
+            let script = ScriptBuf::from_hex(script).unwrap();
+            assert_eq!(
+                format_child_script_address(&script, QBIT_CHILD_PAYOUT_PARAMS).as_deref(),
+                Some(address)
+            );
+        }
+        for script in [
+            p2pkh_script([0; 20]),
+            p2sh_script([0; 20]),
+            ScriptBuf::from_bytes([vec![0x51, 0x20], vec![0; 32]].concat()),
+            ScriptBuf::from_bytes([vec![0x52, 0x14], vec![0; 20]].concat()),
+            ScriptBuf::from_bytes(vec![0x6a]),
+        ] {
+            assert_eq!(
+                format_child_script_address(&script, QBIT_CHILD_PAYOUT_PARAMS),
+                None
+            );
+        }
     }
 
     #[test]

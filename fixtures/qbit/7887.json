@@ -1,0 +1,12 @@
+{
+  "height": 7887,
+  "hash": "b6aeb989f28cb605012d56a732a93e3b794661683d19d83998d7c79fd700364e",
+  "coinbase_txid": "1478ad676e3dd60e3f194e822e0c7fc2e47f3064f11d27086de0ba6366831278",
+  "reward_outputs": [
+    {
+      "script": "5220b03468bcf890af33db25ad082d971ca912b29c68b3340451f368e0d2550dfbd4",
+      "address": "qb1zkq6x308cjzhn8ke945yzm9cu4yft98rgkv6qg50ndrsdy4gdl02qzvytm3"
+    }
+  ],
+  "provenance": "Full raw and decoded getblock from the retained self-hosted Qbit mainnet archive; acquired 2026-10-18 America/Los_Angeles. Pool ownership is a curated association, not an RPC assertion."
+}

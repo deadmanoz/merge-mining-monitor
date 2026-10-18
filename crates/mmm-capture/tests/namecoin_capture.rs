@@ -239,6 +239,7 @@ fn resolves_namecoin_child_attribution_sources_and_keeps_parent_independent() {
         PoolIdentityRef {
             pool_id: f2pool_id,
             pool_identity_id: 9001,
+            payout_confidence: Default::default(),
         },
     );
 

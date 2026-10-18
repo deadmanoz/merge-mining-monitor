@@ -1323,11 +1323,18 @@ summaries, source health) exactly as before, and is distinct from revocation
 The current source labels are `btc_pool_snapshot`,
 `btc_pool_snapshot_legacy_child_script`, `child_payout_registry`,
 `child_coinbase_output`, `rsk_miner_registry`, and `rsk_rpc_miner`.
-`child_payout_registry` marks a Namecoin/Syscoin child payout address
+`child_payout_registry` marks a Namecoin/Syscoin/Qbit child payout address
 or Fractal/Hathor child reward address resolved through `pool_identity`;
 `child_coinbase_output` marks an observed chain-native child payout/reward
 address that remains unresolved. `confidence` is one of `high`, `medium`, or
 `low`.
+
+Qbit payouts use namespace `qbit_payout_address` and `match_kind: "payout_address"`.
+The curated F2Pool mapping emits `high` confidence; SECPOOL/Luxor emit `medium`.
+An unmapped `qb` address remains visible through `child_coinbase_output` with
+an Unknown pool and null identity. Native child tags remain separate rows;
+matching tag/payout pools collapse to one child miner, conflicting known pools
+to Unknown. The Bitcoin-parent pool remains independent.
 
 `event_details[].child_miner_pool` is the child-chain miner fact for that one
 event. It is derived from child-chain evidence and is not inferred by clients

@@ -135,6 +135,10 @@ concurrent tasks inside each locking test.
 - Qbit full-block capture authenticates the child body merkle root and coinbase
   height before child tag attribution. Header-only Qbit proof decoding remains
   body-independent; child and Bitcoin-parent pool attribution stay separate.
+  Qbit payouts use the shared registry with witness-v2/32-byte `qb` addresses.
+  Optional per-entry payout confidence defaults to medium and decorates only
+  matching loaded identities at live/replay bootstrap, without database columns
+  or additional queries. Preserve independent native tags and parent evidence.
 - Strict classic full-block authentication belongs in `mmm-capture::auxpow`,
   not producers. Each family's RPC verbosity, proof authentication and
   capture-failure policy are explicit spec facts; recording a capture error and

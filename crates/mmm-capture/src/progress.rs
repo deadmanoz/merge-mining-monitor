@@ -51,6 +51,14 @@ impl ProgressReporter {
         }
     }
 
+    /// Attach a discovered total without resetting the timer or counters, so
+    /// callers can create the reporter before a fallible count query.
+    #[must_use]
+    pub fn with_total(mut self, total: u64) -> Self {
+        self.total = Some(total);
+        self
+    }
+
     /// Register a line the final summary renders when the job ends, however
     /// it ends (typically an RPC client's metrics snapshot via its `Display`
     /// impl, captured by handle so it reflects the job's last call).

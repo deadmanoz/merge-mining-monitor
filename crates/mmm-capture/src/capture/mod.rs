@@ -240,7 +240,8 @@ impl PoolAttributionSide {
 
 /// Confidence tier recorded on `pool_attribution.confidence`. High for
 /// snapshot/registry-backed matches (coinbase tag, payout address, RSK miner
-/// registry), Medium for child payout-address heuristics. `Low` is reserved
+/// registry), Medium for child payout-address heuristics unless the curated
+/// entry carries a high-confidence override. `Low` is reserved
 /// (no current producer emits it). `as_db_str` is the persisted literal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PoolAttributionConfidence {
@@ -341,7 +342,7 @@ impl EventPoolAttribution {
         }
     }
 
-    /// Build a `ChildBlock` payout-address attribution (Medium confidence)
+    /// Build a `ChildBlock` payout-address attribution (Medium by default)
     /// from a decoded child coinbase output address. Presence of `identity`
     /// decides mapped vs unmapped: mapped fills `pool_id`/`pool_identity_id`
     /// and tags `CHILD_PAYOUT_REGISTRY_SOURCE`, unmapped leaves them NULL and
@@ -365,7 +366,12 @@ impl EventPoolAttribution {
             } else {
                 CHILD_COINBASE_OUTPUT_SOURCE
             },
-            confidence: PoolAttributionConfidence::Medium,
+            confidence: match identity.map(|identity| identity.payout_confidence) {
+                Some(crate::child_payout::ChildPayoutConfidence::High) => {
+                    PoolAttributionConfidence::High
+                }
+                _ => PoolAttributionConfidence::Medium,
+            },
             details: json!({ "address_source": "child_coinbase_outputs" }),
         }
     }

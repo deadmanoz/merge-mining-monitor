@@ -10,7 +10,7 @@
 use crate::poller::PollerDefaults;
 use mmm_capture::child_payout::{
     ChildPayoutParams, FRACTAL_CHILD_REWARD_PARAMS, NAMECOIN_CHILD_PAYOUT_PARAMS,
-    SYSCOIN_CHILD_PAYOUT_PARAMS,
+    QBIT_CHILD_PAYOUT_PARAMS, SYSCOIN_CHILD_PAYOUT_PARAMS,
 };
 use mmm_capture::source_registry::{
     ELASTOS_SOURCE_CODE, FRACTAL_SOURCE_CODE, HATHOR_SOURCE_CODE, NAMECOIN_SOURCE_CODE,
@@ -395,9 +395,8 @@ pub static CHAINS: [ChainSpec; 8] = [
                 genesis_block_hash: QBIT_GENESIS_BLOCK_HASH,
             },
             raw_block_boolean_verbose: false,
-            // Child script tags use the pool snapshot; no Qbit payout
-            // address registry is configured.
-            child_payout: None,
+            // Native child tags and curated payout identities are independent evidence.
+            child_payout: Some(QBIT_CHILD_PAYOUT_PARAMS),
             // Merged mining is accepted from height 0, so no height is below
             // activation and there is nothing to warn about.
             floor_warning: None,
@@ -562,7 +561,7 @@ mod tests {
         assert_eq!(spec.env_prefix, "QBIT");
         assert!(spec.backfill_range_cap.is_none());
         let family = spec.family.as_ref().expect("Qbit is a family chain");
-        assert!(family.child_payout.is_none());
+        assert_eq!(family.child_payout, Some(QBIT_CHILD_PAYOUT_PARAMS));
         match family.fetch {
             FetchStrategy::QbitExtendedHeader { genesis_block_hash } => assert_eq!(
                 genesis_block_hash,

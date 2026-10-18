@@ -135,6 +135,42 @@ indexes beginning with `(event_id, side)` for cleanup and pool collapse;
 the planner estimated roughly 23 million events and 25 million attribution
 rows. No new scan across stored events or producer startup job is added.
 
+Qbit payout attribution adds no node RPC calls. With the currently observed
+single reward address, live capture adds one payout upsert and one source
+cleanup DELETE; existing child-pool refreshes are unchanged. Stored-output
+replay adds one payout upsert and uses the existing two child-pool refresh
+UPDATEs per changed event, plus existing per-parent transaction and lock work.
+The CLI's existing Core-cache startup is a separate cost. An unchanged replay
+makes no attribution writes.
+
+The main replay query now materializes its bounded candidate page before
+loading attribution details. On 2026-10-18, read-only plans on the dev dataset
+(planner estimates 23,257,826 events and 24,895,572 attribution rows) used
+source and event/side indexes. Each of the three detail aggregates ran 500
+times for a 500-event page, rather than 13,463 times before the change. A
+same-statement comparison found identical values for all 500 returned rows.
+Observed first-page execution was 4,248 ms before and 226 ms after, with cache
+warming uncontrolled; this is not a complete replay or production benchmark.
+Eligibility still depends on the remaining source rows. No index was added.
+Progress reporting adds one initial COUNT query per main scan, using the same
+eligibility predicate without provenance hydration, and no per-event statement.
+On the same dev dataset, its source-indexed plan counted 13,463 Qbit candidates
+in 235 ms; cache conditions were uncontrolled. The remapped page parameters
+still returned identical values for 500 rows. A transient integration check
+delayed four payout inserts by 11 seconds each: the reporter logged done=3/4,
+rate and ETA at 33 seconds, then finished at 4/4. A no-op repeat finished at
+4/4; an injected insert failure logged aborted at 0/4. The instrumentation was
+removed before the full suite, with no permanent test hook.
+A separate count-query failure injection reproduced the missing abort summary
+before the reporter was moved ahead of setup; afterward it logged aborted at
+0 events with the total still unknown. That instrumentation was also removed.
+
+The payout-aware Qbit transport scenario also passed with a 340 ms response
+delay on 2026-10-18: genesis 1 request/342 ms, recovered capture 2/787 ms,
+unchanged rescan 1/363 ms, repeated capture 2/745 ms and 2/742 ms, and body
+recovery 2/752 ms, with no retries or failures. These scenario intervals include
+database/API checks and do not measure production block-download throughput.
+
 ## Frontend Tests
 
 Playwright tests exercise the static frontend against stubbed or live API

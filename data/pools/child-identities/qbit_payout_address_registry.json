@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "address": "qb1zpyh3ygrlnrdzk5nrz0wh9usmeex2tfanq89p5yyvqj3pj4tuzlgs4hc5uh",
+      "pool_slug": "f2pool",
+      "pool_canonical_name": "F2Pool",
+      "confidence": "high",
+      "evidence": {
+        "verified_at": "2026-10-18",
+        "script_pubkey": "5220092f12207f98da2b526313dd72f21bce4ca5a7b301ca1a108c04a219557c17d1",
+        "native_verification": "Qbit mainnet decodescript confirms this witness-v2, 32-byte P2MR address. Full-block fixture 135331 independently retains the same payout and native F2Pool tag.",
+        "btc_parent_pool_reconciliation": "4,482/4,482 retained active observations pay this script and have F2Pool Bitcoin-parent attribution. All 4,482 also resolve to F2Pool from native child coinbase tags.",
+        "ownership_qualification": "High confidence in the pool association; independent wallet-control confirmation is unavailable."
+      }
+    },
+    {
+      "address": "qb1zgdwqjnwla8vtsal9vjckyyxa4nl85s75xq25wey6vn0t506l4hwqy0p2u9",
+      "pool_slug": "secpool",
+      "pool_canonical_name": "SecPool",
+      "confidence": "medium",
+      "evidence": {
+        "verified_at": "2026-10-18",
+        "script_pubkey": "5220435c094ddfe9d8b877e564b16210ddacfe7a43d4301547649a64deba3f5faddc",
+        "native_verification": "Qbit mainnet decodescript confirms this witness-v2, 32-byte P2MR address.",
+        "btc_parent_pool_reconciliation": "1,245/1,245 retained active observations pay this script and have independently Bitcoin-coinbase-attributed SECPOOL parents.",
+        "ownership_qualification": "Correlation-backed pool association; no native child tag or independent wallet-control confirmation."
+      }
+    },
+    {
+      "address": "qb1zgxwrmumwzvyk0jawp708eat70dzdrhyz80q83vypp9r8cj7e9ucqlwfe8r",
+      "pool_slug": "luxor",
+      "pool_canonical_name": "Luxor",
+      "confidence": "medium",
+      "evidence": {
+        "verified_at": "2026-10-18",
+        "script_pubkey": "5220419c3df36e130967cbae0f9e7cf57e7b44d1dc823bc078b08109467c4bd92f30",
+        "native_verification": "Qbit mainnet decodescript confirms this witness-v2, 32-byte P2MR address.",
+        "btc_parent_pool_reconciliation": "1,070/1,070 retained active observations pay this script and have independently Bitcoin-coinbase-attributed Luxor parents.",
+        "ownership_qualification": "Correlation-backed pool association; no native child tag or independent wallet-control confirmation."
+      }
+    }
+  ],
+  "unmapped_shared_wallet": {
+    "address": "qb1zkq6x308cjzhn8ke945yzm9cu4yft98rgkv6qg50ndrsdy4gdl02qzvytm3",
+    "reason": "6,815 retained active observations span AntPool, Binance Pool, BTC.com, Poolin, Ultimus Pool and WhitePool. The wallet operator is unconfirmed; no pool mapping is seeded."
+  }
+}

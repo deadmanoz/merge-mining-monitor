@@ -41,6 +41,11 @@ for nine merge-mined chains at once (Argentum, Bitmark, Emercoin, Myriadcoin,
 Namecoin, Syscoin, Terracoin, Unobtanium, and Xaya). The Block Detail drawer
 resolves the pool, the decoded AuxPoW commitment, and each chain's child block.*
 
+Qbit child miners resolve from native coinbase tags and curated payout
+addresses: F2Pool at high confidence, SECPOOL and Luxor at medium. These child
+identities remain separate from the Bitcoin parent pool; the shared wallet
+remains unmapped. See [attribution](docs/attribution.md) for the evidence.
+
 The main view is a windowed Bitcoin header tree: the canonical spine, each block
 labelled with its pool and a badge for the number of chains that merge-mined it.
 From it you can:

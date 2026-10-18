@@ -363,6 +363,11 @@ and `0025_retire_pending_supersede.sql` drops the `supersede` kind of
 operational failures without changing the public error code or source identity.
 `0031_drop_hathor_expected_btc_nbits.sql` drops the Hathor sidecar's
 `expected_btc_nbits`, which only Hathor's retired private lineage check wrote.
+`0032_add_qbit_payout_namespace.sql` extends `pool_identity`'s namespace check
+with `qbit_payout_address`. It rewrites no event evidence. Curated confidence
+is loaded from registry metadata into the existing attribution confidence
+field; it adds no database column. Apply the migration through the backup-first
+workflow before starting the payout-aware Qbit producer or replay.
 
 `0007_support_partial_child_evidence.sql` makes child evidence nullable, adds
 authenticated child header and `nBits` storage, replaces the old composite

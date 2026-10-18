@@ -77,6 +77,33 @@ test("the block drawer renders authenticated and unavailable child evidence hone
   await expect(events.nth(1)).toContainText("2023-11-14T22:13:20Z");
 });
 
+test("Qbit auxiliary summaries show child pools and leave the shared wallet unlabelled", async ({ page }) => {
+  const nodes = [makeNode(HASH, 700000, null, "canonical", { id: 1, prev_id: null })];
+  const childPools = [
+    [78058, { id: 8, slug: "f2pool", name: "F2Pool", known: true }],
+    [8197, { id: 9, slug: "secpool", name: "SecPool", known: true }],
+    [2450, { id: 10, slug: "luxor", name: "Luxor", known: true }],
+    [7887, { id: null, slug: null, name: "Unknown", known: false }],
+  ];
+  await stubApi(page, [], {
+    treePayload: (params) => treeEnvelope(params, { nodes }),
+    blockPayload: (hash) => blockPayload(hash, {
+      bitcoin_miner_pool: { id: 7, slug: "antpool", name: "AntPool", known: true },
+      event_details: childPools.map(([height, pool], index) => event({
+        id: index + 1, source: "auxpow:qbit", child_chain: "qbit",
+        child_height: height, child_miner_pool: pool,
+      })),
+    }),
+  });
+  await page.goto(`/?selected=${HASH}`);
+  const summaries = page.locator("#drawer details.event-block > summary");
+  await expect(summaries).toHaveCount(4);
+  for (let index = 0; index < 3; index += 1) {
+    await expect(summaries.nth(index)).toHaveText(`Qbit · ${childPools[index][0]} · ${childPools[index][1].name}`);
+  }
+  await expect(summaries.nth(3)).toHaveText("Qbit · 7887");
+});
+
 // The offset is the only place the drawer subtracts two stamps. fmtDelta rounds
 // to the largest fitting unit, which is exactly what loses the distinction a
 // reader comparing two auxiliaries on one block needs, so the exact second count

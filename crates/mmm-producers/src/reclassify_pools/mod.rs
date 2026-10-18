@@ -50,9 +50,11 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result, bail};
 use tokio_postgres::Client;
-use tracing::{debug, info};
+use tracing::info;
 
-use crate::chains::child_payout_registry::seed_all_child_payout_identities;
+use crate::chains::child_payout_registry::{
+    apply_child_payout_confidence, seed_all_child_payout_identities,
+};
 use crate::chains::elastos::identity::{
     upsert_elastos_minerinfo_pool_identities, upsert_elastos_reward_address_pool_identities,
 };
@@ -68,11 +70,12 @@ use mmm_capture::capture::{
 };
 use mmm_capture::child_payout::{
     FRACTAL_REWARD_ADDRESS_NAMESPACE, NAMECOIN_PAYOUT_ADDRESS_NAMESPACE, PoolIdentityLookup,
-    SYSCOIN_PAYOUT_ADDRESS_NAMESPACE,
+    QBIT_PAYOUT_ADDRESS_NAMESPACE, SYSCOIN_PAYOUT_ADDRESS_NAMESPACE,
 };
 use mmm_capture::pool_resolver::{PoolIdentityRegistry, PoolResolver};
+use mmm_capture::progress::ProgressReporter;
 use mmm_capture::source_registry::{
-    FRACTAL_SOURCE_CODE, NAMECOIN_SOURCE_CODE, SYSCOIN_SOURCE_CODE,
+    FRACTAL_SOURCE_CODE, NAMECOIN_SOURCE_CODE, QBIT_SOURCE_CODE, SYSCOIN_SOURCE_CODE,
 };
 use mmm_read_model::{drive_args, require_positive, update_parent_events};
 use mmm_store::{
@@ -85,6 +88,40 @@ mod plan;
 use plan::{ParentUpdateGroup, plan_batch_updates};
 
 const DEFAULT_BATCH_SIZE: i64 = 500;
+const CHILD_PAYOUT_SOURCE_CODES: &[&str] = &[
+    NAMECOIN_SOURCE_CODE,
+    SYSCOIN_SOURCE_CODE,
+    FRACTAL_SOURCE_CODE,
+    QBIT_SOURCE_CODE,
+];
+// Shared by the initial count and every page so progress measures the same
+// eligible events the scan processes. Params: overwrite, parent source,
+// child-tag source, payout source codes, optional source ID.
+const CANDIDATE_FILTER_SQL: &str = r"e.revoked_at IS NULL
+      AND (e.btc_parent_coinbase_script IS NOT NULL
+           OR e.btc_parent_coinbase_outputs IS NOT NULL
+           OR e.btc_parent_coinbase_outputs_text IS NOT NULL
+           OR e.child_coinbase_script IS NOT NULL
+           OR (s.code = ANY($4::text[]) AND e.child_coinbase_outputs IS NOT NULL))
+      AND ($1
+           OR (s.code = ANY($4::text[]) AND e.child_coinbase_outputs IS NOT NULL)
+           OR ((e.btc_parent_coinbase_script IS NOT NULL
+                OR e.btc_parent_coinbase_outputs IS NOT NULL
+                OR e.btc_parent_coinbase_outputs_text IS NOT NULL)
+               AND NOT EXISTS (
+                   SELECT 1 FROM event_pool_attribution a
+                   WHERE a.event_id = e.id
+                     AND a.side = 'btc_parent'
+                     AND a.source = $2
+               ))
+           OR (e.child_coinbase_script IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM event_pool_attribution a
+                   WHERE a.event_id = e.id
+                     AND a.side = 'child_block'
+                     AND a.source = $3
+               )))
+      AND ($5::bigint IS NULL OR e.source_id = $5)";
 const EVENT_POOL_ATTRIBUTION_JSON_ROWS_SELECT: &str = r"
    SELECT COALESCE(
        jsonb_agg(
@@ -341,20 +378,32 @@ async fn apply_parent_group(client: &mut Client, group: &ParentUpdateGroup) -> R
 /// `plan::plan_batch_updates`/`attribution_state_from_row` (positional
 /// `row.get`). The two parent/child LATERAL subqueries roll each side's
 /// source-scoped attribution up to a single row (NULL fields when not exactly
-/// one); the third aggregates child payout rows to JSON. Params: `$1` keyset
-/// cursor (id), `$2` limit, `$3` overwrite (false = fill-missing-only, which
-/// adds the `NOT EXISTS` provenance-gap filters), `$4`/`$5` snapshot/legacy-child
-/// sources, `$6`/`$7` child payout namespaces/sources, `$8` payout-eligible
-/// source codes, `$9` optional `source_id` filter (NULL = all sources). Scoped
+/// one); the third aggregates child payout rows to JSON. Params: `$1`
+/// overwrite, `$2`/`$3` snapshot/legacy-child sources, `$4` payout-eligible source
+/// codes, `$5` optional source ID, `$6` keyset cursor, `$7` page limit, and
+/// `$8`/`$9` child payout namespaces/sources. Scoped
 /// to non-revoked events with usable evidence, ordered by `e.id` for resumable
-/// paging.
+/// paging. Materialize the page before loading attribution details: otherwise a
+/// source-scoped sort can run every lateral aggregate for all remaining events.
 fn candidate_batch_sql() -> String {
-    let parent_attr = source_scoped_attribution_lateral("parent_attr", "btc_parent", "$4");
-    let child_attr = source_scoped_attribution_lateral("child_attr", "child_block", "$5");
+    let parent_attr = source_scoped_attribution_lateral("parent_attr", "btc_parent", "$2");
+    let child_attr = source_scoped_attribution_lateral("child_attr", "child_block", "$3");
 
     format!(
         r"
-SELECT e.id, e.btc_parent_header_hash, s.code AS source_code,
+WITH candidates AS MATERIALIZED (
+    SELECT e.id, e.btc_parent_header_hash, s.code AS source_code,
+           e.btc_parent_coinbase_script, e.btc_parent_coinbase_outputs,
+           e.btc_parent_coinbase_outputs_text, e.child_coinbase_script,
+           e.child_coinbase_outputs, e.confirmed_at
+    FROM merge_mining_event e
+    JOIN source s ON s.id = e.source_id
+    WHERE {CANDIDATE_FILTER_SQL}
+      AND ($6::bigint IS NULL OR e.id > $6)
+    ORDER BY e.id
+    LIMIT $7
+)
+SELECT e.id, e.btc_parent_header_hash, e.source_code,
        parent_attr.row_count AS parent_attribution_row_count,
        parent_attr.namespace AS parent_attribution_namespace,
        parent_attr.match_kind AS parent_attribution_match_kind,
@@ -375,44 +424,16 @@ SELECT e.id, e.btc_parent_header_hash, s.code AS source_code,
        btc_parent_coinbase_script, btc_parent_coinbase_outputs,
        btc_parent_coinbase_outputs_text,
        child_coinbase_script, child_coinbase_outputs, confirmed_at
-FROM merge_mining_event e
-JOIN source s ON s.id = e.source_id
+FROM candidates e
 {parent_attr}
 {child_attr}
 LEFT JOIN LATERAL ({EVENT_POOL_ATTRIBUTION_JSON_ROWS_SELECT}
    WHERE a.event_id = e.id
      AND a.side = 'child_block'
-     AND a.namespace = ANY($6::text[])
-     AND a.source = ANY($7::text[])
+     AND a.namespace = ANY($8::text[])
+     AND a.source = ANY($9::text[])
 ) child_payout_attr ON true
-WHERE e.revoked_at IS NULL
-  AND (e.btc_parent_coinbase_script IS NOT NULL
-       OR e.btc_parent_coinbase_outputs IS NOT NULL
-       OR e.btc_parent_coinbase_outputs_text IS NOT NULL
-       OR e.child_coinbase_script IS NOT NULL
-       OR (s.code = ANY($8::text[]) AND e.child_coinbase_outputs IS NOT NULL))
-  AND ($3
-       OR ((e.btc_parent_coinbase_script IS NOT NULL
-            OR e.btc_parent_coinbase_outputs IS NOT NULL
-            OR e.btc_parent_coinbase_outputs_text IS NOT NULL)
-           AND NOT EXISTS (
-               SELECT 1 FROM event_pool_attribution a
-               WHERE a.event_id = e.id
-                 AND a.side = 'btc_parent'
-                 AND a.source = $4
-           ))
-       OR (e.child_coinbase_script IS NOT NULL
-           AND NOT EXISTS (
-               SELECT 1 FROM event_pool_attribution a
-               WHERE a.event_id = e.id
-                 AND a.side = 'child_block'
-                 AND a.source = $5
-           ))
-       OR (s.code = ANY($8::text[]) AND e.child_coinbase_outputs IS NOT NULL))
-  AND ($1::bigint IS NULL OR e.id > $1)
-  AND ($9::bigint IS NULL OR e.source_id = $9)
-ORDER BY e.id
-LIMIT $2"
+ORDER BY e.id"
     )
 }
 
@@ -437,7 +458,7 @@ fn source_scoped_attribution_lateral(alias: &str, side: &str, source_param: &str
 
 /// Load one keyset page of candidate rows after `cursor` (exclusive). Binds the
 /// fixed child payout namespace/source/source-code sets, the mode flags from
-/// `config`, and the optional `source_filter` (`$9`, `None` = all sources), then
+/// `config`, and the optional `source_filter` (`$5`, `None` = all sources), then
 /// runs `candidate_batch_sql`. Returns raw rows; decoding and planning happen in
 /// `plan::plan_batch_updates`.
 async fn load_candidate_batch(
@@ -446,7 +467,7 @@ async fn load_candidate_batch(
     config: &ReclassifyPoolsConfig,
     source_filter: Option<i64>,
 ) -> Result<Vec<tokio_postgres::Row>> {
-    // In fill-missing-only mode ($3 = false), scan rows whose source-scoped
+    // In fill-missing-only mode ($1 = false), scan rows whose source-scoped
     // attribution provenance has not been materialized yet. `--overwrite` scans
     // all rows with usable evidence because it may re-attribute an already-set
     // row and should refresh provenance at the same time.
@@ -454,38 +475,58 @@ async fn load_candidate_batch(
         NAMECOIN_PAYOUT_ADDRESS_NAMESPACE.to_owned(),
         SYSCOIN_PAYOUT_ADDRESS_NAMESPACE.to_owned(),
         FRACTAL_REWARD_ADDRESS_NAMESPACE.to_owned(),
+        QBIT_PAYOUT_ADDRESS_NAMESPACE.to_owned(),
     ];
     let child_payout_sources = vec![
         CHILD_COINBASE_OUTPUT_SOURCE.to_owned(),
         CHILD_PAYOUT_REGISTRY_SOURCE.to_owned(),
-    ];
-    let child_payout_source_codes = vec![
-        NAMECOIN_SOURCE_CODE.to_owned(),
-        SYSCOIN_SOURCE_CODE.to_owned(),
-        FRACTAL_SOURCE_CODE.to_owned(),
     ];
     let sql = candidate_batch_sql();
     client
         .query(
             &sql,
             &[
-                &cursor,
-                &config.batch_size,
                 &config.overwrite,
                 &BTC_POOL_SNAPSHOT_SOURCE,
                 &BTC_POOL_SNAPSHOT_LEGACY_CHILD_SCRIPT_SOURCE,
+                &CHILD_PAYOUT_SOURCE_CODES,
+                &source_filter,
+                &cursor,
+                &config.batch_size,
                 &child_payout_namespaces,
                 &child_payout_sources,
-                &child_payout_source_codes,
-                &source_filter,
             ],
         )
         .await
         .context("load reclassify-pools candidate batch")
 }
 
+/// Count the scan's initial eligible snapshot without hydrating provenance.
+/// Producers may add candidates while replay runs; the total is a starting
+/// estimate, not a lock held across the pass.
+async fn count_candidates(client: &Client, overwrite: bool, source: Option<i64>) -> Result<u64> {
+    let sql = format!(
+        "SELECT count(*) FROM merge_mining_event e JOIN source s ON s.id = e.source_id \
+         WHERE {CANDIDATE_FILTER_SQL}"
+    );
+    let row = client
+        .query_one(
+            &sql,
+            &[
+                &overwrite,
+                &BTC_POOL_SNAPSHOT_SOURCE,
+                &BTC_POOL_SNAPSHOT_LEGACY_CHILD_SCRIPT_SOURCE,
+                &CHILD_PAYOUT_SOURCE_CODES,
+                &source,
+            ],
+        )
+        .await
+        .context("count reclassify-pools candidates")?;
+    Ok(u64::try_from(row.get::<_, i64>(0))?)
+}
+
 /// Self-seed the embedded resolver, RSK-only pool slugs, and the Hathor reward,
-/// Elastos minerinfo, Elastos reward-address, and Namecoin/Syscoin/Fractal
+/// Elastos minerinfo, Elastos reward-address, and Namecoin/Syscoin/Fractal/Qbit
 /// child-payout identity registries, then load the child payout identity lookup.
 /// All idempotent `ON CONFLICT` upserts, safe alongside live producers. Returns the
 /// resolver, registry, slug map, and identity lookup the phases read.
@@ -518,18 +559,20 @@ async fn seed_reclassify_pools(
         .context("seed Elastos reward-address pool identities")?;
     seed_all_child_payout_identities(client, &mut pool_ids_by_slug)
         .await
-        .context("seed Namecoin/Syscoin/Fractal child-payout pool identities")?;
-    let child_payout_identities = load_pool_identities_by_namespace(
+        .context("seed child-payout pool identities")?;
+    let mut child_payout_identities = load_pool_identities_by_namespace(
         client,
         &[
             NAMECOIN_PAYOUT_ADDRESS_NAMESPACE,
             SYSCOIN_PAYOUT_ADDRESS_NAMESPACE,
             FRACTAL_REWARD_ADDRESS_NAMESPACE,
+            QBIT_PAYOUT_ADDRESS_NAMESPACE,
             HATHOR_REWARD_ADDRESS_NAMESPACE,
         ],
     )
     .await
     .context("load child payout pool identities")?;
+    apply_child_payout_confidence(&mut child_payout_identities, &pool_ids_by_slug)?;
     Ok((
         resolver,
         registry,
@@ -550,6 +593,7 @@ async fn run_main_candidate_scan(
     config: &ReclassifyPoolsConfig,
     stats: &mut ReclassifyPoolsStats,
 ) -> Result<()> {
+    let progress = ProgressReporter::new("reclassify-pools-main", None);
     // Optional `--source` filter resolves to a `source_id` and bounds the
     // candidate scan to that one source; the tails are already source-scoped.
     let source_filter = match &config.source {
@@ -572,6 +616,8 @@ async fn run_main_candidate_scan(
         source = ?config.source,
         "reclassify-pools: starting main candidate scan"
     );
+    let total = count_candidates(client, config.overwrite, source_filter).await?;
+    let progress = progress.with_total(total);
     let mut cursor: Option<i64> = None;
     let mut batch_index: u64 = 0;
 
@@ -582,17 +628,6 @@ async fn run_main_candidate_scan(
         }
         cursor = Some(rows.last().expect("non-empty batch").get(0));
         batch_index += 1;
-        if batch_index.is_multiple_of(50) {
-            debug!(
-                phase = "main_scan",
-                batch_index,
-                cursor = ?cursor,
-                parent_pool_updates = stats.parent_pool_updates,
-                child_pool_updates = stats.child_pool_updates,
-                "reclassify-pools: main candidate scan progress"
-            );
-        }
-
         let groups = plan_batch_updates(
             &rows,
             resolver,
@@ -601,6 +636,12 @@ async fn run_main_candidate_scan(
             config,
             stats,
         );
+
+        let updates = groups
+            .iter()
+            .map(|group| group.updates.len())
+            .sum::<usize>();
+        progress.advance((rows.len() - updates) as u64);
 
         // Apply each parent group transactionally through the read-model mutation
         // module: parent attribution writes and that parent's read-model reconcile
@@ -622,8 +663,10 @@ async fn run_main_candidate_scan(
             if group.parent_rollup_changed {
                 stats.parents_reconciled += 1;
             }
+            progress.advance(group.updates.len() as u64);
         }
     }
+    progress.finish();
 
     info!(
         phase = "main_scan",
