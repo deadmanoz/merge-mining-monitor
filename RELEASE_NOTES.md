@@ -13,11 +13,8 @@
 
 ## [0.9.1] - 2026-09-29
 
-- Refuse merge-mined parents from other SHA-256 chains (mostly Bitcoin Cash) by
-  checking each parent against Bitcoin's difficulty history before storing it,
-  and remove over 52,000 non-Bitcoin `unknown` blocks stored by earlier captures.
-- Remove Bitcoin blocks and AuxPoW proofs once no evidence attests them, and
-  apply the same Bitcoin difficulty-history check to orphan classification.
+- Refuse merge-mined parents from other SHA-256 chains (mostly Bitcoin Cash) by checking each parent against Bitcoin's difficulty history before storing it, and remove over 52,000 non-Bitcoin `unknown` blocks stored by earlier captures.
+- Remove Bitcoin blocks and AuxPoW proofs once no evidence attests them, and apply the same Bitcoin difficulty-history check to orphan classification.
 
 ## [0.9.0] - 2026-09-29
 
@@ -26,11 +23,8 @@
 
 ## [0.8.2] - 2026-09-22
 
-- Surface ten reviewed body-invalid Bitcoin parents as error blocks with their
-  rejection reasons instead of stales, expanding the unified catalogue to 49
-  invalid parents and 107 child-chain observations.
-- Preserve observation identities when parents move into the error catalogue, and
-  unify body-invalid reporting under `kind=error_block` and `error_block_reason`.
+- Surface ten reviewed body-invalid Bitcoin parents as error blocks with their rejection reasons instead of stales, expanding the unified catalogue to 49 invalid parents and 107 child-chain observations.
+- Preserve observation identities when parents move into the error catalogue, and unify body-invalid reporting under `kind=error_block` and `error_block_reason`.
 
 ## [0.8.1] - 2026-09-21
 
@@ -71,11 +65,8 @@
 
 ## [0.7.7] - 2026-09-01
 
-- Import Research's canonical publication: 1,037,005 ordinary events, 21
-  stale-descendant summaries, and 86 authenticated error observations covering
-  39 consensus-invalid Bitcoin parents.
-- Verify all 29 publication artifacts before database mutation and refresh the
-  historical manifest and error catalogue from the same Research commit.
+- Import Research's canonical publication: 1,037,005 ordinary events, 21 stale-descendant summaries, and 86 authenticated error observations covering 39 consensus-invalid Bitcoin parents.
+- Verify all 29 publication artifacts before database mutation and refresh the historical manifest and error catalogue from the same Research commit.
 
 ## [0.7.6] - 2026-08-29
 
@@ -148,6 +139,4 @@
 
 ## [0.1.0] - 2026-07-02
 
-- Initial source release of `merge-mining-monitor`, including the Rust
-  workspace, Postgres schema, capture and reconciliation pipeline, read API,
-  and static frontend.
+- Initial source release of `merge-mining-monitor`, including the Rust workspace, Postgres schema, capture and reconciliation pipeline, read API, and static frontend.

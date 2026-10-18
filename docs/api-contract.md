@@ -1,47 +1,36 @@
 # API Contract
 
 This document defines the release JSON contract for the merge-mining monitor UI.
-Fixture examples live in `fixtures/api/`; fixture
-coverage is listed by `fixtures/api/manifest.json`.
+Fixture examples live in `fixtures/api/`; fixture coverage is listed by `fixtures/api/manifest.json`.
 
-The current implementation supports Namecoin, RSK, Syscoin, Fractal Bitcoin,
-Hathor, Elastos, Qbit, and Terracoin capture. See `docs/data-model.md` for schema details,
-`docs/architecture.md` for current code flow, and
-`docs/tree-semantics.md` for implementation notes on deriving `/api/v1/tree`
-and orphan navigator responses.
+The current implementation supports Namecoin, RSK, Syscoin, Fractal Bitcoin, Hathor, Elastos, Qbit, and Terracoin capture.
+See `docs/data-model.md` for schema details, `docs/architecture.md` for current code flow, and `docs/tree-semantics.md` for implementation notes on deriving `/api/v1/tree` and orphan navigator responses.
 
 ## Compatibility
 
-All JSON responses use `schema_version = "v1"`. This project is pre-production,
-so breaking contract changes are allowed before release when they simplify the
-shipping API.
+All JSON responses use `schema_version = "v1"`.
+This project is pre-production, so breaking contract changes are allowed before release when they simplify the shipping API.
 
-The `/api/v1` endpoints return JSON only. RSS feeds, pagination beyond the
-documented keyset endpoints, CSV export, and SSE are out of scope. Runtime
-health and readiness probes exist outside `/api/v1` and do not use the JSON
-envelope.
+The `/api/v1` endpoints return JSON only.
+RSS feeds, pagination beyond the documented keyset endpoints, CSV export, and SSE are out of scope.
+Runtime health and readiness probes exist outside `/api/v1` and do not use the JSON envelope.
 
 ## Health And Readiness
 
-`GET /health` is a liveness probe. It returns `204 No Content` when the process
-can answer HTTP, without checking out a database connection.
+`GET /health` is a liveness probe.
+It returns `204 No Content` when the process can answer HTTP, without checking out a database connection.
 
-`GET /ready` is a readiness probe. It returns `204 No Content` only when the
-process can check out a Postgres connection and complete `SELECT 1` inside the
-bounded readiness timeout; otherwise it returns `503 Service Unavailable`.
+`GET /ready` is a readiness probe.
+It returns `204 No Content` only when the process can check out a Postgres connection and complete `SELECT 1` inside the bounded readiness timeout; otherwise it returns `503 Service Unavailable`.
 
 Both probes send `Cache-Control: no-store`.
 
 ## Cache Headers
 
-Successful `/api/v1/*` responses send short public cache headers suitable for a
-reverse proxy or CDN. The JSON envelope includes a wall-clock `generated_at`, so
-conditional JSON requests must be keyed on read-model freshness if they are added
-later, not on a body hash.
+Successful `/api/v1/*` responses send short public cache headers suitable for a reverse proxy or CDN.
+The JSON envelope includes a wall-clock `generated_at`, so conditional JSON requests must be keyed on read-model freshness if they are added later, not on a body hash.
 
-The static frontend is buildless and not fingerprinted: `index.html` uses a
-short edge TTL, hand-authored `www/` assets use moderate TTLs with
-revalidation, and only the vendored versioned D3 file is marked immutable.
+The static frontend is buildless and not fingerprinted: `index.html` uses a short edge TTL, hand-authored `www/` assets use moderate TTLs with revalidation, and only the vendored versioned D3 file is marked immutable.
 Error responses and probe responses are not cached.
 
 ## Common Envelope
@@ -52,52 +41,39 @@ Successful responses include:
 - `generated_at`: epoch seconds;
 - `query`: normalized query echo for endpoints with query parameters.
 
-Endpoints that take no query parameters omit the `query` field:
-`/api/v1/version`, `/api/v1/block/:hash` (a path hash only),
-`/api/v1/sources`, and `/api/v1/competitions`.
-`/api/v1/tree` and `/api/v1/navigator/{target}` have bounded query contracts
-and therefore include a `query` echo.
+Endpoints that take no query parameters omit the `query` field: `/api/v1/version`, `/api/v1/block/:hash` (a path hash only), `/api/v1/sources`, and `/api/v1/competitions`.
+`/api/v1/tree` and `/api/v1/navigator/{target}` have bounded query contracts and therefore include a `query` echo.
 
-Field names are snake_case. Hash values are 64 lowercase display/RPC hex
-strings. Non-hash byte fields use a `_hex` suffix and are lowercase hex or
-JSON `null`. Empty byte arrays are serialized as `null`, not `""`.
+Field names are snake_case.
+Hash values are 64 lowercase display/RPC hex strings.
+Non-hash byte fields use a `_hex` suffix and are lowercase hex or JSON `null`.
+Empty byte arrays are serialized as `null`, not `""`.
 
-Epoch seconds are used for instant fields ending in `_at`, plus `header_time`,
-`block.header.time`, and `child_block_time`. Calendar period fields use UTC
-dates. Week periods use ISO weeks, Monday through Sunday.
+Epoch seconds are used for instant fields ending in `_at`, plus `header_time`, `block.header.time`, and `child_block_time`.
+Calendar period fields use UTC dates.
+Week periods use ISO weeks, Monday through Sunday.
 
 ## Version Metadata
 
-`GET /api/v1/version` has no database dependency. It returns the running
-application SemVer compiled from the Cargo workspace package version, plus the
-release-note data parsed from `RELEASE_NOTES.md` at build time. The release-note
-list is unbounded (every section, every item): the About dialog renders it in a
-dedicated scrollable, per-release collapsible pane. The `truncated` and
-`*_count` fields below are retained as a forward-compatible safety net and are
-currently always consistent with `releases` / `items` (no truncation).
+`GET /api/v1/version` has no database dependency.
+It returns the running application SemVer compiled from the Cargo workspace package version, plus the release-note data parsed from `RELEASE_NOTES.md` at build time.
+The release-note list is unbounded (every section, every item): the About dialog renders it in a dedicated scrollable, per-release collapsible pane.
+The `truncated` and `*_count` fields below are retained as a forward-compatible safety net and are currently always consistent with `releases` / `items` (no truncation).
 
 Response fields:
 
 - `version`: SemVer string from root `Cargo.toml` `[workspace.package].version`.
 - `release_notes.source`: currently `"RELEASE_NOTES.md"`.
-- `release_notes.release_count`: total release-note sections present in
-  `RELEASE_NOTES.md`.
-- `release_notes.truncated`: true when `releases` omits older release-note
-  sections; currently always `false`.
+- `release_notes.release_count`: total release-note sections present in `RELEASE_NOTES.md`.
+- `release_notes.truncated`: true when `releases` omits older release-note sections; currently always `false`.
 - `release_notes.releases`: every release-note section, newest first.
-- `release_notes.releases[].version`: section version, for example
-  `"0.3.0"`.
-- `release_notes.releases[].date`: optional release date from headings like
-  `## [0.3.0] - 2026-07-28`.
-- `release_notes.releases[].items`: top-level bullet entries with wrapped
-  Markdown lines flattened to text.
-- `release_notes.releases[].item_count`: total top-level bullet count in that
-  release-note section.
-- `release_notes.releases[].truncated`: true when `items` omits later entries
-  from that section; currently always `false`.
+- `release_notes.releases[].version`: section version, for example `"0.3.0"`.
+- `release_notes.releases[].date`: optional release date from headings like `## [0.3.0] - 2026-07-28`.
+- `release_notes.releases[].items`: top-level bullet entries with wrapped Markdown lines flattened to text.
+- `release_notes.releases[].item_count`: total top-level bullet count in that release-note section.
+- `release_notes.releases[].truncated`: true when `items` omits later entries from that section; currently always `false`.
 
-Example (truncated to 2 release entries; see `fixtures/api/version.json` for
-the complete machine-checked payload):
+Example (truncated to 2 release entries; see `fixtures/api/version.json` for the complete machine-checked payload):
 
 ```json
 {
@@ -152,94 +128,63 @@ Source codes use `<kind>:<chain>` or `<kind>:<chain>:<instance>`:
 | `surveyed` | `auxpow:doichain` | Child chain recovered and reviewed; zero admissible Bitcoin evidence rows. |
 | `catalogued` | `auxpow:jax-network`, `auxpow:blast`, `auxpow:fusioncoin`, `auxpow:jincoin`, `auxpow:bitcoin-stash` | Known BTC-merge-mined chains with no recovered data, no producer, no `poll_cursor` or `source_health` row, and zero evidence counts. |
 
-Source ids are permanent and never reused (id 32 was retired when Mazacoin was
-removed for having no consensus AuxPoW implementation).
+Source ids are permanent and never reused (id 32 was retired when Mazacoin was removed for having no consensus AuxPoW implementation).
 
-The `source` query parameter accepts comma-delimited source codes. Response
-echoes use `query.sources`, sorted and deduplicated. Normalization trims ASCII
-whitespace, rejects empty members as `invalid_query`, rejects unknown enum
-members as `invalid_query`, rejects syntactically valid but unregistered source
-codes as `unsupported_source`, and sorts the resulting arrays
-lexicographically. When no source filter is provided, `query.sources` is an
-empty array meaning no source filter.
+The `source` query parameter accepts comma-delimited source codes.
+Response echoes use `query.sources`, sorted and deduplicated.
+Normalization trims ASCII whitespace, rejects empty members as `invalid_query`, rejects unknown enum members as `invalid_query`, rejects syntactically valid but unregistered source codes as `unsupported_source`, and sorts the resulting arrays lexicographically.
+When no source filter is provided, `query.sources` is an empty array meaning no source filter.
 
-Malformed source syntax returns `invalid_query`. Well-formed but unregistered
-source codes return `unsupported_source`. Source codes are case-sensitive and
-must be lowercase.
+Malformed source syntax returns `invalid_query`.
+Well-formed but unregistered source codes return `unsupported_source`.
+Source codes are case-sensitive and must be lowercase.
 
-The `source` registry object has `id`, `code`, `kind`, `chain`, `instance`,
-`created_at`, `last_seen_at`, `status`, `sync`, and `counts`. A
-nested `source_ref` uses only `id`, `code`, `kind`, `chain`, and `instance`.
-`last_seen_at` is a derived API field: for AuxPoW sources it is
-`source_health.last_event_seen`; live-chaintip freshness is carried by `sync`
-progress and leaves `last_seen_at` null.
+The `source` registry object has `id`, `code`, `kind`, `chain`, `instance`, `created_at`, `last_seen_at`, `status`, `sync`, and `counts`.
+A nested `source_ref` uses only `id`, `code`, `kind`, `chain`, and `instance`.
+`last_seen_at` is a derived API field: for AuxPoW sources it is `source_health.last_event_seen`; live-chaintip freshness is carried by `sync` progress and leaves `last_seen_at` null.
 
 Source enums:
 
 - `kind`: `auxpow`, `live-chaintip`
 - `status`: `fresh`, `stale`, `not_started`
 
-`source.chain` is non-null in v1 because source-code syntax requires a chain
-segment. `live-chaintip:bitcoin:core` is the Bitcoin Core classifier source. If
-another instance is ever chosen, update `fixtures/api/sources.json`, every
-fixture reference, this document, the manifest, and the source seed migration
-together.
+`source.chain` is non-null in v1 because source-code syntax requires a chain segment.
+`live-chaintip:bitcoin:core` is the Bitcoin Core classifier source.
+If another instance is ever chosen, update `fixtures/api/sources.json`, every fixture reference, this document, the manifest, and the source seed migration together.
 
-Historical `auxpow:<chain>` sources are populated by the operator `import-all`
-or `import-dataset` command and then appear through the same
-block/proof/source summary projections as live AuxPoW evidence. The API does
-not expose a separate dataset row schema for them.
+Historical `auxpow:<chain>` sources are populated by the operator `import-all` or `import-dataset` command and then appear through the same block/proof/source summary projections as live AuxPoW evidence.
+The API does not expose a separate dataset row schema for them.
 
 ## Response Ordering
 
 Response arrays use stable ordering:
 
-- `tree.nodes`: ascending `height`, then lexicographic `hash`; null heights are
-  rendered after height-backed nodes and then sorted by hash. EXCEPTION: in
-  anchor-component mode (`unheighted_anchor`) the placed orphan members all have
-  null `height` and are instead ordered by their derived `placement_height` then
-  stored hash (the layout ranks them by `placement_height`); their root-to-tip
-  order is also carried in `branches[].member_hashes`.
-- `tree.edges`: by the index of `to_hash` in sorted `tree.nodes`, then
-  lexicographic `from_hash`.
+- `tree.nodes`: ascending `height`, then lexicographic `hash`; null heights are rendered after height-backed nodes and then sorted by hash.
+  EXCEPTION: in anchor-component mode (`unheighted_anchor`) the placed orphan members all have null `height` and are instead ordered by their derived `placement_height` then stored hash (the layout ranks them by `placement_height`); their root-to-tip order is also carried in `branches[].member_hashes`.
+- `tree.edges`: by the index of `to_hash` in sorted `tree.nodes`, then lexicographic `from_hash`.
 - `tree.branches`: ascending `btc_height_min`, then lexicographic `root_hash`.
   Orphan branches sort among stale branches by their placement `btc_height_min`.
 - `tree.branches[].member_hashes`: root-to-tip order.
 - `competitions`: ascending `btc_height`, then lexicographic `stale_hash`.
 - `competitions[].sources`: ascending source code, unique.
-- `block.proofs`: ascending `source.code`, then smallest
-  `evidence.contributing_event_ids` value.
-- `block.event_details`: `event_confirmed_at`, `source`, `child_height` with
-  nulls last, `child_block_hash` with nulls last, then `id`.
+- `block.proofs`: ascending `source.code`, then smallest `evidence.contributing_event_ids` value.
+- `block.event_details`: `event_confirmed_at`, `source`, `child_height` with nulls last, `child_block_hash` with nulls last, then `id`.
 - `sources.sources`: ascending `id`.
 
 ## Core Entities
 
-See `docs/data-model.md` for base tables (`merge_mining_event`, chain sidecars,
-`event_pool_attribution`), parent classification kinds (`near`, `unknown`,
-`canonical`, `stale`, `error_block`), and the Bitcoin lineage gate (`docs/capture.md`,
-"Bitcoin Lineage Gate": non-Bitcoin SHA-256 headers are refused at capture and
-never stored). For `near` and `unknown`, the API projects directly from active
-`merge_mining_event` rows; for `canonical`, `stale`, and `error_block`, it reads
-the reconciled `block` / `attestation_proof` model.
+See `docs/data-model.md` for base tables (`merge_mining_event`, chain sidecars, `event_pool_attribution`), parent classification kinds (`near`, `unknown`, `canonical`, `stale`, `error_block`), and the Bitcoin lineage gate (`docs/capture.md`, "Bitcoin Lineage Gate": non-Bitcoin SHA-256 headers are refused at capture and never stored).
+For `near` and `unknown`, the API projects directly from active `merge_mining_event` rows; for `canonical`, `stale`, and `error_block`, it reads the reconciled `block` / `attestation_proof` model.
 
 API-computed miner and branch entities:
 
-- `bitcoin_miner_pool`: miner/pool resolved strictly from Bitcoin parent coinbase
-  evidence (never child-chain evidence).
-- `child_miner_pool`: miner/pool resolved for one child-chain event from that
-  child chain's block evidence (`Unknown` when unresolved).
-- `display_miner_pool`: presentation-layer best-available miner/pool on tree
-  nodes and block details (never overrides `bitcoin_miner_pool`). Equals
-  `bitcoin_miner_pool` when known; when `bitcoin_miner_pool` is `Unknown` (e.g.,
-  an RSK-only stale block with no recoverable Bitcoin coinbase), falls back to
-  the single distinct known `child_miner_pool` across active events for the
-  parent (zero or conflicting known child pools resolve to `Unknown`).
-- `display_miner_basis`: how `display_miner_pool` was resolved:
-  `bitcoin_coinbase` | `child_inferred` | `unknown`. Direct-projected
-  `near`/`unknown` parents are never child-inferred.
-- `stale_branch`: one or more stale blocks linked by parent-child edges, with
-  branch depth, member hashes, and canonical competitor references.
+- `bitcoin_miner_pool`: miner/pool resolved strictly from Bitcoin parent coinbase evidence (never child-chain evidence).
+- `child_miner_pool`: miner/pool resolved for one child-chain event from that child chain's block evidence (`Unknown` when unresolved).
+- `display_miner_pool`: presentation-layer best-available miner/pool on tree nodes and block details (never overrides `bitcoin_miner_pool`).
+  Equals `bitcoin_miner_pool` when known; when `bitcoin_miner_pool` is `Unknown` (e.g., an RSK-only stale block with no recoverable Bitcoin coinbase), falls back to the single distinct known `child_miner_pool` across active events for the parent (zero or conflicting known child pools resolve to `Unknown`).
+- `display_miner_basis`: how `display_miner_pool` was resolved: `bitcoin_coinbase` | `child_inferred` | `unknown`.
+  Direct-projected `near`/`unknown` parents are never child-inferred.
+- `stale_branch`: one or more stale blocks linked by parent-child edges, with branch depth, member hashes, and canonical competitor references.
 
 ## Pool Objects
 
@@ -255,49 +200,35 @@ Unknown pools use:
 {"id": null, "slug": null, "name": "Unknown", "known": false}
 ```
 
-Known slugs must match lowercase letters, digits, and hyphens. RSK
-miner-address attribution remains visible in `event_details[].rsk.pool_identity`
-and is not treated as identical to Namecoin parent coinbase attribution.
+Known slugs must match lowercase letters, digits, and hyphens.
+RSK miner-address attribution remains visible in `event_details[].rsk.pool_identity` and is not treated as identical to Namecoin parent coinbase attribution.
 
-Event attribution rows expose `namespace`, `match_kind`, `matched_value`,
-`pool`, nullable `pool_identity`, `source`, `confidence`, and `details`. Known
-attributions use the same pool object as the legacy `pools` field;
-unresolved observed identifiers use the Unknown pool object with
-`pool_identity: null`.
+Event attribution rows expose `namespace`, `match_kind`, `matched_value`, `pool`, nullable `pool_identity`, `source`, `confidence`, and `details`.
+Known attributions use the same pool object as the legacy `pools` field; unresolved observed identifiers use the Unknown pool object with `pool_identity: null`.
 
 ## Counter Semantics
 
-`source_summary.sources` is the sorted unique source-code array that contributes
-active evidence for the parent header in the response. `/api/v1/tree` may also
-emit canonical context nodes with `sources: []` when source filters remove all
-evidence but the node is still needed to connect visible structure; those nodes
-are context, not evidence, and do not satisfy `min_sources`.
+`source_summary.sources` is the sorted unique source-code array that contributes active evidence for the parent header in the response.
+`/api/v1/tree` may also emit canonical context nodes with `sources: []` when source filters remove all evidence but the node is still needed to connect visible structure; those nodes are context, not evidence, and do not satisfy `min_sources`.
 
-`source_summary.distinct_sources` is `COUNT(DISTINCT source_id)` across active
-evidence for that parent header. Direct `near` and `unknown` projections compute
-that distinct source count from non-revoked `merge_mining_event` rows, so two
-Namecoin events for one parent still produce `distinct_sources = 1`. Canonical
-and stale projections count non-revoked `attestation_proof.source_id` values
-and add the synthetic Bitcoin source when the `block` row is Core-attested or
-live-observed.
+`source_summary.distinct_sources` is `COUNT(DISTINCT source_id)` across active evidence for that parent header.
+Direct `near` and `unknown` projections compute that distinct source count from non-revoked `merge_mining_event` rows, so two Namecoin events for one parent still produce `distinct_sources = 1`.
+Canonical and stale projections count non-revoked `attestation_proof.source_id` values and add the synthetic Bitcoin source when the `block` row is Core-attested or live-observed.
 
-`source_summary.auxpow_chain_count` counts distinct AuxPoW child chains among
-active evidence. Namecoin plus RSK for the same parent gives `2`.
+`source_summary.auxpow_chain_count` counts distinct AuxPoW child chains among active evidence.
+Namecoin plus RSK for the same parent gives `2`.
 
-`source_summary.live_observed` is true when the parent header is represented by
-live Bitcoin Core evidence. Core-only backbone rows carry that provenance on
-the canonical `block` row and expose it through `block.source_summary`.
+`source_summary.live_observed` is true when the parent header is represented by live Bitcoin Core evidence.
+Core-only backbone rows carry that provenance on the canonical `block` row and expose it through `block.source_summary`.
 
-`source_summary.pow_validates_btc_target` describes the Bitcoin parent header,
-not the child-chain target. Child-chain target validation stays on
-`event_details[].pow_validates_child_target`.
+`source_summary.pow_validates_btc_target` describes the Bitcoin parent header, not the child-chain target.
+Child-chain target validation stays on `event_details[].pow_validates_child_target`.
 
 ## Endpoint List
 
 ### `/api/v1/tree`
 
-Purpose: project the windowed Bitcoin header tree from the synced Bitcoin Core
-backbone and active merge-mining evidence.
+Purpose: project the windowed Bitcoin header tree from the synced Bitcoin Core backbone and active merge-mining evidence.
 
 Query:
 
@@ -326,18 +257,10 @@ GET /api/v1/tree?at_height&at_time&context=compact&from_height&to_height&kinds=n
 
 #### Response Envelope
 
-- `query`: echoes `from_height`, `to_height`, `at_height`, `at_time`,
-  `window_mode` (`"tip"` | `"explicit"` | `"height"` | `"time"` |
-  `"unheighted_anchor"`), `context` (`"exact"` | `"compact"`), `include_near`,
-  `include_unheighted`, `unheighted_from`, `unheighted_to`, and
-  `unheighted_anchor`.
-- `window`: nullable `btc_height_min`, nullable `btc_height_max`, nullable
-  `tip_height`, `defaulted_to_tip`, nullable `empty_reason`, and
-  `hidden_linear_block_count`.
-- `nodes[]`: sorted by height then hash (in `unheighted_anchor` mode, placed
-  orphan members sort by `placement_height` then hash).
-- `edges[]`: drawn-edge graph including `hidden` edges for collapsed canonical
-  context.
+- `query`: echoes `from_height`, `to_height`, `at_height`, `at_time`, `window_mode` (`"tip"` | `"explicit"` | `"height"` | `"time"` | `"unheighted_anchor"`), `context` (`"exact"` | `"compact"`), `include_near`, `include_unheighted`, `unheighted_from`, `unheighted_to`, and `unheighted_anchor`.
+- `window`: nullable `btc_height_min`, nullable `btc_height_max`, nullable `tip_height`, `defaulted_to_tip`, nullable `empty_reason`, and `hidden_linear_block_count`.
+- `nodes[]`: sorted by height then hash (in `unheighted_anchor` mode, placed orphan members sort by `placement_height` then hash).
+- `edges[]`: drawn-edge graph including `hidden` edges for collapsed canonical context.
 - `branches[]`: stale-branch and multi-block orphan-branch summaries.
 - `legend`: `kinds` and `edge_kinds`.
 
@@ -360,11 +283,8 @@ GET /api/v1/tree?at_height&at_time&context=compact&from_height&to_height&kinds=n
 
 #### Tree Edge Kinds
 
-Clients must derive hidden context from `edges[]`. `edges[]` is the drawn-edge
-graph: a node may carry `prev_id`/`prev_hash` for a visible predecessor without a
-matching `edges[]` entry when that transition has no drawable edge kind (an
-error-block, unknown, or near child, or a canonical child with a non-canonical
-predecessor).
+Clients must derive hidden context from `edges[]`.
+`edges[]` is the drawn-edge graph: a node may carry `prev_id`/`prev_hash` for a visible predecessor without a matching `edges[]` entry when that transition has no drawable edge kind (an error-block, unknown, or near child, or a canonical child with a non-canonical predecessor).
 
 | `edge_kind` | Meaning | Extra fields |
 |---|---|---|
@@ -375,23 +295,16 @@ predecessor).
 | `orphan` | anchor-mode fork edge from a verified strict root to its canonical predecessor (`placement_height - 1`), or a proven orphan-to-orphan prev_hash link inside a multi-block component | none |
 | `orphan_approx` | anchor-mode fork edge for an approximate placement (weak/excluded/pending root, or a strict root whose predecessor is absent/mismatched), to the nearest in-window canonical | none |
 
-Tree reduction is deterministic: collapsed canonical context is represented by
-`hidden` edges with `hidden_count` and summarized by
-`window.hidden_linear_block_count`. Responses return at most 500 nodes, yielding
-`range_too_large` (HTTP 422) when required nodes cannot fit within that cap (see
-`docs/tree-semantics.md`).
+Tree reduction is deterministic: collapsed canonical context is represented by `hidden` edges with `hidden_count` and summarized by `window.hidden_linear_block_count`.
+Responses return at most 500 nodes, yielding `range_too_large` (HTTP 422) when required nodes cannot fit within that cap (see `docs/tree-semantics.md`).
 
 ### `/api/v1/block/:hash`
 
 Purpose: fetch details for a selected parent header.
 
-The hash path parameter may be uppercase or mixed-case when valid hex; the API
-normalizes valid hashes to lowercase before lookup and returns `invalid_hash`
-for invalid syntax. Direct `near` and `unknown` projections group active
-non-revoked `merge_mining_event` rows by `btc_parent_header_hash` (kind
-precedence: canonical/stale/error-block read model first, then `unknown`, then
-`near`). Core-only backbone rows represent Core provenance on `block` and
-`block.source_summary` without a separate observation payload.
+The hash path parameter may be uppercase or mixed-case when valid hex; the API normalizes valid hashes to lowercase before lookup and returns `invalid_hash` for invalid syntax.
+Direct `near` and `unknown` projections group active non-revoked `merge_mining_event` rows by `btc_parent_header_hash` (kind precedence: canonical/stale/error-block read model first, then `unknown`, then `near`).
+Core-only backbone rows represent Core provenance on `block` and `block.source_summary` without a separate observation payload.
 
 | Response Field | Contract |
 |---|---|
@@ -411,8 +324,8 @@ precedence: canonical/stale/error-block read model first, then `unknown`, then
 GET /api/v1/navigator/{target}?limit&cursor&direction&anchor_hash&classification
 ```
 
-Purpose: one bounded navigation API for the header-tree controls. The five
-targets are:
+Purpose: one bounded navigation API for the header-tree controls.
+The five targets are:
 
 | Target | Axis | Item scope | View |
 |---|---|---|---|
@@ -424,48 +337,33 @@ targets are:
 
 All targets use the same modes:
 
-- latest mode: omit `cursor`, `direction`, and `anchor_hash`; returns the newest
-  item(s) for the target.
-- page mode: pass an opaque response `cursor` plus `direction=older|newer`;
-  returns the next page on that side of the cursor.
-- anchor mode: pass `anchor_hash=<64 lowercase display hex>`; returns the item
-  containing that hash. For branch targets, interior member hashes resolve to
-  their owning branch, not just the root.
+- latest mode: omit `cursor`, `direction`, and `anchor_hash`; returns the newest item(s) for the target.
+- page mode: pass an opaque response `cursor` plus `direction=older|newer`; returns the next page on that side of the cursor.
+- anchor mode: pass `anchor_hash=<64 lowercase display hex>`; returns the item containing that hash.
+  For branch targets, interior member hashes resolve to their owning branch, not just the root.
 
 Query parameters:
 
-- `limit`: optional page size, default `1`, maximum `2000`; `limit=0` is
-  `invalid_query`.
-- `cursor`: opaque hex-encoded server cursor from a previous navigator item or
-  `next_cursor` / `prev_cursor`. It is target-bound and axis-bound; a cursor from
-  another target is `invalid_query`.
+- `limit`: optional page size, default `1`, maximum `2000`; `limit=0` is `invalid_query`.
+- `cursor`: opaque hex-encoded server cursor from a previous navigator item or `next_cursor` / `prev_cursor`.
+  It is target-bound and axis-bound; a cursor from another target is `invalid_query`.
 - `direction`: required with `cursor`, and only valid with `cursor`.
 - `anchor_hash`: mutually exclusive with `cursor`.
-- `classification`: accepted only by `orphan` and `orphan-branch`, defaulting to
-  `strict_btc_orphan,weak_btc_orphan`. The valid classes are
-  `strict_btc_orphan`, `weak_btc_orphan`, `excluded`, and `pending`.
+- `classification`: accepted only by `orphan` and `orphan-branch`, defaulting to `strict_btc_orphan,weak_btc_orphan`.
+  The valid classes are `strict_btc_orphan`, `weak_btc_orphan`, `excluded`, and `pending`.
 
-Supplying any other parameter, mixing `cursor` with `anchor_hash`, supplying only
-one of `cursor` / `direction`, or passing `classification` to a stale or
-error-block target is `invalid_query`. `error-block` rejects `classification`
-because catalogue membership is not a refinement of `unknown` and so has no
-orphan-class axis.
+Supplying any other parameter, mixing `cursor` with `anchor_hash`, supplying only one of `cursor` / `direction`, or passing `classification` to a stale or error-block target is `invalid_query`.
+`error-block` rejects `classification` because catalogue membership is not a refinement of `unknown` and so has no orphan-class axis.
 
 Response fields:
 
-- `query`: normalized target, mode, cursor, direction, anchor hash,
-  classification, and limit.
+- `query`: normalized target, mode, cursor, direction, anchor hash, classification, and limit.
 - `target`: the target string from the path.
-- `items[]`: target-specific navigator items, newest-first regardless of whether
-  the page was reached by an older or newer cursor.
+- `items[]`: target-specific navigator items, newest-first regardless of whether the page was reached by an older or newer cursor.
 - `total`: the global count for the active target and classification filter.
-- `facets`: `{}` except for `orphan`, where it includes
-  `orphan_classes: { strict, weak, excluded, pending }`, the full per-class
-  breakdown over PoW-valid unknown rows independent of the active filter.
-- `next_cursor`: opaque cursor for the next older page, or `null` at the oldest
-  edge.
-- `prev_cursor`: opaque cursor for the next newer page, or `null` at the newest
-  edge.
+- `facets`: `{}` except for `orphan`, where it includes `orphan_classes: { strict, weak, excluded, pending }`, the full per-class breakdown over PoW-valid unknown rows independent of the active filter.
+- `next_cursor`: opaque cursor for the next older page, or `null` at the oldest edge.
+- `prev_cursor`: opaque cursor for the next newer page, or `null` at the newest edge.
 
 Each `items[]` entry has this format:
 
@@ -473,45 +371,29 @@ Each `items[]` entry has this format:
 - `kind`: one of the target strings.
 - `primary_hash`: display/RPC hash for the block or branch root.
 - `label`: display label for the UI.
-- `position`: `{ axis, min, max }`; the stale and error-block targets use
-  Bitcoin height, orphan targets use `btc_header_time`. For `error-block`,
-  `min` and `max` are always equal, because each item is one block.
-- `index`: 1-based newest-first rank in the active target (and classification
-  filter). `1` is the newest item; `total` is the oldest. Items in one
-  response share one snapshot with `total`, so `index <= total`.
-- `cursor`: opaque item cursor. Clients must send it back as-is.
-- `branch`: `null` for single-block targets, or
-  `{ branch_id, root_hash, tip_hashes, depth }` for branch targets.
-- `orphan`: `null` except for the `orphan` target, where it is
-  `{ btc_orphan_class }` (`null` only when `pending` is in the active filter).
-- `view`: either `null`, `{ mode: "tree_window", target_height, tree_from,
-  tree_to, select_hash, center_hash }`, or `{ mode: "unheighted_anchor",
-  anchor_hash, select_hash, center_hash }`.
-- `view_error`: `null` unless the backend cannot advertise a safe tree-window
-  view, in which case it is `{ code, target_height, message, action }`.
+- `position`: `{ axis, min, max }`; the stale and error-block targets use Bitcoin height, orphan targets use `btc_header_time`.
+  For `error-block`, `min` and `max` are always equal, because each item is one block.
+- `index`: 1-based newest-first rank in the active target (and classification filter).
+  `1` is the newest item; `total` is the oldest. Items in one response share one snapshot with `total`, so `index <= total`.
+- `cursor`: opaque item cursor.
+  Clients must send it back as-is.
+- `branch`: `null` for single-block targets, or `{ branch_id, root_hash, tip_hashes, depth }` for branch targets.
+- `orphan`: `null` except for the `orphan` target, where it is `{ btc_orphan_class }` (`null` only when `pending` is in the active filter).
+- `view`: either `null`, `{ mode: "tree_window", target_height, tree_from, tree_to, select_hash, center_hash }`, or `{ mode: "unheighted_anchor", anchor_hash, select_hash, center_hash }`.
+- `view_error`: `null` unless the backend cannot advertise a safe tree-window view, in which case it is `{ code, target_height, message, action }`.
 
 Ordering is stable and target-specific:
 
 - `stale`: `btc_height` descending, then stored stale hash bytes ascending.
-- `stale-branch`: `btc_height_max` descending, then `btc_height_min` descending,
-  then stored root hash bytes ascending.
-- `error-block`: `btc_height` descending, then stored header hash bytes
-  ascending. The hash tie-break is required rather than cosmetic: the catalogue
-  carries more than one block at some heights, so paging on height alone would
-  skip or repeat members of a group (`branch` and `orphan` are always `null`).
-- `orphan`: `btc_header_time` descending, then stored header hash bytes
-  descending.
-- `orphan-branch`: `btc_header_time_max` descending, then
-  `btc_header_time_min` descending, then stored root hash bytes ascending.
+- `stale-branch`: `btc_height_max` descending, then `btc_height_min` descending, then stored root hash bytes ascending.
+- `error-block`: `btc_height` descending, then stored header hash bytes ascending.
+  The hash tie-break is required rather than cosmetic: the catalogue carries more than one block at some heights, so paging on height alone would skip or repeat members of a group (`branch` and `orphan` are always `null`).
+- `orphan`: `btc_header_time` descending, then stored header hash bytes descending.
+- `orphan-branch`: `btc_header_time_max` descending, then `btc_header_time_min` descending, then stored root hash bytes ascending.
 
-Single-block stale items round-trip to `/api/v1/block/:hash` and to tree node
-hashes. Stale branch items include only current components whose stale members
-have a derivable canonical competitor, with `depth >= 2`; one-block stale
-branches remain single `stale` items and block detail. Orphan branch items
-include only proven prev_hash-linked orphan components with `depth >= 2`;
-one-block orphan components remain single `orphan` items. Branch endpoints
-intentionally omit member lists, pool detail, and placement heights; the tree
-and `/api/v1/block/:hash` endpoints expose those when a branch is selected.
+Single-block stale items round-trip to `/api/v1/block/:hash` and to tree node hashes.
+Stale branch items include only current components whose stale members have a derivable canonical competitor, with `depth >= 2`; one-block stale branches remain single `stale` items and block detail.
+Orphan branch items include only proven prev_hash-linked orphan components with `depth >= 2`; one-block orphan components remain single `orphan` items. Branch endpoints intentionally omit member lists, pool detail, and placement heights; the tree and `/api/v1/block/:hash` endpoints expose those when a branch is selected.
 See `docs/tree-semantics.md` for where `btc_orphan_class` appears across endpoints.
 
 ### `/api/v1/sources`
@@ -521,8 +403,7 @@ Purpose: drive source filters and health panels.
 Response fields:
 
 - `sources[]` sorted by `id`.
-- `status`: evidence freshness only (`fresh`, `stale`, or `not_started`;
-  `not_started` requires derived `last_seen_at = null`).
+- `status`: evidence freshness only (`fresh`, `stale`, or `not_started`; `not_started` requires derived `last_seen_at = null`).
 - `sync`: source capture progress, tracked separately from evidence freshness.
 
 | `sync` Field | Contract |
@@ -542,7 +423,8 @@ Response fields:
 | `bitcoin-core-backbone` | Derived from `bitcoin_core_sync_state`: no row -> `not_started`; `last_error_code` set -> `error`; row older than 1 hour -> `stale`; fresh row with no target or no contiguous progress -> `not_started`; fresh row below target -> `catching_up`; fresh row at/beyond target -> `live`. |
 | `historical`, `partial`, `surveyed`, `catalogued` | Reports the lifecycle token as both `sync.mode` and `sync.state` with `null` progress fields. |
 
-Per-source `counts` (`counts.events`, distinct-parent `near`/`unknown`/`canonical`/`stale`/`error_block`, and `strict_orphan`/`weak_orphan`) are served from precomputed `source_health` (O(sources)). This endpoint **fails closed** (HTTP 500 `internal_error`) rather than returning zeros when `source_health_ready` is false (run `reconcile-read-model --rebuild-source-health` after initial schema creation or bulk backfills) or if any active `unknown` parent fails its Bitcoin target.
+Per-source `counts` (`counts.events`, distinct-parent `near`/`unknown`/`canonical`/`stale`/`error_block`, and `strict_orphan`/`weak_orphan`) are served from precomputed `source_health` (O(sources)).
+This endpoint **fails closed** (HTTP 500 `internal_error`) rather than returning zeros when `source_health_ready` is false (run `reconcile-read-model --rebuild-source-health` after initial schema creation or bulk backfills) or if any active `unknown` parent fails its Bitcoin target.
 
 ### `/api/v1/competitions`
 
@@ -550,44 +432,30 @@ Per-source `counts` (`counts.events`, distinct-parent `near`/`unknown`/`canonica
 GET /api/v1/competitions
 ```
 
-Purpose: serve every derivable stale-vs-canonical competition in one read, so a
-client can bin, window and filter the header-time-delta distribution without a
-request per interaction. There are no query parameters; the set is small and
-slow-growing, and all selection is client-side.
+Purpose: serve every derivable stale-vs-canonical competition in one read, so a client can bin, window and filter the header-time-delta distribution without a request per interaction.
+There are no query parameters; the set is small and slow-growing, and all selection is client-side.
 
 Response fields:
 
-- `competitions[]` ordered by ascending `btc_height`, then lexicographic
-  `stale_hash` (the same rule as `tree.nodes`). Height alone is not a stable
-  key: one Bitcoin height can carry many stale blocks.
+- `competitions[]` ordered by ascending `btc_height`, then lexicographic `stale_hash` (the same rule as `tree.nodes`).
+  Height alone is not a stable key: one Bitcoin height can carry many stale blocks.
 
 Per row:
 
 - `btc_height`, `stale_hash`, `stale_header_time`;
 - `header_time_delta_s`: `canonical.btc_header_time - stale.btc_header_time`.
-  Positive means the stale block carries the earlier timestamp. JSON `null`
-  when the difference falls outside i32; consumers must treat `null` as
-  unavailable and exclude it from aggregates, never coerce it to `0`;
-- `stale_bitcoin_miner_pool` and `canonical_bitcoin_miner_pool`: the same pool
-  objects the tree and block endpoints serve;
+  Positive means the stale block carries the earlier timestamp.
+  JSON `null` when the difference falls outside i32; consumers must treat `null` as unavailable and exclude it from aggregates, never coerce it to `0`;
+- `stale_bitcoin_miner_pool` and `canonical_bitcoin_miner_pool`: the same pool objects the tree and block endpoints serve;
 - `sources[]`: sorted, unique active evidence source codes for the stale block.
-  These are the non-revoked `attestation_proof` source codes plus the synthetic
-  `live-chaintip:bitcoin:core` when the stale block is Core-attested or
-  live-observed, matching what `block.source_summary.sources` reports for the
-  same block so a shared Source filter selects the same rows in both views.
+  These are the non-revoked `attestation_proof` source codes plus the synthetic `live-chaintip:bitcoin:core` when the stale block is Core-attested or live-observed, matching what `block.source_summary.sources` reports for the same block so a shared Source filter selects the same rows in both views.
 
-A row appears only when the stale block's `canonical_competitor_hash` resolves
-to a block that is both `canonical` and at the **same** `btc_height`. Those
-predicates are load-bearing: the column is only a foreign key to `block` with a
-not-self check, so nothing in the schema prevents it pointing at a
-non-canonical row, or at a canonical row from another height. Two blocks at
-different heights never raced, so such a pair is not a competition: its delta
-and pool pair would be meaningless, and `canonical_hash` would not be
-recoverable from the reported `btc_height` as described below.
+A row appears only when the stale block's `canonical_competitor_hash` resolves to a block that is both `canonical` and at the **same** `btc_height`.
+Those predicates are load-bearing: the column is only a foreign key to `block` with a not-self check, so nothing in the schema prevents it pointing at a non-canonical row, or at a canonical row from another height.
+Two blocks at different heights never raced, so such a pair is not a competition: its delta and pool pair would be meaningless, and `canonical_hash` would not be recoverable from the reported `btc_height` as described below.
 
-`canonical_hash` is deliberately not served here. It is reachable from
-`btc_height` through `/api/v1/tree`, and a second 64-character hash per row
-roughly doubles the payload for a value this endpoint's clients do not need.
+`canonical_hash` is deliberately not served here.
+It is reachable from `btc_height` through `/api/v1/tree`, and a second 64-character hash per row roughly doubles the payload for a value this endpoint's clients do not need.
 
 ## Nullability By Parent Kind
 
@@ -612,22 +480,14 @@ roughly doubles the payload for a value this endpoint's clients do not need.
 | `competition` | null | null | null | required when paired | null |
 | `stale_branch` | null | null | null | required | null |
 
-The `unknown` invariant depends on producer behavior: rows with failing Bitcoin
-target are `near`, not `unknown`. The first non-AuxPoW producer migration must
-preserve `btc_parent_kind != 'unknown' OR pow_validates_btc_target`, and the
-read API must fail loudly if it observes an active `unknown` event with
-`pow_validates_btc_target = false`.
+The `unknown` invariant depends on producer behavior: rows with failing Bitcoin target are `near`, not `unknown`.
+The first non-AuxPoW producer migration must preserve `btc_parent_kind != 'unknown' OR pow_validates_btc_target`, and the read API must fail loudly if it observes an active `unknown` event with `pow_validates_btc_target = false`.
 
 ## Event Details
 
-Every event detail includes source, child evidence, parent hash, event-parent
-kind, generic AuxPoW fields, `child_miner_pool`, pool identity objects, target
-flags, event lifecycle fields, and `pool_attributions`. `child_height`,
-`child_block_hash`, `child_header_hex`, `child_block_time`, and `child_nbits`
-(8-character lowercase hex compact target when present) are nullable independent
-evidence fields; missing source evidence is JSON `null`, never zero or a
-placeholder. Rows sort by `event_confirmed_at`, `source`, nullable
-`child_height` and `child_block_hash` (nulls last), then `id`.
+Every event detail includes source, child evidence, parent hash, event-parent kind, generic AuxPoW fields, `child_miner_pool`, pool identity objects, target flags, event lifecycle fields, and `pool_attributions`.
+`child_height`, `child_block_hash`, `child_header_hex`, `child_block_time`, and `child_nbits` (8-character lowercase hex compact target when present) are nullable independent evidence fields; missing source evidence is JSON `null`, never zero or a placeholder.
+Rows sort by `event_confirmed_at`, `source`, nullable `child_height` and `child_block_hash` (nulls last), then `id`.
 
 | Field / Object | Contract |
 |---|---|
@@ -661,10 +521,8 @@ AuxPoW proofs are derived from contributing `merge_mining_event` rows:
 
 - `discovered_at`: earliest contributing event `discovered_at`;
 - `confirmed_at`: earliest current contributing event `confirmed_at`;
-- `revoked_at`: `null` while any contributing event remains active, otherwise
-  the maximum contributing `revoked_at`;
-- `revocation_reason`: null while live, optional summary when all events are
-  revoked;
+- `revoked_at`: `null` while any contributing event remains active, otherwise the maximum contributing `revoked_at`;
+- `revocation_reason`: null while live, optional summary when all events are revoked;
 - `pow_validates_btc_target`: proof-level Bitcoin target validation.
 
 Child target validation remains on event details.
@@ -698,16 +556,13 @@ Error responses use:
 | `backbone_unsynced` | 409 | `{ "from_height": n, "to_height": n, "first_missing_height": n, "missing_count": n, "partial_count": n, "conflict_count": 0, "action": "run sync-bitcoin-core" }` |
 | `backbone_conflict` | 409 | `{ "from_height": n, "to_height": n, "first_missing_height": null, "missing_count": 0, "partial_count": 0, "conflict_count": n, "conflict_height": n, "conflict_reason": "...", "hashes": ["..."], "action": "run sync-bitcoin-core" }` |
 
-Unexpected pool checkout, SQL, or response-building invariant failures return
-HTTP 500 with `code = "internal_error"`, message `internal server error`, and
-empty details. The server logs the underlying error; clients should treat this
-as a server fault, not a query contract response.
+Unexpected pool checkout, SQL, or response-building invariant failures return HTTP 500 with `code = "internal_error"`, message `internal server error`, and empty details.
+The server logs the underlying error; clients should treat this as a server fault, not a query contract response.
 
 Expected 4xx cases:
 
 - `/api/v1/block/:hash`: `invalid_hash`, `not_found`.
-- `/api/v1/tree`: `invalid_query`, `unsupported_source`, `range_too_large`,
-  `backbone_unsynced`, `backbone_conflict`.
+- `/api/v1/tree`: `invalid_query`, `unsupported_source`, `range_too_large`, `backbone_unsynced`, `backbone_conflict`.
 - `/api/v1/navigator/{target}`: `invalid_query`, `range_too_large`.
 - `/api/v1/sources`: no query validation for the base endpoint.
 - `/api/v1/competitions`: no query validation.
@@ -715,33 +570,23 @@ Expected 4xx cases:
 
 ## Bounds
 
-- `/api/v1/tree`: at most 2,016 explicit requested Bitcoin heights. `at_height`
-  and a resolved `at_time` request are single-height lookups unless
-  `context=compact` is supplied, in which case the backend chooses a bounded
-  range around the target and emits hidden edges for omitted canonical spans.
-  The omitted-height default is a 16-block tip window. Responses return at most
-  500 nodes after deterministic context collapsing. Compact mode also caps
-  event candidates, required candidates, and optional orphan candidates before
-  component expansion, then shrinks or skips non-essential context so a valid
-  covered target renders instead of surfacing
-  `range_too_large`. Direct explicit ranges can still return `range_too_large`
-  when they request too many non-collapsible nodes. When
-  `include_unheighted=true`, `unheighted_from` / `unheighted_to` may span at
-  most 31 UTC calendar days and return at most 250 null-height near/unknown
-  nodes after filters.
-- `/api/v1/navigator/{target}`: page size at most 2,000. Stale targets paginate
-  over height-axis cursors; orphan targets paginate over time-axis cursors.
-  Every target is presented newest-first, exposes opaque bidirectional cursors
-  (`direction=older|newer`), and supports `anchor_hash` locate mode. `orphan`
-  and `orphan-branch` are filtered by `classification` (default strict+weak).
+- `/api/v1/tree`: at most 2,016 explicit requested Bitcoin heights.
+  `at_height` and a resolved `at_time` request are single-height lookups unless `context=compact` is supplied, in which case the backend chooses a bounded range around the target and emits hidden edges for omitted canonical spans.
+  The omitted-height default is a 16-block tip window.
+  Responses return at most 500 nodes after deterministic context collapsing.
+  Compact mode also caps event candidates, required candidates, and optional orphan candidates before component expansion, then shrinks or skips non-essential context so a valid covered target renders instead of surfacing `range_too_large`.
+  Direct explicit ranges can still return `range_too_large` when they request too many non-collapsible nodes.
+  When `include_unheighted=true`, `unheighted_from` / `unheighted_to` may span at most 31 UTC calendar days and return at most 250 null-height near/unknown nodes after filters.
+- `/api/v1/navigator/{target}`: page size at most 2,000.
+  Stale targets paginate over height-axis cursors; orphan targets paginate over time-axis cursors.
+  Every target is presented newest-first, exposes opaque bidirectional cursors (`direction=older|newer`), and supports `anchor_hash` locate mode.
+  `orphan` and `orphan-branch` are filtered by `classification` (default strict+weak).
 
-Navigator cursors are target-bound and axis-bound. Clients must treat them as
-opaque strings and send them back unchanged. Clients narrow the query after
-`range_too_large`.
+Navigator cursors are target-bound and axis-bound.
+Clients must treat them as opaque strings and send them back unchanged.
+Clients narrow the query after `range_too_large`.
 
 ## Fixture Coverage
 
-`fixtures/api/manifest.json` defines machine-readable fixture coverage and lists
-every `fixtures/api/*.json` file except `manifest.json` itself (error fixtures
-use `endpoint_family = "errors"`). `tests/api_fixture_contract.rs` smoke-checks
-the manifest, parses every fixture, and verifies the minimal response envelope.
+`fixtures/api/manifest.json` defines machine-readable fixture coverage and lists every `fixtures/api/*.json` file except `manifest.json` itself (error fixtures use `endpoint_family = "errors"`).
+`tests/api_fixture_contract.rs` smoke-checks the manifest, parses every fixture, and verifies the minimal response envelope.

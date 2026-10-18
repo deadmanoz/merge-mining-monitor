@@ -6,7 +6,8 @@ SQL migrations (`NNNN_short_description.sql`) applied in lexical order by `scrip
 
 - Run only via `just db-migrate-dev` or `just db-migrate-deploy` (backup + auto-restore on failure).
 - Migrations run in `psql --single-transaction` and are append-only (`0003_*` onwards).
-- Source IDs are permanent: assign the next ID in `source_registry`, regenerate `0002` (`just gen-source-artifacts`), and add an idempotent forward migration. Retiring a source keeps its ID gap.
+- Source IDs are permanent: assign the next ID in `source_registry`, regenerate `0002` (`just gen-source-artifacts`), and add an idempotent forward migration.
+  Retiring a source keeps its ID gap.
 - Rule changes altering verdicts schedule a generation-tracked recheck:
 
 ```sql

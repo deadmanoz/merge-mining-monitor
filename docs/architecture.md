@@ -1,10 +1,7 @@
 # Architecture
 
-`merge-mining-monitor` is a Rust/Postgres service that collects evidence about
-Bitcoin stale blocks from merge-mined AuxPoW child chains, live Bitcoin Core
-observations, and recovered historical datasets. It turns heterogeneous source
-evidence into normalized base observations, then derives a read model for the
-API and frontend.
+`merge-mining-monitor` is a Rust/Postgres service that collects evidence about Bitcoin stale blocks from merge-mined AuxPoW child chains, live Bitcoin Core observations, and recovered historical datasets.
+It turns heterogeneous source evidence into normalized base observations, then derives a read model for the API and frontend.
 
 ## System Flow
 
@@ -12,9 +9,7 @@ API and frontend.
   <img src="img/system-data-flow.png" width="920" alt="Three-band Merge Mining Monitor data flow from capture sources through base evidence, read-model reconciliation, and read-only serving" />
 </p>
 
-The diagram shows the same ownership model as the text below: producers capture
-base evidence, the read-model reconciler is the only writer of derived tables,
-and the API serves those derived projections without writing capture state.
+The diagram shows the same ownership model as the text below: producers capture base evidence, the read-model reconciler is the only writer of derived tables, and the API serves those derived projections without writing capture state.
 
 ```text
 1. CAPTURE          offline parsers authenticate; producers write base tables
@@ -48,22 +43,11 @@ and the API serves those derived projections without writing capture state.
    capture_error ───────┘   (source capture-error state)
 ```
 
-1. **CAPTURE (`mmm-capture`, `mmm-producers`, `mmm-store`)**: Offline parsers
-   authenticate child-chain proofs and the Bitcoin lineage gate refuses
-   non-Bitcoin SHA-256 parents before storage (`docs/capture.md`). Producers and
-   importers write only base evidence (`merge_mining_event`, sidecars,
-   `event_pool_attribution`, `historical_event_provenance`, `known_stale_block`)
-   plus producer operational state (`poll_cursor`, `capture_error`,
-   `child_chain_head`) and durable reconcile queues (`docs/historical-ingest.md`).
-2. **RECONCILE (`mmm-bitcoin-core`, `mmm-read-model`)**: `mmm-read-model` is the
-   sole writer of derived tables (`block`, `attestation_proof`, `source_health`).
-   It combines base evidence, `known_stale_block` exclusion gates, the pinned
-   error catalogue, and Bitcoin Core classification / suffix replacement,
-   draining `historical_reconcile_queue` and `bitcoin_core_reconcile_queue` in
-   bounded transactions (`docs/data-model.md`).
-3. **SERVE (`mmm-api`)**: The read-only HTTP server projects the derived tables,
-   `capture_error` status, and the persisted Core-header cache to `/api/v1/*` and
-   serves the static `www/` frontend without calling Bitcoin Core RPC.
+1. **CAPTURE (`mmm-capture`, `mmm-producers`, `mmm-store`)**: Offline parsers authenticate child-chain proofs and the Bitcoin lineage gate refuses non-Bitcoin SHA-256 parents before storage (`docs/capture.md`).
+   Producers and importers write only base evidence (`merge_mining_event`, sidecars, `event_pool_attribution`, `historical_event_provenance`, `known_stale_block`) plus producer operational state (`poll_cursor`, `capture_error`, `child_chain_head`) and durable reconcile queues (`docs/historical-ingest.md`).
+2. **RECONCILE (`mmm-bitcoin-core`, `mmm-read-model`)**: `mmm-read-model` is the sole writer of derived tables (`block`, `attestation_proof`, `source_health`).
+   It combines base evidence, `known_stale_block` exclusion gates, the pinned error catalogue, and Bitcoin Core classification / suffix replacement, draining `historical_reconcile_queue` and `bitcoin_core_reconcile_queue` in bounded transactions (`docs/data-model.md`).
+3. **SERVE (`mmm-api`)**: The read-only HTTP server projects the derived tables, `capture_error` status, and the persisted Core-header cache to `/api/v1/*` and serves the static `www/` frontend without calling Bitcoin Core RPC.
 
 ## Crates
 
@@ -101,24 +85,14 @@ justfile           # db, build, test, lint, serve, sync, poll, and backfill targ
 - `mmm-api` does not import producer internals.
 - `mmm-api` may read the persisted Core-header cache through `mmm-store`; it never calls Core RPC.
 - Bitcoin Core access is isolated in `mmm-bitcoin-core`.
-- Hash byte order follows rust-bitcoin newtypes: store `to_byte_array()` bytes
-  directly and use display/RPC hex only at presentation boundaries.
-- Adding a Namecoin-family source should extend the source registry and shared
-  producer path, not clone a sibling chain module.
+- Hash byte order follows rust-bitcoin newtypes: store `to_byte_array()` bytes directly and use display/RPC hex only at presentation boundaries.
+- Adding a Namecoin-family source should extend the source registry and shared producer path, not clone a sibling chain module.
 
 ## Public Interfaces
 
-- CLI commands are exposed by `crates/merge-mining-monitor/src/main.rs` and
-  documented through `justfile`.
+- CLI commands are exposed by `crates/merge-mining-monitor/src/main.rs` and documented through `justfile`.
 - Runtime API behavior is documented in `docs/api-contract.md`.
 - Product and UI behavior live in `docs/ui-model.md`.
-- Generated source metadata is owned by `crates/mmm-capture/src/source_registry`
-  and emitted into `migrations/0002_seed_sources.sql` and
-  `www/js/source-registry.generated.js`.
-- The generated findings corpus is owned by
-  `crates/mmm-capture/src/findings_registry/mod.rs`, which validates the
-  hand-authored `data/findings/` files and emits
-  `www/js/findings.generated.js`.
-- Strict classic AuxPoW authentication is owned by `mmm-capture::auxpow`; the
-  producer family spec independently selects RPC dialect, raw proof
-  authentication, and capture-failure policy.
+- Generated source metadata is owned by `crates/mmm-capture/src/source_registry` and emitted into `migrations/0002_seed_sources.sql` and `www/js/source-registry.generated.js`.
+- The generated findings corpus is owned by `crates/mmm-capture/src/findings_registry/mod.rs`, which validates the hand-authored `data/findings/` files and emits `www/js/findings.generated.js`.
+- Strict classic AuxPoW authentication is owned by `mmm-capture::auxpow`; the producer family spec independently selects RPC dialect, raw proof authentication, and capture-failure policy.

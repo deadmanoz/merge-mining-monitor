@@ -1,7 +1,7 @@
 # Configuration
 
-The monitor is configured with environment variables. `just` loads `.env`
-automatically via `set dotenv-load`; the binary itself does not.
+The monitor is configured with environment variables.
+`just` loads `.env` automatically via `set dotenv-load`; the binary itself does not.
 
 ## Per-Chain Variables
 
