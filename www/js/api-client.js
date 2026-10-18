@@ -30,9 +30,7 @@ async function fetchJson(key, path) {
 }
 
 async function loadSources() {
-  // Show a loading state while the (count-aggregating, sometimes slow) /sources
-  // query is in flight, but only when no source checkboxes are rendered yet, so
-  // a Refresh never blanks an already-populated panel.
+  // Show a loading indicator only before the first source render so Refresh does not blank the rail.
   const container = $("#source-controls");
   if (container && !container.querySelector('input[name="source"]')) {
     container.innerHTML = `<div class="loading">Loading sources</div>`;
@@ -49,13 +47,6 @@ async function loadSources() {
   }
 }
 
-/// Load the whole competition set for the delta view.
-///
-/// One unpaginated read, by design: the set is bounded and slow-growing, so
-/// every window, bin and filter change is answered from memory rather than by
-/// another request. Returns true when the payload was applied, matching
-/// loadTree, so the view registry can tell a real load from a superseded or
-/// failed one and leave its dirty flag alone.
 async function loadCompetitions() {
   const payload = await fetchJson("competitions", `${API_BASE}/competitions`);
   if (!payload) return false;
@@ -70,16 +61,10 @@ function refreshActiveNavigatorTarget() {
   return hash ? hydrateNavigatorAnchor(target, hash) : Promise.resolve();
 }
 
-// The label shown in the Go-to select's (hidden, selected) prompt so it names the
-// active target being stepped: a navigator target, the live tip, or an exact
-// lookup/context window.
 function navSelectLabel() {
   return navSelectLabelForState(state);
 }
 
-// A compact per-class count summary for the navigator readout, scoped to the
-// currently-selected orphan classes (so toggling a class on surfaces its count),
-// e.g. "strict 16 · weak 14". Empty until counts have loaded.
 function orphanCountsText(counts) {
   if (!counts) return "";
   const selected = state.query.classification?.length
@@ -95,10 +80,6 @@ function orphanCountsText(counts) {
     .join(" · ");
 }
 
-// Apply the active target's stepper state to the shared navigator: the Go-to
-// select's displayed label (which target is being stepped), the << < > >> buttons,
-// and the readout (position within that target). Disabled while a jump is in
-// flight. The select stays on its hidden prompt so re-picking an option re-fires.
 function refreshNavControls() {
   const goto = $("#nav-goto");
   const coarseOlder = $("#nav-coarse-older");
@@ -107,7 +88,6 @@ function refreshNavControls() {
   const coarseNewer = $("#nav-coarse-newer");
   const readout = $("#nav-readout");
   if (!older || !newer || !coarseOlder || !coarseNewer || !readout) return;
-  // Name the active target in the select's prompt (the option it rests on).
   const prompt = goto?.querySelector('option[value=""]');
   if (prompt) prompt.textContent = navSelectLabel();
 
@@ -123,7 +103,6 @@ function refreshNavControls() {
       else if (countsText) text = countsText;
     }
   }
-  // tip: no stepping, empty readout.
   const busy = anyNavTargetBusy(state);
   older.disabled = busy || !olderEnabled;
   coarseOlder.disabled = busy || !olderEnabled;
@@ -132,10 +111,7 @@ function refreshNavControls() {
   readout.textContent = text;
 }
 
-// Re-derive each target's cursor from the selection, then settle the active
-// target: keep a navigator-locked target while the selection still belongs to
-// it, otherwise recompute by registry precedence. A plain canonical / no-match
-// click leaves the active target as-is.
+// Keep a navigator-locked target while the selection still matches it; otherwise recompute by precedence.
 function reconcileNavFromSelected() {
   const matches = navSelectionMatches(state);
   if (state.nav.source === "navigator" && matches[state.nav.target]) return;
@@ -143,8 +119,6 @@ function reconcileNavFromSelected() {
   if (target) state.nav = { target, source: "selection" };
 }
 
-// The Go-to menu: jump to the latest of the chosen target (or reset to tip) and
-// lock the target as a navigator choice.
 function goTo(target) {
   state.navEpoch += 1;
   if (target === "tip") {
@@ -155,29 +129,17 @@ function goTo(target) {
   if (isNavigatorTarget(target)) loadNavigatorLatest(target);
 }
 
-// The shared << < > >> stepper dispatches to the active target.
 function stepNav(direction, stride) {
   state.navEpoch += 1;
   if (isNavigatorTarget(state.nav.target)) stepNavigator(state.nav.target, direction, stride);
 }
 
-// One-shot camera center on a node, using the tree's stored zoom behavior and
-// laid-out positions. Callers await the matching loadTree before centering, so a
-// node missing from the rendered layout means the window genuinely omitted the
-// target (not a benign interleave): fall back to anchoring the tip and warn,
-// rather than leaving a stale camera. Because softRefresh preserves the stored
-// transform and this sets it last, once centered the target stays centered across
-// later refreshes.
 function centerCameraOnNode(hash) {
   const svgEl = $("#tree-svg");
   const elState = svgEl?.__mmmTree;
   if (!elState || !elState.zoom) return;
   const node = elState.byHash?.get(hash);
   if (!node) {
-    // The target block is not in the rendered window (e.g. the backend window did
-    // not include it). Don't silently leave a stale camera after a jump: anchor on
-    // the layout tip as a fresh render would, and report the miss for diagnosis
-    // rather than returning invisibly.
     if (anchorCameraOnTip(svgEl)) {
       console.warn(`centerCameraOnNode: "${hash}" absent from rendered window; anchored on tip`);
     }
@@ -191,11 +153,6 @@ function centerCameraOnNode(hash) {
   );
 }
 
-// True when the just-selected block sits near (or past) a viewport edge. A click
-// recenters only then, so a block comfortably in view is left where it is and
-// routine clicking does not jerk the camera. The "near" band is a fraction of the
-// viewport on each side; defaults to true (center) when the node cannot be
-// measured (e.g. not in the rendered window).
 function clickedNodeNeedsCenter() {
   const svgEl = $("#tree-svg");
   const nodeEl = svgEl?.querySelector('g.tree-node[data-selected="true"]');
@@ -209,13 +166,7 @@ function clickedNodeNeedsCenter() {
     || n.top < s.top + padY || n.bottom > s.bottom - padY;
 }
 
-// Click-to-center: load the block, then recenter ONLY if it is near a viewport
-// edge, once the drawer-open reflow has settled. loadBlock's setRailCollapsed
-// queues its reflow rAF synchronously, so this rAF (queued after) measures the
-// block at the final tree width; when the drawer was already open there is no
-// reflow. The captured-epoch + selectedHash guard drops a stale center if a newer
-// gesture (another click, a jump, Live tip, or a deselect) supersedes this one
-// before the rAF fires, so a deferred center cannot lock a stale camera.
+// Measure after the drawer-open rAF settles; drop if a newer gesture superseded this click.
 function loadBlockThenCenter(hash) {
   loadBlock(hash);
   const epoch = state.navEpoch;
@@ -225,12 +176,7 @@ function loadBlockThenCenter(hash) {
   });
 }
 
-// Center on the block at an entered tree height. Several nodes can share a BTC
-// height (a canonical block plus its stale competitor(s)), so pick deterministically
-// and canonical-first: the canonical at the EXACT height (the spine), else any block
-// at the exact height, else the nearest heighted block; ties break canonical-first
-// then by hash order. No-op when there are no heighted nodes or the value is not
-// finite. centerCameraOnNode stays safe if the chosen node is absent from byHash.
+// Prefer canonical at the exact height, then any exact match, then nearest heighted node.
 function centerCameraOnHeight(heightStr) {
   const target = Number(heightStr);
   if (!Number.isFinite(target)) return;
@@ -251,12 +197,6 @@ function centerCameraOnHeight(heightStr) {
   if (best) centerCameraOnNode(best.hash);
 }
 
-// Center on the rendered window's mid-height. Used for a date/time lookup: the
-// backend resolves the timestamp to a canonical block and builds the compact
-// window AROUND it, but does not echo which block, so the landing sits ~mid-window
-// and centering the mid-height lands within a block or two of it. That is ample
-// for the "go to roughly this date" intent; exact time landing would need a
-// backend target echo. No-op when no bounded window is rendered.
 function centerCameraOnWindowMidHeight() {
   const w = state.tree?.window;
   if (!w || w.btc_height_min == null || w.btc_height_max == null) return;
@@ -336,14 +276,10 @@ async function jumpToNavigatorAnchor(target, hash) {
     navigatorUrl(target, { anchor_hash: hash, limit: 1 }),
   );
   setNavigatorBusy(state, target, false);
-  // Superseded by a newer gesture: the user moved on, so drop this result.
   if (epoch !== state.navEpoch) {
     refreshNavControls();
     return;
   }
-  // The anchor fetch failed (null) or carried no navigable item, but this click is
-  // still the current gesture. Fall back to plain block detail so selecting a node
-  // ALWAYS opens the drawer rather than silently no-opping.
   const item = payload?.items?.[0] ?? null;
   if (!item) {
     if (payload) applyNavigatorPayload(state, target, payload, null);
@@ -384,24 +320,11 @@ async function jumpToNavigatorItem(target, item, payload) {
   state.nav = { target, source: "navigator" };
   setNavigatorBusy(state, target, true);
   refreshNavControls();
-  // Expand the drawer BEFORE loading/centering. Otherwise loadBlock expands it
-  // after we center, which reflows the grid, narrows the tree SVG, and re-renders
-  // reusing the now-wrong wide-width transform, knocking the centered target
-  // off-screen. Opening it first lays the tree out at its final width; loadBlock's
-  // later expand is then a no-op.
+  // Expand the drawer before loading so the tree lays out at its final width.
   setRailCollapsed(RAILS.drawer, false);
-  // Load the target view WITHOUT committing query/URL yet.
-  // If a newer gesture supersedes this jump mid-load, loadTree's epoch gate drops
-  // the response and nothing else was mutated, so no canceled view leaks into the
-  // query/URL.
   const applied = await loadTree(commitView);
   setNavigatorBusy(state, target, false);
-  // Abort the commit if this jump did not win: a newer nav gesture superseded it,
-  // or its view load was overtaken (e.g. by a softRefresh) so the displayed tree
-  // is NOT this window. Either way, do not commit the URL or center/select.
   if (epoch !== state.navEpoch || !applied) { refreshNavControls(); return; }
-  // Won: now commit the view to query + form + URL, then clear the prior camera
-  // and center on the target.
   applyNavigatorPayload(state, target, payload, item);
   if (jump.mode === "height" && commitView?.treeHeight) {
     activateHeightLookup(commitView.treeHeight);
@@ -435,8 +358,6 @@ function navigationErrorForTree(error = {}) {
   };
 }
 
-// Tree node click dispatch (renderTree passes only the hash). An orphan-class
-// unknown node re-anchors the orphan view; any other kind opens block detail.
 function selectTreeNode(hash) {
   state.navEpoch += 1;
   const node = state.tree?.nodes?.find((entry) => entry.hash === hash);
@@ -450,28 +371,13 @@ function selectTreeNode(hash) {
   }
 }
 
-// Load the tree for `view` (a jump's target window/anchor) or, by default, the
-// committed state.query. A jump passes a view so it can render its target without
-// mutating state.query/URL until it wins. Returns true only when THIS call applied
-// its own payload, so a jump commits (URL/center/select) only when its view won;
-// false means superseded (by a newer nav gesture or by another tree fetch sharing
-// the "tree" seq key, e.g. a softRefresh) or errored.
+// Returns true only when this call applied its own payload; jumps commit query/URL only on win.
 async function loadTree(view) {
-  // Claim ownership of the shared tree state for this load. A newer loadTree (a
-  // jump, softRefresh, or a validation-only filter edit that never fetches) bumps
-  // this, so a stale load below leaves state.tree / state.errors.tree untouched.
   const myLoad = ++state.treeLoadSeq;
-  // Reject an out-of-range window before fetching so the user gets instant
-  // feedback and the backend is never asked to build an oversized tree. Only the
-  // default (state.query) path can carry a user-entered window; jump views are
-  // always pre-bounded, so they skip this.
   if (!view) {
     const windowError = treeWindowError();
     if (windowError) {
-      // Invalidate any in-flight "tree" FETCH so its fetchJson sees a seq mismatch
-      // and returns without its success path clearing this validation error (the
-      // validation does not fetch, so it would not otherwise bump the fetch seq).
-      // treeLoadSeq above guards loadTree's own branches; this guards fetchJson's.
+      // Bump fetch seq so any in-flight fetchJson("tree") drops its response without clearing this error.
       state.seq.tree = (state.seq.tree || 0) + 1;
       state.errors.tree = { code: "invalid_range", message: windowError };
       state.tree = null;
@@ -482,25 +388,12 @@ async function loadTree(view) {
   delete state.errors.tree;
   $("#tree-error").textContent = "Loading tree";
   $("#tree-error").dataset.state = "loading";
-  // Capture the nav epoch too: a nav gesture (a node click, a deselect) can
-  // supersede a jump WITHOUT starting a competing tree load, so treeLoadSeq alone
-  // would not catch it. Non-nav loads (initial, softRefresh, filter edits that
-  // bump the epoch just before calling this) match.
   const epoch = state.navEpoch;
   let payload = await fetchJson("tree", treePath(view));
-  // A newer loadTree started while this was in flight: it owns the shared tree and
-  // error state now, so leave both untouched (do not clear its validation error or
-  // apply this stale tree). Do NOT renderTreePanel here either: painting the stale
-  // state.tree against a just-cleared (null) transform would re-anchor on old
-  // geometry and lock elState.transform, so the owning load's render would preserve
-  // the stale camera. The owning load paints when it settles.
   if (myLoad !== state.treeLoadSeq) {
     return false;
   }
   if (epoch !== state.navEpoch) {
-    // Superseded only by a nav gesture (no newer tree load). Discard this
-    // response, including any request error fetchJson recorded for it, so a
-    // canceled load cannot paint a stale error over the current view.
     delete state.errors.tree;
     renderTreePanel();
     return false;
@@ -511,23 +404,15 @@ async function loadTree(view) {
     renderTreePanel();
     return true;
   }
-  // payload null: a fetch error (its error is already recorded and current). This
-  // call did not win, so a jump must not commit.
   renderTreePanel();
   return false;
 }
 
-// Record that a view just received data. Called on every successful tree load
-// (initial, refresh, auto-refresh, Live tip, height change) and on every
-// competitions load, so each view carries its own freshness.
 function markUpdated(view = "tree") {
   state.updatedAt[view] = Date.now();
   renderUpdated();
 }
 
-// Paint the top-right freshness indicator from the ACTIVE view's stamp. A load
-// that lands while another view is on screen updates its own view's stamp
-// without relabelling the one the user is looking at.
 function renderUpdated() {
   const el = $("#last-updated");
   if (!el) return;
@@ -546,11 +431,6 @@ function renderUpdated() {
   el.setAttribute("title", action);
 }
 
-// An error block is a plain height-axis single block with no competitor and no
-// branch, so its anchor needs only a catalogued kind and a resolved height.
-// Without this, selecting one directly (a tree click or a `?selected=` deep
-// link) would leave whichever target was active still showing its own readout,
-// and stepping from the selected block would be impossible.
 function errorBlockAnchorFromBlock(payload, hash) {
   const block = payload?.block;
   if (!block || block.kind !== "error_block") return null;
@@ -583,11 +463,8 @@ function selectedNodeBranchTarget(hash) {
 async function loadBlock(hash) {
   state.selectedHash = hash;
   state.selectedBlock = null;
-  // Selecting any block re-derives the active target. Navigator cursors are
-  // hydrated below through the unified anchor_hash mode.
   reconcileNavFromSelected();
   refreshNavControls();
-  // Selecting a block always reveals the detail panel if it was collapsed.
   setRailCollapsed(RAILS.drawer, false);
   $("#drawer").innerHTML = `<div class="loading">Loading block</div>`;
   syncUrl();
@@ -604,7 +481,6 @@ async function loadBlock(hash) {
   const branchTarget = selectedNodeBranchTarget(hash);
   if (branchTarget) hydrateNavigatorAnchor(branchTarget, hash);
   else if (staleAnchor) hydrateNavigatorAnchor("stale", hash);
-  // Kinds are mutually exclusive, so this cannot race the stale hydrate above.
   else if (errorBlockAnchor) hydrateNavigatorAnchor("errorBlock", hash);
   if (anchor && branchTarget !== "orphanBranch") hydrateNavigatorAnchor("orphan", hash);
 }

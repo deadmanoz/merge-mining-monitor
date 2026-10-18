@@ -34,16 +34,12 @@ db-psql:
     docker compose exec -it db psql -U "$PGUSER" -d "$PGDATABASE"
 
 # Apply all pending migrations with an automatic backup and failure restore.
-# See scripts/migrate-safe.sh.
 db-migrate-dev:
     ./scripts/migrate-safe.sh dev
 
-# Deploy mode uses the same automatic restore behavior; remote deployment
-# scripts call this explicit target.
 db-migrate-deploy:
     ./scripts/migrate-safe.sh deploy
 
-# Convenience local default. Production deployment scripts call db-migrate-deploy.
 db-migrate: db-migrate-dev
 
 db-backup:
@@ -67,9 +63,7 @@ build:
 
 test:
     cargo test --workspace
-    ./scripts/test-historical-source-manifest.sh
-    ./scripts/test-gen-research-publication-pins.sh
-    ./scripts/gen-research-publication-pins.sh --check --allow-missing-repo
+    just check-data-artifacts
     ./scripts/live-test-deployment.sh self-check
 
 test-integration: db-up
@@ -84,14 +78,7 @@ lint:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
     ./scripts/arch-lint.sh
 
-# Mechanical architecture gates: file-size budgets + jscpd duplication
-# (scripts/arch-lint.sh, .jscpd.json). The structural clippy lints
-# (too_many_lines, self_named_module_files) are denied workspace-wide via
-# [workspace.lints.clippy], so every clippy run enforces them; the script
-# gates also run inside `lint`. This target stays independently invokable
-# and adds the advisory cognitive_complexity pass (nursery lint, metric
-# churns across toolchains, so advisory -W only, never a hard gate). Red is
-# fixed by refactoring, never by raising a threshold or allowlisting.
+# File-size + jscpd duplication gates plus advisory cognitive_complexity pass.
 arch-lint:
     ./scripts/arch-lint.sh
     cargo clippy --workspace --all-targets --all-features -- -W clippy::cognitive_complexity
@@ -107,9 +94,7 @@ check-data-artifacts:
     ./scripts/test-gen-research-publication-pins.sh
     ./scripts/gen-research-publication-pins.sh --check --allow-missing-repo
 
-# Regenerate data/pools/current.json from a clean upstream
-# bitcoin-data/mining-pools clone. Pin --generated-at for byte-for-byte
-# reproduction. Pass POOLS_DIR explicitly, or set MMM_POOLS_DIR locally.
+# Regenerate data/pools/current.json from bitcoin-data/mining-pools (POOLS_DIR or $MMM_POOLS_DIR).
 gen-pool-snapshot *args="":
     @set -- {{args}}; \
     pools_dir="${MMM_POOLS_DIR:-}"; \
@@ -123,11 +108,7 @@ gen-pool-snapshot *args="":
     fi; \
     cargo run --features artifact-generation --bin gen_pool_snapshot -- "$pools_dir" "$@"
 
-# Regenerate (or --check) the curated-data artifacts: the source-seed SQL
-# (migrations/0002_seed_sources.sql) and frontend metadata
-# (www/js/source-registry.generated.js) from crates/mmm-capture/src/source_registry, and the
-# frontend findings corpus (www/js/findings.generated.js) from data/findings/.
-# `--check` is the drift gate (also run by `cargo test`).
+# Regenerate (or --check) migrations/0002_seed_sources.sql, www/js/source-registry.generated.js, and www/js/findings.generated.js.
 gen-source-artifacts *args="":
     cargo run --quiet --features artifact-generation --bin gen_source_artifacts -- {{args}}
 
@@ -135,21 +116,16 @@ gen-source-artifacts *args="":
 gen-research-publication-pins *args="":
     ./scripts/gen-research-publication-pins.sh {{args}}
 
-# Focused normalized monitor-evidence manifest generator.
 gen-historical-source-manifest *args="":
     ./scripts/gen-historical-source-manifest.sh {{args}}
 
-# Focused compact error-block catalogue generator.
 gen-error-blocks-catalogue *args="":
     ./scripts/gen-error-blocks-catalogue.sh {{args}}
 
 serve:
     cargo run -- serve
 
-# Parameterized producer recipes: one pair serves every chain; the registry
-# dispatch in the binary resolves poll-<chain>/backfill-<chain> from the
-# ChainSpec table. The per-chain names below are one-line delegations kept as
-# the documented operator interface; adding a chain needs no new recipe.
+# Parameterized producer recipes and per-chain operator aliases.
 poll chain:
     cargo run -- poll-{{chain}}
 
@@ -157,32 +133,20 @@ backfill chain start end:
     cargo run -- backfill-{{chain}} {{start}} {{end}}
 
 poll-namecoin: (poll "namecoin")
-
 poll-rsk: (poll "rsk")
-
 poll-syscoin: (poll "syscoin")
-
 poll-fractal: (poll "fractal")
-
 poll-hathor: (poll "hathor")
-
 poll-elastos: (poll "elastos")
-
 poll-qbit: (poll "qbit")
 poll-terracoin: (poll "terracoin")
 
 backfill-namecoin start end: (backfill "namecoin" start end)
-
 backfill-rsk start end: (backfill "rsk" start end)
-
 backfill-syscoin start end: (backfill "syscoin" start end)
-
 backfill-fractal start end: (backfill "fractal" start end)
-
 backfill-hathor start end: (backfill "hathor" start end)
-
 backfill-elastos start end: (backfill "elastos" start end)
-
 backfill-qbit start end: (backfill "qbit" start end)
 backfill-terracoin start end: (backfill "terracoin" start end)
 
@@ -207,32 +171,18 @@ reclassify-unknown-parents *args:
 reclassify-parent hash:
     cargo run -- reclassify-parent {{hash}}
 
-# Offline historical pool re-resolution. Self-seeds the expanded pool snapshot
-# and child identity registries, then re-attributes merge_mining_event pool IDs
-# from stored coinbase columns plus persisted child-chain identity fields.
-# Default is fill-NULL-only; pass --overwrite to re-attribute already-set
-# registry-backed pool IDs. Never writes NULL over known attribution.
-#
-# Phase gates (run only what changed; the RSK pass scans the whole RSK corpus, so
-# skip it unless the RSK miner registry changed):
-#   --only <rsk|main|hathor|elastos>   run exactly one phase
-#   --skip-<rsk|main|hathor|elastos>   drop one phase (mutually exclusive with --only)
-#   --source auxpow:<chain>            bound the main scan to one source (full source code)
-# Runbook (which pass to run): docs/attribution.md.
+# Offline historical pool re-resolution (--overwrite, --only/--skip-<phase>, --source; see docs/attribution.md).
 reclassify-pools *args:
     cargo run -- reclassify-pools {{args}}
 
-# Populate the canonical Bitcoin header backbone from Bitcoin Core. The tree API
-# reads this data only and returns a 409 when the requested window is unsynced.
+# Populate the canonical Bitcoin header backbone from Bitcoin Core.
 sync-bitcoin-core *args:
     cargo run -- sync-bitcoin-core {{args}}
 
 reconcile-read-model *args:
     cargo run -- reconcile-read-model {{args}}
 
-# Rebuild the source_health per-source rollup counters from base tables (the
-# authoritative recompute behind /api/v1/sources). Run after fresh database
-# setup and after bulk backfills; sets source_health_ready so /sources serves.
+# Rebuild source_health rollup counters from base tables and set source_health_ready.
 rebuild-source-health:
     cargo run -- reconcile-read-model --rebuild-source-health
 
@@ -246,46 +196,32 @@ restore-merge-mining-event event_id:
 
 live-test-init:
     ./scripts/live-test-deployment.sh init
-
 live-test-preflight:
     ./scripts/live-test-deployment.sh preflight
-
 live-test-capture-tips:
     ./scripts/live-test-deployment.sh capture-tips
-
 live-test-baseline:
     ./scripts/live-test-deployment.sh baseline
-
 live-test-progress:
     ./scripts/live-test-deployment.sh progress
-
 live-test-backfill chain start end:
     ./scripts/live-test-deployment.sh backfill {{chain}} {{start}} {{end}}
-
 live-test-backfill-next chain chunk:
     ./scripts/live-test-deployment.sh backfill-next {{chain}} {{chunk}}
-
 live-test-classify *args:
     ./scripts/live-test-deployment.sh classify {{args}}
-
 live-test-reconcile-all:
     ./scripts/live-test-deployment.sh reconcile-all
-
 live-test-reconcile-missing:
     ./scripts/live-test-deployment.sh reconcile-missing
-
 live-test-smoke:
     ./scripts/live-test-deployment.sh smoke
-
 live-test-self-check:
     ./scripts/live-test-deployment.sh self-check
-
 live-test-start service:
     ./scripts/live-test-deployment.sh start {{service}}
-
 live-test-stop service:
     ./scripts/live-test-deployment.sh stop {{service}}
-
 live-test-status:
     ./scripts/live-test-deployment.sh status
 

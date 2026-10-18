@@ -55,23 +55,11 @@ pub struct BitcoinCoreHeader {
     pub bits: u32,
 }
 
-/// The meaningful effect of replacing the mutable cache suffix: whether the
-/// replacement scheduled unknown-parent reclassification work, and what is
-/// pending afterwards.
-///
-/// A changed shallow header can alter previously derived orphan placement,
-/// and a horizon advance can settle rows that had no verdict. Neither is
-/// done inside the refresh: the refresh increments the pending generation
-/// and the scheduled recheck job (`reclassify-unknown-parents --scheduled`)
-/// consumes it one page per cache-lock hold.
+/// Outcome of replacing the mutable cache suffix and scheduling `reclassify-unknown-parents --scheduled`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BitcoinCoreHeaderCacheUpdate {
-    /// This replacement scheduled a recheck (the pending generation moved).
     pub scheduled: bool,
-    /// The pending scope revisits already classified orphans, not only rows
-    /// with no orphan class yet.
     pub pending_orphans: bool,
-    /// Work is pending: the pending generation exceeds the acknowledged one.
     pub pending: bool,
 }
 
@@ -84,9 +72,7 @@ struct BitcoinCoreHeaderCacheState {
     acknowledged_generation: i64,
 }
 
-/// What a scheduled recheck must cover: whether already classified orphans
-/// are revisited, and which witness sources' events are candidates (`None`
-/// is every source; an empty list is none, the state a bind leaves behind).
+/// Scheduled recheck scope (`orphans` flag and optional source filter; `None` means all sources).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecheckScope {
     pub orphans: bool,
@@ -94,8 +80,6 @@ pub struct RecheckScope {
 }
 
 impl RecheckScope {
-    /// Every source, orphans included: what an invalidating cache change
-    /// schedules.
     pub fn everything() -> Self {
         Self {
             orphans: true,
@@ -103,8 +87,6 @@ impl RecheckScope {
         }
     }
 
-    /// Every source, rows without a verdict only: what a horizon advance
-    /// schedules.
     pub fn pending_rows() -> Self {
         Self {
             orphans: false,
@@ -112,7 +94,6 @@ impl RecheckScope {
         }
     }
 
-    /// Nothing: the pending scope right after a bind consumed it.
     fn nothing() -> Self {
         Self {
             orphans: false,
@@ -120,8 +101,6 @@ impl RecheckScope {
         }
     }
 
-    /// Widen this scope by another: orphans by OR, sources by union where
-    /// `None` (every source) absorbs any list.
     fn union(&self, other: &RecheckScope) -> RecheckScope {
         let sources = match (&self.sources, &other.sources) {
             (Some(mine), Some(theirs)) => {
@@ -138,8 +117,7 @@ impl RecheckScope {
     }
 }
 
-/// The pass a scheduled recheck job has bound to a generation, with the
-/// keyset cursor of the last completed page.
+/// Active recheck pass bound to a generation, with the keyset cursor of the last completed page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecheckPass {
     pub generation: i64,
@@ -147,30 +125,20 @@ pub struct RecheckPass {
     pub cursor: Option<(i64, i64)>,
 }
 
-/// The scheduled-recheck state of the Core-header cache.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScheduledRecheck {
     pub pending_generation: i64,
-    /// What has been scheduled since the last bind, including the scope of a
-    /// pass an invalidating trigger folded back in.
     pub pending_scope: RecheckScope,
     pub acknowledged_generation: i64,
-    /// The pass in flight, which continues from its cursor: an invalidating
-    /// trigger clears it, an additive one (a horizon advance) leaves it.
     pub pass: Option<RecheckPass>,
 }
 
 impl ScheduledRecheck {
-    /// Work is pending while the pending generation exceeds the acknowledged
-    /// one.
     pub fn is_pending(&self) -> bool {
         self.pending_generation > self.acknowledged_generation
     }
 }
 
-/// Read the scheduled-recheck state. Callers that go on to bind or advance a
-/// pass hold the exclusive cache lock, which serializes them against the
-/// refresh that schedules work.
 pub async fn load_scheduled_recheck<C: GenericClient>(client: &C) -> Result<ScheduledRecheck> {
     let row = client
         .query_one(
@@ -204,10 +172,7 @@ pub async fn load_scheduled_recheck<C: GenericClient>(client: &C) -> Result<Sche
     })
 }
 
-/// Bind a pass to the pending generation with a fresh cursor, consuming the
-/// pending scope `scope` (what was scheduled since the last bind, as the
-/// caller just loaded it under the exclusive cache lock); triggers that
-/// arrive later accumulate for the follow-up pass.
+/// Bind a pass to `recheck_pending_generation` with a fresh cursor, consuming `scope`.
 pub async fn bind_recheck_pass<C: GenericClient>(
     client: &C,
     scope: RecheckScope,
@@ -238,7 +203,6 @@ pub async fn bind_recheck_pass<C: GenericClient>(
     })
 }
 
-/// Persist the keyset cursor of the last completed page of the bound pass.
 pub async fn persist_recheck_cursor<C: GenericClient>(
     client: &C,
     generation: i64,
@@ -259,11 +223,7 @@ pub async fn persist_recheck_cursor<C: GenericClient>(
     )
 }
 
-/// Acknowledge the bound pass as complete: its generation becomes the
-/// acknowledged one and the pass is cleared. Additive triggers that arrived
-/// during the pass keep the pending generation ahead, and the caller binds a
-/// follow-up pass over the scope accumulated since. Fails closed when no
-/// pass is bound to that generation.
+/// Acknowledge the bound pass for `generation` and clear its cursor.
 pub async fn acknowledge_recheck_pass<C: GenericClient>(client: &C, generation: i64) -> Result<()> {
     let updated = client
         .execute(
@@ -283,11 +243,7 @@ pub async fn acknowledge_recheck_pass<C: GenericClient>(client: &C, generation: 
     )
 }
 
-/// Schedule a recheck by hand (a repair or a test): increments the pending
-/// generation and widens the pending scope by `scope`. `invalidating` says
-/// verdicts already given may change: a pass in flight is cleared and its
-/// scope folded back into the pending scope, so the next bind starts over
-/// with the merged scope. Migrations do the same in SQL.
+/// Increment `recheck_pending_generation` and widen pending scope; if `invalidating`, folds any in-flight pass back into pending.
 pub async fn schedule_core_recheck<C: GenericClient>(
     client: &C,
     scope: &RecheckScope,

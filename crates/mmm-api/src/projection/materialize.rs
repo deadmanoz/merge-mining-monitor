@@ -1,4 +1,4 @@
-//! The neutral parent-projection pipeline shared by tree and block projections.
+//! Shared parent-projection pipeline for tree and block projections.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -13,12 +13,6 @@ use super::shared::{
 use crate::normalize::ParentKind;
 use mmm_capture::source_registry::BITCOIN_SOURCE_CODE;
 
-/// The neutral per-parent projection: one Bitcoin parent (block-backed or
-/// direct-event-only) before tree-vs-block-detail shaping. `evidence` and
-/// `protected` are mutated post-construction by the tree builder
-/// (tree::mod/anchor/compact) to drive canonical-reduction; both start false
-/// here. `hash_bytes` is the wire/internal-order key for joins; `hash`/
-/// `prev_hash` are explorer-hex (display_hash-reversed).
 #[derive(Debug, Clone)]
 pub(super) struct ParentProjection {
     pub(super) hash_bytes: Vec<u8>,
@@ -29,9 +23,6 @@ pub(super) struct ParentProjection {
     pub(super) btc_orphan_class: Option<String>,
     pub(super) header_time: i64,
     pub(super) bitcoin_miner_pool: PoolObject,
-    /// Best-available display miner: the strict `bitcoin_miner_pool` when known,
-    /// otherwise the chain-agnostic child-inferred fallback (see
-    /// `resolve_display_miner`). Never overrides the strict fact.
     pub(super) display_miner_pool: PoolObject,
     pub(super) display_miner_basis: &'static str,
     pub(super) source_summary: SourceSummary,
@@ -42,12 +33,8 @@ pub(super) struct ParentProjection {
     pub(super) competition: Option<TreeCompetition>,
 }
 
-/// Project block-backed parents into neutral `ParentProjection`s, assembling
-/// each per-parent source summary from its events and proofs.
-/// Enforces the active-unknown invariant: a block-backed `unknown` whose any
-/// active event fails the Bitcoin target is a hard projection-invariant error
-/// (never silently served). Honors `source_filter` when admitting the Bitcoin
-/// source into the summary.
+/// Project block-backed parents into `ParentProjection`s, enforcing that active events for an
+/// `unknown` block validate the Bitcoin target.
 pub(super) fn project_blocks(
     blocks: &[BlockRow],
     events: &[EventRow],
@@ -105,12 +92,7 @@ pub(super) fn project_blocks(
         .collect()
 }
 
-/// Project parents that have AuxPoW events but NO read-model `block` row
-/// (Near/Unknown only) into neutral projections, skipping any hash already
-/// covered by a block row. `btc_orphan_class` is None by construction (no
-/// block row means no Core-gated orphan verdict, i.e. pending). Same
-/// active-unknown-fails-target invariant as project_blocks. Groups by
-/// parent_hash via BTreeMap for deterministic ordering.
+/// Project `Near`/`Unknown` parents that have AuxPoW events but no `block` row (`btc_orphan_class = None`).
 pub(super) fn project_direct_events(
     events: &[EventRow],
     block_hashes: &HashSet<Vec<u8>>,
@@ -154,13 +136,9 @@ pub(super) fn project_direct_events(
             prev_hash: display_hash(&first.prev_hash)?,
             height: None,
             kind,
-            // Direct-event projections have no read-model `block` row, so no
-            // Core-gated orphan class (pending by construction).
             btc_orphan_class: None,
             header_time: first.header_time,
             bitcoin_miner_pool: unknown_pool(),
-            // Near/unknown direct-event parents are not validated Bitcoin blocks,
-            // so we never infer a miner for them: display stays unknown.
             display_miner_pool: unknown_pool(),
             display_miner_basis: DisplayMinerBasis::Unknown.as_str(),
             child_chain_evidence: child_chain_evidence_from_events(events.iter().copied()),
@@ -177,11 +155,6 @@ pub(super) fn project_direct_events(
     Ok(projections)
 }
 
-/// Build the `SourceSummary` for a block-backed parent: union the source
-/// records across its events and proofs, then (subject to
-/// source_filter) add the synthetic Bitcoin source iff the block is
-/// core-attested or live-observed and not already present. pow_validates flag
-/// is true unless the parent is an unfproven unknown.
 pub(super) fn source_summary_for_block(
     block: &BlockRow,
     events: &[EventRow],
@@ -209,10 +182,6 @@ pub(super) fn source_summary_for_block(
     )
 }
 
-/// Aggregate events into per-(source,child_chain) `ChildChainEvidence`:
-/// event_count plus min/max child_height. Grouped via BTreeMap so the
-/// serialized array order is deterministic (pinned by the tree/block JSON
-/// fixtures).
 pub(super) fn child_chain_evidence_from_events<'a>(
     events: impl IntoIterator<Item = &'a EventRow>,
 ) -> Vec<ChildChainEvidence> {
@@ -244,18 +213,10 @@ pub(super) fn child_chain_evidence_from_events<'a>(
         .collect()
 }
 
-/// True iff `code` passes the source filter: an empty filter admits every
-/// source, otherwise the code must be explicitly listed. Gates whether the
-/// synthetic Bitcoin source is added to a block summary.
 pub(super) fn source_filter_allows(source_filter: &[String], code: &str) -> bool {
     source_filter.is_empty() || source_filter.iter().any(|source| source == code)
 }
 
-/// Fold a set of source records into a `SourceSummary`: dedupe by source id,
-/// sort codes, count distinct sources, count distinct auxpow child chains, and
-/// detect a live-chaintip observation. `pow_validates_btc_target` is passed
-/// through by the caller. Sorted/BTree-backed so the serialized summary is
-/// deterministic (pinned by tree + block fixtures).
 pub(super) fn source_summary_from_sources<'a>(
     sources: impl IntoIterator<Item = &'a SourceRecord>,
     pow_validates_btc_target: bool,

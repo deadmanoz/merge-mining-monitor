@@ -23,10 +23,7 @@ use crate::helpers::{
     project_tree, set_orphan_class,
 };
 
-/// Bitcoin mainnet block 400000 (2016-02-25): raw 80-byte header and the
-/// coinbase scriptSig (BIP34 push of 400000, "/BW Pool/" tag). Embedded so the
-/// orphan scenario test below can drive the production strict-orphan
-/// classifier with genuine PoW, era nBits, and BIP34 height evidence.
+/// Bitcoin mainnet block 400000 (2016-02-25) header and BIP34 coinbase scriptSig.
 const BTC_400000_HEADER_HEX: &str = "0400000039fa821848781f027a2e6dfabbf6bda920d9ae61b63400030000000000000000ecae536a304042e3154be0e3e9a8220e5568c3433a9ab49ac4cbb74f8df8e8b0cc2acf569fb9061806652c27";
 const BTC_400000_COINBASE_SCRIPTSIG_HEX: &str = "03801a060004cc2acf560433c30f37085d4a39ad543b0c000a425720537570706f727420384d200a666973686572206a696e78696e092f425720506f6f6c2f";
 
@@ -105,9 +102,7 @@ async fn retained_hathor_script_needs_matching_full_coinbase_for_strict_evidence
             orphan_candidate_verdict(&parent),
         ));
 
-        // Retained Hathor rows predate structural coinbase validation. A
-        // height-shaped stored script without the complete transaction must
-        // therefore remain weak in both the writer and read-only projection.
+        // Script-only Hathor observations remain weak without the full coinbase tx.
         let event_id = capture_child_event(
             &mut client,
             ChildEvidence::new(
@@ -130,10 +125,6 @@ async fn retained_hathor_script_needs_matching_full_coinbase_for_strict_evidence
         assert_eq!(weak.total, 1);
         assert_eq!(orphan_class(&weak.items[0]), Some("weak_btc_orphan"));
 
-        // Simulate a supported replay/import enriching the retained event's
-        // existing nullable column, then use the normal reconciler to rebuild
-        // the writer-owned classification. The API independently evaluates
-        // the same shared evidence rule and must agree with the stored class.
         let tx_bytes = serialized_coinbase_tx(&script_sig);
         client
             .execute(
@@ -153,10 +144,6 @@ async fn retained_hathor_script_needs_matching_full_coinbase_for_strict_evidence
         assert_eq!(strict.total, 1);
         assert_eq!(orphan_class(&strict.items[0]), Some("strict_btc_orphan"));
 
-        // Anchor projection independently loads strict evidence through the
-        // API-local query shell. Seed the small canonical context it needs and
-        // require exact BIP34 placement, proving the read-only path consumed
-        // the matching Hathor transaction rather than falling back to time.
         let canonical_prev = parent.prev_blockhash.to_byte_array().to_vec();
         insert_block(
             &client,
@@ -209,22 +196,9 @@ async fn retained_hathor_script_needs_matching_full_coinbase_for_strict_evidence
 #[tokio::test]
 async fn orphans_classifies_real_header_weak_then_strict_and_tracks_revocation() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // Read-model scenario: a genuine mainnet header (Bitcoin block 400000,
-        // 2016-02-25, fetched once from Bitcoin Core) captured as a
-        // Core-absence-attested unknown. Strict/weak orphan classification
-        // through the production path needs a header with real BTC PoW and
-        // era nBits plus BIP34 coinbase evidence - every committed AuxPoW
-        // fixture's parent is a sub-BTC-target share (pow false, forced
-        // near), and crafted regtest-bits headers classify
-        // excluded. The fake verdict's absence attestation is what
-        // makes the (in reality canonical) header an orphan candidate here.
         let parent: Header = deserialize(&hex::decode(BTC_400000_HEADER_HEX)?)?;
         let parent_hash = header_hash_bytes(&parent);
 
-        // First capture the header WITHOUT its coinbase scriptSig: no BIP34
-        // strict-height evidence reaches the rollup, so the offline classifier
-        // falls through to the timestamp-selected nBits match and renders the
-        // WEAK verdict.
         let weak_event_id = capture_child_event(
             &mut client,
             ChildEvidence::new(
@@ -246,10 +220,6 @@ async fn orphans_classifies_real_header_weak_then_strict_and_tracks_revocation()
         revoke_event(&mut client, weak_event_id, "weak scenario revocation").await?;
         assert_eq!(fetch_default_orphans_page(&client, 10).await?.total, 0);
 
-        // Re-capture with the real coinbase scriptSig: it carries the BIP34
-        // height (400000), and the header's genuine nBits match the committed
-        // table at that height, so the offline classifier renders the strict
-        // verdict.
         let event_id = capture_child_event(
             &mut client,
             ChildEvidence::new(
@@ -271,11 +241,6 @@ async fn orphans_classifies_real_header_weak_then_strict_and_tracks_revocation()
         assert_eq!(listed.total, 1);
         assert_eq!(listed.items[0].primary_hash, display_hash(&parent_hash));
 
-        // Revoking the only contributing event removes the orphan from the
-        // index through the production cascade; restoring under a re-attested
-        // absence verdict re-derives the class and brings it back (a
-        // transient Disabled-classifier restore would leave it unclassified,
-        // per the preserve-under-transient-unknown contract).
         revoke_event(&mut client, event_id, "scenario revocation").await?;
         let revoked = fetch_default_orphans_page(&client, 10).await?;
         assert_eq!(revoked.total, 0);
@@ -297,9 +262,6 @@ async fn orphans_classifies_real_header_weak_then_strict_and_tracks_revocation()
 }
 
 async fn seed_paginated_unknowns(client: &Client) -> Result<[Vec<u8>; 4]> {
-    // Unknown blocks have NULL height; located by btc_header_time. u2 and u3
-    // share a header time (2000) to exercise the stored-hash tie-break and the
-    // cursor boundary.
     let u1 = hash_bytes(0x00a1);
     let u2 = hash_bytes(0x00a2);
     let u3 = hash_bytes(0x00a3);
@@ -313,10 +275,7 @@ async fn seed_paginated_unknowns(client: &Client) -> Result<[Vec<u8>; 4]> {
         insert_unknown_block(client, hash, &prev, time).await?;
     }
 
-    // A revocation husk: demote_zero_active_block leaves a fully-revoked,
-    // non-core block as kind='unknown' with pow_validated=false. Its header
-    // time (2500) would sort between u4 and the 2000 group if it leaked, so
-    // the index must exclude it and total must not count it.
+    // Revocation husk (`pow_validated = false`) must be excluded from items and counts.
     let husk = hash_bytes(0x00a5);
     insert_unknown_block(client, &husk, &hash_bytes(0x10a5), 2500).await?;
     client
@@ -331,10 +290,6 @@ async fn seed_paginated_unknowns(client: &Client) -> Result<[Vec<u8>; 4]> {
 }
 
 async fn assert_older_cursor_walk(client: &Client, expected: &[String]) -> Result<()> {
-    // Walk the whole index one row at a time via the opaque item cursor; this
-    // crosses the same-header-time boundary (u3 -> u2) with no skip or duplicate.
-    // The cursor is precise: the last page returns its row with next_cursor =
-    // None, so there is no trailing empty request.
     let mut walked = Vec::new();
     let mut cursor: Option<String> = None;
     let mut first = true;
@@ -346,8 +301,6 @@ async fn assert_older_cursor_walk(client: &Client, expected: &[String]) -> Resul
         let page = fetch_orphans_page(client, &raw_query).await?;
         assert_eq!(page.total, 4);
         assert_eq!(page.items.len(), 1);
-        // The Latest page (no cursor) sits at the global newest edge, so it has
-        // no prev_cursor; every later (older) page has a newer neighbour.
         if first {
             assert!(
                 page.prev_cursor.is_none(),
@@ -378,8 +331,6 @@ async fn assert_older_cursor_walk(client: &Client, expected: &[String]) -> Resul
 }
 
 async fn assert_older_then_newer_round_trip(client: &Client) -> Result<()> {
-    // Round trip: from the newest anchor, one older step then one newer step
-    // returns to the same row.
     let newest = fetch_default_orphans_page(client, 1).await?.items.remove(0);
     let stepped_older = fetch_orphans_page(
         client,
@@ -406,7 +357,6 @@ async fn assert_older_then_newer_round_trip(client: &Client) -> Result<()> {
 #[tokio::test]
 async fn orphans_paginate_newest_first_by_header_time() -> Result<()> {
     crate::run_db_test!(client, {
-        // Empty DB: no orphans, no cursor, all per-class counts zero.
         let empty = fetch_default_orphans_page(&client, 10).await?;
         assert_eq!(empty.total, 0);
         assert!(empty.items.is_empty());
@@ -417,8 +367,6 @@ async fn orphans_paginate_newest_first_by_header_time() -> Result<()> {
 
         let [u1, u2, u3, u4] = seed_paginated_unknowns(&client).await?;
 
-        // Newest-first by (btc_header_time DESC, stored hash DESC), husk excluded:
-        // 3000:u4, then 2000:{u3,u2} (stored a3 > a2), then 1000:u1.
         let expected = vec![
             display_hash(&u4),
             display_hash(&u3),
@@ -428,16 +376,12 @@ async fn orphans_paginate_newest_first_by_header_time() -> Result<()> {
 
         assert_older_cursor_walk(&client, &expected).await?;
 
-        // A page large enough for the whole index returns it in order, no cursor
-        // either way (it is both the newest and oldest edge).
         let all = fetch_default_orphans_page(&client, 100).await?;
         assert_eq!(orphan_hashes(&all), expected);
         assert_eq!(all.total, 4);
         for (offset, item) in all.items.iter().enumerate() {
             assert_eq!(item.index, offset as u64 + 1);
         }
-        // counts is the full per-class breakdown over the PoW-valid unknown
-        // population (the pow_validated=false husk is excluded from counts too).
         assert_eq!(orphan_counts(&all).strict, 4);
         assert_eq!(orphan_counts(&all).weak, 0);
         assert_eq!(orphan_counts(&all).excluded, 0);
@@ -445,11 +389,6 @@ async fn orphans_paginate_newest_first_by_header_time() -> Result<()> {
         assert!(all.next_cursor.is_none());
         assert!(all.prev_cursor.is_none());
 
-        // Newer walk: from the oldest row, step newer one row at a time via the
-        // opaque cursor, crossing the same-time boundary (u2 -> u3) with no skip
-        // or duplicate. It reconstructs the
-        // ascending order, and every after page exposes a next_cursor (the anchor
-        // it stepped off is always an older neighbour).
         let oldest = all.items.last().expect("non-empty index").clone();
         let mut newer_walked = Vec::new();
         let mut after_cursor: Option<String> = Some(oldest.cursor.clone());
@@ -501,7 +440,6 @@ async fn orphans_paginate_newest_first_by_header_time() -> Result<()> {
 #[tokio::test]
 async fn orphans_filter_by_classification() -> Result<()> {
     crate::run_db_test!(client, {
-        // One PoW-valid unknown per class, plus one pending (NULL class).
         let strict = hash_bytes(0x0b01);
         let weak = hash_bytes(0x0b02);
         let excluded = hash_bytes(0x0b03);
@@ -517,9 +455,7 @@ async fn orphans_filter_by_classification() -> Result<()> {
         set_orphan_class(&client, &strict, "strict_btc_orphan").await?;
         set_orphan_class(&client, &weak, "weak_btc_orphan").await?;
         set_orphan_class(&client, &excluded, "excluded").await?;
-        // `pending` keeps its NULL class.
 
-        // Default (strict+weak): only the strict and weak rows, newest-first.
         let default = fetch_default_orphans_page(&client, 100).await?;
         assert_eq!(
             orphan_hashes(&default),
@@ -528,28 +464,23 @@ async fn orphans_filter_by_classification() -> Result<()> {
         assert_eq!(default.total, 2);
         assert_eq!(default.items[0].index, 1);
         assert_eq!(default.items[1].index, 2);
-        // `counts` is the full per-class breakdown, INDEPENDENT of the filter.
         assert_eq!(orphan_counts(&default).strict, 1);
         assert_eq!(orphan_counts(&default).weak, 1);
         assert_eq!(orphan_counts(&default).excluded, 1);
         assert_eq!(orphan_counts(&default).pending, 1);
-        // Each returned row carries its own class.
         assert_eq!(orphan_class(&default.items[0]), Some("strict_btc_orphan"));
         assert_eq!(orphan_class(&default.items[1]), Some("weak_btc_orphan"));
 
-        // Excluded-only filter returns just the excluded row.
         let excluded_page =
             fetch_orphans_page(&client, "classification=excluded&limit=100").await?;
         assert_eq!(orphan_hashes(&excluded_page), vec![display_hash(&excluded)]);
         assert_eq!(excluded_page.total, 1);
 
-        // Pending-only filter returns the NULL-class row (with a null row class).
         let pending_page = fetch_orphans_page(&client, "classification=pending&limit=100").await?;
         assert_eq!(orphan_hashes(&pending_page), vec![display_hash(&pending)]);
         assert_eq!(pending_page.total, 1);
         assert!(orphan_class(&pending_page.items[0]).is_none());
 
-        // All four classes selected returns every PoW-valid unknown.
         let all = fetch_orphans_page(
             &client,
             "classification=strict_btc_orphan,weak_btc_orphan,excluded,pending&limit=100",

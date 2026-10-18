@@ -1,8 +1,4 @@
-//! Bitcoin Core coinbase evidence helpers.
-//!
-//! Core block coinbase evidence is block-level context, not AuxPoW event
-//! evidence. This module keeps extraction and pool resolution shared between
-//! Core write paths and the bounded enrichment command.
+//! Bitcoin Core block-level coinbase pool resolution.
 
 use std::collections::HashMap;
 
@@ -11,34 +7,14 @@ use tracing::warn;
 use crate::capture::resolve_parent_pool_attribution_from_serialized_coinbase_outputs;
 use crate::pool_resolver::PoolResolver;
 
-/// Outcome of resolving a Bitcoin Core coinbase to a pool.
-///
-/// `pool_id` is the matched `pool.id`, `None` when neither the scriptSig tag nor
-/// any payout address resolves. `corrupt_outputs` is best-effort: it is set true
-/// only when the serialized outputs blob failed to deserialize, so the address
-/// fallback could not run. Pool resolution is never aborted on corrupt outputs;
-/// the tag-path result (or `None`) still stands.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CoreCoinbasePoolResolution {
     pub pool_id: Option<i64>,
     pub corrupt_outputs: bool,
 }
 
-/// Resolve a Bitcoin Core coinbase to a `pool.id`, tag-first then
-/// payout-address fallback.
-///
-/// Precedence: try the coinbase scriptSig pool tag
-/// (`PoolResolver::resolve_coinbase_script`); on a hit that maps to a known slug
-/// in `pool_ids_by_slug`, return that id. Otherwise consensus-decode
-/// `serialized_outputs` (the coinbase tx outputs blob) into `TxOut`s, extract
-/// payout addresses, and try `PoolResolver::resolve_payout_addresses`. A slug
-/// hit with no entry in `pool_ids_by_slug` yields no id (pools not yet persisted
-/// are not invented here).
-///
-/// Best-effort on corruption: a decode failure of the outputs blob sets
-/// `corrupt_outputs = true` and returns no id rather than erroring, so one bad
-/// row never aborts a batch. `serialized_outputs == None` skips the fallback
-/// silently.
+/// Resolve a Bitcoin Core coinbase to `pool.id` (scriptSig tag first, then payout-address
+/// fallback over `serialized_outputs`); corrupt output blobs set `corrupt_outputs = true` without failing.
 pub fn resolve_btc_pool_from_coinbase(
     script: &[u8],
     serialized_outputs: Option<&[u8]>,

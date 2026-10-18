@@ -1,9 +1,4 @@
-//! Tree-navigation readiness for the stale index projections.
-//!
-//! Given a stale block or branch span, decide whether a renderable `/tree` window
-//! exists for it (backbone synced, node budget within the tree contract) and emit
-//! either the `TreeNavigation` deep-link or the machine `NavigationError`. Shared
-//! by stale and stale-branch navigator targets.
+//! Tree-navigation readiness for stale, stale-branch, and error-block navigator targets.
 
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -15,15 +10,8 @@ use super::shared::{
 };
 use super::tree::TREE_NODE_LIMIT;
 
-/// Heights of canonical context padded on each side of a navigation span when
-/// computing the renderable tree window, bounded by the complete-canonical tip.
 const NAVIGATION_PADDING: i32 = 16;
 
-/// Precomputed tree-window navigation for a stale target, embedded in the
-/// unified navigator item `view`.
-/// `tree_from/tree_to` is the renderable height window (padded, backbone-
-/// complete, within the tree node budget); `select_hash`/`center_hash` drive the
-/// stepper. Field names and `mode = "tree_window"` are the locked JSON contract.
 #[derive(Debug, Clone, Serialize)]
 pub struct TreeNavigation {
     pub mode: &'static str,
@@ -34,11 +22,6 @@ pub struct TreeNavigation {
     pub center_hash: String,
 }
 
-/// Why a stale target has no renderable `navigation`, serialized as
-/// `navigation_error` (null when navigation is present). `code` is the locked
-/// machine value (`target_backbone_unsynced` | `target_window_too_large`);
-/// `action` is the operator remedy. Built by the `*_error` constructors below.
-/// Field names are the locked JSON contract.
 #[derive(Debug, Clone, Serialize)]
 pub struct NavigationError {
     pub code: &'static str,
@@ -47,10 +30,6 @@ pub struct NavigationError {
     pub action: &'static str,
 }
 
-/// A stale navigation request: the `target_height` to center on, the
-/// `span_min/span_max` height range it must show, and `required_nodes` (extra
-/// budget beyond the height range: 1 for a single stale, the branch depth for a
-/// branch). Consumed by `navigation_for_span` and the coverage-window planner.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct NavigationSpan {
     pub(super) target_height: i32,
@@ -59,35 +38,21 @@ pub(super) struct NavigationSpan {
     pub(super) required_nodes: usize,
 }
 
-/// Per-request navigation inputs loaded once: backbone `coverage` over the
-/// merged windows plus the stale-node `budget`. Reused across every span so the
-/// readiness queries run once, not per stale.
 #[derive(Debug, Clone)]
 pub(super) struct NavigationReadiness {
     coverage: BackboneWindowCoverage,
     budget: NavigationWindowBudget,
 }
 
-/// Sorted heights of every off-spine row in the loaded windows, used to count a
-/// window's visible nodes (canonical heights plus the rows that render beside
-/// them) against `TREE_NODE_LIMIT` so navigation never proposes an over-budget
-/// tree window.
-///
-/// Both stale AND consensus-invalid error blocks count: the compact tree keeps an
-/// in-window `error_block` row (see `tree/compact.rs`), so it occupies a node
-/// exactly like a stale row does. Counting only stales under-budgets any window
-/// containing one, and the navigator would advertise a target that `/tree` then
-/// rejects with `range_too_large`.
+/// Sorted heights of off-spine rows (stale blocks and sourced `error_block` rows) in the loaded
+/// windows, counted against `TREE_NODE_LIMIT` so navigation never proposes an over-budget window.
 #[derive(Debug, Clone)]
 pub(super) struct NavigationWindowBudget {
     off_spine_heights: Vec<i32>,
 }
 
-/// Decide a stale target's navigation: returns `Some(TreeNavigation)` when the
-/// backbone is complete and a tree window fits the node budget, else
-/// `Some(NavigationError)` with the first failing reason (unsynced backbone or
-/// over-budget window). Exactly one of the pair is `Some`. The check order is
-/// the locked error-code precedence surfaced in the wire `navigation_error`.
+/// Return `Some(TreeNavigation)` when the backbone is complete and a window fits `TREE_NODE_LIMIT`,
+/// or `Some(NavigationError)` with the first failing reason (`target_backbone_unsynced` | `target_window_too_large`).
 pub(super) fn navigation_for_span(
     span: NavigationSpan,
     select_hash: String,
@@ -149,10 +114,6 @@ pub(super) fn navigation_for_span(
     )
 }
 
-/// Find the widest renderable `(tree_from, tree_to)` window around a span: pads
-/// by `NAVIGATION_PADDING`, then picks the first window that is both
-/// backbone-complete and within the visible-node budget. `None` if no padded
-/// window qualifies (caller maps that to a backbone-unsynced error).
 fn renderable_navigation_window(
     span_min: i32,
     span_max: i32,
@@ -177,10 +138,6 @@ fn renderable_navigation_window(
     None
 }
 
-/// Load navigation readiness once per request: merge all spans' coverage
-/// windows, then load backbone coverage and the stale-node budget over them.
-/// `None` (skip navigation) when the backbone is unsynced or no span needs a
-/// window.
 pub(super) async fn load_navigation_readiness(
     client: &Client,
     max_complete_height: Option<i32>,
@@ -198,16 +155,8 @@ pub(super) async fn load_navigation_readiness(
     Ok(Some(NavigationReadiness { coverage, budget }))
 }
 
-/// Load the sorted off-spine heights inside the requested windows (lateral range
-/// lookup, ordered) so `NavigationWindowBudget` can count them per window by
-/// binary search.
-///
-/// The kind filter must match what the tree actually renders beside the
-/// canonical spine: stale rows, plus consensus-invalid error blocks that carry at
-/// least one source. A sourceless error block is dropped by the tree's
-/// `min_sources` filter, so counting it here would consume budget for a node
-/// that never appears, needlessly narrowing the window or reporting a target as
-/// too large when the tree could in fact render it.
+/// Load sorted off-spine heights inside `windows` (stale rows plus `error_block` rows with
+/// `distinct_sources >= 1`, matching what the tree renders beside the canonical spine).
 async fn load_navigation_budget(
     client: &Client,
     windows: &[(i32, i32)],
@@ -240,10 +189,6 @@ async fn load_navigation_budget(
     })
 }
 
-/// Build the padded coverage windows the navigation queries must load: one per
-/// in-range span that fits the tree contract, then `merge_navigation_windows`
-/// folds overlapping/adjacent windows so the readiness queries scan each height
-/// at most once.
 fn navigation_coverage_windows(
     max_complete_height: i32,
     spans: &[NavigationSpan],
@@ -266,8 +211,6 @@ fn navigation_coverage_windows(
     merge_navigation_windows(windows)
 }
 
-/// Fold sorted height windows, merging any that overlap or are adjacent
-/// (gap <= 1), so the coverage/budget queries never rescan a shared height.
 fn merge_navigation_windows(mut windows: Vec<(i32, i32)>) -> Vec<(i32, i32)> {
     windows.sort_unstable();
     let mut merged = Vec::<(i32, i32)>::new();
@@ -285,9 +228,6 @@ fn merge_navigation_windows(mut windows: Vec<(i32, i32)>) -> Vec<(i32, i32)> {
     merged
 }
 
-/// True when a span cannot fit one tree window at all: its height count plus
-/// `required_nodes` exceeds `TREE_NODE_LIMIT`. The unconditional overflow check
-/// that yields the `target_window_too_large` navigation error.
 fn navigation_span_exceeds_tree_contract(
     span_min: i32,
     span_max: i32,
@@ -296,7 +236,6 @@ fn navigation_span_exceeds_tree_contract(
     height_count(span_min, span_max).saturating_add(required_nodes as u64) > TREE_NODE_LIMIT as u64
 }
 
-/// Inclusive count of heights in `[from, to]`; 0 when the range is inverted.
 fn height_count(from_height: i32, to_height: i32) -> u64 {
     if to_height < from_height {
         return 0;
@@ -305,22 +244,15 @@ fn height_count(from_height: i32, to_height: i32) -> u64 {
 }
 
 impl NavigationWindowBudget {
-    /// Does the window's visible-node count (canonical heights + the stale rows in
-    /// it) fit `TREE_NODE_LIMIT`? Stales are extra nodes the tree must render.
     fn window_fits_tree_contract(&self, from_height: i32, to_height: i32) -> bool {
         self.visible_node_budget(from_height, to_height) <= TREE_NODE_LIMIT as u64
     }
 
-    /// Visible tree nodes in a window: the inclusive height count plus the
-    /// off-spine rows inside it (stale and consensus-invalid error blocks, each
-    /// rendering as an extra node).
     fn visible_node_budget(&self, from_height: i32, to_height: i32) -> u64 {
         height_count(from_height, to_height)
             .saturating_add(self.off_spine_count(from_height, to_height) as u64)
     }
 
-    /// Number of off-spine rows with height in `[from, to]`, by binary search over
-    /// the sorted `off_spine_heights` (relies on the loader's ORDER BY).
     fn off_spine_count(&self, from_height: i32, to_height: i32) -> usize {
         if to_height < from_height {
             return 0;
@@ -335,9 +267,6 @@ impl NavigationWindowBudget {
     }
 }
 
-/// Build the `target_backbone_unsynced` navigation error (backbone not synced to
-/// the target). Its `code`/`message`/`action` strings are the locked wire
-/// contract.
 fn target_backbone_unsynced_error(target_height: i32) -> NavigationError {
     NavigationError {
         code: "target_backbone_unsynced",
@@ -347,16 +276,11 @@ fn target_backbone_unsynced_error(target_height: i32) -> NavigationError {
     }
 }
 
-/// Build the `target_window_too_large` navigation error (span exceeds one tree
-/// window). Its `code`/`message`/`action` strings are the locked wire contract.
 fn target_window_too_large_error(target_height: i32) -> NavigationError {
     NavigationError {
         code: "target_window_too_large",
         target_height,
         message: "Navigation target is too large to render as one tree window",
-        // Target-neutral: this path is shared by stale, stale-branch and
-        // error-block targets, and an error block is always a single height, so
-        // naming a "stale block target" would be wrong guidance for it.
         action: "open a narrower navigation target",
     }
 }
@@ -413,8 +337,6 @@ mod tests {
 
     #[test]
     fn navigation_budget_counts_off_spine_nodes_as_extra_visible_nodes() {
-        // Heights come from the loader, which selects stale AND error-block rows;
-        // both render beside the canonical spine and so cost a node each.
         let budget = NavigationWindowBudget {
             off_spine_heights: vec![90, 100, 100, 110],
         };

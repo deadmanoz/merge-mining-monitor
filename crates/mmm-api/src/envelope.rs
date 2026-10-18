@@ -1,13 +1,10 @@
-//! The success envelope: `schema_version`, `generated_at`, and an optional
-//! normalized `query` echo. See `docs/api-contract.md` (Common Envelope).
+//! Success envelope (`schema_version`, `generated_at`, optional `query` echo).
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use serde_json::Value;
 
-/// Epoch seconds for the `generated_at` field. Shared by the success and error
-/// envelopes so both use one clock source.
 pub(crate) fn now_epoch_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -15,11 +12,6 @@ pub(crate) fn now_epoch_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// The success envelope wrapping a typed endpoint payload `T`. `query` is the
-/// normalized query echo for endpoints that take query parameters;
-/// `/api/v1/block/:hash` omits it. Payload fields are flattened to the top
-/// level to match the fixtures (e.g. `tree.json` has `nodes` alongside
-/// `schema_version`).
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct SuccessEnvelope<T> {
     pub(crate) schema_version: &'static str,
@@ -31,10 +23,6 @@ pub(crate) struct SuccessEnvelope<T> {
 }
 
 impl<T> SuccessEnvelope<T> {
-    /// Build the envelope stamping `generated_at` from the wall clock now. The
-    /// default for endpoints whose payload does not itself depend on the
-    /// timestamp (use `with_generated_at` when the projection and the envelope
-    /// must share one clock value).
     pub(crate) fn new(payload: T, query: Option<Value>) -> Self {
         Self {
             schema_version: super::SCHEMA_VERSION,
@@ -44,11 +32,8 @@ impl<T> SuccessEnvelope<T> {
         }
     }
 
-    /// Build the envelope reusing a `generated_at` the caller already captured.
-    /// `/api/v1/sources` computes per-source freshness against the same epoch it
-    /// stamps here (`projection::sources(reference_now)`), so the envelope clock
-    /// must match the projection clock; a second `now_epoch_secs()` call could
-    /// diverge.
+    /// Reuses a caller-captured `generated_at` so projection freshness and
+    /// envelope metadata share one clock value.
     pub(crate) fn with_generated_at(payload: T, query: Option<Value>, generated_at: u64) -> Self {
         Self {
             schema_version: super::SCHEMA_VERSION,

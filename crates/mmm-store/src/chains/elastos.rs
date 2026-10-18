@@ -3,10 +3,6 @@
 use anyhow::{Context, Result};
 use tokio_postgres::GenericClient;
 
-/// One active (non-revoked) Elastos event that has at least one registry-matchable
-/// but still-unresolved child identity attribution. `attributions` is a JSON array
-/// of those rows, each pre-joined to the matching `pool_identity` so the caller can
-/// promote them with no second round trip (and, for Elastos, no RPC re-fetch).
 #[derive(Debug, Clone)]
 pub struct ElastosIdentityReresolveRow {
     pub event_id: i64,
@@ -14,15 +10,8 @@ pub struct ElastosIdentityReresolveRow {
     pub attributions: serde_json::Value,
 }
 
-/// Page through active Elastos events that carry registry-matchable yet unresolved
-/// child identity attributions in `namespaces`: rows whose `(namespace,
-/// matched_value)` already has a `pool_identity` but whose attribution still has a
-/// NULL `pool_id`. Keyset-paginated on `event_id` (pass the last row's id back as
-/// `cursor_event_id`, `None` to start), capped at `batch_size`. The INNER JOIN to
-/// `pool_identity` means only events with at least one matchable row are returned;
-/// each attribution carries the resolved `pool_id`/`pool_identity_id` plus the
-/// stored `match_kind`/`details` so the caller can re-emit it verbatim with the
-/// pool attached. Used by the no-RPC `reclassify-pools` Elastos re-resolution tail.
+/// Keyset-paginated active Elastos events (`e.id > cursor_event_id`) whose unresolved
+/// `child_block` identity attributions in `namespaces` now match a `pool_identity` row.
 pub async fn load_elastos_identity_reresolve_batch<C: GenericClient>(
     client: &C,
     source_id: i64,

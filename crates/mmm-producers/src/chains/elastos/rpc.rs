@@ -1,17 +1,8 @@
-//! Elastos (ELA) JSON-RPC client.
+//! Elastos (ELA) JSON-RPC client (`getcurrentheight`, `getblockbyheight`).
 //!
-//! Elastos.ELA is a Go reimplementation (not a Bitcoin Core fork) with a
-//! hand-rolled JSON-RPC 2.0 interface. `getcurrentheight` returns the tip;
-//! `getblockbyheight {"height": N}` returns block JSON carrying the child header
-//! fields plus a hex `auxpow` CAuxPow blob. The endpoint is configurable
-//! (`ELASTOS_RPC_URL`): the self-hosted node by default, the public
-//! `https://api.elastos.io/ela` as a drop-in fallback (same JSON-RPC format).
-//!
-//! The Elastos block hash covers an 84-byte header (the 80-byte Bitcoin prefix
-//! plus a trailing `height` field), so [`ElastosBlock::reconstruct`] hashes 84
-//! bytes and verifies the result against the RPC-reported `hash`. The 80-byte
-//! prefix is kept only for its `bits`/`time`; the real Elastos block hash (which
-//! cryptographically binds the height) is the verified one.
+//! The Elastos block hash covers an 84-byte header (80-byte Bitcoin prefix plus
+//! trailing little-endian `height`), verified against the RPC-reported `hash` in
+//! [`ElastosBlock::reconstruct`].
 
 use std::time::Duration;
 
@@ -30,43 +21,23 @@ use mmm_capture::auxpow::{MAX_ELASTOS_AUXPOW_BYTES, ParsedHeader};
 use mmm_rpc as rpc_http;
 use rpc_http::{RpcMetrics, build_rpc_client};
 
-/// Default endpoint (localhost). Override via `ELASTOS_RPC_URL` for the actual
-/// node: LAN-direct `http://<node-host>:20336` for a self-hosted deployment,
-/// or the public `https://api.elastos.io/ela` drop-in fallback.
 pub(crate) const DEFAULT_ELASTOS_RPC_URL: &str = "http://127.0.0.1:20336";
 
-/// Cap on the `auxpow` hex string accepted from the (possibly public, untrusted)
-/// endpoint, enforced BEFORE `hex::decode` so a hostile response cannot drive a
-/// huge allocation. The parser re-checks the decoded byte length as defense in
-/// depth.
+/// Pre-decode hex cap enforced before `hex::decode`.
 const MAX_ELASTOS_AUXPOW_HEX_LEN: usize = MAX_ELASTOS_AUXPOW_BYTES * 2;
-
-/// Bounded retries for a transient (HTTP 429 / 5xx / transport) failure against
-/// the public endpoint before a single request gives up.
 const MAX_TRANSIENT_RETRIES: usize = 4;
 
-/// Connection config for the Elastos endpoint. Built from `chains::config`
-/// (`ELASTOS_RPC_URL`/user/password/timeout); `user`/`password` are `None` for the
-/// public endpoint and only sent as basic auth when both are present.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ElastosRpcConfig {
     pub url: String,
     pub user: Option<String>,
     pub password: Option<String>,
-    /// Whole-request timeout for the HTTP transport. Defaults to
-    /// `ELASTOS_RPC_TIMEOUT_SECS` (15s).
     pub request_timeout: Duration,
 }
 
-/// A block returned by `getblockbyheight`. Only the fields the producer needs are
-/// deserialised; the endpoint returns many more fields which serde ignores.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ElastosBlock {
-    /// RPC-reported 84-byte Elastos block hash (hex). [`Self::reconstruct`]
-    /// recomputes it from the header and rejects a mismatch.
     pub hash: String,
-    /// Child height. Cross-checked against the requested height before any write:
-    /// a stale/misrouted response must not act on the wrong child.
     pub height: i32,
     pub version: i32,
     pub previousblockhash: String,
@@ -74,20 +45,13 @@ pub struct ElastosBlock {
     pub time: u32,
     pub bits: u32,
     pub nonce: u32,
-    /// Hex CAuxPow blob; absent for a non-PoW / non-AuxPoW block.
     pub auxpow: Option<String>,
-    /// Decoded transaction vector from Elastos RPC. The AuxPoW verifier does not
-    /// authenticate this JSON; reward attribution records it as RPC-observed
-    /// decoded identity.
+    /// Decoded transactions (unauthenticated by `CAuxPow`; used for RPC-observed identity).
     #[serde(default)]
     pub tx: Vec<ElastosTransaction>,
-    /// Optional top-level miner tag from the RPC response.
     pub minerinfo: Option<String>,
 }
 
-/// A decoded RPC transaction. The first tx is treated as the coinbase for
-/// reward-address and minerinfo identity extraction (not authenticated by the
-/// CAuxPow blob, so recorded as RPC-observed decoded identity only).
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ElastosTransaction {
     #[serde(default)]
@@ -95,16 +59,11 @@ pub struct ElastosTransaction {
     pub payload: Option<ElastosTransactionPayload>,
 }
 
-/// Elastos coinbase payload. `coinbasedata` is a candidate minerinfo source
-/// alongside the block-level `minerinfo` tag.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ElastosTransactionPayload {
     pub coinbasedata: Option<String>,
 }
 
-/// A transaction output. The RPC spreads payout addresses across several optional
-/// shapes (`address`, `addresses`, nested `scriptPubKey`); [`Self::decoded_addresses`]
-/// flattens them.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ElastosVout {
     pub n: Option<i32>,
@@ -116,9 +75,7 @@ pub struct ElastosVout {
 }
 
 impl ElastosVout {
-    /// Every payout address this output exposes, flattened across the four RPC
-    /// shapes (top-level `address`/`addresses` then nested `scriptPubKey`),
-    /// in source order. Not deduplicated; the identity layer dedupes downstream.
+    /// Flatten payout addresses across top-level `address`/`addresses` and nested `scriptPubKey`.
     pub fn decoded_addresses(&self) -> Vec<&str> {
         let mut addresses = Vec::new();
         if let Some(address) = self.address.as_deref() {
@@ -135,8 +92,6 @@ impl ElastosVout {
     }
 }
 
-/// Nested output script descriptor; another source of payout addresses folded in
-/// by [`ElastosVout::decoded_addresses`].
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ElastosScriptPubKey {
     pub address: Option<String>,
@@ -144,30 +99,19 @@ pub struct ElastosScriptPubKey {
     pub addresses: Vec<String>,
 }
 
-/// The reconstructed child block: the 80-byte Bitcoin-shaped prefix header (for
-/// its `bits`/`time`), the real Elastos 84-byte block hash (verified against the
-/// RPC `hash`), the RPC height, and the decoded CAuxPow blob (if present).
 #[derive(Debug, Clone)]
 pub struct ReconstructedBlock {
-    /// The 80-byte Bitcoin-shaped prefix, kept only for its `bits`/`time`; NOT the
-    /// thing the Elastos hash covers.
+    /// 80-byte Bitcoin-shaped prefix (kept for `bits`/`time`).
     pub prefix_header: ParsedHeader,
-    /// The verified 84-byte Elastos block hash (rust-bitcoin newtype, wire bytes),
-    /// the value the CAuxPow commitment is checked against.
+    /// Verified 84-byte Elastos block hash (`sha256d(prefix || height_le)`).
     pub block_hash: BlockHash,
     pub height: i32,
     pub time: u32,
-    /// Decoded CAuxPow blob, `None` for a non-AuxPoW block (the caller skips it).
     pub auxpow: Option<Vec<u8>>,
 }
 
 impl ElastosBlock {
-    /// Reconstruct the child header and compute + verify the Elastos block hash.
-    ///
-    /// The 80-byte Bitcoin prefix gives `bits`/`time`; the Elastos block hash is
-    /// `sha256d(prefix || height_le)` (84 bytes), so the height is cryptographically
-    /// bound. The computed hash MUST equal the RPC-reported `hash` (a cheap guard
-    /// against an inconsistent third-party response), else this rejects the block.
+    /// Reconstruct the child header and verify `sha256d(prefix || height_le)` against `self.hash`.
     pub fn reconstruct(&self) -> Result<ReconstructedBlock> {
         let prefix = Header {
             version: Version::from_consensus(self.version),
@@ -184,7 +128,6 @@ impl ElastosBlock {
             nonce: self.nonce,
         };
 
-        // Elastos block hash = sha256d(80-byte prefix || height u32 LE).
         let mut header84 = serialize(&prefix);
         debug_assert_eq!(header84.len(), Header::SIZE);
         header84.extend_from_slice(&self.height.to_le_bytes());
@@ -218,13 +161,8 @@ impl ElastosBlock {
     }
 }
 
-/// The RPC trait the Elastos capture state machine depends on, abstracted as a
-/// trait so the state machine can be driven by a mock in tests (mirrors
-/// [`crate::chains::hathor::rpc::HathorRpc`]).
 #[allow(async_fn_in_trait)]
 pub trait ElastosRpc {
-    /// Fetch one block by height (`getblockbyheight`). The endpoint is untrusted,
-    /// so the caller re-verifies (reconstruct, commitment, targets) before writing.
     async fn get_block_by_height(&self, height: i32) -> Result<ElastosBlock>;
 }
 
@@ -236,8 +174,6 @@ pub(crate) struct ElastosRpcClient {
 }
 
 impl ElastosRpcClient {
-    /// Build the client over the shared `mmm_rpc` HTTP transport (connection pool,
-    /// the config's whole-request timeout).
     pub(crate) fn new(config: ElastosRpcConfig) -> Result<Self> {
         let http = build_rpc_client(config.request_timeout)?;
         Ok(Self {
@@ -247,31 +183,19 @@ impl ElastosRpcClient {
         })
     }
 
-    /// Transport counters for this client, including retries this client's own
-    /// transient-failure backoff loop issues.
     pub(crate) fn metrics(&self) -> RpcMetrics {
         self.metrics.clone()
     }
 
-    /// Tip height via `getcurrentheight`.
     pub(crate) async fn get_current_height(&self) -> Result<i32> {
         self.call("getcurrentheight", json!([])).await
     }
 
-    /// One block via `getblockbyheight` (named `height` param, the Go-RPC format).
     pub(crate) async fn get_block_by_height(&self, height: i32) -> Result<ElastosBlock> {
         self.call("getblockbyheight", json!({ "height": height }))
             .await
     }
 
-    /// JSON-RPC 2.0 call with bounded retry/backoff on transient failures (429,
-    /// 5xx, transport), so a rate-limiting public endpoint does not fail a tick or
-    /// a backfill height on the first hiccup. A protocol-level RPC error or a 4xx
-    /// other than 429 is permanent and returned immediately.
-    ///
-    /// Every attempt is timed through its consumed body and recorded; the loop
-    /// alone knows whether a transient failure is followed by a retry or is
-    /// the exhausted last one, so it records retries and the failed call.
     async fn call<T: DeserializeOwned>(&self, method: &str, params: Value) -> Result<T> {
         let request = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
         let mut attempt = 0;
@@ -301,9 +225,6 @@ impl ElastosRpcClient {
         }
     }
 
-    /// A single HTTP attempt, classifying the failure as transient (worth a retry:
-    /// transport error, 429, 5xx) or permanent (decode failure, protocol-level RPC
-    /// error, missing result, any other 4xx) so [`Self::call`] can decide.
     async fn try_call<T: DeserializeOwned>(
         &self,
         method: &str,
@@ -340,14 +261,12 @@ impl ElastosRpc for ElastosRpcClient {
     }
 }
 
-/// An RPC error tagged with whether it is worth retrying.
 struct CallError {
     err: anyhow::Error,
     transient: bool,
 }
 
 impl CallError {
-    /// Tag a failure as retryable (the caller backs off and tries again).
     fn transient(err: anyhow::Error) -> Self {
         Self {
             err,
@@ -355,7 +274,6 @@ impl CallError {
         }
     }
 
-    /// Tag a failure as non-retryable (the caller returns it immediately).
     fn permanent(err: anyhow::Error) -> Self {
         Self {
             err,

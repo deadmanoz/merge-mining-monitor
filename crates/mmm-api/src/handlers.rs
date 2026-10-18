@@ -1,6 +1,4 @@
-//! Read-API handlers. Each route validates its own query params before checking
-//! out a DB connection, then wraps the typed projection in the shared success
-//! envelope.
+//! Read-API handlers.
 
 use axum::Json;
 use axum::extract::rejection::PathRejection;
@@ -22,17 +20,10 @@ use super::projection::{self, ProjectionError};
 use super::query::{NavigatorTarget, parse_navigator_query, parse_tree_query};
 use super::version;
 
-/// `/api/v1/tree` projects the merge-mining attribution tree (optional
-/// `source`/`window` query). Validates query params before DB checkout;
-/// payload pinned by fixtures/api/tree.json and tree-unheighted-anchor.json.
 pub(crate) async fn tree(State(state): State<AppState>, RawQuery(query): RawQuery) -> Response {
     respond("tree", tree_response(&state, query).await)
 }
 
-/// `/api/v1/navigator/{target}` is the unified navigator index for stale
-/// blocks, stale branches, consensus-invalid error blocks, BTC orphans, and orphan
-/// branches. It supports latest, cursor page, and anchor-hash locate modes
-/// through one parser.
 pub(crate) async fn navigator(
     State(state): State<AppState>,
     Path(target): Path<String>,
@@ -44,31 +35,26 @@ pub(crate) async fn navigator(
     )
 }
 
-/// `/api/v1/sources` has NO query validation per the contract.
+/// No query validation per the API contract.
 pub(crate) async fn sources(State(state): State<AppState>) -> Response {
     respond("sources", sources_response(&state).await)
 }
 
-/// `/api/v1/competitions` has NO query validation per the contract: it serves
-/// the whole competition set and the client filters locally.
+/// No query validation per the API contract; serves the full set for client filtering.
 pub(crate) async fn competitions(State(state): State<AppState>) -> Response {
     respond("competitions", competitions_response(&state).await)
 }
 
-/// `/api/v1/version` serves compile-time application version metadata and the
-/// full release-note projection. It never checks out a database connection.
+/// Compile-time version metadata and release notes; never touches Postgres.
 pub(crate) async fn version_metadata() -> Response {
     success_response(version::payload(), None)
 }
 
-/// `/health` is process liveness. It intentionally does not touch Postgres so
-/// supervisors can distinguish a running process from a ready read service.
+/// Process liveness probe; does not touch Postgres.
 pub(crate) async fn health() -> StatusCode {
     StatusCode::NO_CONTENT
 }
 
-/// `/ready` is the public readiness probe: the process is running and can
-/// complete a bounded checkout plus trivial Postgres query.
 pub(crate) async fn ready(State(state): State<AppState>) -> StatusCode {
     let Ok(Ok(client)) = timeout(Duration::from_secs(2), state.pool().get()).await else {
         return StatusCode::SERVICE_UNAVAILABLE;
@@ -79,11 +65,8 @@ pub(crate) async fn ready(State(state): State<AppState>) -> StatusCode {
     StatusCode::NO_CONTENT
 }
 
-/// `/api/v1/block/{hash}` owns the invalid_hash envelope even when axum's `Path`
-/// extractor would reject (a percent-escape that decodes to invalid UTF-8, e.g.
-/// `%ff`). A `PathRejection` maps to invalid_hash using the raw last path
-/// segment from `OriginalUri`; otherwise the segment is normalized before DB
-/// lookup.
+/// Maps `PathRejection` (e.g. non-UTF-8 percent-escapes like `%ff`) to
+/// `invalid_hash` using the raw last path segment from `OriginalUri`.
 pub(crate) async fn block(
     State(state): State<AppState>,
     OriginalUri(uri): OriginalUri,
@@ -151,7 +134,6 @@ async fn navigator_response(
     Ok(success_response(payload, Some(query.query)))
 }
 
-/// Threads one timestamp into both the payload and envelope.
 async fn sources_response(state: &AppState) -> Result<Response, ProjectionError> {
     let generated_at = now_epoch_secs();
     let client = db_client(state).await?;
@@ -164,8 +146,6 @@ async fn sources_response(state: &AppState) -> Result<Response, ProjectionError>
     .into_response())
 }
 
-/// Fallible body of the competitions handler. No query to validate, so it goes
-/// straight to a pooled client.
 async fn competitions_response(state: &AppState) -> Result<Response, ProjectionError> {
     let generated_at = now_epoch_secs();
     let client = db_client(state).await?;

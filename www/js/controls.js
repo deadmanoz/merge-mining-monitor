@@ -13,14 +13,7 @@ const UI_ICONS = {
   close: '<path d="M18 6 6 18" /><path d="m6 6 12 12" />',
 };
 
-// One descriptor per info dialog drives both the markup shell
-// (renderInfoDialogShell) and the open/wire behavior (openInfoDialog in this
-// module, wireInfoDialog in boot.js), so adding a dialog is a registry row, not
-// another wire/open/render trio. `resolve` maps the clicked key to its help
-// entity (the source dialog's two-step code -> source lives here); `entityTitle`
-// / `entityKicker` / `renderBody` derive the dynamic content. `controlsSelector`
-// is the delegation container; auxpow info buttons live in the re-rendered
-// drawer, so it delegates from `document` instead.
+// Info dialog descriptors driving shell markup and delegated openers.
 const INFO_DIALOGS = [
   {
     id: "kind-dialog",
@@ -68,8 +61,6 @@ const INFO_DIALOGS = [
     bodyClassName: "about-dialog-body kind-dialog-body",
     closeId: "delta-dialog-close",
     closeLabel: "Close header time delta dialog",
-    // The delta view builds its own markup, so the trigger cannot be bound by
-    // a static controlsSelector the way the rail dialogs are.
     delegateFromDocument: true,
     dataAttr: "data-delta-info",
     datasetKey: "deltaInfo",
@@ -109,9 +100,6 @@ const INFO_DIALOGS = [
     delegateFromDocument: true,
     dataAttr: "data-consensus-rule-info",
     datasetKey: "consensusRuleInfo",
-    // The drawer emits this trigger only for a mapped token, so the fallback is
-    // an unreachable-path guard: openInfoDialog dereferences the resolved entity
-    // and would throw on null.
     resolve: (key) => consensusRuleHelpFor(key) || { name: "Consensus rule", meta: "", body: [] },
     entityTitle: (help) => help.name,
     entityKicker: (help) => help.meta,
@@ -254,8 +242,6 @@ function renderInfoDialogs() {
 
 function renderSourceControlRows(entries) {
   return entries.map((source) => {
-    // Catalogued and surveyed sources have no evidence to filter on, so their
-    // checkbox is disabled and row greyed; the info button remains active.
     const groupKey = sourceGroupKey(source);
     const disabled = groupKey === "catalogued" || groupKey === "surveyed";
     const checked = state.query.sources.includes(source.code) ? "checked" : "";
@@ -375,8 +361,6 @@ function renderKindDialog(kind) {
   ].join("");
 }
 
-// The "About sources" explainer: source classes plus the reminder that native
-// chain status is separate from Monitor lifecycle and evidence coverage.
 function renderSourcesAboutDialog() {
   const classes = kvRows([
     ["Bitcoin Core parent chain", "The live Bitcoin Core node that classifies every recovered parent header. It is the classification authority, not a merge-mined producer."],
@@ -393,8 +377,6 @@ function renderSourcesAboutDialog() {
   ].join("");
 }
 
-// One opener for every INFO_DIALOGS descriptor: resolve the clicked key to its
-// help entity, fill the title/kicker/body from the descriptor, and show it.
 function openInfoDialog(descriptor, key) {
   const dialog = $(`#${descriptor.id}`);
   if (!dialog) return;
@@ -414,18 +396,11 @@ function renderAuxpowDialog(topic) {
 }
 
 function resetTreeToTip() {
-  // Tip clears BOTH tree-view modes AND the selection, so the drawer, the node
-  // highlight, and the URL selected/anchor params stop pointing at the previously
-  // selected block. (The old reset only cleared the tree window.) Bump the nav
-  // epoch so any in-flight jump that resumes after this discards its result.
   state.navEpoch += 1;
   state.nav = { target: "tip", source: "navigator" };
   clearTreeViewModes();
   state.selectedHash = null;
   state.selectedBlock = null;
-  // Every height/time anchor a readout can be rebuilt from, or a stale one
-  // survives Live tip and can reactivate the previous readout and edge controls
-  // when a later navigator request fails.
   state.stale.anchor = null;
   state.errorBlock.anchor = null;
   state.orphan.anchor = null;
@@ -435,12 +410,6 @@ function resetTreeToTip() {
   syncUrl();
   renderDrawer();
   markTreeSelection();
-  // Collapse the drawer WITHOUT its layout rAF: rerenderTreeAfterLayout would
-  // re-render the still-stale state.tree against the just-cleared (null) transform
-  // BEFORE loadTree resolves, re-anchoring on old geometry and writing a non-null
-  // transform back, so the tip render below would preserve that stale camera (the
-  // "Live tip did not move, refresh fixes it" bug). loadTree()'s own render already
-  // lays the tree out at the collapsed width and anchors on the live tip.
   setRailCollapsed(RAILS.drawer, true, { rerender: false });
   refreshNavControls();
   clearStoredTreeTransform();
@@ -448,11 +417,7 @@ function resetTreeToTip() {
 }
 
 function renderTreePanel() {
-  // A display:none panel measures 0, so painting here would lay the tree out at
-  // the 780x420 fallback and store a camera against geometry that does not
-  // exist. Every caller can arrive while another view owns the workspace: the
-  // shared rails' layout callback, and any tree load still in flight when the
-  // user switched away. Record the debt; the tree view settles it on return.
+  // Defer painting when the tree panel is hidden so we don't measure 0 width.
   if (!$("#tree-svg")?.clientWidth) {
     state.treeRepaintPending = true;
     return;
@@ -484,9 +449,6 @@ function renderTreePanel() {
   updateHeightPlaceholders(state.tree?.window);
 }
 
-// Show the current visible height as a placeholder hint on the exact-height
-// input. The value stays empty so the backend tip remains the default until the
-// user explicitly types a height.
 function updateHeightPlaceholders(window) {
   const form = $("#filters");
   if (!form) return;
@@ -495,16 +457,10 @@ function updateHeightPlaceholders(window) {
   if (form.treeHeight) form.treeHeight.placeholder = max || min;
 }
 
-// Clicking empty canvas deselects: drop the selected block, clear the tree
-// highlight/overlay, and collapse the detail drawer so the merge-mining card
-// does not linger on stale data.
 function clearSelection({
   clearOrphanAnchor = false,
   resetSelectionNavigator = false,
 } = {}) {
-  // A background deselect is a navigation gesture: bump the epoch so an in-flight
-  // jump awaiting loadTree does not resume and reselect/recenter the old target
-  // after the user has clicked away.
   state.navEpoch += 1;
   state.selectedHash = null;
   state.selectedBlock = null;
@@ -521,16 +477,9 @@ function clearSelection({
 }
 
 function clearTreeSelection() {
-  // Nothing selected means the orphan target has no stepper anchor. The tree
-  // view anchor remains intact, so only "Go to -> Tip" leaves the strip.
   clearSelection({ clearOrphanAnchor: true });
 }
 
-// Update the highlighted node and its chain overlay in place without re-laying
-// out or re-fitting the tree. markTreeSelection itself only restyles the node,
-// draws its per-chain breakdown, and refreshes the detail pane; it never moves the
-// camera. Camera centering on a click is a separate, explicit step in the click
-// dispatch (selectTreeNode -> loadBlockThenCenter), not a side effect of selection.
 function markTreeSelection() {
   const svgEl = $("#tree-svg");
   if (!svgEl) return;
@@ -542,14 +491,9 @@ function markTreeSelection() {
   if (elState && !overlay.empty()) {
     drawSelectionOverlay(overlay, state.selectedHash, elState.byHash);
   }
-  // Re-apply so the newly selected block is never left dimmed.
   applyTreeHighlight(svgEl, state.query.sources, state.query.kinds, state.query.classification, state.selectedHash);
 }
 
-// Source and Classification kinds are both client-side highlights, not server filters: a
-// block stays prominent only when it matches every active highlight, and any
-// non-matching block (plus edges between two non-matching blocks) fades back.
-// Neither refetches the tree nor changes per-block counts.
 function nodeMatchesSources(node, sources) {
   const nodeSources = node?.source_summary?.sources || [];
   return matchesSourceFilter(nodeSources, sources)
@@ -585,8 +529,6 @@ function applyTreeHighlight(svgEl, sources, kinds, classifications, selectedHash
   const root = d3.select(svgEl);
   root.selectAll("g.tree-node")
     .classed("tree-node--dim", (node) => active && node.hash !== selectedHash && !nodeMatchesHighlight(node, sources, kinds, classifications));
-  // Both the edge path and any hidden-span count pill bound to that edge share
-  // one dim test, keyed on whether either endpoint matches the highlight.
   const edgeDimmed = (edge) => {
     if (!active || !byHash) return false;
     const from = byHash.get(edge.from_hash);
@@ -597,18 +539,11 @@ function applyTreeHighlight(svgEl, sources, kinds, classifications, selectedHash
   root.selectAll("g.tree-edge-label").classed("tree-edge--dim", edgeDimmed);
 }
 
-// Drop the stored pan/zoom transform so the next render re-anchors on the tip.
-// Used by explicit recenter actions ("Live tip", "Refresh"); plain filter
-// changes intentionally keep the transform so the view does not snap.
 function clearStoredTreeTransform() {
   const svgEl = $("#tree-svg");
   if (svgEl?.__mmmTree) svgEl.__mmmTree.transform = null;
 }
 
-// The filter rail and the detail drawer are both collapsible, resizable side
-// rails driven by the same machinery. `edge` is the side the drag handle sits
-// on (drawer widens by dragging its left edge leftward; filters widen by
-// dragging their right edge rightward). `attr` is the workspace dataset flag.
 const RAILS = {
   drawer: {
     widthKey: "mmm-drawer-width",
@@ -634,8 +569,6 @@ const RAILS = {
   },
 };
 
-// Collapse/expand a rail. Re-renders the tree afterward so it reclaims (or
-// yields) the freed width at 1:1 without re-anchoring the view.
 function setRailCollapsed(cfg, collapsed, { persist = true, rerender = true } = {}) {
   const workspace = $(".workspace");
   if (!workspace) return;
@@ -660,9 +593,6 @@ function applyStoredRailWidth(cfg) {
   }
 }
 
-// Re-render the tree from cached data (no refetch) after the grid reflows, so
-// the SVG picks up its new width. The stored pan/zoom transform is reused, and
-// block positions are pitch-based, so the view stays put.
 function rerenderTreeAfterLayout() {
   window.requestAnimationFrame(() => renderTreePanel());
 }

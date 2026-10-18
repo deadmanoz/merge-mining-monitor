@@ -1,13 +1,8 @@
 //! Bitcoin Core live-tip window repair and verification.
 //!
-//! The bounded recent-Core window the tree's default live-tip projection reads.
-//! The historical contiguous cursor can lag hours behind during catch-up, and
-//! AuxPoW classifier traffic can leave sparse near-tip canonical rows, so this
-//! module fills any holes in `[tip - window + 1, tip]` through the normal
-//! backbone writer, then verifies the result is a single unbroken complete chain
-//! ending exactly at the captured Core tip. Any verification breach is an
-//! integrity error (`BackboneIntegrityError::LiveWindowInvariant`) that
-//! fail-stops the live producer rather than serving a stale sparse island.
+//! Fills holes in `[tip - window + 1, tip]` and verifies a single unbroken,
+//! coinbase-complete canonical chain ending at the captured Core tip; any
+//! breach raises `BackboneIntegrityError::LiveWindowInvariant`.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -26,9 +21,6 @@ use super::{
     load_or_init_sync_state, run_sync_bitcoin_core, update_sync_error,
 };
 
-/// A canonical `block` row inside the live window, carrying its height alongside
-/// the hash/prev-hash/coinbase columns the verification walk compares. Hashes
-/// are BYTEA wire-order bytes, compared without reversal.
 #[derive(Debug, Clone)]
 struct CanonicalWindowRow {
     height: i32,
@@ -37,33 +29,21 @@ struct CanonicalWindowRow {
     coinbase_status: String,
 }
 
-/// Carried context for the per-row verification helpers: the source, the window
-/// bounds, and the captured Core tip the window must end on. Copy so each helper
-/// can build a self-describing error without re-threading individual fields.
 #[derive(Debug, Clone, Copy)]
 struct LiveWindowContext {
     source_id: i64,
-    /// Inclusive low end of the window, `live_backbone_window_start_height`.
     start_height: i32,
-    /// Captured Core tip; `target.height` is the inclusive high end.
     target: BitcoinCoreBackboneTip,
 }
 
-/// Inclusive low end of the live window for a given tip and window size,
-/// `tip - (window - 1)`, clamped at 0 so the genesis-anchored start never goes
-/// negative for shallow chains. Saturating arithmetic avoids overflow.
 pub(super) fn live_backbone_window_start_height(tip_height: i32, window_heights: i32) -> i32 {
     tip_height
         .saturating_sub(window_heights.saturating_sub(1))
         .max(0)
 }
 
-/// Fill any holes in `[start, target.height]` against an already-captured tip by
-/// running a bounded `missing_only` backbone batch over exactly that range
-/// (`tip: false`, so it never re-pins the target). The target hash is confirmed
-/// against Core both before and after the fill: a mismatch means the chain moved
-/// under the sweep and is reported as a live-window invariant failure. Returns
-/// the fill stats so the caller can decide whether to verify or retry.
+/// Fill any holes in `[start, target.height]` via a bounded `missing_only`
+/// batch, verifying `target.hash` against Core before and after.
 pub(crate) async fn repair_near_tip_gaps_to_target<S>(
     client: &mut Client,
     source: &S,
@@ -97,12 +77,8 @@ where
     Ok(stats)
 }
 
-/// Assert the live window is a single, gapless, all-complete canonical chain
-/// that links back-to-front and ends exactly on the captured Core tip. Loads the
-/// window rows once, buckets them by height, then walks `start..=target.height`
-/// checking cardinality, coinbase completeness, prev-link continuity, and the
-/// final tip-hash match. The first breach records the error and returns a
-/// `LiveWindowInvariant` integrity error; a clean window returns `Ok(())`.
+/// Assert the live window is a gapless, coinbase-complete canonical chain
+/// ending on `target`.
 pub(crate) async fn verify_live_backbone_window<S>(
     client: &Client,
     source: &S,
@@ -134,10 +110,6 @@ where
     .await
 }
 
-/// Walk the bucketed window rows in height order, applying each invariant in
-/// turn: exactly one row per height, complete coinbase, prev-link to the row
-/// below, and finally that the topmost row's hash equals the captured tip. The
-/// first failing check short-circuits with a recorded integrity error.
 async fn verify_live_backbone_window_rows(
     client: &Client,
     ctx: LiveWindowContext,
@@ -157,10 +129,6 @@ async fn verify_live_backbone_window_rows(
     verify_live_window_tip_hash(client, ctx, tip_hash).await
 }
 
-/// Remove and return the single canonical row at `height`, enforcing exactly-one
-/// cardinality: zero rows is a `missing_height` breach, more than one is a
-/// `duplicate_height` breach. Both record the error and return a
-/// `LiveWindowInvariant`; the caller never sees an empty or ambiguous height.
 async fn take_single_live_window_row(
     client: &Client,
     ctx: LiveWindowContext,
@@ -212,9 +180,6 @@ async fn take_single_live_window_row(
     Ok(rows.into_iter().next().expect("row cardinality checked"))
 }
 
-/// Require the row's coinbase to be fully captured (`complete`); any other
-/// status is an `incomplete_coinbase` breach. The live-tip projection assumes
-/// every window height carries coinbase evidence, so a partial row cannot serve.
 async fn verify_live_window_coinbase(
     client: &Client,
     ctx: LiveWindowContext,
@@ -244,10 +209,6 @@ async fn verify_live_window_coinbase(
     .await
 }
 
-/// Require this row's prev-header-hash to equal the hash of the row one height
-/// below, proving an unbroken chain. The first row in the window has no
-/// predecessor to check (`previous_hash` is `None`) and passes. A mismatch is a
-/// `prev_link_mismatch` breach. Bytes are compared in wire order, no reversal.
 async fn verify_live_window_prev_link(
     client: &Client,
     ctx: LiveWindowContext,
@@ -284,10 +245,6 @@ async fn verify_live_window_prev_link(
     .await
 }
 
-/// Require the top-of-window row's hash to equal the captured Core tip hash, so
-/// the verified chain ends exactly where Core's tip is. A missing or differing
-/// top hash is a `tip_hash_mismatch` breach. `target.hash` is converted to
-/// wire-order bytes for the comparison.
 async fn verify_live_window_tip_hash(
     client: &Client,
     ctx: LiveWindowContext,
@@ -322,9 +279,6 @@ async fn verify_live_window_tip_hash(
     .await
 }
 
-/// Range-load every canonical `block` row in `[from_height, to_height]`, ordered
-/// by height then hash. One query for the whole window (vs the per-height point
-/// lookups the sync hot path uses) keeps verification a single round trip.
 async fn load_canonical_window_rows(
     client: &Client,
     from_height: i32,
@@ -356,10 +310,6 @@ async fn load_canonical_window_rows(
         .collect())
 }
 
-/// Re-fetch the Core hash at `target.height` and confirm it still matches the
-/// captured target. Bracketing the fill with this check (before and after)
-/// detects the active chain reorging mid-sweep; a divergence is a
-/// `target_hash_mismatch` breach rather than a silently stale repair.
 async fn verify_live_backbone_target_hash<S>(
     client: &Client,
     source: &S,
@@ -396,10 +346,6 @@ where
     .await
 }
 
-/// Single exit point for every live-window breach: record the error under the
-/// shared `LIVE_WINDOW_INVARIANT_ERROR_CODE` with the breach-specific message and
-/// details JSON, then return a `LiveWindowInvariant` integrity error. Generic in
-/// `T` so callers can `return` it directly from a function of any result type.
 async fn live_window_invariant_failure<T>(
     client: &Client,
     source_id: i64,

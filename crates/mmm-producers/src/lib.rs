@@ -1,8 +1,7 @@
-//! Every ingest/maintenance engine a CLI subcommand dispatches: the chain
-//! registry and its producers, the live loop, the Bitcoin Core backbone,
-//! and the repair/reattribution commands. The only crate that combines chain
-//! RPC with database writes - and it owns NO base-table or derived-table SQL
-//! of its own (store and read-model helpers are called with data).
+//! Ingest and maintenance engines dispatched by CLI subcommands: live AuxPoW
+//! pollers and bounded backfills, Bitcoin Core backbone sync, historical
+//! publication and known-stale imports, and pool reattribution. Combines chain
+//! RPC with database writes exclusively through `mmm-store` and `mmm-read-model`.
 
 mod bitcoin_core_backbone;
 mod bitcoin_epoch_cache;

@@ -91,17 +91,9 @@ impl LockedCanonicalRow {
     }
 }
 
-/// Replace a bounded canonical suffix and enqueue its post-commit cascades.
-///
-/// Every replacement has a complete Core coinbase before this function starts.
-/// After taking the shared cache lock and exclusive canonical-view barrier, the
-/// transaction re-checks the producer's canonical view and sync cursor, locks every
-/// old/new/predecessor/competitor hash in global order,
-/// promotes the new suffix, demotes displaced rows to Core-attested stale rows,
-/// rebinds stale rows whose canonical competitor was displaced, reconciles any
-/// active events, advances the cursor only when the common ancestor connects to
-/// the proven prefix, and durably enqueues every replacement and displaced
-/// hash. Drain with [`drain_core_reconcile_queue`] after commit.
+/// Replace a bounded canonical suffix under the shared cache lock and exclusive
+/// canonical-view barrier, demote displaced rows to stale, rebind stale competitors,
+/// and durably enqueue affected hashes into `bitcoin_core_reconcile_queue`.
 pub async fn replace_core_canonical_suffix(
     client: &mut Client,
     source_id: i64,
@@ -131,10 +123,8 @@ pub struct CoreSuffixReplacementInput<'a> {
     pub pending_sync_target: Option<(i32, BlockHash)>,
 }
 
-/// Validated form of [`replace_core_canonical_suffix`]. The caller's source
-/// check runs after the exclusive view barrier is acquired and again after the
-/// mutation is staged, immediately before commit. Either failure rolls the
-/// whole suffix replacement back.
+/// Validated form of [`replace_core_canonical_suffix`] running `validators` after taking the
+/// exclusive view barrier and again immediately before commit.
 pub async fn replace_core_canonical_suffix_validated<VBefore, VAfter>(
     client: &mut Client,
     source_id: i64,
@@ -180,18 +170,12 @@ where
         lock_hashes.push(replacement.header.prev_blockhash.to_byte_array().to_vec());
     }
 
-    // READ COMMITTED is deliberate. The exclusive advisory request may block
-    // behind an in-flight capture; PostgreSQL then gives the following
-    // statements fresh post-wait snapshots, so the topology/event rereads see
-    // that capture's commit. A SERIALIZABLE snapshot established by the
-    // blocking lock statement could be stale after the wait.
+    // READ COMMITTED is deliberate: blocking on the exclusive advisory lock lets subsequent
+    // statements observe fresh post-wait snapshots rather than a stale pre-wait snapshot.
     let txn = client
         .transaction()
         .await
         .context("begin Bitcoin Core canonical suffix replacement")?;
-    // Cache refresh drains committed suffix work while holding its exclusive
-    // lock. Taking the shared counterpart first makes a suffix either commit
-    // before that drain check or wait until the refresh has completed.
     mmm_store::lock_bitcoin_core_header_cache_shared_in_transaction(&txn).await?;
     lock_core_canonical_view_exclusive(&txn).await?;
     validate_before(&txn).await?;
@@ -206,9 +190,6 @@ where
     let bracket = MultiParentSourceHealthBracket::open(&txn, &plan.affected_hashes).await?;
     apply_suffix_mutation(&txn, replacements, &plan).await?;
 
-    // The replacement itself changed these rows, so each is expanded whatever
-    // the primary reconcile later finds; the cascade continues past their
-    // dependents only where reconciling one changes something.
     enqueue_core_reconcile_hashes(
         &txn,
         source_id,
@@ -317,10 +298,6 @@ async fn rebind_stale_competitors<C: GenericClient>(
     displaced: &LockedCanonicalRow,
     replacement_hash: &[u8],
 ) -> Result<()> {
-    // The caller holds the exclusive canonical-view barrier, which serializes
-    // every production kind/competitor writer. One set-based update per
-    // displaced height keeps arbitrary stale fanout out of the Rust lock set;
-    // the replacement seed discovers these rows during durable expansion.
     client
         .execute(
             "UPDATE block SET canonical_competitor_hash = $2, \
@@ -543,11 +520,7 @@ async fn reconcile_replacement_parent<C: GenericClient>(
     Ok(())
 }
 
-/// Durably enqueue parents as strict-reconcile primaries of the Core suffix
-/// cascade, so a job whose cursor advances past them can leave their
-/// reconciliation and dependent expansion to the queue drain rather than to
-/// process memory. Nothing has changed these rows yet, so the cascade stops
-/// at a primary whose reconcile changes nothing.
+/// Durably enqueue `hashes` as strict-reconcile primaries in `bitcoin_core_reconcile_queue`.
 pub(crate) async fn enqueue_core_reconcile_primaries<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -563,11 +536,8 @@ pub(crate) async fn enqueue_core_reconcile_primaries<C: GenericClient>(
     .await
 }
 
-/// Settle a primary in the transaction that commits its reconcile: it becomes
-/// an expansion row when the reconcile changed it or its enqueuer already
-/// had (`expand_unchanged`), and is deleted otherwise, so the cascade stops
-/// at an unchanged parent and no crash window separates the reconcile from
-/// its bookkeeping. A row already moved to a newer generation is left alone.
+/// Settle a primary inside its reconcile transaction: convert to an expansion row when
+/// `changed` or `expand_unchanged`, or retire it otherwise.
 pub(crate) async fn settle_core_reconcile_primary<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -604,12 +574,7 @@ pub(crate) async fn settle_core_reconcile_primary<C: GenericClient>(
     Ok(())
 }
 
-/// Durably enqueue hashes whose dependents must be re-examined although the
-/// hashes themselves need no primary reconcile (canonical siblings a strict
-/// reconcile synthesized or corrected): expansion-only rows, unless the hash
-/// is already queued as a primary, which then expands after its own reconcile
-/// whatever that finds. A row already queued moves to a newer generation so
-/// work in flight on it is superseded rather than consumed.
+/// Durably enqueue sibling hashes whose dependents must be expanded.
 pub(crate) async fn enqueue_core_reconcile_expansions<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -631,10 +596,6 @@ pub(crate) async fn enqueue_core_reconcile_expansions<C: GenericClient>(
     Ok(())
 }
 
-/// Enqueue primaries; `expand_unchanged` says their dependents are expanded
-/// even when the primary reconcile changes nothing. A hash already queued
-/// keeps the stronger of the two, and one already waiting for expansion keeps
-/// that expansion whatever its new primary finds.
 async fn enqueue_core_reconcile_hashes<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -661,21 +622,7 @@ async fn enqueue_core_reconcile_hashes<C: GenericClient>(
     Ok(())
 }
 
-/// Drain durable dependent-cascade seeds for one Bitcoin source.
-///
-/// Each row alternates through a durable two-phase worklist. A
-/// `primary_pending` row strictly reclassifies and reconciles that parent and,
-/// in that same transaction, becomes an expansion row when the reconcile
-/// changed it or its enqueuer already had (`expand_unchanged`, a property of
-/// that row alone), or is retired so the cascade stops at an unchanged
-/// parent; expansion enqueues every dependent parent and deletes its seed in
-/// one transaction. No crash window
-/// separates a reconcile from its bookkeeping, so neither a crash nor a
-/// cascade-budget exit can lose an in-memory frontier. Generation predicates
-/// prevent older work from consuming a newer change to the same hash. The
-/// pending source error clears only when the queue is empty while holding the
-/// source's sync-state row lock. Strict configured classification makes a
-/// transient Core failure retain the durable primary for a later drain.
+/// Drain durable two-phase (`primary_pending` -> expansion) cascade work for `source_id`.
 pub async fn drain_core_reconcile_queue(
     client: &mut Client,
     source_id: i64,
@@ -696,22 +643,11 @@ pub async fn drain_core_reconcile_queue_with_budget_for_test(
     drain_core_reconcile_queue_with_budget(client, source_id, classifier, cascade_budget).await
 }
 
-/// Primaries reconciled per exclusive cache-lock hold by the bounded
-/// recovery drain. Each primary is a strict Core-classified reconcile, and
-/// from the production host every Core round trip costs about 340 ms, so
-/// this keeps one hold to the order of a minute even when a reorg queued
-/// thousands of parents.
+/// Primaries reconciled per exclusive cache-lock hold (~25 * 340 ms production RTT).
 pub const CORE_RECOVERY_BATCH: usize = 25;
 
-/// Drain up to `max_primaries` primaries (and every expansion row met on the
-/// way) of the committed Core suffix cascade for `source_id`, and report
-/// whether the queue is empty afterwards.
-///
-/// This is the per-lock-hold unit of the recovery the cache refresh and the
-/// scheduled recheck perform: the caller holds the exclusive cache lock, drains
-/// one batch, and either proceeds (queue empty, same hold) or releases the
-/// lock and calls again, so pollers waiting on the shared lock interleave
-/// between batches while cache-dependent work still waits for an empty queue.
+/// Drain up to `max_primaries` primaries (plus encountered expansions) for `source_id`
+/// and return `true` when the queue is empty.
 pub async fn drain_core_reconcile_queue_batch(
     client: &mut Client,
     source_id: i64,
@@ -747,9 +683,6 @@ async fn drain_core_reconcile_queue_with_budget(
     Ok(())
 }
 
-/// Drain until the queue is empty (`true`) or `max_primaries` primaries have
-/// been reconciled with work still queued (`false`), reporting each primary
-/// to `progress` when given.
 async fn drain_core_reconcile_queue_up_to(
     client: &mut Client,
     source_id: i64,

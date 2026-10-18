@@ -125,8 +125,6 @@ async fn seed_replaceable_core_suffix(
 #[tokio::test]
 async fn core_header_cache_retains_epochs_replaces_horizon_and_rejects_conflicts() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // An identical observation is harmless, while a conflicting row below
-        // must fail closed.
         crate::support::db::clear_bitcoin_history(&client).await?;
         record_bitcoin_core_header(&client, &header(0, 0, 1, 0x1d00_ffff)).await?;
         record_bitcoin_core_header(&client, &header(0, 0, 1, 0x1d00_ffff)).await?;
@@ -199,7 +197,6 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
             first.pending_orphans,
             "initial Core-cache population revisits classifications made before the cache existed"
         );
-        // A pass bound to the pending generation, left in flight.
         let populated = load_scheduled_recheck(&client).await?;
         let pass = bind_recheck_pass(&client, populated.pending_scope).await?;
 
@@ -252,9 +249,6 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
             boundary_overlaps_existing_coverage.pending_orphans,
             "a new retarget boundary inside prior timestamp coverage can change existing verdicts"
         );
-        // Such a replacement also moves the cache generation, so child-chain
-        // heads recorded before it stop being final; the plain horizon
-        // advances above left it alone.
         assert_eq!(
             generation_before, 0,
             "populating an empty cache and plain horizon advances change no given verdict"
@@ -264,9 +258,6 @@ async fn cache_refresh_keeps_timestamp_coverage_and_retries_an_unacknowledged_sw
     })
 }
 
-/// A refresh whose horizon is height 101 with a timestamp older than the
-/// coverage already recorded: an ordinary advance the first time, unchanged
-/// after.
 async fn advance_to_101(client: &mut Client) -> Result<BitcoinCoreHeaderCacheUpdate> {
     replace_bitcoin_core_header_cache(
         client,
@@ -279,7 +270,6 @@ async fn advance_to_101(client: &mut Client) -> Result<BitcoinCoreHeaderCacheUpd
     .await
 }
 
-/// The cache generation child-chain heads are pinned to.
 async fn core_cache_generation(client: &Client) -> Result<i64> {
     Ok(client
         .query_one(
@@ -400,9 +390,6 @@ async fn refresh_drains_pending_core_reconcile_before_reading_core_snapshot() ->
     })
 }
 
-/// The Namecoin fixture's unknown parent captured as an event, with the Core
-/// cache seeded through its height: the starting point for the tests that
-/// drive a cache change past an existing classification.
 struct SeededParent {
     source_id: i64,
     event_id: i64,
@@ -435,9 +422,6 @@ async fn seed_unknown_parent(client: &Client) -> Result<SeededParent> {
     })
 }
 
-/// A fake Core view 100 blocks past the seeded parent whose prior horizon
-/// header differs from the cached one: a shallow reorg at the parent's
-/// height, the way the shallow-reorg tests exercise it.
 fn reorged_core_view(seeded: &SeededParent) -> FakeParentClassifier {
     let parent_header = seeded.parent_header;
     let core_tip = seeded.parent_height + 100;
@@ -476,8 +460,6 @@ async fn refresh_releases_the_lock_between_recovery_batches_and_replaces_on_an_e
         let classifier = ConfiguredParentClassifier::Fake(fake.clone());
         let order = Arc::new(std::sync::Mutex::new(Vec::<&'static str>::new()));
 
-        // The refresh takes the lock and stops at the gate inside its first
-        // recovery batch, whose first primary is the fixture's parent.
         let refresh_client = connect_to_schema(&schema).await?;
         let refresh_order = Arc::clone(&order);
         let refresh = tokio::spawn(async move {
@@ -490,10 +472,6 @@ async fn refresh_releases_the_lock_between_recovery_batches_and_replaces_on_an_e
             .await
             .expect("the first recovery batch did not reach the gated classification");
 
-        // A suffix replacement contends for the shared lock while the refresh
-        // holds it through its first batch. Once the refresh releases the lock
-        // with work still queued, the replacement commits one more cascade
-        // primary, as a real replacement enqueues its dependents.
         let suffix_client = connect_to_schema(&schema).await?;
         let suffix_order = Arc::clone(&order);
         let mut suffix = tokio::spawn(async move {
@@ -525,8 +503,6 @@ async fn refresh_releases_the_lock_between_recovery_batches_and_replaces_on_an_e
             .expect("the refresh must finish once the queue drains")??;
         assert_eq!(table.horizon_height(), seeded.parent_height + 100);
 
-        // The late primary was committed before the refresh finished, and the
-        // refresh drained it before replacing the cache: the queue is empty.
         assert_eq!(
             order.lock().unwrap().as_slice(),
             ["late primary committed", "refresh finished"]
@@ -543,9 +519,6 @@ async fn refresh_releases_the_lock_between_recovery_batches_and_replaces_on_an_e
     })
 }
 
-/// A committed cascade of one more primary than a recovery batch holds, so a
-/// refresh must release the lock once before the queue can be empty. Explicit
-/// enqueue times put `first_hash` first, the way the drain orders its work.
 async fn seed_recovery_queue(client: &Client, bitcoin: i64, first_hash: &[u8]) -> Result<()> {
     client
         .execute(
@@ -586,9 +559,6 @@ async fn refresh_with_a_pending_generation_completes_without_scanning() -> Resul
         let seeded = seed_unknown_parent(&client).await?;
         let generation = schedule_core_recheck(&client, &RecheckScope::everything(), true).await?;
 
-        // A producer's startup refresh with a full recheck pending: the fake
-        // classifies nothing, because the refresh leaves the candidates to
-        // the job, and the generation is still pending afterwards.
         let fake = reorged_core_view(&seeded);
         let classifier = ConfiguredParentClassifier::Fake(fake.clone());
         refresh_bitcoin_core_header_cache(&mut client, &classifier).await?;
@@ -896,8 +866,6 @@ async fn revocation_waits_for_cache_before_taking_a_parent_lock() -> Result<()> 
         let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
             orphan_candidate_verdict(&parent_header),
         ));
-        // This test uses the low-level fixture writer, so materialize the
-        // parent before exercising its real revocation path.
         reconcile_from_merge_mining_event(&mut client, event_id, &classifier, None).await?;
 
         let refresh = connect_to_schema(&schema).await?;
@@ -1059,9 +1027,6 @@ async fn refresh_detects_an_advancing_tip_reorg_at_the_prior_horizon() -> Result
             100
         );
 
-        // A new tip can conceal a reorg at the old horizon because that height
-        // is no longer part of the next sparse replacement. The refresh must
-        // verify it directly before preserving the prior timestamp high-water.
         let reorged = ConfiguredParentClassifier::Fake(
             FakeParentClassifier::new(ParentClassification::unknown(
                 &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
@@ -1135,8 +1100,6 @@ async fn shallow_cache_reorg_schedules_a_recheck_the_job_applies() -> Result<()>
                 &[&epoch],
             )
             .await?;
-        // The fixture writer intentionally bypasses incremental maintenance;
-        // establish its derived baseline before testing a cache-driven update.
         rebuild_source_health(&mut client).await?;
         let absent = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
             orphan_candidate_verdict(&parent_header),
@@ -1176,8 +1139,6 @@ async fn shallow_cache_reorg_schedules_a_recheck_the_job_applies() -> Result<()>
         );
         refresh_bitcoin_core_header_cache(&mut client, &reorged).await?;
 
-        // The refresh only schedules: the verdict is untouched and a recheck
-        // covering already classified orphans is pending.
         let after_refresh: Option<String> = client
             .query_one(
                 "SELECT btc_orphan_class FROM block WHERE btc_header_hash = $1",
@@ -1190,7 +1151,6 @@ async fn shallow_cache_reorg_schedules_a_recheck_the_job_applies() -> Result<()>
         assert!(scheduled.is_pending());
         assert!(scheduled.pending_scope.orphans);
 
-        // The job applies the new verdict and maintains source health.
         let report = run_scheduled_recheck(&mut client, &reorged, 100).await?;
         assert_eq!(report.changed, 1);
         assert_eq!(report.acknowledged, Some(scheduled.pending_generation));
@@ -1238,17 +1198,11 @@ async fn a_strict_classification_error_keeps_the_pass_and_the_verdict() -> Resul
 
         let fake = reorged_core_view(&seeded).with_classification_error_on_call(1);
         let classifier = ConfiguredParentClassifier::Fake(fake.clone());
-        // The refresh classifies nothing itself, so the injected error on the
-        // first classification is never reached by it.
         refresh_bitcoin_core_header_cache(&mut client, &classifier).await?;
         assert_eq!(fake.call_count().await, 0);
         let scheduled = load_scheduled_recheck(&client).await?;
         assert!(scheduled.is_pending());
 
-        // The job's strict classification hits it: the run fails, the pass
-        // stays bound with its cursor past the queued page, the generation
-        // stays pending, and the verdict is untouched, so a later run repeats
-        // the candidate from the durable queue.
         let error = run_scheduled_recheck(&mut client, &classifier, 100)
             .await
             .expect_err("a strict classification failure must fail the scheduled run");

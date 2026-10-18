@@ -74,16 +74,8 @@ function clearTreeViewModes() {
 function syncUrl() {
   const params = new URLSearchParams();
   const q = state.query;
-  // Only non-default views are written, so every existing tree URL round-trips
-  // byte-identically to before the view parameter existed.
   if (q.view && q.view !== DEFAULTS.view) params.set("view", q.view);
-  // Owned by the delta view; written here so one function builds the URL.
   if (q.era) params.set("era", q.era);
-  // Owned by the findings view. Serialized ONLY while findings is active: the
-  // shared activation path has no view-exit hook, so an unconditional write
-  // would leak `?view=delta&finding=<slug>` after switching views. The
-  // in-memory slug survives the switch so returning to findings restores the
-  // open article.
   if (q.view === "findings" && q.finding) params.set("finding", q.finding);
   if (hasUnheightedAnchorView()) {
     params.set("unheighted_anchor", q.unheightedAnchor);

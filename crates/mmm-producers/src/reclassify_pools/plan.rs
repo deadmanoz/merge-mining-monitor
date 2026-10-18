@@ -1,8 +1,5 @@
 //! Pure planning layer for `reclassify-pools`: decode one keyset page of
-//! candidate rows and resolve, per event, which source-scoped attribution rows
-//! should be written under fill-missing-only / overwrite rules. No DB writes
-//! happen here. The driver in the parent module pairs each parent group this
-//! produces with that parent's read-model reconcile inside one transaction.
+//! candidate rows and plan per-parent attribution updates.
 
 use std::collections::HashMap;
 
@@ -23,37 +20,23 @@ use mmm_capture::pool_resolver::PoolResolver;
 
 use super::{ReclassifyPoolsConfig, ReclassifyPoolsStats};
 
-/// One scanned event decoded from a candidate-batch row: the stored raw
-/// coinbase evidence plus the current source-scoped attribution state for each
-/// side. Resolution is pure over these fields; nothing here triggers a DB write.
 #[derive(Debug)]
 struct CandidateRow {
     id: i64,
-    /// Parent BTC header hash bytes (wire/internal order, as stored). Used as
-    /// the grouping key so all an event's writes share their parent's reconcile.
     btc_parent_header_hash: Vec<u8>,
     source_code: String,
-    /// Current BTC-parent attribution row state for the snapshot source.
     parent_attribution: ExistingSourceAttribution,
-    /// Current child-side attribution row state for the legacy child-script source.
     child_attribution: ExistingSourceAttribution,
-    /// Existing child payout attribution rows (chain-native payout/reward
-    /// namespaces), used by `should_write` to honor fill-missing-only vs overwrite.
     child_payout_attributions: ExistingAttributionSet,
     btc_parent_coinbase_script: Option<Vec<u8>>,
     btc_parent_coinbase_outputs: Option<Vec<u8>>,
     btc_parent_coinbase_outputs_text: Option<String>,
     child_coinbase_script: Option<Vec<u8>>,
     child_coinbase_outputs: Option<Vec<u8>>,
-    /// Event confirmation timestamp, reused as the `observed_at` of any rows
-    /// this pass writes so provenance timestamps stay tied to the evidence.
     event_confirmed_at: i64,
 }
 
-/// Snapshot of the single source-scoped attribution row currently present for
-/// one side of one event. `row_count` distinguishes 0 (absent), 1 (the unique
-/// row these `Option` fields describe), and >1 (a duplicate that overwrite
-/// always rewrites). When `row_count != 1` the descriptive fields are NULL.
+/// Source-scoped attribution state for one side of an event (`row_count` 0, 1, or >1).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct ExistingSourceAttribution {
     row_count: i64,
@@ -67,11 +50,6 @@ struct ExistingSourceAttribution {
 }
 
 impl ExistingSourceAttribution {
-    /// True only when exactly one row exists and its full provenance tuple
-    /// (namespace, match kind, matched value, pool id, identity id, confidence,
-    /// details) equals the freshly resolved attribution. Compares the whole
-    /// tuple, not just `pool_id`, so a provenance-only change still counts as a
-    /// difference and lets overwrite refresh it.
     fn matches(&self, attribution: &EventPoolAttribution) -> bool {
         self.row_count == 1
             && self.namespace.as_deref() == Some(attribution.namespace)
@@ -84,33 +62,18 @@ impl ExistingSourceAttribution {
     }
 }
 
-/// One planned attribution update for an event. The `*_changed` flags drive the
-/// transactional delete-then-upsert in `apply_parent_group`: each side is only
-/// touched when its flag is set, so an unchanged side is never rewritten.
 #[derive(Debug)]
 pub(super) struct PlannedUpdate {
     pub(super) event_id: i64,
-    /// Parent BTC pool attribution differs and should be (re)written; this also
-    /// gates whether the parent's read model is reconciled.
     pub(super) parent_pool_changed: bool,
-    /// Legacy child-script pool attribution differs and should be (re)written.
     pub(super) child_pool_changed: bool,
-    /// Chain-native child payout attribution rows differ and should be written.
     pub(super) child_payout_changed: bool,
-    /// Parent + legacy-child-script attributions to upsert (with stale cleanup).
     pub(super) attributions: Vec<EventPoolAttribution>,
-    /// Child payout attributions to upsert WITHOUT stale cleanup (multiple
-    /// payout addresses per event are legitimate, so siblings must survive).
+    /// Upserted without stale cleanup so sibling payout addresses survive.
     pub(super) child_payout_attributions: Vec<EventPoolAttribution>,
-    /// Provenance timestamp for written rows, sourced from the event's
-    /// `confirmed_at`.
     pub(super) observed_at: i64,
 }
 
-/// All planned updates for one parent header hash in a batch, plus whether any
-/// of them changed parent-side attribution. A changed parent-side pool match
-/// means the pool snapshot may also change the read model's Bitcoin-coinbase
-/// miner resolution for this parent, so the parent is reconciled again.
 #[derive(Debug)]
 pub(super) struct ParentUpdateGroup {
     pub(super) parent_hash: Vec<u8>,
@@ -118,25 +81,12 @@ pub(super) struct ParentUpdateGroup {
     pub(super) parent_rollup_changed: bool,
 }
 
-/// Outcome of parent-pool re-resolution for one row.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct ParentResolution {
     attribution: Option<EventPoolAttribution>,
-    /// True when the stored structured `btc_parent_coinbase_outputs` blob
-    /// failed to deserialize. Preserved publication text may still resolve it.
     corrupt_outputs: bool,
 }
 
-/// Resolve the parent BTC pool attribution for one row from its stored coinbase
-/// script (tags) and its independently stored coinbase outputs (payout
-/// addresses).
-/// Address derivation reuses the live parser's `output_addresses` so historical
-/// and capture-time attribution agree.
-///
-/// Best-effort: a corrupt or schema-legacy `btc_parent_coinbase_outputs` blob
-/// does NOT abort the whole offline pass. The resolver tries preserved
-/// publication text and flags the structured blob so the caller can count/log
-/// it.
 fn resolve_parent_pool(
     row: &CandidateRow,
     resolver: &PoolResolver,
@@ -199,19 +149,12 @@ fn resolve_parent_pool_from_published_text(
     resolve_parent_pool_attribution_from_coinbase(script, &addresses, resolver, pool_ids_by_slug)
 }
 
-/// Result of payout re-resolution for one event. `attributions` holds only the
-/// rows the write policy says to write (may include unresolved NULL-pool
-/// observations); `changed` is true iff that vector is non-empty; `corrupt_outputs`
-/// flags a blob that failed consensus decode so the caller can count it.
 struct ChildPayoutResolution {
     attributions: Vec<EventPoolAttribution>,
     changed: bool,
     corrupt_outputs: bool,
 }
 
-/// Re-resolve child payout attributions from stored coinbase outputs. Returns
-/// unchanged when the source has no payout params or the row has no outputs
-/// bytes. A corrupt blob is flagged and skipped, not fatal.
 fn resolve_child_payouts(
     row: &CandidateRow,
     identities: &PoolIdentityLookup,
@@ -266,10 +209,6 @@ fn unchanged_child_payout() -> ChildPayoutResolution {
     }
 }
 
-/// Decide whether a source-scoped attribution row should be written under
-/// fill-missing-only / overwrite rules. The decision compares the full
-/// provenance tuple, not just `pool_id`, because the API exposes namespace,
-/// match kind, matched value, source, confidence, and identity linkage.
 fn should_write_attribution(
     current: &ExistingSourceAttribution,
     resolved: Option<&EventPoolAttribution>,
@@ -284,9 +223,6 @@ fn should_write_attribution(
     overwrite && !current.matches(resolved)
 }
 
-/// Plan one batch's updates, grouped by parent header hash in first-seen
-/// order. Resolution is pure (no DB writes); a corrupt blob only adjusts the
-/// counter, and nothing commits until each parent's transaction.
 pub(super) fn plan_batch_updates(
     rows: &[tokio_postgres::Row],
     resolver: &PoolResolver,
@@ -383,9 +319,7 @@ pub(super) fn plan_batch_updates(
     groups
 }
 
-/// Decode an `ExistingSourceAttribution` from the eight consecutive columns
-/// starting at `offset`. The offsets (3 for parent, 11 for child) must stay in
-/// lockstep with the candidate-batch projection order.
+/// Decode `ExistingSourceAttribution` from eight consecutive columns starting at `offset`.
 fn attribution_state_from_row(
     row: &tokio_postgres::Row,
     offset: usize,
@@ -456,7 +390,6 @@ mod tests {
 
     #[test]
     fn never_writes_null_over_existing() {
-        // Unresolved coinbase: leave the existing ID untouched.
         let current = existing_from(&test_attribution(3));
         assert!(!should_write_attribution(&current, None, false));
         assert!(!should_write_attribution(&current, None, true));
@@ -520,10 +453,6 @@ mod tests {
 
     #[test]
     fn corrupt_parent_outputs_blob_is_skipped_not_aborting() {
-        // A non-matching coinbase script forces the address fallback, and a
-        // corrupt outputs blob (a varint claiming outputs with no data) fails
-        // consensus deserialize. Best-effort: the row resolves to None and is
-        // flagged so the caller counts it; the pass must NOT abort.
         let resolver = PoolResolver::from_default_snapshot().unwrap();
         let pool_ids_by_slug: HashMap<String, i64> = HashMap::new();
         let corrupt_outputs = vec![0xffu8, 0xff, 0xff];
@@ -560,8 +489,6 @@ mod tests {
 
     #[test]
     fn well_formed_unmatched_outputs_are_not_flagged_corrupt() {
-        // A valid (empty) outputs blob that resolves to no pool is unresolved
-        // but NOT corrupt, so it must not inflate `corrupt_parent_outputs`.
         let resolver = PoolResolver::from_default_snapshot().unwrap();
         let pool_ids_by_slug: HashMap<String, i64> = HashMap::new();
         let empty_outputs = bitcoin::consensus::serialize(&Vec::<TxOut>::new());
@@ -579,8 +506,6 @@ mod tests {
     fn missing_parent_script_still_validates_independent_outputs() {
         let resolver = PoolResolver::from_default_snapshot().unwrap();
         let pool_ids_by_slug: HashMap<String, i64> = HashMap::new();
-        // Parent output evidence is independent of the optional script. A
-        // malformed blob is still detected when the script is absent.
         let row = candidate_with_outputs(None, Some(vec![0xffu8, 0xff, 0xff]));
         let resolution = resolve_parent_pool(&row, &resolver, &pool_ids_by_slug);
         assert_eq!(resolution.attribution, None);

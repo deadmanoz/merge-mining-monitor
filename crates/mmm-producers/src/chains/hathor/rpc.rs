@@ -1,14 +1,8 @@
-//! Hathor public REST client.
+//! Hathor public REST client (`/status`, `/block_at_height`, `/transaction`).
 //!
-//! Hathor mainnet is whitelist-permissioned (hathor-core #751), so there is no
-//! self-hosted node; this talks to the Foundation's public REST API. Unlike the
-//! JSON-RPC chain clients this is a plain `GET` REST client. Because the
-//! endpoint is third-party and is the hot path for both polling and backfill,
-//! every request goes through a bounded retry/backoff that honors `Retry-After`,
-//! falls back to a second URL on exhaustion, and DISTINGUISHES a definitive
-//! absent height (`success: false` / no block) from a transient fetch failure
-//! (retries exhausted): the capture state machine maps the former to its absent
-//! branch and the latter to a hold, never to a revoke.
+//! Uses bounded retry/backoff honoring `Retry-After` with fallback URL support,
+//! and distinguishes a definitive absent height/tx (`success: false` -> `Ok(None)`)
+//! from a transient or malformed response (`Err`).
 
 use std::time::Duration;
 
@@ -22,57 +16,37 @@ use crate::chains::is_transient_http_status;
 use mmm_rpc as rpc_http;
 use rpc_http::{RpcMetrics, build_rpc_client};
 
-/// Default primary endpoint: the Foundation's public mainnet node 1.
 pub(crate) const DEFAULT_API_URL: &str = "https://node1.mainnet.hathor.network/v1a";
-/// Default fallback endpoint: node 2, tried after node 1 exhausts its retries.
 pub(crate) const DEFAULT_FALLBACK_URL: &str = "https://node2.mainnet.hathor.network/v1a";
-/// Default retry attempts per endpoint before falling back / surfacing an error.
 pub(crate) const DEFAULT_MAX_RETRIES: u32 = 6;
 const BACKOFF_BASE: Duration = Duration::from_millis(200);
 const BACKOFF_CAP: Duration = Duration::from_secs(5);
 
-/// Endpoint + retry/backoff policy for the public Hathor REST client. Loaded
-/// from env via `chains::config`; defaults are the Foundation node URLs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HathorRpcConfig {
-    /// Primary REST base URL (e.g. `DEFAULT_API_URL`).
     pub url: String,
-    /// Optional second endpoint tried after the primary exhausts its retries.
     pub fallback_url: Option<String>,
-    /// Per-request HTTP timeout applied to the underlying `reqwest` client.
     pub request_timeout: Duration,
-    /// Retry attempts per endpoint on transient (429 / 5xx / network) failures.
     pub max_retries: u32,
 }
 
-/// Block metadata from `GET /block_at_height`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct HathorBlockMeta {
     pub tx_id: String,
     pub version: i32,
-    /// The height the endpoint places the block at; the capture path holds it
-    /// to the height it asked for.
     pub height: i32,
     #[serde(default)]
     pub is_voided: bool,
 }
 
-/// Transaction payload from `GET /transaction` (the merge-mining proof source).
 #[derive(Debug, Clone, Deserialize)]
 pub struct HathorTransaction {
-    /// Full serialised block hex (funds + graph + aux_pow).
     pub raw: String,
-    /// RFC 0006 split-header AuxPoW hex; absent on non-merge-mined transactions.
     pub aux_pow: Option<String>,
-    /// Block hash (display hex); equals the reconstructed BTC parent header hash.
     pub hash: String,
-    /// Required: a missing timestamp would otherwise date a captured event at the
-    /// Unix epoch instead of holding/failing like the other response-format checks.
     pub timestamp: i64,
 }
 
-/// The public Hathor REST client used by live polling and bounded backfills.
-/// Cheap to clone (the inner `reqwest::Client` is an `Arc`).
 #[derive(Debug, Clone)]
 pub(crate) struct HathorRpcClient {
     config: HathorRpcConfig,
@@ -81,8 +55,6 @@ pub(crate) struct HathorRpcClient {
 }
 
 impl HathorRpcClient {
-    /// Build the client, sharing the workspace's tuned `reqwest` builder so the
-    /// configured `request_timeout` applies to every request.
     pub(crate) fn new(config: HathorRpcConfig) -> Result<Self> {
         let http = build_rpc_client(config.request_timeout)?;
         Ok(Self {
@@ -92,13 +64,10 @@ impl HathorRpcClient {
         })
     }
 
-    /// Transport counters for this client, including retries this client's own
-    /// retry/fallback loop issues.
     pub(crate) fn metrics(&self) -> RpcMetrics {
         self.metrics.clone()
     }
 
-    /// Current chain tip: the max height across the DAG best-block tips.
     pub(crate) async fn get_chain_tip(&self) -> Result<i32> {
         let status: StatusResponse = self.get_with_retry("/status", &[]).await?;
         status
@@ -110,13 +79,8 @@ impl HathorRpcClient {
             .ok_or_else(|| anyhow::anyhow!("Hathor /status returned no best_block_tips"))
     }
 
-    /// Block metadata at a height. `Ok(None)` is a DEFINITIVE absent height
-    /// (`success: false`); a transient fetch failure is `Err`. A `success: true`
-    /// response that omits `block` (schema drift / a renamed field) is treated as
-    /// malformed (`Err`), NOT a definitive absence (`Ok(None)`): it surfaces as a
-    /// transient hold rather than being mistaken for an absent height. (Under
-    /// `HATHOR_BACKFILL_SKIP_HOLDS=1` a backfill still downgrades that hold to a
-    /// logged skip, like any transient hold; live polling holds and retries.)
+    /// Block metadata at `height`. `Ok(None)` is a definitive absence (`success: false`);
+    /// a `success: true` response without `block` or a transport failure is `Err`.
     pub(crate) async fn get_block_at_height(&self, height: i32) -> Result<Option<HathorBlockMeta>> {
         let resp: BlockResponse = self
             .get_with_retry("/block_at_height", &[("height", height.to_string())])
@@ -130,9 +94,6 @@ impl HathorRpcClient {
         }
     }
 
-    /// Full transaction by id. `Ok(None)` is a DEFINITIVE absent transaction
-    /// (`success: false`); a transient fetch failure or a `success: true` response
-    /// that omits `tx` is `Err` (see [`Self::get_block_at_height`]).
     pub(crate) async fn get_transaction(&self, tx_id: &str) -> Result<Option<HathorTransaction>> {
         let resp: TransactionResponse = self
             .get_with_retry("/transaction", &[("id", tx_id.to_owned())])
@@ -146,9 +107,6 @@ impl HathorRpcClient {
         }
     }
 
-    /// GET with bounded retry/backoff on transient statuses (429, 5xx) and
-    /// network errors, honoring `Retry-After`, then the fallback URL, then `Err`
-    /// (a transient exhaustion the caller must treat as a hold, not an absence).
     async fn get_with_retry<T>(&self, path: &str, query: &[(&str, String)]) -> Result<T>
     where
         T: DeserializeOwned,
@@ -162,12 +120,7 @@ impl HathorRpcClient {
         let last_url_idx = urls.len() - 1;
         for (url_idx, base_url) in urls.into_iter().enumerate() {
             for attempt in 0..self.config.max_retries {
-                // The final attempt on the final endpoint falls straight through to
-                // the error below, so there is no point sleeping after it.
                 let is_final = url_idx == last_url_idx && attempt + 1 == self.config.max_retries;
-                // Every attempt is timed through its consumed body and recorded,
-                // a cancelled one included; the loop records the retry it
-                // issues and the failure it gives up with.
                 let outcome = {
                     let _attempt = self.metrics.attempt(1);
                     self.try_get::<T>(base_url, path, query).await
@@ -205,10 +158,6 @@ impl HathorRpcClient {
         }))
     }
 
-    /// One HTTP attempt: send, check the status, decode the body. A transport
-    /// error or a transient status (429, 5xx) is worth a retry, carrying the
-    /// endpoint's `Retry-After` when it sent one; any other status or an
-    /// undecodable body is a terminal failure.
     async fn try_get<T>(
         &self,
         base_url: &str,
@@ -237,9 +186,6 @@ impl HathorRpcClient {
         };
         let status = response.status();
         if is_transient_http_status(status) {
-            // The status names the transient, so a persistent one (a sustained
-            // 429) surfaces a diagnosable error instead of the generic
-            // "exhausted retries" message.
             return GetOutcome::Transient {
                 err: anyhow::anyhow!("Hathor REST {path} returned transient status {status}"),
                 status: Some(status),
@@ -262,11 +208,8 @@ impl HathorRpcClient {
     }
 }
 
-/// What one Hathor REST attempt produced.
 enum GetOutcome<T> {
     Ok(T),
-    /// Worth a retry: a transport error (no status) or a transient status,
-    /// with the endpoint's own delay when it sent a `Retry-After`.
     Transient {
         err: anyhow::Error,
         status: Option<reqwest::StatusCode>,
@@ -275,16 +218,9 @@ enum GetOutcome<T> {
     Failed(anyhow::Error),
 }
 
-/// The RPC trait the Hathor capture state machine depends on, abstracted as a
-/// trait so the state machine can be driven by a mock in tests.
 #[allow(async_fn_in_trait)]
 pub trait HathorRpc {
-    /// Block metadata at a height. `Ok(None)` is a DEFINITIVE absent height; an
-    /// `Err` is a transient failure the state machine must map to a hold, never
-    /// a revoke.
     async fn get_block_at_height(&self, height: i32) -> Result<Option<HathorBlockMeta>>;
-    /// Full transaction by id, with the same `Ok(None)`-absent / `Err`-transient
-    /// contract as [`Self::get_block_at_height`].
     async fn get_transaction(&self, tx_id: &str) -> Result<Option<HathorTransaction>>;
 }
 
@@ -297,8 +233,6 @@ impl HathorRpc for HathorRpcClient {
     }
 }
 
-/// Parse a `Retry-After` header expressed in delta-seconds (the form the public
-/// endpoint uses); ignores HTTP-date form, which is uncommon here.
 fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
     let secs: u64 = headers
         .get(reqwest::header::RETRY_AFTER)?
@@ -310,7 +244,6 @@ fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
     Some(Duration::from_secs(secs.min(BACKOFF_CAP.as_secs() * 4)))
 }
 
-/// Exponential backoff capped at `BACKOFF_CAP` (no jitter; deterministic).
 fn backoff_delay(attempt: u32) -> Duration {
     let scaled = BACKOFF_BASE.saturating_mul(1u32 << attempt.min(5));
     scaled.min(BACKOFF_CAP)
@@ -333,8 +266,6 @@ struct TipInfo {
 
 #[derive(Debug, Deserialize)]
 struct BlockResponse {
-    // `success` is required: a 200 response that omits it is malformed (Err), not
-    // a definitive absence, so schema drift cannot silently stall polling.
     success: bool,
     #[serde(default)]
     block: Option<HathorBlockMeta>,

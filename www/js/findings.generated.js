@@ -12,45 +12,22 @@ export const FINDINGS = [
     "affected_sources": [
       "auxpow:elastos"
     ],
-    "summary": "A consensus-level int64 output-sum overflow halted the Elastos main chain on 2026-07-20. Block production stopped at height 2,260,595, the exact tip this monitor's node froze on, and a rollback to the pre-exploit state is planned.",
-    "body": "On July 20 a consensus-level exploit hit the Elastos main chain: a transaction whose outputs summed past the signed 64-bit range wrapped around and passed monetary validation. The first affected block was `2,260,451`; block production stopped at `2,260,595`, the last of the 145 affected blocks and the exact height this monitor's node froze on, minutes after our last captured AuxPoW parent.[^1]\n\nElastos plans to roll the chain back to the last valid pre-exploit state and resume under corrected rules, with AuxPoW explicitly part of recovery testing. Until then no AuxPoW blocks are being produced, and this source reads stale.\n\nTwenty-two captured events sit inside the exploit window. When the rollback lands they become orphaned child blocks and the affected range will be re-reconciled: a rare case where a child-chain reorg is announced in advance.",
+    "summary": "An int64 output-sum overflow halted the Elastos main chain on 2026-07-20 at height 2,260,595, with a rollback to the pre-exploit state planned.",
+    "body": "A transaction whose outputs overflowed signed 64-bit arithmetic wrapped around and passed validation between heights `2,260,451` and `2,260,595` (145 blocks), where this monitor's node froze minutes after our last captured AuxPoW parent.[^1]\n\nElastos plans to roll back to the last valid pre-exploit state and resume under corrected rules; until then no AuxPoW blocks are produced and this source reads stale.\n\nTwenty-two captured events sit inside the exploit window and will be re-reconciled as orphaned child blocks once the rollback lands.",
     "anchors": [
-      {
-        "kind": "child-height",
-        "value": "2260586",
-        "label": "last AuxPoW block"
-      },
-      {
-        "kind": "child-height",
-        "value": "2260451",
-        "label": "first affected block"
-      },
-      {
-        "kind": "source",
-        "value": "auxpow:elastos"
-      }
+      { "kind": "child-height", "value": "2260586", "label": "last AuxPoW block" },
+      { "kind": "child-height", "value": "2260451", "label": "first affected block" },
+      { "kind": "source", "value": "auxpow:elastos" }
     ],
     "figures": [
       {
         "kind": "series-chart",
-        "caption": "Weekly Elastos AuxPoW captures, with the halt bucket and zero tail shown explicitly.",
-        "accessible_summary": "Elastos produced 475 to 540 captured AuxPoW events in each complete week before the incident. The week beginning July 20 contains 68 pre-halt events, then the following observed bucket is zero.",
+        "caption": "Weekly Elastos AuxPoW captures showing the July 20 halt and zero tail.",
+        "accessible_summary": "Weekly Elastos AuxPoW captures held at 475–540 before dropping to 68 in the halt week of July 20 and 0 thereafter.",
         "summary": [
-          {
-            "label": "Normal weeks",
-            "value": "475–540",
-            "detail": "Captured AuxPoW events per complete week"
-          },
-          {
-            "label": "Chain tip",
-            "value": "2,260,595",
-            "detail": "Production stopped 20 Jul 2026"
-          },
-          {
-            "label": "After halt",
-            "value": "0",
-            "detail": "No captured events through 29 Jul"
-          }
+          { "label": "Normal weeks", "value": "475–540", "detail": "Captured AuxPoW events per complete week" },
+          { "label": "Chain tip", "value": "2,260,595", "detail": "Production stopped 20 Jul 2026" },
+          { "label": "After halt", "value": "0", "detail": "No captured events through 29 Jul" }
         ],
         "y_label": "captured events / week",
         "y_min": 0.0,
@@ -60,70 +37,33 @@ export const FINDINGS = [
             "label": "Captured AuxPoW events (week starts Monday)",
             "mark": "bar",
             "points": [
-              {
-                "t": "2026-06-08",
-                "v": 475.0
-              },
-              {
-                "t": "2026-06-15",
-                "v": 508.0
-              },
-              {
-                "t": "2026-06-22",
-                "v": 540.0
-              },
-              {
-                "t": "2026-06-29",
-                "v": 480.0
-              },
-              {
-                "t": "2026-07-06",
-                "v": 478.0
-              },
-              {
-                "t": "2026-07-13",
-                "v": 538.0
-              },
-              {
-                "t": "2026-07-20",
-                "v": 68.0
-              },
-              {
-                "t": "2026-07-27",
-                "v": 0.0
-              }
+              { "t": "2026-06-08", "v": 475.0 },
+              { "t": "2026-06-15", "v": 508.0 },
+              { "t": "2026-06-22", "v": 540.0 },
+              { "t": "2026-06-29", "v": 480.0 },
+              { "t": "2026-07-06", "v": 478.0 },
+              { "t": "2026-07-13", "v": 538.0 },
+              { "t": "2026-07-20", "v": 68.0 },
+              { "t": "2026-07-27", "v": 0.0 }
             ]
           }
         ],
         "markers": [
-          {
-            "t": "2026-07-20",
-            "label": "Chain halts",
-            "detail": "Tip 2,260,595"
-          }
+          { "t": "2026-07-20", "label": "Chain halts", "detail": "Tip 2,260,595" }
         ],
         "bands": [
-          {
-            "from": "2026-07-20",
-            "to": "2026-07-27",
-            "label": "Halt + zero tail",
-            "detail": "68 events before the stop, then zero"
-          }
+          { "from": "2026-07-20", "to": "2026-07-27", "label": "Halt + zero tail", "detail": "68 events before the stop, then zero" }
         ],
         "x_ticks": [
           "2026-06-08",
           "2026-07-06",
           "2026-07-27"
         ],
-        "note": "Weeks start Monday. The 20 Jul bucket is intentionally partial because production halted; 27 Jul is observed through the 2026-07-29 query."
+        "note": "Monday-start weeks; 20 Jul is partial due to the halt, queried 2026-07-29."
       }
     ],
     "references": [
-      {
-        "id": 1,
-        "label": "Elastos - Main Chain Security Jul 20 2026 Incident Update",
-        "url": "https://blog.elastos.net/announcement/july20-security-update/"
-      }
+      { "id": 1, "label": "Elastos - Main Chain Security Jul 20 2026 Incident Update", "url": "https://blog.elastos.net/announcement/july20-security-update/" }
     ]
   },
   {
@@ -137,48 +77,23 @@ export const FINDINGS = [
       "auxpow:rsk",
       "auxpow:fractal"
     ],
-    "summary": "Foundry USA's last merge-mined parent on RSK and on Fractal is the same Bitcoin block: height 955,218, mined 2026-06-24 19:54:41 UTC. One block merge-mining both chains, then never again.",
-    "body": "Foundry USA's last merge-mined parent on RSK and on Fractal is the same Bitcoin block: height `955,218`, mined at 19:54:41 UTC on June 24.[^2] One block merge-mining both chains, then never again: a single-cut operational shutdown, not a wind-down.\n\nBefore the exit Foundry contributed roughly a quarter of each chain's attributed parents, matching its share of the Bitcoin network; it merge-mined with essentially its whole pool. Since June 24 both chains continue at normal rates on the remaining pools.\n\nNo public reporting of the exit exists; Rootstock's own Q1 2026 merged-mining report still listed Foundry as a top contributor.[^1] This dataset appears to be the first documentation.",
+    "summary": "Foundry USA ceased merge-mining both RSK and Fractal simultaneously after Bitcoin block 955,218 on 2026-06-24 19:54:41 UTC.",
+    "body": "Block `955,218` is Foundry's final merge-mined parent on both chains—a single-cut operational shutdown rather than a gradual wind-down.[^2]\n\nBefore exiting, Foundry contributed roughly a quarter of each chain's attributed parents, matching its Bitcoin network share; both chains continue at normal rates on the remaining pools.\n\nNo public announcement accompanied the exit; Rootstock's Q1 2026 report still listed Foundry as a top contributor.[^1]",
     "anchors": [
-      {
-        "kind": "btc-height",
-        "value": "955218",
-        "label": "last Foundry merge-mined parent"
-      },
-      {
-        "kind": "source",
-        "value": "auxpow:rsk"
-      },
-      {
-        "kind": "source",
-        "value": "auxpow:fractal"
-      },
-      {
-        "kind": "pool",
-        "value": "Foundry USA"
-      }
+      { "kind": "btc-height", "value": "955218", "label": "last Foundry merge-mined parent" },
+      { "kind": "source", "value": "auxpow:rsk" },
+      { "kind": "source", "value": "auxpow:fractal" },
+      { "kind": "pool", "value": "Foundry USA" }
     ],
     "figures": [
       {
         "kind": "series-chart",
         "caption": "Weekly Foundry-attributed merge-mined parents for RSK and Fractal across the full paired window.",
-        "accessible_summary": "From April 2025 through June 24, 2026, Foundry contributed hundreds of attributed parents per week to both RSK and Fractal. Both series fall to zero after the same final Bitcoin parent at height 955,218 and remain zero through the July 29 query.",
+        "accessible_summary": "Foundry contributed hundreds of RSK and Fractal parents per week from April 2025 until dropping to zero on both chains after Bitcoin block 955,218 on June 24, 2026.",
         "summary": [
-          {
-            "label": "Paired window",
-            "value": "14 months",
-            "detail": "Apr 2025 to 24 Jun 2026"
-          },
-          {
-            "label": "Last parent",
-            "value": "BTC 955,218",
-            "detail": "24 Jun 2026 19:54:41 UTC"
-          },
-          {
-            "label": "After exit",
-            "value": "0",
-            "detail": "Both chains through 29 Jul"
-          }
+          { "label": "Paired window", "value": "14 months", "detail": "Apr 2025 to 24 Jun 2026" },
+          { "label": "Last parent", "value": "BTC 955,218", "detail": "24 Jun 2026 19:54:41 UTC" },
+          { "label": "After exit", "value": "0", "detail": "Both chains through 29 Jul" }
         ],
         "y_label": "attributed parents / week",
         "y_min": 0.0,
@@ -188,274 +103,73 @@ export const FINDINGS = [
             "mark": "line",
             "style": "solid",
             "points": [
-              {
-                "t": "2025-04-21",
-                "v": 284.0
-              },
-              {
-                "t": "2025-04-28",
-                "v": 323.0
-              },
-              {
-                "t": "2025-05-05",
-                "v": 301.0
-              },
-              {
-                "t": "2025-05-12",
-                "v": 266.0
-              },
-              {
-                "t": "2025-05-19",
-                "v": 287.0
-              },
-              {
-                "t": "2025-05-26",
-                "v": 313.0
-              },
-              {
-                "t": "2025-06-02",
-                "v": 280.0
-              },
-              {
-                "t": "2025-06-09",
-                "v": 321.0
-              },
-              {
-                "t": "2025-06-16",
-                "v": 281.0
-              },
-              {
-                "t": "2025-06-23",
-                "v": 267.0
-              },
-              {
-                "t": "2025-06-30",
-                "v": 328.0
-              },
-              {
-                "t": "2025-07-07",
-                "v": 303.0
-              },
-              {
-                "t": "2025-07-14",
-                "v": 272.0
-              },
-              {
-                "t": "2025-07-21",
-                "v": 270.0
-              },
-              {
-                "t": "2025-07-28",
-                "v": 291.0
-              },
-              {
-                "t": "2025-08-04",
-                "v": 257.0
-              },
-              {
-                "t": "2025-08-11",
-                "v": 298.0
-              },
-              {
-                "t": "2025-08-18",
-                "v": 327.0
-              },
-              {
-                "t": "2025-08-25",
-                "v": 271.0
-              },
-              {
-                "t": "2025-09-01",
-                "v": 284.0
-              },
-              {
-                "t": "2025-09-08",
-                "v": 311.0
-              },
-              {
-                "t": "2025-09-15",
-                "v": 308.0
-              },
-              {
-                "t": "2025-09-22",
-                "v": 292.0
-              },
-              {
-                "t": "2025-09-29",
-                "v": 281.0
-              },
-              {
-                "t": "2025-10-06",
-                "v": 260.0
-              },
-              {
-                "t": "2025-10-13",
-                "v": 310.0
-              },
-              {
-                "t": "2025-10-20",
-                "v": 325.0
-              },
-              {
-                "t": "2025-10-27",
-                "v": 283.0
-              },
-              {
-                "t": "2025-11-03",
-                "v": 245.0
-              },
-              {
-                "t": "2025-11-10",
-                "v": 304.0
-              },
-              {
-                "t": "2025-11-17",
-                "v": 246.0
-              },
-              {
-                "t": "2025-11-24",
-                "v": 280.0
-              },
-              {
-                "t": "2025-12-01",
-                "v": 240.0
-              },
-              {
-                "t": "2025-12-08",
-                "v": 260.0
-              },
-              {
-                "t": "2025-12-15",
-                "v": 252.0
-              },
-              {
-                "t": "2025-12-22",
-                "v": 295.0
-              },
-              {
-                "t": "2025-12-29",
-                "v": 285.0
-              },
-              {
-                "t": "2026-01-05",
-                "v": 297.0
-              },
-              {
-                "t": "2026-01-12",
-                "v": 291.0
-              },
-              {
-                "t": "2026-01-19",
-                "v": 254.0
-              },
-              {
-                "t": "2026-01-26",
-                "v": 238.0
-              },
-              {
-                "t": "2026-02-02",
-                "v": 286.0
-              },
-              {
-                "t": "2026-02-09",
-                "v": 349.0
-              },
-              {
-                "t": "2026-02-16",
-                "v": 335.0
-              },
-              {
-                "t": "2026-02-23",
-                "v": 284.0
-              },
-              {
-                "t": "2026-03-02",
-                "v": 295.0
-              },
-              {
-                "t": "2026-03-09",
-                "v": 310.0
-              },
-              {
-                "t": "2026-03-16",
-                "v": 317.0
-              },
-              {
-                "t": "2026-03-23",
-                "v": 338.0
-              },
-              {
-                "t": "2026-03-30",
-                "v": 311.0
-              },
-              {
-                "t": "2026-04-06",
-                "v": 266.0
-              },
-              {
-                "t": "2026-04-13",
-                "v": 309.0
-              },
-              {
-                "t": "2026-04-20",
-                "v": 256.0
-              },
-              {
-                "t": "2026-04-27",
-                "v": 310.0
-              },
-              {
-                "t": "2026-05-04",
-                "v": 324.0
-              },
-              {
-                "t": "2026-05-11",
-                "v": 308.0
-              },
-              {
-                "t": "2026-05-18",
-                "v": 298.0
-              },
-              {
-                "t": "2026-05-25",
-                "v": 280.0
-              },
-              {
-                "t": "2026-06-01",
-                "v": 223.0
-              },
-              {
-                "t": "2026-06-08",
-                "v": 213.0
-              },
-              {
-                "t": "2026-06-15",
-                "v": 256.0
-              },
-              {
-                "t": "2026-06-22",
-                "v": 111.0
-              },
-              {
-                "t": "2026-06-29",
-                "v": 0.0
-              },
-              {
-                "t": "2026-07-06",
-                "v": 0.0
-              },
-              {
-                "t": "2026-07-13",
-                "v": 0.0
-              },
-              {
-                "t": "2026-07-20",
-                "v": 0.0
-              },
-              {
-                "t": "2026-07-27",
-                "v": 0.0
-              }
+              { "t": "2025-04-21", "v": 284.0 },
+              { "t": "2025-04-28", "v": 323.0 },
+              { "t": "2025-05-05", "v": 301.0 },
+              { "t": "2025-05-12", "v": 266.0 },
+              { "t": "2025-05-19", "v": 287.0 },
+              { "t": "2025-05-26", "v": 313.0 },
+              { "t": "2025-06-02", "v": 280.0 },
+              { "t": "2025-06-09", "v": 321.0 },
+              { "t": "2025-06-16", "v": 281.0 },
+              { "t": "2025-06-23", "v": 267.0 },
+              { "t": "2025-06-30", "v": 328.0 },
+              { "t": "2025-07-07", "v": 303.0 },
+              { "t": "2025-07-14", "v": 272.0 },
+              { "t": "2025-07-21", "v": 270.0 },
+              { "t": "2025-07-28", "v": 291.0 },
+              { "t": "2025-08-04", "v": 257.0 },
+              { "t": "2025-08-11", "v": 298.0 },
+              { "t": "2025-08-18", "v": 327.0 },
+              { "t": "2025-08-25", "v": 271.0 },
+              { "t": "2025-09-01", "v": 284.0 },
+              { "t": "2025-09-08", "v": 311.0 },
+              { "t": "2025-09-15", "v": 308.0 },
+              { "t": "2025-09-22", "v": 292.0 },
+              { "t": "2025-09-29", "v": 281.0 },
+              { "t": "2025-10-06", "v": 260.0 },
+              { "t": "2025-10-13", "v": 310.0 },
+              { "t": "2025-10-20", "v": 325.0 },
+              { "t": "2025-10-27", "v": 283.0 },
+              { "t": "2025-11-03", "v": 245.0 },
+              { "t": "2025-11-10", "v": 304.0 },
+              { "t": "2025-11-17", "v": 246.0 },
+              { "t": "2025-11-24", "v": 280.0 },
+              { "t": "2025-12-01", "v": 240.0 },
+              { "t": "2025-12-08", "v": 260.0 },
+              { "t": "2025-12-15", "v": 252.0 },
+              { "t": "2025-12-22", "v": 295.0 },
+              { "t": "2025-12-29", "v": 285.0 },
+              { "t": "2026-01-05", "v": 297.0 },
+              { "t": "2026-01-12", "v": 291.0 },
+              { "t": "2026-01-19", "v": 254.0 },
+              { "t": "2026-01-26", "v": 238.0 },
+              { "t": "2026-02-02", "v": 286.0 },
+              { "t": "2026-02-09", "v": 349.0 },
+              { "t": "2026-02-16", "v": 335.0 },
+              { "t": "2026-02-23", "v": 284.0 },
+              { "t": "2026-03-02", "v": 295.0 },
+              { "t": "2026-03-09", "v": 310.0 },
+              { "t": "2026-03-16", "v": 317.0 },
+              { "t": "2026-03-23", "v": 338.0 },
+              { "t": "2026-03-30", "v": 311.0 },
+              { "t": "2026-04-06", "v": 266.0 },
+              { "t": "2026-04-13", "v": 309.0 },
+              { "t": "2026-04-20", "v": 256.0 },
+              { "t": "2026-04-27", "v": 310.0 },
+              { "t": "2026-05-04", "v": 324.0 },
+              { "t": "2026-05-11", "v": 308.0 },
+              { "t": "2026-05-18", "v": 298.0 },
+              { "t": "2026-05-25", "v": 280.0 },
+              { "t": "2026-06-01", "v": 223.0 },
+              { "t": "2026-06-08", "v": 213.0 },
+              { "t": "2026-06-15", "v": 256.0 },
+              { "t": "2026-06-22", "v": 111.0 },
+              { "t": "2026-06-29", "v": 0.0 },
+              { "t": "2026-07-06", "v": 0.0 },
+              { "t": "2026-07-13", "v": 0.0 },
+              { "t": "2026-07-20", "v": 0.0 },
+              { "t": "2026-07-27", "v": 0.0 }
             ]
           },
           {
@@ -463,291 +177,81 @@ export const FINDINGS = [
             "mark": "line",
             "style": "dashed",
             "points": [
-              {
-                "t": "2025-04-21",
-                "v": 142.0
-              },
-              {
-                "t": "2025-04-28",
-                "v": 222.0
-              },
-              {
-                "t": "2025-05-05",
-                "v": 216.0
-              },
-              {
-                "t": "2025-05-12",
-                "v": 178.0
-              },
-              {
-                "t": "2025-05-19",
-                "v": 197.0
-              },
-              {
-                "t": "2025-05-26",
-                "v": 224.0
-              },
-              {
-                "t": "2025-06-02",
-                "v": 184.0
-              },
-              {
-                "t": "2025-06-09",
-                "v": 222.0
-              },
-              {
-                "t": "2025-06-16",
-                "v": 207.0
-              },
-              {
-                "t": "2025-06-23",
-                "v": 194.0
-              },
-              {
-                "t": "2025-06-30",
-                "v": 254.0
-              },
-              {
-                "t": "2025-07-07",
-                "v": 214.0
-              },
-              {
-                "t": "2025-07-14",
-                "v": 204.0
-              },
-              {
-                "t": "2025-07-21",
-                "v": 208.0
-              },
-              {
-                "t": "2025-07-28",
-                "v": 279.0
-              },
-              {
-                "t": "2025-08-04",
-                "v": 190.0
-              },
-              {
-                "t": "2025-08-11",
-                "v": 202.0
-              },
-              {
-                "t": "2025-08-18",
-                "v": 213.0
-              },
-              {
-                "t": "2025-08-25",
-                "v": 185.0
-              },
-              {
-                "t": "2025-09-01",
-                "v": 198.0
-              },
-              {
-                "t": "2025-09-08",
-                "v": 211.0
-              },
-              {
-                "t": "2025-09-15",
-                "v": 201.0
-              },
-              {
-                "t": "2025-09-22",
-                "v": 201.0
-              },
-              {
-                "t": "2025-09-29",
-                "v": 193.0
-              },
-              {
-                "t": "2025-10-06",
-                "v": 185.0
-              },
-              {
-                "t": "2025-10-13",
-                "v": 222.0
-              },
-              {
-                "t": "2025-10-20",
-                "v": 219.0
-              },
-              {
-                "t": "2025-10-27",
-                "v": 200.0
-              },
-              {
-                "t": "2025-11-03",
-                "v": 176.0
-              },
-              {
-                "t": "2025-11-10",
-                "v": 213.0
-              },
-              {
-                "t": "2025-11-17",
-                "v": 187.0
-              },
-              {
-                "t": "2025-11-24",
-                "v": 190.0
-              },
-              {
-                "t": "2025-12-01",
-                "v": 174.0
-              },
-              {
-                "t": "2025-12-08",
-                "v": 183.0
-              },
-              {
-                "t": "2025-12-15",
-                "v": 173.0
-              },
-              {
-                "t": "2025-12-22",
-                "v": 206.0
-              },
-              {
-                "t": "2025-12-29",
-                "v": 190.0
-              },
-              {
-                "t": "2026-01-05",
-                "v": 191.0
-              },
-              {
-                "t": "2026-01-12",
-                "v": 203.0
-              },
-              {
-                "t": "2026-01-19",
-                "v": 166.0
-              },
-              {
-                "t": "2026-01-26",
-                "v": 159.0
-              },
-              {
-                "t": "2026-02-02",
-                "v": 188.0
-              },
-              {
-                "t": "2026-02-09",
-                "v": 253.0
-              },
-              {
-                "t": "2026-02-16",
-                "v": 244.0
-              },
-              {
-                "t": "2026-02-23",
-                "v": 224.0
-              },
-              {
-                "t": "2026-03-02",
-                "v": 210.0
-              },
-              {
-                "t": "2026-03-09",
-                "v": 226.0
-              },
-              {
-                "t": "2026-03-16",
-                "v": 226.0
-              },
-              {
-                "t": "2026-03-23",
-                "v": 256.0
-              },
-              {
-                "t": "2026-03-30",
-                "v": 216.0
-              },
-              {
-                "t": "2026-04-06",
-                "v": 192.0
-              },
-              {
-                "t": "2026-04-13",
-                "v": 222.0
-              },
-              {
-                "t": "2026-04-20",
-                "v": 175.0
-              },
-              {
-                "t": "2026-04-27",
-                "v": 241.0
-              },
-              {
-                "t": "2026-05-04",
-                "v": 224.0
-              },
-              {
-                "t": "2026-05-11",
-                "v": 209.0
-              },
-              {
-                "t": "2026-05-18",
-                "v": 203.0
-              },
-              {
-                "t": "2026-05-25",
-                "v": 198.0
-              },
-              {
-                "t": "2026-06-01",
-                "v": 150.0
-              },
-              {
-                "t": "2026-06-08",
-                "v": 148.0
-              },
-              {
-                "t": "2026-06-15",
-                "v": 177.0
-              },
-              {
-                "t": "2026-06-22",
-                "v": 77.0
-              },
-              {
-                "t": "2026-06-29",
-                "v": 0.0
-              },
-              {
-                "t": "2026-07-06",
-                "v": 0.0
-              },
-              {
-                "t": "2026-07-13",
-                "v": 0.0
-              },
-              {
-                "t": "2026-07-20",
-                "v": 0.0
-              },
-              {
-                "t": "2026-07-27",
-                "v": 0.0
-              }
+              { "t": "2025-04-21", "v": 142.0 },
+              { "t": "2025-04-28", "v": 222.0 },
+              { "t": "2025-05-05", "v": 216.0 },
+              { "t": "2025-05-12", "v": 178.0 },
+              { "t": "2025-05-19", "v": 197.0 },
+              { "t": "2025-05-26", "v": 224.0 },
+              { "t": "2025-06-02", "v": 184.0 },
+              { "t": "2025-06-09", "v": 222.0 },
+              { "t": "2025-06-16", "v": 207.0 },
+              { "t": "2025-06-23", "v": 194.0 },
+              { "t": "2025-06-30", "v": 254.0 },
+              { "t": "2025-07-07", "v": 214.0 },
+              { "t": "2025-07-14", "v": 204.0 },
+              { "t": "2025-07-21", "v": 208.0 },
+              { "t": "2025-07-28", "v": 279.0 },
+              { "t": "2025-08-04", "v": 190.0 },
+              { "t": "2025-08-11", "v": 202.0 },
+              { "t": "2025-08-18", "v": 213.0 },
+              { "t": "2025-08-25", "v": 185.0 },
+              { "t": "2025-09-01", "v": 198.0 },
+              { "t": "2025-09-08", "v": 211.0 },
+              { "t": "2025-09-15", "v": 201.0 },
+              { "t": "2025-09-22", "v": 201.0 },
+              { "t": "2025-09-29", "v": 193.0 },
+              { "t": "2025-10-06", "v": 185.0 },
+              { "t": "2025-10-13", "v": 222.0 },
+              { "t": "2025-10-20", "v": 219.0 },
+              { "t": "2025-10-27", "v": 200.0 },
+              { "t": "2025-11-03", "v": 176.0 },
+              { "t": "2025-11-10", "v": 213.0 },
+              { "t": "2025-11-17", "v": 187.0 },
+              { "t": "2025-11-24", "v": 190.0 },
+              { "t": "2025-12-01", "v": 174.0 },
+              { "t": "2025-12-08", "v": 183.0 },
+              { "t": "2025-12-15", "v": 173.0 },
+              { "t": "2025-12-22", "v": 206.0 },
+              { "t": "2025-12-29", "v": 190.0 },
+              { "t": "2026-01-05", "v": 191.0 },
+              { "t": "2026-01-12", "v": 203.0 },
+              { "t": "2026-01-19", "v": 166.0 },
+              { "t": "2026-01-26", "v": 159.0 },
+              { "t": "2026-02-02", "v": 188.0 },
+              { "t": "2026-02-09", "v": 253.0 },
+              { "t": "2026-02-16", "v": 244.0 },
+              { "t": "2026-02-23", "v": 224.0 },
+              { "t": "2026-03-02", "v": 210.0 },
+              { "t": "2026-03-09", "v": 226.0 },
+              { "t": "2026-03-16", "v": 226.0 },
+              { "t": "2026-03-23", "v": 256.0 },
+              { "t": "2026-03-30", "v": 216.0 },
+              { "t": "2026-04-06", "v": 192.0 },
+              { "t": "2026-04-13", "v": 222.0 },
+              { "t": "2026-04-20", "v": 175.0 },
+              { "t": "2026-04-27", "v": 241.0 },
+              { "t": "2026-05-04", "v": 224.0 },
+              { "t": "2026-05-11", "v": 209.0 },
+              { "t": "2026-05-18", "v": 203.0 },
+              { "t": "2026-05-25", "v": 198.0 },
+              { "t": "2026-06-01", "v": 150.0 },
+              { "t": "2026-06-08", "v": 148.0 },
+              { "t": "2026-06-15", "v": 177.0 },
+              { "t": "2026-06-22", "v": 77.0 },
+              { "t": "2026-06-29", "v": 0.0 },
+              { "t": "2026-07-06", "v": 0.0 },
+              { "t": "2026-07-13", "v": 0.0 },
+              { "t": "2026-07-20", "v": 0.0 },
+              { "t": "2026-07-27", "v": 0.0 }
             ]
           }
         ],
         "markers": [
-          {
-            "t": "2026-06-24",
-            "label": "Last shared parent",
-            "detail": "BTC 955,218 · 24 Jun 2026"
-          }
+          { "t": "2026-06-24", "label": "Last shared parent", "detail": "BTC 955,218 · 24 Jun 2026" }
         ],
         "bands": [
-          {
-            "from": "2026-06-24",
-            "to": "2026-07-27",
-            "label": "0 since 24 Jun",
-            "detail": "No attributed parents"
-          }
+          { "from": "2026-06-24", "to": "2026-07-27", "label": "0 since 24 Jun", "detail": "No attributed parents" }
         ],
         "x_ticks": [
           "2025-04-21",
@@ -757,20 +261,12 @@ export const FINDINGS = [
           "2026-04-06",
           "2026-07-27"
         ],
-        "note": "Weeks start Monday. RSK uses the registered child miner address; Fractal uses independently reconciled Bitcoin parent coinbase attribution. Active, Bitcoin-target-valid events only; queried 2026-07-29."
+        "note": "Monday-start weeks; RSK uses child miner address, Fractal uses parent coinbase attribution. Queried 2026-07-29."
       }
     ],
     "references": [
-      {
-        "id": 1,
-        "label": "Rootstock - Merged Mining Insights Report Q1 2026",
-        "url": "https://rootstock.io/blog/rootstock-x-bitcoin-merged-mining-insights-report-q1-2026/"
-      },
-      {
-        "id": 2,
-        "label": "mempool.space - Bitcoin block 955,218",
-        "url": "https://mempool.space/block/955218"
-      }
+      { "id": 1, "label": "Rootstock - Merged Mining Insights Report Q1 2026", "url": "https://rootstock.io/blog/rootstock-x-bitcoin-merged-mining-insights-report-q1-2026/" },
+      { "id": 2, "label": "mempool.space - Bitcoin block 955,218", "url": "https://mempool.space/block/955218" }
     ]
   },
   {
@@ -783,49 +279,23 @@ export const FINDINGS = [
     "affected_sources": [
       "auxpow:hathor"
     ],
-    "summary": "Hathor's chain difficulty fell roughly 3,500-fold within two days of 2026-06-10. F2Pool still merge-mines Hathor with a residual hashrate slice, but parents that clear Bitcoin's target are no longer expected.",
-    "body": "Between 12:00 and 14:30 UTC on June 10, Hathor's chain difficulty fell off a cliff: block weight (log2 difficulty) dropped from ~68.7, where it had sat all year, to a floor near 56.9 two days later, a roughly 3,500-fold reduction in per-block work.[^1]\n\nEvery Bitcoin-difficulty Hathor parent this monitor has ever attributed was mined by F2Pool, and F2Pool has not left: current Hathor blocks still carry `/F2Pool/` parent coinbases built on live Bitcoin templates. What changed is scale. At the residual ~5-7 PH/s, a parent that clears Bitcoin's target is expected roughly once every few years, against ~40 per month before the collapse.[^2]\n\nThe capture pipeline was verified end-to-end against this window; the source's stale badge is a faithful description of the chain, not a monitor fault. The last captured parent (Hathor height `6,631,349`, Bitcoin height `953,043`) landed about ten hours before the collapse began.",
+    "summary": "Hathor's chain difficulty fell ~3,500-fold within two days of 2026-06-10, leaving only a residual F2Pool hashrate slice unlikely to clear Bitcoin's target.",
+    "body": "Starting June 10 between 12:00 and 14:30 UTC, Hathor block weight (log2 difficulty) dropped from ~68.7 to a 56.9 floor over two days (~11.8 bits less work per block).[^1]\n\nF2Pool still merge-mines Hathor with `/F2Pool/` coinbases on live Bitcoin templates, but at the residual ~5–7 PH/s a Bitcoin-difficulty parent is expected roughly once every few years vs ~40/month pre-collapse.[^2]\n\nThe source's stale badge reflects this hashrate drop rather than a monitor fault; the last Bitcoin-difficulty parent (Hathor `6,631,349`, Bitcoin `953,043`) landed ~10 hours before the collapse.",
     "anchors": [
-      {
-        "kind": "btc-height",
-        "value": "953043",
-        "label": "last parent's Bitcoin block"
-      },
-      {
-        "kind": "child-height",
-        "value": "6631349",
-        "label": "last Hathor parent"
-      },
-      {
-        "kind": "source",
-        "value": "auxpow:hathor"
-      },
-      {
-        "kind": "pool",
-        "value": "F2Pool"
-      }
+      { "kind": "btc-height", "value": "953043", "label": "last parent's Bitcoin block" },
+      { "kind": "child-height", "value": "6631349", "label": "last Hathor parent" },
+      { "kind": "source", "value": "auxpow:hathor" },
+      { "kind": "pool", "value": "F2Pool" }
     ],
     "figures": [
       {
         "kind": "series-chart",
         "caption": "Hathor block weight before, during, and after the June 2026 collapse.",
-        "accessible_summary": "Hathor block weight held near 68.7 through the first half of 2026, fell to 56.9 over two days beginning June 10, and stayed there through July. The 11.8-bit drop represents roughly 3,500 times less work per block.",
+        "accessible_summary": "Hathor block weight held near 68.7 until falling 11.8 bits (~3,500x less work) between June 10 and June 12, 2026 to a 56.9 floor.",
         "summary": [
-          {
-            "label": "Work reduction",
-            "value": "~3,500×",
-            "detail": "About 11.8 difficulty bits"
-          },
-          {
-            "label": "Before",
-            "value": "~68.7",
-            "detail": "Block weight through 10 Jun"
-          },
-          {
-            "label": "After",
-            "value": "56.9",
-            "detail": "New floor through 29 Jul"
-          }
+          { "label": "Work reduction", "value": "~3,500×", "detail": "About 11.8 difficulty bits" },
+          { "label": "Before", "value": "~68.7", "detail": "Block weight through 10 Jun" },
+          { "label": "After", "value": "56.9", "detail": "New floor through 29 Jul" }
         ],
         "y_label": "block weight (log2 difficulty)",
         "y_min": 56.0,
@@ -836,105 +306,36 @@ export const FINDINGS = [
             "mark": "line",
             "style": "solid",
             "points": [
-              {
-                "t": "2026-02-14",
-                "v": 67.86
-              },
-              {
-                "t": "2026-03-21",
-                "v": 68.19
-              },
-              {
-                "t": "2026-04-25",
-                "v": 68.09
-              },
-              {
-                "t": "2026-05-12",
-                "v": 68.03
-              },
-              {
-                "t": "2026-05-30",
-                "v": 69.08
-              },
-              {
-                "t": "2026-06-06",
-                "v": 68.84
-              },
-              {
-                "t": "2026-06-08",
-                "v": 68.78
-              },
-              {
-                "t": "2026-06-10T01:20",
-                "v": 68.68
-              },
-              {
-                "t": "2026-06-10T11:44",
-                "v": 68.66
-              },
-              {
-                "t": "2026-06-10T12:30",
-                "v": 66.21
-              },
-              {
-                "t": "2026-06-10T13:12",
-                "v": 64.04
-              },
-              {
-                "t": "2026-06-10T13:48",
-                "v": 62.1
-              },
-              {
-                "t": "2026-06-10T14:23",
-                "v": 60.3
-              },
-              {
-                "t": "2026-06-12",
-                "v": 56.91
-              },
-              {
-                "t": "2026-06-24",
-                "v": 56.91
-              },
-              {
-                "t": "2026-07-07",
-                "v": 56.91
-              },
-              {
-                "t": "2026-07-21",
-                "v": 56.91
-              },
-              {
-                "t": "2026-07-29",
-                "v": 56.91
-              }
+              { "t": "2026-02-14", "v": 67.86 },
+              { "t": "2026-03-21", "v": 68.19 },
+              { "t": "2026-04-25", "v": 68.09 },
+              { "t": "2026-05-12", "v": 68.03 },
+              { "t": "2026-05-30", "v": 69.08 },
+              { "t": "2026-06-06", "v": 68.84 },
+              { "t": "2026-06-08", "v": 68.78 },
+              { "t": "2026-06-10T01:20", "v": 68.68 },
+              { "t": "2026-06-10T11:44", "v": 68.66 },
+              { "t": "2026-06-10T12:30", "v": 66.21 },
+              { "t": "2026-06-10T13:12", "v": 64.04 },
+              { "t": "2026-06-10T13:48", "v": 62.1 },
+              { "t": "2026-06-10T14:23", "v": 60.3 },
+              { "t": "2026-06-12", "v": 56.91 },
+              { "t": "2026-06-24", "v": 56.91 },
+              { "t": "2026-07-07", "v": 56.91 },
+              { "t": "2026-07-21", "v": 56.91 },
+              { "t": "2026-07-29", "v": 56.91 }
             ]
           }
         ],
         "markers": [
-          {
-            "t": "2026-06-10T12:00",
-            "label": "Collapse begins",
-            "detail": "12:00 UTC, 10 Jun"
-          }
+          { "t": "2026-06-10T12:00", "label": "Collapse begins", "detail": "12:00 UTC, 10 Jun" }
         ],
         "bands": [
-          {
-            "from": "2026-06-10T12:00",
-            "to": "2026-06-12",
-            "label": "~3,500× less work",
-            "detail": "68.7 → 56.9"
-          }
+          { "from": "2026-06-10T12:00", "to": "2026-06-12", "label": "~3,500× less work", "detail": "68.7 → 56.9" }
         ],
         "references": [
-          {
-            "v": 68.7,
-            "label": "Pre-collapse regime ~68.7"
-          },
-          {
-            "v": 56.91,
-            "label": "Post-collapse floor 56.9"
-          }
+          { "v": 68.7, "label": "Pre-collapse regime ~68.7" },
+          { "v": 56.91, "label": "Post-collapse floor 56.9" }
         ],
         "x_ticks": [
           "2026-02-14",
@@ -942,20 +343,12 @@ export const FINDINGS = [
           "2026-06-10",
           "2026-07-29"
         ],
-        "note": "Sampled per height window from the Hathor public node API, 2026-07-29."
+        "note": "Sampled from the Hathor public node API, 2026-07-29."
       }
     ],
     "references": [
-      {
-        "id": 1,
-        "label": "Hathor mainnet public node API (block weight series)",
-        "url": "https://node1.mainnet.hathor.network/v1a/status"
-      },
-      {
-        "id": 2,
-        "label": "mempool.space - F2Pool mined blocks",
-        "url": "https://mempool.space/mining/pool/f2pool"
-      }
+      { "id": 1, "label": "Hathor mainnet public node API (block weight series)", "url": "https://node1.mainnet.hathor.network/v1a/status" },
+      { "id": 2, "label": "mempool.space - F2Pool mined blocks", "url": "https://mempool.space/mining/pool/f2pool" }
     ]
   },
   {
@@ -968,25 +361,14 @@ export const FINDINGS = [
     "affected_sources": [
       "auxpow:terracoin"
     ],
-    "summary": "The May 2026 Bitcoin win is present in the retained node but absent from the pinned Terracoin publication. A later August witness motivates continuous capture.",
-    "body": "Terracoin block `3,220,057` commits to Bitcoin block `950,154`, which Bitcoin Core confirms is canonical.[^1] The retained June refresh contains this witness and four other candidates, but the pinned Monitor publication ends with earlier events. That publication gap does not establish a period without merge mining.\n\nA second fixed control is Terracoin `3,288,246`, which commits to MiningDutch Bitcoin block `964,388` on 28 August 2026. Live capture and the regenerated Research publication authenticate these proofs and classify parents through Bitcoin Core. The source cursor and capture errors describe collection health independently of the time of the latest Bitcoin-difficulty winner.",
+    "summary": "Post-cutoff Terracoin witnesses in May and August 2026 motivate continuous live capture alongside the pinned historical publication.",
+    "body": "Terracoin block `3,220,057` commits to canonical Bitcoin block `950,154` (absent from the earlier pinned snapshot), and block `3,288,246` commits to MiningDutch Bitcoin block `964,388` on 28 August 2026.[^1]\n\nLive capture and the refreshed Research publication authenticate both proofs through Bitcoin Core, while cursor and capture-error state track collection health independently of sparse Bitcoin-difficulty wins.",
     "anchors": [
-      {
-        "kind": "btc-height",
-        "value": "950154",
-        "label": "recovered canonical parent"
-      },
-      {
-        "kind": "source",
-        "value": "auxpow:terracoin"
-      }
+      { "kind": "btc-height", "value": "950154", "label": "recovered canonical parent" },
+      { "kind": "source", "value": "auxpow:terracoin" }
     ],
     "references": [
-      {
-        "id": 1,
-        "label": "mempool.space - Bitcoin block 950,154",
-        "url": "https://mempool.space/block/950154"
-      }
+      { "id": 1, "label": "mempool.space - Bitcoin block 950,154", "url": "https://mempool.space/block/950154" }
     ]
   },
   {
@@ -1001,58 +383,25 @@ export const FINDINGS = [
       "auxpow:rsk",
       "auxpow:fractal"
     ],
-    "summary": "Across September 11 and 12, 2025, Foundry USA produced 20 full-difficulty Bitcoin blocks at 16 heights (914,261 to 914,373) that all went stale, foregoing roughly 46.9 BTC. No public fork observer holds a record of them; the evidence survives only in RSK and Fractal AuxPoW captures.",
-    "body": "It began with a self-race: at height `914,261` on September 11, Foundry staled a block against its own canonical winner. About three and a half hours later the cluster proper started, and over roughly 17 hours Foundry staled 19 more full-difficulty blocks at 15 further heights, through `914,373`. Thirteen of the twenty carry Foundry's coinbase tags directly; the other seven are tied to Foundry through the RSK reward-address registry on their AuxPoW evidence. The 15 height races lost to competing pools put the foregone reward at roughly 46.9 BTC in subsidy plus fees.[^1]\n\nThe timing profile points at the pool layer rather than a propagation race. Within the cluster, the stale headers carry timestamps 6 to 1,621 seconds earlier than their canonical winners (median about 600 seconds). Header clocks are self-reported and are not observation times, so they cannot prove which block was found first; what they do show is Foundry repeatedly stamping templates well before the blocks that beat them. Each stale builds on a canonical parent and none chain onto each other, the signature of a recurring failure in the block-submission path rather than a chain split.[^1]\n\nNo public record of these blocks exists outside merge mining. ForkMonitor and its peers hold nothing for them, and a fork observer only captures a stale that one of its own nodes saw in real time; Bitcoin keeps no durable network-wide stale record. The strongest available statement from observers alone is that if these blocks propagated at all, nobody watching recorded it; taken together with the timing profile, the most plausible reading is an internal failure at the pool, blocks assembled and stamped that never propagated to the network.[^2] The episode is visible today only because merge-mined child chains embed every Bitcoin parent template they see: the RSK and Fractal captures preserved all 20 headers. Foundry later left merge mining entirely in June 2026, closing the channel that made this incident observable.",
+    "summary": "Across September 11–12, 2025, Foundry USA produced 20 full-difficulty stale Bitcoin blocks across 16 heights (914,261–914,373), foregoing ~46.9 BTC and surviving only in RSK and Fractal AuxPoW captures.",
+    "body": "After an initial self-race at height `914,261`, Foundry staled 19 more full-difficulty blocks over ~17 hours across 15 further heights through `914,373` (13 attributed via parent coinbase tags, 7 via the RSK reward-address registry), losing ~46.9 BTC in races won by competing pools.[^1]\n\nCluster stale headers carry timestamps 6 to 1,621 seconds earlier than their canonical winners (median ~600s), and every stale builds on a canonical parent rather than chaining onto a prior stale—the signature of a recurring block-submission failure rather than a propagation race or chain split.[^1]\n\nForkMonitor and peer observers recorded none of these blocks, indicating they likely never propagated beyond the pool; the headers survive only because RSK and Fractal embedded the parent templates via AuxPoW.[^2]",
     "anchors": [
-      {
-        "kind": "btc-height",
-        "value": "914261",
-        "label": "first stale, a self-race Foundry won"
-      },
-      {
-        "kind": "btc-height",
-        "value": "914344",
-        "label": "largest deficit, 1,621s"
-      },
-      {
-        "kind": "btc-height",
-        "value": "914373",
-        "label": "last stale of the cluster"
-      },
-      {
-        "kind": "source",
-        "value": "auxpow:rsk"
-      },
-      {
-        "kind": "source",
-        "value": "auxpow:fractal"
-      },
-      {
-        "kind": "pool",
-        "value": "Foundry USA"
-      }
+      { "kind": "btc-height", "value": "914261", "label": "first stale, a self-race Foundry won" },
+      { "kind": "btc-height", "value": "914344", "label": "largest deficit, 1,621s" },
+      { "kind": "btc-height", "value": "914373", "label": "last stale of the cluster" },
+      { "kind": "source", "value": "auxpow:rsk" },
+      { "kind": "source", "value": "auxpow:fractal" },
+      { "kind": "pool", "value": "Foundry USA" }
     ],
     "figures": [
       {
         "kind": "series-chart",
-        "caption": "Each Foundry stale is shown as a discrete header-time deficit, not a continuous trend.",
-        "accessible_summary": "Twenty discrete Foundry stale blocks occurred from September 11 to 12. Nineteen form a 17-hour cluster. Header-time deficits range from 6 to 1,621 seconds, with a median of 577.5 seconds across all twenty values.",
+        "caption": "Header-time deficit vs canonical winner for each of the 20 Foundry stale blocks.",
+        "accessible_summary": "Twenty Foundry stale blocks on September 11–12, 2025 show header-time deficits of 6 to 1,621 seconds (median 577.5s) across a 17-hour cluster.",
         "summary": [
-          {
-            "label": "Stale blocks",
-            "value": "20",
-            "detail": "Across 16 Bitcoin heights"
-          },
-          {
-            "label": "Cluster span",
-            "value": "~17 hours",
-            "detail": "19 blocks after the self-race"
-          },
-          {
-            "label": "Largest deficit",
-            "value": "1,621s",
-            "detail": "Bitcoin height 914,344"
-          }
+          { "label": "Stale blocks", "value": "20", "detail": "Across 16 Bitcoin heights" },
+          { "label": "Cluster span", "value": "~17 hours", "detail": "19 blocks after the self-race" },
+          { "label": "Largest deficit", "value": "1,621s", "detail": "Bitcoin height 914,344" }
         ],
         "y_label": "header-time deficit vs winner (s)",
         "y_min": 0.0,
@@ -1062,101 +411,34 @@ export const FINDINGS = [
             "label": "One lollipop per stale block",
             "mark": "lollipop",
             "points": [
-              {
-                "t": "2025-09-11T17:48",
-                "v": 0.0
-              },
-              {
-                "t": "2025-09-11T21:18",
-                "v": 963.0
-              },
-              {
-                "t": "2025-09-11T21:25",
-                "v": 549.0
-              },
-              {
-                "t": "2025-09-11T23:54",
-                "v": 6.0
-              },
-              {
-                "t": "2025-09-12T04:37",
-                "v": 135.0
-              },
-              {
-                "t": "2025-09-12T04:46",
-                "v": 616.0
-              },
-              {
-                "t": "2025-09-12T05:52",
-                "v": 1301.0
-              },
-              {
-                "t": "2025-09-12T06:22",
-                "v": 745.0
-              },
-              {
-                "t": "2025-09-12T06:44",
-                "v": 1454.0
-              },
-              {
-                "t": "2025-09-12T07:01",
-                "v": 421.0
-              },
-              {
-                "t": "2025-09-12T07:23",
-                "v": 203.0
-              },
-              {
-                "t": "2025-09-12T08:28",
-                "v": 559.0
-              },
-              {
-                "t": "2025-09-12T09:01",
-                "v": 1621.0
-              },
-              {
-                "t": "2025-09-12T09:11",
-                "v": 1016.0
-              },
-              {
-                "t": "2025-09-12T10:34",
-                "v": 302.0
-              },
-              {
-                "t": "2025-09-12T11:52",
-                "v": 596.0
-              },
-              {
-                "t": "2025-09-12T12:05",
-                "v": 711.0
-              },
-              {
-                "t": "2025-09-12T12:13",
-                "v": 207.0
-              },
-              {
-                "t": "2025-09-12T13:35",
-                "v": 731.0
-              },
-              {
-                "t": "2025-09-12T13:58",
-                "v": 465.0
-              }
+              { "t": "2025-09-11T17:48", "v": 0.0 },
+              { "t": "2025-09-11T21:18", "v": 963.0 },
+              { "t": "2025-09-11T21:25", "v": 549.0 },
+              { "t": "2025-09-11T23:54", "v": 6.0 },
+              { "t": "2025-09-12T04:37", "v": 135.0 },
+              { "t": "2025-09-12T04:46", "v": 616.0 },
+              { "t": "2025-09-12T05:52", "v": 1301.0 },
+              { "t": "2025-09-12T06:22", "v": 745.0 },
+              { "t": "2025-09-12T06:44", "v": 1454.0 },
+              { "t": "2025-09-12T07:01", "v": 421.0 },
+              { "t": "2025-09-12T07:23", "v": 203.0 },
+              { "t": "2025-09-12T08:28", "v": 559.0 },
+              { "t": "2025-09-12T09:01", "v": 1621.0 },
+              { "t": "2025-09-12T09:11", "v": 1016.0 },
+              { "t": "2025-09-12T10:34", "v": 302.0 },
+              { "t": "2025-09-12T11:52", "v": 596.0 },
+              { "t": "2025-09-12T12:05", "v": 711.0 },
+              { "t": "2025-09-12T12:13", "v": 207.0 },
+              { "t": "2025-09-12T13:35", "v": 731.0 },
+              { "t": "2025-09-12T13:58", "v": 465.0 }
             ]
           }
         ],
         "markers": [
-          {
-            "t": "2025-09-11T21:18",
-            "label": "Cluster proper begins",
-            "detail": "19 blocks over ~17 hours"
-          }
+          { "t": "2025-09-11T21:18", "label": "Cluster proper begins", "detail": "19 blocks over ~17 hours" }
         ],
         "references": [
-          {
-            "v": 577.5,
-            "label": "Median deficit 577.5s"
-          }
+          { "v": 577.5, "label": "Median deficit 577.5s" }
         ],
         "x_ticks": [
           "2025-09-11T17:48",
@@ -1164,20 +446,12 @@ export const FINDINGS = [
           "2025-09-12T06:44",
           "2025-09-12T13:58"
         ],
-        "note": "One discrete mark per stale block from this monitor's competition data, queried 2026-07-29. Header clocks are self-reported, not observation times."
+        "note": "Competition data queried 2026-07-29; header timestamps are self-reported."
       }
     ],
     "references": [
-      {
-        "id": 1,
-        "label": "bnoc.xyz - Introducing the Merge Mining Monitor",
-        "url": "https://bnoc.xyz/t/introducing-the-merge-mining-monitor/146"
-      },
-      {
-        "id": 2,
-        "label": "ForkMonitor (no record of these blocks)",
-        "url": "https://forkmonitor.info/"
-      }
+      { "id": 1, "label": "bnoc.xyz - Introducing the Merge Mining Monitor", "url": "https://bnoc.xyz/t/introducing-the-merge-mining-monitor/146" },
+      { "id": 2, "label": "ForkMonitor (no record of these blocks)", "url": "https://forkmonitor.info/" }
     ]
   },
   {
@@ -1191,48 +465,23 @@ export const FINDINGS = [
       "auxpow:rsk",
       "auxpow:fractal"
     ],
-    "summary": "Foundry's first merge-mined parents appear on RSK and Fractal on the same day, in the same Bitcoin block (height 893,543), establishing a shared operational start for both attributed series.",
-    "body": "Foundry USA's first merge-mined parent on RSK and on Fractal is the same Bitcoin block: height `893,543`, mined on April 22, 2025.[^2] The pool announced Rootstock merged mining publicly, and its Fractal participation began in the same template.[^1]\n\nThat shared parent makes the opening unusually precise: this is not two loosely dated launches, but one Bitcoin template beginning both attributed series. Weekly attributions remain present on both chains throughout the following two months, showing that the opening parent began sustained activity rather than recording an isolated observation.",
+    "summary": "Foundry's first merge-mined parents on RSK and Fractal share Bitcoin block 893,543 on 2025-04-22, marking a simultaneous operational launch.",
+    "body": "Foundry USA publicly announced Rootstock merged mining while beginning Fractal participation in the exact same Bitcoin template at height `893,543` on April 22, 2025.[^1][^2]\n\nWeekly attributions remain steady on both chains across the following two months, confirming sustained production from that shared opening parent.",
     "anchors": [
-      {
-        "kind": "btc-height",
-        "value": "893543",
-        "label": "first Foundry merge-mined parent"
-      },
-      {
-        "kind": "source",
-        "value": "auxpow:rsk"
-      },
-      {
-        "kind": "source",
-        "value": "auxpow:fractal"
-      },
-      {
-        "kind": "pool",
-        "value": "Foundry USA"
-      }
+      { "kind": "btc-height", "value": "893543", "label": "first Foundry merge-mined parent" },
+      { "kind": "source", "value": "auxpow:rsk" },
+      { "kind": "source", "value": "auxpow:fractal" },
+      { "kind": "pool", "value": "Foundry USA" }
     ],
     "figures": [
       {
         "kind": "series-chart",
         "caption": "Weekly Foundry-attributed merge-mined parents across the opening nine weekly bins.",
-        "accessible_summary": "Foundry's first attributed RSK and Fractal parents share Bitcoin height 893,543 on April 22, 2025. Both weekly series remain active across the next two months, with RSK ranging from 266 to 323 parents and Fractal from 142 to 224 parents per weekly bin.",
+        "accessible_summary": "Foundry's RSK (266–323/week) and Fractal (142–224/week) series both launch at Bitcoin height 893,543 on April 22, 2025 and stay active across the first nine weeks.",
         "summary": [
-          {
-            "label": "Shared start",
-            "value": "22 Apr 2025",
-            "detail": "RSK and Fractal"
-          },
-          {
-            "label": "Opening parent",
-            "value": "BTC 893,543",
-            "detail": "Both chains in one template"
-          },
-          {
-            "label": "Early follow-through",
-            "value": "Both active",
-            "detail": "First nine weekly bins"
-          }
+          { "label": "Shared start", "value": "22 Apr 2025", "detail": "RSK and Fractal" },
+          { "label": "Opening parent", "value": "BTC 893,543", "detail": "Both chains in one template" },
+          { "label": "Early follow-through", "value": "Both active", "detail": "First nine weekly bins" }
         ],
         "y_label": "attributed parents / week",
         "y_min": 0.0,
@@ -1242,42 +491,15 @@ export const FINDINGS = [
             "mark": "line",
             "style": "solid",
             "points": [
-              {
-                "t": "2025-04-21",
-                "v": 284.0
-              },
-              {
-                "t": "2025-04-28",
-                "v": 323.0
-              },
-              {
-                "t": "2025-05-05",
-                "v": 301.0
-              },
-              {
-                "t": "2025-05-12",
-                "v": 266.0
-              },
-              {
-                "t": "2025-05-19",
-                "v": 287.0
-              },
-              {
-                "t": "2025-05-26",
-                "v": 313.0
-              },
-              {
-                "t": "2025-06-02",
-                "v": 280.0
-              },
-              {
-                "t": "2025-06-09",
-                "v": 321.0
-              },
-              {
-                "t": "2025-06-16",
-                "v": 281.0
-              }
+              { "t": "2025-04-21", "v": 284.0 },
+              { "t": "2025-04-28", "v": 323.0 },
+              { "t": "2025-05-05", "v": 301.0 },
+              { "t": "2025-05-12", "v": 266.0 },
+              { "t": "2025-05-19", "v": 287.0 },
+              { "t": "2025-05-26", "v": 313.0 },
+              { "t": "2025-06-02", "v": 280.0 },
+              { "t": "2025-06-09", "v": 321.0 },
+              { "t": "2025-06-16", "v": 281.0 }
             ]
           },
           {
@@ -1285,71 +507,32 @@ export const FINDINGS = [
             "mark": "line",
             "style": "dashed",
             "points": [
-              {
-                "t": "2025-04-21",
-                "v": 142.0
-              },
-              {
-                "t": "2025-04-28",
-                "v": 222.0
-              },
-              {
-                "t": "2025-05-05",
-                "v": 216.0
-              },
-              {
-                "t": "2025-05-12",
-                "v": 178.0
-              },
-              {
-                "t": "2025-05-19",
-                "v": 197.0
-              },
-              {
-                "t": "2025-05-26",
-                "v": 224.0
-              },
-              {
-                "t": "2025-06-02",
-                "v": 184.0
-              },
-              {
-                "t": "2025-06-09",
-                "v": 222.0
-              },
-              {
-                "t": "2025-06-16",
-                "v": 207.0
-              }
+              { "t": "2025-04-21", "v": 142.0 },
+              { "t": "2025-04-28", "v": 222.0 },
+              { "t": "2025-05-05", "v": 216.0 },
+              { "t": "2025-05-12", "v": 178.0 },
+              { "t": "2025-05-19", "v": 197.0 },
+              { "t": "2025-05-26", "v": 224.0 },
+              { "t": "2025-06-02", "v": 184.0 },
+              { "t": "2025-06-09", "v": 222.0 },
+              { "t": "2025-06-16", "v": 207.0 }
             ]
           }
         ],
         "markers": [
-          {
-            "t": "2025-04-22",
-            "label": "Shared first parent",
-            "detail": "BTC 893,543 · 22 Apr 2025"
-          }
+          { "t": "2025-04-22", "label": "Shared first parent", "detail": "BTC 893,543 · 22 Apr 2025" }
         ],
         "x_ticks": [
           "2025-04-21",
           "2025-05-12",
           "2025-06-16"
         ],
-        "note": "Weeks start Monday; the first bin is partial because the shared first parent was mined on Tuesday 22 April. RSK uses the registered child miner address; Fractal uses independently reconciled Bitcoin parent coinbase attribution. Active, Bitcoin-target-valid events only."
+        "note": "Monday-start weeks (21 Apr bin starts Tuesday 22 Apr); RSK uses child miner address, Fractal uses parent coinbase attribution."
       }
     ],
     "references": [
-      {
-        "id": 1,
-        "label": "Rootstock - Bitcoin Mining 2.0: Foundry Now Merge Mines Rootstock",
-        "url": "https://rootstock.io/blog/bitcoin-mining-2-0-foundry-now-merge-mines-rootstock/"
-      },
-      {
-        "id": 2,
-        "label": "mempool.space - Bitcoin block 893,543",
-        "url": "https://mempool.space/block/893543"
-      }
+      { "id": 1, "label": "Rootstock - Bitcoin Mining 2.0: Foundry Now Merge Mines Rootstock", "url": "https://rootstock.io/blog/bitcoin-mining-2-0-foundry-now-merge-mines-rootstock/" },
+      { "id": 2, "label": "mempool.space - Bitcoin block 893,543", "url": "https://mempool.space/block/893543" }
     ]
   }
 ];

@@ -1,20 +1,5 @@
-//! A scripted, in-process Bitcoin Core RPC fixture for exercising the
-//! PRODUCTION `ConfiguredParentClassifier` end to end, without a real node.
-//!
-//! Answers exactly the five JSON-RPC methods `BitcoinCoreRpcClient` calls
-//! (`getblockchaininfo`, `getblockcount`, `getblockhash`, `getblockheader`
-//! verbose and non-verbose, `getblock` verbosity 0) from a canned, linked
-//! header chain, over a plain blocking `std::net::TcpListener` (the same
-//! style `chains::hathor::rpc`'s tests use): `BitcoinCoreRpcClient::rpc_call`
-//! already dispatches every call through `spawn_blocking`, so a synchronous
-//! transport is the accurate fixture for it, not an async server. Counts every
-//! request it answers, per method, so a test can compare the server's own
-//! counters against the client-side `RpcMetrics` the same classification run
-//! produced.
-//!
-//! Test-only (unlike `fake.rs`, nothing outside this crate's own test module
-//! constructs one, so this stays behind `#[cfg(test)]` rather than also being
-//! reachable under the `db-integration` feature).
+//! Scripted in-process Bitcoin Core RPC fixture (`getblockchaininfo`, `getblockcount`,
+//! `getblockhash`, `getblockheader`, `getblock`) with per-method request counters.
 
 #![cfg(test)]
 

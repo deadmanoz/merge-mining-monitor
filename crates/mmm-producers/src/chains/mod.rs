@@ -44,9 +44,6 @@ fn is_transient_http_status(status: StatusCode) -> bool {
     status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
 }
 
-/// The transport counters a chain job reports: the child-chain client's, plus
-/// the Core classifier's when it is Core-backed. Shared by every poll tick and
-/// backfill summary so both RPC pictures always appear together.
 pub(crate) fn rpc_metrics_for_reporting(
     chain_metrics: mmm_rpc::RpcMetrics,
     classifier: &mmm_bitcoin_core::ConfiguredParentClassifier,
@@ -56,17 +53,12 @@ pub(crate) fn rpc_metrics_for_reporting(
     metrics
 }
 
-/// Which registry-dispatched command a producer subcommand names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandKind {
     Poll,
     Backfill,
 }
 
-/// Pure resolution of `poll-<slug>` / `backfill-<slug>` onto a spec row.
-/// Returns `None` for every non-producer command (including
-/// `backfill-hathor-cache`, which has its own command facade). Runtime
-/// bootstrap and command invocation happen through `run_producer_command`.
 fn resolve(command: &str) -> Option<(&'static spec::ChainSpec, CommandKind)> {
     for spec in &spec::CHAINS {
         if command == format!("poll-{}", spec.slug) {
@@ -79,14 +71,10 @@ fn resolve(command: &str) -> Option<(&'static spec::ChainSpec, CommandKind)> {
     None
 }
 
-/// True when `command` names one of the registry-dispatched producer commands.
 pub fn is_producer_command(command: &str) -> bool {
     resolve(command).is_some()
 }
 
-/// Run a registry-dispatched producer command. Resolution stays pure and
-/// backfill args are parsed before runtime bootstrap, but command behavior
-/// belongs to this facade rather than the spec data rows.
 pub async fn run_producer_command<I, S>(command: &str, args: I) -> anyhow::Result<()>
 where
     I: IntoIterator<Item = S>,
@@ -141,9 +129,6 @@ async fn run_backfill_command(
     }
 }
 
-/// Run the bespoke Hathor archive-cache import command. Keeping this command
-/// inside `mmm-producers` lets normal builds hide the Hathor cache/capture
-/// modules while preserving the CLI behavior and db-integration test access.
 pub async fn run_hathor_cache_command<I, S>(args: I) -> anyhow::Result<()>
 where
     I: IntoIterator<Item = S>,
@@ -154,9 +139,6 @@ where
     let mut pg_client = rt.pg_client;
     crate::producer_runtime::warn_if_empty_known_stale_membership(&pg_client, "hathor-cache")
         .await?;
-    // An archive is a snapshot of the chain as it was, not an observation of
-    // it as it is: it writes events but never moves the record of which block
-    // the chain carries at a height.
     let context = hathor::capture::HathorCaptureContext::new_with_classifier(
         &pg_client,
         rt.parent_classifier,
@@ -186,18 +168,12 @@ where
     Ok(())
 }
 
-/// The non-producer commands, in the order the unknown-command listing has
-/// always shown them.
 const NON_PRODUCER_COMMANDS: &str = "import-dataset, import-all, import-known-stales, \
                                      reclassify-known-stales, \
                                      reclassify-unknown-parents, reclassify-parent, \
                                      reclassify-pools, sync-bitcoin-core, reconcile-read-model, \
                                      revoke-merge-mining-event, restore-merge-mining-event, or serve";
 
-/// The unknown-command error, generated from the spec table so it cannot
-/// drift. Byte-identical to the historical literal (golden-tested below):
-/// all poll commands, then all backfill commands with `backfill-hathor-cache`
-/// after `backfill-hathor`, then the non-producer commands.
 pub fn unknown_command_message(other: &str) -> String {
     let polls = spec::CHAINS
         .iter()
@@ -227,8 +203,6 @@ pub fn unknown_command_message(other: &str) -> String {
     )
 }
 
-/// The no-command help line, generated from the spec table. Byte-identical to
-/// the historical literal (golden-tested below).
 pub fn no_command_help() -> String {
     let mut parts = Vec::new();
     for (idx, spec) in spec::CHAINS.iter().enumerate() {

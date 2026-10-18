@@ -98,7 +98,6 @@ async fn source_health_rebuild_refuses_pending_historical_reconciliation() -> Re
     })
 }
 
-/// The semantic (non-`updated_at`) `source_health` projection, sorted by source.
 pub(crate) async fn read_source_health_semantic(
     client: &Client,
 ) -> Result<Vec<(i64, SourceHealthCounts)>> {
@@ -132,10 +131,6 @@ pub(crate) async fn read_source_health_semantic(
         .collect())
 }
 
-/// Assert the incrementally-maintained `source_health` + the global invalid
-/// counter equal the non-mutating recompute. A maintained row whose
-/// source has no recompute entry must be all-zeros (a source that lost its last
-/// active event keeps a zeroed row).
 pub(crate) async fn assert_source_health_matches_recompute(
     client: &Client,
     context: &str,
@@ -193,8 +188,6 @@ pub(crate) async fn assert_source_health_matches_recompute(
     Ok(())
 }
 
-/// The Core-attested canonical `ParentClassification` used to promote an unknown
-/// parent in these reconcile tests (known height, fresh Core observation).
 fn canonical_at(prev_hash: Vec<u8>, height: i32) -> ParentClassification {
     ParentClassification {
         kind: ParentKind::Canonical,
@@ -214,8 +207,6 @@ fn canonical_at(prev_hash: Vec<u8>, height: i32) -> ParentClassification {
     }
 }
 
-/// `(strict_orphan, weak_orphan, unknown, canonical)` distinct-parent counts for a
-/// source, read straight from the maintained `source_health` row.
 async fn read_sh_counts(client: &Client, source_id: i64) -> Result<(i64, i64, i64, i64)> {
     let row = client
         .query_one(
@@ -228,13 +219,9 @@ async fn read_sh_counts(client: &Client, source_id: i64) -> Result<(i64, i64, i6
     Ok((row.get(0), row.get(1), row.get(2), row.get(3)))
 }
 
-// Drive real capture/revoke/restore paths while comparing maintained
-// source_health rows against a full SQL recompute after each transition.
-// capture_in_txn snapshots before upsert, so this catches incremental drift.
 #[tokio::test]
 async fn source_health_incremental_matches_recompute() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // Rebuild establishes the empty ready baseline before deltas.
         rebuild_source_health(&mut client).await?;
         let ready: bool = client
             .query_one(
@@ -260,14 +247,10 @@ async fn source_health_incremental_matches_recompute() -> Result<()> {
         let nc_event = capture_test_payload(&mut client, namecoin, &classifier, &mut p1).await?;
         assert_source_health_matches_recompute(&client, "after namecoin capture").await?;
 
-        // The same parent through another source exercises source-scoped
-        // counters over a shared parent hash.
         let mut p2 = fixture.payload(700_001, canonical_proof(), 200)?;
         capture_test_payload(&mut client, rsk, &classifier, &mut p2).await?;
         assert_source_health_matches_recompute(&client, "after rsk capture (two sources)").await?;
 
-        // The near-parent fixture adds a distinct Namecoin parent through the
-        // same mutation path, which catches distinct-parent maintenance drift.
         let near = parse_auxpow_fixture("500001-near-parent")?;
         let mut near_payload = namecoin_event_payload(
             &near,
@@ -298,8 +281,6 @@ async fn source_health_incremental_matches_recompute() -> Result<()> {
     })
 }
 
-// Synthesizes the canonical competitor branch so stale counting runs under the
-// recompute oracle instead of only checking hand-maintained counters.
 #[tokio::test]
 async fn source_health_matches_recompute_for_stale_with_competitor() -> Result<()> {
     crate::run_mut_db_test!(client, {
@@ -339,10 +320,6 @@ async fn source_health_matches_recompute_for_stale_with_competitor() -> Result<(
     })
 }
 
-// Reconcile uses the no-wrapper PrimaryDiff path, distinct from producer
-// capture/revoke, and must move source_health buckets the same way. Orphan
-// class is a refinement inside kind=unknown: strict/weak counters move while
-// current_kind remains unknown.
 #[tokio::test]
 async fn source_health_matches_recompute_on_orphan_class_transition() -> Result<()> {
     crate::run_mut_db_test!(client, {
@@ -382,8 +359,6 @@ async fn source_health_matches_recompute_on_orphan_class_transition() -> Result<
             None,
         )
         .await?;
-        // The Core-absent verdict writes btc_orphan_class inside the
-        // source_health bracket; kind remains unknown but orphan counters move.
         assert_source_health_matches_recompute(&client, "after orphan classification").await?;
         let class: String = client
             .query_one(
@@ -409,8 +384,6 @@ async fn source_health_matches_recompute_on_orphan_class_transition() -> Result<
             "still one unknown parent: the orphan class is a refinement of unknown"
         );
 
-        // Promotion to canonical clears the orphan refinement counters as it
-        // leaves unknown.
         let canonical = canonical_at(header.prev_blockhash.to_byte_array().to_vec(), height);
         reconcile_from_merge_mining_event(
             &mut client,

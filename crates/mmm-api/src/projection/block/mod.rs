@@ -1,4 +1,4 @@
-//! Block-detail projection for `/api/v1/block/:hash`.
+//! Block-detail projection for `/api/v1/block/:hash` (`fixtures/api/block-*.json`).
 
 use std::collections::HashMap;
 
@@ -31,10 +31,6 @@ use loaders::{
     load_stale_branch,
 };
 
-/// The `/api/v1/block/{hash}` success envelope body. Every field name is the
-/// locked JSON wire contract (pinned by fixtures/api/block-*.json).
-/// `competition`, `stale_branch`, and `commitment` serialize as `null` (not
-/// omitted) when absent.
 #[derive(Debug, Clone, Serialize)]
 pub struct BlockPayload {
     pub block: ApiBlock,
@@ -42,17 +38,9 @@ pub struct BlockPayload {
     pub event_details: Vec<EventDetail>,
     pub competition: Option<TreeCompetition>,
     pub stale_branch: Option<BlockStaleBranch>,
-    /// Parent-level AuxPoW merge-mining commitment. `None` (serialized as
-    /// `null`, matching `competition` / `stale_branch`) only when the block has
-    /// no recognized AuxPoW-format event.
     pub commitment: Option<Commitment>,
 }
 
-/// Parent-level merge-mining commitment for `/block/:hash`. `format` is always
-/// one of the three string values when this is `Some`; `marker` is non-null only
-/// for a Namecoin-family parent whose coinbase scriptSig yields a `fabe6d6d`
-/// marker. The coinbase fields come from the single representative row
-/// `derive_commitment` chose (the marker-source row when a marker decodes).
 #[derive(Debug, Clone, Serialize)]
 pub struct Commitment {
     pub format: &'static str,
@@ -64,53 +52,28 @@ pub struct Commitment {
 #[derive(Debug, Clone, Serialize)]
 pub struct AuxMarkerProjection {
     pub magic_present: bool,
-    /// Reversed/display hash order (the reverse of the raw scriptSig bytes),
-    /// matching every other API hash field.
     pub aux_merkle_root: String,
     pub merkle_size: u32,
     pub merkle_nonce: u32,
 }
 
-/// The `block` member of `BlockPayload`. Field names are the locked wire
-/// contract (pinned by block-*.json). `btc_orphan_class` and `coinbase_tag`
-/// already carry their derivation contract below; the remaining fields are
-/// direct read-model projections.
 #[derive(Debug, Clone, Serialize)]
 pub struct ApiBlock {
     pub hash: String,
     pub height: Option<i32>,
     pub kind: &'static str,
-    /// Derived refinement of `kind='unknown'` (see `block.btc_orphan_class`):
-    /// `strict_btc_orphan` / `weak_btc_orphan` / `excluded`, or `null`
-    /// for canonical/stale/error-block blocks and for pending/never-Core-checked
-    /// unknowns.
+    /// `strict_btc_orphan` | `weak_btc_orphan` | `excluded` when `kind='unknown'` and Core-checked.
     pub btc_orphan_class: Option<String>,
-    /// Primary consensus violation from the live classifier or pinned fallback
-    /// catalogue.
     /// Present only when `kind='error_block'`.
     pub error_block_reason: Option<String>,
-    /// Printable raw tag runs from the commitment representative's Bitcoin
-    /// coinbase scriptSig, or `null` when that representative has no recoverable
-    /// coinbase script.
     pub coinbase_tag: Option<String>,
     pub header: HeaderProjection,
     pub bitcoin_miner_pool: PoolObject,
-    /// Best-available miner: equals `bitcoin_miner_pool` when
-    /// `display_miner_basis` is `bitcoin_coinbase`, otherwise the chain-agnostic
-    /// child-inferred pool (or the unknown sentinel). Lets the UI label an
-    /// RSK-only stale block with its merge-miner while `bitcoin_miner_pool`
-    /// stays a strict Bitcoin-coinbase fact.
     pub display_miner_pool: PoolObject,
-    /// `bitcoin_coinbase` | `child_inferred` | `unknown` (see
-    /// `DisplayMinerBasis`).
     pub display_miner_basis: &'static str,
     pub source_summary: SourceSummary,
 }
 
-/// The decoded Bitcoin parent header for the wire `header` object (built by
-/// `header_projection`). `prev_hash` / `merkle_root` are display-order hex
-/// (rust-bitcoin `Display` reverses); `bits` is the 8-hex-digit compact target.
-/// Pinned by block-*.json.
 #[derive(Debug, Clone, Serialize)]
 pub struct HeaderProjection {
     pub version: i32,
@@ -121,10 +84,6 @@ pub struct HeaderProjection {
     pub nonce: u32,
 }
 
-/// One active attestation proof in `BlockPayload.proofs`. Field names are the
-/// locked wire contract (block-*.json). Only non-revoked proofs reach here
-/// (loader filters `revoked_at IS NULL`); `evidence` is the opaque per-proof
-/// JSON blob.
 #[derive(Debug, Clone, Serialize)]
 pub struct ApiProof {
     pub kind: String,
@@ -137,9 +96,6 @@ pub struct ApiProof {
     pub evidence: Value,
 }
 
-/// The `source` object embedded in `ApiProof`. Wire field names locked
-/// (block-*.json). `instance` distinguishes multiple sources of the same
-/// code/kind.
 #[derive(Debug, Clone, Serialize)]
 pub struct SourceRef {
     pub id: i64,
@@ -149,11 +105,6 @@ pub struct SourceRef {
     pub instance: Option<String>,
 }
 
-/// One merge_mining_event row in `BlockPayload.event_details`. Field names are
-/// the locked wire contract (block-*.json). Several fields carry their own
-/// derivation contract below (chain_id / slot_index / aux_proof are
-/// Namecoin-family-only and parent-match-gated). Rendered and sorted by
-/// `render_event_details`.
 #[derive(Debug, Clone, Serialize)]
 pub struct EventDetail {
     pub id: i64,
@@ -164,12 +115,7 @@ pub struct EventDetail {
     pub child_header_hex: Option<String>,
     pub child_block_time: Option<i64>,
     pub child_nbits: Option<String>,
-    /// When a producer observed the child chain no longer carrying this
-    /// event's block at `child_height`, and the hash of the block carried
-    /// there instead (same display order as `child_block_hash`). Set and
-    /// cleared together. A null pair means no displacement has been recorded,
-    /// not that this is the chain's current block. Child-side only: a
-    /// displaced event still counts for every Bitcoin-side field.
+    /// Set and cleared together when a child chain replaces this event's block at `child_height`.
     pub child_displaced_at: Option<i64>,
     pub child_displaced_by: Option<String>,
     pub btc_parent_header_hash: String,
@@ -180,15 +126,8 @@ pub struct EventDetail {
     pub child_coinbase_txid: Option<String>,
     pub child_coinbase_script_hex: Option<String>,
     pub aux_merkle_proof_hex: Option<String>,
-    /// Reference AuxPoW chain id (Namecoin = 1; cite-or-null for others).
-    /// Namecoin-family events only; `null` otherwise.
     pub chain_id: Option<u32>,
-    /// This chain's slot (`nChainIndex`) in the parent's aux merkle tree,
-    /// decoded from the stored CAuxPow blob. Namecoin-family events only, and
-    /// only when the blob's embedded parent header matches this event's parent.
     pub slot_index: Option<u32>,
-    /// The decoded CAuxPow merkle proofs (a human breakdown of the raw
-    /// `aux_merkle_proof_hex` bytes). Same gate as `slot_index`.
     pub aux_proof: Option<AuxProofDetail>,
     pub rsk: Option<RskEventDetail>,
     pub pow_validates_btc_target: bool,
@@ -202,20 +141,12 @@ pub struct EventDetail {
     pub pool_attributions: EventPoolAttributions,
 }
 
-/// Per-event pool attributions split by side: `btc_parent` (parent coinbase) vs
-/// `child_block` (child coinbase / payout registry). Wire field names locked
-/// (block-*.json). `Default` (both empty) is the value for an event with no
-/// attribution rows.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct EventPoolAttributions {
     pub btc_parent: Vec<EventPoolAttributionProjection>,
     pub child_block: Vec<EventPoolAttributionProjection>,
 }
 
-/// One pool-attribution match inside `EventPoolAttributions`. Wire field names
-/// locked (block-*.json). `pool` resolves via
-/// `COALESCE(pool_identity.pool_id, attribution.pool_id)`; `pool_identity` is
-/// non-null only for identity-backed matches.
 #[derive(Debug, Clone, Serialize)]
 pub struct EventPoolAttributionProjection {
     pub namespace: String,
@@ -228,20 +159,9 @@ pub struct EventPoolAttributionProjection {
     pub details: Value,
 }
 
-/// The decoded merge-mining merkle proofs for one auxiliary block: the two
-/// branches (`coinbase_branch` from the coinbase txid to the parent
-/// transaction merkle root; `blockchain_branch` from the aux block hash to
-/// the committed aux merkle root), plus the classic-only `hash_block`.
-/// Replaces the opaque proof-byte hex in the UI. All hashes are display-order
-/// hex.
 #[derive(Debug, Clone, Serialize)]
 pub struct AuxProofDetail {
-    /// `CAuxPow::hashBlock`: a redundant convenience hash the verifier ignores,
-    /// conventionally all-zero for Namecoin-family blocks. NOT the actual parent
-    /// block hash (that is `block.hash` / `event.btc_parent_header_hash`).
-    /// A classic-CAuxPow wire field: always present for Namecoin-family
-    /// proofs and OMITTED for qbit-format proofs, whose wire format has no
-    /// such field (never synthesize a placeholder hash).
+    /// Classic `CAuxPow::hashBlock` (omitted for Qbit-format proofs, which have no such wire field).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hash_block: Option<String>,
     pub coinbase_branch: AuxBranchDetail,
@@ -250,17 +170,10 @@ pub struct AuxProofDetail {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AuxBranchDetail {
-    /// The branch side-mask / index (`nIndex`); for `blockchain_branch` this is
-    /// the chain's slot index. Non-negative (the decoder rejects negatives).
     pub index: u32,
     pub siblings: Vec<String>,
 }
 
-/// RSK merge-mining evidence for an `EventDetail` (RSK events only; `null`
-/// otherwise). Wire field names locked (block-rsk-near.json,
-/// block-rsk-uncle-near.json). `merge_mining_hash` / proof hex are encoded in
-/// stored byte order (RSKIP-92 midstate form, no Display reversal);
-/// `uncle_referencing_height` maps the sidecar's `uncle_parent_height`.
 #[derive(Debug, Clone, Serialize)]
 pub struct RskEventDetail {
     pub block_hash: String,
@@ -276,10 +189,6 @@ pub struct RskEventDetail {
     pub uncle_referencing_height: Option<i32>,
 }
 
-/// A resolved pool-identity reference (id + namespace + identifier) embedded in
-/// attribution and RSK projections. Wire field names locked (block-rsk-*.json).
-/// Reused across loaders.rs and detail.rs; `identifier` is lowercased for RSK
-/// miner addresses.
 #[derive(Debug, Clone, Serialize)]
 pub struct PoolIdentityRef {
     pub id: i64,
@@ -287,11 +196,6 @@ pub struct PoolIdentityRef {
     pub identifier: String,
 }
 
-/// The `stale_branch` member of `BlockPayload`, present only for
-/// `kind='stale'`. Wire field names locked (block-one-block-stale.json,
-/// block-multi-block-stale-branch.json). Members are height-ordered,
-/// root-to-tip; `position` is one of root_and_tip/root/tip/interior relative to
-/// the selected block. Built by `load_stale_branch`.
 #[derive(Debug, Clone, Serialize)]
 pub struct BlockStaleBranch {
     pub branch_id: String,
@@ -307,13 +211,7 @@ pub struct BlockStaleBranch {
     pub child_stale_hashes: Vec<String>,
 }
 
-/// `/api/v1/block/{hash}` projection entry. Routes on read-model presence: a
-/// `block` row hydrates the full canonical/stale/error-block/unknown payload
-/// (`block_from_read_model`); absence falls through to direct
-/// merge_mining_event projection (`block_from_direct_events`, near/unknown).
-/// `hash` is display-order hex, decoded to stored byte order via
-/// `stored_hash_from_display` before any lookup. Pinned by
-/// fixtures/api/block-*.json.
+/// `/api/v1/block/{hash}` projection entry: routes on `block` read-model presence vs direct `merge_mining_event` fallback.
 pub async fn block(client: &Client, hash: &str) -> Result<BlockPayload, ProjectionError> {
     let hash_bytes = stored_hash_from_display(hash)?;
     let block_row = load_block_detail(client, &hash_bytes).await?;
@@ -325,8 +223,6 @@ pub async fn block(client: &Client, hash: &str) -> Result<BlockPayload, Projecti
     }
 }
 
-/// Assemble the parent-projection source summary for the block detail view
-/// from the read-model row plus its event/proof/observation hydrations.
 fn block_source_summary(
     row: &BlockDetailRow,
     event_details: &[loaders::EventDetailRow],
@@ -364,13 +260,6 @@ fn block_source_summary(
     source_summary_for_block(&block_row, &event_rows, &proof_sources, sources, &[])
 }
 
-/// Hydrate `BlockPayload` for a block that has a read-model `block` row.
-/// Canonical/stale events are gathered via proof `contributing_event_ids`;
-/// unknown via direct hash lookup. The proof/event reads are NOT one
-/// repeatable-read transaction (see inline note), so a mid-read reconcile
-/// renders the active subset rather than 500-ing. competition/stale_branch only
-/// populate for stale; coinbase_tag prefers the Core-attested stored script
-/// before the commitment fallback.
 async fn block_from_read_model(
     client: &Client,
     hash: &str,
@@ -380,11 +269,7 @@ async fn block_from_read_model(
     let proofs = load_proof_details_for_hash(client, &row.hash).await?;
     let event_details = if matches!(row.kind, ParentKind::Canonical | ParentKind::Stale) {
         let ids = contributing_event_ids(&proofs)?;
-        // Revoke/restore reconciles proofs and events transactionally, but this
-        // read path is not itself a repeatable-read transaction. If a concurrent
-        // reconcile lands between the proof read and event hydration, render the
-        // active event subset rather than turning a transient snapshot skew into
-        // a 500.
+        // Proof and event reads are not in one repeatable-read transaction; render the active subset on concurrent reconcile.
         load_event_details_by_ids(client, &ids).await?
     } else {
         load_event_details_by_hash(client, &row.hash).await?
@@ -445,12 +330,6 @@ async fn block_from_read_model(
     })
 }
 
-/// Hydrate `BlockPayload` for a hash with merge_mining_event rows but no
-/// read-model `block` row (near/unknown). 404s when no events exist. `kind` is
-/// unknown if any event is unknown, else near;
-/// height/orphan_class/proofs/competition/stale_branch are all
-/// absent by construction. Header comes from the lowest-id event's stored
-/// parent header.
 async fn block_from_direct_events(
     client: &Client,
     hash: &str,

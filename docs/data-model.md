@@ -1,8 +1,7 @@
 # Data Model
 
 The database separates captured evidence from derived presentation state.
-Producers append or update base evidence; the read model computes the Bitcoin
-tree view from that evidence.
+Producers append or update base evidence; the read model computes the Bitcoin tree view from that evidence.
 
 ## Core Tables
 
@@ -17,7 +16,8 @@ tree view from that evidence.
 | chain sidecars | One-to-one evidence details for chains with extra structured data, such as RSK and Hathor. |
 | `event_pool_attribution` | Attribution rows connecting an event to a pool with source/provenance details. |
 | `poll_cursor` | Live poll progress. Backfills never move the cursor. |
-| `capture_error` | Producer-owned operational state: one row per `(source_id, height)` a producer could not capture, with the failure kind, a diagnostic detail, and first/last seen times. Written and cleared only by capture; `/api/v1/sources` reads the earliest unresolved height per source. |
+| `capture_error` | Producer-owned operational state: one row per `(source_id, height)` a producer could not capture, with the failure kind (`malformed_auxpow_proof` or `height_capture_failed`), a diagnostic detail, and first/last seen times. Written before returning from a failing height and cleared only when that same height is reprocessed successfully; `/api/v1/sources` reads the earliest unresolved height per source. |
+| `child_chain_head` | Producer-owned operational state: one row per `(source_id, child_height)` recording the block hash, parent, outcome, and evidence marker a producer last observed at that height, used by trailing rescans. |
 | `known_stale_block` | Operator-imported known-stale membership loaded by `import-known-stales` from the upstream `bitcoin-data/stale-blocks` dataset. Consulted as an orphan-classification exclusion gate: a catalogued stale is `excluded`, never labelled strict/weak. |
 | `block` | Derived Bitcoin parent block state: canonical, stale, consensus-invalid error block, or unknown. |
 | `attestation_proof` | Derived proof rows supporting a block. |
@@ -25,408 +25,99 @@ tree view from that evidence.
 
 ## Parent Classification
 
-Every stored parent is a Bitcoin header. Merge mining lets a child chain
-commit to any SHA-256 parent, so a proof that verifies says nothing about
-the parent's chain: a Bitcoin Cash block or share, or another SHA-256 chain's
-block, verifies just as well. The capture lineage gate
-(`mmm_capture::lineage::bitcoin_lineage`, applied in
-`mmm_read_model::capture_in_txn`) refuses such a parent before anything is
-written, and the event is never stored. See [Capture](capture.md#bitcoin-lineage-gate).
+Every stored parent is a Bitcoin header.
+Merge mining lets a child chain commit to any SHA-256 parent, so a proof that verifies says nothing about the parent's chain: a Bitcoin Cash block or share, or another SHA-256 chain's block, verifies just as well.
+The capture lineage gate (`mmm_capture::lineage::bitcoin_lineage`, applied in `mmm_read_model::capture_in_txn`) refuses such a parent before anything is written, and the event is never stored.
+See [Capture](capture.md#bitcoin-lineage-gate).
 
 `btc_parent_kind` is one of:
 
-- `near` - a Bitcoin share: the parent is a Bitcoin header that fails its own
-  target.
-- `unknown` - a Bitcoin header that meets its own target, but no Bitcoin-chain
-  membership proof is available.
+- `near` - a Bitcoin share: the parent is a Bitcoin header that fails its own target.
+- `unknown` - a Bitcoin header that meets its own target, but no Bitcoin-chain membership proof is available.
 - `canonical` - Bitcoin Core proves the parent is on the active chain.
 - `stale` - Bitcoin Core proves the parent is a valid off-chain Bitcoin block.
-- `error_block` - parent hash meets Bitcoin's target but violates a Bitcoin
-  consensus rule. The live classifier currently derives `time_below_mtp` from
-  the exact eleven-header predecessor window returned by Core; the pinned
-  research catalogue remains the fallback for other reproducibly validated
-  rules. It is neither stale nor an orphan; `block.error_block_reason` records
-  its primary rejection token and `btc_height_source` records whether its height
-  came from the catalogue or a canonical/stale predecessor.
+- `error_block` - parent hash meets Bitcoin's target but violates a Bitcoin consensus rule.
+  The live classifier currently derives `time_below_mtp` from the exact eleven-header predecessor window returned by Core; the pinned research catalogue remains the fallback for other reproducibly validated rules.
+  It is neither stale nor an orphan; `block.error_block_reason` records its primary rejection token and `btc_height_source` records whether its height came from the catalogue or a canonical/stale predecessor.
 
-Orphan status is not a `btc_parent_kind`. It is the derived
-`block.btc_orphan_class` (`strict_btc_orphan`, `weak_btc_orphan`, or
-`excluded`; NULL while pending), set only after a Core-absence-attested verdict
-and the Core-cache-backed strict/weak orphan classifier, which reads the
-lineage rule: a coinbase height consistent with the header's time and its
-epoch's bits is strict evidence, bits matching the time's epoch are weak
-evidence, and a header newer than the cache waits for it. A verdict attests
-absence only when the candidate was found absent and every further consensus
-lookup completed or found nothing; a lookup the lenient live policy tolerated
-leaves the row pending for the next recheck. A header on a placed Bitcoin prev
-whose bits are not that height's gets no absence verdict: it is another
-chain's header, not an orphan. Before the strict/weak
-resolution runs, the classifier consults the operator-imported
-`known_stale_block` membership (loaded by `import-known-stales` from the
-upstream `bitcoin-data/stale-blocks` dataset): a catalogued stale is `excluded`
-outright, never labelled strict/weak, and `import-known-stales` atomically
-demotes rows classified before the membership was imported.
-Published direct-stale and stale-descendant provenance is also an exclusion
-from strict/weak orphan classification while a branch remains derived
-`unknown`.
+Orphan status is not a `btc_parent_kind`.
+It is the derived `block.btc_orphan_class` (`strict_btc_orphan`, `weak_btc_orphan`, or `excluded`; NULL while pending), set only after a Core-absence-attested verdict and the Core-cache-backed strict/weak orphan classifier, which reads the lineage rule: a coinbase height consistent with the header's time and its epoch's bits is strict evidence, bits matching the time's epoch are weak evidence, and a header newer than the cache waits for it.
+A verdict attests absence only when the candidate was found absent and every further consensus lookup completed or found nothing; a lookup the lenient live policy tolerated leaves the row pending for the next recheck.
+A header on a placed Bitcoin prev whose bits are not that height's gets no absence verdict: it is another chain's header, not an orphan.
+Before the strict/weak resolution runs, the classifier consults the operator-imported `known_stale_block` membership (loaded by `import-known-stales` from the upstream `bitcoin-data/stale-blocks` dataset): a catalogued stale is `excluded` outright, never labelled strict/weak, and `import-known-stales` atomically demotes rows classified before the membership was imported.
+Published direct-stale and stale-descendant provenance is also an exclusion from strict/weak orphan classification while a branch remains derived `unknown`.
 
-Reviewed body-rule failures use the same `error_block` classification as
-header-context failures. Research authenticates complete body evidence and
-pins the independently established verdicts; Monitor consumes that catalogue.
-Migration `0029` drops the obsolete `body_invalid_stale` annotation table. Its
-importer, API joins, `body_invalid` and `body_invalid_rule` fields, and
-compatibility types are removed. Child witnesses and their publication
-provenance remain in the normal evidence tables.
+Reviewed body-rule failures use the same `error_block` classification as header-context failures.
+Research authenticates complete body evidence and pins the independently established verdicts; Monitor consumes that catalogue.
+Migration `0029` drops the obsolete `body_invalid_stale` annotation table.
+Its importer, API joins, `body_invalid` and `body_invalid_rule` fields, and compatibility types are removed.
+Child witnesses and their publication provenance remain in the normal evidence tables.
 
-Historical error witnesses retain `classification=error_block` in
-`historical_event_provenance`, while `block.error_block_reason` is derived by
-the shared Core-plus-catalogue classifier. They replace a prior `stale` or
-`unknown` classification for the same parent, rather than acting as a separate
-display-only override. Their pinned research publication reference and original
-source coordinates make an exact replay idempotent; evidence that changes at an
-existing coordinate conflicts. Ordinary authoritative-snapshot cleanup
-intentionally excludes this scope.
+Historical error witnesses retain `classification=error_block` in `historical_event_provenance`, while `block.error_block_reason` is derived by the shared Core-plus-catalogue classifier.
+They replace a prior `stale` or `unknown` classification for the same parent, rather than acting as a separate display-only override.
+Their pinned research publication reference and original source coordinates make an exact replay idempotent; evidence that changes at an existing coordinate conflicts.
+Ordinary authoritative-snapshot cleanup intentionally excludes this scope.
 
 ## Child Observation Identity
 
-Child height, hash, header, time, and `nBits` are nullable, independent evidence
-fields. Missing source evidence remains `NULL`; producers and importers do not
-fabricate substitutes.
+Child height, hash, header, time, and `nBits` are nullable, independent evidence fields.
+Missing source evidence remains `NULL`; producers and importers do not fabricate substitutes.
 
 - A real child hash is exact identity under `(source_id, child_block_hash)`.
-- One exact identity has one stored Bitcoin parent. A second observation with
-  the same source and child hash but a different parent is contradictory
-  source evidence and fails closed.
-- Historical child hashes use the exact bytes stored by live capture. For
-  SHA256d child headers this is raw `sha256d::Hash::to_byte_array()` order, not
-  reversed display/RPC order.
-- A hashless observation uses
-  `(source_id, child_height, btc_parent_header_hash)`.
+- One exact identity has one stored Bitcoin parent.
+  A second observation with the same source and child hash but a different parent is contradictory source evidence and fails closed.
+- Historical child hashes use the exact bytes stored by live capture.
+  For SHA256d child headers this is raw `sha256d::Hash::to_byte_array()` order, not reversed display/RPC order.
+- A hashless observation uses `(source_id, child_height, btc_parent_header_hash)`.
 - Every event has at least a child hash or a child height.
 - A later exact observation can promote one unambiguous partial event in place.
 - A partial observation represented by one exact event reuses that event.
-- Non-null contradictions and ambiguous refinement fail rather than choosing a
-  writer.
-- The store returns the resulting inserted, updated, promoted, or
-  exact-satisfied disposition with the event id so import accounting cannot
-  diverge from identity resolution.
+- Non-null contradictions and ambiguous refinement fail rather than choosing a writer.
+- The store returns the resulting inserted, updated, promoted, or exact-satisfied disposition with the event id so import accounting cannot diverge from identity resolution.
 
-The API exposes these fields as nullable values and additionally surfaces an
-authenticated `child_header_hex` and `child_nbits` when present.
+The API exposes these fields as nullable values and additionally surfaces an authenticated `child_header_hex` and `child_nbits` when present.
 
 ### What `child_block_time` Means
 
-`child_block_time` is the child block's own claimed timestamp as its chain
-reports it: the header `nTime` for Namecoin-family chains, the RSK block
-timestamp, the Hathor block transaction timestamp. Whoever builds the child
-template writes it. It is not a broadcast time, not a capture time, and not a
-second opinion on when the Bitcoin block was found.
+`child_block_time` is the child block's own miner-set timestamp as reported by its chain (header `nTime` for Namecoin-family chains, RSK block timestamp, Hathor transaction timestamp).
+Because child data is committed into the Bitcoin coinbase before Bitcoin work exists, it is fixed before the parent is mined and is neither a broadcast time nor a capture time (`event_discovered_at` records the first database write time and is never advanced).
 
-It is fixed once set, whatever the AuxPoW format. The child data is committed
-into the Bitcoin coinbase before the Bitcoin work exists, so altering the stamp
-would void the proof of work; it cannot be refreshed when the proof is later
-submitted to the child chain.
+Whether a stored timestamp is verified depends on the row's other columns (which can be filled by separate observations via `fill_existing_event`):
+- `child_header_hex` present: header bytes are stored to cross-check the stamp.
+- `aux_proof` present: the Bitcoin parent coinbase is proven to commit to the child data (live Namecoin-family, Qbit, and Elastos capture).
+- Neither (e.g., RSK, unverified Hathor RPC, or proof-less historical imports): the value is the source's reported number.
 
-How far a stamp is evidence depends on the row, not on its source. The first
-two levels come apart in both directions, so check them separately:
+A negative offset (`child_block_time < btc_header_time`) is ordinary because a child template is reused across successive Bitcoin jobs (and may be built by a proxied child-chain operator; see `docs/attribution.md`).
+A positive offset is an ordering disagreement internal to the block only when both the commitment and the header timestamp were verified.
 
-- `child_header_hex` present: bytes are stored to check the stamp against. That
-  is not the same as the check having run. A payload carrying both is validated
-  together, and the normalized publication contract carries this column, so an
-  imported row is re-derivable even though no import writes an AuxPoW proof.
-  But the two columns fill independently (`fill_existing_event` COALESCEs each
-  against the same stored field), so an event assembled from separate
-  observations can hold a header that was never compared with its stored
-  timestamp. Re-derive before relying on it.
-- `aux_proof` present: the Bitcoin block is proven to have committed to the
-  child data. Live Namecoin-family capture and Elastos carry this. Elastos
-  verifies the commitment without storing a header, so a missing header does
-  not imply an unproven stamp.
-- Neither: the value is the source's reported number. RSK sits here
-  permanently, because its proof format discards the parent coinbase. Hathor
-  capture sits here today but its stamp is recoverable: the sidecar retains the
-  RFC 0006 `funds_graph`, whose bytes carry the transaction timestamp and fold
-  into the committed auxiliary hash. Capture copies the RPC value without
-  cross-checking them, so it is unverified rather than uncheckable.
-
-A row the import CREATED is therefore proof-less: nothing shows the Bitcoin
-side committed to it. Whether it is also re-derivable depends on the row, since
-the contract accepts height- or hash-only child evidence and validation returns
-early with no header, so an import-created row can carry a timestamp and no
-header at all. Where an import instead refines an event live capture already
-created, the store preserves that event's existing `aux_merkle_proof`, so the
-row keeps its proof.
-
-Two reading rules follow, both bounded by the same fact: the database holds two
-claimed timestamps and nothing else, and both are miner-set.
-
-- A NEGATIVE offset is the ordinary case and is not lateness. A child header is
-  reused across successive Bitcoin jobs, so it is stamped earlier than the
-  parent that finally carries it. The magnitude reflects the refresh and
-  stamping policy behind each stamp, and the two need not share an operator,
-  since a Bitcoin pool may proxy child-chain operation through another (see
-  `docs/attribution.md`). Do not derive a verdict about a Bitcoin timestamp
-  from it.
-- A POSITIVE offset is an ordering disagreement worth investigating. It is
-  internal to the block only where the commitment was verified AND the stored
-  stamp was checked against the committed data. A verified proof alone does not
-  establish the second, for the same independence reason as above: the proof
-  and the timestamp can arrive from separate observations and never be
-  compared. Otherwise it says only that the source's reported child time
-  exceeds the Bitcoin header time. It is never proof that either number is
-  wrong.
-
-Neither direction can speak to block withholding. Every child stamp is sealed
-before the block is found, so nothing inside the block records when it was
-published. `event_discovered_at` does not answer it either: it is never
-advanced after the first write. For an event the backfill or import created it
-is therefore the import date rather than a first-observation time; where live
-capture inserted the event first and an import only refined it, the value stays
-the earlier live-ingestion time.
-
-Historical parent-coinbase evidence is also lossless. Structured full
-transactions populate the normal txid, script, and serialized-output fields,
-while the complete transaction bytes and normalized publication output text
-remain attached to the event. The text field preserves address, value/script,
-and raw scriptPubKey forms that cannot be represented as a value-complete
-`Vec<TxOut>`.
+Historical parent-coinbase evidence is also lossless: structured full transactions populate the normal txid, script, and serialized-output fields, while the complete transaction bytes and normalized publication output text remain attached to the event.
 
 ## Child Displacement
 
-A child chain can replace the block it carries at a height. The event captured
-for the replaced block is still valid Bitcoin-side evidence: its parent header
-carries real proof of work and its coinbase committed to that child block.
-Neither fact changes when the child chain prefers a different block at the
-same height, so the schema records displacement on the event rather than
-through revocation.
+When a child chain replaces the block at `child_height`, the replaced block's `merge_mining_event` remains valid Bitcoin-side evidence (its parent header and coinbase commitment are unchanged), so displacement is recorded on the event rather than through `event_revoked_at`:
 
-- `child_displaced_at` is the epoch second a producer observed that the child
-  chain no longer carries the block at `child_height`; `child_displaced_by` is
-  the internal-order hash of the block now carried there. They are set and
-  cleared together, and a block is never displaced by itself.
-- Bitcoin-side aggregates (`block`, `attestation_proof`, `source_health`, and
-  the parent projections) never read these columns. Only child-centric views,
-  which block the child chain carries at a height, consult them.
-- Revocation keeps its one meaning: the evidence itself is bad.
-- `mmm-store::record_child_chain_block(txn, source, height, record)`, where the record names the block hash, its parent, the outcome, the evidence marker and the observation time,
-  is the one write. It clears displacement on the event for that hash (a
-  chain that flips back) and marks every other event at the height that is
-  not yet displaced as displaced by it. A hashless partial observation is
-  the current block when its Bitcoin parent is the recorded block's parent,
-  the identity partial promotion uses, and a different block when the
-  parents differ; a block known to carry no AuxPoW displaces every hashless
-  row, since none can be it; a block whose proof did not verify leaves
-  hashless rows untouched. An already-displaced event keeps its first
-  displacement record:
-  the columns say when a block first left the chain and what replaced it
-  then, not which block is current now. The chain's current block at a
-  height is the event with no displacement; when the chain carries a block
-  with no AuxPoW there is no current event, and a later such block changes
-  nothing. The write takes a transaction-scoped advisory lock on the
-  height so concurrent callers serialize and the later commit wins, is
-  one UPDATE, is idempotent, ignores revocation state, and changes only
-  the two columns, so it needs no parent reconciliation or parent lock.
-  The producer sequence for a captured block is `lock_child_chain_height`,
-  then the event upsert, then this write, all in the capture transaction;
-  taking the height lock before the upsert is what stops two captures of
-  different blocks at one height deadlocking on each other's event row. A
-  current block with no AuxPoW has no event, so its producer calls the
-  write alone in a transaction of its own.
-- Only an observation of the child chain can say which block is current.
-  A write that inserts a new event at a height without one, such as a
-  historical publication import for a live chain, leaves that event
-  undisplaced beside the recorded current block until the next
-  observation of the height (a poller rescan or a backfill) records the
-  chain again.
-
-`0022_add_child_displacement.sql` adds the columns with their constraints
-`NOT VALID`, and `0023_validate_child_displacement.sql` validates them under
-the weaker lock in its own transaction. The block detail API projects the
-pair on each event detail as `child_displaced_at` and `child_displaced_by`.
-The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit, Terracoin), the Elastos
-producer and the Hathor producer call the write for every height they
-process. `0024_restore_hathor_displaced_events.sql` brings the events Hathor
-had revoked as `hathor_superseded` or `hathor_voided` to this model.
-
-The same write keeps `child_chain_head`, one row per `(source_id,
-child_height)`: the block hash the producer last observed there, the parent
-its proof named (NULL when no proof verified), an `outcome` (`captured`,
-`recorded`, `non_auxpow`, `unverified`, `held`), a producer-defined
-`evidence_marker` (Hathor: a digest of every sidecar's graph head at the
-height, the bytes its work floor reads; NULL for a producer that records on
-its own proof alone) and `observed_at`. It is the
-durable answer to "what did the chain carry here when we last looked", which
-the event rows cannot give for a block that yields no event. A trailing
-rescan compares one block-hash lookup against it: the same hash with a final
-outcome (`captured`, `recorded`, `non_auxpow`) skips the proof fetch and the
-capture, and runs only the displacement maintenance above; a different hash,
-no row, or a non-final outcome captures the height again, as does, for
-Hathor, a sidecar captured, imported or rewritten at the height since the
-row was written, because Hathor records a block only after holding its
-declared work against every block captured there and that check must see
-the evidence now. A capture whose parent verdict is provisional records
-`unverified`, so the height is re-observed and the verdict retried whatever
-orphan class the parent already carries: a tolerated Core lookup failure cut
-the classification short, or Core attested the parent absent, which is a
-point-in-time observation (a live capture can reach Core before Core has the
-block at that height, and a stale header may arrive later still) that the
-routine rechecks would otherwise never revisit. Migration `0026`
-adds the table with no backfill; the first rescan window after it fills the
-rows.
-
-## Capture Errors
-
-`capture_error` is the one producer-owned table that records a gap rather than
-evidence. It exists because neither of the obvious homes can carry one:
-`poll_cursor` is monotonic (upserted through `GREATEST`) with no error column,
-so once the cursor is past a height the hole is invisible; `source_health` is
-derived state whose sole writer is `mmm-read-model`.
-
-- Written by capture, BEFORE returning from the failing height, so a crash
-  between detection and return cannot lose the signal.
-- Keyed `(source_id, height)`. Re-observing a height refreshes `last_seen_at`
-  and preserves `first_seen_at`.
-- Cleared only when that SAME height is reprocessed successfully. An unrelated
-  cursor advance never clears it.
-- `error_kind` is the stored diagnostic vocabulary (`malformed_auxpow_proof`
-  or `height_capture_failed`); `detail` is diagnostic only and is never
-  projected onto the wire.
-- `/api/v1/sources` reduces a source's rows to the LOWEST unresolved height,
-  the earliest gap and therefore the bound on trustworthy coverage, and reports
-  it as `sync.error_code = auxpow_capture_error` ahead of the ordinary
-  live/stale verdict.
-
-Capture-failure policy is `FamilySpec::failure_policy` on the chain spec:
-skip a malformed proof, hold a malformed proof, or hold any height failure.
-Terracoin holds any height failure, so it also records per-height operational
-failures on new and rescanned heights; see `docs/capture.md`.
+- `child_displaced_at` (epoch second observed) and `child_displaced_by` (internal-order hash of the replacing child block) are set or cleared together on `merge_mining_event` and never self-reference.
+  Already-displaced events keep their first displacement record; a chain that flips back to a block clears its displacement.
+- Bitcoin-side aggregates (`block`, `attestation_proof`, `source_health`, and parent projections) ignore these columns; `event_revoked_at` is reserved for bad evidence.
+- `mmm-store::record_child_chain_block(txn, source, height, record)` is the single write path (called by every live producer except RSK, under a per-height advisory lock taken before the event upsert).
+  For hashless partial rows, a matching `btc_parent_header_hash` identifies the current block, a different parent or a known non-AuxPoW block displaces it, and an unverified block leaves it untouched.
+  Events inserted without a live chain observation (such as historical imports) remain undisplaced until a poller rescan or backfill observes the height.
+- The same write updates `child_chain_head` (`(source_id, child_height)` -> observed block hash, nullable parent hash, `outcome` in `captured`/`recorded`/`non_auxpow`/`unverified`/`held`, nullable `evidence_marker`, and `observed_at`).
+  Trailing rescans compare a single block-hash lookup against `child_chain_head`: an unchanged hash with a final outcome (`captured`, `recorded`, `non_auxpow`) and unchanged `evidence_marker` skips full proof fetch/capture, whereas a changed hash, missing row, open `capture_error`, or provisional `unverified` parent verdict re-captures the height.
 
 ## Read-Model Rules
 
-- Derived rows are written through `mmm-read-model` mutation entry points.
-- Historical base snapshots enqueue parents transactionally. Primary parent
-  rebuilds commit one at a time, store their changed-hash seeds transactionally,
-  and delete queue work only after the dependent cascade succeeds.
-- A bounded Bitcoin Core reorg replaces the complete canonical suffix in one
-  read-model transaction. New active headers become canonical, displaced
-  headers become Core-attested stale competitors without losing coinbase,
-  pool, AuxPoW, or proof evidence. Existing stale rows that pointed at a
-  displaced header are rebound to the same-height replacement competitor in
-  the transaction. Every displaced and replacement hash enters
-  `bitcoin_core_reconcile_queue` before commit; expansion from the replacement
-  then discovers the rebound rows. Each seed durably separates its primary
-  reconcile from dependent expansion; queue generations prevent older work
-  from deleting or expanding over a newer change to the same hash. Durable
-  primary replay uses strict Core classification, allowing a replacement to
-  reclassify children that became inferably stale while retaining previously
-  persisted Core coinbase and pool evidence.
-  When the contiguous cursor is below the live-tip repair view, this transaction
-  ends at the cursor; normal bounded follow batches fill the remaining gap.
-- A transient classifier `unknown` never demotes a previously proven canonical
-  or stale row.
-- Bad evidence is removed with explicit event revocation, then the read model
-  recomputes the affected parent state. A parent that stops being a Bitcoin
-  header after a Core-cache change is not revoked: the next capture of its
-  child block deletes the event, and a block or proof no evidence attests any
-  more is deleted with it.
-- A child-chain reorg is not bad evidence. The schema records a displaced
-  child block with `child_displaced_at` and `child_displaced_by` so the
-  event can stay active for Bitcoin-side state. Every live producer except
-  RSK writes those columns for the heights it processes; RSK's heights hold
-  several blocks by design and it keeps its own rescan. A lineage verdict
-  that removes evidence is scoped to the block it was reached on, never to
-  every event at the height; a block is its hash, or for a hashless
-  historical row its height and Bitcoin parent.
-- Bitcoin Core backbone rows are written by `sync-bitcoin-core` and are required
-  for tree windows the UI should browse.
+- Derived rows (`block`, `attestation_proof`, `source_health`) are written only through `mmm-read-model` mutation entry points.
+- Historical base snapshots enqueue parents in `historical_reconcile_queue` transactionally.
+  Primary parent rebuilds commit one at a time, store their changed-hash seeds transactionally, and delete queue work only after the dependent cascade succeeds.
+- A bounded Bitcoin Core reorg replaces the complete divergent canonical suffix in one read-model transaction (ending at the tip or at a lagged contiguous cursor): new active headers become `canonical`, displaced headers become Core-attested `stale` competitors retaining their coinbase/pool/proof evidence, existing stales are rebound to the same-height replacement, and every displaced and replacement hash enters `bitcoin_core_reconcile_queue` before commit (`backbone_reorg_reconcile_pending` remains visible on `/api/v1/sources` until both primary strict reconciliation and dependent expansion drain).
+- A transient classifier `unknown` never demotes a previously proven `canonical` or `stale` row.
+- Bad evidence is removed with explicit event revocation, then the read model recomputes the affected parent state.
+  A parent that stops being a Bitcoin header after a Core-cache change is not revoked: the next capture of its child block deletes the event (scoped to that exact child block identity, never every event at the height), and any `block` or `attestation_proof` no evidence attests any longer is deleted with it.
+- Bitcoin Core backbone rows are written by `sync-bitcoin-core` and are required for tree windows the UI browses.
 
 ## Migrations
 
-Public migration history starts with:
-
-- `0001_canonical_schema.sql` - squashed baseline schema.
-- `0002_seed_sources.sql` - generated source seed for fresh databases.
-
-Later schema changes are appended as new numbered forward migrations.
-
-`0020_add_qbit_source.sql` converges live source `auxpow:qbit` on permanent id
-36 for databases that applied an earlier `0002`, and
-`0021_add_capture_error.sql` adds the producer-owned `capture_error` table.
-`0022_add_child_displacement.sql` adds the nullable `child_displaced_at` and
-`child_displaced_by` columns to `merge_mining_event` with `NOT VALID`
-constraints, and `0023_validate_child_displacement.sql` validates them.
-`0024_restore_hathor_displaced_events.sql` restores the events Hathor had
-revoked for a child-DAG replacement or void and records their displacement,
-and `0025_retire_pending_supersede.sql` drops the `supersede` kind of
-`poll_pending_reconcile` with its payload columns.
-`0030_capture_failure_kind.sql` extends capture-error diagnostics to per-height
-operational failures without changing the public error code or source identity.
-`0031_drop_hathor_expected_btc_nbits.sql` drops the Hathor sidecar's
-`expected_btc_nbits`, which only Hathor's retired private lineage check wrote.
-`0032_add_qbit_payout_namespace.sql` extends `pool_identity`'s namespace check
-with `qbit_payout_address`. It rewrites no event evidence. Curated confidence
-is loaded from registry metadata into the existing attribution confidence
-field; it adds no database column. Apply the migration through the backup-first
-workflow before starting the payout-aware Qbit producer or replay.
-
-`0007_support_partial_child_evidence.sql` makes child evidence nullable, adds
-authenticated child header and `nBits` storage, replaces the old composite
-identity with exact and partial unique indexes, and adds historical publication
-provenance. Existing event values are preserved by the migration. The migration
-fails before altering the schema if legacy rows contain duplicate exact
-`(source_id, child_block_hash)` identities; see the audit query in
-`docs/operations.md`.
-
-Migration `0010_add_bitcoin_core_header_cache.sql` adds the sparse Core-derived
-header cache and its singleton state. Boundaries are marked final only after
-Core re-reads them 100 blocks behind the synced tip. The current shallow epoch
-and moving horizon are refreshed from Core on every command. The state retains
-a safe timestamp-coverage high-water mark for valid non-monotonic header times
-and, since `0027`, the scheduled unknown-parent recheck: a pending generation
-with the scope accumulated since the last bind (orphans revisited or not,
-witness sources or all), the acknowledged generation, and the bound pass with
-its cursor, which an invalidating trigger clears while folding its scope back
-into the pending scope. The scheduled job hands each page of candidates to
-`bitcoin_core_reconcile_queue` as strict primaries in the transaction that
-advances its cursor, so the queue, not process memory, holds the dependent
-cascade of every parent the cursor has passed. nBits and
-timestamp classification read this cache, so the monitor has no compiled
-Bitcoin epoch dataset. A strict BIP34 claim above the cached Core horizon stays
-pending, even when the surrounding difficulty epoch is cached. The first cache
-population conservatively revisits existing orphan classifications that could
-have been derived before the cache existed. A cache refresh holds the exclusive
-cache lock while it drains pending suffix work, replaces headers, and sweeps
-derived rows. Each ordinary classification takes the shared cache lock before
-the shared canonical-view barrier and parent advisory locks, then holds both for
-its transaction. Suffix replacement takes the shared cache lock before the
-canonical barrier exclusively. The sweep therefore cannot acknowledge a cache
-generation while an older verdict can still commit or form a lock-order cycle.
-
-A strict primary reconcile also persists, in its own transaction, an
-expansion seed for every sibling hash it changed (a canonical predecessor or
-competitor it synthesized or corrected), so the dependents of those blocks
-are re-examined by the drain rather than by a cascade held in process memory.
-
-Migration `0012_add_bitcoin_core_reconcile_queue.sql` adds generation-protected
-durable two-phase work for atomic near-tip Core suffix replacement. A
-`primary_pending` seed first reconciles its parent and, in that reconcile's
-own transaction, becomes an expansion seed when the reconcile changed the
-parent or the row's `expand_unchanged` (since `0028`) says its enqueuer
-already had, or is retired otherwise; an expansion seed discovers and enqueues
-dependents, without the flag, atomically with its own deletion. A suffix
-replacement's seeds carry the flag, as does a row that was waiting for
-expansion when it was queued again; a scheduled recheck's candidates do not.
-Beyond a seed the cascade continues only through parents whose reconcile
-changed something.
-The sync state remains in `backbone_reorg_reconcile_pending` until the queue
-drains, so a crash or budget exit is visible and restart-safe rather than a
-silent partial reconciliation. The pending status durably suspends an unrelated
-or out-of-range prior producer error tuple in its details and restores that tuple
-when the final queue row is removed. A same-height or link conflict whose error
-height lies inside the committed replacement suffix is resolved by that suffix
-and is consumed instead of suspended.
-
-After a migration has reached a persistent database, do not edit it. Add a new
-forward migration. Real database migration runs go through `just db-migrate-dev`
-or `just db-migrate-deploy`, both of which use the backup-first wrapper in
-`scripts/migrate-safe.sh`.
+Public migration history starts with `0001_canonical_schema.sql` (squashed baseline schema) and `0002_seed_sources.sql` (registry-generated source seed for fresh databases), followed by append-only numbered forward migrations (`0003` through `0032`).
+After a migration has reached a persistent database, never edit it; add a new forward migration instead (regenerating `0002` only alongside an idempotent forward migration when adding a source).
+Run all real database migrations through `just db-migrate-dev` or `just db-migrate-deploy` (`scripts/migrate-safe.sh`); see `migrations/README.md` for baseline-reset and scheduled-recheck conventions.

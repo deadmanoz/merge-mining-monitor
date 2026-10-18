@@ -21,8 +21,6 @@ use mmm_store::{upsert_rsk_only_pools, upsert_rsk_pool_identities, write_rsk_cap
 use crate::support::default_pool_snapshot;
 use crate::support::scenario::canonical_verdict;
 
-// ─── RSK structure/capture integration tests ─────────────────────────────────
-
 const KNOWN_MINER_HEX: &str = "12d3178a62ef1f520944534ed04504609f7307a1";
 const SECOND_MINER_HEX: &str = "4e5dabc28e4a0f5e5b19fcb56b28c5a1989352c1";
 
@@ -148,15 +146,12 @@ async fn rsk_capture_reconciles_read_model_in_transaction() -> Result<()> {
 #[tokio::test]
 async fn writes_pre_floor_full_header_event() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // RSK height 112,829 is below the 139,999 acquisition floor. The
-        // durable regression pin: the capture/write path must not height-gate
-        // this event. (The floor as a start boundary lives in the poller's
-        // activation_floor in spec.rs and is not exercised here.)
+        // RSK height 112,829 is below the 139,999 acquisition floor; capture/write
+        // must not height-gate it, and its un-solved BTC nBits classifies as `near`.
         let block = load_rsk_block_fixture("canonical-pre-floor-full-header");
         let header = btc_header_from_fixture(&block);
         let parent_hash = header.block_hash().to_byte_array().to_vec();
         let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
-            // Height is arbitrary: the verdict is never consulted (see below).
             canonical_verdict(&header, 490_000),
         ));
         let context = rsk_context_with_known_miner(&client, classifier).await?;
@@ -178,13 +173,6 @@ async fn writes_pre_floor_full_header_event() -> Result<()> {
                 &[&context.source_id(), &child_block_hash],
             )
             .await?;
-        // The pre-floor RSK header is merge-mining work evidence whose hash
-        // does not meet the target declared in its own nBits. For this real
-        // fixture that IS BTC's era target, which the RSK miner did not solve
-        // (RSK's difficulty is lower). Capture maps
-        // pow_validates_btc_target == false to ParentKind::Near before the
-        // classifier verdict is consulted, so `near` is the correct stored
-        // kind for this fixture.
         assert_eq!(row.get::<_, Option<i32>>(0), Some(112_829));
         assert_eq!(row.get::<_, String>(1), "near");
         assert_eq!(row.get::<_, Vec<u8>>(2), parent_hash);
@@ -198,35 +186,24 @@ async fn rsk_role_flip_replay_refreshes_sidecar_role() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let context =
             rsk_context_with_known_miner(&client, ConfiguredParentClassifier::Disabled).await?;
-
-        // The SAME RSK block (same hash + height => same conflict key) is first
-        // captured as canonical, then, after a reorg, re-seen as an uncle. The
-        // trailing rescan window must correct its role on replay.
         let block = load_rsk_block_fixture("canonical-valid");
 
         let canonical_event_id =
             write_ready_rsk_capture(&mut client, &context, &block, false, None, None).await?;
-
-        // Confirm the sidecar starts as canonical with a resolved pool identity.
         let canonical_role = rsk_evidence_role(&client, canonical_event_id).await?;
         assert_rsk_role(&canonical_role, false, None, None);
         let canonical_pool_identity = canonical_role.pool_identity_id;
         assert!(canonical_pool_identity.is_some());
 
-        // Replay the same block as an uncle of a later canonical block.
         let replay_event_id =
             write_ready_rsk_capture(&mut client, &context, &block, true, Some(0), Some(729_005))
                 .await?;
-        // Same conflict key => same event row, not a second event.
         assert_eq!(replay_event_id, canonical_event_id);
 
-        // Role columns now reflect the uncle observation...
         let uncle_role = rsk_evidence_role(&client, canonical_event_id).await?;
         assert_rsk_role(&uncle_role, true, Some(0), Some(729_005));
-        // ...while the resolved pool identity is preserved (COALESCE).
         assert_eq!(uncle_role.pool_identity_id, canonical_pool_identity);
 
-        // Still exactly one event/sidecar row for this block.
         let count: i64 = client
             .query_one(
                 "SELECT COUNT(*)::BIGINT FROM rsk_merge_mining_evidence",
@@ -236,7 +213,6 @@ async fn rsk_role_flip_replay_refreshes_sidecar_role() -> Result<()> {
             .get(0);
         assert_eq!(count, 1);
 
-        // Reverse direction: re-seen as canonical again => role flips back.
         write_ready_rsk_capture(&mut client, &context, &block, false, None, None).await?;
         assert_rsk_role(
             &rsk_evidence_role(&client, canonical_event_id).await?,
@@ -274,21 +250,16 @@ async fn run_rsk_canonical_and_uncle(client: &mut Client) -> Result<()> {
     let canonical = load_rsk_block_fixture("canonical-valid");
     let uncle = load_rsk_block_fixture("uncle-valid");
 
-    // First-write of the canonical block.
     let first_event_id =
         write_ready_rsk_capture(client, &context, &canonical, false, None, None).await?;
-
-    // Replay of the same canonical block must be idempotent on event id.
     let second_event_id =
         write_ready_rsk_capture(client, &context, &canonical, false, None, None).await?;
     assert_eq!(first_event_id, second_event_id);
 
-    // Uncle write referencing canonical height 729_000.
     let uncle_event_id =
         write_ready_rsk_capture(client, &context, &uncle, true, Some(0), Some(729_000)).await?;
     assert_ne!(uncle_event_id, first_event_id);
 
-    // merge_mining_event has exactly two rows for this source.
     let count_row = client
         .query_one(
             "SELECT COUNT(*)::BIGINT FROM merge_mining_event WHERE source_id = $1",
@@ -298,8 +269,6 @@ async fn run_rsk_canonical_and_uncle(client: &mut Client) -> Result<()> {
     let count: i64 = count_row.get(0);
     assert_eq!(count, 2);
 
-    // The canonical row should classify as 'unknown' (BTC PoW valid against
-    // its own nBits; no Bitcoin chain proof in this slice).
     let canonical_row = client
         .query_one(
             "SELECT btc_parent_kind, pow_validates_btc_target, pow_validates_child_target, \
@@ -333,7 +302,6 @@ async fn run_rsk_canonical_and_uncle(client: &mut Client) -> Result<()> {
 }
 
 async fn assert_rsk_evidence_rows_and_identity(client: &Client) -> Result<()> {
-    // Both rows have side-table evidence with correct uncle context.
     let evidence_rows = client
         .query(
             "SELECT event_id, is_uncle, uncle_index, uncle_parent_height, \
@@ -352,7 +320,6 @@ async fn assert_rsk_evidence_rows_and_identity(client: &Client) -> Result<()> {
 
     assert_evidence_row_role(uncle_evidence, true, Some(0), Some(729_000));
 
-    // pool_identity row exists with the expected namespace + identifier.
     let identity_row = client
         .query_one(
             "SELECT namespace, identifier FROM pool_identity WHERE id = $1",
@@ -387,8 +354,6 @@ async fn write_ready_rsk_capture(
 async fn run_rsk_pool_identity_progression(client: &mut Client) -> Result<()> {
     let (_, mut pool_ids_by_slug) = default_pool_snapshot(client).await?;
 
-    // Start with an EMPTY registry: the miner address is not yet known to
-    // pool_identity.
     let empty_registry = empty_rsk_registry();
     upsert_rsk_only_pools(client, &empty_registry, &mut pool_ids_by_slug).await?;
     let empty_identity_ids =
@@ -404,7 +369,6 @@ async fn run_rsk_pool_identity_progression(client: &mut Client) -> Result<()> {
     let block = load_rsk_block_fixture("uncle-second-miner");
     let v1_inputs = ready_inputs(&context_v1, &block, false, None, None);
 
-    // The captured proof bytes that must survive the later replay.
     let stable_merge_mining_hash = v1_inputs.evidence.merge_mining_hash.clone();
     let stable_block_hash = v1_inputs.evidence.rsk_block_hash.clone();
 
@@ -416,7 +380,6 @@ async fn run_rsk_pool_identity_progression(client: &mut Client) -> Result<()> {
     )
     .await?;
 
-    // pool_identity_id starts NULL because the registry had no entry.
     let row = client
         .query_one(
             "SELECT pool_identity_id FROM rsk_merge_mining_evidence WHERE event_id = $1",
@@ -426,7 +389,6 @@ async fn run_rsk_pool_identity_progression(client: &mut Client) -> Result<()> {
     let initial_identity: Option<i64> = row.get(0);
     assert_eq!(initial_identity, None);
 
-    // Now build a richer registry that includes SECOND_MINER_HEX and replay.
     let (_, mut pool_ids_v2) = default_pool_snapshot(client).await?;
     let richer_registry = rsk_registry_with_second_miner();
     upsert_rsk_only_pools(client, &richer_registry, &mut pool_ids_v2).await?;
@@ -446,7 +408,6 @@ async fn run_rsk_pool_identity_progression(client: &mut Client) -> Result<()> {
     .await?;
     assert_eq!(replayed_event_id, event_id);
 
-    // pool_identity_id has progressed NULL -> resolved.
     let row = client
         .query_one(
             "SELECT pool_identity_id, merge_mining_hash, rsk_block_hash \
@@ -458,7 +419,6 @@ async fn run_rsk_pool_identity_progression(client: &mut Client) -> Result<()> {
     let stored_merge_mining_hash: Vec<u8> = row.get(1);
     let stored_block_hash: Vec<u8> = row.get(2);
     assert!(resolved_identity.is_some());
-    // Stable captured bytes are preserved on replay.
     assert_eq!(stored_merge_mining_hash, stable_merge_mining_hash);
     assert_eq!(stored_block_hash, stable_block_hash);
 

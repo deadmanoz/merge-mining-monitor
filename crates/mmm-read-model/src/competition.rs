@@ -2,13 +2,9 @@
 
 use super::*;
 
-/// Retire the derived rows of a parent with no active non-near evidence left
-/// (its events were deleted or revoked). A block exists only while evidence
-/// attests it, so a non-Core block and its proofs are deleted. A Core-attested
-/// block stays as the backbone row Core vouches for, and a block another row
-/// still names as its `canonical_competitor_hash` cannot be deleted (the
-/// foreign key has no `ON DELETE`); both are demoted in place and keep their
-/// proof history, and the dependent cascade re-derives any referencing row.
+/// Retire or demote a parent `block` row when no active non-`near` events remain.
+/// Core-attested blocks and blocks referenced via `canonical_competitor_hash` are
+/// demoted in place; all others and their proofs are deleted.
 pub(crate) async fn retire_zero_active_block<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -44,12 +40,9 @@ pub(crate) async fn retire_zero_active_block<C: GenericClient>(
     Ok(())
 }
 
-/// Rewrite a zero-active `block` row in place: a Core-attested block keeps the
-/// backbone fields Core vouches for (kind, height, competitor, one distinct
-/// source, `pow_validated=true`, persisted Core-coinbase miner); a non-Core
-/// block that must survive because a row still references it collapses to an
-/// `unknown` husk (counters zeroed, `pow_validated=false`, orphan class and
-/// error reason cleared, miner NULL), which the API orphan index filters out.
+/// Demote a zero-active `block` row in place: Core-attested rows retain their
+/// backbone fields; non-Core referenced rows collapse to a zero-attestation
+/// `unknown` husk.
 async fn demote_zero_active_block<C: GenericClient>(client: &C, hash: &[u8]) -> Result<()> {
     let core_pool_id = resolve_persisted_core_coinbase_bitcoin_miner_pool_id(client, hash).await?;
     client
@@ -78,12 +71,8 @@ async fn demote_zero_active_block<C: GenericClient>(client: &C, hash: &[u8]) -> 
     Ok(())
 }
 
-/// Derive `block.btc_orphan_class` for the reconciled parent. Canonical/stale
-/// blocks carry NULL. An unknown block is freshly classified only when this pass
-/// carries a Core-absence verdict (`core_absence_attested`); otherwise the
-/// persisted value is preserved (mirrors `effective_classification`'s
-/// preserve-under-transient-unknown behaviour) so a Core-off or transient
-/// reconcile never wipes a real orphan class.
+/// Derive `block.btc_orphan_class` for `hash` (`None` unless `kind == Unknown`;
+/// preserves the persisted class when `core_absence_attested` is false).
 pub(crate) async fn compute_block_orphan_class<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -101,8 +90,6 @@ pub(crate) async fn compute_block_orphan_class<C: GenericClient>(
     if !classification.core_absence_attested {
         return load_persisted_orphan_class(client, hash).await;
     }
-    // Check operator-imported membership before strict/weak refinement. The
-    // membership boundary and self-reference rationale live in mmm-store.
     if mmm_store::is_known_stale_hash(client, hash).await? {
         debug!(
             hash = %hex::encode(hash),
@@ -154,11 +141,6 @@ async fn has_published_stale_branch_attestation<C: GenericClient>(
         .is_some())
 }
 
-/// Read the persisted `block.btc_orphan_class` for a hash. The preserve-under-
-/// transient-unknown fallback in `compute_block_orphan_class`: when a reconcile
-/// pass carries no fresh Core-absence verdict, the stored class is reused so a
-/// Core-off or transient run never wipes a real orphan class. `None` when the
-/// row or column is NULL.
 pub(crate) async fn load_persisted_orphan_class<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -173,13 +155,6 @@ pub(crate) async fn load_persisted_orphan_class<C: GenericClient>(
     Ok(row.and_then(|row| row.get::<_, Option<String>>(0)))
 }
 
-/// Resolve the Bitcoin miner pool from the Core coinbase evidence already
-/// persisted on `block` (script + outputs), via the shared
-/// `resolve_bitcoin_miner_pool_id_from_coinbase` resolver. `None` when the row or
-/// its stored coinbase script is absent. Used to re-attribute a block whose live
-/// classification carries no fresh coinbase: by `demote_zero_active_block` to keep
-/// a core-preserved block's miner, and by `resolve_effective_bitcoin_miner_pool_id`
-/// for a canonical or Core-attested stale block missing a fresh Core coinbase.
 pub(crate) async fn resolve_persisted_core_coinbase_bitcoin_miner_pool_id<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -204,19 +179,9 @@ pub(crate) async fn resolve_persisted_core_coinbase_bitcoin_miner_pool_id<C: Gen
     resolve_bitcoin_miner_pool_id_from_coinbase(client, Some(&script), outputs.as_deref()).await
 }
 
-/// Best BIP34 coinbase height usable as STRICT orphan evidence for this parent:
-/// any active non-near event from a strict-eligible chain (see
-/// [`btc_orphan::STRICT_BIP34_CHAINS`]) whose stored BTC parent coinbase
-/// evidence passes the shared strict-height validator. Hathor additionally
-/// requires a complete coinbase transaction whose sole input script matches
-/// the stored script. RSK (NULL coinbase) and Xaya are excluded by the chain
-/// join, so they are weak-only. Returns `None` when no strict evidence is
-/// available.
-///
-/// Crate-internal: the api crate cannot (and must not) reach this
-/// writer-crate helper; it carries its own DECLARED read-only copy in
-/// `crates/mmm-api/src/projection/shared/mod.rs`, built on the shared
-/// mmm-capture parser and constants.
+/// First valid strict BIP34 coinbase height from an active non-`near` event on
+/// [`btc_orphan::STRICT_BIP34_CHAINS`]. Mirrored by the declared read-only copy
+/// in `crates/mmm-api/src/projection/shared/mod.rs`.
 pub(crate) async fn load_strict_bip34_height<C: GenericClient>(
     client: &C,
     hash: &[u8],

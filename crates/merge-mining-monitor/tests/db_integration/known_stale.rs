@@ -1,11 +1,4 @@
-//! Known-stale membership: the `compute_block_orphan_class` exclusion gate and
-//! the retroactive `reclassify-known-stales` demotion pass.
-//!
-//! A known stale is absent from Core's active chain by definition, so it passes
-//! the reconciler's Core-absence gate and the offline classifier would refine it
-//! into strict/weak. These tests prove the membership gate excludes it instead,
-//! and that the demotion pass fixes rows contaminated before the membership was
-//! imported (the production bug: a catalogued stale served as strict_btc_orphan).
+//! Known-stale membership exclusion gate and retroactive `reclassify-known-stales` demotion.
 
 use anyhow::Result;
 use bitcoin::hashes::Hash as _;
@@ -19,12 +12,6 @@ use tokio_postgres::Client;
 
 use crate::support::scenario::{ChildEvidence, capture_child_event, orphan_candidate_verdict};
 use crate::support::{absent_classifier, btc_400000_header, btc_400000_orphan_fixture};
-
-// Real Bitcoin block 400000 header + coinbase scriptSig: genuine BTC PoW and era
-// nBits, so the offline classifier renders a real strict/weak verdict (a crafted
-// regtest-bits header would classify excluded). The coinbase carries the BIP34
-// height, so a syscoin (strict-eligible) parent with it lands strict, and
-// without it lands weak.
 
 async fn block_kind_and_class(client: &Client, hash: &[u8]) -> Result<(String, Option<String>)> {
     let row = client
@@ -52,9 +39,6 @@ async fn membership_hash_is_excluded_never_strict_or_weak() -> Result<()> {
         let (parent, coinbase_script, _) = btc_400000_orphan_fixture(&client).await?;
         let parent_hash = parent.block_hash().to_byte_array().to_vec();
 
-        // Baseline: a strict-eligible syscoin parent with its real BIP34 coinbase,
-        // Core-absence attested, classifies as a STRICT orphan while the membership
-        // is empty. This is exactly the contamination the production bug produces.
         let event_id = capture_child_event(
             &mut client,
             ChildEvidence::new(
@@ -75,8 +59,6 @@ async fn membership_hash_is_excluded_never_strict_or_weak() -> Result<()> {
             "without membership the fixture is a strict orphan"
         );
 
-        // Register the header as a known stale, then re-run classification: the
-        // membership gate must exclude it, never leave it strict/weak.
         assert!(
             upsert_known_stale_block(
                 &client,
@@ -106,8 +88,6 @@ async fn reclassify_known_stales_demotes_contaminated_row_and_keeps_source_healt
         let (parent, _, _) = btc_400000_orphan_fixture(&client).await?;
         let parent_hash = parent.block_hash().to_byte_array().to_vec();
 
-        // Contaminate: capture WITHOUT the coinbase so the syscoin parent lands a
-        // WEAK orphan while the membership is still empty.
         capture_child_event(
             &mut client,
             ChildEvidence::new(
@@ -128,8 +108,6 @@ async fn reclassify_known_stales_demotes_contaminated_row_and_keeps_source_healt
         let source_id = get_source_id(&client, SYSCOIN_SOURCE_CODE).await?;
         assert_eq!(weak_orphan_parents(&client, source_id).await?, 1);
 
-        // The upstream membership arrives after the contamination; the demotion
-        // pass corrects the existing row.
         upsert_known_stale_block(&client, &parent_hash, Some(400_000), "test", 1_000).await?;
         let summary = run_reclassify_known_stales(
             &mut client,
@@ -146,7 +124,6 @@ async fn reclassify_known_stales_demotes_contaminated_row_and_keeps_source_healt
             ("unknown".to_string(), Some("excluded".to_string()))
         );
 
-        // Idempotent: a second pass finds nothing left to demote.
         let again = run_reclassify_known_stales(
             &mut client,
             ReclassifyKnownStalesConfig { batch_size: 10 },
@@ -154,9 +131,6 @@ async fn reclassify_known_stales_demotes_contaminated_row_and_keeps_source_healt
         .await?;
         assert_eq!(again.demoted, 0);
 
-        // source_health stayed consistent: the maintained counter dropped to 0 and
-        // matches a fresh recompute from base tables (proving the per-parent diff
-        // maintenance, not a global rebuild, kept the counters correct).
         assert_eq!(weak_orphan_parents(&client, source_id).await?, 0);
         let recomputed = compute_source_health_from_base(&client).await?;
         let row = recomputed
@@ -249,11 +223,6 @@ async fn import_known_stales_serializes_with_parent_advisory_lock() -> Result<()
         )?;
 
         let result = async {
-            // Simulate a producer holding this parent's advisory lock mid-
-            // classification: the import of the same hash must block until the
-            // producer's transaction ends, so the documented import-then-
-            // reclassify sequence can never race an in-flight strict/weak
-            // classification.
             let txn = client.transaction().await?;
             mmm_read_model::lock_block_hash(&txn, &hash).await?;
 

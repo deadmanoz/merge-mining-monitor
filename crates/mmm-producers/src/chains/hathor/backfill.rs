@@ -1,8 +1,4 @@
-//! Bounded Hathor historical backfill. Intentionally divergent from the shared
-//! family runner: public-REST range cap, per-height delay, and the
-//! absent/transient hold policy (`HATHOR_BACKFILL_SKIP_HOLDS`; a pending
-//! parent lineage always stops the backfill). Env reads route
-//! through `chains::config`; behavior unchanged.
+//! Bounded Hathor historical backfill over public REST.
 
 use anyhow::{Context, Result, bail};
 use tracing::{info, warn};
@@ -18,7 +14,6 @@ use crate::chains::hathor::rpc::HathorRpcClient;
 use crate::chains::spec::HATHOR_DEFAULT_BACKFILL_START;
 use crate::producer_runtime::{ProducerRuntime, run_post_backfill_repair};
 
-/// Registry-dispatched live-poll entry point for Hathor.
 pub(crate) async fn poll(
     spec: &'static crate::chains::spec::ChainSpec,
     rt: ProducerRuntime,
@@ -42,19 +37,14 @@ pub(crate) async fn poll(
     poller.run_forever().await
 }
 
-/// Registry-dispatched backfill entry point for Hathor.
 pub(crate) async fn backfill(rt: ProducerRuntime, config: BackfillConfig) -> Result<()> {
     let rpc_config = crate::chains::config::hathor_rpc_config()?;
     let rpc = HathorRpcClient::new(rpc_config)?;
     run_hathor_backfill(rt, rpc, config).await
 }
 
-/// Drive the inclusive `[start, end]` range through the shared capture path over
-/// the public REST API, then run the post-backfill read-model repair. A bounded
-/// backfill must not leave silent gaps: a pending parent lineage always aborts,
-/// and absent/transient holds abort by default
-/// unless `HATHOR_BACKFILL_SKIP_HOLDS` downgrades them to logged skips. Honors
-/// the per-height delay; does NOT move the live poll cursor.
+/// Absent/transient holds abort by default unless `HATHOR_BACKFILL_SKIP_HOLDS=1`;
+/// never moves `poll_cursor`.
 pub(crate) async fn run_hathor_backfill(
     rt: ProducerRuntime,
     rpc: HathorRpcClient,
@@ -81,8 +71,6 @@ pub(crate) async fn run_hathor_backfill(
     let delay_ms: u64 = crate::chains::config::hathor_backfill_delay_ms();
     let skip_holds = crate::chains::config::hathor_backfill_skip_holds();
 
-    // The range of a backfill is not a bound on fork depth; like the poller,
-    // it reconciles forks as deep as the configured rescan depth.
     let fork_window = crate::chains::config::poller_config(config.spec)?.reorg_depth;
     let context = HathorCaptureContext::new_with_classifier(
         &client,
@@ -143,8 +131,6 @@ fn hathor_backfill_effect(
         | HathorHeightOutcome::NearSkipped => Ok(BackfillHeightEffect::NonAuxpowSkipped),
         HathorHeightOutcome::NonBitcoinParent => Ok(BackfillHeightEffect::NonBitcoinParent),
         HathorHeightOutcome::MalformedSkipped => Ok(BackfillHeightEffect::MalformedSkipped),
-        // A bounded backfill must not silently leave gaps. Transient/absent
-        // holds fail by default, with an explicit skip override.
         HathorHeightOutcome::LineagePending => Err(lineage_pending_error(spec, height)),
         HathorHeightOutcome::AbsentHold | HathorHeightOutcome::TransientHold => {
             if skip_holds {
@@ -181,10 +167,6 @@ mod tests {
 
     #[test]
     fn hathor_rejects_an_unbounded_public_sweep() {
-        // A huge range trips the public-endpoint guard under any sane default
-        // (`HATHOR_MAX_BACKFILL_RANGE`); without it the public REST API would be
-        // swept. The `HATHOR_ALLOW_LARGE_BACKFILL=1` override is process-global
-        // env and so left to manual operation rather than a racy test.
         let empty: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let err = BackfillConfig::from_args_with_lookup(
             crate::chains::spec::by_id(crate::chains::spec::ChainId::Hathor),

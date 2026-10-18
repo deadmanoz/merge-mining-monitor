@@ -1,25 +1,8 @@
-//! Elastos capture: the per-height state machine for live polling and bounded
-//! backfills.
+//! Elastos per-height capture for live polling and bounded backfills.
 //!
-//! Elastos is a Namecoin-family AuxPoW producer reachable over a CONFIGURABLE
-//! endpoint (the self-hosted node by default, the public RPC as a
-//! fallback). Because the endpoint may be untrusted, every written event is
-//! self-verified before any DB write: the child header reconstruction + hash
-//! guard ([`crate::chains::elastos::rpc::ElastosBlock::reconstruct`]), the full CAuxPow
-//! commitment ([`verify_auxpow_commitment`]), the BTC parent-target gate, the
-//! child AuxPoW-target gate, and the shared Bitcoin-lineage gate every capture
-//! passes (`mmm_read_model::capture_in_txn`).
-//!
-//! Unlike the own-node Namecoin-family producers, the Elastos child header is an
-//! 84-byte header (the height is hashed in), so the child block hash is computed
-//! and verified rather than taken as `ParsedHeader::hash()`. The producer builds a
-//! [`NormalizedEventEvidence`] directly (the Hathor pattern): the child is the
-//! Elastos block, the parent is the BTC block from the CAuxPow.
-//!
-//! Elastos defaults to `reorg_depth = 0` (DPoS finality). A replay/backfill can
-//! still reprocess a height whose lineage verdict changed after a Core-cache
-//! change: the shared capture seam then removes the event of a block whose
-//! parent turned out to be another chain's.
+//! Because `ELASTOS_RPC_URL` may point to an untrusted endpoint, every block is
+//! self-verified (84-byte child header hash, `CAuxPow` commitment, BTC parent
+//! target, child target, and Bitcoin lineage) before any DB write.
 
 use anyhow::{Context, Result};
 use bitcoin::consensus::serialize;
@@ -56,10 +39,6 @@ use mmm_store::{
     record_child_chain_block_in_own_transaction, upsert_merge_mining_event_with_attributions,
 };
 
-/// Per-run state shared across heights: the embedded pool resolver, the shared
-/// `ProducerContext` (source_id + parent classifier), and the reward-address /
-/// minerinfo identity lookup loaded once at startup. Cheap to share by reference;
-/// holds no per-height state.
 #[derive(Debug)]
 pub struct ElastosCaptureContext {
     resolver: PoolResolver,
@@ -68,13 +47,8 @@ pub struct ElastosCaptureContext {
 }
 
 impl ElastosCaptureContext {
-    /// Bootstrap the context: register the Elastos source, snapshot the pool
-    /// resolver, seed the embedded minerinfo registry, and preload the
-    /// child-identity lookup for both Elastos namespaces (reward address +
-    /// minerinfo). The minerinfo seed runs **before** the identity load, so a fresh
-    /// database resolves the reviewed labels on the first capture (the Hathor
-    /// pattern). The classifier is supplied so live polling and backfills share one
-    /// configured parent classifier.
+    /// Bootstrap Elastos capture context, seeding minerinfo and reward-address
+    /// identities before loading the lookup map.
     pub async fn new_with_classifier(
         client: &Client,
         parent_classifier: ConfiguredParentClassifier,
@@ -108,13 +82,10 @@ impl ElastosCaptureContext {
         })
     }
 
-    /// The `source` row id for `ELASTOS_SOURCE_CODE` (every write/revoke is scoped
-    /// to it).
     pub fn source_id(&self) -> i64 {
         self.base.source_id()
     }
 
-    /// The configured BTC parent classifier, shared with `capture_in_txn`.
     pub fn parent_classifier(&self) -> &ConfiguredParentClassifier {
         self.base.parent_classifier()
     }
@@ -124,68 +95,39 @@ impl ElastosCaptureContext {
     }
 }
 
-/// Per-height capture outcome. The poller maps `LineagePending` to
-/// [`crate::poller::HeightProgress::Hold`] and everything else to `Advance`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElastosHeightOutcome {
-    /// A verified BTC-parent event was written.
     AuxpowWritten,
-    /// No `auxpow` field, or a pre-activation dummy block; no event.
     NonAuxpowSkipped,
-    /// The parent header fails its own difficulty (the common merge-mined
-    /// case): Elastos captures only parents that are blocks, never `near`.
+    /// Parent header fails BTC difficulty; Elastos captures only BTC-valid parents.
     NearSkipped,
-    /// The parent header fails the child AuxPoW target; never written.
     ChildTargetSkipped,
-    /// The parent is another chain's header (the shared lineage gate); no
-    /// event written.
     NonBitcoinParent,
-    /// The parent's lineage waits on a Bitcoin epoch the Core header cache
-    /// has not reached; no event written, and the height is retried.
     LineagePending,
-    /// The block was inconsistent / the proof malformed; skipped without a write.
     MalformedSkipped,
 }
 
-/// A child block whose AuxPoW commitment verified and whose parent meets the
-/// child target: the identity the child-side record uses. The Elastos endpoint
-/// may be untrusted, and hash self-consistency alone would let a fabricated
-/// response displace real events, so only a block backed by real work
-/// committing to it is ever recorded as the chain's block.
+/// Child block whose AuxPoW commitment verified and whose parent meets the
+/// child target; only proven blocks are recorded as the chain's head at a height.
 #[derive(Debug, Clone, Copy)]
 struct ProvenBlock {
     hash: BlockHash,
     parent_hash: BlockHash,
 }
 
-/// The pure (no-DB) verdict of evaluating a fetched block through every gate.
-/// Keeps the gate logic unit-testable over committed fixtures.
 enum ElastosEvaluation {
-    /// Terminal skip, no event. `proven` is set when the block can still be
-    /// recorded as the chain's block at its height, see [`ProvenBlock`].
     Skip {
         outcome: ElastosHeightOutcome,
         proven: Option<ProvenBlock>,
     },
-    /// A verified proof whose parent is a block: capture it through the
-    /// lineage gate.
     Write {
         parsed: Box<ParsedAuxpowBlock>,
         recon: Box<ReconstructedBlock>,
     },
 }
 
-/// Drive one Elastos height: fetch, evaluate every gate, then apply the DB effect.
-///
-/// Every processed height also records which block the child chain carries
-/// there (see `docs/data-model.md`, "Child Displacement"): a captured block is
-/// recorded inside its capture transaction, and a block that yields no event is
-/// recorded in a transaction of its own only when it is proven (its AuxPoW
-/// commitment verified and its parent meets the child target), because the
-/// endpoint may be untrusted.
-/// The whole height, from the RPC fetch through the last write, runs under a
-/// session-level lock on `(source, height)`, so what was observed is what is
-/// recorded even when a poller and a backfill overlap on the height.
+/// Fetch, evaluate, and persist one Elastos height under the session-level
+/// `(source, height)` lock.
 pub async fn process_elastos_height(
     client: &mut Client,
     rpc: &impl ElastosRpc,
@@ -198,8 +140,6 @@ pub async fn process_elastos_height(
     finish_child_chain_height_operation(client, source_id, height, result).await
 }
 
-/// One height's fetch, gates and writes, under the session-level height lock
-/// [`process_elastos_height`] holds around it.
 async fn process_locked_height(
     client: &mut Client,
     rpc: &impl ElastosRpc,
@@ -234,16 +174,9 @@ async fn apply_elastos_evaluation(
         }
     };
 
-    // A captured block is recorded inside its capture transaction. Every other
-    // outcome records the block here, but only when it is proven: a block whose
-    // commitment did not verify, or that carries no AuxPoW, or a response for
-    // another height, says nothing trustworthy about what the chain carries.
     if outcome != ElastosHeightOutcome::AuxpowWritten
         && let Some(block) = proven
     {
-        // A near or child-target verdict is settled; a non-Bitcoin one carries
-        // the Core-cache generation it was decided under, so a verdict-changing
-        // refresh reopens it; a pending one is retried.
         let head_outcome = match outcome {
             ElastosHeightOutcome::LineagePending => ChildChainHeadOutcome::Held,
             _ => ChildChainHeadOutcome::Recorded,
@@ -266,19 +199,7 @@ async fn apply_elastos_evaluation(
     Ok(outcome)
 }
 
-/// Run every offline gate over a fetched block. No DB, no RPC: pure, so the gate
-/// order and verdicts are unit-testable over committed fixtures.
-///
-/// Order (each fails closed): requested-height match -> reconstruct + hash guard
-/// -> auxpow presence -> parse -> PARENT-side dummy filter -> commitment verify ->
-/// BTC parent target -> child target. The parent's Bitcoin lineage is decided
-/// at the write, by the shared capture seam. A verdict carries the block's
-/// proven identity only once its commitment verified and its parent met the
-/// child target.
 fn evaluate_elastos_block(requested_height: i32, block: &ElastosBlock) -> ElastosEvaluation {
-    // Untrusted-endpoint guard: the RPC must answer for the height we asked for, or
-    // a stale/misrouted response would write or revoke the WRONG child height while
-    // the poller advances past this one.
     if block.height != requested_height {
         warn!(
             requested = requested_height,
@@ -369,12 +290,6 @@ fn auxpow_gate_skip(
     None
 }
 
-/// The in-transaction half of a capture: the Elastos upsert (the shared event
-/// row only, Elastos has no sidecar), then the child-side record that this
-/// block is the chain's block at its height. The capture transaction took the
-/// per-height lock first, so the record is ordered before every parent lock;
-/// the whole closure may run again under the retry loop and every step is
-/// idempotent.
 async fn upsert_and_record_block(
     txn: &Transaction<'_>,
     source_id: i64,
@@ -406,11 +321,6 @@ async fn upsert_and_record_block(
     Ok(outcome)
 }
 
-/// Capture a verified block. Builds the evidence directly (child = the Elastos
-/// block, parent = the BTC block from the CAuxPow) and runs it through the
-/// shared capture seam, whose lineage gate decides whether the parent is
-/// Bitcoin's. A refused parent also returns the Core-cache generation its
-/// verdict was decided under, for the block's child head.
 async fn write_capture(
     client: &mut Client,
     context: &ElastosCaptureContext,
@@ -438,7 +348,6 @@ async fn write_capture(
         child_block_time: Some(i64::from(recon.time)),
         child_nbits: None,
         btc_parent_header: parsed.parent_header.header,
-        // The own-node child-target check, GATED true to reach this path.
         pow_validates_child_target: Some(validates_target(
             parsed.parent_header.hash(),
             recon.prefix_header.bits(),
@@ -448,7 +357,6 @@ async fn write_capture(
         btc_parent_coinbase_outputs: Some(serialize(&parsed.parent_coinbase_outputs)),
         btc_parent_coinbase_outputs_text: None,
         btc_parent_coinbase_tx_bytes: None,
-        // Child coinbase absent (the Elastos Go-RPC tx is not coerced into TxOut).
         child_coinbase_txid: None,
         child_coinbase_script: None,
         child_coinbase_outputs: None,
@@ -491,8 +399,6 @@ use crate::chains::elastos::rpc::ElastosRpcClient;
 use crate::chains::spec::{ChainId, by_id};
 use crate::poller::{ChainPoller, ChainPollerState, HeightProgress};
 
-/// Elastos live capture chain. Monotonic like the Namecoin family: a pending
-/// parent lineage holds the cursor and every other outcome advances.
 pub(crate) struct ElastosChainPoller {
     state: ChainPollerState,
     rpc: ElastosRpcClient,
@@ -500,8 +406,6 @@ pub(crate) struct ElastosChainPoller {
 }
 
 impl ElastosChainPoller {
-    /// Bundle the owned DB client, RPC client, and per-run context into a poller the
-    /// generic `Poller` can drive height by height.
     pub(crate) fn new(
         client: Client,
         rpc: ElastosRpcClient,
@@ -544,9 +448,6 @@ impl ChainPoller for ElastosChainPoller {
         Ok(())
     }
 
-    /// Process one height, then translate the outcome to poll progress: a
-    /// parent whose lineage is pending holds the cursor until a later tick's
-    /// cache refresh decides it; every other outcome advances.
     async fn process_height(&mut self, height: i32) -> Result<HeightProgress> {
         let outcome =
             process_elastos_height(&mut self.state.client, &self.rpc, &self.context, height)

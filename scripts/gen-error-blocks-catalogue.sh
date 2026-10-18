@@ -24,19 +24,9 @@ Options:
 USAGE
 }
 
-die() {
-    printf 'error: %s\n' "$*" >&2
-    exit 1
-}
-
-skip_check() {
-    printf 'error-blocks catalogue check skipped: %s\n' "$*" >&2
-    exit 0
-}
-
-require_command() {
-    command -v "$1" >/dev/null 2>&1 || die "required command is unavailable: $1"
-}
+PIN_CHECK_LABEL="error-blocks catalogue"
+# shellcheck source=scripts/lib/research-pins.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/research-pins.sh"
 
 committed_source_commit() {
     local path="$1"

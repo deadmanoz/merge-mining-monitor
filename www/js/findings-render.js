@@ -1,8 +1,4 @@
-// Pure renderers for the findings view: the month-grouped feed, the article,
-// and the structured evidence figures. No state reads and no wiring here; the
-// view module owns both. Citation markup reuses the source-dialog helpers so
-// `[^N]` markers, `code` spans, and the Sources list render identically to the
-// chain profiles (and the jscpd gate stays quiet).
+// Pure renderers for the findings feed, articles, and evidence figures.
 
 import { esc } from "./frontend-state.js?v=0.9.3";
 import { renderFigure } from "./findings-figures.js?v=0.9.3";
@@ -12,8 +8,6 @@ import {
   renderSourcesSection,
 } from "./source-dialog.js?v=0.9.3";
 
-// Category/status presentation. Colors are existing semantic tokens, chosen
-// once here so chips and rail dots stay in sync.
 const CATEGORIES = {
   "hashrate-shift": { label: "Hashrate shift", color: "var(--near)" },
   "pool-exit": { label: "Pool exit", color: "var(--unknown)" },
@@ -33,9 +27,6 @@ const MONTHS = [
   "July", "August", "September", "October", "November", "December",
 ];
 
-/// Parse an ISO date or `YYYY-MM-DDTHH:MM` instant as a UTC epoch (ms). The
-/// generator validated the format, so a NaN here means corpus drift, not user
-/// input; render defensively anyway.
 function instantMs(t) {
   return Date.parse(t.includes("T") ? `${t}:00Z` : `${t}T00:00:00Z`);
 }
@@ -60,10 +51,7 @@ function statusPill(status) {
   return `<span class="finding-status finding-status-${esc(meta.tone)}">${esc(meta.label)}</span>`;
 }
 
-/// One feed card. NOT a button: summaries carry live citation links, and an
-/// interactive element may not nest another. The card is a plain container
-/// the delegated handler opens by `data-finding` (ignoring clicks that land
-/// on a link), and the title is the dedicated keyboard-reachable opener.
+// Card is an <article> (not a <button>) because summaries contain live citation <a> links.
 function findingCard(finding) {
   const chains = finding.affected_sources
     .map((code) => `<span class="finding-chip">${esc(chainOf(code))}</span>`)
@@ -89,8 +77,6 @@ function findingCard(finding) {
     </article>`;
 }
 
-/// The feed: cards in corpus order (newest-first), grouped under month labels
-/// derived from `observed_at`. `findings` is already filtered by the view.
 function renderFeed(findings, total) {
   if (!findings.length) {
     return `
@@ -100,7 +86,7 @@ function renderFeed(findings, total) {
   }
   let out = `
     <div class="findings-head"><h2>Findings</h2>
-      <span class="findings-head-sub">${findings.length === total ? `${total} findings` : `${findings.length} of ${total} shown`} · evidence-anchored</span></div>`;
+      <span class="findings-head-sub">${findings.length === total ? `${total} findings` : `${findings.length} of ${total} shown`}</span></div>`;
   let month = "";
   for (const finding of findings) {
     const label = monthLabel(finding.observed_at);
@@ -113,9 +99,6 @@ function renderFeed(findings, total) {
   return out;
 }
 
-/// One evidence anchor. Height anchors jump to the tree and source anchors
-/// open the source dialog (both via the view's delegated handler); child
-/// heights and pools are informational chips with nothing to navigate to yet.
 function anchorControl(anchor) {
   const label = anchor.label ? `<span class="fa-label">${esc(anchor.label)}</span>` : "";
   const value = `<span class="fa-value">${esc(anchor.value)}</span>`;
@@ -132,9 +115,6 @@ function anchorControl(anchor) {
     <span class="fa-kind">${esc(kind)}</span>${value}${label}</span>`;
 }
 
-/// The article: nav, meta, cited prose paragraphs, figures, anchors, Sources.
-/// `index`/`total` position the finding in corpus order for the newer/older
-/// controls (index 0 is newest).
 function renderArticle(finding, index, total) {
   const meta = [
     `Observed <span class="fa-value">${esc(finding.observed_at)}</span>${

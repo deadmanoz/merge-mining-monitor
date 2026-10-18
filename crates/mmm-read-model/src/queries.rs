@@ -2,14 +2,8 @@
 
 use super::*;
 
-/// Aggregate every active (non-`near`, non-revoked) auxpow attestation of a
-/// parent into the rollup the `block` row is rebuilt from: attestation count,
-/// distinct sources, distinct auxpow chains, OR-folded pow/difficulty flags,
-/// and the attestation time window. Returns `None` when no active event
-/// references the hash, which is the signal for `rebuild_parent_read_model` to
-/// take the zero-active demotion path. Core's own observation is NOT counted
-/// here; the reconciler adds the +1 distinct-source for `core_attested` when it
-/// compares against the persisted block.
+/// Aggregate active (non-`near`, non-revoked) auxpow attestations for a parent.
+/// Returns `None` when no active event references `hash`.
 pub(crate) async fn load_parent_rollup<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -56,12 +50,9 @@ pub(crate) async fn load_parent_rollup<C: GenericClient>(
     }))
 }
 
-/// Pick the one active event whose parent-header bytes and coinbase represent
-/// the parent for the rebuilt `block` row. Ordering prefers a non-NULL coinbase
-/// script, then lowest `child_height`/`id`, so the chosen header carries pool
-/// evidence when any attestation has it. Calls `ensure_active_parent_headers_match`
-/// first to fail loudly if active events disagree on the header bytes for this
-/// hash, since the derived block can only commit to one header.
+/// Select the representative active event for a parent (preferring non-NULL
+/// coinbase script, then lowest `child_height`/`id`) and verify all active
+/// events agree on parent header bytes.
 pub(crate) async fn load_representative_active_event<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -88,11 +79,6 @@ pub(crate) async fn load_representative_active_event<C: GenericClient>(
     Ok(event)
 }
 
-/// Bail if any active event for this parent hash carries different header bytes
-/// than the representative. The derived `block` row commits to exactly one
-/// header; divergent bytes under one hash mean corrupt evidence rather than a
-/// reconcilable state, so we return an error instead of silently picking
-/// one. Called by `load_representative_active_event` before the header is used.
 pub(crate) async fn ensure_active_parent_headers_match<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -122,13 +108,7 @@ pub(crate) async fn ensure_active_parent_headers_match<C: GenericClient>(
     Ok(())
 }
 
-/// Load the derived `block` fields that decide whether a rebuild actually
-/// changed anything and where the cascade must propagate: kind, height (+source),
-/// competitor hash, core-attested flag, difficulty flag, coinbase script.
-/// Returns `None` when no `block` row exists yet. Mutation/reconcile paths read
-/// this as the before/after pair around a parent rebuild; equality of the two
-/// snapshots is the idempotency key that decides whether to enqueue dependents
-/// and whether `(before != after)` reports a changed hash.
+/// Load the derived `block` fields used to detect cascade-relevant changes.
 pub(crate) async fn load_block_cascade_state<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -164,9 +144,6 @@ pub(crate) async fn load_block_cascade_state<C: GenericClient>(
     .transpose()
 }
 
-/// Load one `merge_mining_event` by id into the typed form, including revoked
-/// rows (the reconciler re-reads the same id across lock acquisition to detect
-/// drift, so this must NOT filter on `revoked_at`). Errors if the id is absent.
 pub(crate) async fn load_event<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -187,9 +164,6 @@ pub(crate) async fn load_event<C: GenericClient>(
     event_from_row(&row)
 }
 
-/// Decode a `merge_mining_event` row into the typed event. Shared by the
-/// by-id, representative, and anchor loaders so the column projection stays in
-/// one place; the column order here must match every SELECT that feeds it.
 pub(crate) fn event_from_row(row: &Row) -> Result<MergeMiningEvent> {
     let kind: String = row.get(6);
     Ok(MergeMiningEvent {
@@ -207,10 +181,6 @@ pub(crate) fn event_from_row(row: &Row) -> Result<MergeMiningEvent> {
     })
 }
 
-/// Parse the `merge_mining_event.btc_parent_kind` enum string. Note `near` is a
-/// real stored value (proximity attestation) while orphan-ness is NOT here: it
-/// is the derived `block.btc_orphan_class`, never a parent-kind. Errors on any
-/// other string so a schema/enum drift fails loudly rather than mis-classifies.
 pub(crate) fn parent_kind_from_db(value: &str) -> Result<ParentKind> {
     match value {
         "canonical" => Ok(ParentKind::Canonical),
@@ -222,11 +192,7 @@ pub(crate) fn parent_kind_from_db(value: &str) -> Result<ParentKind> {
     }
 }
 
-/// Find the anchor event for a block hash: the lowest-`child_height`/`id`
-/// active (non-`near`, non-revoked) event attesting this parent. The reconciler
-/// uses it to reconcile a block-grain change through the event path that owns
-/// the parent rebuild, so block and event reconciliation converge on one row.
-/// Returns `None` for a block with no surviving attestations.
+/// Lowest-`child_height`/`id` active non-`near` event attesting `hash`.
 pub(crate) async fn find_anchor_event_for_block<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -247,11 +213,7 @@ pub(crate) async fn find_anchor_event_for_block<C: GenericClient>(
     Ok(row.map(|row| row.get(0)))
 }
 
-/// Find active, pow-validating events whose parent's PREV-hash is this hash:
-/// the next-block-up dependents in the chain-link cascade. When a parent's
-/// derived state changes, its children's `canonical_competitor`/sibling
-/// reasoning may change, so `enqueue_dependents` re-queues these. Restricted to
-/// `pow_validates_btc_target` because only valid-PoW links anchor a successor.
+/// Active, PoW-validating non-`near` events whose parent `prev_hash` equals `hash`.
 pub(crate) async fn find_child_events<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -272,10 +234,6 @@ pub(crate) async fn find_child_events<C: GenericClient>(
     Ok(rows.into_iter().map(|row| row.get(0)).collect())
 }
 
-/// Find derived `block` rows whose `btc_prev_header_hash` is this hash: the
-/// block-grain successors to re-queue when a parent's derived state changes.
-/// Complements `find_child_events` (which finds successors via event rows that
-/// have no materialized block yet); both feed `enqueue_dependents`.
 pub(crate) async fn find_derived_child_blocks<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -293,11 +251,6 @@ pub(crate) async fn find_derived_child_blocks<C: GenericClient>(
     Ok(rows.into_iter().map(|row| row.get(0)).collect())
 }
 
-/// Find stale blocks whose canonical competitor is this hash. A structural
-/// change to the canonical block (kind/height/validity) can invalidate the stale
-/// side, so `enqueue_dependents` re-queues each stale side for rebuild. This is
-/// the canonical-to-stale edge of the cascade that the chain-link finders do not
-/// cover.
 pub(crate) async fn find_stale_competitor_dependents<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -316,20 +269,12 @@ pub(crate) async fn find_stale_competitor_dependents<C: GenericClient>(
     Ok(rows.into_iter().map(|row| row.get(0)).collect())
 }
 
-/// A repair candidate emitted by `load_reconcile_candidates`, tagged by grain:
-/// `Event(id)` reconciles through the parent-rebuild path, `Block(hash)`
-/// reconciles an orphan/zero-attestation block that no active event references.
-/// The runner dispatches on this in lib.rs.
 #[derive(Debug)]
 pub(crate) enum ReconcileCandidate {
     Event(i64),
     Block(Vec<u8>),
 }
 
-/// The missing-only repair-candidate scan: one statement yielding both
-/// event-grain and block-grain candidates (orphan blocks, unclassified
-/// unknown events, zero-attestation rows), height/source-scoped by the
-/// reconcile config.
 const RECONCILE_CANDIDATES_SQL: &str = "WITH parent_scope AS ( \
                 SELECT e.btc_parent_header_hash, COALESCE(min(e.child_height)::bigint, 2147483648::bigint) AS sort_child_height, min(e.id) AS sort_event_id \
                 FROM merge_mining_event e \
@@ -432,13 +377,6 @@ const RECONCILE_CANDIDATES_SQL: &str = "WITH parent_scope AS ( \
              ORDER BY sort_child_height, sort_event_id, kind, hash \
              LIMIT $4";
 
-/// Run the missing-only repair scan (`RECONCILE_CANDIDATES_SQL`) and decode the
-/// dual-grain rows into `ReconcileCandidate`s, ordered so event candidates sort
-/// ahead of block candidates and the `LIMIT` is a deterministic batch. Resolves
-/// the optional source-code filter to an id first. `classifier_enabled` ($5)
-/// gates the "stale parent with no block yet" candidate: only treat a missing
-/// block as stale-pending when a classifier could actually confirm it, else it
-/// stays unknown and is not flagged.
 pub(crate) async fn load_reconcile_candidates(
     client: &Client,
     config: &ReconcileReadModelConfig,
@@ -475,14 +413,8 @@ pub(crate) async fn load_reconcile_candidates(
         .collect()
 }
 
-/// Take the per-block `pg_advisory_xact_lock` for one hash, keyed by
-/// `hashtextextended(hex(hash), BLOCK_LOCK_SEED)` so the lock key is stable
-/// across processes and the seed namespaces it away from other advisory locks.
-/// Held until the transaction ends; it serializes concurrent rebuilds of the
-/// same parent so the source_health before/after bracket is consistent. Callers
-/// that lock more than one hash MUST go through `lock_block_hashes` for ordered
-/// acquisition; calling this directly for a single, already-canonical hash is
-/// fine (see `lock_block_hash`).
+/// Acquire the per-block transaction advisory lock (`hashtextextended(hex(hash), BLOCK_LOCK_SEED)`).
+/// Callers locking multiple hashes must use [`lock_block_hashes`].
 pub async fn lock_block_hash<C: GenericClient>(client: &C, hash: &[u8]) -> Result<()> {
     client
         .execute(
@@ -494,13 +426,7 @@ pub async fn lock_block_hash<C: GenericClient>(client: &C, hash: &[u8]) -> Resul
     Ok(())
 }
 
-/// Acquire per-hash advisory locks for a set, sorted and deduped FIRST. Global
-/// sort order is the deadlock-avoidance contract: every path that locks more
-/// than one block hash must acquire them in the same total order, so two
-/// transactions touching an overlapping set can never hold-and-wait in a cycle.
-/// All callers funnel the parent + prev + classification + competitor hashes
-/// through here for exactly that reason; never hand-lock a multi-hash set out
-/// of order.
+/// Acquire per-hash advisory locks in sorted, deduplicated order to prevent deadlocks.
 pub async fn lock_block_hashes<C: GenericClient>(client: &C, hashes: &[Vec<u8>]) -> Result<()> {
     let mut hashes = hashes.to_vec();
     hashes.sort();

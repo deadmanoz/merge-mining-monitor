@@ -17,13 +17,9 @@ use tokio_postgres::Client;
 use crate::support::db::{advisory_locks_held, displacement_at};
 use crate::support::exact_observation;
 
-/// A `HathorRpc` that always returns one fixed block + transaction, so a committed
-/// Hathor block fixture can drive `process_hathor_height` end to end.
 struct FixtureHathorRpc {
     meta: HathorBlockMeta,
     tx: HathorTransaction,
-    /// `/transaction` fetches served: the call a rescan of an unchanged
-    /// height must not make.
     tx_calls: AtomicUsize,
 }
 
@@ -38,23 +34,18 @@ impl HathorRpc for FixtureHathorRpc {
     }
 }
 
-/// An `unknown` parent classification over the BTC genesis header, for fake
-/// classifiers whose horizon outcome is driven by `synced_tip_height`, not
-/// parent placement.
 fn unknown_genesis_parent() -> ParentClassification {
     ParentClassification::unknown(
         &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
     )
 }
 
-/// A fake Core classifier whose fresh mainnet tip is `tip`.
 fn fake_classifier_synced_to(tip: i32) -> ConfiguredParentClassifier {
     ConfiguredParentClassifier::Fake(
         FakeParentClassifier::new(unknown_genesis_parent()).with_synced_tip_height(tip),
     )
 }
 
-/// A live context over the default 20-block rescan window.
 async fn live_context(
     client: &Client,
     classifier: ConfiguredParentClassifier,
@@ -74,9 +65,6 @@ fn hathor_1971823_fixture() -> (i32, FixtureHathorRpc) {
     )))
 }
 
-/// A committed Hathor block fixture as `(height, rpc)`. The fixture RPC answers
-/// every height with its block, so a block from one height can be served at
-/// another to stand in for a child-chain replacement.
 fn hathor_fixture(json: &str) -> (i32, FixtureHathorRpc) {
     let j: serde_json::Value = serde_json::from_str(json).expect("deserialize Hathor fixture");
     let height = j["hathor_height"].as_i64().unwrap() as i32;
@@ -102,8 +90,6 @@ fn hathor_fixture(json: &str) -> (i32, FixtureHathorRpc) {
     )
 }
 
-/// The event count at `(source, height)`: a parent the lineage gate refuses
-/// leaves none, whatever an earlier capture stored.
 async fn hathor_events_at(client: &Client, source_id: i64, height: i32) -> Result<i64> {
     Ok(client
         .query_one(
@@ -115,8 +101,6 @@ async fn hathor_events_at(client: &Client, source_id: i64, height: i32) -> Resul
         .get(0))
 }
 
-/// Make the Core cache disagree with the fixture parent's epoch bits, so the
-/// parent at 710,969 no longer looks like a Bitcoin header.
 async fn contradict_fixture_parent_epoch(client: &Client) -> Result<()> {
     client
         .execute(
@@ -160,9 +144,6 @@ async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> R
         let fetched = rpc.tx_calls.load(Ordering::SeqCst);
         assert!(fetched >= 1);
 
-        // The chain still carries the captured block: the block metadata is
-        // enough to know that, so the transaction is not fetched again and
-        // the event is left as it is.
         let outcome = rescan_hathor_height(&mut client, &rpc, &context, height).await?;
         assert_eq!(outcome, RescanOutcome::Unchanged);
         assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched);
@@ -177,13 +158,6 @@ async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> R
         assert_eq!(active, 1);
         assert_eq!(advisory_locks_held(&client).await?, 0);
 
-        // A sidecar added at the height since the record (a historical import,
-        // or the cache ingest enriching an imported event) changes the
-        // evidence the block's work was held against: the rescan takes the
-        // full capture, which re-runs the work-floor check, and records the
-        // block again against the evidence now, after which the fast path
-        // applies again. An event without a sidecar is not part of that
-        // evidence.
         let imported = exact_observation("500001-near-parent", height, [0x5b; 32], 2_030)?;
         let imported_id = upsert_merge_mining_event(&client, context.source_id(), &imported)
             .await?
@@ -215,8 +189,6 @@ async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> R
         assert_eq!(outcome, RescanOutcome::Unchanged);
         assert_eq!(rpc.tx_calls.load(Ordering::SeqCst), fetched);
 
-        // A replay that rewrites the sidecar's graph head (the bytes the
-        // work floor reads) changes the evidence just as a new sidecar does.
         client
             .execute(
                 "UPDATE hathor_merge_mining_evidence SET funds_graph = \
@@ -239,10 +211,6 @@ async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> R
             )
             .await?;
 
-        // A verdict came from the Core header cache. When the cache replaces a
-        // boundary that can change verdicts (its generation moves) the head is
-        // no longer final: the rescan captures the height again, and with the
-        // epoch's nBits changed underneath it the event is retracted.
         contradict_fixture_parent_epoch(&client).await?;
         client
             .execute(
@@ -333,7 +301,6 @@ async fn live_capture_promotes_a_hashless_historical_row_without_revoking_it() -
     })
 }
 
-/// A display-order Hathor block hash in internal byte order, as stored.
 fn internal_hash(tx_id: &str) -> Vec<u8> {
     bitcoin::BlockHash::from_str(tx_id)
         .unwrap()
@@ -341,11 +308,8 @@ fn internal_hash(tx_id: &str) -> Vec<u8> {
         .to_vec()
 }
 
-/// `(child_block_hash, child_displaced_by, revoked_at)` of one event.
 type DisplacementRow = (Vec<u8>, Option<Vec<u8>>, Option<i64>);
 
-/// A copy of a fixture RPC with its response edited: what the endpoint would
-/// answer if it misplaced, voided or corrupted that block.
 fn variant_of(
     rpc: &FixtureHathorRpc,
     edit: impl FnOnce(&mut HathorBlockMeta, &mut HathorTransaction),
@@ -364,10 +328,6 @@ fn variant_of(
 async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let (height, rpc_a) = hathor_1971823_fixture();
-        // A real block from another height, which the endpoint now places at
-        // this one: the chain's replacement for A. The proof cannot bind a
-        // block to a height; the position is the endpoint's assertion, as it is
-        // for every captured event.
         let (_, mut rpc_b) = hathor_fixture(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../fixtures/hathor/2773476.json"
@@ -383,7 +343,6 @@ async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> 
             rows
         };
 
-        // Tick 1: A is captured and is the chain's block.
         assert_eq!(
             process_hathor_height(&mut client, &rpc_a, &context, height).await?,
             HathorHeightOutcome::AuxpowWritten
@@ -394,8 +353,6 @@ async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> 
         );
         assert_eq!(advisory_locks_held(&client).await?, 0);
 
-        // Tick 2: the chain now carries B. B is captured, A is displaced by it
-        // and stays active: it is still valid Bitcoin-side evidence.
         assert_eq!(
             process_hathor_height(&mut client, &rpc_b, &context, height).await?,
             HathorHeightOutcome::AuxpowWritten
@@ -406,8 +363,6 @@ async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> 
         ]);
         assert_eq!(displacement_at(&client, source_id, height).await?, after_b);
 
-        // Tick 3: B answered for its own height rather than the one asked for
-        // holds the height for a retry; nothing changes.
         let misrouted = variant_of(&rpc_b, |meta, _| meta.height = 2_773_476);
         assert_eq!(
             process_hathor_height(&mut client, &misrouted, &context, height).await?,
@@ -415,8 +370,6 @@ async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> 
         );
         assert_eq!(displacement_at(&client, source_id, height).await?, after_b);
 
-        // Tick 4: a response whose reconstruction identity is broken proves
-        // nothing, so it changes nothing.
         let tampered = variant_of(&rpc_b, |_, tx| {
             let last = tx.raw.pop().unwrap();
             tx.raw.push(if last == '0' { '1' } else { '0' });
@@ -427,8 +380,6 @@ async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> 
         );
         assert_eq!(displacement_at(&client, source_id, height).await?, after_b);
 
-        // Tick 5: B reported voided names no replacement: nothing changes and
-        // nothing is revoked.
         let voided = variant_of(&rpc_b, |meta, _| meta.is_voided = true);
         assert_eq!(
             process_hathor_height(&mut client, &voided, &context, height).await?,
@@ -436,8 +387,6 @@ async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> 
         );
         assert_eq!(displacement_at(&client, source_id, height).await?, after_b);
 
-        // Tick 6: A again. A is restored and B displaced by it; nothing was
-        // revoked, and no lock or held height is left behind.
         assert_eq!(
             process_hathor_height(&mut client, &rpc_a, &context, height).await?,
             HathorHeightOutcome::AuxpowWritten
@@ -474,10 +423,6 @@ async fn a_block_declaring_trivial_work_does_not_displace_the_captured_block() -
             HathorHeightOutcome::AuxpowWritten
         );
 
-        // A self-consistent response built from A's own bytes that declares
-        // almost no work: the reconstruction identity holds and the trivial
-        // target is met, but the block captured at the height declares about
-        // 2^68 hashes, and a block that far below it is not the chain's block.
         let raw = hex::decode(&rpc_a.tx.raw)?;
         let aux_pow = hex::decode(rpc_a.tx.aux_pow.as_deref().unwrap())?;
         let recon = reconstruct_from_blobs(

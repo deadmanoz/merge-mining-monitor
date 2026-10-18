@@ -1,13 +1,5 @@
-//! The historical-import engine: stream a recovered-evidence CSV row by row and
-//! persist each accepted row through the standard producer write path.
-//!
-//! This is the only I/O layer of the importer. It pairs the pure `csv_source`
-//! parse with the live Core `ConfiguredParentClassifier` to decide each row,
-//! then writes only `merge_mining_event` (plus, for RSK, the 1:1
-//! `rsk_merge_mining_evidence` sidecar) via `mmm_store`, routing through
-//! `read_model::mutation` so the derived tables
-//! follow the same path as live producers. Per-row failures are tallied as
-//! skips, never aborts; only setup failures and capture errors propagate.
+//! Historical-import engine: stream a recovered-evidence CSV and persist
+//! accepted rows through the shared producer and read-model write path.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -53,13 +45,6 @@ use publication_state::{ImportPlan, plan_publication_import};
 mod write_plan;
 use write_plan::{PlannedWrite, write_planned_imports};
 
-/// Running tallies for one import, surfaced to the operator via `print`.
-///
-/// `rows_seen` counts every CSV record; `candidates` those that passed both the
-/// parse gate and the decision gate; `ingested` those actually persisted. The
-/// per-kind and per-attestation counters partition `ingested`, and `skipped`
-/// maps each `SkipReason::as_str` to its drop count. Counters reconcile:
-/// rows_seen = ingested + sum(skipped).
 #[derive(Debug, Default, Clone)]
 pub struct HistoricalImportSummary {
     pub expected_rows: u64,
@@ -82,14 +67,10 @@ pub struct HistoricalImportSummary {
     pub weak_orphans: u64,
     pub error_blocks: u64,
     pub error_parents: u64,
-    /// Unknown rows whose PERSISTED `btc_orphan_class` is `excluded`, from
-    /// either exclusion path: the known-stale membership gate or the
-    /// wrong-difficulty-epoch check, both of which can override a local
-    /// strict/weak verdict at write time.
+    /// Unknown rows whose persisted `btc_orphan_class` is `excluded`
+    /// (known-stale membership gate or wrong-difficulty-epoch check).
     pub excluded: u64,
-    /// Ingested unknown rows whose persisted class is still NULL (beyond the
-    /// persisted Core-cache horizon, or a row reconciliation left without a
-    /// block row).
+    /// Ingested unknown rows whose persisted class is still NULL.
     pub pending: u64,
     pub known_direct_branch_attestations: u64,
     pub known_descendant_branch_attestations: u64,
@@ -104,9 +85,6 @@ pub struct HistoricalImportAllSummary {
     pub skipped_matching_state: u64,
 }
 
-/// Per-import shared state threaded into `import_candidate`, resolved once before
-/// the row loop so each row reuses the same source id, classifier, pool resolver,
-/// and slug-to-id map rather than recomputing them.
 struct ImportContext<'a> {
     source_id: i64,
     classifier: &'a ConfiguredParentClassifier,
@@ -126,20 +104,12 @@ struct ChainImportContext<'a> {
 }
 
 impl HistoricalImportSummary {
-    /// Increment the drop count for `reason`, keyed by its stable string.
     fn skip(&mut self, reason: SkipReason) {
         *self.skipped.entry(reason.as_str()).or_default() += 1;
     }
 
-    /// Bump the per-kind and per-attestation counters after a successful persist.
-    ///
-    /// Buckets by the PERSISTED `block.kind` and `btc_orphan_class` read back
-    /// after the write, never the incoming payload: capture reconciliation can
-    /// retain an existing canonical/stale row when a later classification is
-    /// unknown (`effective_classification`), and the read-model's known-stale
-    /// membership gate can persist `excluded` for a row whose offline verdict
-    /// was strict/weak. The summary reports what was stored. Call exactly once
-    /// per persisted row, paired with `ingested += 1`.
+    /// Buckets by the persisted `block.kind` and `btc_orphan_class` read back
+    /// after reconciliation (not the incoming offline verdict).
     fn record_persisted(&mut self, persisted: Option<(BlockKind, Option<String>)>, count: u64) {
         match persisted {
             Some((BlockKind::Canonical, _)) => self.canonical += count,
@@ -170,8 +140,6 @@ impl HistoricalImportSummary {
         }
     }
 
-    /// Print the one-line space-delimited summary to stdout (the operator-facing
-    /// report; the `skipped` map renders as comma-joined `reason:count` pairs).
     pub fn print(&self) {
         println!(
             "historical import: expected_rows={} published_canonical={} published_stale={} published_stale_descendant={} published_strict_btc_orphan={} published_weak_btc_orphan={} rows_seen={} candidates={} ingested={} inserted={} updated={} promoted={} satisfied_by_existing_exact={} removed={} canonical={} stale={} error_block={} error_parents={} strict_btc_orphan={} weak_btc_orphan={} excluded={} pending={} known_direct_branch_attestations={} known_descendant_branch_attestations={} skipped={}",
@@ -261,14 +229,6 @@ impl HistoricalImportAllSummary {
     }
 }
 
-/// Stream the configured CSV and persist accepted rows, returning the tallies.
-///
-/// Requires a live Core classifier (the orphan-import safety guard). Resolves
-/// the `source_id`, upserts the embedded pool snapshot, validates and
-/// classifies the complete input before opening the chain transaction, then
-/// iterates rows to capture them. Honors `--limit` (caps `ingested`) and logs
-/// progress every `batch_size` ingests.
-/// Setup, validation, and capture errors propagate.
 pub async fn run_historical_import(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -506,8 +466,6 @@ async fn import_rows_in_transaction(
     Ok((summary, parent_counts))
 }
 
-/// Preflight the complete pinned publication, then import every event artifact
-/// in deterministic chain order with one shared parent-classification cache.
 pub async fn run_historical_import_all(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -706,8 +664,6 @@ async fn run_historical_import_configs_locked(
     .await
 }
 
-/// Exercise the production multi-chain orchestration with explicit normalized
-/// fixture configs. Only exposed to the database integration test feature.
 #[cfg(feature = "db-integration")]
 #[doc(hidden)]
 pub async fn run_historical_import_configs_for_test(
@@ -718,9 +674,6 @@ pub async fn run_historical_import_configs_for_test(
     run_historical_import_configs(client, classifier, configs, None).await
 }
 
-/// Exercise the production error-observation preflight and write path with a
-/// small union-schema fixture. Only exposed to the database integration test
-/// feature.
 #[cfg(feature = "db-integration")]
 #[doc(hidden)]
 pub async fn run_error_observation_import_for_test(
@@ -763,8 +716,6 @@ pub async fn run_error_observation_import_for_test(
     mmm_store::finish_bitcoin_core_header_cache_operation(client, result).await
 }
 
-/// Exercise manifest-to-chain config resolution plus the production
-/// manifest-backed import path without requiring a full 27-chain fixture.
 #[cfg(feature = "db-integration")]
 #[doc(hidden)]
 pub async fn run_manifest_historical_import_for_test(
@@ -838,8 +789,6 @@ pub async fn enqueue_published_stale_branches_for_test(client: &mut Client) -> R
     enqueue_published_stale_branches(client).await
 }
 
-/// Validate the shared classifier and known-stale prerequisites once for the
-/// set of non-surveyed chains that will be imported.
 async fn ensure_import_environment(
     client: &Client,
     classifier: &ConfiguredParentClassifier,
@@ -851,8 +800,6 @@ async fn ensure_import_environment(
     if !classifier.is_enabled() {
         bail!("BITCOIN_RPC_URL is required for historical import");
     }
-    // An empty membership means the orphan-class gate cannot exclude a known
-    // stale. Refuse by default; the flag is only for disposable diagnostics.
     let known_stale_count = mmm_store::count_known_stale_blocks(client).await?;
     if known_stale_count == 0
         && configs
@@ -872,12 +819,6 @@ async fn ensure_import_environment(
     Ok(())
 }
 
-/// Persist one decided candidate through the shared producer write path.
-///
-/// Resolves pool attribution from the parent coinbase, builds the standard event
-/// payload, then writes it and durably enqueues the affected parent inside the
-/// caller-owned chain transaction. The bounded read-model reconcile drains
-/// after commit. `Skip` is unreachable here by construction.
 async fn import_candidate(
     txn: &Transaction<'_>,
     context: &ImportContext<'_>,
@@ -905,12 +846,9 @@ async fn import_candidate(
         now_epoch_seconds()?,
     )?;
     payload.historical_provenance = Some(candidate.historical_provenance.clone());
-    // RSK rows carry a 1:1 `rsk_merge_mining_evidence` payload that must land
-    // in the same transaction as the event (mmm-api hard-errors on any
-    // `auxpow:rsk` event without its sidecar row). Hathor deliberately stays on
-    // the generic upsert: its writer requires the RFC 0006 sidecar the exports
-    // cannot supply. Every other chain writes the event alone. `pool_identity_id` stays NULL here --
-    // the `reclassify-pools` late-fill path resolves it from the registry.
+    // RSK rows require their 1:1 `rsk_merge_mining_evidence` sidecar in the
+    // same transaction; Hathor exports lack the RFC 0006 sidecar and use the
+    // generic event upsert.
     let rsk_evidence = candidate.rsk_evidence.as_ref();
     let upsert = async |txn: &tokio_postgres::Transaction<'_>,
                         source_id: i64,

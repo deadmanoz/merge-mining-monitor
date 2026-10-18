@@ -1,9 +1,4 @@
-// Source modal body: a three-tab view (General | Technical | Capture) over a
-// source. General/Technical come from the generated CHAIN_PROFILES editorial
-// corpus (authored in data/sources/chain_profiles.json,
-// emitted by `just gen-source-artifacts`); Capture combines editorial provenance
-// with the live /sources payload.
-// Extracted from controls.js so neither file exceeds the arch-lint budget.
+// Source modal body: General, Technical, and Capture tabs over CHAIN_PROFILES and /sources.
 import { CHAIN_PROFILES, SOURCE_LIFECYCLE } from "./source-registry.generated.js?v=0.9.3";
 import { esc, formatScalar, relativeTime, sourceChain } from "./frontend-state.js?v=0.9.3";
 import { kvRows } from "./drawer-renderer.js?v=0.9.3";
@@ -15,12 +10,8 @@ const TABS = [
   { id: "capture", label: "Capture" },
 ];
 
-// `chain_status` is a modal-only editorial label. Source grouping/filtering uses
-// (kind, SOURCE_LIFECYCLE) via relationshipChip(), not these status labels.
 const STATUS_LABELS = { active: "Active", zombie: "Zombie", dormant: "Dormant", dead: "Dead", unknown: "Unknown" };
 
-// How this monitor relates to the chain, from (kind, lifecycle) - NOT lifecycle
-// alone, so the Bitcoin Core parent context is never labelled a producer.
 function relationshipChip(source) {
   const kind = source?.kind || String(source?.code || "").split(":")[0] || "";
   const lifecycle = SOURCE_LIFECYCLE[source?.code] || source?.lifecycle || "";
@@ -33,8 +24,6 @@ function relationshipChip(source) {
   return { label: "Registered source", cls: "other" };
 }
 
-// The modal subhead (kicker): the chain's editorial tagline, or "" so the caller
-// can fall back to the registry meta for a source without a profile.
 function sourceTagline(source) {
   return CHAIN_PROFILES[sourceChain(source)]?.tagline || "";
 }
@@ -43,22 +32,15 @@ function chip(text, cls) {
   return `<span class="sd-chip sd-chip-${esc(cls)}">${esc(text)}</span>`;
 }
 
-// One [^N] citation marker -> a superscript link to reference N. url/label are
-// escaped (kvRows inserts values unescaped, so escaping here is the only defense).
 function citeLink(n, refs, suffix = "", localMap = null) {
   const ref = refs.find((r) => r.id === n);
   if (!ref) return null;
-  // localMap renumbers the DISPLAYED marker to a per-tab local 1..k while the
-  // link still resolves to the global reference; null keeps global numbering.
   const display = localMap ? (localMap.get(n) ?? n) : n;
   const label = esc(ref.label);
   return `<sup class="sd-cite"><a href="${esc(ref.url)}" target="_blank" rel="noopener noreferrer" aria-label="Reference ${display}: ${label}" title="${label}">${display}${suffix}</a></sup>`;
 }
 
-// Inline prose formatter for the editorial corpus. INVARIANT: for marker-free
-// text this is HTML-equivalent to esc(); it only ever emits <code>/<sup>/<a>
-// with every attribute escaped. esc() first, then tokenize on `code` spans so
-// [^N] markers inside backticks stay literal, then expand markers elsewhere.
+// Formats backtick code spans and [^N] citation links with escaped attributes.
 function fmt(text, refs = [], localMap = null) {
   return esc(text)
     .split(/(`[^`]+`)/)
@@ -71,7 +53,6 @@ function fmt(text, refs = [], localMap = null) {
     .join("");
 }
 
-// The ascending set of [^N] ids cited across a tab's fields, for its Sources list.
 function collectCites(...texts) {
   const ids = new Set();
   for (const t of texts) {
@@ -80,10 +61,6 @@ function collectCites(...texts) {
   return [...ids].sort((a, b) => a - b);
 }
 
-// Per-tab citation renumbering: map each cited GLOBAL reference id to its local
-// 1..k position (ascending). Threaded into fmt()/sourcesSection() so a tab's
-// markers and Sources list both read 1..k with no gaps. A null map (used by the
-// shared kind dialog) keeps the original global numbering.
 function localRefMap(citedIds) {
   return new Map(citedIds.map((id, index) => [id, index + 1]));
 }
@@ -153,9 +130,6 @@ function bullets(refs, localMap, items) {
   return `<ul class="sd-notable">${items.map((i) => `<li>${fmt(i, refs, localMap)}</li>`).join("")}</ul>`;
 }
 
-// Per-tab "Sources" list. With a localMap the items are numbered 1..k locally
-// (matching the renumbered inline markers); without one (the shared kind dialog)
-// they keep their global reference id, so that caller is unaffected.
 function sourcesSection(refs, citedIds, localMap = null) {
   const byId = new Map(refs.map((r) => [r.id, r]));
   const items = citedIds
@@ -174,9 +148,6 @@ function historyPanel(source, profile) {
   const h = profile.history;
   const cited = collectCites(profile.status_detail, h.founded, h.merge_mining, h.ended, h.narrative);
   const localMap = localRefMap(cited);
-  // ONE source-class chip (the monitor's relationship to the source). The
-  // native chain state moves to a scoped "Chain status" row, so it never reads
-  // as the Monitor lifecycle or evidence coverage.
   const rel = relationshipChip(source);
   const chips = `<div class="sd-chips">${chip(rel.label, `rel-${rel.cls}`)}</div>`;
   const chainStatus = STATUS_LABELS[profile.chain_status] || "Unknown";
@@ -194,8 +165,6 @@ function keyFactsBlock(refs, localMap, keyFacts) {
   return subhead("At a glance") + kvRows(keyFacts.map((k) => [k.label, fmt(k.value, refs, localMap)]));
 }
 
-// Technical is the chain's merge-mining science only; how/where this monitor
-// captures the data lives in the Capture tab (capturePanel).
 function technicalPanel(profile) {
   const refs = profile.references || [];
   const t = profile.technical;
@@ -213,17 +182,17 @@ function technicalPanel(profile) {
   ].join("");
 }
 
-// Capture tab: how/where this monitor captures the chain's evidence. Editorial
-// (derivation method, provenance + coverage window) over the live operational
-// state (per-source help, sync progress, evidence counts). `profile` is null on
-// the defensive no-profile fallback, leaving only the operational rows.
 function capturePanel(source, profile) {
   const refs = profile?.references || [];
   const t = profile?.technical || {};
   const prov = profile?.provenance;
   const help = profile?.help;
   const cited = collectCites(
-    t.capture, prov?.source, prov?.coverage, t.bitcoin_relevance, ...(t.recovery || []),
+    t.capture,
+    prov?.source,
+    prov?.coverage,
+    t.bitcoin_relevance,
+    ...(Array.isArray(t.recovery) ? t.recovery : []),
   );
   const localMap = localRefMap(cited);
   const derive = t.capture ? subhead("How this monitor derives it") + paras(refs, localMap, t.capture) : "";
@@ -231,21 +200,15 @@ function capturePanel(source, profile) {
     ? subhead("Provenance & coverage") +
       kvRows([["Source", fmt(prov.source, refs, localMap)], ["Coverage", fmt(prov.coverage, refs, localMap)]])
     : "";
-  // Recovery: the chain's Bitcoin-recovery yield (was "Why it matters for
-  // Bitcoin") plus the recovery-outcome bullets (counts, windows, novelty),
-  // moved out of the Technical tab so Technical stays pure chain-science.
   const relevanceHeading = sourceChain(source) === "bitcoin" ? "Placement" : "Recovery";
   const recovery = t.bitcoin_relevance
-    ? subhead(relevanceHeading) + paras(refs, localMap, t.bitcoin_relevance) + bullets(refs, localMap, t.recovery || [])
+    ? subhead(relevanceHeading) +
+      paras(refs, localMap, t.bitcoin_relevance) +
+      (t.recovery && t.recovery.length ? bullets(refs, localMap, t.recovery) : "")
     : "";
-  // Catalogued and surveyed sources have no admissible evidence: suppress both
-  // the operational block and the always-zero evidence-count table.
   const lifecycle = SOURCE_LIFECYCLE[source?.code] || source?.lifecycle;
   const hasNoEvidence = lifecycle === "catalogued" || lifecycle === "surveyed";
   const operational = hasNoEvidence ? "" : operationalBlock(source, help);
-  // Live/parent sources carry a `help` block; historical recovered-dataset
-  // sources omit it and show only their operational source status.
-  // Near/Unknown are deliberately not surfaced here (see CHANGELOG + e2e).
   const counts = !hasNoEvidence && sourceChain(source) !== "bitcoin" && source.counts
     ? kvRows([
         ["Events", formatScalar(source.counts.events)],
@@ -266,9 +229,6 @@ function capturePanel(source, profile) {
   );
 }
 
-// Render the tabbed source modal body. Falls back to a Capture-only render when
-// a chain has no editorial profile (defensive; the Rust completeness test makes
-// that unreachable for registry chains in practice).
 function renderSourceDialog(source) {
   const profile = CHAIN_PROFILES[sourceChain(source)];
   if (!profile) return capturePanel(source, null);

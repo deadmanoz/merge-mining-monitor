@@ -1,10 +1,5 @@
-//! Read-model scenario builder for projection behavior tests.
-//!
-//! Applies Bitcoin Core spine blocks and child-chain evidence through the
-//! production mutation entry points, so derived block and proof rows stay
-//! reconciler-owned. Keep using direct SQL seeds from
-//! [`super::seed`] for table-layout tests such as pagination, filters, and
-//! column handling.
+//! Read-model scenario builder for projection behavior tests, driving Bitcoin
+//! Core spine blocks and child-chain evidence through production mutation entry points.
 
 use std::collections::BTreeMap;
 
@@ -25,7 +20,6 @@ use mmm_read_model::{
 use mmm_store::{get_source_id, upsert_merge_mining_event_with_attributions};
 use tokio_postgres::Client;
 
-/// Verdict for a parent Core reports on its active chain.
 pub fn canonical_verdict(header: &Header, height: i32) -> ParentClassification {
     ParentClassification {
         kind: ParentKind::Canonical,
@@ -38,8 +32,6 @@ pub fn canonical_verdict(header: &Header, height: i32) -> ParentClassification {
     }
 }
 
-/// Verdict for a parent Core reports as a known stale block beaten by
-/// `canonical_competitor_hash` at the same height.
 pub fn stale_verdict(
     header: &Header,
     height: i32,
@@ -57,8 +49,6 @@ pub fn stale_verdict(
     }
 }
 
-/// Verdict for a stale parent when the test also needs the synthesized
-/// canonical competitor header persisted in the read model.
 pub fn stale_verdict_with_competitor_header(
     header: &Header,
     height: i32,
@@ -79,14 +69,10 @@ pub fn stale_verdict_with_competitor_header(
     }
 }
 
-/// Verdict for an unresolved parent (classifier disabled, transient error, or
-/// genuinely never seen) - preserves any persisted orphan class.
 pub fn unknown_verdict(header: &Header) -> ParentClassification {
     ParentClassification::unknown(header)
 }
 
-/// Verdict for a BTC-orphan candidate: Core was consulted and proved the
-/// header absent, so the reconciler derives `block.btc_orphan_class`.
 pub fn orphan_candidate_verdict(header: &Header) -> ParentClassification {
     ParentClassification {
         core_absence_attested: true,
@@ -94,8 +80,6 @@ pub fn orphan_candidate_verdict(header: &Header) -> ParentClassification {
     }
 }
 
-/// One child-chain observation of a BTC parent, captured through the
-/// production event write path under the given classifier verdict.
 pub struct ChildEvidence {
     pub key: &'static str,
     pub source_code: &'static str,
@@ -108,10 +92,6 @@ pub struct ChildEvidence {
 }
 
 impl ChildEvidence {
-    /// The 32-byte child block hash mixes `child_height` into the leading
-    /// bytes of a `child_seed` fill, so events are distinct per
-    /// (source, height, seed) - the event key is
-    /// (source_id, child_height, child_block_hash).
     pub fn new(
         key: &'static str,
         source_code: &'static str,
@@ -135,8 +115,6 @@ impl ChildEvidence {
         }
     }
 
-    /// Attach a BTC parent coinbase scriptSig (e.g. carrying a pool tag) to
-    /// the captured evidence.
     pub fn with_parent_coinbase_script(mut self, script: Vec<u8>) -> Self {
         self.parent_coinbase_script = Some(script);
         self
@@ -148,8 +126,6 @@ enum Step {
     Child(Box<ChildEvidence>),
 }
 
-/// Ordered scenario description; `apply` drives every step through the
-/// production mutation entry points and returns the event ids by key.
 #[derive(Default)]
 pub struct Scenario {
     steps: Vec<Step>,
@@ -160,20 +136,16 @@ impl Scenario {
         Self::default()
     }
 
-    /// Append a Bitcoin Core spine block (canonical-by-Core observation),
-    /// written via `write_core_canonical` with its cascade token consumed.
     pub fn core_canonical(mut self, header: Header, height: i32) -> Self {
         self.steps.push(Step::CoreCanonical { header, height });
         self
     }
 
-    /// Append a child-chain evidence capture.
     pub fn child_event(mut self, evidence: ChildEvidence) -> Self {
         self.steps.push(Step::Child(Box::new(evidence)));
         self
     }
 
-    /// Run every step in order through the production write paths.
     pub async fn apply(self, client: &mut Client) -> Result<Applied> {
         let mut event_ids = BTreeMap::new();
         for step in self.steps {
@@ -243,7 +215,6 @@ impl Scenario {
     }
 }
 
-/// Handle to the applied scenario: production event ids by evidence key.
 pub struct Applied {
     pub event_ids: BTreeMap<&'static str, i64>,
 }
@@ -257,8 +228,6 @@ impl Applied {
     }
 }
 
-/// Apply one child evidence capture through the same production mutation path as
-/// [`Scenario::apply`], returning its event id.
 pub async fn capture_child_event(client: &mut Client, evidence: ChildEvidence) -> Result<i64> {
     let key = evidence.key;
     Scenario::new()
@@ -268,8 +237,6 @@ pub async fn capture_child_event(client: &mut Client, evidence: ChildEvidence) -
         .event_id(key)
 }
 
-/// Revoke a captured event through the production mutation path (derived
-/// rows rebuilt by the same cascade the CLI revoke command uses).
 pub async fn revoke_event(client: &mut Client, event_id: i64, reason: &str) -> Result<()> {
     revoke_merge_mining_event(
         client,

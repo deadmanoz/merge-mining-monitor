@@ -15,52 +15,31 @@ use tokio_postgres::{Client, GenericClient, Transaction};
 /// from the source-health class in the same space.
 const CHILD_CHAIN_LOCK_CLASS: i32 = 0x4348; // 'CH' - child chain block at a height
 
-/// What the caller of [`record_child_chain_block`] knows about the current
-/// block's Bitcoin parent, which decides how hashless partial observations at
-/// the height are treated.
+/// Parent identity of the current child block, governing how hashless partial observations at the height are displaced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CurrentBlockParent<'a> {
-    /// The block's proof verified and names this parent (internal byte order).
-    /// A hashless row with the same parent is the block; any other hashless
-    /// row is a different block and is displaced.
+    /// Verified proof naming this parent (internal byte order); matching hashless rows are current, others displaced.
     Known(&'a [u8]),
-    /// The block is known to carry no AuxPoW. No hashless AuxPoW observation
-    /// can be it, so every hashless row is displaced.
+    /// Block carries no AuxPoW; all hashless rows at the height are displaced.
     NoAuxpow,
-    /// The block's proof did not verify, so its parent is unknown. Hashless
-    /// rows are left untouched: one of them may be this very block, and
-    /// displacing it by itself would poison its later promotion.
+    /// Proof unverified; hashless rows are left untouched to avoid poisoning later promotion.
     Unknown,
 }
 
-/// What the producer made of the block it recorded at a height. Stored on
-/// the `child_chain_head` row so a later rescan can tell from one block-hash
-/// lookup whether the height needs capturing again: only the final outcomes
-/// let a rescan that finds the same hash skip the capture.
+/// Producer outcome stored on `child_chain_head` to decide whether a rescan can skip re-capturing the same block hash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChildChainHeadOutcome {
-    /// An event was written for the block.
     Captured,
-    /// The block's proof verified and its verdict is settled, but it yields
-    /// no event (a parent that misses Bitcoin's target, for instance).
+    /// Proof verified and verdict settled, but yields no event (e.g. parent misses Bitcoin target).
     Recorded,
-    /// The block carries no AuxPoW and yields no event.
     NoAuxpow,
-    /// The block's proof did not parse, or its verdict still depends on the
-    /// Bitcoin Core cache and may change when the height is observed again.
+    /// Proof failed or verdict is provisional on the Bitcoin Core cache.
     Unverified,
-    /// The producer holds the cursor at the block; the next observation
-    /// captures it again.
+    /// Cursor held at this block; re-captured on the next observation.
     Held,
 }
 
 impl ChildChainHeadOutcome {
-    /// The outcome of a capture that wrote an event: final unless the
-    /// parent's verdict is provisional (a tolerated Core lookup failure cut
-    /// the classification short, or Core attested the parent absent, which a
-    /// header it learns later changes), in which case the height is
-    /// re-observed so the verdict is retried whatever orphan class the parent
-    /// already carries.
     pub fn captured(classification_provisional: bool) -> Self {
         if classification_provisional {
             Self::Unverified
@@ -69,7 +48,6 @@ impl ChildChainHeadOutcome {
         }
     }
 
-    /// Whether a rescan that finds the same block hash may skip the capture.
     pub fn is_final(self) -> bool {
         matches!(self, Self::Captured | Self::Recorded | Self::NoAuxpow)
     }
@@ -96,18 +74,11 @@ impl ChildChainHeadOutcome {
     }
 }
 
-/// The evidence at a height a producer's decision to record a block there
-/// depends on, fingerprinted on the head row so a rescan can tell that an
-/// import or capture since has changed it and take the full capture, which
-/// re-runs the producer's check against the evidence now.
+/// Sidecar evidence fingerprint stored on `child_chain_head` so rescans detect out-of-band evidence changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvidenceMarker {
-    /// The producer records a block on its own proof alone.
     None,
-    /// Hathor holds a block's declared work against every captured block's
-    /// sidecar at the height: a digest of every sidecar's graph head there
-    /// (the bytes the floor reads), which a new capture, a sidecar added to
-    /// an imported event and a replay rewriting a sidecar all move.
+    /// Digest of Hathor sidecar graph heads (first 45 bytes) at the height.
     HathorSidecars,
 }
 
@@ -120,8 +91,6 @@ impl EvidenceMarker {
     ) -> Result<Option<i64>> {
         match self {
             Self::None => Ok(None),
-            // The first 64 bits of an MD5 over every sidecar's graph head at
-            // the height, in row order, as a BIGINT; NULL when there is none.
             Self::HathorSidecars => Ok(client
                 .query_one(
                     "SELECT ('x' || left(md5(string_agg( \
@@ -140,7 +109,6 @@ impl EvidenceMarker {
     }
 }
 
-/// What a producer records for the block a child chain carries at a height.
 #[derive(Debug, Clone, Copy)]
 pub struct ChildChainHeadRecord<'a> {
     pub block_hash: &'a [u8],
@@ -148,42 +116,26 @@ pub struct ChildChainHeadRecord<'a> {
     pub outcome: ChildChainHeadOutcome,
     pub evidence: EvidenceMarker,
     pub observed_at: i64,
-    /// The Core-cache generation the outcome was decided under, when it was
-    /// decided in an earlier transaction (a lineage refusal); `None` stamps
-    /// the generation current in the recording transaction. A verdict-changing
-    /// refresh between the two then leaves the head non-final.
+    /// Core-cache generation when decided in an earlier transaction (`None` uses the recording transaction's generation).
     pub core_cache_generation: Option<i64>,
 }
 
-/// The block a child chain last carried at a height, as its producer recorded
-/// it: the `child_chain_head` row.
+/// Persisted `child_chain_head` row for a `(source_id, child_height)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChildChainHead {
     pub block_hash: Vec<u8>,
-    /// The parent the block's proof named, `None` when the block yielded no
-    /// verified proof. Lets displacement maintenance on a skipped rescan treat
-    /// hashless observations the way the original capture did.
     pub btc_parent_header_hash: Option<Vec<u8>>,
     pub outcome: ChildChainHeadOutcome,
-    /// The Bitcoin Core header cache has replaced a boundary that can change
-    /// verdicts since this row was written, so its outcome is not final.
     pub core_cache_changed: bool,
-    /// The evidence the producer's recording depends on has changed since
-    /// this row was written (see [`EvidenceMarker`]), so the producer must
-    /// re-run its check before treating the block as recorded.
     pub evidence_changed: bool,
     pub observed_at: i64,
 }
 
 impl ChildChainHead {
-    /// Whether a rescan that finds the same block hash may skip the capture:
-    /// the outcome is final and the Core cache it was derived under has not
-    /// replaced a verdict-changing boundary since.
     pub fn is_final(&self) -> bool {
         self.outcome.is_final() && !self.core_cache_changed
     }
 
-    /// The [`CurrentBlockParent`] the original capture recorded with.
     pub fn current_parent(&self) -> CurrentBlockParent<'_> {
         match (&self.btc_parent_header_hash, self.outcome) {
             (Some(parent), _) => CurrentBlockParent::Known(parent.as_slice()),
@@ -193,9 +145,6 @@ impl ChildChainHead {
     }
 }
 
-/// Load the block the child chain last carried at `(source_id, child_height)`,
-/// or `None` when no producer has processed the height since the row was
-/// introduced.
 pub async fn load_child_chain_head<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -230,8 +179,6 @@ pub async fn load_child_chain_head<C: GenericClient>(
 }
 
 impl CurrentBlockParent<'_> {
-    /// The parent hash the head row records, `None` when the proof did not
-    /// name one.
     fn parent_hash(&self) -> Option<&[u8]> {
         match self {
             CurrentBlockParent::Known(parent) => Some(parent),
@@ -240,7 +187,6 @@ impl CurrentBlockParent<'_> {
     }
 }
 
-/// What one `record_child_chain_block` call changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ChildDisplacementOutcome {
     /// Events whose displacement was cleared because their block is the
@@ -333,54 +279,13 @@ pub async fn lock_child_chain_height(
     Ok(())
 }
 
-/// Record that the child chain now carries `current_block_hash` at
-/// `(source_id, child_height)`.
+/// Record `record.block_hash` as the child chain's current block at `(source_id, child_height)`.
 ///
-/// Clears displacement on the event for that block, which is how a chain that
-/// flips back to an earlier block is recorded, and marks every other event at
-/// the height that is not yet displaced as displaced by it, with `observed_at`
-/// as the displacement time. An event already displaced keeps its first
-/// displacement record: the two columns say when a block first left the chain
-/// and which block took its place at that moment, and are not a pointer to the
-/// chain's current block. The current block is the event with no
-/// displacement; when the chain carries a block with no AuxPoW there is no
-/// current event, and a later such block changes nothing the columns record.
-///
-/// A hashless partial observation at the height is treated by what the caller
-/// knows about the current block's parent, see [`CurrentBlockParent`]: with a
-/// known parent the row with that parent is the block (the identity partial
-/// promotion uses) and any other hashless row is displaced; a block that
-/// carries no AuxPoW displaces every hashless row, since none can be it; a
-/// block whose proof did not verify leaves hashless rows untouched, since the
-/// caller cannot tell which block such a row observed. Revoked events are treated the
-/// same as active ones: displacement tracks the child chain and revocation
-/// tracks evidence validity, and neither reads the other.
-///
-/// The call runs inside the caller's transaction under the per-height lock
-/// from [`lock_child_chain_height`], which it takes itself (re-entrant within
-/// the transaction), so two callers recording different blocks at one height
-/// serialize and the later commit describes the chain; the transition itself
-/// is one UPDATE, so a failure never leaves the height half-moved. It is
-/// idempotent, and it changes only the two displacement columns, so no parent
-/// read-model reconciliation and no parent advisory lock are needed.
-///
-/// The call also upserts the `child_chain_head` row for the height (block
-/// hash, the parent the proof named, `outcome`, `observed_at`), the durable
-/// record a trailing rescan compares one block-hash lookup against; see
-/// [`load_child_chain_head`].
-///
-/// The producer sequence for a captured block is: take the height lock, upsert
-/// the block's event, then call this. Taking the lock first matters: an
-/// upsert locks its own event row, and two captures of different blocks at
-/// one height that each held a row before contending for the height lock
-/// would deadlock. A current block that carries no AuxPoW has no event, so
-/// its producer calls this alone in a transaction of its own.
-///
-/// Only an observation of the child chain can say which block is current. A
-/// write that inserts a new event at a height without one, such as a
-/// historical publication import for a live chain, leaves that event
-/// undisplaced beside the recorded current block until the next observation
-/// of the height (a poller rescan or a backfill) records the chain again.
+/// Under [`lock_child_chain_height`] (which callers that also upsert an event must acquire
+/// *before* the event upsert to avoid row-lock vs height-lock deadlocks), upserts
+/// `child_chain_head`, clears displacement on the matching event, and marks any other
+/// undisplaced events at the height as displaced at `observed_at` (preserving first-displacement
+/// timestamps on already-displaced rows and handling hashless rows per [`CurrentBlockParent`]).
 pub async fn record_child_chain_block(
     txn: &Transaction<'_>,
     source_id: i64,
@@ -440,14 +345,8 @@ pub async fn record_child_chain_block(
     .await
 }
 
-/// A rescan found the chain still carrying the block the head records:
-/// run the displacement maintenance [`record_child_chain_block`] runs (a
-/// write that bypassed observation may have left an undisplaced sibling)
-/// and refresh the head's observation time, but leave its outcome and the
-/// Core cache generation it was derived under untouched. Stamping the
-/// current generation here would erase a verdict-changing cache replacement
-/// that a concurrent refresh committed between the head check and this
-/// write, and the height would never be captured again.
+/// Refresh `observed_at` and re-apply displacement for an unchanged `child_chain_head` block
+/// without advancing its recorded `core_cache_generation`.
 pub async fn reobserve_child_chain_block_in_own_transaction(
     client: &mut Client,
     source_id: i64,
@@ -493,10 +392,6 @@ pub async fn reobserve_child_chain_block_in_own_transaction(
     Ok(outcome)
 }
 
-/// The one displacement transition, under the per-height lock the caller
-/// holds: clear displacement on the current block's event, mark every other
-/// event at the height displaced by it, and decide hashless observations by
-/// what is known of the current block's parent.
 async fn apply_child_displacement(
     txn: &Transaction<'_>,
     source_id: i64,
@@ -547,10 +442,7 @@ async fn apply_child_displacement(
     })
 }
 
-/// [`record_child_chain_block`] in a transaction of its own, for a block that
-/// yields no event (no AuxPoW, or a proof that failed a gate): there is no
-/// event upsert to order it against, and the record takes the per-height lock
-/// itself.
+/// [`record_child_chain_block`] in its own transaction for blocks that yield no event.
 pub async fn record_child_chain_block_in_own_transaction(
     client: &mut Client,
     source_id: i64,

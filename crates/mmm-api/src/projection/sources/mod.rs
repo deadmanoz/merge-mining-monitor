@@ -1,4 +1,4 @@
-//! Source health projection for `/api/v1/sources`.
+//! Source health projection for `/api/v1/sources` (`fixtures/api/sources.json`).
 
 use std::collections::HashMap;
 
@@ -13,20 +13,11 @@ use sync_status::{
 
 mod sync_status;
 
-/// `/api/v1/sources` success payload (fixture: fixtures/api/sources.json). Wire
-/// contract: `sources` is ordered by `source.id` ascending, one record per row
-/// in the `source` table. Source ids are permanent and may contain retired gaps.
-/// Re-exported and consumed by the integration-test host.
 #[derive(Debug, Clone, Serialize)]
 pub struct SourcesPayload {
     pub sources: Vec<SourceEndpointRecord>,
 }
 
-/// One source row in the `/api/v1/sources` payload (fixture: sources.json). Every
-/// field name is the locked JSON wire contract. `status` is the freshness verdict
-/// from the derived `last_seen_at`; `sync` is the per-class capture-progress
-/// status; `counts` carries the precomputed source_health tallies including
-/// strict/weak BTC-orphan sub-counts.
 #[derive(Debug, Clone, Serialize)]
 pub struct SourceEndpointRecord {
     pub id: i64,
@@ -41,18 +32,6 @@ pub struct SourceEndpointRecord {
     pub counts: SourceCounts,
 }
 
-/// Per-source capture-progress status nested under each `/api/v1/sources` record
-/// (fixture: sources.json). `mode` names the capture class (live,
-/// bitcoin-core-backbone, historical, partial, surveyed, catalogued, unknown)
-/// and `state` its
-/// current phase (not_started, catching_up, live, stale, error, historical,
-/// partial, surveyed, catalogued). All fields are the locked
-/// wire contract; `&'static str` mode/state values are part of that contract.
-///
-/// `error_code` / `error_height` carry two independent error classes: the
-/// Bitcoin Core backbone's own `bitcoin_core_sync_state` error, and (for a live
-/// AuxPoW source) the earliest unresolved `capture_error` height, reported as
-/// `auxpow_capture_error`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SourceSyncStatus {
     pub mode: &'static str,
@@ -65,10 +44,6 @@ pub struct SourceSyncStatus {
     pub error_height: Option<i32>,
 }
 
-/// Per-source evidence tallies nested under each `/api/v1/sources` record
-/// (fixture: sources.json). Read straight from the precomputed `source_health`
-/// table, never re-aggregated at request time. `strict_orphan`/`weak_orphan` are
-/// the BTC-orphan sub-counts; field names are the locked wire contract.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SourceCounts {
     pub events: usize,
@@ -81,9 +56,6 @@ pub struct SourceCounts {
     pub weak_orphan: usize,
 }
 
-/// Decoded `source` row joined with its poll_cursor / bitcoin_core_sync_state
-/// progress, before merge with source_health counts. Private staging type for
-/// `load_source_endpoint_rows`; not serialized.
 #[derive(Debug, Clone)]
 struct SourceEndpointBaseRow {
     id: i64,
@@ -94,14 +66,9 @@ struct SourceEndpointBaseRow {
     created_at: i64,
     cursor: Option<SourceCursorProgress>,
     backbone: Option<SourceBackboneProgress>,
-    /// Lowest unresolved `capture_error` height for this source, or `None`
-    /// when it holds none.
     capture_error_height: Option<i32>,
 }
 
-/// One `source_health` row (events + last_event_seen + the SourceCounts tallies)
-/// keyed by `source_id`, merged into the endpoint records by `sources`. Private
-/// staging type for `load_source_count_aggregates`.
 #[derive(Debug, Clone)]
 struct SourceCountAggregateRow {
     source_id: i64,
@@ -110,12 +77,6 @@ struct SourceCountAggregateRow {
     counts: SourceCounts,
 }
 
-/// Build the `/api/v1/sources` payload: O(sources) join of the `source` table
-/// against precomputed poll_cursor / bitcoin_core_sync_state progress and the
-/// `source_health` count table, ordered by `source.id`. Fails closed (Err) until
-/// `source_health_ready`, so un-rebuilt zero counts are never served. `reference_now`
-/// (epoch secs) anchors the freshness verdicts. For auxpow sources, the derived
-/// `last_seen_at` is the latest event seen and seeds `sync.latest_evidence_at`.
 pub async fn sources(
     client: &Client,
     reference_now: u64,
@@ -146,8 +107,6 @@ pub async fn sources(
                         .as_ref()
                         .and_then(|aggregate| aggregate.last_event_seen)
                 } else {
-                    // Bitcoin Core freshness is carried by bitcoin_core_sync_state,
-                    // not by event-derived source_health counts.
                     None
                 };
                 let mut sync = sync_for_source_code(
@@ -177,17 +136,8 @@ pub async fn sources(
     })
 }
 
-/// Load every `source` row joined LEFT to its poll_cursor progress, (for the
-/// live-chaintip backbone) its contiguous bitcoin_core_sync_state, and its
-/// lowest unresolved capture-error height, ordered by `source.id` to fix the
-/// wire output order. Bails if a join yields a partial cursor (height/updated-at
-/// split) or a null contiguous-height/updated-at.
-///
-/// `capture_error` holds one row per `(source_id, height)`, so a source can hold
-/// several while `/api/v1/sources` allows exactly one record per source. The
-/// lateral reduction takes the LOWEST height: the earliest gap is what bounds
-/// trustworthy coverage, and the primary key makes that choice unique without a
-/// tie-break.
+/// Load `source` rows joined with `poll_cursor`, contiguous `bitcoin_core_sync_state`, and
+/// the lowest unresolved `capture_error` height (`ORDER BY source.id`).
 async fn load_source_endpoint_rows(client: &Client) -> Result<Vec<SourceEndpointBaseRow>> {
     let rows = client
         .query(
@@ -260,17 +210,8 @@ async fn load_source_endpoint_rows(client: &Client) -> Result<Vec<SourceEndpoint
 }
 
 async fn load_source_count_aggregates(client: &Client) -> Result<Vec<SourceCountAggregateRow>> {
-    // O(sources): read the precomputed source_health table + the single-row
-    // read_model_invariant guard instead of re-aggregating merge_mining_event.
-    // The counters are maintained incrementally by the reconciler and rebuilt by
-    // `reconcile-read-model --rebuild-source-health`.
-    //
-    // The guard scalars and the rows are read in ONE statement (one snapshot): a
-    // maintenance transaction committing between two separate reads could expose
-    // `invalid_unknown_parents = 0` from before the commit alongside rows from
-    // after it, bypassing the fail-closed guard. The LEFT JOIN against the
-    // always-present invariant row also keeps the not-ready / empty-table case
-    // observable (one row with NULL source_health columns).
+    // Read `read_model_invariant` and `source_health` in a single statement so a concurrent
+    // maintenance commit cannot split the guard scalars from the rows.
     let rows = client
         .query(
             "SELECT inv.source_health_ready, inv.invalid_unknown_parents, \
@@ -292,19 +233,15 @@ async fn load_source_count_aggregates(client: &Client) -> Result<Vec<SourceCount
     let ready: bool = first.get(0);
     let invalid_unknown_parents: i64 = first.get(1);
 
-    // Fail closed: an un-rebuilt (empty) source_health must never be served as
-    // legitimate zeros. Once the first rebuild sets ready = TRUE this is satisfied.
     if !ready {
         bail!("source_health not initialized; run reconcile-read-model --rebuild-source-health");
     }
-    // Preserve the prior invalid-unknown guard exactly (same error string).
     if invalid_unknown_parents > 0 {
         bail!("active unknown event fails Bitcoin target");
     }
 
     rows.iter()
         .filter_map(|row| {
-            // NULL source_id => the LEFT JOIN placeholder for an empty table.
             let source_id: Option<i64> = row.get(2);
             source_id.map(|source_id| {
                 Ok(SourceCountAggregateRow {
@@ -327,9 +264,6 @@ async fn load_source_count_aggregates(client: &Client) -> Result<Vec<SourceCount
         .collect()
 }
 
-/// Convert a Postgres BIGINT count to usize, attaching the column `label` on the
-/// (should-be-impossible) negative-count overflow so a corrupt source_health row
-/// surfaces a named error rather than a panic.
 fn i64_to_usize(value: i64, label: &str) -> Result<usize> {
     value
         .try_into()

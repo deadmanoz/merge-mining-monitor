@@ -1,12 +1,4 @@
-// The findings view: an evidence-backed editorial feed over the generated
-// corpus, with an article state that replaces the feed (no third pane; the
-// block-detail drawer stays out of this view entirely, see layout.css).
-//
-// All markup is built in JS into the two empty index.html mount points, like
-// the delta view and for the same reason: the rail fieldsets as static markup
-// would blow index.html's architecture budget. Registration is injected
-// (`registerFindingsView(registerView)`) from boot to avoid a static module
-// cycle with view-shell.
+// Findings view: editorial feed and article canvas over the generated findings corpus.
 
 import { markUpdated } from "./api-client.js?v=0.9.3";
 import { INFO_DIALOGS, openInfoDialog } from "./controls.js?v=0.9.3";
@@ -22,8 +14,6 @@ function registerFindingsView(registerView) {
   registerView("findings", {
     label: "Findings",
     async load({ force = false } = {}) {
-      // The corpus is a static import, so "loading" is seeding state once; the
-      // freshness stamp keeps the topbar indicator from going blank here.
       if (!state.findings || force) {
         state.findings = FINDINGS;
         markUpdated("findings");
@@ -36,10 +26,6 @@ function registerFindingsView(registerView) {
   });
 }
 
-/// The findings the feed shows under the current filters. Category and status
-/// exclusions are findings-local; the Source filter is the shared one, matched
-/// against `affected_sources` so a source selection narrows the feed exactly
-/// like it narrows the other views.
 function visibleFindings() {
   const ui = state.findingsUi;
   return state.findings.filter(
@@ -50,9 +36,7 @@ function visibleFindings() {
   );
 }
 
-/// Paint the canvas from state: the article named by `state.query.finding`, or
-/// the feed. An unknown slug (stale link, renamed finding) degrades to the
-/// feed and clears the param, mirroring how an unregistered view falls back.
+// Paints the article named by `state.query.finding`, or falls back to the feed.
 function paint() {
   const scroller = $("#findings-scroll");
   if (!scroller) return;
@@ -99,15 +83,11 @@ function dispatchAnchor(button) {
   if (kind === "btc-height") {
     showInTree(Number(value));
   } else if (kind === "source") {
-    // Called directly rather than via the descriptor's own delegation, which
-    // is scoped to #source-controls and never sees clicks in this canvas.
     const descriptor = INFO_DIALOGS.find((d) => d.id === "source-dialog");
     if (descriptor) openInfoDialog(descriptor, value);
   }
 }
 
-/// One rail filter group. Checkboxes start checked; unchecking adds the value
-/// to the exclusion list.
 function filterGroup(legend, entries, hidden) {
   const rows = Object.entries(entries)
     .map(([value, meta]) => {
@@ -121,8 +101,6 @@ function filterGroup(legend, entries, hidden) {
   return `<fieldset><legend>${legend}</legend><div class="stack-sm">${rows}</div></fieldset>`;
 }
 
-/// One-shot DOM build; findings stay mounted and CSS scoping hides them, the
-/// same lifecycle as the delta view.
 function mount() {
   if (mounted) return;
   mounted = true;
@@ -142,15 +120,11 @@ function mount() {
     const at = list.indexOf(box.value);
     if (box.checked && at !== -1) list.splice(at, 1);
     if (!box.checked && at === -1) list.push(box.value);
-    // Filter changes invalidate the remembered feed position: the list the
-    // user scrolled is not the list being shown now.
     state.findingsUi.feedScroll = 0;
     paint();
   });
 
   $("#findings-main").addEventListener("click", (event) => {
-    // A citation link inside a card summary is its own gesture: let it act
-    // without also treating the click as card activation.
     if (event.target.closest("a")) return;
     const card = event.target.closest("[data-finding]");
     if (card) {

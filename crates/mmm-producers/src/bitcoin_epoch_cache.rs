@@ -17,22 +17,12 @@ pub const CORE_HEADER_REORG_SAFE_DEPTH: i32 = 100;
 /// than storing a mixture of two active chains.
 const CORE_HEADER_SNAPSHOT_ATTEMPTS: usize = 3;
 
-/// Bring the sparse Core-header cache through the current synced Core tip and
-/// return the classification table for this command.
+/// Bring the sparse Core-header cache through the current synced Core tip.
 ///
-/// Every producer calls this at startup and before each tick, so it holds the
-/// exclusive cache lock only for bounded work. A committed Core suffix
-/// cascade must finish before the cache is read or replaced, so each lock
-/// hold drains one batch of it: when the queue is not empty afterwards the
-/// lock is released and the loop tries again, letting pollers waiting on the
-/// shared lock interleave; when it is empty, the cache replacement happens in
-/// that same hold, because a concurrent suffix replacement could commit and
-/// queue a new cascade in any gap between the check and the replacement.
-///
-/// Reclassification of unknown parents is not done here. A replacement that
-/// changes what verdicts can be given schedules a recheck on the cache state
-/// (a generation the scheduled job `reclassify-unknown-parents --scheduled`
-/// consumes one page per lock hold); this only reports that work is pending.
+/// Each exclusive cache-lock hold drains at most one `CORE_RECOVERY_BATCH` of
+/// committed Core suffix cascade before releasing to let shared-lock pollers
+/// interleave; once the queue is empty, cache replacement runs in the same
+/// lock hold. Unknown-parent reclassification is scheduled rather than run inline.
 pub async fn refresh_bitcoin_core_header_cache(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,

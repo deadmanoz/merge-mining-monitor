@@ -3,17 +3,14 @@ import { fmtDelta } from "./delta-scales.js?v=0.9.3";
 import { $, chainDisplayName, CLASSIFICATION_META, esc, formatEpoch, formatScalar, formatSourceList, formatSourceRef, state } from "./frontend-state.js?v=0.9.3";
 
 
-// Contextual help for the esoteric AuxPoW and merge-mining concepts in the
-// block-detail drawer, sourced from the merge-mining/AuxPoW explainer. Each `(i)`
-// button in the drawer carries data-auxpow-info=<topic> and opens #auxpow-dialog
-// with this content.
+// Contextual help topics for AuxPoW fields in the block-detail drawer.
 const AUXPOW_HELP = {
   inferred_miner: {
     name: "Inferred miner",
     meta: "Best-available miner when the Bitcoin coinbase miner is unknown",
     body: [
-      "This Bitcoin block's own coinbase miner could not be identified, so \"Bitcoin miner\" stays Unknown. That happens when there is no recoverable Bitcoin coinbase to read a pool identity from, most often an RSK-only stale block whose compressed AuxPoW proof discards the parent coinbase under RSKIP-92.",
-      "It was still merge-mined: the same proof-of-work that found this Bitcoin block also secured a child-chain block, whose own miner or payout identity we map to a pool and show here. That identity is usually, but not always, the same operator as the Bitcoin coinbase miner, so treat it as a best-available hint, not a coinbase fact; the strict \"Bitcoin miner\" stays Unknown.",
+      "This Bitcoin block's own coinbase miner could not be identified, most often on an RSK-only stale block whose RSKIP-92 proof omits the parent coinbase.",
+      "Because the same proof of work also secured a child-chain block, the monitor maps that child block's miner or payout identity to a pool as a best-available hint while keeping \"Bitcoin miner\" as Unknown.",
     ],
   },
   commitment: {
@@ -56,14 +53,10 @@ const AUXPOW_HELP = {
   },
   child_time: {
     name: "Child Time",
-    // Provenance-neutral: this topic is shown for every event, including the
-    // RSK, Hathor and historical rows whose stamp was never checked against the
-    // commitment, so the kicker must not assert that it was.
     meta: "The auxiliary block's own claimed timestamp, and its offset from Bitcoin",
     body: [
-      "The auxiliary block's own timestamp, not a monitor capture time and not when the block reached its network. Whoever builds the child template writes it; the monitor observes no build and records only the claim. Which field it is depends on the chain: the header nTime for the Namecoin family, the block timestamp for RSK, the block transaction timestamp for Hathor.",
-      "It usually sits behind the Bitcoin header time, and that is ordinary. The child data is committed into the Bitcoin coinbase before the Bitcoin work exists, so the stamp is sealed and cannot be refreshed later; one template is reused across many Bitcoin jobs, so it is stamped earlier than the parent that finally carries it.",
-      "How much it proves varies. The Child Header row says whether bytes are stored to re-derive the stamp from, which is narrower than whether the Bitcoin block committed to it, and narrower again than a check having run: the header and the timestamp fill independently, so an event assembled from separate observations may never have had the two compared. A positive offset is an ordering disagreement worth investigating, never proof that either clock is wrong.",
+      "The auxiliary block's timestamp (header nTime, RSK block timestamp, or Hathor tx timestamp): the monitor observes no build and records only the claim. Because the child template is sealed into the Bitcoin coinbase before hashing and reused across jobs, it usually trails the parent header time.",
+      "A stored Child Header is narrower than whether the Bitcoin block committed to it, and separate observations may not cross-check the two. A positive offset marks an ordering disagreement, not a broken clock.",
     ],
   },
   targets: {
@@ -104,173 +97,134 @@ function auxpowHelpFor(topic) {
   return AUXPOW_HELP[topic] || { name: "AuxPoW", meta: "", body: [] };
 }
 
-// The Bitcoin consensus rules a catalogued error block is proven to break, keyed
-// by the research catalogue's primary `rejection_reason` token. Each entry names
-// the rule in prose and says what the block did wrong, so the drawer shows more
-// than a raw snake_case token.
-//
-// The vocabulary is deliberately not exhaustive: the research classifier can
-// emit tokens this map has not seen yet. An unmapped token falls
-// back to its raw value with no help control (see `consensusRuleHelpFor` and
-// `renderParentBlock`) rather than opening an empty or mislabelled dialog.
-// Header-context and reviewed body-rule failures share this map and dialog.
+// Consensus rules for catalogued error blocks, keyed by `rejection_reason`.
 const CONSENSUS_RULE_HELP = {
   consensus_invalid_parent: {
     name: "Invalid predecessor",
     meta: "Extends a Bitcoin consensus-invalid branch",
     body: [
-      "This block extends a predecessor that the reviewed Research catalogue establishes as consensus-invalid. The authenticated predecessor path cannot form a valid Bitcoin branch, even when this block carries sufficient proof of work.",
-      "The rejection follows from that ancestry. It does not establish a separate transaction or script failure in this block's own body.",
+      "This block extends a predecessor that the reviewed Research catalogue establishes as consensus-invalid, so its authenticated predecessor path cannot form a valid Bitcoin branch despite valid proof of work.",
     ],
   },
   "bad-blk-sigops": {
     name: "Too many sigops (bad-blk-sigops)",
     meta: "Signature-operation cost exceeds Bitcoin's 80,000 limit",
     body: [
-      "Bitcoin caps a block's total signature-operation cost at 80,000. A block over the cap is rejected by every consensus-following node with bad-blk-sigops, however much proof of work it carries.",
-      "This violation requires complete block and previous-output evidence. The reviewed Research catalogue supplies that verdict; the monitor classifies these parents as error blocks even when their headers pass the available stale-profile checks.",
+      "This block's total signature-operation cost exceeds Bitcoin's 80,000 consensus cap, as established from complete block and previous-output evidence in the Research catalogue.",
     ],
   },
   "block-script-verify-flag-failed": {
     name: "Script verification failed (block-script-verify-flag-failed)",
     meta: "A transaction fails Bitcoin consensus script verification",
     body: [
-      "The four early P2SH cases in the Research catalogue spend previous outputs with invalid redeem scripts. Complete transaction and authenticated previous-output evidence establishes the failure; a valid proof of work does not make the block valid.",
+      "Transactions in this block spend previous outputs with invalid P2SH redeem scripts, established from complete transaction and previous-output evidence.",
     ],
   },
   "bad-cb-amount": {
     name: "Coinbase overpayment (bad-cb-amount)",
     meta: "Coinbase outputs exceed the permitted subsidy plus transaction fees",
     body: [
-      "A Bitcoin block may pay its miner no more than the block subsidy plus its transaction fees. The reviewed full-block evidence establishes that this coinbase pays more than that amount, so the block is consensus-invalid.",
+      "A Bitcoin block may pay its miner no more than the block subsidy plus its transaction fees; reviewed full-block evidence shows this coinbase overpays.",
     ],
   },
   "bad-txns-inputs-missingorspent": {
     name: "Missing or spent input (bad-txns-inputs-missingorspent)",
     meta: "A transaction spends an unavailable previous output",
     body: [
-      "Every transaction input must spend an available output from the prior chain state or an earlier transaction in the same block. The reviewed full-block evidence establishes a missing or already-spent input. The header and merge-mining witness alone cannot establish this body-level failure.",
+      "Reviewed full-block evidence shows a transaction spending a missing or already-spent input against the prior chain state.",
     ],
   },
   bip34_v2_coinbase_height_mismatch: {
     name: "BIP34 coinbase height mismatch (version 2+)",
     meta: "Coinbase scriptSig does not begin with this block's height",
     body: [
-      "BIP34 requires a version 2 or newer block to begin its coinbase scriptSig with its own height, serialized exactly. This block's coinbase carries a different height, so it is invalid regardless of its proof of work.",
-      "This is BIP34's first enforcement stage, active from height 224,413, where the rule bound only blocks that opted in to version 2.",
+      "During BIP34's v2 opt-in stage (from height 224,413), a version 2+ block had to begin its coinbase scriptSig with its serialized height; this block carries a different height.",
     ],
   },
   bip34_coinbase_height_mismatch: {
     name: "BIP34 coinbase height mismatch",
     meta: "Coinbase height prefix mandatory and wrong here",
     body: [
-      "From height 227,931 BIP34's coinbase-height prefix is mandatory for every valid block, and version 1 blocks are rejected outright. This block's coinbase scriptSig does not carry its own serialized height.",
-      "Bitcoin Core buries this deployment, so the monitor's catalogue applies the rule explicitly rather than relying on a node to replay it for an off-chain branch.",
+      "From height 227,931 every valid block must begin its coinbase scriptSig with its own serialized height; this block carries a different height.",
     ],
   },
   bip34_v2_coinbase_height_missing: {
     name: "BIP34 coinbase height missing (version 2+)",
     meta: "Version 2+ block with no coinbase height prefix at all",
     body: [
-      "A version 2 or newer block from BIP34's first enforcement stage whose coinbase scriptSig carries no serialized height prefix at all, as distinct from carrying the wrong one.",
+      "A version 2+ block from BIP34's first enforcement stage whose coinbase scriptSig omits the required serialized height prefix.",
     ],
   },
   bip34_coinbase_height_missing: {
     name: "BIP34 coinbase height missing",
     meta: "No coinbase height prefix where one is mandatory",
     body: [
-      "From height 227,931 every valid block must carry its serialized height at the start of the coinbase scriptSig. This block carries none at all, as distinct from carrying the wrong one.",
+      "From height 227,931 every valid block must begin its coinbase scriptSig with its serialized height; this block omits the prefix entirely.",
     ],
   },
   bip34_block_version_below_2: {
     name: "Block version below 2 (BIP34)",
     meta: "Version 1 block after BIP34 made version 2 the minimum",
     body: [
-      "BIP34 set a minimum block version of 2 from height 227,931. This header declares a lower version.",
-      "The catalogue applies a hard height cutover at the observed activation height. Bitcoin Core's real rule was a rolling 750-of-1000 lock-in then 950-of-1000 enforcement, so treat a minimum-version verdict as a canonical-context judgement rather than a universal one.",
+      "BIP34 required block version 2 or higher from height 227,931; this header declares version 1.",
     ],
   },
   bip66_block_version_below_3: {
     name: "Block version below 3 (BIP66)",
     meta: "Version predates BIP66's strict DER minimum",
     body: [
-      "BIP66 set a minimum block version of 3 from height 363,725. This header declares a lower version.",
-      "As with the other minimum-version rules, the catalogue uses a hard height cutover at the observed activation height rather than replaying Bitcoin Core's rolling supermajority threshold.",
+      "BIP66 required block version 3 or higher from height 363,725; this header declares a lower version.",
     ],
   },
   bip65_block_version_below_4: {
     name: "Block version below 4 (BIP65)",
     meta: "Version predates BIP65's CHECKLOCKTIMEVERIFY minimum",
     body: [
-      "BIP65 set a minimum block version of 4 from height 388,381. This header declares a lower version.",
-      "As with the other minimum-version rules, the catalogue uses a hard height cutover at the observed activation height rather than replaying Bitcoin Core's rolling supermajority threshold.",
+      "BIP65 required block version 4 or higher from height 388,381; this header declares a lower version.",
     ],
   },
   coinbase_scriptsig_length_above_100: {
     name: "Coinbase scriptSig too long",
     meta: "Serialized length outside the 2-100 byte bound",
     body: [
-      "A coinbase scriptSig must serialize to between 2 and 100 bytes. This block's exceeds 100.",
-      "The token name is historical; the gate enforces the full two-sided bound.",
+      "A coinbase scriptSig must serialize to 2–100 bytes; this block's exceeds 100 bytes.",
     ],
   },
   coinbase_scriptsig_length_below_2: {
     name: "Coinbase scriptSig too short",
     meta: "Serialized length below the 2-byte minimum",
     body: [
-      "A coinbase scriptSig must serialize to between 2 and 100 bytes. This block's is shorter than 2.",
+      "A coinbase scriptSig must serialize to 2–100 bytes; this block's is shorter than 2 bytes.",
     ],
   },
   median_time_past_violation: {
     name: "Block time not after median-time-past",
     meta: "Timestamp violates the median-time-past rule",
     body: [
-      "A block's timestamp must be strictly greater than the median-time-past of its parent, the median of the previous eleven block times. This block's is not.",
-      "The parent's median-time-past is committed canonical-chain context, so this rule re-derives offline with no live node.",
+      "A block's timestamp must be strictly greater than its parent's median-time-past (the median of the preceding 11 blocks).",
     ],
   },
   time_below_mtp: {
     name: "Block time at or below median-time-past",
     meta: "Timestamp at or under the canonical parent's median-time-past",
     body: [
-      "This block's nTime is at or below the median-time-past of its canonical parent, which the median-time-past rule forbids.",
-      "The parent's median-time-past is committed canonical-chain context, so this rule re-derives offline with no live node.",
+      "This block's nTime is at or below its canonical parent's median-time-past.",
     ],
   },
   nbits_retarget_not_applied: {
     name: "Retarget not applied",
     meta: "Carries the previous epoch's nBits at a retarget boundary",
     body: [
-      "At a difficulty retarget boundary (a height divisible by 2016) this block still carries the previous epoch's nBits instead of the newly retargeted value, while its header hash nonetheless meets Bitcoin's real target at that height.",
-      "This is distinct from an ordinary nBits mismatch away from a boundary, which usually means the header's difficulty context is another chain's rather than Bitcoin's. Such a header is not an error block at all.",
-    ],
-  },
-  time_beyond_future_limit: {
-    name: "Block time beyond the future limit",
-    meta: "Timestamp more than two hours ahead of network-adjusted time",
-    body: [
-      "Bitcoin rejects a block whose timestamp is more than two hours beyond network-adjusted time.",
-      "No catalogued block carries this token. Network-adjusted time cannot be reconstructed from committed offline evidence, so the rule is not mechanically re-checkable and the catalogue's offline validator rejects any row claiming it.",
+      "At a 2016-block difficulty retarget boundary, this header carries the previous epoch's nBits instead of the retargeted value while still meeting Bitcoin's target.",
     ],
   },
 };
 
-// Help for one catalogued consensus rule, or null when the token is outside the
-// mapped vocabulary. Null is meaningful: the caller renders the raw token with no
-// help control rather than an empty dialog.
-//
-// The own-property check matters: the token is server data, and a plain object's
-// bracket lookup also resolves inherited members, so tokens like `constructor`,
-// `toString` or `__proto__` would otherwise read as mapped rules and emit a help
-// control whose dialog then throws on the missing `body`.
 function consensusRuleHelpFor(token) {
   if (!token || !Object.prototype.hasOwnProperty.call(CONSENSUS_RULE_HELP, token)) return null;
   return CONSENSUS_RULE_HELP[token];
 }
 
-// A small `(i)` button that opens the AuxPoW help dialog for one topic. Models
-// the source-info-button; wired by a document-level delegation like the copy
-// buttons, so it survives drawer re-renders.
 function auxpowInfoButton(topic) {
   const help = auxpowHelpFor(topic);
   const label = `About ${esc(help.name)}`;
@@ -279,14 +233,10 @@ function auxpowInfoButton(topic) {
   </button>`;
 }
 
-// A detail section whose heading carries an AuxPoW help button.
 function detailSectionHelp(title, topic, body) {
   return `<section class="detail-section"><h3>${esc(title)} ${auxpowInfoButton(topic)}</h3>${body}</section>`;
 }
 
-// The consensus-rule twin of auxpowInfoButton, opening #consensus-rule-dialog.
-// Only ever emitted for a token consensusRuleHelpFor maps, so the dialog it
-// opens always has content.
 function consensusRuleInfoButton(token, help) {
   const label = `About ${esc(help.name)}`;
   return `<button class="icon-button auxpow-info-button" type="button" data-consensus-rule-info="${esc(token)}" aria-label="${label}" title="${label}">
@@ -294,10 +244,6 @@ function consensusRuleInfoButton(token, help) {
   </button>`;
 }
 
-// The "Consensus rejection" row value: the humanised rule name plus its help
-// control when the token is mapped, otherwise the raw token alone. A catalogue
-// row always carries a token, so the empty case is only reachable through a
-// malformed payload.
 function consensusRejectionValue(token) {
   if (!token) return esc("catalogued consensus violation");
   const help = consensusRuleHelpFor(token);
@@ -324,9 +270,6 @@ function renderDrawer() {
   container.innerHTML = renderBlockDetailPayload(payload);
 }
 
-// Pure block-detail renderer: builds the drawer HTML from a /block/:hash payload
-// with no `state` access, so the dev fixture harness can render committed
-// fixtures directly. `renderDrawer` is the thin `state`-reading caller.
 function renderBlockDetailPayload(payload) {
   const block = payload.block;
   return [
@@ -335,9 +278,6 @@ function renderBlockDetailPayload(payload) {
     detailSection("Sources & capture", renderSourcesAndCapture(block.source_summary)),
     detailSection("Auxiliary blocks", renderEvents(payload.event_details || [], block.header?.time)),
     payload.competition ? detailSection("Competition", renderCompetition(payload.competition)) : "",
-    // An error block has no competition section because it never competed. Say
-    // so rather than leaving the reader to infer meaning from a missing panel
-    // that a stale block at the same height would have.
     !payload.competition && block.kind === "error_block"
       ? detailSection("Competition", `<div class="empty">This block never raced. It carries full Bitcoin proof of work but breaks a consensus rule, so it was never a valid contender for its height and has no canonical competitor.</div>`)
       : "",
@@ -351,9 +291,6 @@ function renderParentBlock(block) {
     ["Height", formatScalar(block.height)],
     ["Kind", kindBadge(block.kind)],
   ];
-  // btc_orphan_class is a refinement of kind='unknown'; show it only there
-  // (canonical/stale always have a null orphan class). Reuse the navigator's
-  // label map; a null class is the pending, never-Core-checked case.
   if (block.kind === "unknown") {
     const meta = CLASSIFICATION_META[block.btc_orphan_class || "pending"];
     rows.push(["Orphan class", esc(meta ? meta.name : (block.btc_orphan_class || "Pending"))]);
@@ -365,10 +302,6 @@ function renderParentBlock(block) {
     rows.push(["Coinbase tag", esc(block.coinbase_tag)]);
   }
   rows.push(["Bitcoin miner", poolName(block.bitcoin_miner_pool)]);
-  // For an RSK-only stale block the Bitcoin coinbase miner is unknown; show
-  // the chain-agnostic child-inferred miner without overstating it as coinbase.
-  // The strict row above stays Unknown; the (i) button explains the situation and
-  // per-event "Child miner" rows disclose the specific child-chain provenance.
   if (block.display_miner_basis === "child_inferred") {
     rows.push(["Inferred miner", `${poolName(block.display_miner_pool)} ${auxpowInfoButton("inferred_miner")}`]);
   }
@@ -383,11 +316,6 @@ function renderParentBlock(block) {
   ])}</details>`;
 }
 
-// The AuxPoW marker shared by every child chain committed to this Bitcoin
-// parent: the decoded aux_merkle_root/merkle_size/merkle_nonce for Namecoin-family
-// parents, or a format-only entry with a null marker for RSK (rsk-opaque) and
-// Hathor (hathor-rfc0006). The raw coinbase tag is rendered in the parent block
-// section from the server-projected block field.
 function renderCommitment(commitment) {
   const rows = [["Format", formatScalar(commitment.format)]];
   if (commitment.parent_coinbase_txid) {
@@ -412,8 +340,6 @@ function kvRows(rows) {
   return `<dl class="kv">${rows.map(([key, value]) => `<dt>${esc(key)}</dt><dd>${value}</dd>`).join("")}</dl>`;
 }
 
-// The shared copy button + its (formerly duplicated) icon SVG. The full value
-// rides on data-copy; boot's delegated click handler copies it to the clipboard.
 function copyButton(value) {
   const text = esc(value);
   return `<button type="button" class="copy-button" data-copy="${text}" aria-label="Copy value" title="Copy value">
@@ -432,8 +358,6 @@ function copyValue(value) {
   return `<code>${esc(value)}</code> ${copyButton(value)}`;
 }
 
-// A copy button with no inline value, for large blobs we deliberately do not
-// dump into the page (avoids a wall of hex).
 function copyOnly(value) {
   if (value === null || value === undefined) return formatScalar(value);
   return copyButton(value);
@@ -446,37 +370,12 @@ function explorerCopyValue(value, chain, block = {}) {
   return `${copyValue(value)} ${explorerLink(explorer, chain)}`;
 }
 
-// The auxiliary stamp beside its offset from the Bitcoin header this event is
-// committed to. Both are miner-set claims, and not necessarily by one operator:
-// a Bitcoin pool can proxy child-chain operation elsewhere, which is why the two
-// attributions are tracked apart. The offset is normally negative because the
-// child stamp was settled when the template was built, while the parent one is
-// set later, at job creation or rolled past it; neither is a clock reading the
-// service records. The child_time help topic carries
-// the mechanism and the caveats, including that a stored child header means the
-// stamp is re-derivable rather than that a parent committed to it. That
-// distinction is left to the help text and the Child Header row rather than
-// gating the offset: a per-event authentication flag would be a new API field,
-// which this change does not add.
-// Rendered only when the subtraction is exact, so a pair JavaScript cannot
-// subtract losslessly shows the time alone rather than a rounded offset dressed
-// up as measured.
+// Formats child block time alongside its exact offset from the Bitcoin header time.
 function childTimeCell(childTime, parentHeaderTime) {
   const stamp = unavailableEvidence(childTime, formatEpoch);
   if (!Number.isSafeInteger(childTime) || !Number.isSafeInteger(parentHeaderTime)) return stamp;
   const offset = childTime - parentHeaderTime;
-  // Two safe operands can still difference into the imprecise range: child_block_time
-  // is an unbounded i64 by contract, so a safe-but-extreme stamp minus a u32 parent
-  // time lands past MAX_SAFE_INTEGER and the "exact seconds" title would be a lie.
   if (!Number.isSafeInteger(offset)) return stamp;
-  // fmtDelta compacts to the largest fitting unit, which is what the distribution
-  // view reads in, but it rounds two offsets a few seconds apart to the same
-  // minute (-600 and -607 are both "-10m"). Comparing auxiliaries on one block is
-  // exactly where that distinction matters, so the exact second count is rendered
-  // VISIBLY rather than parked in a title: a title on a non-focusable span is
-  // unreachable by keyboard and touch, and hiding the figure from sighted readers
-  // to expose it only to assistive technology just moves the gap. It is appended
-  // only where the compact form is lossy, so "+7s" is not padded to "+7s (+7s)".
   const sign = offset > 0 ? "+" : "";
   const compact = fmtDelta(offset);
   const exactShort = `${sign}${offset}s`;
@@ -509,7 +408,6 @@ function poolName(pool) {
   return `<span class="${cls}">${esc(pool.name || "Unknown")}</span>`;
 }
 
-// Provenance section: which monitor sources captured this Bitcoin parent.
 function renderSourcesAndCapture(summary = {}) {
   const rows = [
     ["Sources", formatSourceList(summary.sources || [])],
@@ -519,11 +417,6 @@ function renderSourcesAndCapture(summary = {}) {
   return kvRows(rows);
 }
 
-// Each event collapses to a one-line summary (chain, child height, and the
-// child miner when child-side attribution resolves); expanding reveals the rest.
-// Dropped fields that were redundant with the Header (Parent Kind, Parent Hash,
-// Parent Bitcoin miner) or internal (the DB ID). Child miner only appears when
-// resolved.
 function renderEvents(events, parentHeaderTime) {
   if (!events.length) return `<div class="empty">No auxiliary blocks</div>`;
   return events.map((event) => {
@@ -538,8 +431,6 @@ function renderEvents(events, parentHeaderTime) {
         height: event.child_height,
       }))],
       ["Child Header", unavailableEvidence(event.child_header_hex)],
-      // The real auxiliary block time, not a monitor capture timestamp. The help
-      // topic covers why it normally trails the Bitcoin header time.
       ["Child Time", `${childTimeCell(event.child_block_time, parentHeaderTime)} ${auxpowInfoButton("child_time")}`],
       ["Child nBits", unavailableEvidence(event.child_nbits)],
       ["PoW (parent_target / aux_target)", `${formatScalar(event.pow_validates_btc_target)} / ${formatScalar(event.pow_validates_child_target)} ${auxpowInfoButton("targets")}`],
@@ -548,9 +439,6 @@ function renderEvents(events, parentHeaderTime) {
     if (event.chain_id != null) rows.push(["Chain id", `${formatScalar(event.chain_id)} ${auxpowInfoButton("chain_id")}`]);
     if (knownChildPool) rows.push(["Child miner", poolName(knownChildPool)]);
     const rsk = event.rsk ? renderRsk(event.rsk) : "";
-    // The decoded AuxPoW proof (two merkle branches), or a compact fallback when
-    // the stored blob is present but did not decode (corrupt / parent-mismatched),
-    // so the bytes never silently vanish from the UI.
     const auxProof = event.aux_proof
       ? renderAuxProof(event.aux_proof)
       : renderUndecodedProof(event.aux_merkle_proof_hex);
@@ -558,11 +446,6 @@ function renderEvents(events, parentHeaderTime) {
   }).join("");
 }
 
-// The decoded CAuxPow merkle proofs for one auxiliary block: the redundant
-// hash_block (CAuxPow::hashBlock, conventionally zero) plus the coinbase_branch
-// (coinbase txid -> parent tx merkle root) and blockchain_branch (aux block hash
-// -> aux_merkle_root). Each sibling is an individual copyable hash, not a wall of
-// hex. Absent for RSK / Hathor and for rows whose stored blob does not decode.
 function renderAuxProof(proof) {
   if (!proof) return "";
   const branch = (label, topic, b) => {
@@ -580,8 +463,6 @@ function renderAuxProof(proof) {
   return `<details class="collapse"><summary>AuxPoW proof ${auxpowInfoButton("auxpow_proof")}</summary>${inner}</details>`;
 }
 
-// Fallback when the stored CAuxPow blob did not decode: keep it reachable as a
-// byte count plus a copy button, never an inline hex wall.
 function renderUndecodedProof(hex) {
   if (!hex) return "";
   const bytes = Math.floor(hex.length / 2);
@@ -590,10 +471,6 @@ function renderUndecodedProof(hex) {
   ])}</details>`;
 }
 
-// RSK-specific extras shown inside an expanded RSK event. The RSK block hash and
-// height are dropped here because they are already the event's Child Hash and
-// summary height; uncle position only shows for uncles, and the null-prone
-// miner identity / opaque proof rows only appear when present.
 function renderRsk(rsk) {
   const rows = [["Uncle", formatScalar(rsk.is_uncle)]];
   if (rsk.is_uncle) {
@@ -625,12 +502,7 @@ function renderCompetition(competition) {
   ]);
 }
 
-/// A derivable delta doubles as a cross-link into the distribution view, which
-/// shows where this competition sits among all of them. An absent or
-/// unrepresentable one stays plain text: it has no position on the symlog strip,
-/// no bin and no outlier row, so the link would land on a view that cannot place
-/// it. The selection is already in `state.selectedHash`, so the target view
-/// needs no argument beyond the view id.
+// Cross-links a finite delta to the distribution view; null stays plain text.
 function formatHeaderTimeDelta(value) {
   if (value === null || value === undefined) return formatScalar(value);
   const seconds = Number(value);

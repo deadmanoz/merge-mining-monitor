@@ -1,10 +1,4 @@
-//! The first-wave read-API error contract: the error codes, their HTTP
-//! statuses, and the shared error envelope. This module is value-compatible with
-//! the `fixtures/api/error-*.json` fixtures. See `docs/api-contract.md` (Errors).
-//!
-//! `InvalidQuery` and `RangeTooLarge` are reused across many endpoints and call
-//! sites, so they carry a per-call `message` (each error fixture is only one
-//! instance of that code). The other codes have stable messages.
+//! Read-API error codes, HTTP statuses, and error envelope (`docs/api-contract.md`).
 
 use axum::Json;
 use axum::http::StatusCode;
@@ -17,32 +11,27 @@ use super::envelope::now_epoch_secs;
 
 #[derive(Debug)]
 pub enum ApiError {
-    /// HTTP 400. Malformed or semantically invalid query parameters; `details`
-    /// is an object keyed by the invalid parameter(s).
+    /// HTTP 400: malformed or semantically invalid query parameters.
     InvalidQuery { message: String, details: Value },
-    /// HTTP 400. The `:hash` path parameter is not 64 hex characters.
+    /// HTTP 400: `:hash` path parameter is not 64 hex characters.
     InvalidHash { raw: String },
-    /// HTTP 400. A well-formed but unregistered source code.
+    /// HTTP 400: well-formed but unregistered source code.
     UnsupportedSource { source: String },
-    /// HTTP 404. A valid, normalized hash with no matching block.
+    /// HTTP 404: valid normalized hash with no matching block.
     NotFound { hash: String },
-    /// HTTP 422. A valid request whose window exceeds an endpoint bound.
+    /// HTTP 422: valid request whose window exceeds an endpoint bound.
     RangeTooLarge {
         parameter: String,
         limit: u64,
         received: u64,
         message: String,
     },
-    /// HTTP 409. The requested Bitcoin height window is not covered by the
-    /// synced Bitcoin Core backbone.
+    /// HTTP 409: Bitcoin height window is not covered by the synced Bitcoin Core backbone.
     BackboneUnsynced { details: Value },
-    /// HTTP 409. The requested Bitcoin height window has an inconsistent
-    /// Bitcoin Core backbone, such as duplicate canonical rows or broken links.
+    /// HTTP 409: Bitcoin height window has an inconsistent Bitcoin Core backbone.
     BackboneConflict { details: Value },
 }
 
-/// The wire body format: `schema_version`, `generated_at`, `error{...}`. A typed
-/// struct (not a `json!` map) so serialization preserves the fixture field order.
 #[derive(Debug, Serialize)]
 pub struct ErrorEnvelope {
     pub schema_version: &'static str,
@@ -50,9 +39,6 @@ pub struct ErrorEnvelope {
     pub error: ErrorBody,
 }
 
-/// The inner `error` object: `code`, `message`, `details`. Field order is the
-/// wire contract (this is the object every `error-*.json` fixture asserts
-/// value-equal, ignoring the volatile envelope `generated_at`).
 #[derive(Debug, Serialize)]
 pub struct ErrorBody {
     pub code: &'static str,
@@ -61,8 +47,6 @@ pub struct ErrorBody {
 }
 
 impl ApiError {
-    /// Construct an `invalid_query` (HTTP 400) with a per-call message and a
-    /// `details` object keyed by the offending parameter(s).
     pub fn invalid_query(message: impl Into<String>, details: Value) -> Self {
         Self::InvalidQuery {
             message: message.into(),
@@ -70,29 +54,20 @@ impl ApiError {
         }
     }
 
-    /// Construct an `invalid_hash` (HTTP 400) carrying the raw, un-normalized
-    /// `:hash` for the `details.hash` echo.
     pub fn invalid_hash(raw: impl Into<String>) -> Self {
         Self::InvalidHash { raw: raw.into() }
     }
 
-    /// Construct an `unsupported_source` (HTTP 400) for a well-formed but
-    /// unregistered source code.
     pub fn unsupported_source(source: impl Into<String>) -> Self {
         Self::UnsupportedSource {
             source: source.into(),
         }
     }
 
-    /// Construct a `not_found` (HTTP 404) for a valid normalized hash that
-    /// matches no block (or no in-set anchor).
     pub fn not_found(hash: impl Into<String>) -> Self {
         Self::NotFound { hash: hash.into() }
     }
 
-    /// Construct a `range_too_large` (HTTP 422) with a per-call message; the
-    /// `parameter`/`limit`/`received` triple becomes `details` (pinned by
-    /// `error-range-too-large.json`).
     pub fn range_too_large(
         parameter: impl Into<String>,
         limit: u64,
@@ -107,7 +82,6 @@ impl ApiError {
         }
     }
 
-    /// The wire `error.code` string.
     pub fn code(&self) -> &'static str {
         match self {
             Self::InvalidQuery { .. } => "invalid_query",
@@ -120,7 +94,6 @@ impl ApiError {
         }
     }
 
-    /// The HTTP status for this code.
     pub fn status(&self) -> StatusCode {
         match self {
             Self::InvalidQuery { .. }
@@ -132,7 +105,6 @@ impl ApiError {
         }
     }
 
-    /// The wire `error.message` string.
     pub fn message(&self) -> String {
         match self {
             Self::InvalidQuery { message, .. } => message.clone(),
@@ -149,7 +121,6 @@ impl ApiError {
         }
     }
 
-    /// The wire `error.details` object.
     pub fn details(&self) -> Value {
         match self {
             Self::InvalidQuery { details, .. } => details.clone(),
@@ -172,7 +143,6 @@ impl ApiError {
         }
     }
 
-    /// Build the full error envelope (schema_version + generated_at + error).
     pub fn to_envelope(&self) -> ErrorEnvelope {
         ErrorEnvelope {
             schema_version: SCHEMA_VERSION,
@@ -187,18 +157,12 @@ impl ApiError {
 }
 
 impl IntoResponse for ApiError {
-    /// Render the error to its locked wire form: HTTP `status()` + the
-    /// `ErrorEnvelope` JSON body. The single production mapping every handler
-    /// error funnels through.
     fn into_response(self) -> Response {
         (self.status(), Json(self.to_envelope())).into_response()
     }
 }
 
-/// The HTTP 500 response for unexpected internal failures. Deliberately not
-/// an [`ApiError`] variant: it leaks no details, has a fixed `internal_error`
-/// code and message, and empty `details{}`. Handlers return it after logging
-/// the real cause.
+/// HTTP 500 response for unexpected internal failures (logs real cause in handlers; leaks no details).
 pub(crate) fn internal_error_response() -> Response {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -229,8 +193,6 @@ mod tests {
         .unwrap()
     }
 
-    /// Assert the status, the envelope wrapper, and that the `error` object is
-    /// value-equal to the fixture (the volatile `generated_at` is ignored).
     fn assert_matches_fixture(err: &ApiError, status: StatusCode, fixture_name: &str) {
         assert_eq!(err.status(), status, "{fixture_name} status");
         let env = serde_json::to_value(err.to_envelope()).unwrap();

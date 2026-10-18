@@ -1,11 +1,7 @@
-//! Byte-level parse infrastructure: the bounded Reader and the raw
-//! transaction/branch/auxpow readers built on it.
+//! Bounded byte cursor and raw transaction, merkle branch, and `CAuxPow` readers.
 
 use super::*;
 
-/// The subset of a parsed transaction the AuxPoW parser keeps: the computed
-/// txid, the first input scriptSig (the coinbase tag / AuxPoW marker carrier,
-/// `None` if the transaction has no inputs), and the outputs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ParsedTransaction {
     pub(crate) txid: Txid,
@@ -14,21 +10,14 @@ pub(crate) struct ParsedTransaction {
     pub(crate) outputs: Vec<TxOut>,
 }
 
-/// Deserialise an 80-byte Bitcoin block header into a [`ParsedHeader`]. Wire
-/// order in, rust-bitcoin newtypes out (which reverse only on `Display`). Used
-/// for both child and parent headers across every parse path.
 pub(crate) fn parse_header(raw: [u8; Header::SIZE]) -> Result<ParsedHeader> {
     Ok(ParsedHeader {
         header: deserialize(&raw).context("deserialize Bitcoin block header")?,
     })
 }
 
-/// Read one `CAuxPow` record in exact wire order: parent coinbase transaction,
-/// `hashBlock` (32 bytes, stored as-is via `from_byte_array`, no reversal), the
-/// coinbase merkle branch + its i32 index, the chain merkle branch + its i32
-/// index, then the 80-byte parent header. Shared by every parse entry point
-/// (full block, header blob, Elastos blob) and by the stored-blob re-decoders
-/// ([`decode_auxpow_proof`]).
+/// Read one `CAuxPow` record in wire order: parent coinbase tx, `hashBlock`,
+/// coinbase merkle branch + i32 index, chain merkle branch + i32 index, and 80-byte parent header.
 pub(crate) fn read_auxpow(reader: &mut Reader<'_>) -> Result<ParsedAuxpow> {
     let coinbase_tx = read_transaction(reader).context("parse parent coinbase transaction")?;
     let hash_block =
@@ -60,18 +49,10 @@ pub(crate) fn read_auxpow(reader: &mut Reader<'_>) -> Result<ParsedAuxpow> {
     })
 }
 
-/// Read a `CMerkleBranch`: a CompactSize count followed by that many 32-byte
-/// sibling hashes (wire order, wrapped into `TxMerkleNode`). The declared count
-/// is bounded against the bytes remaining before allocating, so a corrupt stored
-/// proof cannot drive an OOM allocation.
+/// Read a `CMerkleBranch`, bounding `count` against `remaining / 32` before allocating
+/// so a corrupt stored proof varint cannot trigger an OOM allocation.
 pub(crate) fn read_merkle_branch(reader: &mut Reader<'_>) -> Result<Vec<TxMerkleNode>> {
     let count = reader.read_varint_usize()?;
-    // Bound the declared count against the bytes actually remaining before
-    // allocating: each entry is a 32-byte hash, so a count larger than
-    // `remaining / 32` can never be satisfied. Without this, a corrupt stored
-    // `aux_merkle_proof` varint could drive a huge `Vec::with_capacity` and OOM
-    // the `serve` process on the `/block` read path, where `decode_auxpow_proof`
-    // reparses untrusted stored bytes.
     ensure!(
         count <= reader.remaining_slice().len() / 32,
         "merkle branch count {count} exceeds the {} remaining bytes",
@@ -88,9 +69,6 @@ pub(crate) fn read_merkle_branch(reader: &mut Reader<'_>) -> Result<Vec<TxMerkle
     Ok(hashes)
 }
 
-/// Read one transaction via rust-bitcoin `deserialize_partial`, advancing the
-/// reader by exactly the consumed length so the next field starts at the right
-/// offset. Keeps only what the producer needs (see [`ParsedTransaction`]).
 pub(crate) fn read_transaction(reader: &mut Reader<'_>) -> Result<ParsedTransaction> {
     let (tx, consumed) = deserialize_partial::<Transaction>(reader.remaining_slice())
         .context("parse transaction")?;
@@ -107,9 +85,6 @@ pub(crate) fn read_transaction(reader: &mut Reader<'_>) -> Result<ParsedTransact
     })
 }
 
-/// The raw fields read out of one `CAuxPow` record, before assembly into the
-/// public [`ParsedAuxpowBlock`]. Crate-internal handoff from [`read_auxpow`] to
-/// `assemble_auxpow_block` and the stored-blob decoders.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ParsedAuxpow {
     pub(crate) coinbase_tx: ParsedTransaction,
@@ -119,11 +94,6 @@ pub(crate) struct ParsedAuxpow {
     pub(crate) parent_header: ParsedHeader,
 }
 
-/// A bounded byte cursor over an untrusted blob: every read is length-checked
-/// against the buffer (see `read_slice`), so a corrupt stored `aux_merkle_proof`
-/// cannot over-read. All multi-byte integers are little-endian (Bitcoin wire
-/// order); 32-byte hashes are read as raw arrays and wrapped by the caller into
-/// the right newtype, with no byte reversal at this layer.
 #[derive(Debug)]
 pub(crate) struct Reader<'a> {
     pub(crate) buf: &'a [u8],
@@ -160,9 +130,6 @@ impl<'a> Reader<'a> {
         Ok(slice.try_into().unwrap())
     }
 
-    /// Advance by `len` bytes and return the consumed slice, erroring (rather
-    /// than panicking or over-reading) past the buffer end. The single bounds
-    /// check every other read routes through.
     pub(crate) fn read_slice(&mut self, len: usize) -> Result<&'a [u8]> {
         let end = self
             .pos
@@ -183,15 +150,10 @@ impl<'a> Reader<'a> {
         &self.buf[self.pos..]
     }
 
-    /// [`read_varint`](Self::read_varint) narrowed to usize, erroring on
-    /// overflow. Callers MUST still bound the result against bytes remaining
-    /// before allocating (see [`read_merkle_branch`]).
     pub(crate) fn read_varint_usize(&mut self) -> Result<usize> {
         usize::try_from(self.read_varint()?).context("varint value overflows usize")
     }
 
-    /// Read a Bitcoin CompactSize varint (`0x00..=0xfc` inline, `0xfd` = u16,
-    /// `0xfe` = u32, `0xff` = u64, all little-endian).
     pub(crate) fn read_varint(&mut self) -> Result<u64> {
         let first = self.read_u8()?;
         match first {

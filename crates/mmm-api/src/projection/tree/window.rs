@@ -1,5 +1,4 @@
-//! Tree window resolution (tip strategies, backbone coverage) and the
-//! windowed block/event loaders.
+//! Tree window resolution (tip strategies, backbone coverage) and windowed block/event loaders.
 
 use std::collections::HashMap;
 
@@ -17,10 +16,6 @@ use crate::query::TreeQuery;
 use crate::query::epoch_start_of_day;
 use mmm_capture::source_registry::BITCOIN_SOURCE_CODE;
 
-/// Resolved height window for a `/tree` request: the `(from,to)` BTC-height bounds
-/// (None for an unbounded/empty/anchor view), the `tip_height` for a defaulted
-/// view, and the `empty_reason` machine string. Copied verbatim into the wire
-/// `TreeWindow`; constructors below encode each resolution strategy.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ResolvedTreeWindow {
     pub(super) from_height: Option<i32>,
@@ -31,9 +26,6 @@ pub(super) struct ResolvedTreeWindow {
 }
 
 impl ResolvedTreeWindow {
-    /// A fully-bounded window from explicit `[from_height, to_height]` (exact-height,
-    /// from/to params, compact radius windows, and the anchor placement window).
-    /// Not a tip default and never empty.
     pub(super) fn explicit(from_height: i32, to_height: i32) -> Self {
         Self {
             from_height: Some(from_height),
@@ -44,9 +36,6 @@ impl ResolvedTreeWindow {
         }
     }
 
-    /// The no-param tip default: a DEFAULT_TREE_WINDOW_HEIGHTS-wide window ending at
-    /// `tip_height` (clamped at genesis), with `defaulted_to_tip = true` so the
-    /// frontend can flag the auto-selected view.
     pub(super) fn for_tip(tip_height: i32) -> Self {
         let window_back = DEFAULT_TREE_WINDOW_HEIGHTS.saturating_sub(1);
         Self {
@@ -58,10 +47,6 @@ impl ResolvedTreeWindow {
         }
     }
 
-    /// A defaulted tip view that found no canonical tip: no bounds,
-    /// `defaulted_to_tip = true` (a tip attempt), and the supplied `empty_reason`
-    /// (e.g. `no_canonical_tip`). Kept distinct from `empty_lookup` so the wire
-    /// `defaulted_to_tip` flag stays truthful.
     pub(super) fn empty(reason: &'static str) -> Self {
         Self {
             from_height: None,
@@ -72,10 +57,6 @@ impl ResolvedTreeWindow {
         }
     }
 
-    /// An explicit at_time lookup that resolved to nothing (no complete canonical at
-    /// or before the time): no bounds, `defaulted_to_tip = false` (an explicit query,
-    /// not a tip default), with the supplied `empty_reason`. The `false` here vs
-    /// `empty`'s `true` is a wire field, so the two stay separate.
     pub(super) fn empty_lookup(reason: &'static str) -> Self {
         Self {
             from_height: None,
@@ -86,9 +67,6 @@ impl ResolvedTreeWindow {
         }
     }
 
-    /// Anchor mode shows the selected unknown plus its nearest unknown neighbors
-    /// with no height spine. It is an explicit user view, not a tip default, so
-    /// `defaulted_to_tip` is false and there is no `empty_reason`.
     pub(super) fn for_anchor() -> Self {
         Self {
             from_height: None,
@@ -99,19 +77,11 @@ impl ResolvedTreeWindow {
         }
     }
 
-    /// The `(from,to)` height bounds when both are present, else `None`. Loaders and
-    /// coverage checks branch on this to decide whether the window has a height spine
-    /// at all (anchor/empty windows return `None`).
     pub(super) fn bounds(self) -> Option<(i32, i32)> {
         self.from_height.zip(self.to_height)
     }
 }
 
-/// Load non-revoked `merge_mining_event` rows for the tree: those attached to the
-/// window's block hashes, plus (when `include_unheighted`) the `near`/`unknown`
-/// direct rows whose parent header time is in the date window. `ORDER BY
-/// (btc_parent_header_hash, e.id)` keeps per-parent grouping deterministic for
-/// projection. Honors the source filter (`$1` all-sources bypass).
 pub(super) async fn load_active_events_for_tree(
     client: &Client,
     source_filter: &[String],
@@ -160,10 +130,8 @@ pub(super) async fn load_active_events_for_tree(
     map_event_rows(rows)
 }
 
-/// Resolve the height window for the default (non-anchor, non-compact) path, in
-/// precedence order: `at_height` (exact), `at_time` (nearest complete-canonical at
-/// or before, else `empty_lookup`), explicit `from/to`, then the default tip (else
-/// `empty` with `no_canonical_tip`). This precedence is the wire contract.
+/// Resolve the default (non-anchor, non-compact) height window in precedence order:
+/// `at_height`, `at_time`, explicit `from/to`, then default tip.
 pub(super) async fn resolve_tree_window(
     client: &Client,
     query: &TreeQuery,
@@ -189,10 +157,6 @@ pub(super) async fn resolve_tree_window(
     }
 }
 
-/// Newest complete-canonical height with `btc_header_time <= at_time`, or `None`.
-/// Backs the `at_time` window/compact target resolution. `ORDER BY btc_header_time
-/// DESC, btc_height DESC, btc_header_hash ASC LIMIT 1` makes the at-or-before pick
-/// deterministic across equal-time rows.
 pub(super) async fn load_complete_canonical_height_at_time(
     client: &Client,
     at_time: i64,
@@ -214,9 +178,6 @@ pub(super) async fn load_complete_canonical_height_at_time(
     Ok(row.map(|row| row.get(0)))
 }
 
-/// Canonical `hash -> prev_hash` ancestry over the window (display hex), after
-/// asserting backbone coverage. Feeds compact's hidden-edge `hidden_predecessor`
-/// walk so collapsed runs resolve to a real in-window predecessor.
 pub(super) async fn load_verified_canonical_ancestry(
     client: &Client,
     window: ResolvedTreeWindow,
@@ -247,11 +208,8 @@ pub(super) async fn load_verified_canonical_ancestry(
     Ok(ancestry)
 }
 
-/// Pick the default tip height by three strategies in order: a contiguous complete
-/// run with no higher complete block, then the sparse clean-island scan, then the
-/// contiguous run without the no-higher guard. The order is the contract: prefer a
-/// fully-synced tip, degrade to a clean island, and only then a contiguous run
-/// that may sit below a higher partial.
+/// Pick the default tip height: contiguous complete run with no higher complete block,
+/// then sparse clean-island scan, then contiguous run without the no-higher guard.
 pub(super) async fn load_default_tree_tip_height(client: &Client) -> Result<Option<i32>> {
     if let Some(tip_height) = load_contiguous_complete_tree_tip_height(client, true).await? {
         return Ok(Some(tip_height));
@@ -262,11 +220,6 @@ pub(super) async fn load_default_tree_tip_height(client: &Client) -> Result<Opti
     }
 }
 
-/// Contiguous tip strategy: the sync-state `contiguous_complete_height` is a valid
-/// tip iff the DEFAULT_TREE_WINDOW_HEIGHTS-wide window below it is a gapless run of
-/// exactly-one complete canonical block per height with consistent prev-links.
-/// `require_no_higher_complete` adds the guard that no complete canonical sits
-/// above it (the strict first pass; relaxed in the final fallback).
 pub(super) async fn load_contiguous_complete_tree_tip_height(
     client: &Client,
     require_no_higher_complete: bool,
@@ -326,11 +279,6 @@ pub(super) async fn load_contiguous_complete_tree_tip_height(
     Ok(row.map(|row| row.get(0)))
 }
 
-/// Sparse tip strategy: scan back DEFAULT_TREE_SPARSE_SCAN_HEIGHTS over
-/// single-block complete canonical heights, segment them into prev-link-contiguous
-/// islands, and return the highest height that closes a DEFAULT_TREE_WINDOW_HEIGHTS
-/// run within one island (or a short near-genesis island). Used when the
-/// contiguous strategy finds no clean run at the synced tip.
 pub(super) async fn load_sparse_complete_tree_tip_height(client: &Client) -> Result<Option<i32>> {
     let row = client
         .query_opt(
@@ -403,9 +351,6 @@ pub(super) async fn load_sparse_complete_tree_tip_height(client: &Client) -> Res
     Ok(row.map(|row| row.get(0)))
 }
 
-/// Assert the canonical backbone covers the window's height span before a tree
-/// load (delegates to `shared::ensure_backbone_window_coverage`). An unbounded
-/// window (anchor/empty) has no spine to verify, so it is a no-op.
 pub(super) async fn ensure_tree_backbone_coverage(
     client: &Client,
     window: ResolvedTreeWindow,
@@ -416,11 +361,8 @@ pub(super) async fn ensure_tree_backbone_coverage(
     ensure_backbone_window_coverage(client, from_height, to_height).await
 }
 
-/// Load the window's blocks: the height-spine rows in `[from,to]`, plus (when
-/// `include_unheighted` and `unknown` is selected) null-height unknown blocks in
-/// the date window. The `classification` orphan-class filter applies ONLY to the
-/// unheighted-unknown branch, so the public unheighted view surfaces the same
-/// orphan population as the navigator; the height-spine branch is unfiltered.
+/// Load the window's height-spine blocks plus (when `include_unheighted`) null-height
+/// `unknown` blocks matching `query.classification`.
 pub(super) async fn load_blocks_for_tree(
     client: &Client,
     query: &TreeQuery,
@@ -439,10 +381,6 @@ pub(super) async fn load_blocks_for_tree(
         .unheighted_to
         .map(|date| epoch_start_of_day(date) + 86_399)
         .unwrap_or(0);
-    // The orphan-class filter (default strict+weak) applies ONLY to the
-    // date-window unheighted-unknown branch, so the public unheighted tree view
-    // surfaces the same orphan population as the navigator. The height-window
-    // branch is unaffected.
     let (class_values, include_pending) = classification_filter_params(&query.classification);
     let sql = format!(
         "{BLOCK_ROW_SELECT} \
@@ -480,11 +418,8 @@ pub(super) async fn load_blocks_for_tree(
     rows_to_blocks(rows)
 }
 
-/// All block hashes for unheighted (`btc_height IS NULL`) unknown parents in the
-/// time window, REGARDLESS of orphan class. Seeds the direct-projection de-dup so
-/// a block-backed unknown that `classification` filtered out of the tree's block
-/// rows is never re-projected from its active events as a class-less (pending)
-/// direct node.
+/// All block hashes for unheighted `unknown` parents in the time window, regardless of
+/// `btc_orphan_class` (used to exclude classified blocks from direct-event projection).
 pub(super) async fn load_unheighted_unknown_block_hashes(
     client: &Client,
     from_epoch: i64,

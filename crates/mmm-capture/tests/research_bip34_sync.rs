@@ -1,22 +1,6 @@
-//! Cross-repo drift-sync test for the two BIP34 constants `mmm-capture` ports
-//! from the merge-mining-research repo's Python classifier by hand.
-//!
-//! `mmm_capture::btc_orphan::STRICT_BIP34_CHAINS` and `BIP34_HEIGHT` are
-//! deliberate hand-maintained ports of the research repo's
-//! `BTC_COINBASE_SCRIPTSIG_CHAINS`
-//! (`scripts/analysis/classify_btc_stale_relevance.py`) and `BIP34_HEIGHT`
-//! (`src/stale_blocks_analysis/config.py`). The dual classifier (one Rust,
-//! one Python) is permanent by design, so this test guards against silent
-//! drift between the two hand-maintained copies rather than trying to
-//! eliminate the duplication.
-//!
-//! The research checkout is located via `MERGE_MINING_RESEARCH_DIR`, falling
-//! back to the sibling `../merge-mining-research` checkout relative to this
-//! workspace's root. Neither is guaranteed to be present in every
-//! environment this test runs in (CI, a contributor's machine), so the test
-//! SKIPS cleanly when neither resolves to a directory. When the checkout IS
-//! found, failing to locate either constant in the expected source is a hard
-//! test failure: a silently-passing sync test would be worse than none.
+//! Cross-repo drift check for `STRICT_BIP34_CHAINS` and `BIP34_HEIGHT` against
+//! `merge-mining-research` (`MERGE_MINING_RESEARCH_DIR` or `../merge-mining-research`).
+//! Skips cleanly when the research checkout is absent.
 
 use std::env;
 use std::fs;
@@ -81,12 +65,6 @@ fn strict_bip34_chains_and_height_match_research_repo() {
     );
 }
 
-/// `MERGE_MINING_RESEARCH_DIR` if it resolves to a directory, else the
-/// sibling `../merge-mining-research` checkout relative to this workspace's
-/// root if that resolves to a directory, else `None`. A `MERGE_MINING_RESEARCH_DIR`
-/// pointing at a non-directory does NOT fall back to the sibling: an explicit
-/// but wrong override should behave the same as "not found" for the skip
-/// decision, since either way there is nothing to read.
 fn locate_research_checkout() -> Option<PathBuf> {
     if let Some(dir) = env::var_os(RESEARCH_DIR_ENV) {
         let path = PathBuf::from(dir);
@@ -97,14 +75,6 @@ fn locate_research_checkout() -> Option<PathBuf> {
     sibling.is_dir().then_some(sibling)
 }
 
-/// Parse the `BTC_COINBASE_SCRIPTSIG_CHAINS = { ... }` Python set literal:
-/// simple line-based extraction of quoted strings between the `{` that opens
-/// the assignment and the next top-level `}`. Deliberately naive (no real
-/// Python parsing) since the source is a flat literal of quoted strings, one
-/// per line, with no nesting; tolerant of blank lines, trailing commas, and
-/// `#` comments. Returns `None` only when the assignment itself cannot be
-/// found (a missing/renamed constant), never for an empty or malformed body
-/// (those panic instead, per the "fail loudly" contract).
 fn parse_btc_coinbase_scriptsig_chains(source: &str) -> Option<Vec<String>> {
     let name_at = source.find("BTC_COINBASE_SCRIPTSIG_CHAINS")?;
     let brace_open = source[name_at..].find('{')? + name_at;
@@ -138,8 +108,6 @@ fn parse_btc_coinbase_scriptsig_chains(source: &str) -> Option<Vec<String>> {
     Some(chains)
 }
 
-/// Parse the literal `BIP34_HEIGHT = <int>` assignment. Python underscore
-/// digit separators (e.g. `227_931`) are stripped before parsing.
 fn parse_bip34_height(source: &str) -> Option<i32> {
     for raw_line in source.lines() {
         let line = raw_line.split('#').next().unwrap_or("").trim();

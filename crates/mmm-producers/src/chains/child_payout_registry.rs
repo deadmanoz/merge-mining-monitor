@@ -1,21 +1,7 @@
-//! Child-payout-address identity registries (Namecoin, Syscoin, Fractal, Qbit).
+//! Embedded child-payout-address identity registries (Namecoin, Syscoin, Fractal, Qbit).
 //!
-//! These chains attribute the child miner by formatting the
-//! child coinbase outputs as chain-native addresses (see
-//! [`mmm_capture::child_payout`]) and matching them byte-for-byte against a
-//! curated address->pool registry. This module embeds the registry JSON
-//! files, validates them through the shared identity-registry validator, and seeds the
-//! `pool_identity` rows so capture and `reclassify-pools` resolve them.
-//! A new child-payout chain is a row in [`embedded_registries`],
-//! never a cloned module.
-//!
-//! The address validator is keyed off each chain's [`ChildPayoutParams`] - the
-//! same version bytes / bech32 HRP the formatter encodes with - so it cannot drift
-//! from what capture emits. It is fully checksum-validated: a base58 address must
-//! base58check-decode to a version + 20-byte hash under the chain's P2PKH or P2SH
-//! version; a witness address must segwit-decode (bech32/bech32m checksum) under the
-//! chain's HRP. So a curation typo fails loudly at seed time instead of becoming a
-//! mapping that silently never matches `child_output_addresses` at resolve time.
+//! Address validation is keyed off each chain's [`ChildPayoutParams`] (base58check
+//! P2PKH/P2SH version bytes and bech32 HRP) so curation typos fail at seed time.
 
 use std::collections::HashMap;
 
@@ -46,17 +32,12 @@ const FRACTAL_REWARD_REGISTRY_JSON: &str =
 const QBIT_PAYOUT_REGISTRY_JSON: &str =
     include_str!("../../../../data/pools/child-identities/qbit_payout_address_registry.json");
 
-/// A child-payout registry: schema version plus address->pool entries. The
-/// per-entry `evidence` block in the JSON is documentation only and is ignored
-/// here (serde skips unknown fields).
 #[derive(Debug, Clone, Deserialize)]
 struct ChildPayoutRegistry {
     schema_version: u32,
     entries: Vec<ChildPayoutEntry>,
 }
 
-/// One address->pool mapping. `address` is the chain-native payout/reward address
-/// exactly as [`mmm_capture::child_payout::child_output_addresses`] formats it.
 #[derive(Debug, Clone, Deserialize)]
 struct ChildPayoutEntry {
     address: String,
@@ -66,9 +47,6 @@ struct ChildPayoutEntry {
     confidence: ChildPayoutConfidence,
 }
 
-/// The `(namespace, embedded JSON)` table. Adding a child-payout chain is a row
-/// here, paired with a [`ChildPayoutParams`](mmm_capture::child_payout::ChildPayoutParams)
-/// in the chain spec.
 fn embedded_registries() -> [(&'static str, &'static str); 4] {
     [
         (
@@ -87,8 +65,6 @@ fn embedded_registries() -> [(&'static str, &'static str); 4] {
     ]
 }
 
-/// Seed every embedded child-payout registry. Used by `reclassify-pools`.
-/// Idempotent; the same mappings are used during live bootstrap.
 pub(crate) async fn seed_all_child_payout_identities(
     client: &Client,
     pool_ids_by_slug: &mut HashMap<String, i64>,
@@ -99,9 +75,7 @@ pub(crate) async fn seed_all_child_payout_identities(
     Ok(())
 }
 
-/// Apply curated confidence to identities already loaded from the database.
-/// Metadata never creates an identity or overrides a different pool mapping.
-/// Shared by live bootstrap and offline replay; no additional database work.
+/// Apply curated confidence to loaded identities without creating or overriding pool mappings.
 pub(crate) fn apply_child_payout_confidence(
     identities: &mut PoolIdentityLookup,
     pool_ids_by_slug: &HashMap<String, i64>,
@@ -121,9 +95,6 @@ pub(crate) fn apply_child_payout_confidence(
     Ok(())
 }
 
-/// Seed exactly one child-payout namespace's registry. Used at each chain's
-/// capture bootstrap, where only that chain's namespace is needed. Idempotent.
-/// Errors if `namespace` is not a known child-payout namespace.
 pub(crate) async fn seed_child_payout_identities_for(
     client: &Client,
     namespace: &str,
@@ -137,8 +108,6 @@ pub(crate) async fn seed_child_payout_identities_for(
     seed_namespace(client, namespace, json, pool_ids_by_slug).await
 }
 
-/// Parse + validate one registry JSON, then upsert its pools and address
-/// identities (idempotent, non-remapping).
 async fn seed_namespace(
     client: &Client,
     namespace: &str,
@@ -171,7 +140,6 @@ async fn seed_namespace(
     Ok(())
 }
 
-/// View a [`ChildPayoutEntry`] as a generic [`IdentityRegistryEntry`].
 fn child_payout_entry(entry: &ChildPayoutEntry) -> IdentityRegistryEntry<'_> {
     IdentityRegistryEntry {
         identifier: &entry.address,
@@ -180,23 +148,13 @@ fn child_payout_entry(entry: &ChildPayoutEntry) -> IdentityRegistryEntry<'_> {
     }
 }
 
-/// base58check decode length for a standard P2PKH/P2SH address: 1 version byte +
-/// 20-byte hash.
 const BASE58_DECODED_LEN: usize = 21;
 
-/// Well-formedness gate for a child-payout address, keyed off the chain's
-/// [`ChildPayoutParams`] and fully checksum-validated so a curation typo fails
-/// loudly at seed time rather than becoming a silent never-matches mapping. A
-/// witness address (`<hrp>1...`) must segwit-decode (bech32/bech32m checksum +
-/// witness program) under the chain's HRP; a legacy address must base58check-decode
-/// to 21 bytes whose version is the chain's P2PKH or P2SH version. Decoding rather
-/// than matching first characters accepts every valid form - e.g. a Namecoin P2SH
-/// address renders `6...`, which a prefix list would have wrongly rejected.
+/// Validate a child-payout address against its chain's [`ChildPayoutParams`]
+/// (segwit HRP + checksum or 21-byte base58check with P2PKH/P2SH version byte).
 fn validate_child_payout_address(namespace: &str, address: &str) -> Result<(), String> {
     let params = params_for_namespace(namespace)
         .ok_or_else(|| format!("unknown child-payout namespace {namespace}"))?;
-    // Witness address: the chain's HRP plus the bech32 separator. No base58 P2PKH/
-    // P2SH form for these chains begins with the HRP, so this split is unambiguous.
     if address.starts_with(params.bech32_hrp) && address[params.bech32_hrp.len()..].starts_with('1')
     {
         return match segwit::decode(address) {
@@ -239,8 +197,6 @@ fn validate_child_payout_address(namespace: &str, address: &str) -> Result<(), S
     }
 }
 
-/// Map a child-payout namespace to its [`ChildPayoutParams`] (version bytes + HRP),
-/// the single source of address-format truth shared with the formatter.
 fn params_for_namespace(namespace: &str) -> Option<ChildPayoutParams> {
     [
         NAMECOIN_CHILD_PAYOUT_PARAMS,

@@ -1,16 +1,5 @@
-/* Chart primitives: the SVG mark, axis and overlay vocabulary shared by any
-   plotted view. Layout belongs to the view's own stylesheet. */
-
 :root {
-  /* The sign of a delta is a polarity, so it gets a diverging pair with a
-     neutral zero. Light mode reuses the shipped --stale and --proof tokens;
-     dark mode steps the same two hues into the dark-mode lightness band.
-
-     The obvious --stale / --canonical (red/green) pair was rejected: it
-     separates by only dE 5.5 under deuteranopia. Both pairs below pass
-     lightness band, chroma floor, CVD separation, normal-vision floor and
-     contrast against the plot surface. Position (left or right of zero) is
-     the primary encoding; colour reinforces it. */
+  /* Diverging polarity palette chosen for CVD separation (red/green fails under deuteranopia). */
   --delta-stale-earlier: #b13f3a;
   --delta-canonical-earlier: #1f6feb;
   --delta-tied: #7b877f;
@@ -113,24 +102,18 @@
   cursor: crosshair;
 }
 
- /* The hit rect is appended after its own mark so it paints above and takes
-    the pointer, which means `+` from the hit reaches the NEXT bin's mark. CSS
-    has no previous-sibling combinator, so select the mark and look forward. */
+/* .bar-hit is appended after its .bar-mark to capture pointer events above it. */
 .bar-mark:has(+ .bar-hit:hover),
 .bar-mark:has(+ .bar-hit:focus-visible) {
   filter: brightness(1.15);
 }
 
-/* The bin holding the current selection. An outline rather than a fill change:
-   the fill already carries the sign, and brightness is taken by hover. */
 .bar-mark.is-selected {
   stroke: var(--focus);
   stroke-width: 2;
   paint-order: stroke;
 }
 
-/* Off-scale gutters: everything past the window edge, drawn on the same count
-   axis but hatched so it never reads as an in-range bin. */
 .gutter-mark {
   stroke: var(--line-strong);
   stroke-width: 1;
@@ -194,8 +177,7 @@
   cursor: ew-resize;
 }
 
-/* The window is always symmetric about zero, so dragging the band resizes it
-   rather than panning; the cursor should say so. */
+/* Symmetric window around zero: dragging the band resizes rather than pans. */
 .brush-body {
   fill: transparent;
   cursor: ew-resize;
@@ -211,9 +193,6 @@
 
 /* ── Overlays ──────────────────────────────────────────────────────────── */
 
-/* A static row above the plot rather than an overlay: at narrow windows the
-   off-scale gutters run the full height, and an overlay legend would sit on
-   top of their counts. */
 .chart-legend {
   display: flex;
   flex-wrap: wrap;
@@ -241,7 +220,6 @@
   border-radius: 3px;
 }
 
-/* Mirrors the SVG hatch used in the off-scale gutters. */
 .legend-swatch-hatch {
   border: 1px solid var(--line);
   background: repeating-linear-gradient(

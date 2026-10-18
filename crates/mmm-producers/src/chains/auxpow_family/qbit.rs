@@ -1,11 +1,5 @@
-//! The Qbit format adapter for the shared bitcoind-family runner.
-//!
-//! Qbit is the one family chain whose proof is not a classic `CAuxPow`: its
-//! extended header has no `hashBlock` field, so `ParsedQbitAuxpow` is a
-//! distinct type that cannot travel the `ParsedAuxpowBlock` write path. This
-//! module authenticates native chain placement and projects the verified proof
-//! and child coinbase into the chain-agnostic `NormalizedEventEvidence`. The shared
-//! runner in `mod.rs` stays format-agnostic.
+//! Qbit format adapter for the shared bitcoind-family runner: authenticates
+//! native placement and projects `ParsedQbitAuxpowBlock` into [`NormalizedEventEvidence`].
 
 use anyhow::{Context, Result, ensure};
 use bitcoin::BlockHash;
@@ -24,16 +18,6 @@ use mmm_capture::capture::{
     resolve_child_pool_attribution_from_script, resolve_parent_pool_attribution_from_coinbase,
 };
 
-/// Fetch and verify one Qbit height. Qbit's `getblock <hash> 0` returns the
-/// complete block. The decoder verifies its proof and authenticates the child
-/// coinbase against the child transaction merkle root.
-///
-/// Native placement is authenticated HERE, because the decoder deliberately
-/// does not: `child_height` is a caller claim to it and it pins no chain
-/// identity. Both checks are hard errors, not capture errors: a node that
-/// answers `getblock <hash>` with a block that does not hash to `hash`, or that
-/// answers height 0 with a foreign genesis, is not a Qbit mainnet node and no
-/// height from it can be trusted.
 pub(super) async fn fetch_qbit_candidate(
     rpc: &impl BitcoindRpc,
     spec: &'static ChainSpec,
@@ -82,12 +66,8 @@ pub(super) async fn fetch_qbit_candidate(
     }
 }
 
-/// Authenticate that a decoded Qbit block really is the mainnet block at
-/// `height`. The decoder treats `child_height` as a caller claim and pins no
-/// chain identity, so both checks live here. Hard errors, not capture errors: a
-/// node that answers `getblock <hash>` with a block that does not hash to
-/// `hash`, or answers height 0 with a foreign genesis, is not a Qbit mainnet
-/// node and no height from it can be trusted.
+/// Hard error (not capture error) if `getblock <hash>` returns a mismatched
+/// header hash or a foreign genesis at height 0.
 fn ensure_qbit_native_placement(
     label: &str,
     height: i32,
@@ -107,11 +87,6 @@ fn ensure_qbit_native_placement(
     Ok(())
 }
 
-/// Write one Qbit event. The proof is projected straight into
-/// `NormalizedEventEvidence`: the stored `aux_merkle_proof` is the exact
-/// `auxpow_bytes` region `decode_qbit_auxpow_proof` re-accepts, and the child
-/// height is the authenticated RPC height, checked against the child coinbase.
-/// Child script tags and Bitcoin parent attribution remain separate.
 pub(super) async fn write_qbit_event(
     client: &mut Client,
     context: &AuxpowCaptureContext,
@@ -150,23 +125,16 @@ pub(super) async fn write_qbit_event(
     write_event_in_txn(client, context, &mut payload).await
 }
 
-/// Project a verified Qbit proof into the chain-agnostic evidence type. Pure,
-/// so the persisted-field contract is testable from the mainnet control
-/// fixtures without a node or a database.
 fn qbit_evidence(block: &ParsedQbitAuxpowBlock, height: i32) -> NormalizedEventEvidence {
     let parsed = &block.proof;
     let child = &block.coinbase;
     NormalizedEventEvidence {
-        // Native placement and the authenticated child coinbase agree.
         child_height: Some(height),
         child_block_hash: Some(parsed.child_header.hash().to_byte_array().to_vec()),
         child_header_bytes: Some(parsed.child_header.consensus_bytes()),
         child_block_time: Some(i64::from(parsed.child_header.time())),
         child_nbits: Some(parsed.child_header.bits().to_consensus()),
         btc_parent_header: parsed.parent_header.header,
-        // Qbit's effective target is always the child's own pure-header nBits;
-        // the decoder gates on it, so this re-derivation is recorded as
-        // evidence rather than assumed.
         pow_validates_child_target: Some(validates_target(
             parsed.parent_header.hash(),
             parsed.child_header.bits(),
@@ -203,8 +171,6 @@ mod tests {
         parent_self_pow: bool,
     }
 
-    /// The mainnet control whose embedded parent is a full-difficulty Bitcoin
-    /// block (Qbit 78,058 witnessing BTC 966,017).
     fn positive_control() -> QbitControl {
         serde_json::from_str::<QbitControlsFile>(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -226,8 +192,6 @@ mod tests {
         }
     }
 
-    /// The full native block projects real child evidence without changing
-    /// the stored proof-byte contract.
     #[test]
     fn qbit_evidence_retains_authenticated_child_coinbase() {
         use mmm_capture::auxpow::decode_qbit_auxpow_proof;
@@ -261,9 +225,6 @@ mod tests {
         );
     }
 
-    /// Native placement is the producer's job, so both guards must fire: a
-    /// block that does not hash to the hash it was requested for, and a foreign
-    /// genesis at height 0.
     #[test]
     fn native_placement_guard_rejects_wrong_hash_and_wrong_genesis() {
         let (control, parsed) = parsed_positive_control();
@@ -274,11 +235,9 @@ mod tests {
         let child_hash = parsed.child_header.hash();
         let height = control.height as i32;
 
-        // The happy path: the node returned the block it was asked for.
         ensure_qbit_native_placement("Qbit", height, &child_hash, child_hash, genesis)
             .expect("matching hash is accepted");
 
-        // A node answering getblock <hash> with a different block.
         let foreign = parsed.parent_header.hash();
         let err = ensure_qbit_native_placement("Qbit", height, &foreign, child_hash, genesis)
             .expect_err("mismatched hash must be rejected");
@@ -287,7 +246,6 @@ mod tests {
             "unexpected error: {err}"
         );
 
-        // A node whose height 0 is not Qbit mainnet genesis.
         let err = ensure_qbit_native_placement("Qbit", 0, &child_hash, child_hash, genesis)
             .expect_err("foreign genesis must be rejected");
         assert!(
@@ -295,16 +253,11 @@ mod tests {
             "unexpected error: {err}"
         );
 
-        // ... and the real genesis hash passes the height-0 gate.
         let genesis_hash: BlockHash = genesis.parse().expect("parse pinned genesis");
         ensure_qbit_native_placement("Qbit", 0, &genesis_hash, genesis_hash, genesis)
             .expect("pinned genesis is accepted at height 0");
     }
 
-    /// The startup pin is what protects a poller seeded above height 0 and a
-    /// backfill that never touches genesis: the per-height guard above cannot
-    /// see those. An endpoint whose `getblockhash(0)` is not Qbit mainnet
-    /// genesis must be refused outright, and the real genesis must pass.
     #[test]
     fn startup_pin_refuses_a_non_mainnet_endpoint() {
         let genesis = match family_of(by_id(ChainId::Qbit)).fetch {
@@ -315,7 +268,6 @@ mod tests {
         super::super::validation::ensure_genesis("Qbit", &genesis_hash, genesis)
             .expect("mainnet genesis is accepted");
 
-        // A fork or testnet sharing Qbit's format and chain ID but not its genesis.
         let (_, parsed) = parsed_positive_control();
         let foreign = parsed.child_header.hash();
         let err = super::super::validation::ensure_genesis("Qbit", &foreign, genesis)

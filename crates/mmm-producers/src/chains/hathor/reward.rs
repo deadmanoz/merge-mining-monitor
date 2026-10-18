@@ -17,30 +17,18 @@ use mmm_capture::child_payout::{PoolIdentityLookup, pool_identity_lookup_key};
 
 use crate::chains::hathor::address::{MAINNET_P2PKH_VERSION, MAINNET_P2SH_VERSION};
 
-/// Pool-identity namespace under which decoded Hathor reward addresses are
-/// keyed (shared by the registry seeding, capture, and reclassify replay).
 pub const HATHOR_REWARD_ADDRESS_NAMESPACE: &str = "hathor_reward_address";
-
-/// Hathor's `OP_GREATERTHAN_TIMESTAMP` opcode that closes a timelock prefix.
 const OP_GREATERTHAN_TIMESTAMP: u8 = 0x6f;
 
-/// Parsed Hathor block funds segment: the output list plus the funds/graph
-/// length split it was decoded under.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HathorRewardParse {
-    /// Funds-segment serialization version (big-endian leading u16).
     pub version: u16,
     pub outputs: Vec<HathorRewardOutput>,
-    /// Length of the trailing graph segment (retained as audit context, never
-    /// parsed as outputs).
     pub graph_len: usize,
-    /// Length of the parsed funds segment (the accepted split offset).
     pub funds_len: usize,
 }
 
 impl HathorRewardParse {
-    /// Distinct reward addresses in output order: only HTR (non-token,
-    /// non-authority, standard-script) outputs qualify; deduplicated.
     pub fn reward_addresses(&self) -> Vec<String> {
         let mut addresses = Vec::new();
         for output in &self.outputs {
@@ -53,8 +41,6 @@ impl HathorRewardParse {
         addresses
     }
 
-    /// All outputs (including skipped/non-reward ones) as the audit JSON array
-    /// stored in the sidecar `reward_output_details`.
     pub fn output_details_json(&self) -> Value {
         Value::Array(
             self.outputs
@@ -64,8 +50,6 @@ impl HathorRewardParse {
         )
     }
 
-    /// The distinct reward addresses as the JSON array stored in the sidecar
-    /// `reward_addresses`.
     pub fn reward_addresses_json(&self) -> Value {
         Value::Array(
             self.reward_addresses()
@@ -75,10 +59,6 @@ impl HathorRewardParse {
         )
     }
 
-    /// Child-side pool attributions, one per distinct reward address. A registry
-    /// hit carries the resolved pool id (registry source, higher trust); an
-    /// unmapped address is recorded address-only (coinbase-output source) so it
-    /// stays a future-resolution candidate.
     pub fn reward_attributions(
         &self,
         identities: &PoolIdentityLookup,
@@ -107,33 +87,22 @@ impl HathorRewardParse {
     }
 }
 
-/// One decoded funds-segment output, including the audit metadata for outputs
-/// that do NOT qualify as a reward (token, authority, or nonstandard).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HathorRewardOutput {
-    /// Position in the funds segment's output list.
     pub index: usize,
     pub value: i64,
-    /// Raw `token_data` byte; the high bit is the authority flag, low 7 bits the
-    /// token index.
+    /// High bit is the authority flag; low 7 bits are the token index (`0` = HTR).
     pub token_data: u8,
     pub authority: bool,
     pub token_index: u8,
     pub script_hex: String,
-    /// `"P2PKH"`, `"P2SH"`, or `"nonstandard"`.
     pub script_type: &'static str,
-    /// Decoded payout address, `None` for nonstandard scripts.
     pub address: Option<String>,
-    /// Decoded timelock prefix, if present.
     pub timelock: Option<u32>,
-    /// Why this output is NOT a reward (`authority_output`, `non_htr_token`,
-    /// `nonstandard_script`); `None` means it qualifies.
     pub skipped_reason: Option<&'static str>,
 }
 
 impl HathorRewardOutput {
-    /// The payout address iff this output is a clean HTR reward (token index 0,
-    /// non-authority, standard script); `None` otherwise.
     fn reward_address(&self) -> Option<&String> {
         if self.token_data == 0 && !self.authority && self.skipped_reason.is_none() {
             self.address.as_ref()
@@ -142,8 +111,6 @@ impl HathorRewardOutput {
         }
     }
 
-    /// Full per-output record for the sidecar audit JSON (qualifying and
-    /// skipped outputs alike).
     fn to_audit_json(&self) -> Value {
         json!({
             "output_index": self.index,
@@ -160,10 +127,8 @@ impl HathorRewardOutput {
     }
 }
 
-/// Parse the funds segment (`funds_graph[..funds_graph_split]`) into outputs.
-/// Only the funds segment is decoded; the graph tail is never read as output
-/// data and the funds segment must be consumed exactly (trailing bytes error),
-/// which is what stops a wrong split from parsing graph bytes as outputs.
+/// Parse `funds_graph[..funds_graph_split]` into outputs; requires exact consumption
+/// so graph bytes are never parsed as outputs.
 pub fn parse_hathor_reward_outputs(
     funds_graph: &[u8],
     funds_graph_split: i32,
@@ -202,9 +167,6 @@ pub fn parse_hathor_reward_outputs(
     })
 }
 
-/// Decode one output: value, `token_data`, length-prefixed script. The
-/// authority/token/nonstandard checks classify it and set `skipped_reason`
-/// without dropping the output (it still appears in the audit JSON).
 fn parse_output(index: usize, cursor: &mut Cursor<'_>) -> Result<HathorRewardOutput> {
     let value = cursor.read_output_value()?;
     let token_data = cursor.read_u8()?;
@@ -237,7 +199,6 @@ fn parse_output(index: usize, cursor: &mut Cursor<'_>) -> Result<HathorRewardOut
     })
 }
 
-/// The script-type classification of a single output script.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DecodedScript {
     script_type: &'static str,
@@ -245,8 +206,6 @@ struct DecodedScript {
     timelock: Option<u32>,
 }
 
-/// Classify a Hathor output script (after stripping any timelock prefix) as
-/// P2PKH / P2SH (deriving the base58check address) or nonstandard.
 fn decode_hathor_script(script: &[u8]) -> DecodedScript {
     let (script, timelock) = strip_timelock(script);
     if script.len() == 25
@@ -276,9 +235,8 @@ fn decode_hathor_script(script: &[u8]) -> DecodedScript {
     }
 }
 
-/// Strip a leading Hathor timelock prefix (a 4-byte big-endian timestamp
-/// pushed then `OP_GREATERTHAN_TIMESTAMP`, in either direct-push or `OP_PUSHDATA1`
-/// form), returning the remaining script and the decoded timelock.
+/// Strip a leading Hathor timelock prefix (4-byte big-endian timestamp followed by
+/// `OP_GREATERTHAN_TIMESTAMP`, via direct push or `OP_PUSHDATA1`).
 fn strip_timelock(script: &[u8]) -> (&[u8], Option<u32>) {
     if script.len() >= 6 && script[0] == 0x04 && script[5] == OP_GREATERTHAN_TIMESTAMP {
         let timelock = u32::from_be_bytes(script[1..5].try_into().expect("4-byte slice"));
@@ -295,8 +253,6 @@ fn strip_timelock(script: &[u8]) -> (&[u8], Option<u32>) {
     (script, None)
 }
 
-/// base58check-encode a `version || payload` (20-byte hash) into a Hathor
-/// mainnet address string.
 fn base58_address(version: u8, payload: &[u8]) -> String {
     let mut prefixed = Vec::with_capacity(payload.len() + 1);
     prefixed.push(version);
@@ -304,10 +260,6 @@ fn base58_address(version: u8, payload: &[u8]) -> String {
     base58::encode_check(&prefixed)
 }
 
-/// Build the child-block attribution for one reward address. A registry hit
-/// (`identity.is_some()`) sets the resolved pool id and the registry source; an
-/// unmapped address records the value only, under the coinbase-output source, so
-/// it remains a candidate for a later registry update. Always Medium confidence.
 fn hathor_reward_address_attribution(
     address: String,
     identity: Option<mmm_capture::child_payout::PoolIdentityRef>,
@@ -335,8 +287,6 @@ fn hathor_reward_address_attribution(
     }
 }
 
-/// Forward-only big-endian cursor over the funds segment, bounds-checking every
-/// read so truncated input errors instead of panicking.
 struct Cursor<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -347,21 +297,18 @@ impl<'a> Cursor<'a> {
         Self { buf, pos: 0 }
     }
 
-    /// Take one byte.
     fn read_u8(&mut self) -> Result<u8> {
         Ok(self.take(1)?[0])
     }
 
-    /// Take a big-endian u16.
     fn read_u16(&mut self) -> Result<u16> {
         Ok(u16::from_be_bytes(
             self.take(2)?.try_into().expect("2-byte slice"),
         ))
     }
 
-    /// Decode a Hathor output value: a 4-byte big-endian u32 when the high bit
-    /// of the first byte is clear, otherwise an 8-byte big-endian value stored
-    /// negated (so it must be negative and `i64::MIN` overflows on negation).
+    /// 4-byte big-endian `u32` when the leading high bit is clear; otherwise an
+    /// 8-byte big-endian negated `i64`.
     fn read_output_value(&mut self) -> Result<i64> {
         let first = *self
             .buf
@@ -381,7 +328,6 @@ impl<'a> Cursor<'a> {
             .ok_or_else(|| anyhow::anyhow!("8-byte Hathor output value overflows i64"))
     }
 
-    /// Take exactly `n` bytes, erroring if the segment ends early.
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
         ensure!(
             self.pos
@@ -394,7 +340,6 @@ impl<'a> Cursor<'a> {
         Ok(&self.buf[start..self.pos])
     }
 
-    /// Bytes not yet consumed; the parser requires this to be 0 at the end.
     fn remaining(&self) -> usize {
         self.buf.len() - self.pos
     }

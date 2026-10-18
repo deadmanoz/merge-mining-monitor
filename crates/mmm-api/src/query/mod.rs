@@ -1,6 +1,4 @@
-//! Endpoint-specific query parsing for release read endpoints.
-//!
-//! These helpers keep full query validation in front of the DB checkout path.
+//! Endpoint query parsing and validation.
 
 use std::collections::BTreeMap;
 
@@ -24,11 +22,6 @@ const UNHEIGHTED_DAY_LIMIT: u64 = 31;
 const NAVIGATOR_DEFAULT_LIMIT: usize = 1;
 const NAVIGATOR_LIMIT_MAX: u64 = 2_000;
 
-/// Parsed `/api/v1/tree` request: the resolved lookup bounds plus the
-/// kind/source/classification filters and the echoed `query` block. Built only
-/// by [`parse_tree_query`]; the `query` Value is reflected verbatim into the
-/// tree.json envelope, so its format is the wire contract
-/// (fixtures/api/tree.json, tree-unheighted-anchor.json).
 #[derive(Debug, Clone)]
 pub struct TreeQuery {
     pub from_height: Option<i32>,
@@ -38,10 +31,7 @@ pub struct TreeQuery {
     pub context: TreeContextPolicy,
     pub kinds: Vec<ParentKind>,
     pub source_filter: Vec<String>,
-    /// Orphan-class filter for the unknown population (anchor mode and the
-    /// date-window `include_unheighted` mode). Defaults to `strict+weak` so the
-    /// navigator lands on and steps through orphans only. Inert in the
-    /// height-window/tip modes, which select no time-located unknown rows.
+    /// Orphan-class filter for unknown parents (defaults to `strict+weak`).
     pub classification: Vec<Classification>,
     pub include_near: bool,
     pub include_unheighted: bool,
@@ -52,21 +42,12 @@ pub struct TreeQuery {
     pub query: Value,
 }
 
-/// Parse-time bundle of the mutually-exclusive exact-lookup inputs (`at_height`
-/// xor `at_time`, plus the raw `at_time` string re-echoed in the query block).
-/// Lets `parse_exact_tree_lookup` return one value and `tree_window_mode`
-/// branch on them together.
 struct ExactTreeLookup {
     at_height: Option<i32>,
     at_time: Option<i64>,
     at_time_query: Option<String>,
 }
 
-/// Fully-validated tree lookup controls produced by
-/// `parse_tree_lookup_controls`: every cross-field invariant
-/// (mutually-exclusive modes, both-or-neither bounds, compact-context rules)
-/// has already been checked. `tree_window_mode` and `tree_query_echo` read it
-/// before `TreeQuery` is assembled.
 struct TreeLookupControls {
     from_height: Option<i32>,
     to_height: Option<i32>,
@@ -80,11 +61,6 @@ struct TreeLookupControls {
     min_sources: usize,
 }
 
-/// Which tree window strategy `parse_tree_query` resolved the request to: tip
-/// (default newest window), explicit height range, exact `at_height`, exact
-/// `at_time`, or the no-spine `unheighted_anchor` view. `as_str` is echoed as
-/// the `window_mode` field in the tree.json envelope, so the variant strings
-/// are the wire contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TreeWindowMode {
     Tip,
@@ -95,9 +71,6 @@ pub enum TreeWindowMode {
 }
 
 impl TreeWindowMode {
-    /// The serialized `window_mode` string echoed in the tree.json query block;
-    /// pinned by fixtures/api/tree.json (and tree-unheighted-anchor.json for
-    /// the anchor variant).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Tip => "tip",
@@ -109,10 +82,6 @@ impl TreeWindowMode {
     }
 }
 
-/// Tree response detail level: `Exact` (full window rows) or `Compact` (trimmed
-/// context around an `at_height`/`at_time` lookup). `as_str` is echoed as the
-/// `context` field in the tree.json envelope; `Compact` is only valid with an
-/// exact lookup (validated in `validate_tree_context`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TreeContextPolicy {
     Exact,
@@ -120,8 +89,6 @@ pub enum TreeContextPolicy {
 }
 
 impl TreeContextPolicy {
-    /// The serialized `context` string echoed in the tree.json query block;
-    /// pinned by fixtures/api/tree.json.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Exact => "exact",
@@ -129,20 +96,12 @@ impl TreeContextPolicy {
         }
     }
 
-    /// Whether the compact projection path applies. Read by
-    /// `validate_tree_context` and the tree projection to switch on the
-    /// trimmed-context build.
     pub fn is_compact(self) -> bool {
         self == Self::Compact
     }
 }
 
-/// Parse and fully validate a `/api/v1/tree` query string into a [`TreeQuery`],
-/// rejecting before any DB checkout. Distinguishes the mutually-exclusive
-/// window modes (tip / explicit height range / `at_height` / `at_time` /
-/// `unheighted_anchor`) and the compact-context rules, and builds the `query`
-/// echo block reflected verbatim into tree.json. Errors are the invalid_query /
-/// range_too_large 4xx contract.
+/// Parse and validate a `/api/v1/tree` query string before DB checkout.
 pub fn parse_tree_query(raw: Option<&str>) -> Result<TreeQuery, ApiError> {
     let params = parse_params(
         raw,
@@ -198,11 +157,6 @@ pub fn parse_tree_query(raw: Option<&str>) -> Result<TreeQuery, ApiError> {
     })
 }
 
-/// Validate every tree control field and their cross-field invariants
-/// (mutually-exclusive lookup modes, both-or-neither height bounds,
-/// compact-context and unheighted-window rules, `min_sources >= 1`) and return
-/// the checked [`TreeLookupControls`]. The single validation funnel behind
-/// `parse_tree_query`.
 fn parse_tree_lookup_controls(
     params: &BTreeMap<String, String>,
 ) -> Result<TreeLookupControls, ApiError> {
@@ -255,10 +209,6 @@ fn parse_tree_lookup_controls(
     })
 }
 
-/// Derive the [`TreeWindowMode`] from validated controls by fixed precedence:
-/// anchor, then `at_height`, then `at_time`, then explicit height range, else
-/// tip. Mutual exclusion is already enforced in `validate_tree_lookup_modes`,
-/// so at most one branch is live.
 fn tree_window_mode(controls: &TreeLookupControls) -> TreeWindowMode {
     if controls.unheighted_anchor.is_some() {
         TreeWindowMode::UnheightedAnchor
@@ -273,11 +223,6 @@ fn tree_window_mode(controls: &TreeLookupControls) -> TreeWindowMode {
     }
 }
 
-/// Build the `query` echo block reflected verbatim into the tree.json envelope.
-/// Every key and the conditional inclusion of `unheighted_from`/`unheighted_to`
-/// (only when include_unheighted) and `unheighted_anchor` are the wire
-/// contract; pinned by fixtures/api/tree.json and tree-unheighted-anchor.json.
-/// Do not add, drop, or rename a key.
 fn tree_query_echo(
     controls: &TreeLookupControls,
     window_mode: TreeWindowMode,
@@ -309,8 +254,6 @@ fn tree_query_echo(
     query
 }
 
-/// Parse the `context` param (default `exact`) into [`TreeContextPolicy`]; any
-/// value other than exact/compact is invalid_query.
 fn parse_tree_context(params: &BTreeMap<String, String>) -> Result<TreeContextPolicy, ApiError> {
     match params.get("context").map(String::as_str).unwrap_or("exact") {
         "exact" => Ok(TreeContextPolicy::Exact),
@@ -322,10 +265,6 @@ fn parse_tree_context(params: &BTreeMap<String, String>) -> Result<TreeContextPo
     }
 }
 
-/// Enforce the compact-context preconditions: `context=compact` requires an
-/// `at_height` or `at_time` lookup and cannot be combined with any unheighted
-/// date-window parameter. No-op for exact context. Violations are
-/// invalid_query.
 fn validate_tree_context(
     context: TreeContextPolicy,
     at_height: Option<i32>,
@@ -357,8 +296,6 @@ fn validate_tree_context(
     Ok(())
 }
 
-/// Explicit tree height-window validation: both-or-neither bounds,
-/// non-negative, ordered, and inside the first-wave window limit.
 fn validate_tree_height_window(
     from_height: Option<i32>,
     to_height: Option<i32>,
@@ -397,10 +334,6 @@ fn validate_tree_height_window(
     }
 }
 
-/// Parse the exact-lookup inputs into [`ExactTreeLookup`]: a non-negative
-/// `at_height` and a UTC `at_time` timestamp (preserving its raw string for the
-/// query echo). Their mutual exclusion is checked later in
-/// `validate_tree_lookup_modes`.
 fn parse_exact_tree_lookup(params: &BTreeMap<String, String>) -> Result<ExactTreeLookup, ApiError> {
     let at_height = optional_i32(params, "at_height")?;
     validate_tree_at_height(at_height)?;
@@ -412,7 +345,6 @@ fn parse_exact_tree_lookup(params: &BTreeMap<String, String>) -> Result<ExactTre
     })
 }
 
-/// Reject a negative `at_height` as invalid_query; `None` and non-negative pass.
 fn validate_tree_at_height(at_height: Option<i32>) -> Result<(), ApiError> {
     if let Some(height) = at_height
         && height < 0
@@ -425,9 +357,6 @@ fn validate_tree_at_height(at_height: Option<i32>) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Parse an optional UTC-timestamp param into both its unix epoch (for SQL
-/// bounds) and its raw string (re-echoed verbatim in the query block). Absent
-/// key yields (None, None).
 fn optional_utc_timestamp(
     params: &std::collections::BTreeMap<String, String>,
     key: &str,
@@ -439,10 +368,7 @@ fn optional_utc_timestamp(
     Ok((Some(timestamp), Some(raw.to_owned())))
 }
 
-/// Parse a strict `YYYY-MM-DDTHH:MM:SSZ` UTC timestamp to a unix epoch. The
-/// fixed-position byte check rejects offsets, fractional seconds, and any non-Z
-/// form before RFC3339 parsing; either failure is invalid_query via
-/// `invalid_timestamp`.
+/// Parse a strict `YYYY-MM-DDTHH:MM:SSZ` UTC timestamp to unix epoch seconds.
 fn parse_utc_timestamp_param(key: &str, raw: &str) -> Result<i64, ApiError> {
     let bytes = raw.as_bytes();
     let valid_shape = bytes.len() == 20
@@ -463,8 +389,6 @@ fn parse_utc_timestamp_param(key: &str, raw: &str) -> Result<i64, ApiError> {
         .map_err(|_| invalid_timestamp(key, raw))
 }
 
-/// Build the invalid_query error for a malformed UTC-timestamp param, echoing
-/// the offending value under its key.
 fn invalid_timestamp(key: &str, raw: &str) -> ApiError {
     ApiError::invalid_query(
         format!("{key} must be a UTC timestamp in YYYY-MM-DDTHH:MM:SSZ form"),
@@ -472,8 +396,6 @@ fn invalid_timestamp(key: &str, raw: &str) -> ApiError {
     )
 }
 
-/// The date-window unheighted mode: both dates required when enabled,
-/// ordered, and inside the day limit.
 fn parse_unheighted_window(
     params: &std::collections::BTreeMap<String, String>,
     include_unheighted: bool,
@@ -523,9 +445,6 @@ fn parse_unheighted_window(
     }
 }
 
-/// Anchor mode is its own no-height-spine view (the unknown-block navigator
-/// landing): mutually exclusive with an explicit height window and with the
-/// date-window unheighted mode.
 fn validate_tree_lookup_modes(
     from_height: Option<i32>,
     to_height: Option<i32>,

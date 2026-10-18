@@ -4,21 +4,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
-/// Default per-batch height limit when `--follow` is set without an explicit
-/// `--limit`. Kept small so a catch-up batch finishes well within the live-test
-/// manager's stop grace. The continuous loop keeps overall catch-up throughput,
-/// since per-batch overhead is cheap after incremental cursor advance.
 pub(super) const FOLLOW_DEFAULT_LIMIT: i64 = 50;
-/// Default follow-mode poll interval (seconds) when
-/// `BITCOIN_CORE_SYNC_FOLLOW_INTERVAL_SECS` is unset.
 pub(super) const DEFAULT_FOLLOW_INTERVAL_SECS: u64 = 60;
-/// Default number of recent Core heights kept complete for the tree live-tip
-/// window. Operators can lower this with `BITCOIN_CORE_SYNC_LIVE_WINDOW_HEIGHTS`
-/// when using a large per-height delay, but it must still cover the tree's
-/// default 16-block window.
 pub(super) const DEFAULT_NEAR_TIP_REPAIR_WINDOW_HEIGHTS: i32 = 64;
-/// Floor enforced on the operator-configured live window: it must still cover
-/// the tree's default 16-block live-tip window, so a smaller value is rejected.
+/// Must cover the tree's default 16-block live-tip window.
 const MIN_NEAR_TIP_REPAIR_WINDOW_HEIGHTS: i32 = 16;
 
 pub(super) fn parse_follow_interval_from_lookup(

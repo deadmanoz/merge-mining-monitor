@@ -1,9 +1,4 @@
-//! HTTP-level smoke tests for the read API, driven through
-//! `tower::ServiceExt::oneshot` (no network bind, no live database).
-//!
-//! Query parser edge cases live with `mmm-api::query`; these tests keep only
-//! enough coverage to prove the router returns the shared envelopes before DB
-//! checkout and that valid API routes reach the DB-backed path.
+//! HTTP smoke tests for the read API via `tower::ServiceExt::oneshot` (no DB or network bind).
 
 use axum::Router;
 use axum::body::Body;
@@ -12,7 +7,7 @@ use axum::http::{HeaderMap, Request, StatusCode};
 use mmm_api::{self as api, AppState};
 use mmm_pg::PgConfig;
 use serde_json::Value;
-use tower::ServiceExt; // for `oneshot`
+use tower::ServiceExt;
 
 const SOURCE_FILTERED_ROUTES: [&str; 1] = ["/api/v1/tree"];
 
@@ -39,7 +34,7 @@ fn test_www_dir() -> std::path::PathBuf {
 }
 
 fn test_state() -> AppState {
-    // Dummy config that is never connected; deadpool connects lazily.
+    // Lazy pool config; never connected by pre-DB validation tests.
     let pg = PgConfig {
         host: "127.0.0.1".to_owned(),
         port: 1,
@@ -213,8 +208,6 @@ async fn navigator_endpoint_validates_queries_before_db_checkout() {
             StatusCode::UNPROCESSABLE_ENTITY,
             "range_too_large",
         ),
-        // The orphan-only classification axis does not apply to a catalogue
-        // membership target, so it must be rejected rather than ignored.
         (
             "/api/v1/navigator/error-block?classification=strict_btc_orphan".to_owned(),
             StatusCode::BAD_REQUEST,
@@ -230,7 +223,6 @@ async fn navigator_endpoint_validates_queries_before_db_checkout() {
             StatusCode::BAD_REQUEST,
             "invalid_query",
         ),
-        // An unregistered target must not reach the projection.
         (
             "/api/v1/navigator/error_block".to_owned(),
             StatusCode::BAD_REQUEST,
@@ -306,11 +298,7 @@ fn frontend_module_imports_pin_the_release_version() {
 
         let source = std::fs::read_to_string(&path).expect("read frontend module");
         for (index, line) in source.lines().enumerate() {
-            // Every local specifier, not only static `from "./x.js"` forms. The
-            // suffix-matching predicate this replaces could not see a dynamic
-            // `await import("./x.js?v=...")`, which therefore kept a stale pin
-            // through a release and fetched a cached pre-release module at run
-            // time. Match on the `./` specifier itself so both forms are covered.
+            // Check both static `from "./x.js"` and dynamic `import("./x.js")` specifiers.
             for start in local_specifier_starts(line) {
                 let rest = &line[start..];
                 let Some(end) = rest.find(['"', '\'']) else {
@@ -332,9 +320,6 @@ fn frontend_module_imports_pin_the_release_version() {
     }
 }
 
-/// Byte offsets just past every `"./` or `'./` opening in a line, i.e. the start
-/// of each relative module specifier, whether it was reached by `from "./x"`,
-/// `import "./x"`, or `import("./x")`.
 fn local_specifier_starts(line: &str) -> Vec<usize> {
     let bytes = line.as_bytes();
     (0..bytes.len().saturating_sub(2))

@@ -1,5 +1,4 @@
-//! Block-detail rendering: commitments, coinbase tags, event details,
-//! and RSK evidence.
+//! Block-detail rendering: commitments, coinbase tags, event details, and RSK evidence.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -27,12 +26,9 @@ use mmm_capture::pool_resolver::PoolResolver;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ChainFamily {
-    /// Namecoin / Syscoin / Fractal / Elastos / Terracoin: classic CAuxPow
-    /// proof blob and the standard `fabe6d6d` AuxPoW marker.
+    /// Classic `CAuxPow` proof blob and `fabe6d6d` marker (Namecoin, Syscoin, Fractal, Elastos, Terracoin).
     NamecoinFamily,
-    /// Qbit: native proof format (no `hashBlock`, display-order chain
-    /// commitment); stored proofs decode via `decode_qbit_auxpow_proof`,
-    /// never the classic CAuxPow decoder.
+    /// Qbit native proof format (no `hashBlock`, display-order chain commitment).
     Qbit,
     /// RSK: RSKIP-92 midstate compression discards the coinbase (opaque).
     Rsk,
@@ -41,13 +37,7 @@ pub(super) enum ChainFamily {
     Other,
 }
 
-/// Map a child chain slug to its AuxPoW `ChainFamily`. The single gate that
-/// decides which chains get fabe6d6d marker scanning + slot/aux-proof decoding
-/// (NamecoinFamily: namecoin/syscoin/fractal/elastos/terracoin) vs the Qbit native
-/// format (qbit) vs opaque (rsk) vs split-header (hathor). Proof-format
-/// selection is explicit per slug — never sniffed from stored bytes, and
-/// never a try-one-then-the-other fallback. Adding a family chain is a new
-/// arm here, never a cloned module (architecture rule).
+/// Map a child chain slug to its AuxPoW [`ChainFamily`] (explicit per slug, never sniffed from bytes).
 pub(super) fn chain_family(chain: Option<&str>) -> ChainFamily {
     match chain {
         Some("namecoin") | Some("syscoin") | Some("fractal") | Some("elastos")
@@ -59,17 +49,7 @@ pub(super) fn chain_family(chain: Option<&str>) -> ChainFamily {
     }
 }
 
-/// Reference AuxPoW chain id per child chain, **cite-or-null**. Namecoin's
-/// `AUXPOW_CHAIN_ID` is 1 (the merged-mining spec's worked example confirms slot
-/// derivation with `chain_id = 1`). Elastos's is 1224, verified against live
-/// blocks. Qbit's is 47, cited from pinned Qbit revision `70fea84` chainparams
-/// (the version field's chain-id bits and the LCG slot input). Terracoin's is
-/// 50, the strict chain id the capture path enforces, verified against live
-/// blocks (the version's chain-id bits and the LCG slot of the pinned
-/// `fixtures/terracoin` blocks). Syscoin / Fractal are not yet cited from
-/// their chainparams, so they return `None`
-/// until a sourced constant is added. `slot_index` (decoded from the proof) is
-/// the per-block datum used for verification.
+/// Cited AuxPoW chain ID per child chain (or `None` when uncited).
 pub(super) fn chain_id_for_chain(chain: &str) -> Option<u32> {
     match chain {
         "namecoin" => Some(1),
@@ -80,14 +60,9 @@ pub(super) fn chain_id_for_chain(chain: &str) -> Option<u32> {
     }
 }
 
-/// Project a decoded `AuxMarker` into the wire `AuxMarkerProjection`.
-/// `aux_merkle_root` goes out display-order (rust-bitcoin `Display` reverses the
-/// raw scriptSig bytes, constraint #5); `magic_present` is always true here
-/// (only called once a marker decoded).
 pub(super) fn marker_projection(marker: &AuxMarker) -> AuxMarkerProjection {
     AuxMarkerProjection {
         magic_present: true,
-        // `Display` reverses to the standard display-order hex.
         aux_merkle_root: marker.aux_merkle_root.to_string(),
         merkle_size: marker.merkle_size,
         merkle_nonce: marker.merkle_nonce,
@@ -112,19 +87,8 @@ fn marker_projection_for(family: ChainFamily, marker: &AuxMarker) -> AuxMarkerPr
     }
 }
 
-/// Build the parent-level merge-mining commitment from a block's event rows,
-/// with an explicit family priority (NamecoinFamily > Qbit > Rsk > Hathor). The
-/// representative row (which sets `format`, `parent_coinbase_txid`,
-/// `parent_coinbase_script_hex`, and `marker`) is a single row, so the script and
-/// the marker always agree: within the winning coinbase-bearing family, the
-/// first row that decodes a marker (ascending event id), else its first row with
-/// `marker = None` (see `coinbase_commitment`).
+/// Derive parent-level merge-mining commitment (`NamecoinFamily > Qbit > Rsk > Hathor`).
 pub(super) fn derive_commitment(rows: &[EventDetailRow]) -> Option<Commitment> {
-    // Families that persist the real parent coinbase come first, richest
-    // evidence winning: any Namecoin-family event, else Qbit. Both carry the
-    // coinbase txid and script and may yield a `0xfabe6d6d` marker (Qbit
-    // mainnet also accepts the legacy no-marker placement, so a null marker is
-    // normal there). RSK and Hathor are format-only.
     if let Some(commitment) = coinbase_commitment(rows, ChainFamily::NamecoinFamily, "namecoin-aux")
     {
         return Some(commitment);
@@ -157,10 +121,8 @@ pub(super) fn derive_commitment(rows: &[EventDetailRow]) -> Option<Commitment> {
     None
 }
 
-/// Commitment for a family whose events persist the real parent coinbase.
-/// The representative is the lowest-id member whose coinbase scriptSig yields
-/// a `0xfabe6d6d` marker, else the lowest-id member with a null marker. `None`
-/// when no row belongs to `family`.
+/// Select the lowest-id member of `family` whose coinbase scriptSig decodes a `0xfabe6d6d` marker,
+/// or the lowest-id member with a null marker.
 fn coinbase_commitment(
     rows: &[EventDetailRow],
     family: ChainFamily,
@@ -195,21 +157,14 @@ fn coinbase_commitment(
     })
 }
 
-/// Fallback `coinbase_tag`: extract printable tag runs from the commitment
-/// representative's parent coinbase scriptSig (via `extract_coinbase_tag`).
-/// Used when there is no Core-attested stored script (see
-/// `coinbase_tag_from_core_block`, which wins for canonical+core_attested).
 pub(super) fn coinbase_tag_from_commitment(commitment: Option<&Commitment>) -> Option<String> {
     let script_hex = commitment?.parent_coinbase_script_hex.as_deref()?;
     let script = hex::decode(script_hex).ok()?;
     extract_coinbase_tag(&script)
 }
 
-/// Preferred `coinbase_tag` for canonical Core-attested blocks: resolve the
-/// stored `block.btc_coinbase_script` through the pool snapshot (pool name),
-/// falling back to a normalized raw tag. Returns `None` for non-canonical or
-/// non-core-attested rows, deferring to the commitment fallback. Reads stored
-/// wire-order bytes.
+/// Preferred `coinbase_tag` for canonical Core-attested blocks: resolve `block.btc_coinbase_script`
+/// through the pool snapshot, falling back to normalized printable tag runs.
 pub(super) fn coinbase_tag_from_core_block(row: &BlockDetailRow) -> Option<String> {
     if row.kind != ParentKind::Canonical || !row.core_attested {
         return None;
@@ -225,23 +180,11 @@ pub(super) fn coinbase_tag_from_core_block(row: &BlockDetailRow) -> Option<Strin
         .or_else(|| extract_coinbase_tag(script).and_then(|tag| normalize_core_coinbase_tag(&tag)))
 }
 
-/// Trim surrounding slashes/whitespace from a raw Core coinbase tag, returning
-/// `None` if nothing remains. The fallback path inside
-/// `coinbase_tag_from_core_block` when the pool snapshot does not resolve the
-/// script.
 pub(super) fn normalize_core_coinbase_tag(tag: &str) -> Option<String> {
     let normalized = tag.trim_matches('/').trim();
     (!normalized.is_empty()).then(|| normalized.to_owned())
 }
 
-/// Sort and render `EventDetailRow`s into wire `EventDetail`s. Deterministic
-/// order: confirmed_at, source code, child height, child hash, id (pins the
-/// `event_details` array, block-*.json). chain_id/slot_index/aux_proof are
-/// selected per proof format (classic CAuxPow for the Namecoin family, the
-/// Qbit native format for qbit; see `event_proof_projection`), and slot_index
-/// is gated on the decoded blob's embedded parent header matching this
-/// event's own parent (a mismatched-but-parseable blob never leaks another
-/// parent's slot, constraint #5). Decodes via mmm_capture::auxpow::evidence.
 pub(super) fn render_event_details(
     mut rows: Vec<EventDetailRow>,
     pool_attributions_by_event: &HashMap<i64, EventPoolAttributions>,
@@ -308,14 +251,8 @@ pub(super) fn render_event_details(
         .collect()
 }
 
-/// Decode chain_id / slot_index / aux_proof for one event row, selected
-/// EXPLICITLY by chain family: classic CAuxPow for the Namecoin family, the
-/// Qbit native format (no `hashBlock` on the wire) for qbit; every other
-/// family projects nulls. No sniffing and no try-one-then-the-other
-/// fallback. The blob decodes once, gated on its embedded parent header
-/// matching this event's own parent, so a parseable-but-mismatched blob
-/// never surfaces a slot or branch breakdown that belongs to a different
-/// parent; `chain_id` is cite-or-null independent of the blob.
+/// Decode `(chain_id, slot_index, aux_proof)` by chain family, gating `slot_index` and
+/// `aux_proof` on the decoded proof's embedded parent header matching `row.parent_hash`.
 fn event_proof_projection(
     row: &EventDetailRow,
 ) -> (Option<u32>, Option<u32>, Option<AuxProofDetail>) {
@@ -358,8 +295,6 @@ fn event_proof_projection(
     }
 }
 
-/// Shared `AuxProofDetail` constructor for the classic and Qbit arms: branch
-/// projection is identical, and only classic CAuxPow carries a `hashBlock`.
 fn aux_proof_detail(
     hash_block: Option<String>,
     coinbase_branch: &AuxMerkleBranchDetail,
@@ -385,10 +320,7 @@ fn cmp_option_none_last<T: Ord>(left: &Option<T>, right: &Option<T>) -> std::cmp
     }
 }
 
-/// Render an `RskEvidenceRow` into the wire `RskEventDetail`. Hashes/proofs are
-/// hex-encoded in stored byte order (RSKIP-92 midstate form, NOT
-/// Display-reversed, constraint #5); `uncle_parent_height` surfaces as
-/// `uncle_referencing_height`.
+/// Render an [`RskEvidenceRow`] into [`RskEventDetail`] (RSKIP-92 forward byte order, no Display reversal).
 pub(super) fn render_rsk_detail(row: RskEvidenceRow) -> RskEventDetail {
     RskEventDetail {
         block_hash: hex::encode(row.block_hash),
@@ -405,10 +337,6 @@ pub(super) fn render_rsk_detail(row: RskEvidenceRow) -> RskEventDetail {
     }
 }
 
-/// Deserialize 80 stored bytes into the wire `HeaderProjection`. prev_hash /
-/// merkle_root go out display-order (rust-bitcoin Display reverses, constraint
-/// #5); `bits` is 8-hex-digit compact. A malformed header is a 500 (internal,
-/// not 404).
 pub(super) fn header_projection(bytes: &[u8]) -> Result<HeaderProjection, ProjectionError> {
     let header: Header = deserialize(bytes).context("deserialize Bitcoin parent header")?;
     Ok(HeaderProjection {
@@ -421,10 +349,7 @@ pub(super) fn header_projection(bytes: &[u8]) -> Result<HeaderProjection, Projec
     })
 }
 
-/// Collect the de-duplicated, ascending event-id set from all auxpow proofs'
-/// `contributing_event_ids` evidence. Non-auxpow proofs are skipped; an auxpow
-/// proof missing the field is a hard error. This is the canonical/stale path's
-/// event selector (feeds `load_event_details_by_ids`).
+/// Collect de-duplicated ascending `contributing_event_ids` across all `auxpow` proofs.
 pub(super) fn contributing_event_ids(proofs: &[ApiProof]) -> Result<Vec<i64>> {
     let mut ids = BTreeSet::new();
     for proof in proofs {
@@ -448,9 +373,6 @@ pub(super) fn contributing_event_ids(proofs: &[ApiProof]) -> Result<Vec<i64>> {
     Ok(ids.into_iter().collect())
 }
 
-/// The first `contributing_event_ids` member of a proof's evidence, or `None`.
-/// The secondary sort key in `load_proof_details_for_hash` (after source code)
-/// that keeps the wire `proofs` order deterministic for equal-code proofs.
 pub(super) fn first_contributing_id(evidence: &Value) -> Option<i64> {
     evidence
         .get("contributing_event_ids")
@@ -459,9 +381,6 @@ pub(super) fn first_contributing_id(evidence: &Value) -> Option<i64> {
         .and_then(Value::as_i64)
 }
 
-/// Adapt an `EventDetailRow` down to the neutral `EventRow` consumed by the
-/// shared `source_summary_for_block` materializer (the api->materialize boundary).
-/// Intentionally lossy: only the summary-relevant fields are retained.
 pub(super) fn event_row_from_detail(row: &EventDetailRow) -> EventRow {
     EventRow {
         id: row.id,
@@ -476,9 +395,6 @@ pub(super) fn event_row_from_detail(row: &EventDetailRow) -> EventRow {
     }
 }
 
-/// Display-hex an optional stored hash (None passes through, Some is converted
-/// via `display_hash`, constraint #5). Small adapter used for the optional
-/// coinbase txid fields in `render_event_details`.
 pub(super) fn display_hash_opt(bytes: Option<Vec<u8>>) -> Result<Option<String>> {
     bytes.map(|bytes| display_hash(&bytes)).transpose()
 }

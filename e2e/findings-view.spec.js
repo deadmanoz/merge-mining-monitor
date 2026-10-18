@@ -1,13 +1,6 @@
 const { expect, test } = require("@playwright/test");
 const { makeFinding, stubApi, stubFindings } = require("./support/api-stubs");
 
-// The findings view: feed/article canvas states, the finding= URL contract,
-// evidence-anchor cross-links, and the no-drawer layout. Shell mechanics
-// (switcher, scope swap, fallback) live in view-shell.spec.js.
-
-// Three findings across two months so month grouping, ordering, and the
-// newer/older bounds all have branches to observe. Newest first, like the
-// generated module.
 const CORPUS = [
   makeFinding({
     slug: "newest-incident",
@@ -111,7 +104,6 @@ test("the feed renders month groups and cards newest-first", async ({ page }) =>
     "Mid shift",
     "Oldest note",
   ]);
-  // Citation markers in summaries render as superscript links, not raw [^1].
   await expect(page.locator(".finding-card-summary sup.sd-cite").first()).toBeVisible();
 });
 
@@ -119,7 +111,6 @@ test("the drawer column is absent on findings and intact on return", async ({ pa
   await openFindings(page, { path: "/?view=findings" });
 
   await expect(page.locator(".detail-drawer")).toBeHidden();
-  // The grid reserves no drawer track: the canvas reaches the drawer's edge.
   const overlap = await page.evaluate(() => {
     const main = document.querySelector("#findings-main").getBoundingClientRect();
     const workspace = document.querySelector(".workspace").getBoundingClientRect();
@@ -137,7 +128,6 @@ test("a card click opens the article and writes finding=", async ({ page }) => {
   await page.locator('article.finding-card[data-finding="mid-shift"]').click();
   await expect(page.locator(".finding-article-title")).toHaveText("Mid shift");
   expect(new URL(page.url()).searchParams.get("finding")).toBe("mid-shift");
-  // The feed is replaced, not stacked beside or below the article.
   await expect(page.locator(".finding-card")).toHaveCount(0);
 });
 
@@ -171,7 +161,6 @@ test("finding= supplied with a non-findings view is ignored", async ({ page }) =
   await expect(page.locator(".workspace")).toHaveAttribute("data-view", "delta");
   expect(new URL(page.url()).searchParams.get("finding")).toBeNull();
 
-  // Entering findings later shows the feed: the dropped slug did not linger.
   await page.locator('.view-tab[data-view="findings"]').click();
   await expect(page.locator(".finding-card")).toHaveCount(3);
 });
@@ -197,7 +186,6 @@ test("a btc-height anchor lands on the tree with no finding= in the URL", async 
   expect(params.get("tree_height")).toBe("700000");
   expect(params.get("finding")).toBeNull();
 
-  // Returning to findings restores the open article from memory.
   await page.locator('.view-tab[data-view="findings"]').click();
   await expect(page.locator(".finding-article-title")).toHaveText("Newest incident");
   expect(new URL(page.url()).searchParams.get("finding")).toBe("newest-incident");
@@ -246,9 +234,6 @@ test("an event timeline renders lanes, interval, and boundary events", async ({ 
 test("a citation click in a card summary does not open the article", async ({ page }) => {
   await openFindings(page);
 
-  // Citation links open externally (target=_blank); the card must not also
-  // activate. Nested-interactive markup is ruled out structurally: the card
-  // is not a button, the title opener is.
   const popup = page.waitForEvent("popup");
   await page.locator(".finding-card-summary sup.sd-cite a").first().click();
   await (await popup).close();
@@ -270,9 +255,6 @@ test("wide screens bound and center the findings column", async ({ page }) => {
   await page.setViewportSize({ width: 2400, height: 1100 });
   await openFindings(page);
 
-  // Without the drawer track the canvas spans the viewport; cards must not
-  // stretch with it, and the column must sit centered rather than hug the
-  // rail edge.
   const feed = await page.evaluate(() => {
     const card = document.querySelector(".finding-card").getBoundingClientRect();
     const canvas = document.querySelector("#findings-main").getBoundingClientRect();
@@ -282,7 +264,6 @@ test("wide screens bound and center the findings column", async ({ page }) => {
   expect(Math.abs(feed.leftGap - feed.rightGap)).toBeLessThan(40);
   expect(feed.leftGap).toBeGreaterThan(100);
 
-  // The article shares the same centered column with a common left edge.
   await page.locator('article.finding-card[data-finding="newest-incident"]').click();
   const article = await page.evaluate(() => {
     const head = document.querySelector(".finding-article-head").getBoundingClientRect();
@@ -298,9 +279,6 @@ test("mobile widths collapse findings to a single column", async ({ page }) => {
   await page.setViewportSize({ width: 480, height: 900 });
   await openFindings(page);
 
-  // The base findings grid override outranks the breakpoint's plain
-  // .workspace rule, so the breakpoint must restate the columns; without
-  // that, a phantom 250px filter track squeezes the stacked canvas.
   const layout = await page.evaluate(() => {
     const rail = document.querySelector(".filter-rail").getBoundingClientRect();
     const main = document.querySelector("#findings-main").getBoundingClientRect();
@@ -363,8 +341,6 @@ test("category and status filters narrow the feed", async ({ page }) => {
 });
 
 test("the shared source filter narrows the feed by affected sources", async ({ page }) => {
-  // Via the URL rather than the checkbox: the box lives inside a collapsed
-  // <details> source group, and hydration exercises the same shared filter.
   await openFindings(page, { path: "/?view=findings&sources=auxpow:syscoin" });
 
   await expect(page.locator(".finding-card")).toHaveCount(1);

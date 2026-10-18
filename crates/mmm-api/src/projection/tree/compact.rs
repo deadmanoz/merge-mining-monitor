@@ -29,24 +29,15 @@ use super::super::shared::{
     load_max_complete_canonical_height, load_sources, rows_to_blocks,
 };
 
-/// Descending +/- height radii tried by the compact retry loop, widest first.
-/// `compact_candidate_windows` walks these so a RangeTooLarge/BackboneUnsynced
-/// failure at a wide radius re-attempts at the next narrower one, guaranteeing a
-/// usable window down to +/- 16 blocks before giving up.
+/// Descending `+/-` height radii tried by the compact retry loop, widest first.
 const COMPACT_RADIUS_SCHEDULE: [i32; 7] = [1_008, 512, 256, 128, 64, 32, 16];
-/// Cap on non-collapsible (protected or evidence) nodes in a compact context
-/// before the window is rejected as too dense. Checked pre-reduction by
-/// `ensure_compact_candidate_limit`; distinct from `NODE_LIMIT` (the post-reduction
-/// visible-node cap), though both happen to be 500.
+/// Pre-reduction cap on protected or evidence nodes in a compact context window.
 const COMPACT_EVENT_NODE_LIMIT: usize = 500;
-/// The resolved focus block of a compact lookup.
+
 struct CompactTarget {
     height: i32,
 }
 
-/// Per-attempt compact working set: the target, the resolved [from,to] height
-/// window, and the verified canonical ancestry map used to account hidden
-/// (omitted-interior) edges without materializing every canonical block.
 struct CompactContext<'a> {
     target: &'a CompactTarget,
     from_height: i32,
@@ -55,10 +46,8 @@ struct CompactContext<'a> {
     ancestry_by_hash: HashMap<String, String>,
 }
 
-/// `/api/v1/tree?context=compact` entry: render a tight context window around an
-/// exact `at_height`/`at_time` target, retrying progressively narrower radii (and
-/// RangeTooLarge/BackboneUnsynced/BackboneConflict until a window fits. Payload
-/// is `TreePayload` (pinned by fixtures/api/tree.json).
+/// Render a compact context window around `at_height`/`at_time`, retrying narrower radii on
+/// `RangeTooLarge`, `BackboneUnsynced`, or `BackboneConflict`.
 pub(super) async fn compact_tree(
     client: &Client,
     query: &TreeQuery,
@@ -81,9 +70,6 @@ pub(super) async fn compact_tree(
     unreachable!("compact candidate windows is never empty")
 }
 
-/// Materialize the radius schedule into clamped [from,to] height pairs around the
-/// target, dropping consecutive duplicates produced when saturation at chain
-/// bounds collapses two radii to the same window.
 fn compact_candidate_windows(target_height: i32, max_height: i32) -> Vec<(i32, i32)> {
     let mut windows = Vec::new();
     for radius in COMPACT_RADIUS_SCHEDULE {
@@ -98,9 +84,6 @@ fn compact_candidate_windows(target_height: i32, max_height: i32) -> Vec<(i32, i
     windows
 }
 
-/// True for the error classes a narrower compact window may resolve
-/// (RangeTooLarge, BackboneUnsynced, BackboneConflict). Any other error aborts
-/// the retry loop immediately rather than masking a real failure.
 fn is_compact_retry_error(err: &ProjectionError) -> bool {
     matches!(
         err,
@@ -112,9 +95,6 @@ fn is_compact_retry_error(err: &ProjectionError) -> bool {
     )
 }
 
-/// Render one compact attempt at a fixed [from,to] window: load verified
-/// canonical ancestry, build the canonical-context candidate set, enforce the
-/// density caps, reduce/assemble, then check the post-reduction node cap.
 async fn compact_tree_for_window(
     client: &Client,
     query: &TreeQuery,
@@ -140,10 +120,6 @@ async fn compact_tree_for_window(
     Ok(payload)
 }
 
-/// Assemble the protected candidate set for a compact window: seed blocks at the
-/// anchors plus in-window stales/event-bearing canonicals, backfill competition
-/// context, project, then relax non-structural canonical backbone rows so dense
-/// interiors stay collapsible.
 async fn load_compact_candidates(
     client: &Client,
     query: &TreeQuery,
@@ -204,10 +180,8 @@ async fn load_compact_candidates(
     Ok(candidates)
 }
 
-/// Demote canonical candidates that are not structurally required (not an attach
-/// parent, competitor, or context anchor) back to unprotected/non-evidence so the
-/// reducer can collapse long canonical interiors into hidden edges. Compact-only:
-/// the wide-context loader protects far more canonical rows than the default view.
+/// Demote non-structural canonical candidates so the reducer can collapse interior spans into
+/// `hidden` edges.
 fn relax_compact_canonical_backbone(
     candidates: &mut [ParentProjection],
     protected_stale_attach_parents: &HashSet<String>,
@@ -228,9 +202,6 @@ fn relax_compact_canonical_backbone(
     }
 }
 
-/// Backfill the canonical winners and stale attach-parents referenced by any
-/// loaded block's competition/prev_hash but not yet present, so every emitted
-/// stale has its competitor and attach point in the window.
 async fn append_competition_context_blocks(
     client: &Client,
     blocks: &mut Vec<BlockRow>,
@@ -261,9 +232,6 @@ async fn append_competition_context_blocks(
     Ok(())
 }
 
-/// Load proofs for the compact block set and run the shared `project_blocks`
-/// pipeline. Small compact-side adapter onto the neutral materialize helper;
-/// carries no compact-specific logic.
 async fn project_compact_blocks(
     client: &Client,
     query: &TreeQuery,
@@ -285,9 +253,6 @@ async fn project_compact_blocks(
     )?)
 }
 
-/// Reject a compact window whose protected+evidence node count exceeds
-/// `COMPACT_EVENT_NODE_LIMIT` before reduction, so an over-dense context returns
-/// a retryable `range_too_large("compact_event_nodes")` instead of a giant tree.
 fn ensure_compact_candidate_limit(candidates: &[ParentProjection]) -> Result<(), ProjectionError> {
     let protected_count = candidates
         .iter()
@@ -304,8 +269,6 @@ fn ensure_compact_candidate_limit(candidates: &[ParentProjection]) -> Result<(),
     Ok(())
 }
 
-/// Final post-reduction cap: reject if visible nodes exceed `NODE_LIMIT` with a
-/// retryable `range_too_large("node_count")`.
 fn ensure_compact_payload_limit(payload: &TreePayload) -> Result<(), ProjectionError> {
     if payload.nodes.len() > NODE_LIMIT {
         return Err(ProjectionError::Api(ApiError::range_too_large(
@@ -318,10 +281,6 @@ fn ensure_compact_payload_limit(payload: &TreePayload) -> Result<(), ProjectionE
     Ok(())
 }
 
-/// Resolve the compact focus block from `at_height` or `at_time` (latter via the
-/// complete-canonical height-at-time lookup), verifying canonical ancestry at the
-/// exact height. `None` => time lookup found no complete canonical at/before the
-/// time (renders the empty payload).
 async fn resolve_compact_target(
     client: &Client,
     query: &TreeQuery,
@@ -344,10 +303,6 @@ async fn resolve_compact_target(
     Ok(Some(CompactTarget { height }))
 }
 
-/// The empty `TreePayload` returned when a `context=compact&at_time` lookup finds
-/// no complete canonical block at/before the time. Sets `empty_reason =
-/// no_complete_canonical_at_or_before_time`; legend kinds/edge_kinds match the
-/// non-empty payload so the wire format is stable (fixtures/api/tree.json).
 fn empty_compact_time_lookup() -> TreePayload {
     let window = ResolvedTreeWindow::empty_lookup("no_complete_canonical_at_or_before_time");
     TreePayload {
@@ -359,11 +314,8 @@ fn empty_compact_time_lookup() -> TreePayload {
     }
 }
 
-/// Seed SELECT for a compact window: canonical blocks at the three anchor heights
-/// (from/target/to), every in-window stale or error block, and any in-window
-/// canonical that is an active merge-mining parent. The sparse loader, it does
-/// NOT materialize every canonical interior (those become hidden edges via
-/// ancestry).
+/// Sparse seed loader: canonical blocks at `from/target/to`, all in-window stale or error blocks,
+/// and any in-window canonical block with active merge-mining events.
 async fn load_compact_seed_blocks(
     client: &Client,
     target_height: i32,
@@ -394,9 +346,6 @@ async fn load_compact_seed_blocks(
     rows_to_blocks(rows)
 }
 
-/// Fetch any of `hashes` not already loaded, bounded to [from,to], and extend
-/// `blocks`. The building block for pulling protected context (competitors and
-/// attach parents) into the sparse seed set.
 async fn append_missing_blocks(
     client: &Client,
     blocks: &mut Vec<BlockRow>,
@@ -429,9 +378,6 @@ async fn append_missing_blocks(
     Ok(())
 }
 
-/// Display-hash set of canonical anchors (target/from/to), marked
-/// protected_context so the window's three boundary columns always render even
-/// under kind/source filters.
 fn compact_context_hashes(
     blocks: &[BlockRow],
     target_height: i32,

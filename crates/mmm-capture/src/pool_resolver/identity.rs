@@ -1,13 +1,4 @@
-//! RSK miner-address identity registry.
-//!
-//! The RSK structure/capture slice attributes pools by miner address (the
-//! 20-byte Ethereum-style address returned by eth_getBlockByNumber.miner),
-//! not by BTC coinbase tags or BTC payout addresses. RskMinerRegistry is a
-//! repo-local, reviewable embedded JSON file that maps such addresses to
-//! canonical pool slugs. Validation rejects duplicate addresses and slug /
-//! canonical-name disagreements before any DB write so the embedded fixture
-//! cannot contradict the rsk_miner_address namespace UNIQUE constraint on
-//! pool_identity.
+//! RSK miner-address identity registry (`eth_getBlockByNumber.miner` -> pool slug).
 
 use std::collections::HashMap;
 
@@ -19,67 +10,38 @@ use crate::identity_registry::{
     IdentityRegistryEntry, IdentityRegistryError, validate_identity_registry,
 };
 
-/// The embedded `data/pools/child-identities/rsk_miner_registry.json`, `include_str!`-pulled at
-/// compile time. A repo-local, reviewable mapping of RSK miner addresses to
-/// canonical pool slugs, edited deliberately under review (not generator output
-/// like current.json). [`PoolIdentityRegistry::from_default_rsk_registry`] parses
-/// and validates it.
+/// Embedded `data/pools/child-identities/rsk_miner_registry.json`.
 pub const DEFAULT_RSK_MINER_REGISTRY_JSON: &str =
     include_str!("../../../../data/pools/child-identities/rsk_miner_registry.json");
 
-/// Attribution namespace string `"rsk_miner_address"`: the first half of the
-/// `(namespace, matched_value)` key for RSK pool_identity rows. Shared constant so
-/// mmm-store inserts and mmm-producers replay/capture all key against the exact
-/// same namespace the DB UNIQUE constraint expects; never inline this literal.
+/// Attribution namespace `"rsk_miner_address"` for RSK `pool_identity` rows.
 pub const RSK_MINER_ADDRESS_NAMESPACE: &str = "rsk_miner_address";
 
-/// Deserialized form of `data/pools/child-identities/rsk_miner_registry.json`: schema version (must
-/// be 1), shared [`PoolSnapshotSource`] provenance, and the flat `entries` list.
-/// `Deserialize`, but also constructed directly in mmm-producers/test fixtures via
-/// [`PoolIdentityRegistry::from_rsk_registry`].
+/// Deserialized `data/pools/child-identities/rsk_miner_registry.json`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RskMinerRegistry {
-    /// Must be 1 (else `UnsupportedSchemaVersion`).
     pub schema_version: u32,
-    /// Generator/edit provenance: when the registry was produced.
     pub generated_at: String,
-    /// Generator/edit provenance: which set the registry covers.
     pub scope: String,
-    /// Provenance block, reusing [`PoolSnapshotSource`].
     pub source: PoolSnapshotSource,
-    /// The address -> pool mapping. Pub so producers and tests can build the
-    /// registry in memory without going through JSON.
     pub entries: Vec<RskMinerEntry>,
 }
 
-/// One RSK registry row: a miner address mapped to its pool. The `pool_slug` must
-/// exist in the BTC snapshot with real attribution, enforced by a conformance test.
+/// One RSK miner address mapped to its canonical pool.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct RskMinerEntry {
-    /// The raw registry address string (40 hex chars, optional `0x`); normalized
-    /// to lower-case with `0x` stripped at index and lookup time.
     pub miner_address: String,
-    /// The stable DB pool key this address attributes to.
     pub pool_slug: String,
-    /// Display name; must be consistent for a given slug (`SlugCanonicalNameConflict`
-    /// otherwise).
     pub pool_canonical_name: String,
 }
 
-/// A successful RSK miner-address resolution: borrows the matched [`RskMinerEntry`].
-/// Returned by [`PoolIdentityRegistry::resolve_rsk_miner`]; the consumer keys a
-/// pool_identity row under ([`RSK_MINER_ADDRESS_NAMESPACE`], normalized address)
-/// from `entry.pool_slug`.
+/// Borrowed match returned by [`PoolIdentityRegistry::resolve_rsk_miner`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PoolIdentityMatch<'a> {
-    /// The borrowed registry row that matched the looked-up miner address.
     pub entry: &'a RskMinerEntry,
 }
 
-/// Index over an [`RskMinerRegistry`] for miner-address pool attribution.
-/// Construction validates the registry (schema == 1, non-empty fields, 40-hex
-/// addresses, unique addresses, consistent slug -> canonical_name) and maps each
-/// normalized address to its entry. Pure, no I/O.
+/// Validated index over [`RskMinerRegistry`] for miner-address pool attribution.
 #[derive(Debug)]
 pub struct PoolIdentityRegistry {
     rsk: RskMinerRegistry,
@@ -87,28 +49,16 @@ pub struct PoolIdentityRegistry {
 }
 
 impl PoolIdentityRegistry {
-    /// Build the registry from the compile-time-embedded
-    /// [`DEFAULT_RSK_MINER_REGISTRY_JSON`]. Production entry point. Errors only if
-    /// the embedded JSON is malformed or invalid (guarded by a CI test), so prod
-    /// startup `?`s it.
     pub fn from_default_rsk_registry() -> Result<Self, PoolResolverError> {
         Self::from_rsk_json_str(DEFAULT_RSK_MINER_REGISTRY_JSON)
     }
 
-    /// Parse an RSK registry from a JSON string, then validate and index. Used by
-    /// the tests here; parse failures map to `InvalidRegistryJson`. Distinct from
-    /// [`from_default_rsk_registry`](Self::from_default_rsk_registry) (arbitrary
-    /// JSON vs the embedded file).
     pub fn from_rsk_json_str(json: &str) -> Result<Self, PoolResolverError> {
         let registry: RskMinerRegistry = serde_json::from_str(json)
             .map_err(|err| PoolResolverError::InvalidRegistryJson(err.to_string()))?;
         Self::from_rsk_registry(registry)
     }
 
-    /// Validate an already-parsed [`RskMinerRegistry`] and build the address index:
-    /// normalize each miner address (trim, lower-case, strip `0x`) into the lookup
-    /// map. Rejects schema != 1, empty fields, non-40-hex addresses, duplicate
-    /// addresses, and inconsistent slug -> canonical_name.
     pub fn from_rsk_registry(rsk: RskMinerRegistry) -> Result<Self, PoolResolverError> {
         validate_rsk_registry(&rsk)?;
         let mut rsk_by_address = HashMap::new();
@@ -121,15 +71,11 @@ impl PoolIdentityRegistry {
         })
     }
 
-    /// Borrow the validated underlying RSK registry (e.g. to read `schema_version`
-    /// or iterate entries). Used by mmm-store and producer replay paths to
-    /// enumerate addresses.
     pub fn rsk_registry(&self) -> &RskMinerRegistry {
         &self.rsk
     }
 
-    /// Look up an RSK miner address. Accepts hex with or without the `0x`
-    /// prefix; comparison is case-insensitive after normalising to lower-case.
+    /// Look up an RSK miner address (case-insensitive, optional `0x` prefix).
     pub fn resolve_rsk_miner(&self, address: &str) -> Option<PoolIdentityMatch<'_>> {
         let key = normalize_rsk_address(address);
         self.rsk_by_address
@@ -139,10 +85,7 @@ impl PoolIdentityRegistry {
             })
     }
 
-    /// Iterator over the (slug, canonical_name) pairs the RSK registry
-    /// references, deduplicated via the shared
-    /// [`crate::identity_registry::distinct_pool_definitions`]. Startup uses this
-    /// to ensure RSK-only pool rows exist before pool_identity inserts land.
+    /// Deduplicated `(slug, canonical_name)` pairs referenced by the RSK registry.
     pub fn distinct_pool_definitions(&self) -> Vec<(&str, &str)> {
         crate::identity_registry::distinct_pool_definitions(
             self.rsk.entries.iter().map(rsk_registry_entry),
@@ -150,23 +93,12 @@ impl PoolIdentityRegistry {
     }
 }
 
-/// Canonicalize an RSK/Ethereum-style miner address for keying and comparison:
-/// trim, lower-case ASCII, strip a leading `0x`. This function defines
-/// the `rsk_miner_address` key form; mmm-store and mmm-producers must call this
-/// (not ad-hoc lower-casing) so DB writes and in-memory lookups agree
-/// byte-for-byte.
+/// Trim, lower-case ASCII, and strip a leading `0x`.
 pub fn normalize_rsk_address(address: &str) -> String {
     let lower = address.trim().to_ascii_lowercase();
     lower.strip_prefix("0x").unwrap_or(&lower).to_owned()
 }
 
-/// Reject an RSK registry before indexing/persisting via the shared
-/// [`validate_identity_registry`] validator: schema must be 1; miner_address,
-/// pool_slug, pool_canonical_name non-empty and whitespace-free; each address
-/// exactly 40 hex chars after normalization; addresses globally unique under
-/// [`normalize_rsk_address`]; and a given pool_slug never mapped to two
-/// canonical_name values. The generic failures are mapped back onto the RSK
-/// [`PoolResolverError`] variants the callers and tests expect.
 fn validate_rsk_registry(registry: &RskMinerRegistry) -> Result<(), PoolResolverError> {
     let entries = registry.entries.iter().map(rsk_registry_entry);
     validate_identity_registry(
@@ -179,8 +111,6 @@ fn validate_rsk_registry(registry: &RskMinerRegistry) -> Result<(), PoolResolver
     .map_err(map_rsk_registry_error)
 }
 
-/// View an [`RskMinerEntry`] as a generic [`IdentityRegistryEntry`] for the shared
-/// validation/distinct-pool helpers; keeps the `miner_address` JSON field name.
 fn rsk_registry_entry(entry: &RskMinerEntry) -> IdentityRegistryEntry<'_> {
     IdentityRegistryEntry {
         identifier: &entry.miner_address,
@@ -189,7 +119,6 @@ fn rsk_registry_entry(entry: &RskMinerEntry) -> IdentityRegistryEntry<'_> {
     }
 }
 
-/// RSK identifier format check: 40 hex chars after [`normalize_rsk_address`].
 fn validate_rsk_miner_address_format(address: &str) -> Result<(), String> {
     let normalized = normalize_rsk_address(address);
     if normalized.len() == 40 && normalized.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -199,9 +128,6 @@ fn validate_rsk_miner_address_format(address: &str) -> Result<(), String> {
     }
 }
 
-/// Map a shared [`IdentityRegistryError`] onto the RSK [`PoolResolverError`]
-/// variant for that failure (an invalid identifier is an invalid RSK miner
-/// address; the duplicate value carries the normalized key).
 fn map_rsk_registry_error(error: IdentityRegistryError) -> PoolResolverError {
     match error {
         IdentityRegistryError::UnsupportedSchemaVersion(version) => {
@@ -251,12 +177,6 @@ mod tests {
         assert!(registry.rsk_registry().entries.len() >= 10);
     }
 
-    /// Cross-registry completeness invariant: every pool slug referenced by the
-    /// RSK miner-address registry must exist in the embedded BTC snapshot with
-    /// its full BTC attribution. Otherwise `upsert_rsk_only_pools` would
-    /// self-create the shared pool as a bare stub (empty `coinbase_tags` /
-    /// `payout_addresses`), silently downgrading its BTC captures to "unknown".
-    /// This generalizes to any future miner-address identity registry.
     #[test]
     fn every_rsk_referenced_slug_is_present_in_btc_snapshot_with_attribution() {
         use crate::pool_resolver::PoolResolver;

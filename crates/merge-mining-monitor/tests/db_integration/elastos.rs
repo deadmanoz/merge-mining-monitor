@@ -57,9 +57,7 @@ async fn capture_unknown_elastos_block(
 #[tokio::test]
 async fn core_cache_match_writes_the_event_end_to_end() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // The real stuck block: Elastos child 2,243,660, parent BIP34 955,585.
-        // Its matching nBits is supplied by the persisted Core cache, then the
-        // full production path writes the event.
+        // Real stuck block: Elastos child 2,243,660, parent BIP34 955,585.
         let block: ElastosBlock = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../fixtures/elastos/ela-2243660.json"
@@ -111,8 +109,6 @@ async fn a_foreign_parent_retracts_only_its_own_blocks_event() -> Result<()> {
             process_elastos_height(&mut client, &rpc, &context, height).await?,
             ElastosHeightOutcome::AuxpowWritten
         );
-        // A second block's event at the same height (a rescan can leave one): a
-        // verdict on the block the chain carries must not touch its evidence.
         let sibling_hash = hash_bytes(0x5a01);
         insert_event(
             &client,
@@ -186,9 +182,6 @@ async fn a_foreign_parent_retracts_only_its_own_blocks_event() -> Result<()> {
     })
 }
 
-/// An `unknown` parent classification over the BTC genesis header, for fake
-/// classifiers whose horizon outcome is driven by `synced_tip_height`, not
-/// parent placement.
 fn unknown_genesis_parent() -> ParentClassification {
     ParentClassification::unknown(
         &bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header,
@@ -271,8 +264,6 @@ async fn live_capture_maps_known_reward_and_minerinfo_identities() -> Result<()>
     })
 }
 
-// The embedded minerinfo registry is seeded before the capture resolver is
-// loaded, so first capture must already map the minerinfo value to a pool.
 #[tokio::test]
 async fn capture_resolves_embedded_minerinfo_registry_end_to_end() -> Result<()> {
     crate::run_mut_db_test!(client, {
@@ -298,9 +289,6 @@ async fn capture_resolves_embedded_minerinfo_registry_end_to_end() -> Result<()>
     })
 }
 
-// Older rows may contain only an unmapped stored minerinfo attribution. The
-// reclassification path must resolve that value without fetching the child
-// block again through RPC.
 #[tokio::test]
 async fn reclassify_pools_reresolves_existing_elastos_minerinfo_without_rpc() -> Result<()> {
     crate::run_mut_db_test!(client, {
@@ -324,8 +312,6 @@ async fn reclassify_pools_reresolves_existing_elastos_minerinfo_without_rpc() ->
             },
         )
         .await?;
-        // Simulate a pre-registry row: no pool mapping yet and no child
-        // outputs to rederive from.
         client
             .execute(
                 "INSERT INTO event_pool_attribution ( \
@@ -445,9 +431,7 @@ async fn elastos_identity_rows(
         .collect())
 }
 
-/// Recompute the RPC-reported hash after a field change, using the same
-/// `sha256d(80-byte prefix || height LE)` rule reconstruction verifies, so the
-/// changed block still passes the hash guard.
+/// Recompute the RPC-reported hash (`sha256d(80-byte prefix || height LE)`).
 fn rehash(block: &mut ElastosBlock) -> Result<()> {
     let prefix = Header {
         version: Version::from_consensus(block.version),
@@ -479,15 +463,12 @@ async fn an_unproven_block_at_a_rescanned_height_leaves_the_record_alone() -> Re
         let source_id = context.source_id();
         let hash_a = block_a.reconstruct()?.block_hash.to_byte_array().to_vec();
 
-        // A different block at the same height that carries no AuxPoW: a new
-        // nonce, re-hashed so it still passes reconstruction.
         let mut block_n = block_a.clone();
         block_n.nonce = block_n.nonce.wrapping_add(1);
         block_n.auxpow = None;
         rehash(&mut block_n)?;
         let hash_n = block_n.reconstruct()?.block_hash.to_byte_array().to_vec();
 
-        // Tick 1: A is captured and is the chain's block.
         let rpc = FixtureElastosRpc {
             block: block_a.clone(),
         };
@@ -499,11 +480,7 @@ async fn an_unproven_block_at_a_rescanned_height_leaves_the_record_alone() -> Re
         );
         assert_eq!(advisory_locks_held(&client).await?, 0);
 
-        // Tick 2: the endpoint now answers with N, a self-consistent block that
-        // carries no AuxPoW. Nothing backs N with work, and the endpoint may be
-        // untrusted, so N is not recorded as the chain's block: A stays current
-        // and nothing is revoked. (A proven eventless block does displace, see
-        // `core_cache_nbits_mismatch_revokes_an_existing_event`.)
+        // Unproven non-AuxPoW block N does not displace A as the chain's block.
         let rpc = FixtureElastosRpc { block: block_n };
         let outcome = process_elastos_height(&mut client, &rpc, &context, height).await?;
         assert_eq!(outcome, ElastosHeightOutcome::NonAuxpowSkipped);
@@ -514,7 +491,6 @@ async fn an_unproven_block_at_a_rescanned_height_leaves_the_record_alone() -> Re
         assert_ne!(hash_a, hash_n);
         assert_eq!(advisory_locks_held(&client).await?, 0);
 
-        // Tick 3: A again; still current.
         let rpc = FixtureElastosRpc { block: block_a };
         let outcome = process_elastos_height(&mut client, &rpc, &context, height).await?;
         assert_eq!(outcome, ElastosHeightOutcome::AuxpowWritten);

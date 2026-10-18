@@ -6,8 +6,8 @@
   "observed_at": "2026-06-10",
   "published_at": "2026-07-29",
   "affected_sources": ["auxpow:hathor"],
-  "summary": "Hathor's chain difficulty fell roughly 3,500-fold within two days of 2026-06-10. F2Pool still merge-mines Hathor with a residual hashrate slice, but parents that clear Bitcoin's target are no longer expected.",
-  "body": "Between 12:00 and 14:30 UTC on June 10, Hathor's chain difficulty fell off a cliff: block weight (log2 difficulty) dropped from ~68.7, where it had sat all year, to a floor near 56.9 two days later, a roughly 3,500-fold reduction in per-block work.[^1]\n\nEvery Bitcoin-difficulty Hathor parent this monitor has ever attributed was mined by F2Pool, and F2Pool has not left: current Hathor blocks still carry `/F2Pool/` parent coinbases built on live Bitcoin templates. What changed is scale. At the residual ~5-7 PH/s, a parent that clears Bitcoin's target is expected roughly once every few years, against ~40 per month before the collapse.[^2]\n\nThe capture pipeline was verified end-to-end against this window; the source's stale badge is a faithful description of the chain, not a monitor fault. The last captured parent (Hathor height `6,631,349`, Bitcoin height `953,043`) landed about ten hours before the collapse began.",
+  "summary": "Hathor's chain difficulty fell ~3,500-fold within two days of 2026-06-10, leaving only a residual F2Pool hashrate slice unlikely to clear Bitcoin's target.",
+  "body": "Starting June 10 between 12:00 and 14:30 UTC, Hathor block weight (log2 difficulty) dropped from ~68.7 to a 56.9 floor over two days (~11.8 bits less work per block).[^1]\n\nF2Pool still merge-mines Hathor with `/F2Pool/` coinbases on live Bitcoin templates, but at the residual ~5–7 PH/s a Bitcoin-difficulty parent is expected roughly once every few years vs ~40/month pre-collapse.[^2]\n\nThe source's stale badge reflects this hashrate drop rather than a monitor fault; the last Bitcoin-difficulty parent (Hathor `6,631,349`, Bitcoin `953,043`) landed ~10 hours before the collapse.",
   "anchors": [
     { "kind": "btc-height", "value": "953043", "label": "last parent's Bitcoin block" },
     { "kind": "child-height", "value": "6631349", "label": "last Hathor parent" },
@@ -18,7 +18,7 @@
     {
       "kind": "series-chart",
       "caption": "Hathor block weight before, during, and after the June 2026 collapse.",
-      "accessible_summary": "Hathor block weight held near 68.7 through the first half of 2026, fell to 56.9 over two days beginning June 10, and stayed there through July. The 11.8-bit drop represents roughly 3,500 times less work per block.",
+      "accessible_summary": "Hathor block weight held near 68.7 until falling 11.8 bits (~3,500x less work) between June 10 and June 12, 2026 to a 56.9 floor.",
       "summary": [
         { "label": "Work reduction", "value": "~3,500×", "detail": "About 11.8 difficulty bits" },
         { "label": "Before", "value": "~68.7", "detail": "Block weight through 10 Jun" },
@@ -65,19 +65,11 @@
         { "v": 56.91, "label": "Post-collapse floor 56.9" }
       ],
       "x_ticks": ["2026-02-14", "2026-04-25", "2026-06-10", "2026-07-29"],
-      "note": "Sampled per height window from the Hathor public node API, 2026-07-29."
+      "note": "Sampled from the Hathor public node API, 2026-07-29."
     }
   ],
   "references": [
-    {
-      "id": 1,
-      "label": "Hathor mainnet public node API (block weight series)",
-      "url": "https://node1.mainnet.hathor.network/v1a/status"
-    },
-    {
-      "id": 2,
-      "label": "mempool.space - F2Pool mined blocks",
-      "url": "https://mempool.space/mining/pool/f2pool"
-    }
+    { "id": 1, "label": "Hathor mainnet public node API (block weight series)", "url": "https://node1.mainnet.hathor.network/v1a/status" },
+    { "id": 2, "label": "mempool.space - F2Pool mined blocks", "url": "https://mempool.space/mining/pool/f2pool" }
   ]
 }

@@ -1,11 +1,4 @@
-//! The static per-chain specification table.
-//!
-//! One `ChainSpec` row per live merge-mined producer chain. The row carries
-//! the declared, reviewable facts a chain contributes to the shared producer
-//! machinery: identity, env prefix, source code, activation floor, poller
-//! defaults. Behavior lives in the shared implementations
-//! that CONSUME the spec; adding a Namecoin-family chain means adding a row
-//! here (plus its `source_registry` entry), not cloning a module.
+//! Static per-chain specification table (`CHAINS`).
 
 use crate::poller::PollerDefaults;
 use mmm_capture::child_payout::{
@@ -17,29 +10,13 @@ use mmm_capture::source_registry::{
     QBIT_SOURCE_CODE, RSK_SOURCE_CODE, SYSCOIN_SOURCE_CODE, TERRACOIN_SOURCE_CODE,
 };
 
-/// Historical acquisition floor for the live poller. RSK history below this
-/// height predates the monitor's acquisition and contains a mix of full
-/// 80-byte BTC parent headers and variable-width fallback signatures; the
-/// backfill command captures the former and cleanly skips the latter.
-/// (The RSKIP-92 merge-mining format change is at RSK height 729,000, well
-/// above this floor.) The floor exists so the poller never rescans the
-/// backfilled static range on startup.
+/// Historical acquisition floor for the RSK live poller (bounded backfills may
+/// still capture complete 80-byte parent headers below this height).
 const RSK_ACQUISITION_FLOOR: i32 = 139_999;
-/// Current Syscoin chain-2 begins carrying AuxPoW evidence at this height.
 const SYSCOIN_FIRST_AUXPOW_HEIGHT: i32 = 1_973;
-/// Fractal Bitcoin merge-mines from height 1 (AuxPoW activation at mainnet
-/// genesis); only the exact `0x20240100` Cadence class actually carries a
-/// CAuxPow, the rest are skipped by the producer's version gate.
 const FRACTAL_FIRST_AUXPOW_HEIGHT: i32 = 1;
-/// Hathor's activation floor is 0, NOT its safe-default backfill start: the
-/// `version != 3` capture gate makes any pre-activation height a harmless skip,
-/// so an operator can replay earlier heights without the floor blocking them.
 const HATHOR_FIRST_AUXPOW_HEIGHT: i32 = 0;
-/// Documented safe default start for a Hathor backfill (merge-mining is ~100%
-/// from ~1M; below this is mostly version-0 noise). A warn-below threshold, not
-/// the activation floor.
 pub(crate) const HATHOR_DEFAULT_BACKFILL_START: i32 = 1_000_000;
-/// Elastos AuxPoW activation floor (the first post-dummy merge-mined block).
 const ELASTOS_FIRST_AUXPOW_HEIGHT: i32 = 177_000;
 /// Fractal's exact merge-mined block version. Only blocks with this exact
 /// nVersion carry a CAuxPow. The `0x20260100` Cadence class also sets the
@@ -47,20 +24,12 @@ const ELASTOS_FIRST_AUXPOW_HEIGHT: i32 = 177_000;
 /// `parse_namecoin_block`/`parse_auxpow_header_blob` is insufficient as the
 /// Fractal gate.
 const FRACTAL_MERGE_MINED_VERSION: i32 = 0x2024_0100;
-/// Qbit accepts merged-mining commitments from height zero, so its activation
-/// floor is a true floor, not an acquisition floor: no Qbit height above it is
-/// outside the producer's reach.
 const QBIT_FIRST_AUXPOW_HEIGHT: i32 = 0;
-/// Qbit mainnet genesis block hash (display order), pinned from the Qbit 1.0.0
-/// source revision `70fea84`. The proof decoder deliberately pins no chain
-/// identity, so the producer authenticates it here: a node answering height 0
-/// with anything else is not Qbit mainnet.
+/// Qbit mainnet genesis block hash (display order), pinned at height 0 because
+/// the proof decoder authenticates no chain identity.
 const QBIT_GENESIS_BLOCK_HASH: &str =
     "0000000000004d60aa5d46013991d0a0e2995d89ee98e53068ae196d763e79f2";
 
-/// Stable identity for a live producer chain. Consulted by registry dispatch
-/// and spec lookup only; shared implementations branch on spec DATA, not on
-/// this enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChainId {
     Namecoin,
@@ -73,45 +42,25 @@ pub enum ChainId {
     Terracoin,
 }
 
-/// How a bitcoind-family chain authenticates its JSON-RPC endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RpcAuth {
-    /// `<PREFIX>_RPC_USER` and `<PREFIX>_RPC_PASSWORD` are independently
-    /// required (each missing var is its own `<VAR> is required` error).
     RequiredUserPass,
-    /// `<PREFIX>_RPC_USER`/`<PREFIX>_RPC_PASSWORD` are used when both are set
-    /// (one without the other is a set-together error); otherwise
-    /// `<PREFIX>_RPC_COOKIEFILE` may point at a Bitcoin Core-style cookie file
-    /// containing `user:password`; otherwise unauthenticated.
     OptionalUserPassOrCookie,
 }
 
-/// How a bitcoind-family chain's AuxPoW proof bytes are fetched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FetchStrategy {
-    /// `getblock` with the configured verbosity dialect returns a raw block
-    /// carrying inline classic CAuxPow (Namecoin, Syscoin, Terracoin).
-    /// Authentication selects the legacy or strict classic parser.
     RawBlock {
         authentication: RawBlockAuthentication,
     },
-    /// `getblockheader <hash> false true`: a `[child header][CAuxPow]` blob
-    /// (Fractal). Only blobs whose child header version equals
-    /// `exact_version` are merge-mined; every other class is skipped before
-    /// any parse. Parsed by `parse_auxpow_header_blob`.
-    HeaderBlob { exact_version: i32 },
-    /// `getblock <hash> 0` (Qbit): the raw block opens with a Qbit extended
-    /// header, which is NOT a classic CAuxPow. The exact header/proof prefix
-    /// is verified by the Qbit decoder, then the transaction body is
-    /// authenticated against its header before child tag attribution.
-    /// `genesis_block_hash` is the display-order
-    /// mainnet genesis the producer pins at height 0, because the decoder
-    /// deliberately authenticates no chain identity.
-    QbitExtendedHeader { genesis_block_hash: &'static str },
+    HeaderBlob {
+        exact_version: i32,
+    },
+    QbitExtendedHeader {
+        genesis_block_hash: &'static str,
+    },
 }
 
-/// Authentication available for classic full-block acquisition. Other wire formats
-/// retain their own contracts rather than combining incompatible policies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RawBlockAuthentication {
     NodeValidated,
@@ -121,21 +70,11 @@ pub enum RawBlockAuthentication {
     },
 }
 
-/// How shared-runner chains retain malformed proofs and operational failures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureFailurePolicy {
-    /// Log the failure, write nothing, and let the run continue past the
-    /// height. The incumbent bitcoind-family behavior (Namecoin, Syscoin,
-    /// Fractal): a malformed block is rare and the interval is still reported
-    /// complete.
     SkipMalformedProof,
-    /// Persist a `capture_error` row for the height BEFORE returning, then
-    /// refuse to report the interval complete: a new live height holds the
-    /// cursor, a replayed height continues (replay is best-effort by the
-    /// poller's contract) while the persisted row keeps the gap visible, and a
-    /// bounded backfill over a range containing one fails the run. The
-    /// monotonic poll cursor cannot express a gap on its own, which is why the
-    /// durable row exists.
+    /// Persist a `capture_error` row before returning and hold live cursors /
+    /// fail backfills over a range containing a malformed proof.
     HoldMalformedProof,
     /// Also retain returned operational failures, including failed replay heights.
     HoldAnyHeightFailure,
@@ -147,92 +86,44 @@ impl CaptureFailurePolicy {
     }
 }
 
-/// A parse-time backfill range cap (a public/untrusted-endpoint foot-gun
-/// guard): rejected at ARG-PARSE time, before any DB or RPC bootstrap, unless
-/// `<PREFIX>_ALLOW_LARGE_BACKFILL=1`.
+/// Parse-time backfill range cap unless `<PREFIX>_ALLOW_LARGE_BACKFILL=1`.
 #[derive(Debug, Clone, Copy)]
 pub struct RangeCap {
-    /// Default for `<PREFIX>_MAX_BACKFILL_RANGE` (malformed values silently
-    /// fall back to this; today's contract).
     pub default_max: i32,
-    /// Tail note in the over-cap error message.
     pub note: &'static str,
 }
 
-/// Post-backfill read-model repair scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepairScope {
-    /// Repair scans all sources (historical Namecoin behavior).
     Global,
-    /// Repair scans only this chain's own source.
     SourceScoped,
 }
 
-/// The bitcoind-family sharing contract: everything that distinguishes
-/// Namecoin/Syscoin/Fractal/Qbit/Terracoin from each other, as data consumed by ONE
-/// shared client + capture + backfill implementation (`chains::bitcoind_rpc`,
-/// `chains::auxpow_family`). Chains with genuinely divergent protocols (RSK,
-/// Hathor, Elastos) carry `None` and keep real implementations.
 #[derive(Debug, Clone, Copy)]
 pub struct FamilySpec {
-    /// Short label for RPC/parse error contexts and the capture-in-txn chain
-    /// label ("Namecoin", "Syscoin", "Fractal").
     pub label: &'static str,
-    /// How `config::bitcoind_rpc_config` resolves auth env (the per-chain
-    /// error-string and evaluation-order contract).
     pub auth: RpcAuth,
-    /// Which RPC call yields the CAuxPow bytes and how the capture path parses
-    /// them.
     pub fetch: FetchStrategy,
-    /// Legacy RPC verbosity dialect, independent of proof authentication.
     pub raw_block_boolean_verbose: bool,
-    /// Child-payout reward params for value-side capture; `None` leaves the
-    /// reward fields unpopulated.
     pub child_payout: Option<ChildPayoutParams>,
-    /// Verbatim warning logged when a backfill starts below
-    /// `activation_floor`; `None` means no warning (Namecoin, floor 0).
     pub floor_warning: Option<&'static str>,
-    /// Whether post-backfill read-model repair scans all sources or only this
-    /// chain's source (see [`RepairScope`]).
     pub repair_scope: RepairScope,
-    /// How malformed proofs and operational errors are retained
-    /// (see [`CaptureFailurePolicy`]). Declared on every family row so the
-    /// incumbent chains pin their current behavior explicitly.
     pub failure_policy: CaptureFailurePolicy,
 }
 
-/// One live producer chain, as declared data.
 #[derive(Debug, Clone, Copy)]
 pub struct ChainSpec {
-    /// Stable identity; the registry-dispatch and `by_id` lookup key.
     pub id: ChainId,
-    /// Stable lowercase identity: subcommands are `poll-<slug>` /
-    /// `backfill-<slug>`.
     pub slug: &'static str,
-    /// Human display name for log lines and error contexts.
     pub display_name: &'static str,
-    /// Env prefix for every chain-scoped variable (`<PREFIX>_RPC_URL`,
-    /// `<PREFIX>_START_HEIGHT`, ...).
     pub env_prefix: &'static str,
-    /// The chain's `source_registry` code (`auxpow:<slug>`); the conformance
-    /// test asserts the full binding.
     pub source_code: &'static str,
-    /// Lower bound used by the live poller. For most chains this is the first
-    /// height that can carry AuxPoW evidence. RSK is the deliberate exception:
-    /// its value is a historical acquisition floor, and bounded backfills may
-    /// capture complete parent headers below it.
     pub activation_floor: i32,
-    /// Live-poll defaults; `<PREFIX>_*` env vars override each field.
     pub poller: PollerDefaults,
-    /// `Some` for bitcoind-family chains served by the shared
-    /// `chains::auxpow_family` implementation; `None` for divergent chains.
     pub family: Option<FamilySpec>,
-    /// Parse-time backfill range cap (Hathor, Elastos); `None` = uncapped.
     pub backfill_range_cap: Option<RangeCap>,
 }
 
-/// The live producer chains, in the order `main.rs` historically listed their
-/// subcommands, with later additions appended.
 pub static CHAINS: [ChainSpec; 8] = [
     ChainSpec {
         id: ChainId::Namecoin,
@@ -375,15 +266,6 @@ pub static CHAINS: [ChainSpec; 8] = [
         source_code: QBIT_SOURCE_CODE,
         activation_floor: QBIT_FIRST_AUXPOW_HEIGHT,
         poller: PollerDefaults {
-            // Qbit blocks land about a minute apart, so the shared 30s tick
-            // and 100-height batch used by the other bitcoind-family chains
-            // keep the cursor at the tip without oversampling. The default
-            // trailing rescan is 0, matching Namecoin, Syscoin and Fractal,
-            // until the depth is rolled out per chain: the shared runner
-            // records which block the chain carries at every processed
-            // height, so a rescan that finds a replaced block marks the
-            // earlier event displaced rather than adding a second current
-            // event. Operators raise it with `QBIT_REORG_DEPTH`.
             poll_interval_seconds: 30,
             batch_size: 100,
             reorg_depth: 0,
@@ -395,10 +277,7 @@ pub static CHAINS: [ChainSpec; 8] = [
                 genesis_block_hash: QBIT_GENESIS_BLOCK_HASH,
             },
             raw_block_boolean_verbose: false,
-            // Native child tags and curated payout identities are independent evidence.
             child_payout: Some(QBIT_CHILD_PAYOUT_PARAMS),
-            // Merged mining is accepted from height 0, so no height is below
-            // activation and there is nothing to warn about.
             floor_warning: None,
             repair_scope: RepairScope::SourceScoped,
             failure_policy: CaptureFailurePolicy::HoldMalformedProof,
@@ -436,9 +315,6 @@ pub static CHAINS: [ChainSpec; 8] = [
     },
 ];
 
-/// Look up the spec row for a chain id. Infallible: every `ChainId` is
-/// guaranteed a `CHAINS` row (panics otherwise, which the bidirectional
-/// conformance test rules out).
 pub fn by_id(id: ChainId) -> &'static ChainSpec {
     CHAINS
         .iter()

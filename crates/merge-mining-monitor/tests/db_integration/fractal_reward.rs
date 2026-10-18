@@ -21,23 +21,15 @@ fn fractal_reward_child_hash() -> BlockHash {
     FRACTAL_REWARD_CHILD_HASH.parse().unwrap()
 }
 
-/// The new embedded-registry path: `reclassify-pools` self-seeds the embedded
-/// `data/pools/child-identities/fractal_reward_address_registry.json` (no manual `pool_identity`
-/// insert) and resolves a stored child reward output to the seeded pool. Parity
-/// with the Elastos `capture_resolves_embedded_minerinfo_registry_end_to_end` /
-/// `reclassify_pools_reresolves_existing_elastos_minerinfo_without_rpc` tests.
 #[tokio::test]
 async fn reclassify_pools_seeds_embedded_fractal_registry_and_resolves() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // The real F2Pool Fractal reward address shipped in the registry.
         const F2POOL_REGISTRY_ADDRESS: &str = "bc1qptpxl288ng4c7mg6klzu9t0are7nhqlfmtmk9k";
         default_pool_snapshot(&client).await?;
         let source_id = get_source_id(&client, FRACTAL_SOURCE_CODE).await?;
         let event_id = insert_fractal_event_without_child_coinbase(&client, source_id).await?;
         set_child_coinbase_outputs(&client, event_id, f2pool_registry_reward_outputs()).await?;
 
-        // No pool_identity is inserted here: run_reclassify_pools seeds the embedded
-        // registry itself, which is exactly the path under test.
         let stats = run_reclassify_pools(&mut client, ReclassifyPoolsConfig::default()).await?;
         assert_eq!(stats.child_pool_updates, 1);
 
@@ -102,9 +94,7 @@ async fn set_child_coinbase_outputs(
     Ok(())
 }
 
-/// A child coinbase output paying the witness-program hash that formats to the
-/// registry's F2Pool Fractal reward address `bc1qptpxl288ng4c7mg6klzu9t0are7nhqlfmtmk9k`
-/// (the same vector pinned in `mmm_capture::child_payout`'s formatter test).
+/// Output paying the P2WPKH hash for `bc1qptpxl288ng4c7mg6klzu9t0are7nhqlfmtmk9k`.
 fn f2pool_registry_reward_outputs() -> Vec<u8> {
     let reward_hash: [u8; 20] = hex::decode("0ac26fa8e79a2b8f6d1ab7c5c2adfd1e7d3b83e9")
         .unwrap()

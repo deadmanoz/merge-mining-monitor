@@ -31,16 +31,8 @@ struct PendingDecision {
     orphan_verdict: Option<BtcOrphanVerdict>,
 }
 
-/// Validate every normalized candidate and resolve parent classifications before
-/// the chain transaction begins.
-///
-/// Positive Core classifications and Core-absence results are cached by parent
-/// hash so repeated observations across a chain do not repeat RPC work. The
-/// pass keeps a rolling bounded set of unresolved unique parents, so cached
-/// and repeated rows cannot consume classifier capacity and each completed slot
-/// is refilled without waiting for slower peers. Manifest decisions queue in
-/// source order and drain as their classifications arrive, stopping promptly on
-/// the first known-fatal row while bounding speculative lookahead.
+/// Validate candidates and resolve parent classifications with bounded
+/// concurrency before opening the chain transaction.
 pub(super) async fn preflight_and_classify_candidates<C: GenericClient>(
     client: &C,
     classifier: &ConfiguredParentClassifier,
@@ -149,8 +141,6 @@ pub(super) async fn preflight_and_classify_candidates<C: GenericClient>(
     Ok(())
 }
 
-/// Resolve one parent while deferring the predecessor query until Core proves
-/// the candidate itself absent.
 async fn resolve_candidate<C: GenericClient>(
     client: &C,
     classifier: &ConfiguredParentClassifier,
@@ -196,8 +186,6 @@ async fn resolve_candidate<C: GenericClient>(
     Ok((parent_hash, classification))
 }
 
-/// Apply the ready prefix of manifest decisions without overtaking an earlier
-/// unresolved row.
 fn drain_ready_publication_decisions(
     config: &HistoricalImportConfig,
     pending: &mut VecDeque<PendingDecision>,
@@ -226,9 +214,6 @@ fn drain_ready_publication_decisions(
     Ok(())
 }
 
-/// Decide a candidate's fate where live Core classification meets the dataset's
-/// own labels. Historical imports require a Core classifier, so only matching
-/// or independently attested rows reach the preclassified capture path.
 pub(super) async fn import_decision<C: GenericClient>(
     client: &C,
     classifier: &ConfiguredParentClassifier,
@@ -277,10 +262,8 @@ pub(super) async fn import_decision<C: GenericClient>(
     ))
 }
 
-/// Decide one witness from the dedicated error-observation aggregate. The
-/// aggregate is not a valid-evidence override: it must name a catalogue entry,
-/// retain the catalogue's exact rejection reason, and reconcile to that entry
-/// through the shared Core-plus-catalogue resolver.
+/// Decide one witness from the dedicated error-observation aggregate against
+/// the error-block catalogue and Core classifier.
 pub(super) async fn import_error_observation_decision<C: GenericClient>(
     client: &C,
     classifier: &ConfiguredParentClassifier,
@@ -344,9 +327,6 @@ pub(super) async fn import_error_observation_decision<C: GenericClient>(
     )))
 }
 
-/// Keep catalogued consensus-invalid parents out of the historical valid-evidence
-/// import path before a Core classifier decides how to handle the row. Live
-/// capture still records these as `error_block`.
 fn catalogued_error_block_skip_reason(candidate: &ImportCandidate) -> Option<SkipReason> {
     let parent_hash = candidate
         .evidence
@@ -385,10 +365,7 @@ fn classified_import_decision(
         ParentKind::Canonical if source_classification == SourceClassification::Canonical => {
             ImportDecision::CapturePreclassified(Box::new(classification))
         }
-        // A historical source can preserve a parent that was canonical when
-        // observed but is now in Core's stale index. Core's direct stale
-        // attestation is stronger than the publication snapshot, so retain the
-        // source provenance while writing the current stale classification.
+        // Core's direct stale attestation overrides a historical canonical snapshot.
         ParentKind::Stale
             if source_classification == SourceClassification::Canonical
                 && classification.core_attested =>
@@ -411,10 +388,6 @@ fn classified_import_decision(
         ParentKind::Canonical | ParentKind::Stale => {
             ImportDecision::Skip(SkipReason::ClassificationMismatch)
         }
-        // The normalized publication deliberately contains only final valid
-        // evidence. A catalogue match in an override is not a stale/orphan
-        // row, so refuse it rather than importing invalid work through this
-        // valid-evidence path.
         ParentKind::ErrorBlock => ImportDecision::Skip(SkipReason::UnsupportedClassification),
         ParentKind::Near => ImportDecision::Skip(SkipReason::Unclassified),
         ParentKind::Unknown => {

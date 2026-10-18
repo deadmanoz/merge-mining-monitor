@@ -1,6 +1,4 @@
 @media (max-width: 1120px) {
-  /* Stacked layouts need real page scroll; only the full three-column desktop
-     view is locked to a fixed, non-scrolling viewport. */
   .app-shell {
     height: auto;
     min-height: 100dvh;
@@ -14,11 +12,7 @@
       "drawer drawer";
   }
 
-  /* Findings has no drawer: drop its stacked row so the hidden drawer's
-     named area does not leave a stray grid gap under the canvas. Columns must
-     be restated too: the base findings override outranks this breakpoint's
-     plain .workspace rule, so without them findings would keep the desktop
-     250px + minmax(360px) tracks at tablet widths. */
+  /* Restate columns so base .workspace[data-view="findings"] does not override tablet tracks. */
   .workspace[data-view="findings"] {
     grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
     grid-template-areas: "filters tree";
@@ -28,7 +22,6 @@
     min-height: 360px;
   }
 
-  /* Rails are full-width / stacked here, so width dragging does not apply. */
   .rail-resize-handle {
     display: none;
   }

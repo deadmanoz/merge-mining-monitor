@@ -1,9 +1,4 @@
-//! Hathor reward-address identity registry.
-//!
-//! Hathor rewards are decoded from the block funds graph, but a reward address
-//! is only pool-resolved when this embedded registry maps it to a stable pool
-//! slug. The registry is deliberately conservative: local same-event BTC parent
-//! attribution is only a candidate generator, not sufficient evidence by itself.
+//! Hathor reward-address identity registry (`data/pools/child-identities/hathor_reward_registry.json`).
 
 use std::collections::HashMap;
 
@@ -19,24 +14,18 @@ use mmm_capture::identity_registry::{
 };
 use mmm_store::upsert_identity_registry;
 
-/// The embedded reward-address registry, `include_str!`-baked from
-/// `data/pools/child-identities/`. Edit the JSON and rebuild to change the mappings.
 const DEFAULT_HATHOR_REWARD_REGISTRY_JSON: &str =
     include_str!("../../../../../data/pools/child-identities/hathor_reward_registry.json");
 
 /// Decoded length of a valid Hathor address: 1 version byte + 20-byte hash.
 const HATHOR_ADDRESS_DECODED_LEN: usize = 21;
 
-/// The validated reward-address-to-pool registry.
 #[derive(Debug, Clone, Deserialize)]
 struct HathorRewardRegistry {
-    /// Registry schema version; only `1` is accepted.
     schema_version: u32,
     entries: Vec<HathorRewardEntry>,
 }
 
-/// One reward-address-to-pool mapping. Addresses are unique across the registry;
-/// a slug maps to exactly one canonical name.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 struct HathorRewardEntry {
     reward_address: String,
@@ -45,14 +34,10 @@ struct HathorRewardEntry {
 }
 
 impl HathorRewardRegistry {
-    /// Parse and validate the embedded registry.
     fn from_default() -> Result<Self> {
         Self::from_json_str(DEFAULT_HATHOR_REWARD_REGISTRY_JSON)
     }
 
-    /// Parse and fully validate registry JSON (schema version, address format,
-    /// duplicate-address and slug/canonical-name consistency); any violation
-    /// errors rather than seeding a malformed registry.
     fn from_json_str(json: &str) -> Result<Self> {
         let registry: Self =
             serde_json::from_str(json).context("parse Hathor reward registry JSON")?;
@@ -61,9 +46,6 @@ impl HathorRewardRegistry {
     }
 }
 
-/// Seed the registry's pools and reward-address identities (idempotent upserts),
-/// extending `pool_ids_by_slug` with any newly-created slugs and returning the
-/// namespace's resolved identity ids. Called once at capture bootstrap.
 pub(crate) async fn upsert_hathor_reward_pool_identities(
     client: &Client,
     pool_ids_by_slug: &mut HashMap<String, i64>,
@@ -84,8 +66,6 @@ pub(crate) async fn upsert_hathor_reward_pool_identities(
     .context("seed Hathor reward pool identities")
 }
 
-/// View a [`HathorRewardEntry`] as a generic [`IdentityRegistryEntry`] for the
-/// shared validation/distinct-pool helpers; keeps the `reward_address` field name.
 fn hathor_registry_entry(entry: &HathorRewardEntry) -> IdentityRegistryEntry<'_> {
     IdentityRegistryEntry {
         identifier: &entry.reward_address,
@@ -94,10 +74,6 @@ fn hathor_registry_entry(entry: &HathorRewardEntry) -> IdentityRegistryEntry<'_>
     }
 }
 
-/// Reject a registry that would silently misattribute via the shared
-/// [`validate_identity_registry`] validator (unsupported schema, empty/whitespaced
-/// fields, malformed address, a reward address mapped to two pools, or a slug with
-/// conflicting canonical names), with the failures re-phrased in Hathor terms.
 fn validate_hathor_reward_registry(registry: &HathorRewardRegistry) -> Result<()> {
     validate_identity_registry(
         registry.schema_version,
@@ -109,8 +85,6 @@ fn validate_hathor_reward_registry(registry: &HathorRewardRegistry) -> Result<()
     .map_err(map_hathor_registry_error)
 }
 
-/// Hathor identifier format check (reason on failure): a Hathor mainnet address is
-/// base58check-decodable to 21 bytes with a recognized P2PKH/P2SH version byte.
 fn validate_hathor_address(address: &str) -> Result<(), String> {
     let decoded =
         base58::decode_check(address).map_err(|err| format!("not base58check-decodable: {err}"))?;
@@ -127,8 +101,6 @@ fn validate_hathor_address(address: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Re-phrase a shared [`IdentityRegistryError`] in Hathor terms so existing
-/// callers and tests keep their messages.
 fn map_hathor_registry_error(error: IdentityRegistryError) -> anyhow::Error {
     match error {
         IdentityRegistryError::UnsupportedSchemaVersion(version) => {

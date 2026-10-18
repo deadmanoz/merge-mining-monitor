@@ -1,12 +1,4 @@
 //! RSK sidecar-column parsing for the recovered-evidence importer.
-//!
-//! The RSK monitor-evidence export appends the seven columns
-//! `rsk_merge_mining_evidence` requires beyond the shared event row. This
-//! module resolves and parses them into the same [`RskEvidencePayload`] the
-//! live RSK poller writes, so the import path and live capture share one
-//! sidecar shape. mmm-api hard-errors on any `auxpow:rsk` event without a
-//! sidecar row, which is why every column here is required on the RSK
-//! dataset.
 
 use anyhow::Result;
 use mmm_capture::capture::{RSK_PROOF_FORMAT_OPAQUE, RskEvidencePayload};
@@ -15,10 +7,6 @@ use super::csv_source::{
     SkipReason, non_empty, parse_hex_field, parse_optional_hex_field, required_header,
 };
 
-/// Column indices for the RSK export's `rsk_merge_mining_evidence` fields.
-/// All seven are required headers on the RSK dataset -- a file without them
-/// predates the sidecar-bearing export and cannot construct the sidecar rows
-/// mmm-api requires for every `auxpow:rsk` event.
 pub(super) struct RskSidecarColumns {
     miner: usize,
     merge_mining_hash: usize,
@@ -43,23 +31,9 @@ impl RskSidecarColumns {
     }
 }
 
-/// Parse one RSK row's sidecar columns into the `rsk_merge_mining_evidence`
-/// payload the store writes 1:1 with the event.
-///
-/// `rsk_block_hash` and `rsk_height` reuse the event's child identity (the
-/// export's `child_block_hash` is the forward-order RSK block hash, matching
-/// live storage). For uncle rows the export's `child_height` is the uncle's
-/// OWN RSK block number, exactly the convention the live path's
-/// `prepare_rsk_capture` stores (`block.number` of the uncle response, with
-/// `uncle_parent_height` carrying the including canonical height) -- the
-/// research recovery cross-checks every fetched block/uncle's `number`
-/// against the recorded height and refuses a disagreeing row, so the
-/// `(source_id, child_height, child_block_hash)` dedup premise holds for
-/// uncles too. The miner must be exactly 20 bytes and the merge-mining
-/// hash exactly 32; `is_uncle` is the export's `0`/`1`; uncle placement must
-/// be consistent with it (both set when an uncle, both blank otherwise --
-/// the sidecar table CHECKs the same invariant). `pool_identity_id` stays
-/// NULL for the late-fill path `reclassify-pools` owns.
+/// Parse one RSK row's sidecar columns into the 1:1 `rsk_merge_mining_evidence`
+/// payload. For uncles, `child_height` is the uncle's own RSK block number and
+/// `uncle_parent_height` carries the including canonical height.
 pub(super) fn parse_rsk_sidecar(
     columns: &RskSidecarColumns,
     record: &csv::StringRecord,
@@ -104,9 +78,6 @@ pub(super) fn parse_rsk_sidecar(
     })
 }
 
-/// Parse an optional non-negative integer cell: blank yields `None`; a
-/// non-integer or negative value is malformed (the live path only ever
-/// produces non-negative uncle placement, matching `parse_child_height`).
 fn parse_optional_i32(value: Option<&str>) -> Result<Option<i32>, SkipReason> {
     let trimmed = value.unwrap_or_default().trim();
     if trimmed.is_empty() {
@@ -182,8 +153,6 @@ mod tests {
 
     #[test]
     fn rejects_inconsistent_uncle_placement_and_bad_fields() {
-        // The sidecar table CHECKs the same placement invariant; a violating
-        // row must die at parse rather than abort the import mid-transaction.
         assert_eq!(
             parse(RSK_MINER, "1", "", "417924").unwrap_err(),
             SkipReason::Malformed
@@ -204,12 +173,10 @@ mod tests {
             parse(RSK_MINER, "2", "", "").unwrap_err(),
             SkipReason::Malformed
         );
-        // Negative placement never occurs on the live path; reject it.
         assert_eq!(
             parse(RSK_MINER, "1", "-1", "417924").unwrap_err(),
             SkipReason::Malformed
         );
-        // Miner must be exactly 20 bytes; blank is an empty required field.
         assert_eq!(
             parse("32dfc7", "0", "", "").unwrap_err(),
             SkipReason::Malformed

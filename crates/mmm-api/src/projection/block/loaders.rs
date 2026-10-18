@@ -16,11 +16,6 @@ use super::{
 };
 use crate::normalize::ParentKind;
 
-/// In-memory `block` row for the detail projection (already
-/// pub(super)-scoped to the private block module). `header_bytes` and
-/// `btc_coinbase_script` hold stored wire-order bytes, decoded downstream
-/// (constraint #5). `core_attested`/`pow_validated`/`live_observed` drive the
-/// source summary.
 #[derive(Debug)]
 pub(super) struct BlockDetailRow {
     pub(super) hash: Vec<u8>,
@@ -38,10 +33,6 @@ pub(super) struct BlockDetailRow {
     pub(super) btc_coinbase_script: Option<Vec<u8>>,
 }
 
-/// In-memory merge_mining_event row (with joined source + RSK sidecar) for the
-/// detail projection. pub(super) only. All hash/script/proof fields hold stored
-/// wire-order bytes; `render_event_details` and `derive_commitment` decode
-/// them. `kind` is the per-event btc_parent_kind, distinct from the block's.
 #[derive(Debug)]
 pub(super) struct EventDetailRow {
     pub(super) id: i64,
@@ -75,10 +66,6 @@ pub(super) struct EventDetailRow {
     pub(super) rsk: Option<RskEvidenceRow>,
 }
 
-/// RSK merge-mining sidecar row (rsk_merge_mining_evidence join) for an
-/// `EventDetailRow`. pub(super) only. Present iff the event source is RSK
-/// (loader bails if an RSK event has no sidecar). Bytes are stored wire-order,
-/// hex-encoded by `render_rsk_detail`.
 #[derive(Debug)]
 pub(super) struct RskEvidenceRow {
     pub(super) block_hash: Vec<u8>,
@@ -94,10 +81,6 @@ pub(super) struct RskEvidenceRow {
     pub(super) proof_format: String,
 }
 
-/// One member of a stale branch during `load_stale_branch` assembly (recursive
-/// walk). pub(super) only. `canonical_competitor_hash` is the canonical block
-/// that displaced this stale member; all hashes are stored wire-order,
-/// display-converted at projection time.
 #[derive(Debug, Clone)]
 pub(super) struct StaleMemberRow {
     pub(super) hash: Vec<u8>,
@@ -106,14 +89,9 @@ pub(super) struct StaleMemberRow {
     pub(super) canonical_competitor_hash: Vec<u8>,
 }
 
-/// Hard cap on stale-branch members rendered in the block detail. The SQL
-/// queries LIMIT+1 and `load_stale_branch` bails if exceeded, so an oversized
-/// branch is a 500 (a deliberate signal), never a silently truncated payload.
+/// Hard cap on stale-branch members rendered in block detail (`LIMIT + 1` errors on overflow).
 pub(super) const STALE_BRANCH_DETAIL_LIMIT: usize = 500;
 
-/// Load the `block` row for a hash (stored byte order), LEFT JOIN pool. `None`
-/// means no read-model row exists, which routes `block()` to the direct-event
-/// path. Returns the joined miner-pool object resolved via `pool_from_columns`.
 pub(super) async fn load_block_detail(
     client: &Client,
     hash: &[u8],
@@ -152,10 +130,6 @@ pub(super) async fn load_block_detail(
     .transpose()
 }
 
-/// Load active (non-revoked) attestation proofs for a parent hash. Sorted by
-/// source code then first contributing event id, so the wire `proofs` ordering
-/// is deterministic across runs (pinned by block-*.json). Returns wire-ready
-/// `ApiProof`.
 pub(super) async fn load_proof_details_for_hash(
     client: &Client,
     hash: &[u8],
@@ -200,11 +174,6 @@ pub(super) async fn load_proof_details_for_hash(
     Ok(proofs)
 }
 
-/// Load active merge_mining_event rows whose btc_parent_header_hash matches
-/// (stored byte order). The hash-keyed variant used for unknown read-model
-/// blocks and the direct-event path; the id-keyed variant
-/// (`load_event_details_by_ids`) is used for canonical/stale via proof
-/// contributing ids.
 pub(super) async fn load_event_details_by_hash(
     client: &Client,
     hash: &[u8],
@@ -216,11 +185,6 @@ pub(super) async fn load_event_details_by_hash(
     map_event_detail_rows(rows)
 }
 
-/// Load active merge_mining_event rows by explicit id set (the proof
-/// `contributing_event_ids` for canonical/stale blocks). Error blocks use the
-/// hash-keyed path because catalogue evidence is not a stale proof. Empty ids
-/// short-circuit to empty. Sibling of `load_event_details_by_hash`; the two
-/// share `event_detail_sql` and differ only in predicate.
 pub(super) async fn load_event_details_by_ids(
     client: &Client,
     ids: &[i64],
@@ -235,11 +199,6 @@ pub(super) async fn load_event_details_by_ids(
     map_event_detail_rows(rows)
 }
 
-/// Load event_pool_attribution rows for an event id set, bucketed by side
-/// (btc_parent / child_block) into `EventPoolAttributions`. Empty ids
-/// short-circuit. `pool` resolves via COALESCE(pool_identity.pool_id,
-/// attribution.pool_id); an unrecognized side is a hard error (invariant
-/// guard). ORDER BY event_id, side, id pins the per-event wire ordering.
 pub(super) async fn load_pool_attributions_by_event(
     client: &Client,
     ids: &[i64],
@@ -291,12 +250,7 @@ pub(super) async fn load_pool_attributions_by_event(
     Ok(by_event)
 }
 
-/// The shared SELECT for both event-detail loaders, parameterized only by WHERE
-/// `predicate` (the rule-of-two extraction that keeps by-hash and by-ids from
-/// diverging). Column order is positionally coupled to `map_event_detail_rows`
-/// / `rsk_evidence_from_row`; ORDER BY confirmed_at, source code, child height,
-/// child hash, id pins deterministic event ordering. The predicate string is a
-/// fixed internal literal, never user input (no injection risk).
+/// Shared SELECT for event-detail loaders; column indices are positionally coupled to [`map_event_detail_rows`].
 pub(super) fn event_detail_sql(predicate: &str) -> String {
     format!(
         "SELECT e.id, s.id, s.code, s.kind, s.chain, s.instance, \
@@ -327,10 +281,6 @@ pub(super) fn event_detail_sql(predicate: &str) -> String {
     )
 }
 
-/// Decode `event_detail_sql` rows into `EventDetailRow`. Column indices are
-/// positionally locked to `event_detail_sql`'s SELECT list; changing either
-/// side requires changing both. Bytes stay stored wire-order (decoded later).
-/// Delegates the RSK sidecar to `rsk_evidence_from_row`.
 pub(super) fn map_event_detail_rows(rows: Vec<tokio_postgres::Row>) -> Result<Vec<EventDetailRow>> {
     rows.into_iter()
         .map(|row| {
@@ -377,10 +327,6 @@ pub(super) fn map_event_detail_rows(rows: Vec<tokio_postgres::Row>) -> Result<Ve
         .collect()
 }
 
-/// Extract the optional RSK sidecar from a joined event row. `None` for
-/// non-RSK; a missing sidecar on an RSK-coded source is a hard error (data
-/// invariant). `identifier` is lowercased. Column indices are positionally
-/// locked to `event_detail_sql`.
 pub(super) fn rsk_evidence_from_row(
     row: &tokio_postgres::Row,
     source_code: &str,
@@ -422,10 +368,6 @@ pub(super) fn rsk_evidence_from_row(
     }))
 }
 
-/// Derive the competition detail for a stale block (its canonical competitor +
-/// pool-vs-pool timing). `None` when the canonical competitor is not derivable.
-/// `propagation_delta_s` is hard-null until the competition-timing slice lands
-/// (no column yet). Reuses the shared `TreeCompetition` DTO.
 pub(super) async fn load_competition_detail(
     client: &Client,
     block: &BlockDetailRow,
@@ -450,14 +392,10 @@ pub(super) async fn load_competition_detail(
         stale_bitcoin_miner_pool: core.stale_bitcoin_miner_pool,
         canonical_bitcoin_miner_pool: core.canonical_bitcoin_miner_pool,
         header_time_delta_s: core.header_time_delta_s,
-        // No read-model column exists for this until the competition timing
-        // slice lands.
         propagation_delta_s: None,
     }))
 }
 
-/// Walks a stale block's whole branch: ancestors to the root, then every
-/// stale descendant, height-ordered and detail-limited.
 const STALE_BRANCH_SQL: &str = "WITH RECURSIVE ancestors AS ( \
                 SELECT btc_header_hash, btc_prev_header_hash, btc_height, canonical_competitor_hash \
                 FROM block \
@@ -486,11 +424,6 @@ const STALE_BRANCH_SQL: &str = "WITH RECURSIVE ancestors AS ( \
              ORDER BY btc_height, btc_header_hash \
              LIMIT $2";
 
-/// Assemble the `BlockStaleBranch` for a selected stale block: run
-/// `STALE_BRANCH_SQL`, bail if over `STALE_BRANCH_DETAIL_LIMIT` (LIMIT+1
-/// overflow guard), and render the already height-ordered component. Derives
-/// `position` (root/tip/interior) and the branch_id
-/// `stale-{root_height}-{root_hash}`. All output hashes are display-order.
 pub(super) async fn load_stale_branch(
     client: &Client,
     selected_hash: &[u8],

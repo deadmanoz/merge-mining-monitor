@@ -119,11 +119,8 @@ async fn reclassify_pools_requires_overwrite_before_late_filling_conflicting_sid
 #[tokio::test]
 async fn only_main_skips_the_rsk_pass() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // An RSK event the RSK pass would scan under the default config.
         insert_rsk_event(&client, 8_800_010, KNOWN_MINER, 1_780_000_300).await?;
 
-        // `--only main` (run only the main candidate scan) must not execute the
-        // expensive RSK miner-identity pass at all: zero rows scanned, no writes.
         let only_main = run_reclassify_pools(
             &mut client,
             ReclassifyPoolsConfig {
@@ -137,8 +134,6 @@ async fn only_main_skips_the_rsk_pass() -> Result<()> {
         assert_eq!(only_main.rsk_miner_rows_scanned, 0);
         assert_eq!(only_main.rsk_miner_attribution_updates, 0);
 
-        // The default config still runs the RSK pass over the same event, proving
-        // the gate, not a missing sidecar, is what suppressed the scan above.
         let full = reclassify_pools(&mut client).await?;
         assert_eq!(full.rsk_miner_rows_scanned, 1);
 
@@ -154,9 +149,6 @@ async fn second_run_rescans_without_rewriting() -> Result<()> {
         let first = reclassify_pools(&mut client).await?;
         assert_eq!(first.rsk_miner_rows_scanned, 2);
 
-        // Nothing short-circuits a back-to-back run. The second pass rescans the
-        // whole active set and, because the first pass already resolved every
-        // row, writes nothing.
         let second = reclassify_pools(&mut client).await?;
         assert_eq!(second.rsk_miner_rows_scanned, 2);
         assert_eq!(second.rsk_miner_attribution_updates, 0);
@@ -189,19 +181,14 @@ async fn revoked_rsk_events_are_excluded_until_restored() -> Result<()> {
 #[tokio::test]
 async fn seed_remap_conflict_aborts_before_scanning() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // A clean default run self-seeds the KNOWN_MINER -> f2pool identity.
         insert_rsk_event(&client, 8_800_024, KNOWN_MINER, 1_780_000_430).await?;
         reclassify_pools(&mut client).await?;
         let f2pool = pool_id_for_slug(&client, "f2pool").await?;
         let antpool = pool_id_for_slug(&client, "antpool").await?;
         assert_ne!(f2pool, antpool);
 
-        // A second, still-unprocessed event: the scan would attribute it and
-        // late-fill its sidecar if it ever ran.
         let unprocessed = insert_rsk_event(&client, 8_800_025, KNOWN_MINER, 1_780_000_431).await?;
 
-        // Corrupt the identity to a conflicting pool, which the seed rejects
-        // without --overwrite.
         client
             .execute(
                 "UPDATE pool_identity SET pool_id = $1 \
@@ -214,9 +201,6 @@ async fn seed_remap_conflict_aborts_before_scanning() -> Result<()> {
             .expect_err("seed must bail on an unauthorized identity remap");
         assert!(format!("{err:#}").contains("--overwrite"));
 
-        // The ordering is what this pins: the seed runs BEFORE the scan, so the
-        // unprocessed event picked up neither an attribution nor a sidecar
-        // late-fill. Both would exist had the scan run first.
         let attributions: i64 = client
             .query_one(
                 "SELECT count(*) FROM event_pool_attribution WHERE event_id = $1",

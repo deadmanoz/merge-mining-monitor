@@ -24,20 +24,9 @@ struct ErrorBlockRow {
     hash: String,
 }
 
-/// Navigate consensus-invalid, full-proof-of-work parents.
-///
-/// Structurally the stale navigator without its branch machinery: an error
-/// block never raced, so it has no canonical competitor to join and never forms
-/// a branch. It does need the same `(height, hash)` ordering, because the
-/// error-block set is not one block per height — several Bitcoin heights carry
-/// more than one error block, so height alone is not a unique cursor key
-/// and stepping on height alone would skip or repeat group members.
-///
-/// Eligibility requires at least one distinct source, matching what `/tree`
-/// will actually render: its candidate filter drops an error block below
-/// `min_sources`, which defaults to 1 and is never overridden by the frontend.
-/// Offering a sourceless row would advertise a window whose tree response omits
-/// the very block it selects, and the UI would silently fall back to the tip.
+/// Ordered by `(height, hash)` because multiple error blocks can share a
+/// height, and filtered to `distinct_sources >= 1` to match `/tree`'s default
+/// `min_sources` candidate filter.
 const ERROR_BLOCK_ELIGIBLE: &str = "SELECT btc_height AS axis, btc_header_hash AS hash \
      FROM block \
      WHERE kind = 'error_block' AND distinct_sources >= 1";

@@ -2,9 +2,7 @@
 
 use super::*;
 
-/// `Some(true)` if `merge_mining_event` `id` is revoked, `Some(false)` if live,
-/// `None` if the row is absent. Read by revoke/restore before re-running the
-/// reconcile so a no-op transition can short-circuit.
+/// Return `Some(true)` if `event_id` is revoked, `Some(false)` if live, `None` if absent.
 pub(crate) async fn event_revoked_state<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -19,12 +17,7 @@ pub(crate) async fn event_revoked_state<C: GenericClient>(
     Ok(row.map(|row| row.get(0)))
 }
 
-/// One unit of cascade work. `Event` carries an optional pre-computed
-/// classification (boxed to keep the enum small) so the seeding caller can
-/// pin the event it verified and skip a re-classify;
-/// `enqueue_dependents` always pushes `Event(_, None)` because a cascaded child
-/// must be re-classified from current state. `Block` is a derived-table-grain
-/// item (orphan block or stale-competitor dependent) with no anchor event.
+/// Cascade work item (`Event` with optional preclassification, `StrictEvent`, or `Block`).
 #[derive(Debug)]
 pub(crate) enum ReconcileWork {
     Event(i64, Option<Box<PreclassifiedParent>>),
@@ -51,19 +44,8 @@ pub(crate) async fn lock_core_header_cache_for_reconcile<C: GenericClient>(
     Ok(())
 }
 
-/// Drain the cascade queue to a fixed point, reconciling each parent once.
-///
-/// FIFO work-list, not recursion: each dequeued item is reconciled, then its
-/// dependents (`enqueue_dependents`) are appended, so the cascade widens
-/// breadth-first until the queue empties. `visited_events` / `visited_blocks`
-/// dedup so a hash reached by several parents is reconciled once; events dedup
-/// on dequeue (the seed may carry a preclassification a later enqueue cannot),
-/// blocks dedup on the cheaper enqueue check. `budget` bounds
-/// `parents_reconciled` (the count of items actually reconciled, not enqueued):
-/// hitting it raises `ReconcileCascadeBudgetExhausted` rather than looping
-/// unbounded on a pathological fan-out. Each `reconcile_one_*` runs in its own
-/// transaction, so the cascade is a sequence of committed steps, not one
-/// mega-transaction.
+/// Drain the breadth-first cascade queue to a fixed point, reconciling each parent once
+/// in its own transaction up to `budget`.
 pub(crate) async fn drain_reconcile_queue(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -140,8 +122,6 @@ pub(crate) async fn drain_reconcile_queue(
     Ok(stats)
 }
 
-/// `reconcile_dependents_after_changes` with an explicit cascade budget. The
-/// mutation module uses this to apply the standard per-change cascade bound.
 pub(crate) async fn reconcile_dependents_after_changes_with_budget(
     client: &mut Client,
     hashes: &[Vec<u8>],
@@ -158,9 +138,7 @@ pub(crate) async fn reconcile_dependents_after_changes_with_budget(
     .await
 }
 
-/// Cascade dependent rows with a table already validated by the caller's
-/// operation. Historical imports use this so every parent sees one Core-cache
-/// snapshot from preflight through derived reconciliation.
+/// Cascade dependent rows using a caller-validated `NbitsTable` snapshot.
 pub(crate) async fn reconcile_dependents_after_changes_with_budget_and_nbits_table(
     client: &mut Client,
     hashes: &[Vec<u8>],
@@ -192,11 +170,7 @@ pub(crate) async fn reconcile_dependents_after_changes_with_budget_and_nbits_tab
     Ok(())
 }
 
-/// Re-reconcile every derived row that depends on a single changed parent
-/// hash, after the backbone sync committed that parent. Entry point for
-/// `mmm-producers` core-backbone sync; seeds the cascade from this hash's
-/// dependents (not the hash itself) at the default budget. The plural-hash
-/// and explicit-budget forms live behind `reconcile_dependents_after_changes_with_budget`.
+/// Re-reconcile derived rows that depend on `hash` under `DEFAULT_CASCADE_BUDGET`.
 pub async fn reconcile_dependents_after_change(
     client: &mut Client,
     hash: &[u8],
@@ -211,18 +185,7 @@ pub async fn reconcile_dependents_after_change(
     .await
 }
 
-/// Append every derived row that depends on `hash` to the cascade queue.
-///
-/// Three dependent classes, in this fixed order: child events whose
-/// `btc_parent_prev_header_hash = hash` (the next merge-mining event chained
-/// off this parent), derived child blocks whose `btc_prev_header_hash = hash`,
-/// and stale competitor dependents (stale rows whose canonical competitor is
-/// `hash`). The
-/// `visited_*` sets are consulted (not mutated) here so a dependent already
-/// queued or reconciled is not re-enqueued; `stats.descendants_reconciled`
-/// counts each newly-queued item. Child events enqueue as `Event(_, None)`:
-/// a cascaded child is re-classified from current state, never from a stale
-/// preclassification.
+/// Append child events, derived child blocks, and stale competitor blocks depending on `hash`.
 pub(crate) async fn enqueue_dependents(
     client: &Client,
     hash: &[u8],
@@ -252,20 +215,7 @@ pub(crate) async fn enqueue_dependents(
     Ok(())
 }
 
-/// Reconcile one event to a fixed point in its own transaction, retrying on a
-/// changed advisory-lock set.
-///
-/// The lock set an event needs is derived from its classification (predecessor
-/// / competitor hashes), which can shift if the event drifts under us between
-/// the pre-lock classify and the post-lock re-classify. When that happens
-/// `reconcile_one_event_in_txn` returns `ReconcileLockSetChanged`; this wrapper
-/// rolls back and retries up to `RECONCILE_LOCK_SET_RETRY_LIMIT` times. Each
-/// attempt takes the shared Core-view barrier before enabled classification and
-/// retains it through commit, so a concurrent canonical suffix switch cannot
-/// land between verdict and write. This is the no-wrapper path, so it passes
-/// `PrimaryDiff::Reconcile`: it owns the primary parent's source_health diff
-/// (its `before` snapshot is genuinely pre-mutation). Used by the cascade drain
-/// and by block reconcile when the block has an anchor event.
+/// Reconcile one event in its own transaction, retrying on `ReconcileLockSetChanged`.
 pub(crate) async fn reconcile_one_event(
     client: &mut Client,
     event_id: i64,
@@ -287,13 +237,7 @@ pub(crate) async fn reconcile_one_event(
     .await
 }
 
-/// The durable Core suffix-cascade row a strict reconcile settles in its own
-/// transaction: the primary at `generation` moves to expansion or retires
-/// according to whether the reconcile changed it, and every other hash it
-/// changes (a canonical predecessor or competitor it synthesized or
-/// corrected) is persisted as an expansion seed for `source_id`, so a process
-/// exit after the commit can lose neither the bookkeeping nor the dependents
-/// of a sibling an idempotent replay would no longer report as changed.
+/// Durable `bitcoin_core_reconcile_queue` primary state settled inside a strict reconcile transaction.
 #[derive(Clone, Copy)]
 pub(crate) struct DurableCascade<'a> {
     pub(crate) source_id: i64,
@@ -302,7 +246,6 @@ pub(crate) struct DurableCascade<'a> {
 }
 
 impl DurableCascade<'_> {
-    /// Persist the reconcile's outcome for the queue inside `txn`.
     async fn settle<C: GenericClient>(&self, txn: &C, changed_hashes: &[Vec<u8>]) -> Result<()> {
         let mut changed = false;
         let mut siblings = Vec::new();
@@ -376,7 +319,6 @@ async fn reconcile_one_event_with_cascade(
             event_id,
             classifier,
             attempt_preclassified.clone(),
-            // No wrapper: this path owns the primary source_health diff.
             PrimaryDiff::Reconcile,
             nbits_table,
         )
@@ -410,9 +352,7 @@ async fn reconcile_one_event_with_cascade(
     unreachable!("reconcile retry loop always returns")
 }
 
-/// Write one synthesized canonical sibling (the classified predecessor or
-/// competitor) inside the event transaction, with its own cascade-state and
-/// source-health bracket; returns the hash when derived state changed.
+/// Upsert one synthesized canonical sibling with cascade-state and source-health diffing.
 async fn upsert_synthesized_sibling<C: GenericClient>(
     client: &C,
     sibling: &ClassifiedHeader,
@@ -428,41 +368,17 @@ async fn upsert_synthesized_sibling<C: GenericClient>(
     Ok((before != after).then(|| sibling.hash.clone()))
 }
 
-/// Reconcile one event's derived rows inside an already-open transaction; the
-/// single in-txn body shared by the cascade path and every mutation-module
-/// wrapper.
+/// Reconcile one event's derived rows inside an open transaction.
 ///
-/// Lock ordering: classify the parent, fold in `effective_classification`,
-/// derive the full lock-hash set (parent + prev + predecessor + competitor)
-/// and acquire it sorted-and-deduped via `lock_block_hashes` BEFORE any
-/// mutation, so all writers acquire the same hashes in the same global order
-/// and cannot deadlock. After locking, re-load the event and re-derive: if it
-/// drifted (different event, or required locks not covered by what we hold) we
-/// raise `ReconcileLockSetChanged` so the caller retries rather than mutating
-/// under a stale lock set. The `expected_parent_hash` and `PrimaryDiff::Wrapper`
-/// parent-hash guards catch the same drift earlier.
-///
-/// Near / target-failing events early-return with no changes (they hold no
-/// derived state). The `primary` argument fixes who owns the primary parent's
-/// source_health before/after diff; see the inline note on the parameter.
-/// Returns the sorted-deduped set of parent hashes whose derived cascade-state
-/// actually changed (primary plus any synthesized siblings), which the caller
-/// feeds back into `enqueue_dependents`.
+/// Acquires the sorted advisory-lock set (parent + prev + predecessor + competitor)
+/// before mutating, re-verifies the lock set after locking (returning
+/// `ReconcileLockSetChanged` on drift), and returns the sorted parent hashes whose
+/// cascade state changed.
 pub(crate) async fn reconcile_one_event_in_txn<C: GenericClient>(
     client: &C,
     event_id: i64,
     classifier: &ConfiguredParentClassifier,
     preclassified: Option<PreclassifiedParent>,
-    // Who owns the primary parent's source_health diff. `Wrapper` means a
-    // mutation-module entry point already opened a `PrimarySourceHealthBracket`
-    // BEFORE its own mutation and owns that diff, so this function must NOT
-    // diff the primary hash (it would double-apply or use a post-mutation
-    // `before`); it still owns the synthesized predecessor/competitor diffs,
-    // whose hashes never overlap the wrapper-owned primary. `Reconcile`
-    // (reclassify / bulk reconcile / cascade) means there is no wrapper and
-    // this function's `before` IS pre-mutation, so it owns the primary diff
-    // too. The variant requires an opened bracket, so ownership can no longer
-    // be claimed without the snapshot having been taken.
     primary: PrimaryDiff<'_>,
     nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
 ) -> Result<Vec<Vec<u8>>> {
@@ -477,10 +393,6 @@ pub(crate) async fn reconcile_one_event_in_txn<C: GenericClient>(
     {
         return Err(ReconcileLockSetChanged { event_id }.into());
     }
-    // A wrapper-owned bracket must cover THIS event's parent; a mismatch means
-    // the event moved under the wrapper (same drift family as the
-    // expected_parent_hash check above), so force the retry path rather than
-    // mis-attribute the source_health diff.
     if let PrimaryDiff::Wrapper(bracket) = &primary
         && bracket.parent_hash() != initial_event.btc_parent_header_hash.as_slice()
     {
@@ -519,9 +431,6 @@ pub(crate) async fn reconcile_one_event_in_txn<C: GenericClient>(
     }
 
     let before = load_block_cascade_state(client, &event.btc_parent_header_hash).await?;
-    // Primary parent source_health snapshot, owned here only when no wrapper owns
-    // it. `before` here is genuinely pre-mutation for the no-wrapper callers
-    // (apply_event_classification below is the first mutation).
     let sh_primary_before = match primary {
         PrimaryDiff::Wrapper(_) | PrimaryDiff::BulkImport => None,
         PrimaryDiff::Reconcile => Some(
@@ -595,12 +504,7 @@ async fn load_locked_reconcile_event<C: GenericClient>(
     Ok(Some((event, header, classification)))
 }
 
-/// Deserialize the event's stored parent header and classify it. With a
-/// `preclassified` parent the stored `ParentClassification` is reused verbatim
-/// (the trusted form supplied by a seeding caller); otherwise the parent's
-/// prev-hash preflight is loaded and the classifier is run. This is the
-/// event-derived classification form, distinct from the persisted
-/// `block`-row state and the preflight form.
+/// Deserialize and classify the event's stored parent header, reusing `preclassified` when present.
 pub(crate) async fn classify_event_parent<C: GenericClient>(
     client: &C,
     event: &MergeMiningEvent,
@@ -638,13 +542,7 @@ async fn classify_event_parent_with_policy<C: GenericClient>(
     Ok((header, classification))
 }
 
-/// Pre-compute a parent classification before the in-transaction reconcile
-/// body takes per-block locks. Barrier-aware callers pass their open
-/// transaction after taking the shared canonical-view lock, so the
-/// potentially RPC-backed verdict remains valid through commit. Returns
-/// `None` when the classifier is disabled or the event is near / target-failing
-/// (those reconcile to no derived state). The result carries the event's
-/// `expected_parent_hash` so reconcile can detect event drift and retry.
+/// Preclassify an event's parent before acquiring per-block locks.
 pub(crate) async fn preclassify_event_parent<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -653,9 +551,7 @@ pub(crate) async fn preclassify_event_parent<C: GenericClient>(
     preclassify_event_parent_with_policy(client, event_id, classifier, false).await
 }
 
-/// Precompute one candidate with strict Core RPC error handling. A cache-driven
-/// orphan recheck must retain its durable retry marker when fresh Core evidence
-/// cannot be obtained.
+/// Preclassify an event's parent with strict Core RPC error propagation.
 pub(crate) async fn preclassify_event_parent_strict<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -689,10 +585,7 @@ async fn preclassify_event_parent_with_policy<C: GenericClient>(
     )))
 }
 
-/// The full advisory-lock hash set for an event: the parent hash, its prev
-/// hash, plus any predecessor/competitor hashes from the classification, sorted
-/// and deduped. Sorting fixes a global lock-acquisition order across all writers
-/// so they cannot deadlock; the dedup keeps `lock_block_hashes` idempotent.
+/// Sorted, deduplicated advisory-lock hash set for an event and its classification.
 pub(crate) fn classification_lock_hashes(
     event: &MergeMiningEvent,
     classification: &ParentClassification,
@@ -707,11 +600,7 @@ pub(crate) fn classification_lock_hashes(
     hashes
 }
 
-/// Append the predecessor/competitor block hashes a classification implies to
-/// `hashes` (both the bare `canonical_competitor_hash` and the competitor /
-/// predecessor header hashes, when present). Shared by `classification_lock_hashes`
-/// here and by the mutation-module lock-set builder in lib.rs so the two derive
-/// the identical extra-lock set.
+/// Append predecessor and competitor block hashes implied by `classification`.
 pub(crate) fn push_classification_lock_hashes(
     hashes: &mut Vec<Vec<u8>>,
     classification: &ParentClassification,
@@ -727,21 +616,13 @@ pub(crate) fn push_classification_lock_hashes(
     }
 }
 
-/// True if every hash in `required` is present in the sorted `locked` set
-/// (binary search assumes `locked` is sorted, as `classification_lock_hashes`
-/// returns it). Used post-re-classify to confirm the locks already held cover
-/// the locks the re-derived classification needs; a miss forces
-/// `ReconcileLockSetChanged` instead of mutating under an incomplete lock set.
+/// True if every hash in `required` is present in sorted `locked`.
 pub(crate) fn lock_hashes_cover(locked: &[Vec<u8>], required: &[Vec<u8>]) -> bool {
     required
         .iter()
         .all(|hash| locked.binary_search(hash).is_ok())
 }
 
-/// Compute the exact advisory-lock hash set `reconcile_one_event_in_txn` will
-/// acquire for this event, mirroring its classify -> effective -> lock_hashes
-/// derivation. Used by revoke/restore to pre-acquire the same set BEFORE their
-/// `revoked_at` UPDATE.
 pub(crate) async fn event_reconcile_lock_hashes<C: GenericClient>(
     client: &C,
     event: &MergeMiningEvent,
@@ -754,12 +635,7 @@ pub(crate) async fn event_reconcile_lock_hashes<C: GenericClient>(
     Ok(classification_lock_hashes(event, &classification))
 }
 
-/// Acquire the parent advisory lock(s) for a revoke/restore source_health diff
-/// BEFORE the `revoked_at` UPDATE. A near / target-failing event takes a
-/// parent-only lock (reconcile early-returns for it and never locks a broader
-/// set, so there is no global-order hazard); any other event takes the FULL
-/// reconcile lock set so the later in-reconcile lock is a re-entrant subset and
-/// cannot deadlock against a concurrent reconcile holding a competitor lock.
+/// Acquire parent advisory lock(s) before a revoke/restore `revoked_at` UPDATE.
 pub(crate) async fn lock_event_for_source_health<C: GenericClient>(
     client: &C,
     event: &MergeMiningEvent,
@@ -775,16 +651,7 @@ pub(crate) async fn lock_event_for_source_health<C: GenericClient>(
     }
 }
 
-/// Reconcile a block-grain cascade item (orphan block or stale-competitor
-/// dependent) that has no live anchor event.
-///
-/// If a non-near, non-revoked event anchors this hash, delegate to
-/// `reconcile_one_event` so the richer event-derived classification path runs.
-/// Otherwise rebuild the parent read-model from block-row state alone, in its
-/// own transaction: lock the hash, snapshot cascade-state and source-health
-/// before, `rebuild_parent_read_model(.., None)`, snapshot after, and apply the
-/// source-health diff. Returns the hash when its derived cascade-state changed,
-/// so the drain can fan out to its dependents.
+/// Reconcile a block-grain cascade item, delegating to `reconcile_one_event` when an anchor event exists.
 pub(crate) async fn reconcile_one_block(
     client: &mut Client,
     hash: &[u8],
@@ -794,11 +661,7 @@ pub(crate) async fn reconcile_one_block(
     reconcile_one_block_with_policy(client, hash, classifier, nbits_table, false, None).await
 }
 
-/// Reconcile one durable suffix-queue primary while propagating Core transport
-/// failures. A transient classifier error must leave the primary queued for a
-/// later drain rather than committing another unresolved `unknown` verdict.
-/// The queue row is settled, and sibling hashes the reconcile changes are
-/// persisted as expansion seeds, in the reconcile's own transaction.
+/// Reconcile one durable suffix-queue primary while propagating Core transport failures.
 pub(crate) async fn reconcile_one_block_strict(
     client: &mut Client,
     hash: &[u8],

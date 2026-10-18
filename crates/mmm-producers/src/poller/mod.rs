@@ -1,44 +1,13 @@
-//! Live pollers for the AuxPoW capture paths.
+//! Chain-agnostic live poller driver ([`Poller`]) parameterized over [`ChainPoller`].
 //!
-//! A single chain-agnostic driver ([`Poller`]) owns the cursor seeding, the
-//! trailing rescan window, batch advance, startup read-model repair, and
-//! SIGINT/SIGTERM shutdown. It is parameterized over the per-chain
-//! [`ChainPoller`] trait, so Namecoin, RSK, and future merge-mined chains share
-//! one loop instead of hand-copying it.
-//!
-//! ## Trailing rescan window
-//!
-//! `cursor` is the highest height fully processed. `effective_start =
-//! max(start_height override, activation_floor)` is the lowest height the poller
-//! will ever process. Each tick:
-//!
-//! 1. `tip = chain_tip()`.
-//! 2. `rescan_start = max(effective_start, cursor + 1 - reorg_depth)`.
-//! 3. `end = min(tip, cursor + batch_size)`.
-//! 4. If `end < rescan_start`, the window is empty (tip has not advanced); do
-//!    nothing.
-//! 5. Process the window in ascending order, capped by `end` so heights above
-//!    the node tip are never requested:
-//!    - Replay sub-range `rescan_start..=min(cursor, end)` (already-processed
-//!      heights re-scanned for reorgs): best-effort. A per-height failure is
-//!      logged and skipped so an old replay error cannot starve the live tip.
-//!    - New sub-range `(cursor + 1)..=end` (only when `end > cursor`): fail-fast
-//!      with per-height advancement. `Advance` moves the cursor; `Hold` (the
-//!      height could not be captured, e.g. an absent RSK canonical block) stops
-//!      the new range so the height is retried next tick rather than skipped;
-//!      an error propagates after the cursor reflects every completed height.
-//!
-//! ## Cursor seeding
-//!
-//! Live progress lives in the dedicated `poll_cursor` table, independent of
-//! `merge_mining_event`, so bounded backfills never move the live cursor. On
-//! startup the seed is chosen by precedence: an explicit `<PREFIX>_START_HEIGHT`
-//! override (deliberate replay, seeds at `start - 1`); else a persisted
-//! `poll_cursor` row (resume); else the chain tip (`chain_tip() - reorg_depth`,
-//! the new default for a fresh source). A freshly chosen seed with no prior row
-//! is persisted immediately so a restart before the first advancing tick resumes
-//! from it instead of re-anchoring to a moved tip. All persists are monotonic
-//! (`effective_seed_cursor` still clamps any seed up to `effective_start - 1`).
+//! Startup seeds `poll_cursor` by precedence: explicit `<PREFIX>_START_HEIGHT`
+//! (`start - 1`), persisted `poll_cursor`, or `chain_tip() - reorg_depth`, all
+//! clamped to `max(start_override, activation_floor) - 1` and persisted before
+//! the first tick when no row exists. Each tick processes
+//! `max(effective_start, cursor + 1 - reorg_depth)..=min(tip, cursor + batch_size)`:
+//! replay heights (`<= cursor`) are best-effort, while new heights (`> cursor`)
+//! advance monotonically on `Advance`, stop on `Hold`, and persist partial cursor
+//! progress before propagating errors.
 
 use std::future::Future;
 use std::time::{Duration, Instant};
@@ -61,52 +30,29 @@ use crate::live_loop::{LiveProducer, TickOutcome, run_live_loop};
 #[cfg(test)]
 pub(crate) use crate::live_loop::{PollLoopDecision, wait_for_next_tick_or_shutdown};
 
-/// Whether the driver may advance the cursor past a freshly-processed new
-/// height.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeightProgress {
-    /// The height was captured; the cursor may move past it.
     Advance,
-    /// The height could not be captured yet (e.g. an absent RSK canonical
-    /// block, or a parent whose lineage is pending) and must be retried on a
-    /// later tick, not skipped.
+    /// Height not yet capturable; stop the new sub-range and retry next tick.
     Hold,
 }
 
-/// Per-chain default configuration values. Env vars override each field.
-/// There is no default start height: an unset `<PREFIX>_START_HEIGHT` means the
-/// poller seeds at the chain tip (see `Poller::new`), not an activation floor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PollerDefaults {
-    /// Seconds between ticks when `<PREFIX>_POLL_INTERVAL_SECONDS` is unset.
     pub poll_interval_seconds: u64,
-    /// Max new heights advanced per tick (caps `end` at `cursor + batch_size`).
     pub batch_size: i32,
-    /// Trailing heights re-scanned for reorgs each tick; sets how deep a child
-    /// reorg the live loop self-heals before a manual backfill is needed.
     pub reorg_depth: i32,
 }
 
-/// Live poller configuration shared by every chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PollerConfig {
-    /// Explicit `<PREFIX>_START_HEIGHT` override, or `None` to seed at the tip
-    /// (fresh) or resume from the persisted `poll_cursor`. `Some(h)` is for
-    /// deliberate replays/tests and seeds at `h - 1`.
     pub start_height_override: Option<i32>,
-    /// Sleep between ticks; validated `> 0` so the loop always yields.
     pub poll_interval: Duration,
-    /// Max new heights advanced per tick; validated `> 0`.
     pub batch_size: i32,
-    /// Trailing reorg-rescan depth; validated `>= 0` (0 disables the rescan).
     pub reorg_depth: i32,
 }
 
 impl PollerConfig {
-    /// Pure config construction driven by an arbitrary lookup. The
-    /// `chains::config` drives this with `env::var`; unit tests drive it
-    /// with an in-memory map so they never mutate the global (and in Rust 2024
-    /// `unsafe`) process environment.
     pub fn from_lookup<F>(prefix: &str, defaults: PollerDefaults, lookup: F) -> Result<Self>
     where
         F: Fn(&str) -> Option<String>,
@@ -153,10 +99,6 @@ impl PollerConfig {
     }
 }
 
-/// Per-chain behavior the shared driver needs. The driver owns the loop; the
-/// trait supplies tip lookup, per-height capture, and the source/client handles
-/// used for cursor seeding and startup repair.
-/// Shared identity and DB state every live chain poller exposes to the driver.
 pub struct ChainPollerState {
     pub(crate) spec: &'static ChainSpec,
     pub(crate) source_id: i64,
@@ -178,81 +120,51 @@ impl ChainPollerState {
     }
 }
 
-// `async fn` in this trait yields non-`Send` futures, which is fine: the poller
-// future is awaited directly under `#[tokio::main]` (`block_on`), never
-// `tokio::spawn`ed, so no `Send` bound is required.
+// Poller futures are awaited under `#[tokio::main]` (`block_on`), never `tokio::spawn`ed.
 #[allow(async_fn_in_trait)]
 pub trait ChainPoller {
     fn poller_state(&self) -> &ChainPollerState;
 
-    /// The chain's spec-table row: the single source of identity for the
-    /// driver (name, source code, activation floor derive from it).
     fn spec(&self) -> &'static ChainSpec {
         self.poller_state().spec
     }
-    /// Human-readable chain name for log lines.
     fn name(&self) -> &'static str {
         self.spec().display_name
     }
-    /// `source.code` for this chain, used to scope startup read-model repair.
     fn source_code(&self) -> &'static str {
         self.spec().source_code
     }
-    /// `source.id` for this chain, used to seed the poll cursor.
     fn source_id(&self) -> i64 {
         self.poller_state().source_id
     }
-    /// Lowest height that can carry capturable evidence (0 when the chain has
-    /// merge-mined from genesis).
     fn activation_floor(&self) -> i32 {
         self.spec().activation_floor
     }
-    /// Shared DB handle for cursor reads/writes (`load_poll_cursor`,
-    /// `upsert_poll_cursor_with_target`).
     fn client(&self) -> &Client {
         &self.poller_state().client
     }
-    /// Mutable DB handle for the startup read-model repair, which needs `&mut`.
     fn client_mut(&mut self) -> &mut Client;
-    /// Current chain tip height.
     async fn chain_tip(&self) -> Result<i32>;
-    /// Capture a single height. Returns whether the cursor may advance past it.
     async fn process_height(&mut self, height: i32) -> Result<HeightProgress>;
-    /// Re-observe an already-processed height inside the trailing rescan
-    /// window. A chain that can tell from a cheap lookup that the height is
-    /// unchanged overrides this to skip the capture; the default captures the
-    /// height again exactly as [`ChainPoller::process_height`] does.
     async fn rescan_height(&mut self, height: i32) -> Result<HeightProgress> {
         self.process_height(height).await
     }
-    /// Advance the required Core-backed nBits cache before this child-chain
-    /// poll tick. Most test pollers do not own that cache, so the default is a
-    /// no-op.
     async fn refresh_core_cache(&mut self) -> Result<()> {
         Ok(())
     }
-    /// Drain durable per-source pending work (best-effort, each tick). Default
-    /// no-op; only Hathor implements it (the `poll_pending_reconcile` queue).
+    /// Drain durable per-source pending work (best-effort, each tick).
     async fn drain_pending(&mut self) -> Result<()> {
         Ok(())
     }
-    /// The chain client's transport counters, when the poller owns a metered
-    /// client; test pollers do not.
     fn chain_rpc_metrics(&self) -> Option<RpcMetrics> {
         None
     }
-    /// The parent classifier the poller captures against, when it owns one.
     fn parent_classifier(&self) -> Option<&ConfiguredParentClassifier> {
         None
     }
-    /// Child blocks the lineage gate has refused for a non-Bitcoin parent
-    /// since the poller started; the tick summary reports the delta. Test
-    /// pollers capture nothing.
     fn non_bitcoin_parents(&self) -> usize {
         0
     }
-    /// The transport counters the tick summary reports as deltas: the chain
-    /// client's, plus the Core classifier's when it is Core-backed.
     fn rpc_metrics(&self) -> Vec<RpcMetrics> {
         let mut metrics = Vec::from_iter(self.chain_rpc_metrics());
         metrics.extend(self.parent_classifier().and_then(|c| c.metrics()));
@@ -260,49 +172,29 @@ pub trait ChainPoller {
     }
 }
 
-/// What one tick did, for its summary line: filled in as the tick proceeds,
-/// so a failed tick still reports the tip it fetched and the heights it
-/// completed before the failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct TickSummary {
     tip: Option<i32>,
     processed: usize,
     rescanned: usize,
     new: i32,
-    /// A height answered with a hold (a replay hold or a new height not yet
-    /// capturable), as the policy observed it; a tick that failed on an error
-    /// is not held.
     held: bool,
 }
 
-/// What the tick policy counted while it ran, kept by the caller so a tick
-/// that fails part-way still reports the heights it completed and the holds
-/// it met.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct TickProgress {
     processed: usize,
     held: bool,
 }
 
-/// The chain-agnostic live poller driver.
 pub struct Poller<C: ChainPoller> {
     chain: C,
-    /// Highest height fully processed; mirrors the persisted `poll_cursor` row.
-    /// Advanced only after a height captures (`Advance`), and persisted (with
-    /// the current tip as target) after each tick that moved it.
     cursor: i32,
     config: PollerConfig,
 }
 
 impl<C: ChainPoller> Poller<C> {
-    /// Run startup read-model repair, seed the cursor, and build the poller.
-    ///
-    /// Seed precedence: (1) an explicit `<PREFIX>_START_HEIGHT` override seeds at
-    /// `start - 1` for deliberate replays; (2) a persisted `poll_cursor` row
-    /// resumes live progress; (3) a fresh source (no override, no row) seeds at
-    /// `chain_tip() - reorg_depth`. A seed chosen on path (1) or (3) with no
-    /// prior row is persisted immediately so a restart before the first advancing
-    /// tick resumes from it rather than re-anchoring to a moved tip.
+    /// Run startup read-model repair, seed `poll_cursor`, and build the poller.
     pub async fn new(mut chain: C, config: PollerConfig) -> Result<Self> {
         run_startup_repair(&mut chain).await?;
 
@@ -358,25 +250,11 @@ impl<C: ChainPoller> Poller<C> {
         })
     }
 
-    /// The live loop: tick, then wait `poll_interval` or a shutdown signal.
-    /// A failing tick is logged and the loop continues (the next tick retries
-    /// from the persisted cursor); only a SIGINT/SIGTERM returns `Ok(())`.
     pub async fn run_forever(self) -> Result<()> {
         run_live_loop(self).await
     }
 
-    /// One tick: refresh the Core cache, drain pending work, fetch the tip,
-    /// compute the trailing-rescan window, and run the per-height policy. The
-    /// cursor is persisted with the fetched tip as `target_height` so progress
-    /// lag is observable even on an empty tick; if the policy advances the
-    /// cursor mid-window before erroring, the partial progress is persisted
-    /// before the error propagates so completed heights are not reprocessed.
-    /// Returns the count of heights processed.
-    ///
-    /// The whole tick, every step above included, is timed and summarized in
-    /// one `poll tick` line whether it processed a window, found none, or
-    /// failed, with each RPC client's counters as deltas over the tick, so a
-    /// slow tick is attributable to the calls it made.
+    /// Execute one poll tick and log a `poll tick` summary with per-client RPC deltas.
     pub async fn poll_tick(&mut self) -> Result<usize> {
         let tick_start = Instant::now();
         let metrics = self.chain.rpc_metrics();
@@ -510,8 +388,6 @@ impl<C: ChainPoller> Poller<C> {
         tip: i32,
         summary: &mut TickSummary,
     ) -> Result<()> {
-        // `cursor` and `processed` are locals so their `&mut` borrows do not
-        // alias the `&mut self.chain` captured by the processor closure.
         let old_cursor = self.cursor;
         let mut cursor = self.cursor;
         let mut progress = TickProgress::default();
@@ -524,16 +400,9 @@ impl<C: ChainPoller> Poller<C> {
             })
             .await;
 
-        // The policy advances `cursor` height-by-height and can still return
-        // an error on a later new height, so persist any progress before
-        // propagating; otherwise the completed heights replay next tick/restart.
+        // Persist partial cursor advancement before propagating a mid-window error.
         self.persist_progress_if_advanced(cursor, tip).await;
 
-        // Only the new sub-range moves `cursor` (replay is best-effort and never
-        // touches it), so `cursor - old_cursor` is exactly the count of new
-        // heights advanced; the rest of the `processed` count is replay heights
-        // re-scanned. The summary is filled whether or not the tick failed, so
-        // the failed line still names the work done.
         let new = cursor - old_cursor;
         summary.processed = progress.processed;
         summary.rescanned = progress
@@ -567,7 +436,6 @@ impl<C: ChainPoller> Poller<C> {
     }
 }
 
-/// One line of per-client deltas since `before`, for the tick summary.
 fn rpc_deltas(metrics: &[RpcMetrics], before: &[RpcMetricsSnapshot]) -> String {
     metrics
         .iter()
@@ -607,10 +475,8 @@ impl<C: ChainPoller> LiveProducer for Poller<C> {
     }
 }
 
-/// Run startup read-model repair: missing-only, classifier disabled, scoped to
-/// the chain's own source for the event-candidate work (orphan `block` cleanup
-/// remains global). Budget exhaustion is logged and tolerated so historical
-/// rows never block poller startup.
+/// Missing-only startup read-model repair (classifier disabled, scoped to this
+/// source); budget exhaustion is tolerated so historical rows do not block startup.
 async fn run_startup_repair<C: ChainPoller>(chain: &mut C) -> Result<()> {
     let name = chain.name();
     let config = ReconcileReadModelConfig {
@@ -643,30 +509,16 @@ async fn run_startup_repair<C: ChainPoller>(chain: &mut C) -> Result<()> {
     }
 }
 
-/// Clamp the database-seeded cursor up to `effective_start - 1` so the poller
-/// never parks below the configured start. This closes both stall modes: an
-/// empty source seeded below the activation floor, and a persisted
-/// `MAX(child_height)` below a newly-raised start height. In the common case
-/// (persisted max above the start) it is a no-op.
 fn effective_seed_cursor(seeded: i32, effective_start: i32) -> i32 {
     seeded.max(effective_start - 1)
 }
 
-/// The hard floor for cursor seeding and windowing: the explicit start override
-/// (if any) lifted to the activation floor, else the activation floor itself.
-/// With no override, the tip-anchored seed sits far above this, so the floor is
-/// only material on the explicit-override path.
 fn effective_start(start_height_override: Option<i32>, activation_floor: i32) -> i32 {
     start_height_override
         .unwrap_or(activation_floor)
         .max(activation_floor)
 }
 
-/// Bounded retry around a chain tip fetch, used by both the fresh-seed startup
-/// path ([`Poller::new`]) and the steady-state [`Poller::poll_tick`]. The RPC
-/// tunnels show intermittent tip-fetch failures (a stale pooled socket, a
-/// transient connect/timeout error), so retry a few times with linear backoff
-/// before giving up rather than failing the call on a single transient error.
 async fn fetch_tip_with_retry<C: ChainPoller>(chain: &C) -> Result<i32> {
     fetch_tip_with_retry_inner(chain, |attempt| async move {
         sleep(Duration::from_secs(u64::from(attempt))).await;
@@ -674,11 +526,6 @@ async fn fetch_tip_with_retry<C: ChainPoller>(chain: &C) -> Result<i32> {
     .await
 }
 
-/// Retry core for [`fetch_tip_with_retry`], parameterized over the backoff
-/// `sleeper` so tests inject a no-op sleeper and exercise the retry behavior
-/// without real-time delays (production passes the `tokio::time::sleep`-based
-/// sleeper). `sleeper(attempt)` is awaited between failed attempts; it is not
-/// called after the final attempt.
 async fn fetch_tip_with_retry_inner<C, S, Fut>(chain: &C, mut sleeper: S) -> Result<i32>
 where
     C: ChainPoller,
@@ -713,20 +560,12 @@ where
     })
 }
 
-/// The inclusive height range to process this tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TickWindow {
-    /// Lowest height to touch this tick: the trailing reorg-rescan floor,
-    /// clamped up to `effective_start`.
     rescan_start: i32,
-    /// Highest height to touch this tick: `min(tip, cursor + batch_size)`, so
-    /// it never exceeds the node tip nor the per-tick batch cap.
     end: i32,
 }
 
-/// Compute the trailing-rescan window for a tick. Returns `None` when there is
-/// nothing to process (`end < rescan_start`). Saturating arithmetic guards the
-/// (practically unreachable) i32 extremes.
 fn compute_tick_window(
     effective_start: i32,
     cursor: i32,
@@ -743,26 +582,18 @@ fn compute_tick_window(
     }
 }
 
-/// What a rescan of one height did: the chain still carries the block the
-/// `child_chain_head` row recorded with a final outcome, so nothing was
-/// fetched or written beyond the block's identity and the displacement
-/// maintenance, or the height was captured again with the chain's own outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RescanOutcome<T> {
     Unchanged,
     Captured(T),
 }
 
-/// Whether a tick height is a re-observation of one the cursor already
-/// passed, or a new height beyond it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TickHeight {
     Rescan,
     New,
 }
 
-/// [`run_tick_policy_counting`] returning the count of heights processed, the
-/// shape the policy's unit tests assert on.
 #[cfg(test)]
 async fn run_tick_policy<F>(cursor: &mut i32, window: TickWindow, process: F) -> Result<usize>
 where
@@ -774,15 +605,6 @@ where
         .map(|()| progress.processed)
 }
 
-/// Apply the per-tick failure policy over `window`, advancing `cursor` and
-/// counting into `progress` as it goes, so a tick that fails part-way still
-/// reports the heights it completed and the holds it met. The processor is a
-/// closure so this is unit-testable without a live `Client`.
-///
-/// Replay sub-range (`<= cursor`) is best-effort (failures logged and skipped)
-/// and is handed to the processor as [`TickHeight::Rescan`]; the new sub-range
-/// (`> cursor`) is fail-fast, only advances on `Advance`, and is handed over as
-/// [`TickHeight::New`].
 async fn run_tick_policy_counting<F>(
     cursor: &mut i32,
     progress: &mut TickProgress,
@@ -792,9 +614,6 @@ async fn run_tick_policy_counting<F>(
 where
     F: AsyncFnMut(i32, TickHeight) -> Result<HeightProgress>,
 {
-    // Replay sub-range: already-processed heights, re-scanned for reorgs.
-    // Capped at `end` so a cursor ahead of the node tip never requests heights
-    // above the tip.
     let replay_end = (*cursor).min(window.end);
     for height in window.rescan_start..=replay_end {
         match process(height, TickHeight::Rescan).await {
@@ -811,7 +630,6 @@ where
         }
     }
 
-    // New sub-range: the ordered chain tail.
     if window.end > *cursor {
         for height in (*cursor + 1)..=window.end {
             match process(height, TickHeight::New).await {
@@ -835,10 +653,6 @@ where
     Ok(())
 }
 
-/// Parse a `FromStr` env value, returning `default` when the key is unset. A
-/// present-but-unparseable value is a hard error carrying the offending key and
-/// value, so a typo in deployment config fails loudly instead of silently
-/// falling back to the default.
 fn parse_lookup_or<T, F>(lookup: &F, key: &str, default: T) -> Result<T>
 where
     T: std::str::FromStr,
@@ -853,8 +667,6 @@ where
     }
 }
 
-/// Parse an optional `i32` env value. `None` when the key is unset (which, for
-/// `<PREFIX>_START_HEIGHT`, selects the tip-anchored / resume seed paths).
 fn parse_lookup_opt<F>(lookup: &F, key: &str) -> Result<Option<i32>>
 where
     F: Fn(&str) -> Option<String>,

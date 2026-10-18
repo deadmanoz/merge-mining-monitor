@@ -1,10 +1,6 @@
-//! Hathor reward-address replay for `reclassify-pools`.
-//!
-//! Re-derives child reward attributions for already-captured Hathor events from
-//! their persisted `funds_graph` sidecar, picking up registry additions and slug
-//! renames without re-fetching the chain. Keyset-paginated over `event_id`;
-//! reuses the offline reward parser and the shared `ExistingAttributionSet` /
-//! `WritePolicy` so it never clobbers manual/higher-trust attributions.
+//! Offline Hathor reward-address replay for `reclassify-pools` from persisted
+//! `funds_graph` sidecars, preserving manual or higher-trust attributions via
+//! [`ExistingAttributionSet`] and [`WritePolicy`].
 
 use anyhow::Result;
 use tokio_postgres::Client;
@@ -21,12 +17,6 @@ use mmm_store::{
     upsert_event_pool_attributions_without_stale_cleanup,
 };
 
-/// Replay child reward attributions for every captured Hathor event, in
-/// keyset-paginated `event_id` batches. Each row's `funds_graph` is re-parsed
-/// (a corrupt one is counted and skipped, leaving the row untouched), the audit
-/// JSON is refreshed, and the recomputed attributions are filtered through the
-/// row's existing set under the child-payout write policy before upsert (no
-/// stale cleanup, so other sources' attributions survive). Bumps `stats`.
 pub(crate) async fn replay_hathor_reward_attributions(
     client: &Client,
     child_payout_identities: &PoolIdentityLookup,

@@ -1,10 +1,4 @@
 //! Shared helpers for this crate's integration-test binaries.
-//!
-//! Each binary that does `mod support;` compiles its own copy, so the blanket
-//! `allow(dead_code)` avoids unused-helper warnings under -D warnings. The
-//! pure fixture/header helpers live in `mmm_capture::test_support` (anchored
-//! on that crate's manifest dir) and are re-exported here so existing
-//! `support::...` consumers keep compiling.
 
 #![allow(dead_code)]
 
@@ -44,8 +38,6 @@ pub mod scenario;
 #[cfg(feature = "db-integration")]
 pub mod seed;
 
-// Re-export API: like the dead_code blanket above, items unused by a
-// given binary are expected (each binary compiles its own support copy).
 #[allow(unused_imports)]
 #[cfg(feature = "test-support")]
 pub use mmm_capture::test_support::{header_meeting_bits, parse_auxpow_fixture};
@@ -111,18 +103,11 @@ pub async fn default_pool_snapshot(client: &Client) -> Result<DefaultPoolSnapsho
     Ok((resolver, pool_ids_by_slug))
 }
 
-/// The synthetic Bitcoin history the synthetic fixtures' easy-bits parents
-/// (the Namecoin raw blocks, the RSK headers, crafted mutation headers) belong
-/// to: the regtest-limit bits from the all-zero genesis they build on, through
-/// the Namecoin parents' BIP34 heights (800,000 to 800,002) and times.
 #[cfg(feature = "db-integration")]
 pub async fn seed_synthetic_fixture_history(client: &Client) -> Result<()> {
     db::seed_synthetic_bitcoin_history(client, 800_002, 1_700_000_130, 0x207f_ffff).await
 }
 
-/// The synthetic Namecoin fixture world: seeds [`seed_synthetic_fixture_history`]
-/// (replacing whatever history the test set up before), so a test that needs
-/// a different history seeds it after this call.
 #[cfg(feature = "db-integration")]
 pub async fn namecoin_fixture(client: &Client) -> Result<NamecoinFixture> {
     seed_synthetic_fixture_history(client).await?;
@@ -170,8 +155,6 @@ pub async fn capture_test_payload(
     )
 }
 
-/// The id of the event a capture wrote; a capture the lineage gate refused
-/// is a fixture error for a test that expects its evidence stored.
 #[cfg(feature = "db-integration")]
 pub fn written_event_id(outcome: mmm_read_model::CaptureOutcome) -> Result<i64> {
     match outcome {
@@ -291,9 +274,6 @@ pub fn classified_proof(parent_kind: ParentKind, parent_height: i32) -> Classifi
     }
 }
 
-/// An exact observation of a synthetic child block at `height`, built from a
-/// committed AuxPoW fixture's parent and observed at `observed_at`. The child
-/// header is dropped so the hash need not authenticate against it.
 #[cfg(feature = "db-integration")]
 pub fn exact_observation(
     fixture: &str,

@@ -1,8 +1,5 @@
 .about-dialog {
   width: min(620px, calc(100vw - 32px));
-  /* Grow to fit available height instead of a hard 680px cap, so the explainer
-     does not force a scroll when the viewport has the room. Content still bounds
-     the height, so the shorter kind/source dialogs stay compact. */
   max-height: calc(100dvh - 48px);
   padding: 0;
   overflow: hidden;
@@ -78,8 +75,6 @@
   text-transform: uppercase;
 }
 
-/* About-modal visual explainer: a small stepped carousel of SVG screens that
-   shows why scraping merge-mined chains recovers Bitcoin stales. */
 .about-explainer {
   gap: 14px;
 }
@@ -151,7 +146,6 @@
   line-height: 1.55;
 }
 
-/* SVG primitives shared across the four screens. */
 .screen-figure .blk {
   stroke-width: 1.6;
 }
@@ -330,11 +324,6 @@
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-}
-
-.about-credit-impl {
-  color: var(--muted);
-  font-size: 13px;
 }
 
 .about-credit-by {

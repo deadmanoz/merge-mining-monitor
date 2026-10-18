@@ -123,11 +123,8 @@ pub(super) async fn mark_replacement_pending<C: GenericClient>(
     pending: &ReplacementPending,
 ) -> Result<()> {
     let target_hash_bytes = pending.sync_target_tip_hash.to_byte_array().to_vec();
-    // The suffix writer already holds this row FOR UPDATE. Suspend an unresolved
-    // producer error inside the pending details so the final queue transaction
-    // can restore it exactly. A structural conflict covered by the committed
-    // suffix is consumed instead. A re-enqueued suffix carries the existing
-    // tuple instead of nesting pending states.
+    // Suspend an unresolved producer error inside the pending details unless
+    // the committed suffix resolves that structural conflict.
     let suspended_error = load_suspended_sync_error(client, source_id)
         .await?
         .filter(|error| !error.is_resolved_by(pending));
@@ -168,10 +165,8 @@ pub(super) async fn mark_replacement_pending<C: GenericClient>(
     Ok(())
 }
 
-/// Lock the contiguous sync-state row when it exists, so queue work
-/// serializes with a suffix replacement in flight. Before the first Core sync
-/// has written the row (a fresh database running the scheduled recheck) no
-/// replacement can be in flight and there is nothing to serialize with.
+/// Lock the contiguous sync-state row when present so queue work serializes
+/// with an in-flight suffix replacement.
 pub(super) async fn try_lock_sync_state<C: GenericClient>(
     client: &C,
     source_id: i64,

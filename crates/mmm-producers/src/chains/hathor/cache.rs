@@ -1,35 +1,9 @@
 //! Cache-backed Hathor historical ingest (`backfill-hathor-cache`).
 //!
-//! Streams the joined merge-mining-research archive CSV
-//! (`hathor_height,hathor_block_hash,hathor_timestamp,funds_graph_hex,aux_pow_hex`,
-//! height-sorted, one row per best-chain merge-mined block) and drives every
-//! row through the UNCHANGED self-verifying capture path
-//! ([`process_hathor_height`]: reconstruct, sha256d hash guard, nBits verdict)
-//! via a cache-backed [`HathorRpc`]. This is the Hathor analog of the Elastos
-//! producer-backfill-with-oracle pattern: the archive is untrusted input and
-//! the public REST API is never called.
-//!
-//! Error policy is two-tier:
-//!
-//! - ADAPTER-LEVEL (fatal): structural archive corruption - a wrong header,
-//!   short/long rows, non-hex bytes, out-of-order or duplicate heights - is
-//!   detected by [`CacheReader`] in the row loop BEFORE the capture call
-//!   and aborts the run with the offending line number. The [`HathorRpc`]
-//!   impl serves pre-validated rows infallibly and never returns `Err`,
-//!   because [`process_hathor_height`] deliberately converts RPC errors into
-//!   hold outcomes that would silently swallow corruption.
-//! - CAPTURE-LEVEL (counted): rows that validate structurally but fail the capture
-//!   path's own reconstruct/guard checks return the ordinary observable
-//!   [`HathorHeightOutcome`] variants, exactly as a live REST response would.
-//!   The dominant expected bucket is `NearSkipped`: sub-BTC-target near
-//!   shares (the normal case for ~all merge-mined blocks) return from
-//!   reconstruction before the nBits verdict. The context replays an
-//!   archive, so no row records which block the chain carries.
-//!
-//! Heights with no archive row are counted as `absent_heights` by the runner
-//! itself (compact ranges in the skip ledger); the capture path is not driven
-//! for them, because its `Ok(None)` semantic is a transient *hold*, not a
-//! definitive "no merge-mined block here".
+//! Streams the height-sorted archive CSV through [`process_hathor_height`] via
+//! a cache-backed [`HathorRpc`]: structural CSV corruption aborts at the adapter
+//! boundary, while capture-level skips (`NearSkipped`, `MalformedSkipped`, etc.)
+//! are tallied and recorded in the skip ledger.
 
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -44,35 +18,21 @@ use crate::chains::hathor::capture::{
 use crate::chains::hathor::rpc::{HathorBlockMeta, HathorRpc, HathorTransaction};
 use crate::producer_runtime::run_post_backfill_repair;
 
-/// The exact header line the joined archive CSV must carry. A different header
-/// means the wrong file (e.g. the raw two-CSV inputs) was passed; fatal.
 pub const CACHE_CSV_HEADER: &str =
     "hathor_height,hathor_block_hash,hathor_timestamp,funds_graph_hex,aux_pow_hex";
 
-/// Hathor merge-mined block version (`HathorBlockMeta.version`); the capture
-/// state machine treats every other version as non-merge-mined. Every archive
-/// row carries an aux_pow, so the constant is uniform for cache rows.
 const HATHOR_MERGE_MINED_VERSION: i32 = 3;
 
-/// One validated archive row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CacheRow {
     height: i32,
-    /// Hathor block hash, 64 display-hex chars (equals the BTC parent hash).
     hash: String,
     timestamp: i64,
-    /// The funds||graph prefix hex; concatenated with `aux_pow_hex` it is the
-    /// byte-exact live REST `raw` field.
     funds_graph_hex: String,
     aux_pow_hex: String,
 }
 
 impl CacheRow {
-    /// Synthesize the capture-path inputs. `raw` is the byte-exact
-    /// concatenation `funds_graph_hex || aux_pow_hex` (the live REST `raw`
-    /// field), verified against the committed fixtures in the unit tests.
-    /// `is_voided: false` is correct because the extraction walked the
-    /// best chain.
     fn capture_inputs(&self) -> (HathorBlockMeta, HathorTransaction) {
         let meta = HathorBlockMeta {
             tx_id: self.hash.clone(),
@@ -90,17 +50,12 @@ impl CacheRow {
     }
 }
 
-/// True iff `value` is non-empty, even-length, all-ASCII-hex (a decodable byte
-/// payload); used to reject corrupt funds_graph/aux_pow archive columns.
 fn is_hex_payload(value: &str) -> bool {
     !value.is_empty()
         && value.len().is_multiple_of(2)
         && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// Streaming, validating reader over the joined archive CSV. Every yielded row
-/// is structurally valid and strictly height-ascending; any violation is a
-/// fatal error carrying the 1-based line number.
 struct CacheReader<R: BufRead> {
     reader: R,
     line_no: usize,
@@ -110,8 +65,6 @@ struct CacheReader<R: BufRead> {
 }
 
 impl<R: BufRead> CacheReader<R> {
-    /// Wrap a buffered reader; the header is validated lazily on the first
-    /// [`Self::next_row`] call.
     fn new(reader: R) -> Self {
         Self {
             reader,
@@ -122,7 +75,6 @@ impl<R: BufRead> CacheReader<R> {
         }
     }
 
-    /// Next validated row, or `None` at clean EOF.
     fn next_row(&mut self) -> Result<Option<CacheRow>> {
         loop {
             self.buf.clear();
@@ -146,10 +98,7 @@ impl<R: BufRead> CacheReader<R> {
                 continue;
             }
             if line.is_empty() {
-                // A blank line is legal only as the file's very last line (a
-                // trailing newline). Anywhere else it is structural corruption
-                // (e.g. a truncated row) and must not silently vanish from the
-                // row-count identities.
+                // Only a trailing newline at EOF is valid; interior blank lines are corruption.
                 let blank_line_no = self.line_no;
                 self.buf.clear();
                 let more = self
@@ -180,9 +129,6 @@ impl<R: BufRead> CacheReader<R> {
     }
 }
 
-/// Parse and structurally validate one CSV data line into a [`CacheRow`]:
-/// exactly 5 columns, non-negative height, 64-hex block hash, positive
-/// timestamp, even-length-hex payloads. Errors carry the 1-based line number.
 fn parse_cache_row(line_no: usize, line: &str) -> Result<CacheRow> {
     let fields: Vec<&str> = line.split(',').collect();
     ensure!(
@@ -229,10 +175,6 @@ fn parse_cache_row(line_no: usize, line: &str) -> Result<CacheRow> {
     })
 }
 
-/// A [`HathorRpc`] serving exactly one pre-validated archive row. The runner
-/// builds one adapter per row immediately before driving [`process_hathor_height`];
-/// the archive height is a hit, any other height is absent, and no method can
-/// fail.
 struct CachedHathorRpc {
     height: i32,
     meta: HathorBlockMeta,
@@ -260,23 +202,15 @@ impl HathorRpc for CachedHathorRpc {
     }
 }
 
-/// Parsed `backfill-hathor-cache` invocation: the input CSV plus the optional
-/// inclusive `[start, end]` height bounds and the progress cadence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HathorCacheConfig {
     pub csv_path: PathBuf,
-    /// Inclusive lower bound; rows below it are counted out-of-range, and it also
-    /// seeds head-absence accounting (no head gaps without an explicit start).
     pub start_height: Option<i32>,
-    /// Inclusive upper bound; the height-sorted scan stops once a row exceeds it.
     pub end_height: Option<i32>,
-    /// Progress-log interval in processed rows (`--batch-size`).
     pub progress_every: u64,
 }
 
 impl HathorCacheConfig {
-    /// Parse CLI args (`<csv> [--start H] [--end H] [--batch-size N]`),
-    /// validating non-negative bounds, `end >= start`, and a positive batch size.
     pub fn from_args<I, S>(args: I) -> Result<Self>
     where
         I: IntoIterator<Item = S>,
@@ -326,7 +260,6 @@ impl HathorCacheConfig {
         })
     }
 
-    /// Default skip-ledger path: alongside the input CSV.
     pub fn skip_ledger_path(&self) -> PathBuf {
         let mut name = self
             .csv_path
@@ -338,14 +271,6 @@ impl HathorCacheConfig {
     }
 }
 
-/// Per-run accounting over the OBSERVABLE [`HathorHeightOutcome`] variants
-/// plus the runner-level absent/out-of-range counters. Two identities hold for
-/// a clean run (any adapter-level corruption aborts instead):
-///
-/// - rows: `rows_seen = auxpow_written + non_auxpow_skipped + voided_skipped +
-///   near_skipped + malformed_skipped + non_bitcoin_parent + lineage_pending`
-///   (and `rows_seen + rows_out_of_range` = archive data rows read);
-/// - heights: `height_attempts() = rows_seen + absent_heights`.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct HathorCacheSummary {
     pub rows_seen: u64,
@@ -367,9 +292,6 @@ impl HathorCacheSummary {
         self.rows_seen + self.absent_heights
     }
 
-    /// Tally one observable outcome into its per-variant counter. Absent/
-    /// transient holds are no-ops here (the runner treats them as fatal before
-    /// recording, since the adapter serves every archive row).
     fn record(&mut self, outcome: HathorHeightOutcome) {
         match outcome {
             HathorHeightOutcome::AuxpowWritten => self.auxpow_written += 1,
@@ -379,14 +301,11 @@ impl HathorCacheSummary {
             HathorHeightOutcome::MalformedSkipped => self.malformed_skipped += 1,
             HathorHeightOutcome::NonBitcoinParent => self.non_bitcoin_parent += 1,
             HathorHeightOutcome::LineagePending => self.lineage_pending += 1,
-            // Absent/Transient holds are handled (fatally) by the runner
-            // before record().
             HathorHeightOutcome::AbsentHold | HathorHeightOutcome::TransientHold => {}
         }
     }
 }
 
-/// Append one `height,Outcome` row to the skip ledger.
 fn ledger_skip_line(
     ledger: &mut impl Write,
     height: i32,
@@ -395,8 +314,6 @@ fn ledger_skip_line(
     writeln!(ledger, "{height},{outcome:?}").context("write skip-ledger row")
 }
 
-/// Append a (compact) absent-height ledger entry: a single `H,Absent` line when
-/// `from == to`, else a `from..to,Absent` range, so large gaps stay terse.
 fn ledger_absent_range(ledger: &mut impl Write, from: i32, to: i32) -> Result<()> {
     if from == to {
         writeln!(ledger, "{from},Absent").context("write skip-ledger absent row")
@@ -405,9 +322,6 @@ fn ledger_absent_range(ledger: &mut impl Write, from: i32, to: i32) -> Result<()
     }
 }
 
-/// Completion logging plus the post-ingest read-model repair over the
-/// processed height range (budget exhaustion downgrades to a warn with the
-/// documented operator follow-up).
 async fn finish_cache_ingest(
     client: &mut Client,
     context: &HathorCaptureContext,
@@ -446,10 +360,6 @@ async fn finish_cache_ingest(
     Ok(())
 }
 
-/// Drive the archive through the capture path. `reader` and `ledger` are
-/// injected so the DB integration test can run the real pipeline over an
-/// in-memory CSV; the CLI passes the opened file and skip-ledger handles, and
-/// a [`HathorCaptureContext`] built with the caller-chosen classifier.
 pub async fn run_hathor_cache_ingest<R: BufRead>(
     client: &mut Client,
     context: &HathorCaptureContext,
@@ -459,9 +369,6 @@ pub async fn run_hathor_cache_ingest<R: BufRead>(
 ) -> Result<HathorCacheSummary> {
     let mut rows = CacheReader::new(reader);
     let mut summary = HathorCacheSummary::default();
-    // The next height that would be contiguous; absent heights accumulate
-    // between it and each processed row. Seeded by --start when explicit,
-    // else by the first in-range row (no head absence without --start).
     let mut next_expected: Option<i32> = config.start_height;
 
     writeln!(
@@ -477,8 +384,6 @@ pub async fn run_hathor_cache_ingest<R: BufRead>(
             continue;
         }
         if config.end_height.is_some_and(|end| row.height > end) {
-            // Height-sorted input: everything after this is out of range too,
-            // but stop counting rather than reading gigabytes past --end.
             summary.rows_out_of_range += 1;
             break;
         }
@@ -496,9 +401,6 @@ pub async fn run_hathor_cache_ingest<R: BufRead>(
             .await
             .with_context(|| format!("ingest cached Hathor height {}", row.height))?;
         match outcome {
-            // A pending lineage on a historical archive row means the Core cache
-            // refreshed for this command does not reach the parent's epoch.
-            // Record it in the ledger rather than misclassifying the evidence.
             HathorHeightOutcome::LineagePending => {
                 warn!(
                     height = row.height,
@@ -506,8 +408,6 @@ pub async fn run_hathor_cache_ingest<R: BufRead>(
                 );
                 ledger_skip_line(ledger, row.height, outcome)?;
             }
-            // The adapter serves every archive row, so a hold here is a runner
-            // bug, not data: fail loudly rather than miscounting.
             HathorHeightOutcome::AbsentHold | HathorHeightOutcome::TransientHold => bail!(
                 "Hathor cache ingest got {outcome:?} at archive height {}; \
                  cache adapter invariant violated",
@@ -530,7 +430,6 @@ pub async fn run_hathor_cache_ingest<R: BufRead>(
         }
     }
 
-    // Tail absence: only measurable against an explicit --end.
     if let (Some(end), Some(expected)) = (config.end_height, next_expected)
         && end >= expected
     {
@@ -674,8 +573,6 @@ mod tests {
     #[test]
     fn reader_allows_one_trailing_blank_line_but_rejects_interior_blanks() {
         let row = fixture_row();
-        // csv_of already ends each row with CRLF; one extra blank tail line is
-        // the tolerated trailing-newline case.
         let trailing = format!("{}\r\n", csv_of(std::slice::from_ref(&row)));
         assert_eq!(read_all(&trailing).unwrap().len(), 1);
 

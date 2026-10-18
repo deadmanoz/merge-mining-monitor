@@ -5,22 +5,10 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 manifest="${repo_root}/data/historical/historical-source-manifest.json"
 checksum="${repo_root}/data/historical/historical-source-manifest.sha256"
 
-die() {
-    printf 'error: %s\n' "$*" >&2
-    exit 1
-}
+# shellcheck source=scripts/lib/research-pins.sh
+source "${repo_root}/scripts/lib/research-pins.sh"
 
-sha256_file() {
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | awk '{ print $1 }'
-    elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" | awk '{ print $1 }'
-    else
-        die "neither sha256sum nor shasum is available"
-    fi
-}
-
-command -v jq >/dev/null 2>&1 || die "jq is required"
+require_command jq
 [ -f "${manifest}" ] || die "missing ${manifest}"
 [ -f "${checksum}" ] || die "missing ${checksum}"
 

@@ -1,17 +1,7 @@
-//! Qbit native merge-mining proof parsing.
+//! Qbit native merge-mining proof parsing (`[child header:80][non-witness parent coinbase tx][parent branch + i32][chain branch + i32][parent header:80]`, no `hashBlock` field).
 //!
-//! Qbit's extended header is NOT a classic `CAuxPow`. Wire order: 80-byte
-//! pure child header; non-witness parent coinbase transaction; parent merkle
-//! branch (one-byte count + 32-byte sibling hashes) + signed i32 index; chain
-//! merkle branch + signed i32 index; 80-byte parent header. There is NO
-//! legacy 32-byte `hashBlock` field between the coinbase transaction and the
-//! parent branch, and none is synthesized (never store a placeholder hash).
-//!
-//! Rules are pinned to Qbit source revision
-//! `70fea84f5becfb57463247af09790df5ddd424f8` via the executable reference
-//! adapter (`src/stale_blocks_analysis/qbit.py` at merge-mining-research
-//! `e3dc6d6`), whose mainnet control fixtures are mirrored in
-//! `fixtures/qbit/`. Semantics that differ from classic CAuxPow:
+//! Pinned to Qbit `70fea84f5becfb57463247af09790df5ddd424f8` (`fixtures/qbit/`).
+//! Semantics that differ from classic CAuxPow:
 //!
 //! - The chain-commitment fold runs in INTERNAL byte order over
 //!   `sha256d(pure child header)`, and the coinbase scriptSig commits the
@@ -26,32 +16,15 @@
 //! - The child's effective target is ALWAYS its own pure-header nBits, never
 //!   a wrapper-supplied target: the parent header hash must meet the CHILD
 //!   target, and the parent's own nBits is never consulted for validity.
-//!
-//! Scope boundary: validating this proof envelope is NOT validating Qbit
-//! body consensus or Bitcoin parent placement. `child_height` is a caller
-//! claim (explorer/import provenance); it feeds only the version-cadence
-//! gate. There is deliberately no genesis-hash pin here: chain identity is
-//! the importer/producer's job, and the live producer authenticates it in
-//! `chains::auxpow_family::qbit` by matching the decoded child header hash
-//! against the height's `getblockhash` result and pinning mainnet genesis at
-//! height zero.
 
 use super::*;
 
-/// Qbit mainnet merged-mining chain id: the value the version field's
-/// chain-id bits (`(version >> 13) & 0xFFFF`) must carry on a merged block,
-/// and the LCG slot input. Pinned from revision `70fea84` chainparams.
+/// Qbit mainnet merged-mining chain id (`(version >> 13) & 0xFFFF`).
 pub const QBIT_AUXPOW_CHAIN_ID: u32 = 47;
 
-/// Maximum accepted parent (coinbase) merkle branch length.
 const QBIT_PARENT_BRANCH_CAP: usize = 31;
-
-/// Maximum accepted chain merkle branch length. Also bounds `1 << len` for
-/// the tree-size and slot checks well inside u32.
 const QBIT_CHAIN_BRANCH_CAP: usize = 30;
 
-/// Qbit mainnet proof-of-work limit (`0x0000ffff…ff`, 60 f's): the inclusive
-/// upper bound every child target must satisfy.
 fn qbit_pow_limit() -> Target {
     let mut limit = [0xffu8; 32];
     limit[0] = 0x00;
@@ -59,26 +32,14 @@ fn qbit_pow_limit() -> Target {
     Target::from_be_bytes(limit)
 }
 
-/// The outcome of parsing a Qbit extended header: a direct (non-merged) child
-/// header that must meet its own target, or a fully verified merged-mining
-/// proof. Mirrors [`ParsedNamecoinBlock`] so the producer slice can skip
-/// non-merged blocks without allocating proof state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedQbitBlock {
-    /// A non-merged child header (AuxPoW version flag clear); its own hash
-    /// met its own target.
     Direct(ParsedHeader),
-    /// A fully parsed and envelope-verified merged-mining proof, boxed to
-    /// keep the enum small.
     Auxpow(Box<ParsedQbitAuxpow>),
 }
 
-/// A fully parsed Qbit merged-mining proof. `auxpow_bytes` is the stored-bytes
-/// contract for the producer slice: exactly the region from the parent
-/// coinbase transaction through the parent header (`raw[80..]` for a valid
-/// exact extended header), the region [`decode_qbit_auxpow_proof`] re-accepts.
-/// Unlike [`ParsedAuxpowBlock`] there is no `hash_block`: the wire format has
-/// no such field.
+/// Parsed Qbit merged-mining proof. `auxpow_bytes` is `raw[80..]` (parent
+/// coinbase tx through parent header; no `hash_block` field).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedQbitAuxpow {
     pub child_header: ParsedHeader,
@@ -87,35 +48,24 @@ pub struct ParsedQbitAuxpow {
     pub parent_coinbase_script: Vec<u8>,
     pub parent_coinbase_outputs: Vec<TxOut>,
     pub parent_coinbase_output_addresses: Vec<String>,
-    /// Proves the parent coinbase is in the parent block's merkle tree
-    /// (index verified to be exactly 0).
     pub coinbase_branch: MerkleBranch,
-    /// Proves `sha256d(pure child header)` is in the merged-mining chain
-    /// merkle tree committed by the parent coinbase (index verified against
-    /// the deterministic LCG slot).
     pub chain_branch: MerkleBranch,
     pub auxpow_bytes: Vec<u8>,
 }
 
-/// A verified Qbit proof paired with its header-authenticated child coinbase.
-/// Header-only consumers continue to use `ParsedQbitAuxpow`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedQbitAuxpowBlock {
     pub proof: ParsedQbitAuxpow,
     pub coinbase: ParsedChildBlockCoinbase,
 }
 
-/// Authenticate a full native Qbit block's proof and child transaction body.
-/// Direct-mined blocks return `None` after the existing header/PoW checks;
-/// their transaction bodies are not needed for merge-mining evidence.
-/// Native hash and genesis placement remain the caller's responsibility.
+/// Authenticate a full native Qbit block's proof and child transaction body
+/// (merkle root and BIP34 height). Direct-mined blocks return `Ok(None)`.
 pub fn parse_qbit_block(raw: &[u8], child_height: u32) -> Result<Option<ParsedQbitAuxpowBlock>> {
     let prefix = qbit_extended_header_prefix(raw, child_height)?;
     let ParsedQbitBlock::Auxpow(proof) = parse_qbit_extended_header(prefix, child_height)? else {
         return Ok(None);
     };
-    // The proof interrupts ordinary block serialization, just as classic
-    // AuxPoW does. Reuse the body verifier after removing that exact region.
     let mut child_bytes = raw[..Header::SIZE].to_vec();
     child_bytes.extend_from_slice(&raw[prefix.len()..]);
     let coinbase = parse_child_block_coinbase_with_height(&child_bytes, parse_child_bip34_height)?;
@@ -131,13 +81,7 @@ pub fn parse_qbit_block(raw: &[u8], child_height: u32) -> Result<Option<ParsedQb
     }))
 }
 
-/// Parse and envelope-verify one exact Qbit extended header (no trailing
-/// bytes accepted). `child_height` is the caller-claimed native height and
-/// feeds only the version-cadence gate. Checks run in the reference
-/// adapter's order so error causes match: version gate, child-target gate,
-/// then for merged blocks the structural reads, EOF, branch-index bounds,
-/// parent merkle inclusion, chain commitment, and the parent-hash-versus-
-/// CHILD-target proof-of-work gate.
+/// Parse and envelope-verify one exact Qbit extended header (no trailing bytes).
 pub fn parse_qbit_extended_header(raw: &[u8], child_height: u32) -> Result<ParsedQbitBlock> {
     ensure!(
         raw.len() >= Header::SIZE,
@@ -145,7 +89,6 @@ pub fn parse_qbit_extended_header(raw: &[u8], child_height: u32) -> Result<Parse
     );
     let child_header = parse_header(raw[0..Header::SIZE].try_into().unwrap())
         .context("parse Qbit child header")?;
-    // The version layout is defined on the unsigned u32 bit pattern.
     let version = child_header.header.version.to_consensus() as u32;
     let merged = qbit_version_gate(version, child_height)?;
     let child_target = qbit_child_target(child_header.bits())?;
@@ -181,16 +124,7 @@ pub fn parse_qbit_extended_header(raw: &[u8], child_height: u32) -> Result<Parse
     })))
 }
 
-/// Split the exact Qbit extended-header prefix out of a full `getblock <hash>
-/// 0` block. Qbit's RPC returns the complete block, but
-/// [`parse_qbit_extended_header`] deliberately rejects trailing bytes, so the
-/// producer must hand it exactly the header/proof region and nothing more.
-///
-/// Bounded by the same structural reads the parser uses (branch caps, fixed
-/// 80-byte headers, one non-witness coinbase transaction), so a hostile block
-/// cannot make this scan past its own bytes. Verification is NOT performed
-/// here: this only locates the region, and the returned prefix is re-read and
-/// fully verified by [`parse_qbit_extended_header`].
+/// Slice the exact Qbit extended-header prefix from a full `getblock <hash> 0` payload.
 pub fn qbit_extended_header_prefix(raw: &[u8], child_height: u32) -> Result<&[u8]> {
     ensure!(
         raw.len() >= Header::SIZE,
@@ -208,13 +142,9 @@ pub fn qbit_extended_header_prefix(raw: &[u8], child_height: u32) -> Result<&[u8
     Ok(&raw[..reader.position()])
 }
 
-/// Enforce Qbit mainnet's version layout and return whether the block is
-/// merged-mined. The AuxPoW flag is bit 8 and is meaningful only under the
-/// `001` top-bit shape (`version & 0xE0000000 == 0x20000000`); with that
-/// shape, reserved bits `0x00001E00` must be clear; any version using bit 8
-/// or above without the shape is non-canonical; a merged version must carry
-/// chain id [`QBIT_AUXPOW_CHAIN_ID`] in bits 13..29; after genesis the
-/// version must satisfy `4 <= version < 0x80000000`.
+/// Enforce Qbit mainnet's version layout (`001` top-bit shape `0x20000000`,
+/// reserved bits `0x00001E00` clear, chain id 47 in bits 13..29 when bit 8 is set,
+/// and `4 <= version < 0x80000000` after genesis).
 pub(crate) fn qbit_version_gate(version: u32, height: u32) -> Result<bool> {
     if height > 0 {
         ensure!(
@@ -242,18 +172,12 @@ pub(crate) fn qbit_version_gate(version: u32, height: u32) -> Result<bool> {
     Ok(merged)
 }
 
-/// Decode the child's own nBits into its effective target: the compact
-/// encoding must be well-formed and the target inside `(0, pow_limit]`.
-/// This is the ONLY target Qbit proofs are checked against.
 fn qbit_child_target(bits: CompactTarget) -> Result<Target> {
     well_formed_compact_target(bits)
         .filter(|target| *target != Target::ZERO && *target <= qbit_pow_limit())
         .context("invalid Qbit header target")
 }
 
-/// Read one Qbit merkle branch: a single count byte (a multi-byte
-/// CompactSize prefix is >= 0xfd > every cap, so it is over the limit or
-/// non-canonical either way) followed by the bounded 32-byte sibling reads.
 fn read_qbit_branch(reader: &mut Reader<'_>, cap: usize) -> Result<Vec<TxMerkleNode>> {
     let count = reader.read_u8().context("read Qbit merkle branch count")? as usize;
     ensure!(
@@ -271,10 +195,6 @@ fn read_qbit_branch(reader: &mut Reader<'_>, cap: usize) -> Result<Vec<TxMerkleN
     Ok(hashes)
 }
 
-/// The raw fields of one Qbit AuxPoW payload (coinbase tx through parent
-/// header), before verification and assembly. Shared structural reader for
-/// [`parse_qbit_extended_header`] and the stored-blob re-decoder
-/// [`decode_qbit_auxpow_proof`].
 struct QbitRawAuxpow {
     coinbase_txid: Txid,
     coinbase_script: Vec<u8>,
@@ -284,10 +204,6 @@ struct QbitRawAuxpow {
     parent_header: ParsedHeader,
 }
 
-/// Read the Qbit AuxPoW payload in exact wire order: non-witness parent
-/// coinbase transaction, parent branch + i32 index, chain branch + i32
-/// index, 80-byte parent header. Structural only; the commitment and
-/// proof-of-work gates live in `verify_qbit_proof`.
 fn read_qbit_auxpow(reader: &mut Reader<'_>) -> Result<QbitRawAuxpow> {
     // Byte 4 of the tx region is the input-count position; 0x00 there is the
     // BIP144 segwit marker (a real tx never has zero inputs). rust-bitcoin
@@ -338,12 +254,6 @@ fn read_qbit_auxpow(reader: &mut Reader<'_>) -> Result<QbitRawAuxpow> {
     })
 }
 
-/// Verify the Qbit proof envelope over a structurally read payload, in the
-/// reference adapter's order: coinbase branch index exactly 0; chain index
-/// inside the tree width; parent coinbase merkle inclusion (wire order);
-/// display-order chain commitment with marker-or-legacy placement plus the
-/// `[tree_size:4][nonce:4]` footer and deterministic LCG slot; and the
-/// parent header hash meeting the CHILD target.
 fn verify_qbit_proof(
     child_header: &ParsedHeader,
     auxpow: &QbitRawAuxpow,
@@ -395,10 +305,6 @@ fn verify_qbit_proof(
     Ok(())
 }
 
-/// The decoded structure of a stored Qbit proof blob: the slot index, the
-/// embedded parent header hash, and the two merkle branches. Deliberately a
-/// distinct type from [`AuxpowProofDetail`]: the Qbit wire format has no
-/// `hashBlock`, so the classic field stays classic-only.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QbitProofDetail {
     pub slot_index: u32,
@@ -407,13 +313,7 @@ pub struct QbitProofDetail {
     pub blockchain_branch: AuxMerkleBranchDetail,
 }
 
-/// Re-parse a stored Qbit proof blob (the `auxpow_bytes` region: coinbase tx
-/// through parent header) into its branch breakdown. Structural decode only,
-/// mirroring what classic [`decode_auxpow_proof`] does for its format: full
-/// consumption required, both branch indices non-negative, no commitment
-/// re-verification (the child header is not in the blob). Classic CAuxPow
-/// bytes are not accepted here, and Qbit bytes are not accepted by the
-/// classic decoder: format selection is explicit, never sniffed.
+/// Structurally decode a stored Qbit `aux_merkle_proof` blob into its branch breakdown.
 pub fn decode_qbit_auxpow_proof(aux_merkle_proof: &[u8]) -> Option<QbitProofDetail> {
     let mut reader = Reader::new(aux_merkle_proof);
     let auxpow = read_qbit_auxpow(&mut reader).ok()?;

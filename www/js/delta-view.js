@@ -1,16 +1,3 @@
-// The header-time-delta distribution view.
-//
-// Δ is `canonical.btc_header_time - stale.btc_header_time`, the value the block
-// drawer already prints. Positive means the stale block carries the earlier
-// timestamp. The distribution is pathological for one linear axis (the middle
-// half sits inside a minute, the extremes run to weeks), so one focus window
-// drives three panels: a linear histogram of the window, off-scale gutters at
-// its edges, and an always-visible symmetric-log strip of the whole range.
-//
-// All markup here is built in JS. index.html carries only two empty mount
-// points, because the rail fieldsets alone would exceed its architecture
-// budget as static markup.
-
 import { loadBlock, loadCompetitions } from "./api-client.js?v=0.9.3";
 import { clearSelection, updateSourceGroupSelectedMarkers } from "./controls.js?v=0.9.3";
 import { renderContext, renderCoverage, renderHistogram } from "./delta-chart.js?v=0.9.3";
@@ -54,8 +41,6 @@ const view = {
 let mounted = false;
 let lastSelectionRefetch = null;
 
-// ── Data selection ──────────────────────────────────────────────────────────
-
 const rows = () => state.competitions ?? [];
 
 const absMax = (usable) => usable.reduce((max, row) => Math.max(max, Math.abs(row.header_time_delta_s)), 1);
@@ -90,54 +75,32 @@ function registerDeltaView(registerView) {
   });
 }
 
-// Bitcoin's first block. No stale competition can predate it, so a timestamp
-// outside this window is a data fault rather than an era.
 const FIRST_YEAR = 2009;
 const lastPlausibleYear = () => new Date().getUTCFullYear() + 1;
 
-/// The stale block's calendar year, or null when the timestamp is not a
-/// plausible one. `stale_header_time` is an unbounded integer in the wire
-/// contract, so this guards two failure modes: an unrepresentable date yields
-/// NaN, which poisons the bounds and makes every comparison false so the view
-/// reads as empty; and a representable but absurd one (year 255,000 is only
-/// 8e12 seconds away) would enumerate hundreds of thousands of select options.
 function yearOf(row) {
   const year = new Date(row.stale_header_time * 1000).getUTCFullYear();
   if (!Number.isFinite(year)) return null;
   return year >= FIRST_YEAR && year <= lastPlausibleYear() ? year : null;
 }
 
-/// Rows surviving the shared Source filter and the view's own Era filter.
-///
-/// An empty source selection means "no filter", matching the tree's
-/// `highlightActive`, so the two views agree on what an untouched rail means.
 function filtered() {
   const sources = state.query.sources ?? [];
   const all = rows();
   return all.filter((row) => {
     if (!matchesSourceFilter(row.sources, sources)) return false;
     const year = yearOf(row);
-    // An undateable row cannot be placed in an era, so it is never hidden by
-    // one; dropping it would make a bad timestamp look like missing evidence.
     if (year === null) return true;
     return year >= view.yearFrom && year <= view.yearTo;
   });
 }
 
-// ── Mounting ────────────────────────────────────────────────────────────────
-
-/// Build the rail controls and the main panel once, then wire them. Called on
-/// first activation; later activations only re-render.
 function mount() {
   if (mounted) return;
   syncEraBounds();
-  // A shared link may have named an era before the data existed to validate it.
   const [from, to] = parseEra(state.query.era) ?? [];
   view.yearFrom = clamp(from ?? view.yearMin, view.yearMin, view.yearMax);
   view.yearTo = clamp(to ?? view.yearMax, view.yearFrom, view.yearMax);
-  // Clamping can move the era away from what the link asked for (?era=2010-2011
-  // against 2013+ data). Write the effective value back, so a copied URL
-  // reproduces what is on screen instead of what was requested.
   if (state.query.era) syncEraParam();
 
   buildControls();
@@ -146,11 +109,6 @@ function mount() {
   mounted = true;
 }
 
-/// Recompute the selectable era range from the data. Called on mount and on
-/// every render, because a forced refresh can bring back a recovered older era
-/// or roll into a new calendar year; bounds frozen at first mount would filter
-/// the new rows out until a full page reload.
-/// Returns true when the range moved.
 function syncEraBounds() {
   const years = rows().map(yearOf).filter((year) => year !== null);
   const min = years.length ? Math.min(...years) : FIRST_YEAR;
@@ -159,13 +117,11 @@ function syncEraBounds() {
   const wasFullRange = view.yearFrom === view.yearMin && view.yearTo === view.yearMax;
   view.yearMin = min;
   view.yearMax = max;
-  // A user who never narrowed the era keeps seeing everything.
   view.yearFrom = wasFullRange ? min : clamp(view.yearFrom ?? min, min, max);
   view.yearTo = wasFullRange ? max : clamp(view.yearTo ?? max, view.yearFrom, max);
   return true;
 }
 
-/// Re-render the year selects in place after the data range moved.
 function rebuildYearOptions() {
   const from = $("#delta-year-from");
   const to = $("#delta-year-to");
@@ -251,13 +207,6 @@ function buildMain() {
           </div>
         </div>
       </div>
-      <!-- Deliberately not <details>: Chromium slots details content into an
-           anonymous ::details-content box, so the panel's row template never
-           reaches the list, which then grew to its full
-           content height and was silently clipped by the panel instead of
-           scrolling. With real data the default window leaves hundreds of
-           outliers, so most of the list was unreachable. A button with
-           aria-expanded is the disclosure pattern the rails already use. -->
       <section id="delta-outliers" class="outlier-panel" data-open="true">
         <h3 class="outlier-summary">
           <button id="delta-outliers-toggle" class="outlier-toggle" type="button"
@@ -340,13 +289,10 @@ function wireControls() {
   $("#delta-outliers-toggle").addEventListener("click", () => {
     view.outliersOpen = !view.outliersOpen;
     applyOutliersOpen(view.outliersOpen !== false);
-    // A collapsed list could not scroll to the focused row, so opening retries.
     revealFocusedRow();
-    // The plot gains or loses the list's width, so the SVGs need re-measuring.
     renderCharts();
   });
   applyOutliersOpen(view.outliersOpen !== false);
-  // The strip and canvas resize with the rail and drawer, not the window.
   const observer = new ResizeObserver(() => renderCharts());
   observer.observe($("#delta-canvas"));
   observer.observe($("#delta-context-canvas"));
@@ -358,20 +304,13 @@ function selectRow(hash) {
     render();
     return;
   }
-  // Same invariant the tree's own selection keeps: a navigation gesture bumps
-  // the epoch so a navigator request still in flight discards its result.
   state.navEpoch += 1;
   loadBlock(hash);
   render();
 }
 
-// ── Rendering ───────────────────────────────────────────────────────────────
-
 function render() {
   if (!mounted) return;
-  // Moving bounds can clamp the era, and a clamp the URL never hears about
-  // makes the shared link disagree with the selects. This is the path a
-  // recovery from a failed or empty first load takes.
   if (syncEraBounds()) {
     rebuildYearOptions();
     syncEraParam();
@@ -379,9 +318,6 @@ function render() {
   const all = filtered();
   const { usable, unavailable } = partitionByDelta(all);
   const binning = computeBins(usable, view.half ?? absMax(usable), view.binWidth);
-  // binning.half is the snapped window, which is what actually decided
-  // membership. Labelling, brushing and annotating with the requested half
-  // instead would shade records as outside a window that counted them.
   const context = { ...view, half: binning.half, selectedHash: state.selectedHash };
 
   applyOutliersOpen(view.outliersOpen !== false);
@@ -399,7 +335,6 @@ function render() {
   renderCharts(context, usable, binning);
 }
 
-/// Re-paint only the SVGs, for a resize that changed no data.
 function renderCharts(context, usable, binning) {
   if (!mounted) return;
   if (!context) {
@@ -409,16 +344,9 @@ function renderCharts(context, usable, binning) {
     context = { ...view, half: binning.half, selectedHash: state.selectedHash };
   }
   const selected = usable.find((row) => row.stale_hash === state.selectedHash);
-  // The strip marks the selection regardless of the active window, so it needs
-  // the delta for an in-window selection too: renderContext's per-record rug
-  // covers only what the window excludes, so an in-window row has no tick of its
-  // own to mark and would go unmarked there.
   context.selectedDelta = selected
     ? (Number.isFinite(selected.header_time_delta_s) ? selected.header_time_delta_s : null)
     : selectedDeltaOutsideFilter();
-  // Inside the window the selection belongs to a bin, so mark the bin. Past the
-  // edge it belongs to a gutter and an outlier row instead, and binKeyFor
-  // returns null there rather than picking the nearest bin.
   context.selectedBinK = selected ? binKeyFor(binning, selected.header_time_delta_s) : null;
 
   const canvas = $("#delta-canvas");
@@ -428,9 +356,6 @@ function renderCharts(context, usable, binning) {
 
   renderContext($("#delta-context"), $("#delta-context-canvas"), context, usable, binning, {
     onSelect: (row) => selectRow(row.stale_hash),
-    // The ceiling is the wider of the data extent and the CURRENT window.
-    // Capping at the data alone means widening a window that already exceeds it
-    // collapses instead: one +45s record with a +/-120s window would snap to 45.
     onWindow: (half) => {
       const ceiling = Math.max(absMax(usable), context.half);
       view.half = clamp(Math.round(half), 1, ceiling);
@@ -445,9 +370,6 @@ function renderCharts(context, usable, binning) {
   renderLegend(binning);
 }
 
-/// The delta of a selection the active filters exclude, so the strip can still
-/// mark where it sits. Mirrors the tree, which exempts the selected node from
-/// source dimming.
 function selectedDeltaOutsideFilter() {
   if (!state.selectedHash) return null;
   const row = rows().find((candidate) => candidate.stale_hash === state.selectedHash);
@@ -456,10 +378,6 @@ function selectedDeltaOutsideFilter() {
 
 function renderLegend(binning) {
   const w = binning.w;
-  // The zero bin is not always +/-w/2: computeBins clips it to the focus window
-  // when the chosen width is wider (a +/-10s window with 60s bins really spans
-  // -10s to +10s), and a legend saying +/-30s there contradicts both the table
-  // and what counts as an outlier.
   const zero = binning.bins.find((bin) => bin.lo <= 0 && bin.hi >= 0);
   const span = !zero
     ? `±${fmtSpan(w / 2)}`
@@ -513,9 +431,6 @@ function renderMeta(binning) {
 function renderStatus(usable, unavailable, binning) {
   const status = $("#delta-status");
   const outside = binning.below + binning.above;
-  // Three different nothings, which used to read identically. A failed load
-  // saying "no competitions match your filters" is the worst of them: it
-  // blames the user for an outage.
   if (state.errors.competitions) {
     status.dataset.state = "error";
     const error = state.errors.competitions;
@@ -556,9 +471,6 @@ function renderTable(usable, unavailable, { bins, below, above, edgeLo, edgeHi }
     parts.push(`<tr data-outside="true"><td>Off-scale</td><td>&gt; ${fmtInt(edgeHi)}</td>`
       + `<td>${fmtInt(above)}</td><td>${fmtPct(above / total)}</td><td>100%</td></tr>`);
   }
-  // The accessible twin has to report the same condition as the status line;
-  // saying "no match" after a failed load blames the user for an outage here
-  // just as much as it does there.
   const empty = state.errors.competitions
     ? "Competitions could not be loaded."
     : unavailable.length
@@ -568,16 +480,10 @@ function renderTable(usable, unavailable, { bins, below, above, edgeLo, edgeHi }
     || `<tr><td colspan="5">${esc(empty)}</td></tr>`;
 }
 
-/// Clear ONLY the filters that hide the selection, then let the normal
-/// filter-change path re-render. Clearing both would throw away a narrowing the
-/// user made for their own reasons, and resetting everything on navigation is
-/// exactly what the hidden-selection notice exists to avoid.
 function revealSelection() {
   const row = rows().find((candidate) => candidate.stale_hash === state.selectedHash);
   if (!row) return;
 
-  // Era first: it is delta-only, so widening it needs no shared-filter round
-  // trip, and doing it before the Source dispatch means one render, not two.
   const year = yearOf(row);
   let eraWidened = false;
   if (year !== null && (year < view.yearFrom || year > view.yearTo)) {
@@ -594,9 +500,6 @@ function revealSelection() {
     if (eraWidened) render();
     return;
   }
-  // Uncheck the boxes and dispatch the same change the user's own click makes,
-  // so the shared handler owns readForm, the URL, the group markers and the
-  // active view's re-render instead of this view reimplementing all five.
   const boxes = [...document.querySelectorAll('#source-controls input[name="source"]:checked')];
   if (boxes.length) {
     for (const box of boxes) box.checked = false;
@@ -604,9 +507,6 @@ function revealSelection() {
     boxes[0].dispatchEvent(new Event("change", { bubbles: true }));
     return;
   }
-  // No checkboxes to uncheck, yet the filter is active: a shared link can carry
-  // sources= while /api/v1/sources failed, so the rail rendered nothing. Clear
-  // the query state directly rather than leaving the advertised button inert.
   state.query.sources = [];
   syncUrl();
   render();
@@ -619,10 +519,6 @@ function syncPresets() {
   }
 }
 
-/// Era round-trips through shared query state, written only when it is not the
-/// full range so a delta link stays as short as a tree link. Keeping it in
-/// state.query rather than exporting a getter means tree-query-state can write
-/// the URL without importing this module, which would be a cycle.
 function syncEraParam() {
   state.query.era = view.yearFrom === view.yearMin && view.yearTo === view.yearMax
     ? ""
@@ -630,10 +526,6 @@ function syncEraParam() {
   syncUrl();
 }
 
-/// Prepare the view for an explicit focus navigation: the cross-link names a
-/// competition and promises to show it, so the panel that names, flags and
-/// scrolls to it has to be open, and the scroll it owes is a fresh one even for
-/// the selection already held.
 function prepareFocus() {
   view.outliersOpen = true;
   forgetScroll();

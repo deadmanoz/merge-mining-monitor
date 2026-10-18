@@ -24,9 +24,6 @@ use mmm_store::{
 
 use crate::reclassify_pools::{ReclassifyPoolsConfig, ReclassifyPoolsStats};
 
-/// One scanned event: its persisted `rsk_miner` address, the current sidecar
-/// `pool_identity_id` (for one-way late-fill), the event's `observed_at`, and a
-/// snapshot of the existing `rsk_miner_address` attribution to diff against.
 #[derive(Debug)]
 struct ReplayRow {
     event_id: i64,
@@ -37,9 +34,7 @@ struct ReplayRow {
 }
 
 /// Snapshot of the existing `rsk_miner_address` attribution for one event.
-/// `row_count` is the LATERAL `count(*)`: the per-field columns are only
-/// meaningful (non-NULL) when exactly one row exists, so the write decision
-/// must gate on `row_count == 1` before trusting them.
+/// Per-field columns are meaningful only when `row_count == 1`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct ExistingRskMinerAttribution {
     row_count: i64,
@@ -51,8 +46,6 @@ struct ExistingRskMinerAttribution {
 }
 
 impl ExistingRskMinerAttribution {
-    /// True when exactly one existing row already equals the candidate on every
-    /// persisted field, so the upsert can be skipped as a no-op.
     fn matches(&self, attribution: &EventPoolAttribution) -> bool {
         self.row_count == 1
             && self.pool_id == attribution.pool_id
@@ -62,40 +55,27 @@ impl ExistingRskMinerAttribution {
             && self.details.as_ref() == Some(&attribution.details)
     }
 
-    /// True when the single existing row already carries a resolved `pool_id`:
-    /// the guard that stops an unresolved candidate from demoting it.
     fn has_resolved_pool(&self) -> bool {
         self.row_count == 1 && self.pool_id.is_some()
     }
 }
 
-/// A registry hit for a miner address: both the `pool.id` and the
-/// `pool_identity.id` are guaranteed present (the resolver bails otherwise).
 #[derive(Debug, Clone, Copy)]
 struct ResolvedRskMinerIdentity {
     pool_id: i64,
     pool_identity_id: i64,
 }
 
-/// One event's planned mutation. `write_attribution` and
-/// `late_fill_pool_identity_id` are independent: a row may need only one of the
-/// two, and a row needing neither is dropped before this is produced.
 #[derive(Debug)]
 struct PlannedRskMinerUpdate {
     event_id: i64,
     attribution: EventPoolAttribution,
     write_attribution: bool,
-    /// Set only when the sidecar `pool_identity_id` is currently NULL: the column
-    /// is filled once and never overwritten (one-way fill).
+    /// Filled only when sidecar `pool_identity_id` is NULL (one-way fill).
     late_fill_pool_identity_id: Option<i64>,
     observed_at: i64,
 }
 
-/// Reclassify every active RSK event's persisted `rsk_miner` through the
-/// embedded registry: seed identity rows, then keyset-page over events (ordered
-/// by `event_id`, paged on the last id) and apply the planned attribution
-/// upserts and sidecar late-fills per batch in a transaction. Idempotent:
-/// re-running only touches rows whose resolution actually changed.
 pub(crate) async fn reresolve_rsk_miner_identities(
     client: &mut Client,
     registry: &PoolIdentityRegistry,
@@ -155,20 +135,9 @@ pub(crate) async fn reresolve_rsk_miner_identities(
     Ok(())
 }
 
-/// Load one keyset page of active RSK events past `cursor` (NULL on the first
-/// page), each joined to its single `rsk_miner_address` attribution via a
-/// LATERAL count so the caller can diff against [`ExistingRskMinerAttribution`].
-/// Ordered by `event_id` so the last id seeds the next page.
-///
-/// The keyset predicate is applied to BOTH join sides. `r.event_id > $3` is
-/// logically implied by the join condition and changes no results, but without
-/// it the planner can only bound the `merge_mining_event` side: the evidence
-/// side becomes an unbounded index scan that re-walks
-/// `rsk_evidence_event_unique` from the start of the index on every page, so
-/// per-page cost grows with cursor depth and the whole pass becomes quadratic
-/// (measured on production at 18.4M events: ~11.6M index rows read per page
-/// and ~63 hours projected, against 500 rows per page and under an hour with
-/// the predicate present).
+/// Keyset page query over active RSK events. Both `e.id > $3` and `r.event_id > $3`
+/// are required so the planner bounds the `rsk_evidence_event_unique` index scan
+/// rather than re-walking from the start of the index on every page.
 const RSK_MINER_BATCH_SQL: &str = r"
 SELECT e.id,
        encode(r.rsk_miner, 'hex') AS miner,
@@ -241,10 +210,6 @@ async fn load_rsk_miner_batch(
         .collect())
 }
 
-/// Resolve a row's miner address to its registry identity. `Ok(None)` when the
-/// address is not in the registry; `Err` only when the registry references a
-/// pool slug or address with no seeded row (a reseed invariant violation, not a
-/// per-row miss).
 fn resolve_rsk_miner_identity(
     row: &ReplayRow,
     registry: &PoolIdentityRegistry,
@@ -278,11 +243,6 @@ fn resolve_rsk_miner_identity(
     }))
 }
 
-/// Decide what (if anything) to mutate for one row. Builds the candidate
-/// attribution (resolved or unresolved), bails on a resolved-to-resolved pool
-/// remap unless `overwrite` (the operator must validate the remap first), and
-/// computes the one-way sidecar late-fill. Returns `None` when neither the
-/// attribution nor the sidecar needs to change.
 fn plan_rsk_miner_update(
     row: &ReplayRow,
     resolved: Option<ResolvedRskMinerIdentity>,
@@ -328,8 +288,6 @@ fn plan_rsk_miner_update(
     }))
 }
 
-/// True when both the existing single row and the candidate carry a resolved
-/// pool and they disagree: the remap that requires `--overwrite`.
 fn resolved_pool_conflict(
     current: &ExistingRskMinerAttribution,
     attribution: &EventPoolAttribution,
@@ -340,11 +298,9 @@ fn resolved_pool_conflict(
         && current.pool_id != attribution.pool_id
 }
 
-/// The attribution write policy, in precedence order: write when none exists;
-/// skip an exact match; never let an unresolved candidate demote a resolved row;
-/// always promote unresolved -> resolved and fill a missing `pool_identity_id`
-/// within the same pool; otherwise defer to `overwrite`. The
-/// never-demote-resolved rule is the key invariant transient misses must honor.
+/// Write policy: insert if absent, skip exact match, never demote a resolved
+/// row, promote unresolved -> resolved, late-fill `pool_identity_id` within the
+/// same pool, otherwise require `overwrite`.
 fn should_write_rsk_attribution(
     current: &ExistingRskMinerAttribution,
     attribution: &EventPoolAttribution,
@@ -371,10 +327,6 @@ fn should_write_rsk_attribution(
     overwrite
 }
 
-/// Apply one batch's planned updates in a single transaction: per row, upsert
-/// the attribution when flagged and late-fill the sidecar `pool_identity_id`
-/// when set, bumping the matching stat counters only on rows that actually
-/// changed. A no-op batch returns early without opening a transaction.
 async fn apply_rsk_miner_updates(
     client: &mut Client,
     updates: &[PlannedRskMinerUpdate],
@@ -416,20 +368,10 @@ mod tests {
 
     const RSK_MINER: &str = "12d3178a62ef1f520944534ed04504609f7307a1";
 
-    /// The keyset predicate must bound BOTH sides of the evidence-to-event
-    /// join. `r.event_id > $3` is implied by the join and changes no rows, but
-    /// without it the planner cannot bound the evidence-side index scan, which
-    /// then re-walks `rsk_evidence_event_unique` from the start of the index on
-    /// every page and makes the pass quadratic (production: ~11.6M index rows
-    /// per page and a ~63-hour projection, versus 500 rows per page once
-    /// bounded).
-    ///
-    /// This asserts the query text rather than an `EXPLAIN` plan deliberately.
-    /// A plan assertion looked attractive and is what I tried first, but on a
-    /// small fixture corpus the planner picks a different shape (a nested loop
-    /// whose own `Index Cond: (event_id = e.id)` satisfies a naive "is it
-    /// bounded" check), so that test passed with the predicate deleted. Pinning
-    /// the text is blunt but actually fails when the guard is removed.
+    /// Both sides of the evidence-to-event join must carry the keyset predicate
+    /// so the planner bounds `rsk_evidence_event_unique`. Asserted on SQL text
+    /// because on a small test fixture the planner picks a nested-loop plan
+    /// that passes even if the evidence-side predicate is deleted.
     #[test]
     fn rsk_batch_sql_bounds_the_keyset_on_both_join_sides() {
         assert!(

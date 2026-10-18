@@ -24,10 +24,6 @@ function nodeFillVar(node) {
     : `var(--${kind})`;
 }
 
-// On-canvas legend overlay. Two groups: block kinds carry meaning through the
-// node fill color (same var(--kind) the blocks draw with), and edge rows carry
-// user-facing categories. The wire values remain raw edge kinds; the legend
-// deliberately collapses stale_entry/stale into one readable stale-branch row.
 function renderTreeLegend(legend) {
   const body = $("#tree-legend-body");
   if (!body) return;
@@ -44,9 +40,6 @@ function renderTreeLegend(legend) {
     `<div class="tree-legend-group-title">Edges</div>${edgeRows}`;
 }
 
-// Block-kind legend rows: the single "unknown" kind expands into the visible
-// strict/weak orphan signal; every other visible kind is one row keyed by its
-// structural fill-<kind> swatch.
 function blockLegendRows(nodeKinds) {
   const rows = [];
   for (const kind of nodeKinds) {
@@ -83,9 +76,6 @@ function edgeSwatch(kind) {
   return `<svg class="tree-legend-edge-swatch" viewBox="0 0 22 8" aria-hidden="true"><line class="tree-edge edge-${esc(kind)}" x1="1" y1="4" x2="21" y2="4" /></svg>`;
 }
 
-// Restore the persisted collapse state, populate the legend with the static
-// fallback (so it has content even if the first tree fetch errors), and wire the
-// collapse toggle. The tree payload's own legend refreshes the body on load.
 function wireTreeLegend() {
   const legend = $("#tree-legend");
   const toggle = $("#tree-legend-toggle");
@@ -105,10 +95,6 @@ function wireTreeLegend() {
 
 function renderTree(payload, svgElement, options = {}) {
   const svg = d3.select(svgElement);
-  // Per-SVG state: the laid-out nodes (so selection can draw the chain overlay
-  // without a relayout) and the persisted pan/zoom transform (so re-renders
-  // never snap the camera). Bound to the element so the fixture harness's
-  // multiple SVGs do not share a transform.
   const elState = svgElement.__mmmTree || (svgElement.__mmmTree = { byHash: new Map(), transform: null });
   svg.selectAll("*").remove();
   const width = Math.max(520, svgElement.clientWidth || 780);
@@ -152,8 +138,6 @@ function renderTree(payload, svgElement, options = {}) {
     .attr("aria-label", (node) => `${node.kind} ${node.height ?? "unheighted"} ${node.hash}`)
     .attr("transform", (node) => `translate(${node.x},${node.y})`)
     .on("click", (event, node) => {
-      // Stop the gesture reaching the zoom behavior so a select never pans or
-      // zooms the camera.
       event.stopPropagation();
       options.onSelect?.(node.hash);
     })
@@ -168,41 +152,21 @@ function renderTree(payload, svgElement, options = {}) {
     drawTreeBlock(d3.select(this), node);
   });
 
-  // Cache positioned nodes so selection can draw the chain overlay in place, and
-  // draw the current selection's overlay now (it survives a filter re-render).
   elState.byHash = new Map(nodes.map((node) => [node.hash, node]));
   drawSelectionOverlay(overlayLayer, options.selectedHash, elState.byHash);
   applyTreeHighlight(svgElement, options.highlightSources, options.highlightKinds, options.highlightClassifications, options.selectedHash);
 
-  // clickDistance(4) matches the background-click movement threshold below. d3-zoom
-  // defaults clickDistance to 0, so ANY pointer movement between mousedown and
-  // mouseup classifies a node click as a pan and arms a capture-phase click
-  // suppressor that swallows the node's own click (no selection, drawer never
-  // opens). A 4px tolerance lets a small trackpad micro-drag still register as a
-  // click; real pans (>4px) still suppress the trailing click so a pan never selects.
+  // clickDistance(4) lets a small trackpad micro-drag still register as a node click.
   const zoom = d3.zoom().scaleExtent([0.35, 3]).clickDistance(4).on("zoom", (event) => {
     zoomLayer.attr("transform", event.transform);
     elState.transform = event.transform;
   });
   svg.call(zoom);
-  // Cache the zoom behavior so a post-render one-shot center (centerCameraOnNode)
-  // can move the camera without a relayout.
   elState.zoom = zoom;
-  // Disable double-click-to-zoom: double-clicking a block should select, never
-  // move the camera.
   svg.on("dblclick.zoom", null);
-  // Clicking empty canvas deselects. Node clicks stopPropagation, so this only
-  // sees background clicks; the movement threshold ignores the click that ends a
-  // pan-drag so panning never clears the selection.
   let bgPointerDown = null;
   svg.on("pointerdown.bg", (event) => {
     bgPointerDown = [event.clientX, event.clientY];
-    // Mark a tree pointer interaction active so the auto-refresh timer defers its
-    // re-render until release: a renderTree() between this press and the resulting
-    // click would remove the pressed node's <g> (and its per-node click handler),
-    // silently dropping the selection. Only the primary button arms it: a
-    // right-click's pointerup can be swallowed by the context menu, which would
-    // otherwise strand the flag true and block auto-refresh indefinitely.
     if (event.button === 0) state.treePointerActive = true;
   });
   const endTreePointer = () => { state.treePointerActive = false; };
@@ -214,9 +178,6 @@ function renderTree(payload, svgElement, options = {}) {
     bgPointerDown = null;
     if (moved <= 4) options.onBackgroundClick?.();
   });
-  // Preserve the user's pan/zoom across re-renders (filter changes, data
-  // refreshes). Only anchor on the tip when there is no stored transform; the
-  // "Live tip" and "Refresh" actions clear it to force a re-anchor.
   if (elState.transform) {
     svg.call(zoom.transform, elState.transform);
   } else {
@@ -224,8 +185,6 @@ function renderTree(payload, svgElement, options = {}) {
   }
 }
 
-// Per-chain merge-mining evidence for one Bitcoin header, child-chain prefix
-// stripped, used both for the high-level count badge and the click-expand card.
 function childChainList(node) {
   return (node.child_chain_evidence || [])
     .map((item) => ({
@@ -257,9 +216,6 @@ function treeNodeTitle(node, chains) {
   return `${base} | ${label}`;
 }
 
-// One uniform block: kind carried by fill color, the height
-// inside, the Bitcoin miner below, and corner count badges for distinct child chains and
-// distinct sources (fork.observer-style).
 function drawTreeBlock(group, node) {
   const chains = childChainList(node);
   const chainCount = distinctChainCount(chains);
@@ -275,11 +231,6 @@ function drawTreeBlock(group, node) {
     .attr("rx", 8)
     .attr("fill", nodeFillVar(node));
 
-  // Height and miner name both sit inside the block; kind is conveyed by the
-  // fill color, so there is no separate kind label. An unresolved miner reads
-  // "unknown miner" rather than "Unknown" so it cannot be mistaken for the
-  // "unknown" parent kind. A fork-placed orphan (null btc_height) shows its
-  // derived placement height (prefixed "~" when approximate); see nodeLabel.
   group.append("text")
     .attr("class", "tree-block-height")
     .attr("x", 0)
@@ -288,10 +239,6 @@ function drawTreeBlock(group, node) {
     .attr("dominant-baseline", "central")
     .text(nodeLabel(node));
 
-  // Label with the best-available miner: display_miner_pool equals the strict
-  // bitcoin_miner_pool for coinbase-resolved blocks and carries the
-  // child-inferred pool for RSK-only stale blocks (basis "child_inferred"). The
-  // strict bitcoin_miner_pool is the defensive fallback for older payloads.
   const minerPool = node.display_miner_pool ?? node.bitcoin_miner_pool;
   const minerLabel = minerPool?.known && minerPool.name ? minerPool.name : "unknown miner";
   group.append("text")
@@ -327,9 +274,6 @@ function drawCornerBadge(group, cx, cy, value, klass) {
     .text(value);
 }
 
-// Draw the per-chain breakdown for the selected block as an overlay anchored to
-// the block. It lives in the pan/zoom layer (so it tracks the block) but is
-// drawn last and never reflows neighbors or moves the camera.
 function drawSelectionOverlay(overlayLayer, selectedHash, byHash) {
   overlayLayer.selectAll("*").remove();
   if (!selectedHash) return;
@@ -340,24 +284,17 @@ function drawSelectionOverlay(overlayLayer, selectedHash, byHash) {
 
   const title = `merge-mined chains (${distinctChainCount(chains)})`;
   const rows = chains.map((item) => {
-    // Child-chain block height (range when it spans more than one), comma
-    // formatted, no unit prefix. The event count is only shown when more than
-    // one child block commits to this header (e.g. an RSK uncle plus canonical).
     const range = item.min == null
       ? ""
       : (item.min === item.max ? formatInt(item.min) : `${formatInt(item.min)} to ${formatInt(item.max)}`);
     const meta = item.count > 1 ? `${range ? `${range}  ` : ""}×${item.count}` : range;
-    // Each row carries its chain's stable swatch color so the same chain reads
-    // the same everywhere a child-chain layer is added later.
     return { name: chainDisplayName(item.chain), meta, color: chainColor(item.chain) };
   });
 
   const rowH = 16;
   const padX = 11;
   const gap = 22;
-  const swatchPad = 14; // room for the per-chain color swatch left of the name
-  // Size the card to its content so the chain name and the right-aligned
-  // height/count never collide, whatever the value widths are.
+  const swatchPad = 14;
   let contentW = title.length * 6.3;
   rows.forEach((row) => {
     contentW = Math.max(contentW, swatchPad + row.name.length * 7 + gap + row.meta.length * 6.3);
@@ -403,11 +340,6 @@ function edgePath(source, target) {
   return `M${source.x},${source.y} C${midX},${source.y} ${midX},${target.y} ${target.x},${target.y}`;
 }
 
-// A `hidden` edge collapses an omitted run of canonical blocks into one dashed
-// link. Label each with the count it hides (carried in the payload as
-// hidden_count) so the size of the gap is legible without expanding the window.
-// The pill sits at the edge midpoint, which for our symmetric cubic curve is
-// just the midpoint of the two endpoints.
 function drawHiddenEdgeLabels(edgeLayer, edges, nodesByHash) {
   const labeled = edges.filter((edge) => edge.edge_kind === "hidden" && edge.hidden_count > 0);
   edgeLayer.selectAll("g.tree-edge-label")
@@ -441,12 +373,6 @@ function drawHiddenEdgeLabels(edgeLayer, edges, nodesByHash) {
     });
 }
 
-// Anchor the default view on the chain tip at full block size. The tip (rightmost,
-// highest block) sits dead-center at the same (width/2, height/2) point
-// centerCameraOnNode uses, so Live tip, the initial load, and the
-// anchorCameraOnTip fallback all center the tip the way a node click / navigator
-// jump centers its target; nothing is newer than the tip, so the right half of the
-// canvas is intentionally empty and older blocks extend left to be panned to.
 function anchorTreeAtTip(svg, zoom, nodes, width, height) {
   const scale = 1;
   const maxX = Math.max(...nodes.map((node) => node.x));
@@ -459,11 +385,6 @@ function anchorTreeAtTip(svg, zoom, nodes, width, height) {
   svg.call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
 }
 
-// Re-anchor the camera on the layout tip from the cached layout, no relayout.
-// Fallback for centerCameraOnNode when a requested center target is absent from
-// the rendered window, so the camera lands on the tip (as a fresh render would)
-// instead of stalling on a stale view. Returns false when there is no cached
-// layout to anchor on.
 function anchorCameraOnTip(svgElement) {
   const elState = svgElement?.__mmmTree;
   if (!elState?.zoom || !elState.byHash || elState.byHash.size === 0) return false;

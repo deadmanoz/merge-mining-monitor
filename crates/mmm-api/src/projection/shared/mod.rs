@@ -1,5 +1,4 @@
-//! Shared row types, loaders, mappers, and cross-endpoint DTOs for the
-//! projection submodules.
+//! Shared row types, loaders, mappers, and cross-endpoint DTOs (`fixtures/api/tree.json`, `block-*.json`).
 
 use std::collections::HashMap;
 
@@ -25,13 +24,8 @@ pub(crate) use competition::{
     COMPETITION_DELTA_SQL, COMPETITION_FROM_SQL, CompetitionCore, competition_core_select,
 };
 
-/// Split an orphan-class filter into the concrete `block.btc_orphan_class` db
-/// values and whether `pending` (the SQL `NULL` transient) is included. Every
-/// orphan-class-filtered query binds these two params and splices the STATIC
-/// fragment
-/// `b.btc_orphan_class = ANY($values::text[]) OR ($include_pending::boolean AND b.btc_orphan_class IS NULL)`,
-/// so no dynamic SQL string-building is needed. An empty `values` array matches
-/// nothing via `= ANY`, so a pending-only filter selects exactly the NULL rows.
+/// Split an orphan-class filter into `(db_values, include_pending)` for parameterized
+/// `b.btc_orphan_class = ANY($values::text[]) OR ($include_pending::boolean AND b.btc_orphan_class IS NULL)` predicates.
 pub(super) fn classification_filter_params(
     classification: &[Classification],
 ) -> (Vec<String>, bool) {
@@ -74,10 +68,6 @@ pub(super) fn admit_observed_bitcoin_source<T>(
     false
 }
 
-/// Wire-DTO: a Bitcoin miner pool reference. `known=false` with null id/slug
-/// and name "Unknown" is the unresolved sentinel (see unknown_pool). Serde
-/// field names are the locked contract (pinned by tree.json and block-*.json).
-/// PartialEq/Eq back tree-builder dedup.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct PoolObject {
     pub id: Option<i64>,
@@ -86,11 +76,6 @@ pub struct PoolObject {
     pub known: bool,
 }
 
-/// Wire-DTO: per-parent source-attestation summary (sorted source codes,
-/// distinct-source count, distinct auxpow child-chain count, live-observed
-/// flag, pow-validates-Bitcoin-target flag). Built by
-/// materialize::source_summary_from_sources. Serde field names are the locked
-/// contract (pinned by tree.json + block-*.json).
 #[derive(Debug, Clone, Serialize)]
 pub struct SourceSummary {
     pub sources: Vec<String>,
@@ -100,18 +85,12 @@ pub struct SourceSummary {
     pub pow_validates_btc_target: bool,
 }
 
-/// Wire-DTO: coarse evidence presence flags for a parent (live observation and
-/// AuxPoW evidence). Serde field names pinned by tree.json + block-*.json.
 #[derive(Debug, Clone, Serialize)]
 pub struct ProofState {
     pub has_live_observation: bool,
     pub has_auxpow_evidence: bool,
 }
 
-/// Wire-DTO: per-(source, child_chain) evidence rollup for a parent
-/// (event_count, min/max child height). Built by
-/// materialize::child_chain_evidence_from_events; array order is deterministic
-/// (BTreeMap-grouped). Serde field names pinned by tree.json + block-*.json.
 #[derive(Debug, Clone, Serialize)]
 pub struct ChildChainEvidence {
     pub source: String,
@@ -121,10 +100,6 @@ pub struct ChildChainEvidence {
     pub child_height_max: Option<i32>,
 }
 
-/// Wire-DTO: the stale-vs-canonical competition attached to a stale node
-/// (heights, both hashes, both pool objects, and the timing deltas). Built by
-/// tree::build and block::loaders. Serde field names pinned by tree.json +
-/// block-*.json; hashes are explorer-hex (display_hash).
 #[derive(Debug, Clone, Serialize)]
 pub struct TreeCompetition {
     pub btc_height: i32,
@@ -136,10 +111,6 @@ pub struct TreeCompetition {
     pub propagation_delta_s: Option<i32>,
 }
 
-/// Internal `source`-table row (id, code, kind, chain). NOT serialized; the
-/// projection derives wire shapes (SourceSummary, ChildChainEvidence) from
-/// sets of these. `kind` drives auxpow/live-chaintip classification in the
-/// summary fold.
 #[derive(Debug, Clone)]
 pub(super) struct SourceRecord {
     pub(super) id: i64,
@@ -148,13 +119,6 @@ pub(super) struct SourceRecord {
     pub(super) chain: Option<String>,
 }
 
-/// Internal merge_mining_event projection row (id, source, child_height,
-/// parent/prev hash bytes in wire order, header_time, derived ParentKind,
-/// pow-validates-Bitcoin-target, resolved child miner pool). NOT serialized.
-/// parent_hash/prev_hash are stored wire/internal byte order; never reverse
-/// here. `child_miner_pool` is the store-maintained per-event
-/// merge_mining_event.child_miner_pool_id (the namespace-agnostic "one distinct
-/// known child pool else NULL" collapse), used by the display-miner fallback.
 #[derive(Debug, Clone)]
 pub(super) struct EventRow {
     pub(super) id: i64,
@@ -168,11 +132,6 @@ pub(super) struct EventRow {
     pub(super) child_miner_pool: PoolObject,
 }
 
-/// Internal `block`-table projection row (hash/prev_hash wire bytes, height,
-/// kind, btc_orphan_class, header_time, resolved pool, plus the
-/// live_observed/core_attested/pow_validated evidence flags). NOT serialized.
-/// The three evidence flags gate Bitcoin-source admission and the
-/// pow-validates summary flag.
 #[derive(Debug, Clone)]
 pub(super) struct BlockRow {
     pub(super) hash: Vec<u8>,
@@ -187,18 +146,12 @@ pub(super) struct BlockRow {
     pub(super) pow_validated: bool,
 }
 
-/// Internal (parent_hash, source) pair for proof joins where only the attesting
-/// source matters (no per-event fields). Loaded by
-/// load_active_proofs_for_hashes. NOT serialized.
 #[derive(Debug, Clone)]
 pub(super) struct SourceOnlyRow {
     pub(super) parent_hash: Vec<u8>,
     pub(super) source: SourceRecord,
 }
 
-/// Load the full `source` registry keyed by code. Every projection that needs
-/// to admit the synthetic Bitcoin source or classify auxpow/live-chaintip
-/// kinds calls this once per request.
 pub(super) async fn load_sources(client: &Client) -> Result<HashMap<String, SourceRecord>> {
     let rows = client
         .query("SELECT id, code, kind, chain FROM source", &[])
@@ -218,10 +171,6 @@ pub(super) async fn load_sources(client: &Client) -> Result<HashMap<String, Sour
         .collect())
 }
 
-/// Map the canonical event-query column layout (id, source quad, child_height,
-/// parent/prev hash, header_time, kind, pow_validates, child miner pool trio)
-/// into EventRow, resolving the kind string via parent_kind_from_db. The
-/// positional column order is the contract shared with the event SELECTs.
 pub(super) fn map_event_rows(rows: Vec<tokio_postgres::Row>) -> Result<Vec<EventRow>> {
     rows.into_iter()
         .map(|row| {
@@ -247,10 +196,6 @@ pub(super) fn map_event_rows(rows: Vec<tokio_postgres::Row>) -> Result<Vec<Event
         .collect()
 }
 
-/// Map the canonical block-query column layout into BlockRow (hash, prev_hash,
-/// height, kind, evidence flags, pool columns, btc_orphan_class). The
-/// positional column order is the contract every block SELECT in tree/* must
-/// match.
 pub(super) fn rows_to_blocks(rows: Vec<tokio_postgres::Row>) -> Result<Vec<BlockRow>> {
     rows.into_iter()
         .map(|row| {
@@ -271,9 +216,6 @@ pub(super) fn rows_to_blocks(rows: Vec<tokio_postgres::Row>) -> Result<Vec<Block
         .collect()
 }
 
-/// Load non-revoked attestation proofs (source-only) for a set of parent
-/// hashes, honoring an empty-means-all source filter. revoked_at IS NULL is
-/// the active-evidence predicate; revoked rows never project.
 pub(super) async fn load_active_proofs_for_hashes(
     client: &Client,
     source_filter: &[String],
@@ -309,10 +251,6 @@ fn source_only_rows(rows: Vec<tokio_postgres::Row>) -> Vec<SourceOnlyRow> {
         .collect()
 }
 
-/// Build a PoolObject from (id, slug, name) columns: a NULL id yields the
-/// unknown_pool sentinel (known=false); a present id yields known=true with
-/// name defaulting to "Unknown" if NULL. The single mapping from pool join
-/// columns to the wire DTO.
 pub(super) fn pool_from_columns(
     id: Option<i64>,
     slug: Option<String>,
@@ -326,9 +264,6 @@ pub(super) fn pool_from_columns(
     })
 }
 
-/// The unresolved-pool sentinel PoolObject (null id/slug, name "Unknown",
-/// known=false). The shared implementation of the wire-locked unknown-pool object;
-/// pool_from_columns and direct-event projections both route through it.
 pub(super) fn unknown_pool() -> PoolObject {
     PoolObject {
         id: None,
@@ -338,20 +273,10 @@ pub(super) fn unknown_pool() -> PoolObject {
     }
 }
 
-/// How a parent's `display_miner_pool` was resolved. The wire value is the
-/// snake_case `as_str`; it is intentionally chain-agnostic (`child_inferred` never
-/// names a specific child chain, so the contract does not grow an arm per
-/// chain). The strict `bitcoin_miner_pool` is never mutated by this layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DisplayMinerBasis {
-    /// Strict Bitcoin coinbase attribution (`bitcoin_miner_pool` is known).
     BitcoinCoinbase,
-    /// Inferred from a single distinct known child-chain miner pool across the
-    /// parent's active merge-mining events (the merge-miner of the child block
-    /// is the miner of the Bitcoin parent).
     ChildInferred,
-    /// No strict coinbase pool and no unambiguous child inference (zero or
-    /// conflicting known child pools).
     Unknown,
 }
 
@@ -365,17 +290,8 @@ impl DisplayMinerBasis {
     }
 }
 
-/// Resolve the best-available display miner for a Bitcoin parent without
-/// touching the strict `bitcoin_miner_pool` fact. The strict Bitcoin-coinbase
-/// pool always wins when known. Otherwise fall back to the single distinct
-/// known pool across the parent's active child events' `child_miner_pool`
-/// (the store's namespace-agnostic per-event collapse), which is the
-/// merge-mining inference; zero or more than one distinct known pool collapses
-/// to unknown (mirroring `refresh_event_child_miner_pool_id`, no majority
-/// vote). Pure: a revoked event simply never reaches `child_pools`, so the
-/// label drops on revoke with no extra machinery. The single derivation shared
-/// by the tree and block-detail projections (rule of two), so a node label and
-/// its drawer can never disagree.
+/// Resolve display miner: `bitcoin_miner_pool` wins when known; otherwise infer from a single
+/// distinct known child pool across `child_pools` (collapsing to unknown if zero or conflicting).
 pub(super) fn resolve_display_miner<'a>(
     bitcoin_miner_pool: &PoolObject,
     child_pools: impl IntoIterator<Item = &'a PoolObject>,
@@ -394,7 +310,6 @@ pub(super) fn resolve_display_miner<'a>(
         match chosen {
             None => chosen = Some(pool),
             Some(seen) if seen.id == pool.id => {}
-            // A second distinct known child pool: ambiguous, collapse to unknown.
             Some(_) => return (unknown_pool(), DisplayMinerBasis::Unknown),
         }
     }
@@ -404,9 +319,6 @@ pub(super) fn resolve_display_miner<'a>(
     }
 }
 
-/// Group events by parent_hash (cloning into owned EventRows) for per-parent
-/// assembly in project_blocks. HashMap-keyed; callers that need deterministic
-/// order sort downstream.
 pub(super) fn group_events(events: &[EventRow]) -> HashMap<Vec<u8>, Vec<EventRow>> {
     let mut grouped: HashMap<Vec<u8>, Vec<EventRow>> = HashMap::new();
     for event in events {
@@ -418,8 +330,6 @@ pub(super) fn group_events(events: &[EventRow]) -> HashMap<Vec<u8>, Vec<EventRow
     grouped
 }
 
-/// Group source-only proof rows by parent_hash for per-parent assembly.
-/// HashMap-keyed; the proof analogue of group_events.
 pub(super) fn group_sources(rows: &[SourceOnlyRow]) -> HashMap<Vec<u8>, Vec<SourceOnlyRow>> {
     let mut grouped: HashMap<Vec<u8>, Vec<SourceOnlyRow>> = HashMap::new();
     for row in rows {
@@ -431,10 +341,6 @@ pub(super) fn group_sources(rows: &[SourceOnlyRow]) -> HashMap<Vec<u8>, Vec<Sour
     grouped
 }
 
-/// Parse a `btc_parent_kind` / `block.kind` db enum string into ParentKind,
-/// erroring on an unrecognized value (never silently coerced). API-local
-/// twin of mmm-read-model's parser; the api does not depend on the writer
-/// crate (constraint #1), and this maps five fixed db literals.
 pub(super) fn parent_kind_from_db(raw: &str) -> Result<ParentKind> {
     match raw {
         "canonical" => Ok(ParentKind::Canonical),
@@ -446,21 +352,13 @@ pub(super) fn parent_kind_from_db(raw: &str) -> Result<ParentKind> {
     }
 }
 
-/// Render 32 stored hash bytes (wire/internal order) as explorer-hex,
-/// reversing via the BlockHash newtype's Display. The single forward-order
-/// reversal point; never reverse bytes by hand. Errors if the bytea is not 32
-/// bytes.
 pub(super) fn display_hash(bytes: &[u8]) -> Result<String> {
     Ok(BlockHash::from_slice(bytes)
         .context("hash bytea is not 32 bytes")?
         .to_string())
 }
 
-/// Render a child block hash for display, honoring chain byte order. RSK child
-/// block hashes are stored and served in forward (hex) byte order, so they are
-/// hex-encoded as-is; every other chain's hash is internal/wire order and is
-/// reversed by `display_hash` for explorer/RPC hex. The byte-order invariant is
-/// locked, so this is the single place the RSK special-case lives.
+/// RSK child block hashes are stored and served in forward byte order; all other chains reverse via [`display_hash`].
 pub(super) fn display_child_block_hash(source_code: &str, bytes: &[u8]) -> Result<String> {
     if source_code == mmm_capture::source_registry::RSK_SOURCE_CODE {
         Ok(hex::encode(bytes))
@@ -469,10 +367,6 @@ pub(super) fn display_child_block_hash(source_code: &str, bytes: &[u8]) -> Resul
     }
 }
 
-/// Parse a normalized explorer-hex block hash back to stored wire/internal
-/// bytes (the inverse of display_hash) for hash-keyed lookups and keyset
-/// cursors. Uses the BlockHash newtype's to_byte_array, never a manual
-/// reverse.
 pub(super) fn stored_hash_from_display(hash: &str) -> Result<Vec<u8>> {
     Ok(BlockHash::from_str(hash)
         .context("parse normalized block hash")?
@@ -480,9 +374,6 @@ pub(super) fn stored_hash_from_display(hash: &str) -> Result<Vec<u8>> {
         .to_vec())
 }
 
-/// Construct the canonical 'API projection invariant failed' anyhow::Error
-/// (wraps details as JSON). Used at every projection invariant bail!, so the
-/// 500-path message format is uniform across tree/block/build/detail.
 pub(super) fn projection_invariant_error(details: &str) -> anyhow::Error {
     anyhow::anyhow!(
         "API projection invariant failed: {}",
@@ -501,14 +392,8 @@ pub(super) fn ensure_unknown_btc_target(
     Ok(())
 }
 
-/// Strict-BIP34 height lookup over base evidence, API-local.
-///
-/// DECLARED DUPLICATION of mmm-read-model's `load_strict_bip34_height` SQL
-/// shell (the pure evidence validator and constants are shared via
-/// mmm-capture): the api must not depend on the writer crate, and this read-only
-/// SELECT over merge_mining_event is squarely projection-query territory.
-/// Preserves the BIP34 activation-floor guard - a decoded height below
-/// activation is never usable strict evidence.
+/// Declared read-only copy of `mmm-read-model`'s `load_strict_bip34_height` SQL shell
+/// (shared validator in `mmm_capture::btc_orphan`) so `mmm-api` never depends on `mmm-read-model`.
 pub(crate) async fn load_strict_bip34_height<C: tokio_postgres::GenericClient>(
     client: &C,
     hash: &[u8],

@@ -1,7 +1,4 @@
-//! Bounded Elastos historical backfill. Intentionally divergent from the shared
-//! family runner: dual-endpoint self-verifying capture, the range cap
-//! foot-gun guard, and the per-height delay for the public endpoint. Env
-//! reads route through `chains::config`; behavior unchanged.
+//! Bounded Elastos historical backfill.
 
 use anyhow::{Context, Result};
 use tracing::{info, warn};
@@ -16,12 +13,8 @@ use crate::chains::elastos::capture::{
 use crate::chains::elastos::rpc::ElastosRpcClient;
 use crate::producer_runtime::{ProducerRuntime, run_post_backfill_repair};
 
-/// Default per-height delay for the Elastos backfill: 0 (no throttle) unless
-/// ELASTOS_RPC_BACKFILL_DELAY_MS is set (the public endpoint should be
-/// throttled by the operator).
 pub(crate) const ELASTOS_DEFAULT_BACKFILL_DELAY_MS: u64 = 0;
 
-/// Registry-dispatched live-poll entry point for Elastos.
 pub(crate) async fn poll(
     spec: &'static crate::chains::spec::ChainSpec,
     rt: ProducerRuntime,
@@ -39,18 +32,12 @@ pub(crate) async fn poll(
     poller.run_forever().await
 }
 
-/// Registry-dispatched backfill entry point for Elastos.
 pub(crate) async fn backfill(rt: ProducerRuntime, config: BackfillConfig) -> Result<()> {
     let rpc_config = crate::chains::config::elastos_rpc_config()?;
     let rpc = ElastosRpcClient::new(rpc_config)?;
     run_elastos_backfill(rt, rpc, config).await
 }
 
-/// Drive a bounded Elastos backfill over `[start, end]`: validate the range against
-/// the live tip, warn if it dips below the AuxPoW activation floor, self-verify and
-/// process each height (per-request throttle for the public endpoint), then run the
-/// post-backfill read-model repair over the range. Backfills never move
-/// `poll_cursor`. Bails (no silent gaps) if a height hits the Core-cache horizon.
 pub(crate) async fn run_elastos_backfill(
     rt: ProducerRuntime,
     rpc: ElastosRpcClient,
@@ -74,7 +61,6 @@ pub(crate) async fn run_elastos_backfill(
         );
     }
 
-    // Per-request throttle: 0 for the local node, set for the public endpoint.
     let delay_ms: u64 = crate::chains::config::elastos_backfill_delay_ms();
 
     let context = ElastosCaptureContext::new_with_classifier(&client, parent_classifier).await?;
@@ -153,8 +139,6 @@ mod tests {
     #[test]
     fn elastos_rejects_oversize_range_without_override() {
         let empty: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        // A range over the default cap is rejected unless ELASTOS_ALLOW_LARGE_BACKFILL=1
-        // (process-global env, so the override path is left to manual operation).
         let err = BackfillConfig::from_args_with_lookup(
             crate::chains::spec::by_id(crate::chains::spec::ChainId::Elastos),
             ["177000", "300000"],

@@ -1,9 +1,5 @@
-//! Spec-driven environment configuration for chain producers.
-//!
-//! This module is the ONLY place code under `src/chains/` reads process env,
-//! directly or indirectly. Shared implementations receive resolved values;
-//! `main.rs` builds non-chain runtime (DB, classifier) through the
-//! `producer_runtime` module, which owns `PG*` / `BITCOIN_RPC_*`.
+//! Spec-driven environment configuration for chain producers (`src/chains/`'s
+//! sole process-env boundary).
 
 use std::env;
 use std::fs;
@@ -16,25 +12,14 @@ use crate::poller::PollerConfig;
 use mmm_rpc as rpc_http;
 use rpc_http::{DEFAULT_RPC_TIMEOUT_SECS, parse_timeout_secs_from_lookup};
 
-/// The process-env lookup, THE single point where `src/chains/` touches
-/// `std::env`. Every other module under `chains/` receives resolved values or
-/// passes this function (or a test lookup) down.
 pub(crate) fn env_lookup(key: &str) -> Option<String> {
     env::var(key).ok()
 }
 
-/// Build the live-poll configuration for a chain from the process
-/// environment: `<PREFIX>_START_HEIGHT`, `<PREFIX>_POLL_INTERVAL_SECONDS`,
-/// `<PREFIX>_BATCH_SIZE`, and (policy permitting) `<PREFIX>_REORG_DEPTH`,
-/// falling back to the spec row's defaults.
 pub(crate) fn poller_config(spec: &ChainSpec) -> Result<PollerConfig> {
     poller_config_from_lookup(spec, env_lookup)
 }
 
-/// Pure variant of [`poller_config`] driven by an arbitrary lookup, so unit
-/// tests never mutate the global (and in Rust 2024 `unsafe`) process
-/// environment. Every chain reads `<PREFIX>_REORG_DEPTH` the same way; the
-/// spec row supplies the default.
 pub(crate) fn poller_config_from_lookup<F>(spec: &ChainSpec, lookup: F) -> Result<PollerConfig>
 where
     F: Fn(&str) -> Option<String>,
@@ -42,17 +27,10 @@ where
     PollerConfig::from_lookup(spec.env_prefix, spec.poller, lookup)
 }
 
-/// Build the bitcoind-family RPC transport config for a chain from the
-/// process environment, honoring the spec row's `RpcAuth` policy. Each
-/// chain's CURRENT auth contract is preserved verbatim (error strings
-/// included); see the contract tests below.
 pub(crate) fn bitcoind_rpc_config(spec: &ChainSpec) -> Result<BitcoindRpcConfig> {
     bitcoind_rpc_config_from_lookup(spec, env_lookup)
 }
 
-/// Pure variant of [`bitcoind_rpc_config`] driven by an arbitrary lookup.
-/// The cookie FILE read stays real (`fs::read_to_string`); only env access is
-/// injected.
 pub(crate) fn bitcoind_rpc_config_from_lookup<F>(
     spec: &ChainSpec,
     lookup: F,
@@ -66,11 +44,9 @@ where
         .as_ref()
         .with_context(|| format!("{} is not a bitcoind-family chain", spec.slug))?;
 
-    // Evaluation ORDER is part of each preserved contract: RequiredUserPass
-    // (Namecoin) historically resolved URL, then USER, then PASSWORD, each
-    // with its own `<VAR> is required` error; OptionalUserPassOrCookie
-    // (Syscoin/Fractal) resolved the auth pair FIRST (a one-sided pair bails
-    // before the URL check), then URL.
+    // Evaluation order is part of each preserved contract: RequiredUserPass
+    // resolves URL -> USER -> PASSWORD; OptionalUserPassOrCookie resolves the
+    // auth pair first, then URL.
     let (url, user, password) = match family.auth {
         RpcAuth::RequiredUserPass => {
             let url = lookup(&format!("{prefix}_RPC_URL"))
@@ -119,18 +95,10 @@ where
     })
 }
 
-/// Build the RSK JSON-RPC transport config from env. `RSK_RPC_URL` is
-/// required; HTTP basic auth via `RSK_RPC_USER` / `RSK_RPC_PASSWORD` is
-/// optional AND one-sided-tolerant (RSKj's default configuration exposes the
-/// JSON-RPC port unauthenticated on loopback, but ssh-tunnelled deployments
-/// often layer basic auth on top). The one-sided tolerance is today's
-/// contract, pinned by test.
 pub(crate) fn rsk_rpc_config() -> Result<crate::chains::rsk::rpc::RskRpcConfig> {
     rsk_rpc_config_from_lookup(env_lookup)
 }
 
-/// Pure variant of [`rsk_rpc_config`] driven by an arbitrary lookup so unit
-/// tests never touch the global process env.
 pub(crate) fn rsk_rpc_config_from_lookup<F>(
     lookup: F,
 ) -> Result<crate::chains::rsk::rpc::RskRpcConfig>
@@ -149,18 +117,10 @@ where
     })
 }
 
-/// Resolve the RSK backfill prefetch concurrency from
-/// `RSK_BACKFILL_FETCH_CONCURRENCY`, defaulting to
-/// `RSK_DEFAULT_BACKFILL_FETCH_CONCURRENCY` and clamping to `>= 1` so a `0`
-/// or empty value never stalls the pipeline. Contract (pinned by test):
-/// unset or blank falls back to the default; a non-empty malformed value is
-/// an ERROR, not a silent default.
 pub(crate) fn rsk_backfill_fetch_concurrency() -> Result<usize> {
     rsk_backfill_fetch_concurrency_from_lookup(env_lookup)
 }
 
-/// Pure variant of [`rsk_backfill_fetch_concurrency`]; carries the
-/// default/clamp/malformed-error contract documented on the wrapper.
 pub(crate) fn rsk_backfill_fetch_concurrency_from_lookup<F>(lookup: F) -> Result<usize>
 where
     F: Fn(&str) -> Option<String>,
@@ -177,15 +137,10 @@ where
     }
 }
 
-/// Build the Hathor REST client config from env. `HATHOR_RPC_URL` defaults
-/// to the public node1 API; `HATHOR_RPC_FALLBACK_URL` defaults to node2 and
-/// an EMPTY value disables the fallback (today's contract, pinned by test).
 pub(crate) fn hathor_rpc_config() -> Result<crate::chains::hathor::rpc::HathorRpcConfig> {
     hathor_rpc_config_from_lookup(env_lookup)
 }
 
-/// Pure variant of [`hathor_rpc_config`]; carries the URL-defaulting and
-/// empty-disables-fallback contract documented on the wrapper.
 pub(crate) fn hathor_rpc_config_from_lookup<F>(
     lookup: F,
 ) -> Result<crate::chains::hathor::rpc::HathorRpcConfig>
@@ -211,9 +166,6 @@ where
     })
 }
 
-/// `<PREFIX>_MAX_BACKFILL_RANGE` for chains with a spec range cap: malformed
-/// or unset values SILENTLY fall back to the spec default (today's contract;
-/// unlike RSK_BACKFILL_FETCH_CONCURRENCY, which errors on malformed input).
 pub(crate) fn max_backfill_range_from_lookup<F>(spec: &ChainSpec, lookup: F) -> i32
 where
     F: Fn(&str) -> Option<String>,
@@ -228,7 +180,6 @@ where
         .unwrap_or(default_max)
 }
 
-/// `<PREFIX>_ALLOW_LARGE_BACKFILL`: exact-`"1"` boolean.
 pub(crate) fn allow_large_backfill_from_lookup<F>(spec: &ChainSpec, lookup: F) -> bool
 where
     F: Fn(&str) -> Option<String>,
@@ -236,12 +187,10 @@ where
     exact_one_from_lookup(&format!("{}_ALLOW_LARGE_BACKFILL", spec.env_prefix), lookup)
 }
 
-/// Exact-`"1"` boolean (any other value, including `true`, is false).
 pub(crate) fn hathor_backfill_skip_holds() -> bool {
     exact_one_from_lookup("HATHOR_BACKFILL_SKIP_HOLDS", env_lookup)
 }
 
-/// The exact-`"1"` boolean policy shared by the backfill override flags.
 pub(crate) fn exact_one_from_lookup<F>(key: &str, lookup: F) -> bool
 where
     F: Fn(&str) -> Option<String>,
@@ -249,16 +198,10 @@ where
     lookup(key).is_some_and(|value| value == "1")
 }
 
-/// Build the Elastos JSON-RPC 2.0 transport config from env.
-/// `ELASTOS_RPC_URL` defaults to the self-hosted node; auth is an optional
-/// SET-TOGETHER pair (one without the other is an error - today's contract,
-/// pinned by test, deliberately different from RSK's one-sided tolerance).
 pub(crate) fn elastos_rpc_config() -> Result<crate::chains::elastos::rpc::ElastosRpcConfig> {
     elastos_rpc_config_from_lookup(env_lookup)
 }
 
-/// Pure variant of [`elastos_rpc_config`]; carries the defaulted-URL and
-/// set-together auth-pair contract documented on the wrapper.
 pub(crate) fn elastos_rpc_config_from_lookup<F>(
     lookup: F,
 ) -> Result<crate::chains::elastos::rpc::ElastosRpcConfig>
@@ -283,14 +226,10 @@ where
     })
 }
 
-/// `HATHOR_RPC_BACKFILL_DELAY_MS`: malformed or unset silently falls back to
-/// 200ms (today's contract, pinned by test).
 pub(crate) fn hathor_backfill_delay_ms() -> u64 {
     hathor_backfill_delay_ms_from_lookup(env_lookup)
 }
 
-/// Pure variant of [`hathor_backfill_delay_ms`]; malformed or unset silently
-/// falls back to 200ms.
 pub(crate) fn hathor_backfill_delay_ms_from_lookup<F>(lookup: F) -> u64
 where
     F: Fn(&str) -> Option<String>,
@@ -300,13 +239,10 @@ where
         .unwrap_or(200)
 }
 
-/// `ELASTOS_RPC_BACKFILL_DELAY_MS`: malformed or unset silently falls back.
 pub(crate) fn elastos_backfill_delay_ms() -> u64 {
     elastos_backfill_delay_ms_from_lookup(env_lookup)
 }
 
-/// Pure variant of [`elastos_backfill_delay_ms`]; malformed or unset silently
-/// falls back to `ELASTOS_DEFAULT_BACKFILL_DELAY_MS`.
 pub(crate) fn elastos_backfill_delay_ms_from_lookup<F>(lookup: F) -> u64
 where
     F: Fn(&str) -> Option<String>,

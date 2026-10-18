@@ -1,23 +1,5 @@
-//! `gen-pool-snapshot`: regenerate `data/pools/current.json` from the upstream
-//! `bitcoin-data/mining-pools` per-pool files.
-//!
-//! All field-mapping, slug-remap, ordering, JSON-formatting, and diff
-//! logic lives in the pure, unit-tested `pool_snapshot_gen` module; this binary
-//! only performs IO: read upstream files, verify the upstream tree is clean,
-//! write the output, and print a reviewable churn diff.
-//!
-//! Usage:
-//!   gen-pool-snapshot <upstream-pools-dir> [options]
-//!
-//! Options:
-//!   --generated-at <DATE>   Explicit generated_at value (default: today, UTC).
-//!                           Pin this for byte-for-byte reproduction.
-//!   --out-dir <DIR>         Output dir for current.json (default: data/pools).
-//!   --slug-map <FILE>       Pinned slug map (default: <out-dir>/slug-map.json).
-//!   --check                 Do not write; verify the committed current.json's
-//!                           POOL CONTENT matches a fresh regeneration and exit
-//!                           non-zero if it drifted. `--check` writes nothing.
-//!                           Useful for CI drift detection.
+//! `gen-pool-snapshot`: regenerate `data/pools/current.json` from upstream
+//! `bitcoin-data/mining-pools` per-pool files (or verify no drift with `--check`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -92,7 +74,6 @@ fn git(repo: &Path, args: &[&str]) -> Result<String> {
         .to_owned())
 }
 
-/// The upstream repo root is the parent of the `pools/` directory.
 fn upstream_repo_root(pools_dir: &Path) -> Result<PathBuf> {
     pools_dir
         .parent()
@@ -100,11 +81,8 @@ fn upstream_repo_root(pools_dir: &Path) -> Result<PathBuf> {
         .with_context(|| format!("cannot determine repo root for {}", pools_dir.display()))
 }
 
-/// `--check` drift gate: compare pool CONTENT, not provenance. Render the
-/// comparison snapshot with the COMMITTED file's own `generated_at`, so a
-/// different run date never false-fails, but any real pool, format, metadata,
-/// or ordering drift still shows up byte-for-byte. A missing committed file is
-/// itself drift.
+/// Compare pool content against the committed `current.json` using the
+/// committed file's `generated_at` so run-date differences do not false-fail.
 fn run_check_gate(
     pools: &[GeneratedPool],
     committed: &Option<PoolSnapshot>,
@@ -126,9 +104,6 @@ fn run_check_gate(
     print_diff(&diff);
 
     if committed_json != snapshot_json {
-        // Distinguish pool-content drift from formatting/provenance-only
-        // drift so the message does not send an operator hunting for a
-        // non-existent pool change.
         if diff.is_empty() {
             bail!(
                 "current.json is out of date: pool CONTENT is identical but the rendered \
@@ -156,9 +131,6 @@ fn main() -> Result<()> {
     let git_status_short = git(&repo, &["status", "--short", "--", "pools"])?;
     let working_tree_dirty = !git_status_short.is_empty();
 
-    // The committed repo carries the forward registry contract, not a frozen
-    // audit bundle for a dirty input checkout. Regenerate and check from a
-    // clean upstream tree so the source data is reviewable at its own origin.
     if working_tree_dirty {
         bail!(
             "upstream working tree is dirty (uncommitted/untracked pool files). Re-run on a \
@@ -166,7 +138,6 @@ fn main() -> Result<()> {
         );
     }
 
-    // Read every pool file currently on disk (tracked or not), in sorted order.
     let mut dir_entries: Vec<PathBuf> = fs::read_dir(&args.pools_dir)
         .with_context(|| format!("read pools dir {}", args.pools_dir.display()))?
         .map(|entry| entry.map(|entry| entry.path()))
@@ -212,7 +183,6 @@ fn main() -> Result<()> {
     let snapshot = build_validated_snapshot(&pools, &generated_at)?;
     let snapshot_json = render_snapshot_json(&snapshot).map_err(|err| anyhow::anyhow!("{err}"))?;
 
-    // Diff against the committed snapshot for a reviewable churn report.
     let committed_pools = committed
         .as_ref()
         .map(generated_pools_from_snapshot)
@@ -227,11 +197,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Build the snapshot and fail fast if it violates the resolver's own
-/// invariants (duplicate slugs / coinbase tags / payout addresses). This runs
-/// the same `validate_snapshot` the producers run at startup, so a bad regen
-/// fails at generation time (write AND --check) instead of crashing every
-/// producer (and `reclassify-pools`) later.
 fn build_validated_snapshot(
     pools: &[GeneratedPool],
     generated_at: &str,
@@ -243,8 +208,6 @@ fn build_validated_snapshot(
     Ok(snapshot)
 }
 
-/// Read the committed `current.json` (if any). A missing file yields `None`
-/// (everything is "added" for the diff; `--check` treats it as drift).
 fn read_committed_snapshot(current_path: &Path) -> Result<Option<PoolSnapshot>> {
     let Ok(json) = fs::read_to_string(current_path) else {
         return Ok(None);

@@ -1,18 +1,7 @@
-//! Read-model mutation commands.
+//! Read-model mutation entry points.
 //!
-//! Every parent-level base-evidence mutation (producer capture, revoke/restore,
-//! offline pool reclassification, Core canonical block writes) enters the read
-//! model through one of the four entry points here. The module owns the
-//! orchestration ritual that callers previously hand-rolled with divergent
-//! coverage: advisory lock ordering, classifier preclassification, the
-//! source-health before/after snapshot bracket, primary-diff ownership, the
-//! in-transaction reconcile, bounded rollback-and-retry on a reconcile lock-set
-//! change, and the post-commit dependent cascade.
-//!
-//! Callers describe WHAT changed (an upsert callback, a revocation flip, a set
-//! of event updates, a Core header + coinbase); this module decides HOW the
-//! derived state is kept consistent. Chain- and command-specific SQL stays in
-//! the injected callbacks, so byte-format details stay out of this module.
+//! Owns advisory lock ordering, preclassification, source-health brackets,
+//! lock-set retry loops, and post-commit dependent cascades for base-evidence writes.
 
 use anyhow::{Context, Result, bail};
 use bitcoin::BlockHash;
@@ -123,25 +112,17 @@ pub(crate) async fn lock_core_canonical_view_exclusive<C: GenericClient>(client:
     Ok(())
 }
 
-/// Proof token that a mutation wrapper snapshotted the primary parent's
-/// source-health contribution BEFORE its base-evidence mutation ran.
+/// Snapshot bracket for a primary parent's `source_health` contribution around a base-evidence mutation.
 ///
-/// Constructed only by [`PrimarySourceHealthBracket::open`] (which requires the
-/// caller to already hold the parent advisory lock) and consumed by
-/// [`PrimarySourceHealthBracket::close`], so the diff cannot be applied twice.
-/// [`super::reconcile_one_event_in_txn`] accepts wrapper-owned primary-diff
-/// claims only as `PrimaryDiff::Wrapper(&bracket)`: a caller cannot claim
-/// ownership without holding an opened bracket. The one property the type
-/// cannot prove, that `open` ran before the mutation, lives in the four
-/// audited entry points of this module instead of in every caller.
+/// Opened under the parent advisory lock before the mutation and consumed by [`Self::close`]
+/// after in-transaction reconciliation so the primary diff is applied once.
 pub(crate) struct PrimarySourceHealthBracket {
     parent_hash: Vec<u8>,
     before: ParentContribution,
 }
 
 impl PrimarySourceHealthBracket {
-    /// Snapshot the parent's current source-health contribution. The caller
-    /// MUST already hold the parent-hash advisory lock.
+    /// Snapshot the parent's current `source_health` contribution (caller must hold the parent advisory lock).
     pub(crate) async fn open<C: GenericClient>(client: &C, parent_hash: &[u8]) -> Result<Self> {
         let before =
             crate::source_health_sql::snapshot_parent_contribution(client, parent_hash).await?;
@@ -151,15 +132,11 @@ impl PrimarySourceHealthBracket {
         })
     }
 
-    /// The bracketed primary parent hash. `reconcile_one_event_in_txn` reads this
-    /// to skip the wrapper-owned hash when applying its synthesized
-    /// predecessor/competitor diffs, so the primary diff is never double-applied.
     pub(crate) fn parent_hash(&self) -> &[u8] {
         &self.parent_hash
     }
 
-    /// Snapshot the parent's post-mutation contribution and apply the diff to
-    /// `source_health`. Consumes the bracket.
+    /// Snapshot the post-mutation contribution and apply the diff to `source_health`.
     pub(crate) async fn close<C: GenericClient>(self, client: &C) -> Result<()> {
         let after =
             crate::source_health_sql::snapshot_parent_contribution(client, &self.parent_hash)
@@ -168,41 +145,24 @@ impl PrimarySourceHealthBracket {
     }
 }
 
-/// Who applies the primary parent's source-health diff during an in-transaction
-/// reconcile. Replaces the old invisible `primary_owned_by_caller: bool`.
+/// Ownership of the primary parent's `source_health` diff during an in-transaction reconcile.
 pub(crate) enum PrimaryDiff<'a> {
-    /// No wrapper: the reconcile snapshots before/after itself (cascade, bulk
-    /// repair, and reclassify paths, where the reconcile's `before` is
-    /// genuinely pre-mutation).
+    /// Reconcile snapshots before/after itself (cascade, bulk repair, and reclassify paths).
     Reconcile,
-    /// The caller owns source-health accounting for the wider mutation, through
-    /// either a later base-table rebuild or a multi-parent bracket, so this
-    /// reconcile skips its incremental primary diff.
+    /// Caller owns `source_health` accounting for the wider mutation (full rebuild or multi-parent bracket).
     BulkImport,
-    /// A wrapper opened a bracket BEFORE its own base mutation and owns the
-    /// primary diff; the reconcile must not diff the primary hash (it would
-    /// double-apply or use a post-mutation `before`). The reconcile still owns
-    /// the synthesized predecessor/competitor diffs, whose hashes never
-    /// overlap the wrapper-owned primary.
+    /// Mutation wrapper opened a bracket before its base write and owns the primary diff.
     Wrapper(&'a PrimarySourceHealthBracket),
 }
 
-/// A committed parent-level mutation whose dependent reconcile cascade has not
-/// run yet. Returned by [`write_core_canonical`] so its transaction commits
-/// before callers cascade dependents; everything else in this module cascades
-/// inline.
-///
-/// `#[must_use]` + the repo's `-D warnings` gate turn a forgotten cascade (the
-/// bug class fixed in 7d8f616) into a build failure.
+/// Committed parent-level mutation whose dependent reconcile cascade must be run via [`.cascade()`](Self::cascade).
 #[must_use = "a committed read-model mutation must cascade its dependents; call .cascade()"]
 pub struct CommittedParentMutation {
     changed_hashes: Vec<Vec<u8>>,
 }
 
 impl CommittedParentMutation {
-    /// Reconcile dependents of the committed change (descendant events, derived
-    /// child blocks, stale-competitor blocks) under the standard mutation cascade
-    /// budget.
+    /// Reconcile dependents of the committed change under `DEFAULT_CASCADE_BUDGET`.
     pub async fn cascade(
         self,
         client: &mut Client,
@@ -218,12 +178,6 @@ impl CommittedParentMutation {
     }
 }
 
-/// Run the post-commit dependent cascade for `changed_hashes`, or no-op on an
-/// empty set. The single inline-cascade tail shared by `capture_event`,
-/// `set_event_revocation`, and `update_parent_events`; `write_core_canonical`
-/// instead defers this via the `CommittedParentMutation` token. The empty-set
-/// short-circuit is the near / no-reconcile-anchor / no-membership-change
-/// case where nothing derived can have moved.
 async fn cascade_changed(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -266,25 +220,10 @@ async fn cascade_changed_with_nbits_table(
     }
 }
 
-/// Shared per-block capture transaction sequence for every AuxPoW producer.
+/// Shared per-block capture transaction sequence for AuxPoW producers.
 ///
-/// Thin producer-facing wrapper over `capture_event`. The read-model mutation
-/// module owns the orchestration (preclassify, lock ordering, the source-health
-/// bracket, the bounded lock-set-change retry loop, and the post-commit
-/// dependent cascade); the single chain-specific operation, the upsert, is
-/// injected as `upsert`.
-///
-/// The classified `payload` is passed INTO the callback rather than captured at
-/// the call site: the mutation module holds the only `&mut` borrow of `payload`
-/// (it needs it for classification), so a callback that also captured the
-/// payload would create overlapping borrows at the call site. Chain-specific
-/// extras (RSK's `rsk_merge_mining_evidence` sidecar) are captured by the
-/// callback and never appear in this signature, so no byte-format concern leaks
-/// into the shared callback.
-///
-/// `upsert` is [`AsyncFn`] (not `AsyncFnOnce`): the retry loop may invoke it more
-/// than once. It runs only for a parent the lineage gate admits; the outcome
-/// says whether it ran.
+/// Passes the classified `payload` into `upsert` (an [`AsyncFn`] invoked across lock-set retries)
+/// only when the lineage gate admits the parent.
 pub async fn capture_in_txn<F>(
     client: &mut Client,
     source_id: i64,
@@ -299,15 +238,8 @@ where
     capture_event(client, source_id, classifier, payload, chain_label, upsert).await
 }
 
-/// Write one historical observation inside a caller-owned chain transaction.
-///
-/// Historical publication imports intentionally stop at base evidence here.
-/// A parent whose read-model inputs changed is enqueued durably in the same
-/// transaction, then [`drain_historical_reconcile_queue`] rebuilds parent and
-/// dependent state after the chain snapshot commits. Provenance and
-/// presentation-only refreshes skip that redundant work. Keeping advisory
-/// read-model locks out of the chain transaction prevents a broad import from
-/// retaining one lock per parent until commit.
+/// Write one historical observation inside `txn` and enqueue its parent in
+/// `historical_reconcile_queue` when read-model inputs changed.
 pub async fn write_historical_base_in_transaction<F>(
     txn: &Transaction<'_>,
     source_id: i64,
@@ -335,11 +267,6 @@ where
 }
 
 /// Durably enqueue a historical parent for a fresh primary reconcile.
-///
-/// Callers that discover additional historical repair work after the base
-/// import must enqueue it before attempting the primary rebuild. The queue
-/// retains both an unfinished primary and its committed dependent-cascade
-/// seeds across process failures.
 pub async fn enqueue_historical_parent_reconcile<C: GenericClient>(
     client: &C,
     parent_hash: &[u8],
@@ -355,9 +282,7 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
     publication_ref: &str,
     chain: &str,
 ) -> Result<u64> {
-    // Lock every removal target in the same stable event-row order used by the
-    // historical queue worker. The saved parent hashes are enqueued only after
-    // deletion, preserving the shared event -> queue order.
+    // Lock removal targets in `e.id` order before enqueueing into `historical_reconcile_queue`.
     let rows = txn
         .query(
             "SELECT e.btc_parent_header_hash \
@@ -436,35 +361,9 @@ pub async fn rebuild_historical_source_health(client: &mut Client) -> Result<()>
         .context("commit historical source-health rebuild")
 }
 
-/// Capture one merge-mining event: the shared per-block transactional sequence
-/// for every producer.
-///
-/// Run the bounded retry loop: begin a transaction, take the child-height lock
-/// when the payload names a child height (the first lock, so a producer's
-/// child-displacement record inside `upsert` is ordered before every parent
-/// lock and two captures at one child height serialize), take the shared
-/// Core-view barrier, pass the parent through the lineage gate
-/// ([`lineage_gate`]), classify the parent (which may update `payload`),
-/// acquire the payload's read-model lock set plus the parent-hash lock, open
-/// the source-health bracket, perform the chain-specific `upsert`, reconcile
-/// the event in-transaction unless the parent is `near`, close the bracket,
-/// and commit. Dependents are cascaded after commit. Holding the shared barrier
-/// from classification through commit prevents a suffix switch from landing
-/// between those two points.
-///
-/// A parent the gate refuses is never classified or written: a foreign
-/// parent retracts any event this source held for the child block and
-/// commits that, a pending one rolls back.
-///
-/// The classified `payload` is passed INTO the callback rather than captured at
-/// the call site: this function holds the only `&mut` borrow of `payload` (it
-/// needs it for [`super::classify_payload_parent`]), so a callback that also
-/// captured the payload would create overlapping borrows at the call site.
-/// Chain-specific extras (RSK's `rsk_merge_mining_evidence` sidecar) are
-/// captured by the callback and never appear in this signature.
-///
-/// `upsert` is [`AsyncFn`] (not `AsyncFnOnce`): the retry loop may invoke it
-/// more than once.
+/// Capture one merge-mining event: acquire child-height lock (when present), shared
+/// Core-view barrier, run lineage gate, classify, lock parent read-model set, bracket
+/// `source_health`, run `upsert`, reconcile in-txn, and cascade dependents after commit.
 async fn capture_event<F>(
     client: &mut Client,
     source_id: i64,
@@ -504,12 +403,8 @@ where
         }
         let preclassified = classify_payload_parent(&txn, payload, classifier).await?;
         lock_payload_parent_read_model_in_txn(&txn, payload, preclassified.as_ref()).await?;
-        // Ensure the parent is locked even for near / target-failing payloads (the
-        // helper above no-ops for those), then open the source-health bracket
-        // BEFORE the upsert. The wrapper owns the primary parent diff for ALL
-        // kinds; near skips reconcile, and the injected upsert may also un-revoke
-        // the event in-txn (Hathor), which the bracket captures because it
-        // brackets the whole callback.
+        // Lock the parent even for near/target-failing payloads (which skip `lock_payload_parent_read_model_in_txn`)
+        // before opening the source-health bracket.
         lock_block_hash(&txn, &payload.btc_parent_header_hash).await?;
         let bracket =
             PrimarySourceHealthBracket::open(&txn, &payload.btc_parent_header_hash).await?;
@@ -551,7 +446,6 @@ where
     Ok(outcome)
 }
 
-/// The two directions of `set_event_revocation`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RevocationChange {
     Revoke { reason: String },
@@ -566,18 +460,12 @@ impl RevocationChange {
         }
     }
 
-    /// The `revoked_at IS NOT NULL` state this change drives toward.
     fn desired_revoked(&self) -> bool {
         matches!(self, Self::Revoke { .. })
     }
 }
 
-/// Revoke or restore one merge-mining event, keeping the event mutation and
-/// its parent read-model reconcile in one transaction.
-///
-/// Idempotent: changing an event already in the desired state is a no-op
-/// `Ok(())`. A concurrent flip between the UPDATE and the state re-check
-/// consumes a retry attempt.
+/// Revoke or restore one merge-mining event and reconcile its parent read model in one transaction.
 pub(crate) async fn set_event_revocation(
     client: &mut Client,
     event_id: i64,
@@ -600,9 +488,6 @@ pub(crate) async fn set_event_revocation(
             .with_context(|| format!("begin {op} reconcile transaction"))?;
         lock_core_classification_view_shared(&txn, None).await?;
         let attempt_preclassified = preclassify_event_parent(&txn, event_id, classifier).await?;
-        // Pre-acquire the reconcile lock set and open the source-health bracket
-        // BEFORE the revoked_at UPDATE (the membership change). This wrapper
-        // owns the primary diff.
         let event = load_event(&txn, event_id).await?;
         lock_event_for_source_health(&txn, &event, classifier, attempt_preclassified.clone())
             .await?;
@@ -695,25 +580,8 @@ async fn noop_revocation_is_complete(
     }
 }
 
-/// Apply a set of base-evidence UPDATEs to one parent's events and reconcile
-/// that parent's read model in the same transaction (the reclassify-pools
-/// path).
-///
-/// `mutate` runs inside the transaction and must be re-invocable: the bounded
-/// retry loop may run it again after a lock-set-change rollback. When
-/// `reconcile_anchor` is `Some(event_id)`, that event anchors the parent
-/// read-model rebuild (any active event of the parent works, they share
-/// `btc_parent_header_hash`); the reconcile owns the primary source-health
-/// diff, exactly like the bulk-repair paths, because base-evidence updates
-/// that need this path (pool attribution rows) never move source_health. When
-/// `None`, the UPDATEs commit without a reconcile (and therefore without a
-/// cascade).
-///
-/// Lock ordering matches revoke/restore: the advisory locks (the anchor
-/// event's full reconcile lock set, or the bare parent hash when there is no
-/// reconcile) are acquired BEFORE `mutate` takes any event row locks, so a
-/// concurrent producer holding the parent advisory lock can never deadlock
-/// against this path's row locks.
+/// Apply base-evidence UPDATEs (`mutate`) to one parent's events and optionally reconcile
+/// its read model (`reconcile_anchor`) in the same transaction, acquiring advisory locks before row locks.
 pub async fn update_parent_events<F>(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -736,10 +604,6 @@ where
         } else {
             lock_core_canonical_view_shared(&txn).await?;
         }
-        // Advisory locks first, row locks second (the global order every
-        // capture/revoke/restore transaction uses). For an anchored reconcile,
-        // pre-acquire the anchor's full reconcile lock set so the later
-        // in-reconcile acquisition is a re-entrant subset.
         match reconcile_anchor {
             Some(anchor_event_id) => {
                 let event = load_event(&txn, anchor_event_id).await?;
@@ -791,20 +655,14 @@ where
         })
 }
 
-/// One Bitcoin Core-attested canonical block to persist through
-/// `write_core_canonical`: the header + height define the parent row;
-/// `coinbase`, when present, drives the monotonic `btc_coinbase_status`
-/// advance toward `complete`.
+/// Bitcoin Core-attested canonical block payload for [`write_core_canonical`].
 pub struct CoreCanonicalWrite<'a> {
     pub header: &'a Header,
     pub height: i32,
     pub coinbase: Option<BitcoinCoreBlockCoinbase>,
 }
 
-/// Run one caller-supplied operation while holding the exclusive
-/// canonical-view barrier through commit. Ordinary Core writers use this for
-/// their final source/topology validation, row mutation, and cursor bookkeeping
-/// so no shared classifier or competing writer can change the scanned view.
+/// Run `operation` inside a transaction holding the exclusive canonical-view barrier through commit.
 pub async fn run_exclusive_core_canonical_view_transaction<T, F>(
     client: &mut Client,
     label: &str,
@@ -825,13 +683,8 @@ where
     Ok(output)
 }
 
-/// Write one Bitcoin Core-attested canonical block row (backbone sync and
-/// Core-block enrichment), with the parent advisory lock and source-health
-/// bracket around the upsert plus the injected in-transaction extra (the
-/// backbone's sync-state or coinbase-failure bookkeeping; a no-op elsewhere).
-///
-/// Returning the token instead of cascading inline keeps dependent work after
-/// commit, while `#[must_use]` makes the cascade structurally non-forgettable.
+/// Write one Core-attested canonical `block` row under the parent advisory lock and
+/// `source_health` bracket, returning a [`CommittedParentMutation`] token for post-commit cascade.
 pub async fn write_core_canonical<F>(
     client: &mut Client,
     write: CoreCanonicalWrite<'_>,
@@ -844,12 +697,7 @@ where
     write_core_canonical_validated(client, write, async |_txn| Ok(()), in_txn_extra, label).await
 }
 
-/// Write one Core canonical row after validating its source observation while
-/// holding the exclusive canonical-view barrier.
-/// The validator runs before any row mutation, so a suffix switch that committed
-/// after the caller fetched Core evidence cannot be undone by a delayed
-/// ordinary writer, and two catch-up writers cannot both fill the same empty
-/// height from different source views.
+/// Write one Core canonical row after running `validate` under the exclusive canonical-view barrier.
 pub async fn write_core_canonical_validated<V, F>(
     client: &mut Client,
     write: CoreCanonicalWrite<'_>,
@@ -877,8 +725,7 @@ where
     })
 }
 
-/// Locally revoke one merge-mining event and reconcile its parent read model
-/// in the same transaction. See `set_event_revocation`.
+/// Locally revoke one merge-mining event and reconcile its parent read model in the same transaction.
 pub async fn revoke_merge_mining_event(
     client: &mut Client,
     event_id: i64,
@@ -896,8 +743,7 @@ pub async fn revoke_merge_mining_event(
     .await
 }
 
-/// Restore one revoked merge-mining event and reconcile its parent read model
-/// in the same transaction. See `set_event_revocation`.
+/// Restore one revoked merge-mining event and reconcile its parent read model in the same transaction.
 pub async fn restore_merge_mining_event(
     client: &mut Client,
     event_id: i64,
@@ -906,15 +752,7 @@ pub async fn restore_merge_mining_event(
     set_event_revocation(client, event_id, RevocationChange::Restore, classifier).await
 }
 
-/// Mark a `block` row's Core coinbase fetch as failed, monotonically.
-///
-/// The `btc_coinbase_status <> 'complete'` guard makes this advisory: it will
-/// never demote a row that already reached `complete`, so a late failure record
-/// from a retried fetch cannot regress a good coinbase. Injected as the backbone's
-/// `in_txn_extra` inside `write_core_canonical` (and a no-op for every other
-/// canonical write), so the failure status lands in the same transaction as the
-/// header upsert under the parent advisory lock. Detailed failure text stays in
-/// `bitcoin_core_sync_state`, which is the sync-level diagnostics table.
+/// Mark a `block` row's Core coinbase fetch as failed without demoting an already `complete` status.
 pub async fn record_coinbase_failure<C: GenericClient>(
     client: &C,
     height: i32,

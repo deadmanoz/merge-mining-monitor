@@ -1,17 +1,5 @@
-//! Producer-side base-table SQL: event upserts, chain sidecars, poll
-//! cursor, source/pool seeding. Owns every producer-facing SQL statement
-//! against the base tables and never writes a derived table (the
-//! reconciler-authorized lockstep mutations of merge_mining_event live in
-//! mmm-read-model).
-//!
-//! `lib.rs` re-exports the stable public API
-//! (`mmm_store::fn`). Shared, table-generic SQL lives in root modules
-//! (`event`, `pool`, `poll_cursor`, `pending_reconcile`, `capture_error`,
-//! `bitcoin_core_header`, `known_stale`, `historical_import`,
-//! `child_displacement`); chain-specific SQL (capture writers, 1:1 evidence
-//! sidecars, per-chain event reads, the RSK pool-identity adapters) lives
-//! under `chains/<chain>.rs`. A new merge-mined chain is a new
-//! `chains/<chain>.rs`, not an append to one god file.
+//! Producer-side base-table SQL (`merge_mining_event`, 1:1 chain sidecars, attributions,
+//! cursors, capture errors, child-chain heads, and Core header cache). Never writes derived tables.
 
 mod bitcoin_core_header;
 mod capture_error;

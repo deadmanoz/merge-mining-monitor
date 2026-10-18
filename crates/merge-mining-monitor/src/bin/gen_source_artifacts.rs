@@ -1,16 +1,6 @@
-//! Generate (or `--check`) the curated-data artifacts: the baseline
-//! source-seed SQL and the frontend chain-metadata ES module (both from
-//! `src/source_registry`), and the frontend findings ES module (from
-//! `data/findings/` via `src/findings_registry`). Thin IO around
-//! `source_registry::generate` and `findings_registry`.
-//!
-//! Usage:
-//!   gen-source-artifacts            write the artifacts
-//!   gen-source-artifacts --check    verify the committed artifacts match the
-//!                                   curated data (CI drift gate); writes nothing
-//!
-//! Paths are resolved relative to the current directory, so run from the repo
-//! root (the `just gen-source-artifacts` target does).
+//! Generate (or `--check` for CI drift) the curated-data artifacts: baseline
+//! source-seed SQL, frontend chain-metadata ES module, and frontend findings
+//! ES module. Run from the repo root (`just gen-source-artifacts`).
 
 use std::fs;
 use std::path::Path;

@@ -1,14 +1,8 @@
-//! Namecoin-family AuxPoW parsing, plus Qbit's distinct native proof format
-//! (the `qbit` submodule).
+//! Namecoin-family AuxPoW and Qbit native proof parsing.
 //!
-//! Namecoin-family producers work from raw `getblock <hash> 0` bytes. Namecoin's
-//! AuxPoW payload sits between the 80-byte child header and the child
-//! transaction vector when the child version carries `VERSION_AUXPOW`.
-//!
-//! Hashes are stored as rust-bitcoin newtypes (`BlockHash`, `Txid`,
-//! `TxMerkleNode`). Bytes-in-memory are wire (internal) byte order matching
-//! Bitcoin Core's `uint256` convention; `Display`/`to_string()` reverses to
-//! produce the hex form used by RPC and block explorers.
+//! Hashes use rust-bitcoin newtypes (`BlockHash`, `Txid`, `TxMerkleNode`) in
+//! internal wire byte order (`to_byte_array()`), reversing only at display/RPC
+//! boundaries.
 
 use anyhow::{Context, Result, bail, ensure};
 use bitcoin::block::Header;
@@ -20,30 +14,15 @@ use bitcoin::{
 
 pub use bitcoin::TxOut;
 
-/// The child-header version bit (`1 << 8`) that flags a Namecoin-family block as
-/// carrying an AuxPoW payload after the 80-byte header. `parse_namecoin_block`
-/// and `parse_auxpow_header_blob` gate on `version & VERSION_AUXPOW != 0`;
-/// Elastos has no such bit (its child version is 0, AuxPoW is structural).
+/// Child-header version bit (`1 << 8`) flagging a Namecoin-family AuxPoW block.
 pub const VERSION_AUXPOW: i32 = 1 << 8;
 
-/// The outcome of parsing full `getblock <hash> 0` bytes for a Namecoin-family
-/// chain: either a plain child header (no AuxPoW version bit) or a fully parsed
-/// AuxPoW block. `parse_namecoin_block` returns this so the producer can skip
-/// non-AuxPoW blocks without allocating proof state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedNamecoinBlock {
-    /// A child header that does NOT carry the `VERSION_AUXPOW` bit: there is no
-    /// AuxPoW payload to capture, so the producer skips it.
     NonAuxpow(ParsedHeader),
-    /// A fully parsed AuxPoW block, boxed to keep the enum small (the payload is
-    /// large relative to the header-only variant).
     Auxpow(Box<ParsedAuxpowBlock>),
 }
 
-/// A parsed 80-byte Bitcoin block header (rust-bitcoin `Header`). Used for both
-/// child and parent headers across the AuxPoW types, and for the Elastos 80-byte
-/// prefix header (whose real block hash includes a trailing height field and is
-/// computed by the caller, NOT via [`hash`](ParsedHeader::hash)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedHeader {
     pub header: Header,
@@ -58,33 +37,22 @@ impl ParsedHeader {
         self.header.block_hash()
     }
 
-    /// The header `nTime` (seconds). Carried for Core-cache horizon
-    /// classification of the parent header by time.
     pub fn time(&self) -> u32 {
         self.header.time
     }
 
-    /// The header `nBits` compact target. Fed to `validates_target` for the
-    /// PoW-target gate and to the Core-cache difficulty classification.
     pub fn bits(&self) -> CompactTarget {
         self.header.bits
     }
 
-    /// Re-serialise the header to its 80-byte consensus encoding (wire order),
-    /// round-tripping it back to the stored `*_header` BYTEA.
     pub fn consensus_bytes(&self) -> Vec<u8> {
         serialize(&self.header)
     }
 }
 
-/// A fully parsed AuxPoW block: the child header plus its (optionally absent)
-/// coinbase identity, the parent header and parent coinbase identity, and the
-/// `CAuxPow` proof. `auxpow_bytes` is exactly the consumed `CAuxPow` region (no
-/// child-header prefix, no trailing tx vector); it is stored as
-/// `merge_mining_event.aux_merkle_proof` and re-decoded by `decode_auxpow_proof`
-/// on the read path. The `child_coinbase_*` fields are absent for
-/// header+CAuxPow-only blobs (Fractal, Elastos), where the producer supplies the
-/// child height from RPC instead.
+/// Parsed AuxPoW block. `auxpow_bytes` is the exact `CAuxPow` region stored in
+/// `merge_mining_event.aux_merkle_proof`; `child_coinbase_*` fields are `None`
+/// for header+`CAuxPow`-only blobs (Fractal, Elastos).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedAuxpowBlock {
     pub child_header: ParsedHeader,
@@ -102,11 +70,7 @@ pub struct ParsedAuxpowBlock {
     pub auxpow_bytes: Vec<u8>,
 }
 
-/// Child reward identity parsed from FULL child block bytes (Fractal's
-/// `getblock <hash> 0`), used to enrich a header+CAuxPow-only proof that lacked a
-/// child tx vector. Produced by [`parse_child_block_coinbase`] (which first
-/// verifies the child tx merkle root against its header) and attached via
-/// [`attach_child_block_coinbase`] under a child-header-hash equality gate.
+/// Child coinbase identity authenticated against full child block bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedChildBlockCoinbase {
     pub child_header: ParsedHeader,
@@ -130,12 +94,7 @@ pub struct AuxpowProof {
     /// because the parent block header is already serialised later in the
     /// payload. Do not assume equality with [`ParsedHeader::hash`].
     pub hash_block: BlockHash,
-    /// `CAuxPow::(vMerkleBranch, nIndex)`: proves the parent coinbase is
-    /// in the parent block's merkle tree.
     pub coinbase_branch: MerkleBranch,
-    /// `CAuxPow::(vChainMerkleBranch, nChainIndex)`: proves the child
-    /// block hash is in the merged-mining chain merkle tree committed by
-    /// the parent coinbase.
     pub chain_branch: MerkleBranch,
 }
 
@@ -153,14 +112,8 @@ pub use qbit::*;
 pub(crate) use reader::*;
 pub use verify::*;
 
-/// Parse full `getblock <hash> 0` bytes for a Namecoin-family chain (Namecoin,
-/// Syscoin). Layout: 80-byte child header, then if the child version carries
-/// `VERSION_AUXPOW` the `CAuxPow` payload, then the child transaction vector
-/// (varint count + transactions). Returns `NonAuxpow` when the version bit is
-/// clear. The child coinbase identity is read from the first child transaction;
-/// child outputs are NOT formatted as Bitcoin addresses (the embedded BTC pool
-/// snapshot carries the BTC payout addresses). `auxpow_bytes` captures only the
-/// `CAuxPow` byte range between header end and tx-vector start.
+/// Parse full `getblock <hash> 0` bytes (`[child header][CAuxPow][child txs]`)
+/// for a Namecoin-family chain.
 pub fn parse_namecoin_block(raw: &[u8]) -> Result<ParsedNamecoinBlock> {
     let (child_header, prefix) = read_classic_prefix(raw)?;
     let Some((auxpow, auxpow_end)) = prefix else {
@@ -180,8 +133,6 @@ pub fn parse_namecoin_block(raw: &[u8]) -> Result<ParsedNamecoinBlock> {
             txid: Some(coinbase.txid),
             script,
             outputs: coinbase.outputs,
-            // The embedded BTC pool snapshot carries BTC payout addresses.
-            // Avoid formatting Namecoin child outputs as Bitcoin addresses.
             output_addresses: Vec::new(),
         }
     } else {
@@ -198,10 +149,6 @@ pub fn parse_namecoin_block(raw: &[u8]) -> Result<ParsedNamecoinBlock> {
     )))
 }
 
-/// The child-coinbase-derived fields of a parsed AuxPoW block. Absent for a
-/// `[child header][CAuxPow]` blob that carries no child transaction vector
-/// (Fractal's `getblockheader <hash> false true`), where the producer supplies
-/// the child height from the RPC instead.
 struct ChildCoinbase {
     height: Option<i32>,
     txid: Option<Txid>,
@@ -211,8 +158,6 @@ struct ChildCoinbase {
 }
 
 impl ChildCoinbase {
-    /// All-absent child-coinbase fields, for header+CAuxPow-only blobs (Fractal,
-    /// Elastos) where the producer supplies the child height from RPC.
     fn absent() -> Self {
         Self {
             height: None,
@@ -224,10 +169,6 @@ impl ChildCoinbase {
     }
 }
 
-/// Assemble a [`ParsedAuxpowBlock`] from a parsed child header, the (possibly
-/// absent) child-coinbase fields, and the parsed CAuxPoW payload. Shared by
-/// [`parse_namecoin_block`] (full `getblock 0` bytes) and
-/// [`parse_auxpow_header_blob`] (header+CAuxPow-only blobs).
 fn assemble_auxpow_block(
     child_header: ParsedHeader,
     child: ChildCoinbase,
@@ -256,14 +197,8 @@ fn assemble_auxpow_block(
     }
 }
 
-/// Parse a `[child header][CAuxPow]` blob that has NO trailing child transaction
-/// vector, as returned by Fractal Bitcoin's `getblockheader <hash> false true`.
-///
-/// Unlike [`parse_namecoin_block`] (which works from full `getblock <hash> 0`
-/// bytes and requires the child tx vector), this stops at the end of the CAuxPow
-/// and leaves the child-coinbase fields absent; the caller supplies the child
-/// height from the RPC. The caller is responsible for any chain-specific
-/// exact-version gate before calling this (Fractal gates on `0x20240100`).
+/// Parse a `[child header][CAuxPow]` blob with no trailing child transaction
+/// vector (e.g. Fractal Bitcoin's `getblockheader <hash> false true`).
 pub fn parse_auxpow_header_blob(raw: &[u8]) -> Result<ParsedAuxpowBlock> {
     ensure!(
         raw.len() >= Header::SIZE,
@@ -291,9 +226,8 @@ pub fn parse_auxpow_header_blob(raw: &[u8]) -> Result<ParsedAuxpowBlock> {
     ))
 }
 
-/// Parse the full child block bytes used to enrich a header+CAuxPoW-only
-/// proof with child reward identity. The block transaction merkle root must
-/// match its header before any coinbase identity is trusted.
+/// Parse full child block bytes and verify the transaction merkle root against
+/// the header before extracting the child coinbase.
 pub fn parse_child_block_coinbase(raw: &[u8]) -> Result<ParsedChildBlockCoinbase> {
     parse_child_block_coinbase_with_height(raw, parse_bip34_height)
 }
@@ -332,10 +266,8 @@ fn parse_child_block_coinbase_with_height(
     })
 }
 
-/// Attach full child block coinbase fields to an already-parsed
-/// `[child header][CAuxPow]` proof. The hash-pair check prevents a producer
-/// from combining a proof for one Fractal child block with reward bytes from
-/// another.
+/// Attach authenticated child coinbase fields to a `[child header][CAuxPow]`
+/// proof after verifying the child header hashes match.
 pub fn attach_child_block_coinbase(
     parsed: &mut ParsedAuxpowBlock,
     child: ParsedChildBlockCoinbase,
@@ -353,24 +285,11 @@ pub fn attach_child_block_coinbase(
     Ok(())
 }
 
-/// Elastos merged-mining AuxPoW chain id: the slot the parent coinbase commits
-/// the Elastos block hash into. Verified against live blocks (the LCG slot
-/// derivation matches `nChainIndex` at ELA heights 360062 / 1500000 / 2000000).
 pub const ELASTOS_AUXPOW_CHAIN_ID: u32 = 1224;
-
-/// Maximum accepted Elastos `auxpow` blob size. A real Elastos CAuxPow is
-/// ~0.9-1.0 KB; this bounds an untrusted public-RPC response before parsing
-/// (defense in depth behind the RPC-client hex cap).
 pub const MAX_ELASTOS_AUXPOW_BYTES: usize = 4096;
-
-/// The merged-mining commitment magic `fabe6d6d` that marks the start of the
-/// `[magic][aux_merkle_root:32][tree_size:4][nonce:4]` blob inside a parent
-/// coinbase scriptSig.
 const AUXPOW_MAGIC: [u8; 4] = [0xfa, 0xbe, 0x6d, 0x6d];
 
-/// Parse an Elastos `auxpow` field: a CAuxPow-only blob (parent coinbase tx,
-/// hashBlock, the parent and chain merkle branches, parent header) with NO child
-/// transaction vector and NO child-header prefix.
+/// Parse an Elastos `CAuxPow`-only blob.
 ///
 /// Unlike [`parse_namecoin_block`] / [`parse_auxpow_header_blob`], the Elastos
 /// child header is NOT in the blob and is NOT a Bitcoin 80-byte header: an Elastos
@@ -391,10 +310,6 @@ pub fn parse_elastos_auxpow(
     );
     let mut reader = Reader::new(auxpow_blob);
     let auxpow = read_auxpow(&mut reader).context("parse Elastos CAuxPow blob")?;
-    // The Elastos `auxpow` field is exactly the CAuxPow region: a correct parse
-    // consumes it fully. Trailing bytes are malformed, and storing only the
-    // consumed region keeps `decode_auxpow_proof` (the /block read path) able to
-    // re-parse the stored `aux_merkle_proof`.
     ensure!(
         reader.is_eof(),
         "trailing bytes after the Elastos CAuxPow blob"
@@ -407,13 +322,7 @@ pub fn parse_elastos_auxpow(
     ))
 }
 
-/// The narrow stored-bytes read API for presentation layers.
-///
-/// Downstream code (the api projection, fixture-contract tests) decodes
-/// ALREADY-STORED CAuxPow blobs and coinbase scripts that this parser wrote.
-/// Re-exporting exactly that decoding API here names the sanctioned
-/// api -> capture edge: consumers depend on `auxpow::evidence`, never on the
-/// parser internals, so wire-format knowledge stays in one module.
+/// Stored-bytes read API for presentation layers (`mmm-api`).
 pub mod evidence {
     pub use super::{
         AuxMarker, AuxMerkleBranchDetail, TxOut, decode_aux_marker, decode_auxpow_proof,

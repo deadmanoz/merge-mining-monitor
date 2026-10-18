@@ -20,25 +20,9 @@ Options:
 USAGE
 }
 
-die() {
-    printf 'error: %s\n' "$*" >&2
-    exit 1
-}
-
-skip_check() {
-    printf 'historical source manifest check skipped: %s\n' "$*" >&2
-    exit 0
-}
-
-sha256_file() {
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | awk '{ print $1 }'
-    elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" | awk '{ print $1 }'
-    else
-        die "neither sha256sum nor shasum is available"
-    fi
-}
+PIN_CHECK_LABEL="historical source manifest"
+# shellcheck source=scripts/lib/research-pins.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/research-pins.sh"
 
 count_parent_only_rows() {
     python3 - "$1" <<'PY'
@@ -68,10 +52,6 @@ manifest_checksum_path() {
         *.json) printf '%s.sha256\n' "${1%.json}" ;;
         *) printf '%s.sha256\n' "$1" ;;
     esac
-}
-
-require_command() {
-    command -v "$1" >/dev/null 2>&1 || die "required command is unavailable: $1"
 }
 
 repo_dir="${MERGE_MINING_RESEARCH_DIR:-}"

@@ -24,47 +24,27 @@ use mmm_capture::identity_registry::{
 };
 use mmm_store::upsert_identity_registry;
 
-/// `pool_identity.namespace` for reward-address rows: the key both the loader and
-/// the lookup join on to map a payout address to a pool.
+/// `pool_identity.namespace` for Elastos reward addresses.
 pub const ELASTOS_REWARD_ADDRESS_NAMESPACE: &str = "elastos_reward_address";
-/// `pool_identity.namespace` for minerinfo rows (the block tag / coinbase payload).
+/// `pool_identity.namespace` for Elastos minerinfo tags.
 pub const ELASTOS_MINERINFO_NAMESPACE: &str = "elastos_minerinfo";
-/// `event_pool_attribution.source` for an UNMAPPED reward address (no
-/// `pool_identity` row); a mapped one is promoted to `CHILD_PAYOUT_REGISTRY_SOURCE`.
 pub const ELASTOS_RPC_REWARD_ADDRESS_SOURCE: &str = "elastos_rpc_reward_address";
-/// `event_pool_attribution.source` for an UNMAPPED minerinfo value; a mapped one is
-/// promoted to `CHILD_PAYOUT_REGISTRY_SOURCE`.
 pub const ELASTOS_RPC_MINERINFO_SOURCE: &str = "elastos_rpc_minerinfo";
 
-/// Provenance stamp recorded in every attribution's `details`: these identities are
-/// decoded from RPC JSON and are NOT authenticated by the CAuxPow blob.
 const IDENTITY_AUTHORITY: &str = "elastos_rpc_decoded_unverified_by_auxpow";
-/// Protocol payout sinks (asset/stake addresses), not miner payouts; their reward
-/// outputs are excluded from attribution.
+/// Protocol payout sinks (asset/stake addresses) excluded from miner attribution.
 const RESERVED_ADDRESS_PREFIXES: [&str; 2] = ["CRASSETS", "STAKEREWARD"];
 
-/// The embedded `data/pools/child-identities/elastos_minerinfo_registry.json`, `include_str!`-baked
-/// at compile time. A reviewed mapping of Elastos minerinfo labels to pool slugs;
-/// edited deliberately under review. Promoted only when the label is itself a
-/// documented Bitcoin coinbase signature for the pool the same-event BTC parent
-/// reconciled to (the identity is RPC-decoded, not AuxPoW-authenticated).
 const DEFAULT_ELASTOS_MINERINFO_REGISTRY_JSON: &str =
     include_str!("../../../../../data/pools/child-identities/elastos_minerinfo_registry.json");
 
-/// Validated `data/pools/child-identities/elastos_minerinfo_registry.json`: the schema version
-/// (only `1` is accepted) and the flat `minerinfo -> pool` entries.
-/// Provenance/evidence fields in the JSON are ignored on parse.
 #[derive(Debug, Clone, Deserialize)]
 struct ElastosMinerinfoRegistry {
-    /// Only `1` is accepted.
     schema_version: u32,
-    /// The minerinfo label -> pool mappings.
     entries: Vec<ElastosMinerinfoEntry>,
 }
 
-/// One reviewed minerinfo mapping. `minerinfo` is matched byte-for-byte against the
-/// RPC-decoded label (emoji and ASCII strings alike), so it is never trimmed or
-/// case-folded.
+/// Reviewed minerinfo mapping; `minerinfo` is matched byte-for-byte (never trimmed or case-folded).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 struct ElastosMinerinfoEntry {
     minerinfo: String,
@@ -73,10 +53,6 @@ struct ElastosMinerinfoEntry {
 }
 
 impl ElastosMinerinfoRegistry {
-    /// Parse and validate registry JSON via the shared
-    /// [`validate_identity_registry`] validator. The minerinfo identifier is a free
-    /// string (only non-empty/whitespace-free is required; matched byte-for-byte),
-    /// so the identifier validator is [`accept_any_identifier`].
     fn from_json_str(json: &str) -> Result<Self> {
         let registry: Self =
             serde_json::from_str(json).context("parse Elastos minerinfo registry JSON")?;
@@ -92,8 +68,6 @@ impl ElastosMinerinfoRegistry {
     }
 }
 
-/// View an [`ElastosMinerinfoEntry`] as a generic [`IdentityRegistryEntry`] for the
-/// shared validation/seed helpers; keeps the `minerinfo` field name.
 fn elastos_minerinfo_entry(entry: &ElastosMinerinfoEntry) -> IdentityRegistryEntry<'_> {
     IdentityRegistryEntry {
         identifier: &entry.minerinfo,
@@ -102,10 +76,6 @@ fn elastos_minerinfo_entry(entry: &ElastosMinerinfoEntry) -> IdentityRegistryEnt
     }
 }
 
-/// Seed Elastos minerinfo identities from explicit registry JSON: validate, then
-/// upsert pools + `elastos_minerinfo` `pool_identity` rows through the shared
-/// orchestrator (idempotent, non-remapping). This is the injectable core the
-/// production wrapper delegates to.
 async fn upsert_elastos_minerinfo_pool_identities_from_json(
     client: &Client,
     registry_json: &str,
@@ -131,9 +101,6 @@ async fn upsert_elastos_minerinfo_pool_identities_from_json(
     .context("seed Elastos minerinfo pool identities")
 }
 
-/// Seed the embedded Elastos minerinfo registry (production wrapper). Run at
-/// Elastos capture bootstrap and at replay before identities are loaded, so a
-/// fresh database resolves the reviewed labels on the first pass. Idempotent.
 pub(crate) async fn upsert_elastos_minerinfo_pool_identities(
     client: &Client,
     pool_ids_by_slug: &mut HashMap<String, i64>,
@@ -146,24 +113,15 @@ pub(crate) async fn upsert_elastos_minerinfo_pool_identities(
     .await
 }
 
-/// The embedded `data/pools/child-identities/elastos_reward_address_registry.json`, `include_str!`-baked
-/// at compile time. Maps an Elastos child coinbase reward address to a pool slug.
-/// The reward address is the reliable Elastos identity key (unlike minerinfo, which
-/// secpool stamps as `Antpool`); each mapping rests on the address consistently
-/// co-occurring with one pool's independently-attributed Bitcoin parent coinbase.
 const DEFAULT_ELASTOS_REWARD_REGISTRY_JSON: &str =
     include_str!("../../../../../data/pools/child-identities/elastos_reward_address_registry.json");
 
-/// Validated `data/pools/child-identities/elastos_reward_address_registry.json`: schema version (only
-/// `1`) and the flat `address -> pool` entries. Provenance/evidence fields ignored.
 #[derive(Debug, Clone, Deserialize)]
 struct ElastosRewardRegistry {
     schema_version: u32,
     entries: Vec<ElastosRewardEntry>,
 }
 
-/// One reviewed reward-address mapping. `address` is matched byte-for-byte against
-/// the RPC-decoded Elastos coinbase output address.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 struct ElastosRewardEntry {
     address: String,
@@ -172,9 +130,6 @@ struct ElastosRewardEntry {
 }
 
 impl ElastosRewardRegistry {
-    /// Parse and validate via the shared validator. Elastos mainnet addresses are base58
-    /// and start with `E`; that prefix gate plus byte-exact resolve-time matching is
-    /// the well-formedness guard (a malformed entry silently never matches).
     fn from_json_str(json: &str) -> Result<Self> {
         let registry: Self =
             serde_json::from_str(json).context("parse Elastos reward registry JSON")?;
@@ -192,13 +147,8 @@ impl ElastosRewardRegistry {
 
 /// Elastos mainnet standard-address base58check version byte (`E...` addresses).
 const ELASTOS_ADDRESS_VERSION: u8 = 0x21;
-/// Decoded length of an Elastos address: 1 version byte + 20-byte hash.
 const ELASTOS_ADDRESS_DECODED_LEN: usize = 21;
 
-/// Elastos reward-address well-formedness gate, fully checksum-validated so a
-/// curation typo fails loudly at seed time rather than becoming a mapping that
-/// silently never matches an observed reward address. A mainnet address
-/// base58check-decodes to 21 bytes under the standard version byte (`E...`).
 fn validate_elastos_reward_address(address: &str) -> Result<(), String> {
     let decoded =
         base58::decode_check(address).map_err(|err| format!("not base58check-decodable: {err}"))?;
@@ -217,7 +167,6 @@ fn validate_elastos_reward_address(address: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// View an [`ElastosRewardEntry`] as a generic [`IdentityRegistryEntry`].
 fn elastos_reward_entry(entry: &ElastosRewardEntry) -> IdentityRegistryEntry<'_> {
     IdentityRegistryEntry {
         identifier: &entry.address,
@@ -226,9 +175,6 @@ fn elastos_reward_entry(entry: &ElastosRewardEntry) -> IdentityRegistryEntry<'_>
     }
 }
 
-/// Seed the embedded Elastos reward-address registry. Run at Elastos capture
-/// bootstrap and at replay before identities are loaded (the minerinfo pattern),
-/// so the `elastos_reward_address` namespace resolves on the first pass. Idempotent.
 pub(crate) async fn upsert_elastos_reward_address_pool_identities(
     client: &Client,
     pool_ids_by_slug: &mut HashMap<String, i64>,
@@ -250,9 +196,6 @@ pub(crate) async fn upsert_elastos_reward_address_pool_identities(
     .context("seed Elastos reward address pool identities")
 }
 
-/// Build all child-side identity attributions for a block: reward-address rows from
-/// the coinbase outputs plus minerinfo rows from the block tag / coinbase payload.
-/// Each is promoted to a mapped pool only when a matching `pool_identity` exists.
 pub(crate) fn resolve_elastos_identity_attributions(
     block: &ElastosBlock,
     identities: &PoolIdentityLookup,
@@ -263,9 +206,6 @@ pub(crate) fn resolve_elastos_identity_attributions(
     attributions
 }
 
-/// Reward attributions from the coinbase (tx[0]) outputs: flatten each output's
-/// addresses, drop empty/reserved ones, dedupe per address while collecting the
-/// output indexes it appeared at, then resolve each against the identity lookup.
 fn reward_address_attributions(
     block: &ElastosBlock,
     identities: &PoolIdentityLookup,
@@ -321,9 +261,6 @@ fn reward_address_attributions(
         .collect()
 }
 
-/// Minerinfo attributions from the two candidate sources (the block-level
-/// `minerinfo` tag and the coinbase `payload.coinbasedata`), deduped by value with
-/// the source field(s) recorded, then resolved against the identity lookup.
 fn minerinfo_attributions(
     block: &ElastosBlock,
     identities: &PoolIdentityLookup,
@@ -361,9 +298,6 @@ fn minerinfo_attributions(
         .collect()
 }
 
-/// Fold one candidate minerinfo value into the observation list: trim, drop empty,
-/// and either merge the source field into an existing matching value or push a new
-/// observation. Keeps one row per distinct value with all contributing fields.
 fn push_minerinfo(
     observations: &mut Vec<MinerInfoObservation>,
     raw_value: Option<&str>,
@@ -392,16 +326,12 @@ fn push_minerinfo(
     }
 }
 
-/// True for a protocol-reserved payout sink (matches any `RESERVED_ADDRESS_PREFIXES`
-/// entry); such outputs are not miner rewards and are excluded.
 fn is_reserved_address(address: &str) -> bool {
     RESERVED_ADDRESS_PREFIXES
         .iter()
         .any(|prefix| address.starts_with(prefix))
 }
 
-/// Look up a `(namespace, identifier)` in the preloaded identity map, returning the
-/// pool ref when a `pool_identity` row maps it (drives the source/pool promotion).
 fn lookup_identity(
     identities: &PoolIdentityLookup,
     namespace: &str,
@@ -412,23 +342,16 @@ fn lookup_identity(
         .copied()
 }
 
-/// One distinct reward address and the coinbase output indexes it was seen at
-/// (recorded in `details.output_indexes` for provenance).
 struct RewardAddressObservation {
     address: String,
     output_indexes: Vec<i32>,
 }
 
-/// One distinct minerinfo value and which source field(s) carried it (recorded in
-/// `details.source_fields`).
 struct MinerInfoObservation {
     value: String,
     source_fields: Vec<&'static str>,
 }
 
-/// Builder inputs shared by both identity kinds, so [`elastos_identity_attribution`]
-/// constructs the row uniformly: namespace/match_kind, the matched value, the
-/// unmapped fallback source, the optional resolved identity, and the details JSON.
 struct ElastosIdentityAttributionInput {
     namespace: &'static str,
     match_kind: &'static str,
@@ -438,9 +361,6 @@ struct ElastosIdentityAttributionInput {
     details: Value,
 }
 
-/// Assemble one child-block attribution. A resolved identity sets the pool ids and
-/// promotes `source` to `CHILD_PAYOUT_REGISTRY_SOURCE`; an unresolved one keeps the
-/// per-kind unmapped source. Confidence is always Medium (RPC-decoded, unverified).
 fn elastos_identity_attribution(input: ElastosIdentityAttributionInput) -> EventPoolAttribution {
     let mapped = input.identity.is_some();
     EventPoolAttribution {

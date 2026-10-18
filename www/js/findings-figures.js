@@ -1,6 +1,3 @@
-// Data-native evidence figures for Findings. The generated corpus owns the
-// values and annotations; this module owns only scales and presentation.
-
 import { esc } from "./frontend-state.js?v=0.9.3";
 
 const DAY_MS = 86_400_000;

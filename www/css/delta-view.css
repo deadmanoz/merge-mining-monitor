@@ -1,9 +1,4 @@
-/* Layout for the header-time-delta view: the rail controls it adds, the stat
-   row, the plot/outlier split, and the full-range strip. Mark and axis styling
-   lives in chart.css. */
-
-/* Class, not id: an ID selector outranks the [data-view-scope] hide rule in
-   layout.css, which would leave the inactive panel laid out over the tree. */
+/* Class selector: an ID outranks layout.css [data-view-scope] hide rules. */
 .delta-main {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
@@ -38,8 +33,7 @@
   font-weight: 700;
 }
 
-/* controls.css styles `label:has(input[type="checkbox"])` at (0,1,2); the
-   doubled class outranks it so radio rows keep their inline layout. */
+/* Outrank controls.css `label:has(input[type="checkbox"])` specificity (0,1,2). */
 label.radio-row.radio-row {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
@@ -91,8 +85,6 @@ label.radio-row.radio-row {
   overflow-wrap: anywhere;
 }
 
-/* Two-value tiles (a range, a min/max pair) step down so they stay on one line
-   at the narrow end of the auto-fit grid. */
 .stat-tile[data-wide="true"] .stat-value {
   font-size: 15px;
 }
@@ -126,9 +118,7 @@ label.radio-row.radio-row {
   gap: 6px;
 }
 
-/* Pin the rows: hiding the legend removes it as a grid item, and without
-   explicit placement the canvas would slide up into the auto row and collapse
-   to its content height. */
+/* Explicit row placement keeps canvas in row 2 when #delta-legend is hidden. */
 #delta-legend { grid-row: 1; }
 #delta-canvas,
 #delta-table-panel { grid-row: 2; }
@@ -138,8 +128,6 @@ label.radio-row.radio-row {
   min-width: 0;
 }
 
-/* The outlier list is chart navigation, not block detail, so it lives beside
-   the plot rather than in the shared drawer. */
 .outlier-panel {
   grid-area: outliers;
   min-height: 0;
@@ -155,9 +143,6 @@ label.radio-row.radio-row {
   grid-template-rows: auto;
 }
 
-/* Collapsing has to give the column back, not just the rows: the plot is
-   re-rendered on toggle precisely so it can use the width, and a reserved 240px
-   of blank sidebar would make that pointless. */
 .delta-body:has(.outlier-panel[data-open="false"]) {
   grid-template-columns: minmax(0, 1fr) auto;
 }
@@ -272,9 +257,6 @@ label.radio-row.radio-row {
   line-height: 1.45;
 }
 
-/* What the panel says about the current selection: the route back to the tree
-   for any selection, plus, for one the filters exclude, that it is marked on the
-   strip but counted nowhere. */
 .selection-note,
 .hidden-selection {
   margin-bottom: 6px;
@@ -332,9 +314,7 @@ label.radio-row.radio-row {
     grid-template-areas: "plot" "outliers" "strip";
   }
 
-  /* #delta-canvas, not .delta-canvas: the context strip carries that class as
-     well, and this rule sits after .context-canvas so it was overriding the
-     strip's 118px at every width below the breakpoint. */
+  /* Target #delta-canvas so .context-canvas keeps its 118px height. */
   #delta-canvas {
     height: 380px;
   }

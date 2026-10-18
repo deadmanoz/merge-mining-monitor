@@ -1,17 +1,9 @@
-//! Pure sync-status classification for the `/api/v1/sources` projection.
-//!
-//! I/O-free: given a source's lifecycle/kind plus its poll-cursor and
-//! backbone-sync progress, derive the wire `SourceSyncStatus`. Kept apart from the
-//! SQL loaders in the parent module so the state machine is unit-testable without a
-//! database or a wall clock.
+//! Pure sync-status classification for `/api/v1/sources`.
 
 use mmm_capture::source_registry::{self, SourceKind, SourceLifecycle};
 
 use super::SourceSyncStatus;
 
-/// Decoded poll_cursor progress (height, optional target, updated-at epoch) for
-/// an auxpow source. Private input to `classify_source_sync`; the cursor age vs
-/// CAPTURE_PROGRESS_STALE_THRESHOLD_SECS drives the live/stale/catching_up state.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SourceCursorProgress {
     pub(super) height: i32,
@@ -19,10 +11,6 @@ pub(super) struct SourceCursorProgress {
     pub(super) updated_at_epoch: i64,
 }
 
-/// Decoded bitcoin_core_sync_state (contiguous mode) progress for the
-/// live-chaintip source: target tip, contiguous-complete height, last error, and
-/// updated-at epoch. Private input to `classify_bitcoin_core_backbone_sync`. A
-/// negative contiguous height means never-progressed (treated as not_started).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SourceBackboneProgress {
     pub(super) target_tip_height: Option<i32>,
@@ -32,24 +20,12 @@ pub(super) struct SourceBackboneProgress {
     pub(super) updated_at_epoch: i64,
 }
 
-/// Window (7 days) within which a source's `last_seen_at` counts as `fresh` for
-/// the top-level `status` field; older is `stale`. Distinct from the capture
-/// sync-progress staleness threshold below.
+/// 7-day evidence freshness window for top-level `status`.
 const SOURCE_FRESHNESS_THRESHOLD_SECS: i64 = 7 * 24 * 60 * 60;
-/// Cursor/backbone updated-at age (1 hour) past which a live source's `sync.state`
-/// is reported `stale`. Governs capture-progress freshness, NOT the 7-day
-/// evidence freshness used for the top-level `status`.
+/// 1-hour cursor/backbone staleness threshold for `sync.state`.
 const CAPTURE_PROGRESS_STALE_THRESHOLD_SECS: i64 = 60 * 60;
-/// The `sync.error_code` a live AuxPoW source reports while it holds an
-/// unresolved `capture_error` row. One wire code covers every stored
-/// `error_kind`: the kind (malformed proof or per-height failure) is operator
-/// diagnostics, this string is the wire contract. Distinct from the Bitcoin
-/// Core backbone's own error codes, which come from `bitcoin_core_sync_state`.
 const AUXPOW_CAPTURE_ERROR_CODE: &str = "auxpow_capture_error";
 
-/// Top-level source `status` wire value from `last_seen_at`: `not_started` when
-/// never seen, else `fresh`/`stale` against SOURCE_FRESHNESS_THRESHOLD_SECS
-/// (saturating, so a clock-skew future last_seen reads fresh).
 pub(super) fn source_status(last_seen_at: Option<i64>, reference_now: i64) -> &'static str {
     let Some(last_seen_at) = last_seen_at else {
         return "not_started";
@@ -61,9 +37,6 @@ pub(super) fn source_status(last_seen_at: Option<i64>, reference_now: i64) -> &'
     }
 }
 
-/// Resolve a source `code` through `source_registry::by_code` to its
-/// lifecycle+kind, then classify capture progress. An unregistered code maps to
-/// the `unknown`/`unknown` sync status (never panics on a stray DB row).
 pub(super) fn sync_for_source_code(
     code: &str,
     cursor: Option<SourceCursorProgress>,
@@ -84,13 +57,6 @@ pub(super) fn sync_for_source_code(
     )
 }
 
-/// Pure classification of a source's `sync` status from its registry
-/// lifecycle+kind and decoded cursor/backbone/capture-error progress. Non-live
-/// lifecycle classes return their corresponding empty state; live-chaintip uses
-/// the backbone path; live AuxPoW uses the cursor path (catching_up when below
-/// target, stale past CAPTURE_PROGRESS_STALE_THRESHOLD_SECS), with an
-/// unresolved capture error taking precedence over all three. Everything else
-/// is unknown. No I/O, so the inline tests pin every branch.
 fn classify_source_sync(
     lifecycle: SourceLifecycle,
     kind: SourceKind,
@@ -109,9 +75,6 @@ fn classify_source_sync(
         return SourceSyncStatus::empty("surveyed", "surveyed");
     }
     if lifecycle == SourceLifecycle::Catalogued {
-        // Catalogued chains have no producer and no recovered evidence, so they
-        // are non-operational: an explicit empty "catalogued" state rather than
-        // the generic "unknown" fallthrough (which reads as a stray DB row).
         return SourceSyncStatus::empty("catalogued", "catalogued");
     }
     if kind == SourceKind::LiveChaintip {
@@ -122,8 +85,6 @@ fn classify_source_sync(
         _ => return SourceSyncStatus::unknown(),
     };
     let Some(cursor) = cursor else {
-        // A source with no cursor row can still hold a capture error from an
-        // earlier run: the cursor is progress, the error row is coverage.
         let Some(height) = capture_error_height else {
             return SourceSyncStatus::empty(mode, "not_started");
         };
@@ -133,8 +94,7 @@ fn classify_source_sync(
             ..SourceSyncStatus::empty(mode, "error")
         };
     };
-    // An unresolved capture error outranks ordinary freshness: the cursor can
-    // be moving and current while the interval below it still has a hole.
+    // Unresolved capture error outranks ordinary freshness.
     let state = if capture_error_height.is_some() {
         "error"
     } else if reference_now.saturating_sub(cursor.updated_at_epoch)
@@ -161,11 +121,6 @@ fn classify_source_sync(
     }
 }
 
-/// Pure backbone-sync classification for the live-chaintip source: error (last
-/// error set) > stale (updated-at past threshold) > not_started/catching_up/live
-/// from contiguous-complete vs target tip. A negative contiguous height means
-/// never-progressed: state not_started and progress fields null. No I/O; pinned
-/// by the inline backbone tests.
 fn classify_bitcoin_core_backbone_sync(
     backbone: Option<SourceBackboneProgress>,
     reference_now: i64,
@@ -203,9 +158,6 @@ fn classify_bitcoin_core_backbone_sync(
 }
 
 impl SourceSyncStatus {
-    /// A `SourceSyncStatus` carrying only the given `mode`/`state` with all progress,
-    /// evidence, and error fields null. The shared constructor for the no-progress
-    /// branches (historical, not_started, unknown).
     fn empty(mode: &'static str, state: &'static str) -> Self {
         Self {
             mode,
@@ -219,7 +171,6 @@ impl SourceSyncStatus {
         }
     }
 
-    /// The `unknown`/`unknown` sync status used for unregistered codes.
     fn unknown() -> Self {
         Self::empty("unknown", "unknown")
     }

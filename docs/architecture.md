@@ -1,10 +1,7 @@
 # Architecture
 
-`merge-mining-monitor` is a Rust/Postgres service that collects evidence about
-Bitcoin stale blocks from merge-mined AuxPoW child chains, live Bitcoin Core
-observations, and recovered historical datasets. It turns heterogeneous source
-evidence into normalized base observations, then derives a read model for the
-API and frontend.
+`merge-mining-monitor` is a Rust/Postgres service that collects evidence about Bitcoin stale blocks from merge-mined AuxPoW child chains, live Bitcoin Core observations, and recovered historical datasets.
+It turns heterogeneous source evidence into normalized base observations, then derives a read model for the API and frontend.
 
 ## System Flow
 
@@ -12,9 +9,7 @@ API and frontend.
   <img src="img/system-data-flow.png" width="920" alt="Three-band Merge Mining Monitor data flow from capture sources through base evidence, read-model reconciliation, and read-only serving" />
 </p>
 
-The diagram shows the same ownership model as the text below: producers capture
-base evidence, the read-model reconciler is the only writer of derived tables,
-and the API serves those derived projections without writing capture state.
+The diagram shows the same ownership model as the text below: producers capture base evidence, the read-model reconciler is the only writer of derived tables, and the API serves those derived projections without writing capture state.
 
 ```text
 1. CAPTURE          offline parsers authenticate; producers write base tables
@@ -48,66 +43,11 @@ and the API serves those derived projections without writing capture state.
    capture_error ───────┘   (source capture-error state)
 ```
 
-The key design choice is that producers write base evidence only (stage 1).
-Two base tables retain operator-imported provenance:
-`historical_event_provenance` attaches normalized publication claims to events,
-and `known_stale_block` holds known-stale membership loaded by
-`import-known-stales`. The reconciler consults both as orphan-classification
-exclusion evidence. Reviewed body-invalid parents use the shared error
-catalogue. Migration `0029` drops the retired `body_invalid_stale` table;
-its importer and API projection path are removed.
-Historical import also writes `historical_reconcile_queue` in the base
-transaction. After commit, the read-model bulk-rebuilds bounded batches whose
-canonical classification is already proven by the Core-backed `block` row.
-Stale, error, unknown, or inconsistent parents retain the strict one-parent
-transaction path. Exact dependent-cascade seeds stay durable until their
-cascade succeeds. This preserves chain-level snapshot atomicity without
-retaining a transaction-level advisory lock for every parent in a broad
-publication.
-Before that write path, `import-all` streams publication provenance and compact
-event state from `mmm-store`. Research publication references are deliberately
-excluded from logical identity, while operator provenance is excluded from row
-matching and remains visible through authoritative base-event comparison. A
-complete match returns without Core access; incomplete derived state enters the
-same reconciliation path without replaying publication rows.
-Bounded Bitcoin Core reorg repair uses the same durability principle at a
-different ownership boundary. The read-model atomically replaces the canonical
-suffix and enqueues every old and new parent in
-`bitcoin_core_reconcile_queue`; the producer drains those dependent-cascade
-seeds only after commit and resumes them before later sync work after a restart.
-When maintenance lag leaves a divergent contiguous cursor below the normal
-live-tip view, the producer captures a second bounded view ending at that cursor
-and replaces only its divergent suffix. Ordinary follow batches retain ownership
-of the remaining catch-up distance to the live tip.
-The canonical spine therefore changes atomically. Dependent rows converge from
-a durable two-phase worklist, with the pending state exposed until every parent
-has been reconciled and its newly discovered dependents have been enqueued.
-Displaced Core and AuxPoW evidence remains queryable as stale.
-Core-backed classifiers and reconcilers take the shared header-cache lock before
-the shared canonical-view barrier. Suffix replacement takes the shared cache
-lock before holding the canonical barrier exclusively through commit; ordinary
-canonical-row writers and sync-state bookkeeping take only the exclusive
-canonical barrier. This ordering lets cache refresh drain a committed suffix
-queue before reclassification without a cache/canonical lock cycle. The suffix
-validates its pinned Core target after acquiring the barriers and again after
-staging the mutation.
-Producers additionally own `capture_error`, the durable record of a height a
-producer could not capture. It is operational state, not evidence: it is written
-before the failing height returns, cleared only when that same height is
-reprocessed successfully, and read directly by `/api/v1/sources`. It exists
-because the monotonic `poll_cursor` has no way to express a gap and
-`source_health` is derived state this crate does not write. `child_chain_head`
-is operational state of the same kind: the block a chain last carried at each
-processed height, written in the capture transaction so a trailing rescan can
-tell from one block-hash lookup whether the height changed. Only the
-producer's own rescan reads it; the read model and the API never do.
-Derived state (`block`, `attestation_proof`, `source_health`) is rebuilt from
-that evidence by the read-model reconciler (stage 2), so a bad event can be
-revoked and the affected parent block recomputed. Bitcoin Core feeds the
-reconciler two ways: `sync-bitcoin-core` seeds the canonical `block` backbone
-(written through the read-model mutation layer, which stays the sole writer of
-derived tables), and the parent classifier supplies the stale/orphan verdicts
-that annotate those rows.
+1. **CAPTURE (`mmm-capture`, `mmm-producers`, `mmm-store`)**: Offline parsers authenticate child-chain proofs and the Bitcoin lineage gate refuses non-Bitcoin SHA-256 parents before storage (`docs/capture.md`).
+   Producers and importers write only base evidence (`merge_mining_event`, sidecars, `event_pool_attribution`, `historical_event_provenance`, `known_stale_block`) plus producer operational state (`poll_cursor`, `capture_error`, `child_chain_head`) and durable reconcile queues (`docs/historical-ingest.md`).
+2. **RECONCILE (`mmm-bitcoin-core`, `mmm-read-model`)**: `mmm-read-model` is the sole writer of derived tables (`block`, `attestation_proof`, `source_health`).
+   It combines base evidence, `known_stale_block` exclusion gates, the pinned error catalogue, and Bitcoin Core classification / suffix replacement, draining `historical_reconcile_queue` and `bitcoin_core_reconcile_queue` in bounded transactions (`docs/data-model.md`).
+3. **SERVE (`mmm-api`)**: The read-only HTTP server projects the derived tables, `capture_error` status, and the persisted Core-header cache to `/api/v1/*` and serves the static `www/` frontend without calling Bitcoin Core RPC.
 
 ## Crates
 
@@ -145,27 +85,14 @@ justfile           # db, build, test, lint, serve, sync, poll, and backfill targ
 - `mmm-api` does not import producer internals.
 - `mmm-api` may read the persisted Core-header cache through `mmm-store`; it never calls Core RPC.
 - Bitcoin Core access is isolated in `mmm-bitcoin-core`.
-- Hash byte order follows rust-bitcoin newtypes: store `to_byte_array()` bytes
-  directly and use display/RPC hex only at presentation boundaries.
-- Adding a Namecoin-family source should extend the source registry and shared
-  producer path, not clone a sibling chain module.
+- Hash byte order follows rust-bitcoin newtypes: store `to_byte_array()` bytes directly and use display/RPC hex only at presentation boundaries.
+- Adding a Namecoin-family source should extend the source registry and shared producer path, not clone a sibling chain module.
 
 ## Public Interfaces
 
-- CLI commands are exposed by `crates/merge-mining-monitor/src/main.rs` and
-  documented through `justfile`.
+- CLI commands are exposed by `crates/merge-mining-monitor/src/main.rs` and documented through `justfile`.
 - Runtime API behavior is documented in `docs/api-contract.md`.
-- Product and UI behavior live in `docs/product-brief.md` and
-  `docs/ui-model.md`.
-- Generated source metadata is owned by `crates/mmm-capture/src/source_registry`
-  and emitted into `migrations/0002_seed_sources.sql` and
-  `www/js/source-registry.generated.js`.
-- The generated findings corpus is owned by
-  `crates/mmm-capture/src/findings_registry/mod.rs`, which validates the
-  hand-authored `data/findings/` files and emits
-  `www/js/findings.generated.js`.
-
-Strict classic AuxPoW authentication is owned by `mmm-capture::auxpow`.
-The producer family spec independently selects RPC dialect, raw proof
-authentication and capture-failure policy. This keeps byte-layout knowledge
-out of acquisition/persistence orchestration.
+- Product and UI behavior live in `docs/ui-model.md`.
+- Generated source metadata is owned by `crates/mmm-capture/src/source_registry` and emitted into `migrations/0002_seed_sources.sql` and `www/js/source-registry.generated.js`.
+- The generated findings corpus is owned by `crates/mmm-capture/src/findings_registry/mod.rs`, which validates the hand-authored `data/findings/` files and emits `www/js/findings.generated.js`.
+- Strict classic AuxPoW authentication is owned by `mmm-capture::auxpow`; the producer family spec independently selects RPC dialect, raw proof authentication, and capture-failure policy.

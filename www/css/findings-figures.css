@@ -1,16 +1,10 @@
-/* Findings evidence figures: summary strip, reusable series marks, and event
-   timelines. Kept separate from article/feed CSS so both stay below the
-   frontend architecture budget. */
-
 .finding-figure {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-alt);
   display: grid;
   gap: 0;
-  /* The fixed-height findings grid may shrink an overflow-hidden item below
-     its contents. Preserve the intrinsic figure height so axes and captions
-     stay inside the rounded container and the parent scroller owns overflow. */
+  /* Prevent fixed-height parent grid from shrinking figure below intrinsic height. */
   height: max-content;
   width: 100%;
   max-width: 900px;

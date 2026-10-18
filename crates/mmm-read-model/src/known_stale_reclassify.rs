@@ -1,14 +1,4 @@
-//! Retroactive known-stale demotion: re-evaluate EXISTING orphan-classified
-//! `block` rows against the known-stale membership.
-//!
-//! The `compute_block_orphan_class` membership gate keeps NEW classifications
-//! from labelling a known stale strict/weak, but a database populated before the
-//! membership was imported can still hold contaminated rows (the production bug:
-//! a known stale served as `strict_btc_orphan`). This pass finds every
-//! `kind = 'unknown'` block that is strict/weak AND in the membership and demotes
-//! it to `excluded`, maintaining `source_health` through the same before/after
-//! snapshot bracket the reconciler uses. Idempotent (a second run finds nothing)
-//! and Core-free (the demotion is a pure membership fact, not a re-classification).
+//! Retroactive known-stale demotion for `unknown` blocks in `known_stale_block`.
 
 use anyhow::{Context, Result, bail};
 use tokio_postgres::{Client, GenericClient};
@@ -19,8 +9,6 @@ use crate::{cli_args, lock_block_hash};
 
 const DEFAULT_BATCH_SIZE: i64 = 100;
 
-/// Config for `run_reclassify_known_stales`. `batch_size` bounds the page of
-/// affected parents pulled per iteration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReclassifyKnownStalesConfig {
     pub batch_size: i64,
@@ -35,8 +23,6 @@ impl Default for ReclassifyKnownStalesConfig {
 }
 
 impl ReclassifyKnownStalesConfig {
-    /// Parse `reclassify-known-stales` CLI flags via the shared `cli_args`
-    /// flag-walk. Rejects non-positive `--batch-size`.
     pub fn from_args<I, S>(args: I) -> Result<Self>
     where
         I: IntoIterator<Item = S>,
@@ -59,19 +45,13 @@ impl ReclassifyKnownStalesConfig {
     }
 }
 
-/// Outcome of one `run_reclassify_known_stales` pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct KnownStaleReclassifySummary {
-    /// Rows in `known_stale_block` at the start of the pass.
     pub membership_size: i64,
-    /// Contaminated `unknown` blocks (strict/weak AND in the membership) demoted
-    /// to `excluded` by this pass.
     pub demoted: u64,
 }
 
 impl KnownStaleReclassifySummary {
-    /// Print the one-line operator-facing summary. Demotions are surfaced loudly
-    /// so a non-zero count is obvious in operator logs.
     pub fn print(&self) {
         println!(
             "reclassify-known-stales: membership_size={} demoted_to_excluded={}",
@@ -80,16 +60,7 @@ impl KnownStaleReclassifySummary {
     }
 }
 
-/// Demote every contaminated orphan-classified block to `excluded`.
-///
-/// If the membership is EMPTY this is the degraded state the research repo warns
-/// about: nothing can be demoted, so it warns loudly and returns without a scan
-/// rather than silently reporting success. Otherwise it pages contaminated
-/// parents (strict/weak `unknown` blocks whose hash is in `known_stale_block`)
-/// and demotes each inside its own transaction, holding the parent advisory lock
-/// and applying the `source_health` before/after diff so the strict/weak
-/// counters stay consistent. No cascade is needed: `btc_orphan_class` is a leaf
-/// property no dependent row keys on.
+/// Demote every strict/weak `unknown` block present in `known_stale_block` to `excluded`.
 pub async fn run_reclassify_known_stales(
     client: &mut Client,
     config: ReclassifyKnownStalesConfig,
@@ -139,12 +110,8 @@ pub async fn run_reclassify_known_stales(
     })
 }
 
-/// Repair strict/weak orphan rows for membership hashes in an existing
-/// transaction.
-///
-/// The caller must hold the parent advisory locks for `hashes` before changing
-/// the membership. This keeps the membership update, derived demotion, and
-/// source-health delta atomic for `import-known-stales`.
+/// Demote strict/weak orphan rows for `hashes` inside an existing transaction.
+/// Caller must hold the parent advisory locks for `hashes`.
 pub async fn reclassify_known_stale_hashes_in_transaction<C: GenericClient>(
     client: &C,
     hashes: &[Vec<u8>],
@@ -169,9 +136,6 @@ pub async fn reclassify_known_stale_hashes_in_transaction<C: GenericClient>(
     Ok(demoted)
 }
 
-/// Demote one parent's block row inside a transaction, maintaining
-/// `source_health`. Returns the rows demoted (0 if a concurrent pass already
-/// cleared it, keeping the outer scan safe to re-run).
 async fn demote_one(client: &mut Client, hash: &[u8]) -> Result<u64> {
     let txn = client
         .transaction()

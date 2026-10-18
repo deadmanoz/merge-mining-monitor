@@ -1,8 +1,7 @@
 //! Chain-aware child payout address formatting for AuxPoW child outputs.
 //!
-//! These helpers intentionally do not use `bitcoin::Address`: Namecoin and
-//! Syscoin have their own address parameters, and formatting child outputs as
-//! Bitcoin addresses would create false pool identities.
+//! Uses chain-specific base58/bech32 parameters rather than `bitcoin::Address`
+//! so Namecoin and Syscoin outputs never collide with Bitcoin pool identities.
 
 use std::collections::HashMap;
 
@@ -14,12 +13,6 @@ use crate::source_registry::{
     FRACTAL_SOURCE_CODE, NAMECOIN_SOURCE_CODE, QBIT_SOURCE_CODE, SYSCOIN_SOURCE_CODE,
 };
 
-/// Per-chain address-encoding parameters for formatting an AuxPoW child
-/// coinbase output as a chain-native address (NOT a Bitcoin address). Carries
-/// the base58check version bytes for P2PKH and P2SH and the bech32 HRP for
-/// witness outputs, plus the `event_pool_attribution.namespace` under which a
-/// matched payout address is keyed. One const per supported child chain;
-/// resolved from a source code via [`params_for_source_code`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChildPayoutParams {
     pub namespace: &'static str,
@@ -38,25 +31,12 @@ impl ChildPayoutParams {
     }
 }
 
-/// `event_pool_attribution.namespace` for a Namecoin child coinbase payout
-/// address. Persisted string key, bound to the matched address as
-/// `(namespace, matched_value)`. Do not rename without a coordinated data
-/// migration.
 pub const NAMECOIN_PAYOUT_ADDRESS_NAMESPACE: &str = "namecoin_payout_address";
-/// `event_pool_attribution.namespace` for a Syscoin child coinbase payout
-/// address. Persisted string key; do not rename without a data migration.
 pub const SYSCOIN_PAYOUT_ADDRESS_NAMESPACE: &str = "syscoin_payout_address";
-/// `event_pool_attribution.namespace` for a Fractal Bitcoin child coinbase
-/// reward address. Persisted string key; do not rename without a data
-/// migration. (Fractal pays the reward to a standard bc1 address, hence the
-/// reward rather than payout wording.)
 pub const FRACTAL_REWARD_ADDRESS_NAMESPACE: &str = "fractal_reward_address";
 /// Qbit native P2MR payout address, kept separate from Bitcoin parent evidence.
 pub const QBIT_PAYOUT_ADDRESS_NAMESPACE: &str = "qbit_payout_address";
 
-/// Namecoin mainnet address parameters: base58 P2PKH version 52 (`M...`), P2SH
-/// version 13, bech32 HRP `nc`. Verified against the formatting test vectors in
-/// this file.
 pub const NAMECOIN_CHILD_PAYOUT_PARAMS: ChildPayoutParams = ChildPayoutParams {
     namespace: NAMECOIN_PAYOUT_ADDRESS_NAMESPACE,
     p2pkh_version: Some(52),
@@ -65,9 +45,6 @@ pub const NAMECOIN_CHILD_PAYOUT_PARAMS: ChildPayoutParams = ChildPayoutParams {
     witness_program: None,
 };
 
-/// Syscoin mainnet address parameters: base58 P2PKH version 63 (`S...`), P2SH
-/// version 5 (`3...`), bech32 HRP `sys`. Verified against the formatting test
-/// vectors in this file.
 pub const SYSCOIN_CHILD_PAYOUT_PARAMS: ChildPayoutParams = ChildPayoutParams {
     namespace: SYSCOIN_PAYOUT_ADDRESS_NAMESPACE,
     p2pkh_version: Some(63),
@@ -76,10 +53,6 @@ pub const SYSCOIN_CHILD_PAYOUT_PARAMS: ChildPayoutParams = ChildPayoutParams {
     witness_program: None,
 };
 
-/// Fractal Bitcoin address parameters, identical to Bitcoin mainnet: base58
-/// P2PKH version 0, P2SH version 5, bech32 HRP `bc`. Fractal reuses Bitcoin's
-/// address format, so reward addresses render as `bc1...`; verified against
-/// public mempool block samples in this file's tests.
 pub const FRACTAL_CHILD_REWARD_PARAMS: ChildPayoutParams = ChildPayoutParams {
     namespace: FRACTAL_REWARD_ADDRESS_NAMESPACE,
     p2pkh_version: Some(0),
@@ -97,8 +70,6 @@ pub const QBIT_CHILD_PAYOUT_PARAMS: ChildPayoutParams = ChildPayoutParams {
     witness_program: Some((2, 32)),
 };
 
-/// Curated payout association confidence. Omitted registry values preserve the
-/// existing medium rating; high requires corroborating child-native evidence.
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ChildPayoutConfidence {
@@ -107,10 +78,6 @@ pub enum ChildPayoutConfidence {
     Medium,
 }
 
-/// Resolved pool identity for a child payout/reward address: the database
-/// `pool_id` plus the specific `pool_identity_id` (the address-level identity
-/// row). Looked up by `(namespace, identifier)` to attach a concrete pool to a
-/// formatted child address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PoolIdentityRef {
     pub pool_id: i64,
@@ -119,17 +86,8 @@ pub struct PoolIdentityRef {
     pub payout_confidence: ChildPayoutConfidence,
 }
 
-/// Map from `(namespace, identifier)` to a resolved [`PoolIdentityRef`], built
-/// once per replay from the pool-identity table (`mmm-store`) and consulted
-/// while formatting child payout addresses. Key via [`pool_identity_lookup_key`]
-/// so callers cannot drift on tuple construction.
 pub type PoolIdentityLookup = HashMap<(String, String), PoolIdentityRef>;
 
-/// Map a `source_registry` source code to its [`ChildPayoutParams`], or `None`
-/// for chains with no child payout/reward attribution. The match arms key off
-/// the canonical child source codes, keeping this in step
-/// with the source registry. The `None` arm is the explicit no-child-payout
-/// signal, not an error.
 pub fn params_for_source_code(source_code: &str) -> Option<ChildPayoutParams> {
     match source_code {
         NAMECOIN_SOURCE_CODE => Some(NAMECOIN_CHILD_PAYOUT_PARAMS),
@@ -140,18 +98,11 @@ pub fn params_for_source_code(source_code: &str) -> Option<ChildPayoutParams> {
     }
 }
 
-/// Build the [`PoolIdentityLookup`] key `(namespace, identifier)` from borrowed
-/// strs. The single canonical key constructor: callers (lookup builds in
-/// mmm-store, consults in capture/producers) route through it so the tuple format
-/// and ownership cannot drift between insert and get.
 pub fn pool_identity_lookup_key(namespace: &str, identifier: &str) -> (String, String) {
     (namespace.to_owned(), identifier.to_owned())
 }
 
-/// Format every standard output in a child coinbase as a chain-native address
-/// under `params`, de-duplicated and in first-seen order. Non-standard outputs
-/// (OP_RETURN, bare scripts) yield no address and are skipped. Pure: decodes the
-/// script template only, never touches the network.
+/// Format standard outputs in a child coinbase as de-duplicated chain-native addresses.
 pub fn child_output_addresses(outputs: &[TxOut], params: ChildPayoutParams) -> Vec<String> {
     let mut addresses = Vec::new();
     for output in outputs {
@@ -164,16 +115,8 @@ pub fn child_output_addresses(outputs: &[TxOut], params: ChildPayoutParams) -> V
     addresses
 }
 
-/// Decode one standard output script into a chain-native address, or `None` for
-/// non-standard scripts. Byte layout is fixed by the standard templates: P2PKH
-/// (`OP_DUP OP_HASH160 <0x14> hash160 OP_EQUALVERIFY OP_CHECKSIG`) takes the
-/// 20-byte hash at `bytes[3..23]` and base58check-encodes it with
-/// `p2pkh_version`; P2SH (`OP_HASH160 <0x14> hash160 OP_EQUAL`) takes
-/// `bytes[2..22]` with `p2sh_version`; a witness program is `bytes[2..]` (after
-/// the version opcode and push-length byte) bech32-encoded under `bech32_hrp` at
-/// its witness version. The offsets assume the canonical templates that
-/// rust-bitcoin's `is_p2pkh`/`is_p2sh`/`witness_version` already validate; do
-/// not change them.
+/// Decode one standard output script into a chain-native address (`P2PKH` hash160 at `bytes[3..23]`,
+/// `P2SH` hash160 at `bytes[2..22]`, or witness program at `bytes[2..]`).
 pub fn format_child_script_address(script: &Script, params: ChildPayoutParams) -> Option<String> {
     let bytes = script.as_bytes();
     if script.is_p2pkh() {
@@ -197,11 +140,6 @@ pub fn format_child_script_address(script: &Script, params: ChildPayoutParams) -
     None
 }
 
-/// Base58check-encode a 20-byte hash with a one-byte version prefix: prepend
-/// `version`, append `payload`, then `base58::encode_check` (which adds the
-/// 4-byte double-SHA256 checksum). The version byte selects the chain/address
-/// type (e.g. Namecoin P2PKH 52, Syscoin P2PKH 63); the input bytes are used
-/// verbatim, never reversed.
 fn base58_address(version: u8, payload: &[u8]) -> String {
     let mut prefixed = Vec::with_capacity(payload.len() + 1);
     prefixed.push(version);
