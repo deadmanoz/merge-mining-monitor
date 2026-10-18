@@ -50,7 +50,7 @@ pub(super) async fn fetch_qbit_candidate(
         .with_context(|| format!("{} height {height} is not a native height", family.label))?;
 
     let child_header = match raw
-        .get(..80)
+        .get(..bitcoin::block::Header::SIZE)
         .context("Qbit block is shorter than a header")
         .and_then(|bytes| {
             bitcoin::consensus::deserialize::<bitcoin::block::Header>(bytes)

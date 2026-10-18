@@ -135,17 +135,6 @@ indexes beginning with `(event_id, side)` for cleanup and pool collapse;
 the planner estimated roughly 23 million events and 25 million attribution
 rows. No new scan across stored events or producer startup job is added.
 
-The temporary missing-evidence enrichment tool was separately measured on the
-dev VM against three disposable copies of stored events, with a proxy adding
-340 ms per request. Three events used four requests (one genesis check plus
-one raw block per event) in 1.566 seconds of reported job time; connection and
-initial count preparation are outside that interval. A repeat used zero
-requests. Both runs had zero retries and failures. Each resolved event uses
-five data statements plus BEGIN/COMMIT; an unrecognized tag uses four plus
-BEGIN/COMMIT. Candidate pages contain at most 100 events. The tool is
-temporary; normal capture and stored-evidence reclassification remain the
-retained application paths.
-
 ## Frontend Tests
 
 Playwright tests exercise the static frontend against stubbed or live API
