@@ -210,6 +210,7 @@ pub async fn load_pool_identities_by_namespace<C: GenericClient>(
             PoolIdentityRef {
                 pool_id: row.get(2),
                 pool_identity_id: row.get(3),
+                payout_confidence: Default::default(),
             },
         );
     }

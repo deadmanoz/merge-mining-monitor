@@ -135,6 +135,31 @@ indexes beginning with `(event_id, side)` for cleanup and pool collapse;
 the planner estimated roughly 23 million events and 25 million attribution
 rows. No new scan across stored events or producer startup job is added.
 
+Qbit payout attribution adds no node RPC calls. With the currently observed
+single reward address, live capture adds one payout upsert and one source
+cleanup DELETE; existing child-pool refreshes are unchanged. Stored-output
+replay adds one payout upsert and uses the existing two child-pool refresh
+UPDATEs per changed event, plus existing per-parent transaction and lock work.
+The CLI's existing Core-cache startup is a separate cost. An unchanged replay
+makes no attribution writes.
+
+The main replay query now materializes its bounded candidate page before
+loading attribution details. On 2026-10-18, read-only plans on the dev dataset
+(planner estimates 23,257,826 events and 24,895,572 attribution rows) used
+source and event/side indexes. Each of the three detail aggregates ran 500
+times for a 500-event page, rather than 13,463 times before the change. A
+same-statement comparison found identical values for all 500 returned rows.
+Observed first-page execution was 4,248 ms before and 226 ms after, with cache
+warming uncontrolled; this is not a complete replay or production benchmark.
+Eligibility still depends on the remaining source rows. No index or additional
+query was added.
+
+The payout-aware Qbit transport scenario also passed with a 340 ms response
+delay on 2026-10-18: genesis 1 request/342 ms, recovered capture 2/787 ms,
+unchanged rescan 1/363 ms, repeated capture 2/745 ms and 2/742 ms, and body
+recovery 2/752 ms, with no retries or failures. These scenario intervals include
+database/API checks and do not measure production block-download throughput.
+
 ## Frontend Tests
 
 Playwright tests exercise the static frontend against stubbed or live API

@@ -290,4 +290,6 @@ identity and own endpoint checks and persistence, without decoding wire layouts.
 Legacy parsing and Qbit/Elastos proof semantics remain unchanged. Qbit also authenticates the
 child transaction body against its merkle root and checks the chain-native
 coinbase height without Bitcoin's acquisition ceiling before retaining child
-coinbase evidence and matching pool tags.
+coinbase evidence and matching pool tags. Its adapter resolves those same
+authenticated outputs through the child payout registry, preserving tag and
+payout attribution separately without another node call.

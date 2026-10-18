@@ -26,6 +26,9 @@ use crate::support::{exact_observation, namecoin_fixture};
 
 const HEIGHT: i32 = 700;
 
+#[path = "auxpow_family/qbit_payout.rs"]
+mod qbit_payout;
+
 #[tokio::test]
 async fn family_operational_failures_follow_explicit_policy() -> Result<()> {
     crate::run_mut_db_test!(client, {
@@ -696,7 +699,7 @@ async fn an_open_capture_error_takes_the_full_capture_despite_a_final_head() -> 
         assert!(stored.get::<_, bool>(1));
         assert_eq!(stored.get::<_, i64>(2), existing_id);
         let child_rows: i64 = client.query_one("SELECT count(*) FROM event_pool_attribution a JOIN merge_mining_event e ON e.id=a.event_id WHERE e.source_id=$1 AND a.side='child_block'", &[&source_id]).await?.get(0);
-        assert_eq!(child_rows, 1);
+        assert_eq!(child_rows, 2);
         assert_qbit_body_held(&mut client, &context, source_id, height, &raw).await?;
         process_auxpow_height(&mut client, &rpc, &context, height).await?;
         steps.expect("Qbit body recovery", 2, 0);
@@ -1006,6 +1009,15 @@ async fn assert_qbit_child_evidence(client: &Client, source_id: i64) -> Result<(
         payload["event_details"][0]["pool_attributions"]["child_block"][0]["matched_value"],
         "七彩神仙鱼"
     );
+    let payout = payload["event_details"][0]["pool_attributions"]["child_block"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["namespace"] == "qbit_payout_address")
+        .unwrap();
+    assert_eq!(payout["pool"]["slug"], "f2pool");
+    assert_eq!(payout["confidence"], "high");
+    assert_eq!(payout["source"], "child_payout_registry");
     let errors: i64 = client
         .query_one(
             "SELECT count(*) FROM capture_error WHERE source_id = $1",

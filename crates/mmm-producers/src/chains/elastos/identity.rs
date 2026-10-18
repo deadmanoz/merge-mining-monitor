@@ -629,6 +629,7 @@ mod tests {
             PoolIdentityRef {
                 pool_id: 42,
                 pool_identity_id: 4200,
+                payout_confidence: Default::default(),
             },
         );
         identities.insert(
@@ -636,6 +637,7 @@ mod tests {
             PoolIdentityRef {
                 pool_id: 43,
                 pool_identity_id: 4300,
+                payout_confidence: Default::default(),
             },
         );
 
@@ -675,6 +677,7 @@ mod tests {
             identity: Some(PoolIdentityRef {
                 pool_id: 1,
                 pool_identity_id: 2,
+                payout_confidence: Default::default(),
             }),
             details: json!({}),
         });
@@ -686,6 +689,7 @@ mod tests {
             identity: Some(PoolIdentityRef {
                 pool_id: 99,
                 pool_identity_id: 100,
+                payout_confidence: Default::default(),
             }),
             details: json!({}),
         });

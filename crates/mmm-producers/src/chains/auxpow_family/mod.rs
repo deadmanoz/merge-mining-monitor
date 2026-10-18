@@ -98,7 +98,13 @@ impl AuxpowCaptureContext {
                     base.pool_ids_by_slug_mut(),
                 )
                 .await?;
-                load_pool_identities_by_namespace(client, &[params.namespace]).await?
+                let mut identities =
+                    load_pool_identities_by_namespace(client, &[params.namespace]).await?;
+                crate::chains::child_payout_registry::apply_child_payout_confidence(
+                    &mut identities,
+                    base.pool_ids_by_slug(),
+                )?;
+                identities
             }
             None => PoolIdentityLookup::new(),
         };

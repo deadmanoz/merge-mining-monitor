@@ -20,7 +20,7 @@ use crate::chains::spec::{ChainSpec, FamilySpec};
 use mmm_capture::auxpow::{ParsedQbitAuxpowBlock, parse_qbit_block, validates_target};
 use mmm_capture::capture::{
     ClassificationProof, NormalizedEventEvidence, ResolvedPoolAttributions,
-    build_event_payload_from_evidence, now_epoch_seconds,
+    build_event_payload_from_evidence, now_epoch_seconds, resolve_child_payout_attributions,
     resolve_child_pool_attribution_from_script, resolve_parent_pool_attribution_from_coinbase,
 };
 
@@ -133,6 +133,13 @@ pub(super) async fn write_qbit_event(
         &context.resolver,
         context.base.pool_ids_by_slug(),
     ));
+    if let Some(params) = super::family_of(context.spec).child_payout {
+        attributions.extend(resolve_child_payout_attributions(
+            &block.coinbase.child_coinbase_outputs,
+            params,
+            Some(&context.child_payout_identities),
+        ));
+    }
     let now = now_epoch_seconds()?;
     let mut payload = build_event_payload_from_evidence(
         qbit_evidence(block, height),

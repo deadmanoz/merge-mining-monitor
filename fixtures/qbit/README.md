@@ -12,7 +12,13 @@ within the integration tests' retained epoch history. Block 135331 is the
 reported missing child-miner example; its independently RPC-checked identity
 and coinbase fields are in `135331.json`.
 
-Both full blocks test child coinbase authentication and tag attribution.
+The native blocks `2450.hex` (Luxor payout), `7887.hex` (unmapped shared wallet)
+and `8197.hex` (SECPOOL payout) were read with the same raw RPC on 2026-10-18.
+Their JSON sidecars record independently decoded native hashes, txids and
+reward outputs. They cover payout capture and stored-evidence replay alongside
+F2Pool's existing block 78058.
+
+The full blocks test child coinbase authentication, tag and payout attribution.
 The tests retain the proof bytes exactly and authenticate the transaction body
 against the child merkle root. Recorded payout addresses are evidence, not
 pool ownership mappings.

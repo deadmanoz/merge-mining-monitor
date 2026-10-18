@@ -52,7 +52,9 @@ use anyhow::{Context, Result, bail};
 use tokio_postgres::Client;
 use tracing::{debug, info};
 
-use crate::chains::child_payout_registry::seed_all_child_payout_identities;
+use crate::chains::child_payout_registry::{
+    apply_child_payout_confidence, seed_all_child_payout_identities,
+};
 use crate::chains::elastos::identity::{
     upsert_elastos_minerinfo_pool_identities, upsert_elastos_reward_address_pool_identities,
 };
@@ -68,11 +70,11 @@ use mmm_capture::capture::{
 };
 use mmm_capture::child_payout::{
     FRACTAL_REWARD_ADDRESS_NAMESPACE, NAMECOIN_PAYOUT_ADDRESS_NAMESPACE, PoolIdentityLookup,
-    SYSCOIN_PAYOUT_ADDRESS_NAMESPACE,
+    QBIT_PAYOUT_ADDRESS_NAMESPACE, SYSCOIN_PAYOUT_ADDRESS_NAMESPACE,
 };
 use mmm_capture::pool_resolver::{PoolIdentityRegistry, PoolResolver};
 use mmm_capture::source_registry::{
-    FRACTAL_SOURCE_CODE, NAMECOIN_SOURCE_CODE, SYSCOIN_SOURCE_CODE,
+    FRACTAL_SOURCE_CODE, NAMECOIN_SOURCE_CODE, QBIT_SOURCE_CODE, SYSCOIN_SOURCE_CODE,
 };
 use mmm_read_model::{drive_args, require_positive, update_parent_events};
 use mmm_store::{
@@ -347,14 +349,51 @@ async fn apply_parent_group(client: &mut Client, group: &ParentUpdateGroup) -> R
 /// sources, `$6`/`$7` child payout namespaces/sources, `$8` payout-eligible
 /// source codes, `$9` optional `source_id` filter (NULL = all sources). Scoped
 /// to non-revoked events with usable evidence, ordered by `e.id` for resumable
-/// paging.
+/// paging. Materialize the page before loading attribution details: otherwise a
+/// source-scoped sort can run every lateral aggregate for all remaining events.
 fn candidate_batch_sql() -> String {
     let parent_attr = source_scoped_attribution_lateral("parent_attr", "btc_parent", "$4");
     let child_attr = source_scoped_attribution_lateral("child_attr", "child_block", "$5");
 
     format!(
         r"
-SELECT e.id, e.btc_parent_header_hash, s.code AS source_code,
+WITH candidates AS MATERIALIZED (
+    SELECT e.id, e.btc_parent_header_hash, s.code AS source_code,
+           e.btc_parent_coinbase_script, e.btc_parent_coinbase_outputs,
+           e.btc_parent_coinbase_outputs_text, e.child_coinbase_script,
+           e.child_coinbase_outputs, e.confirmed_at
+    FROM merge_mining_event e
+    JOIN source s ON s.id = e.source_id
+    WHERE e.revoked_at IS NULL
+      AND (e.btc_parent_coinbase_script IS NOT NULL
+           OR e.btc_parent_coinbase_outputs IS NOT NULL
+           OR e.btc_parent_coinbase_outputs_text IS NOT NULL
+           OR e.child_coinbase_script IS NOT NULL
+           OR (s.code = ANY($8::text[]) AND e.child_coinbase_outputs IS NOT NULL))
+      AND ($3
+           OR (s.code = ANY($8::text[]) AND e.child_coinbase_outputs IS NOT NULL)
+           OR ((e.btc_parent_coinbase_script IS NOT NULL
+                OR e.btc_parent_coinbase_outputs IS NOT NULL
+                OR e.btc_parent_coinbase_outputs_text IS NOT NULL)
+               AND NOT EXISTS (
+                   SELECT 1 FROM event_pool_attribution a
+                   WHERE a.event_id = e.id
+                     AND a.side = 'btc_parent'
+                     AND a.source = $4
+               ))
+           OR (e.child_coinbase_script IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM event_pool_attribution a
+                   WHERE a.event_id = e.id
+                     AND a.side = 'child_block'
+                     AND a.source = $5
+               )))
+      AND ($1::bigint IS NULL OR e.id > $1)
+      AND ($9::bigint IS NULL OR e.source_id = $9)
+    ORDER BY e.id
+    LIMIT $2
+)
+SELECT e.id, e.btc_parent_header_hash, e.source_code,
        parent_attr.row_count AS parent_attribution_row_count,
        parent_attr.namespace AS parent_attribution_namespace,
        parent_attr.match_kind AS parent_attribution_match_kind,
@@ -375,8 +414,7 @@ SELECT e.id, e.btc_parent_header_hash, s.code AS source_code,
        btc_parent_coinbase_script, btc_parent_coinbase_outputs,
        btc_parent_coinbase_outputs_text,
        child_coinbase_script, child_coinbase_outputs, confirmed_at
-FROM merge_mining_event e
-JOIN source s ON s.id = e.source_id
+FROM candidates e
 {parent_attr}
 {child_attr}
 LEFT JOIN LATERAL ({EVENT_POOL_ATTRIBUTION_JSON_ROWS_SELECT}
@@ -385,34 +423,7 @@ LEFT JOIN LATERAL ({EVENT_POOL_ATTRIBUTION_JSON_ROWS_SELECT}
      AND a.namespace = ANY($6::text[])
      AND a.source = ANY($7::text[])
 ) child_payout_attr ON true
-WHERE e.revoked_at IS NULL
-  AND (e.btc_parent_coinbase_script IS NOT NULL
-       OR e.btc_parent_coinbase_outputs IS NOT NULL
-       OR e.btc_parent_coinbase_outputs_text IS NOT NULL
-       OR e.child_coinbase_script IS NOT NULL
-       OR (s.code = ANY($8::text[]) AND e.child_coinbase_outputs IS NOT NULL))
-  AND ($3
-       OR ((e.btc_parent_coinbase_script IS NOT NULL
-            OR e.btc_parent_coinbase_outputs IS NOT NULL
-            OR e.btc_parent_coinbase_outputs_text IS NOT NULL)
-           AND NOT EXISTS (
-               SELECT 1 FROM event_pool_attribution a
-               WHERE a.event_id = e.id
-                 AND a.side = 'btc_parent'
-                 AND a.source = $4
-           ))
-       OR (e.child_coinbase_script IS NOT NULL
-           AND NOT EXISTS (
-               SELECT 1 FROM event_pool_attribution a
-               WHERE a.event_id = e.id
-                 AND a.side = 'child_block'
-                 AND a.source = $5
-           ))
-       OR (s.code = ANY($8::text[]) AND e.child_coinbase_outputs IS NOT NULL))
-  AND ($1::bigint IS NULL OR e.id > $1)
-  AND ($9::bigint IS NULL OR e.source_id = $9)
-ORDER BY e.id
-LIMIT $2"
+ORDER BY e.id"
     )
 }
 
@@ -454,6 +465,7 @@ async fn load_candidate_batch(
         NAMECOIN_PAYOUT_ADDRESS_NAMESPACE.to_owned(),
         SYSCOIN_PAYOUT_ADDRESS_NAMESPACE.to_owned(),
         FRACTAL_REWARD_ADDRESS_NAMESPACE.to_owned(),
+        QBIT_PAYOUT_ADDRESS_NAMESPACE.to_owned(),
     ];
     let child_payout_sources = vec![
         CHILD_COINBASE_OUTPUT_SOURCE.to_owned(),
@@ -463,6 +475,7 @@ async fn load_candidate_batch(
         NAMECOIN_SOURCE_CODE.to_owned(),
         SYSCOIN_SOURCE_CODE.to_owned(),
         FRACTAL_SOURCE_CODE.to_owned(),
+        QBIT_SOURCE_CODE.to_owned(),
     ];
     let sql = candidate_batch_sql();
     client
@@ -485,7 +498,7 @@ async fn load_candidate_batch(
 }
 
 /// Self-seed the embedded resolver, RSK-only pool slugs, and the Hathor reward,
-/// Elastos minerinfo, Elastos reward-address, and Namecoin/Syscoin/Fractal
+/// Elastos minerinfo, Elastos reward-address, and Namecoin/Syscoin/Fractal/Qbit
 /// child-payout identity registries, then load the child payout identity lookup.
 /// All idempotent `ON CONFLICT` upserts, safe alongside live producers. Returns the
 /// resolver, registry, slug map, and identity lookup the phases read.
@@ -518,18 +531,20 @@ async fn seed_reclassify_pools(
         .context("seed Elastos reward-address pool identities")?;
     seed_all_child_payout_identities(client, &mut pool_ids_by_slug)
         .await
-        .context("seed Namecoin/Syscoin/Fractal child-payout pool identities")?;
-    let child_payout_identities = load_pool_identities_by_namespace(
+        .context("seed child-payout pool identities")?;
+    let mut child_payout_identities = load_pool_identities_by_namespace(
         client,
         &[
             NAMECOIN_PAYOUT_ADDRESS_NAMESPACE,
             SYSCOIN_PAYOUT_ADDRESS_NAMESPACE,
             FRACTAL_REWARD_ADDRESS_NAMESPACE,
+            QBIT_PAYOUT_ADDRESS_NAMESPACE,
             HATHOR_REWARD_ADDRESS_NAMESPACE,
         ],
     )
     .await
     .context("load child payout pool identities")?;
+    apply_child_payout_confidence(&mut child_payout_identities, &pool_ids_by_slug)?;
     Ok((
         resolver,
         registry,

@@ -6,6 +6,9 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Attribute Qbit payouts to F2Pool at high confidence and SECPOOL/Luxor at medium confidence, retaining separate child tags and leaving the shared wallet unmapped.
+- Enrich stored Qbit payout evidence through source-scoped pool replay without additional node calls.
+
 ## [0.9.3] - 2026-10-18
 
 - Attribute Qbit child miners from coinbase tags authenticated against the child block header.

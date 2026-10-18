@@ -79,6 +79,7 @@ seed, and append-only forward migrations.
 | `0029_drop_body_invalid_stale.sql` | Drops the obsolete display-annotation table after body-invalid parents move into the reviewed error catalogue. Run through the backup-first migration workflow; child events and publication provenance are unaffected. |
 | `0030_capture_failure_kind.sql` | Widens the `capture_error.error_kind` check to add `height_capture_failed`, so a chain whose capture-failure policy holds any height failure (Terracoin) keeps a transport or other per-height failure visible during replay even when the monotonic cursor is already beyond the height. Only widens a CHECK constraint; no data changes. |
 | `0031_drop_hathor_expected_btc_nbits.sql` | Drops the Hathor sidecar's `expected_btc_nbits`, a Core-cache nBits lookup the retired Hathor contamination ladder recorded. The shared capture lineage gate decides a parent's lineage at capture time, so the column has no writer or reader. Run through the backup-first migration workflow; no other data changes. |
+| `0032_add_qbit_payout_namespace.sql` | Adds `qbit_payout_address` to the pool-identity namespace check. No event rewrite, scheduled scan or confidence column; apply through the backup-first workflow before Qbit payout capture/replay. |
 
 `0002_seed_sources.sql` is only for fresh/reset databases. It intentionally
 raises if `source` is already populated, so a non-reset database fails cleanly
