@@ -17,7 +17,9 @@ pub mod query;
 #[cfg(not(feature = "db-integration"))]
 mod query;
 mod version;
-pub use version::payload_json as version_payload_json;
+pub use version::{
+    payload_json as version_payload_json, render_fixture_json as render_version_fixture_json,
+};
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -44,19 +46,28 @@ pub use error::ApiError;
 
 pub const SCHEMA_VERSION: &str = "v1";
 pub const APPLICATION_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const FRONTEND_ASSET_PREFIX: &str = concat!("/v/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Clone)]
 pub struct AppState {
     pool: Pool,
+    www_dir: PathBuf,
 }
 
 impl AppState {
     pub fn new(pool: Pool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            www_dir: PathBuf::new(),
+        }
     }
 
     pub(crate) fn pool(&self) -> &Pool {
         &self.pool
+    }
+
+    pub(crate) fn www_dir(&self) -> &Path {
+        &self.www_dir
     }
 }
 
@@ -106,10 +117,15 @@ pub fn build_pool(pg: &PgConfig, max_size: usize) -> Result<Pool> {
         .context("build Postgres connection pool")
 }
 
-pub fn router(state: AppState, www_dir: impl AsRef<Path>) -> Router {
+pub fn router(mut state: AppState, www_dir: impl AsRef<Path>) -> Router {
+    state.www_dir = www_dir.as_ref().to_path_buf();
     let serve_dir = ServeDir::new(www_dir.as_ref()).append_index_html_on_directories(true);
+    let versioned_serve_dir =
+        ServeDir::new(www_dir.as_ref()).append_index_html_on_directories(false);
 
     Router::new()
+        .route("/", get(handlers::index_html))
+        .route("/index.html", get(handlers::index_html))
         .route("/api/v1/tree", get(handlers::tree))
         .route("/api/v1/block/{hash}", get(handlers::block))
         .route("/api/v1/navigator/{target}", get(handlers::navigator))
@@ -118,6 +134,7 @@ pub fn router(state: AppState, www_dir: impl AsRef<Path>) -> Router {
         .route("/api/v1/version", get(handlers::version_metadata))
         .route("/health", get(handlers::health))
         .route("/ready", get(handlers::ready))
+        .nest_service(FRONTEND_ASSET_PREFIX, versioned_serve_dir)
         .fallback_service(serve_dir)
         .layer(
             ServiceBuilder::new()

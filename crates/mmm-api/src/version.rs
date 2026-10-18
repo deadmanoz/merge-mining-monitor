@@ -52,6 +52,16 @@ pub fn payload_json() -> serde_json::Value {
     serde_json::to_value(payload()).expect("version payload serializes")
 }
 
+/// Render the full `/api/v1/version` response envelope with `generated_at` for
+/// `fixtures/api/version.json`.
+pub fn render_fixture_json(generated_at: u64) -> String {
+    let envelope =
+        super::envelope::SuccessEnvelope::with_generated_at(payload(), None, generated_at);
+    let mut rendered = serde_json::to_string_pretty(&envelope).expect("version fixture serializes");
+    rendered.push('\n');
+    rendered
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedReleaseNotes {
     releases: Vec<ReleaseNote>,

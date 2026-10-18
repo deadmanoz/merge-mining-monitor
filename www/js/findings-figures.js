@@ -1,4 +1,4 @@
-import { esc } from "./frontend-state.js?v=0.9.3";
+import { esc } from "./frontend-state.js";
 
 const DAY_MS = 86_400_000;
 const CHART = { width: 880, height: 300, pad: { left: 64, right: 24, top: 54, bottom: 36 } };

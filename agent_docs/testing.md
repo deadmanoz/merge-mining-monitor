@@ -49,4 +49,4 @@ See [`round-trip-budget.md`](round-trip-budget.md) for the ~340 ms production ro
 ## Frontend Tests
 
 Playwright tests exercise the static frontend against stubbed or live API responses.
-Start `just serve` on a free local port when a test needs the real server, set `PLAYWRIGHT_BASE_URL`, and stop the server afterward.
+`just test-e2e` builds the workspace and launches `just serve` automatically via `playwright.config.js`'s `webServer` when `PLAYWRIGHT_BASE_URL` is unset; set `PLAYWRIGHT_BASE_URL` to point Playwright at an already-running external server instead.

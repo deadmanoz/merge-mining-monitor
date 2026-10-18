@@ -1,5 +1,5 @@
-import { fmtDelta, fmtInt, fmtUtcDate } from "./delta-scales.js?v=0.9.3";
-import { $, esc, state } from "./frontend-state.js?v=0.9.3";
+import { fmtDelta, fmtInt, fmtUtcDate } from "./delta-scales.js";
+import { $, esc, state } from "./frontend-state.js";
 
 const OUTLIER_LIMIT = 250;
 

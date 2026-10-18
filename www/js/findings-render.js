@@ -1,12 +1,12 @@
 // Pure renderers for the findings feed, articles, and evidence figures.
 
-import { esc } from "./frontend-state.js?v=0.9.3";
-import { renderFigure } from "./findings-figures.js?v=0.9.3";
+import { esc } from "./frontend-state.js";
+import { renderFigure } from "./findings-figures.js";
 import {
   collectCitedReferenceIds,
   formatCitedText,
   renderSourcesSection,
-} from "./source-dialog.js?v=0.9.3";
+} from "./source-dialog.js";
 
 const CATEGORIES = {
   "hashrate-shift": { label: "Hashrate shift", color: "var(--near)" },

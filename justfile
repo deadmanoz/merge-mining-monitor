@@ -70,7 +70,7 @@ test-integration: db-up
     cargo test -p merge-mining-monitor --features db-integration --test db_integration -- --test-threads=1
     cargo test -p merge-mining-monitor --features db-integration --test api_db_integration -- --test-threads=1
 
-test-e2e:
+test-e2e: build
     npm run test:e2e
 
 lint:
@@ -108,7 +108,7 @@ gen-pool-snapshot *args="":
     fi; \
     cargo run --features artifact-generation --bin gen_pool_snapshot -- "$pools_dir" "$@"
 
-# Regenerate (or --check) migrations/0002_seed_sources.sql, www/js/source-registry.generated.js, and www/js/findings.generated.js.
+# Regenerate (or --check) migrations/0002_seed_sources.sql, www/js/source-registry.generated.js, www/js/findings.generated.js, and fixtures/api/version.json.
 gen-source-artifacts *args="":
     cargo run --quiet --features artifact-generation --bin gen_source_artifacts -- {{args}}
 

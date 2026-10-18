@@ -24,10 +24,10 @@ function readWorkspaceVersion() {
 const RELEASE_VERSION = readWorkspaceVersion();
 
 // Reaching into a frontend module from a test means importing the exact URL
-// boot.js used: a differing cache-busting query is a separate module record
+// boot.js used: a differing version prefix is a separate module record
 // with its own state, so the test would inspect a second, inert copy.
 function moduleUrl(name) {
-  return `/js/${name}?v=${RELEASE_VERSION}`;
+  return `/v/${RELEASE_VERSION}/js/${name}`;
 }
 
 function versionPayload(overrides = {}) {
@@ -249,10 +249,10 @@ function makeFinding(overrides = {}) {
 
 // Serve a spec-controlled corpus as the generated findings module. The real
 // committed module is a static import in the app graph, so this must be
-// routed before page.goto; the exact ?v= URL matters (a different URL would
-// be a second, inert module record - see moduleUrl).
+// routed before page.goto; the exact /v/<version> URL matters (a different URL
+// would be a second, inert module record - see moduleUrl).
 async function stubFindings(page, findings) {
-  await page.route(`**/js/findings.generated.js?v=${RELEASE_VERSION}`, async (route) => {
+  await page.route(`**/v/${RELEASE_VERSION}/js/findings.generated.js`, async (route) => {
     await route.fulfill({
       contentType: "text/javascript",
       body: `export const FINDINGS = ${JSON.stringify(findings, null, 2)};\n`,

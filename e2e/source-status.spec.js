@@ -420,9 +420,9 @@ test("renders version metadata and release notes in the about dialog", async ({ 
   });
 
   await page.goto("/");
-  await expect(page.locator('link[href^="/css/about-version.css"]')).toHaveAttribute(
+  await expect(page.locator('link[href$="/css/about-version.css"]')).toHaveAttribute(
     "href",
-    `/css/about-version.css?v=${RELEASE_VERSION}`,
+    `/v/${RELEASE_VERSION}/css/about-version.css`,
   );
   await page.getByRole("button", { name: "About this monitor" }).click();
 

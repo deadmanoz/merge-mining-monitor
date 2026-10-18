@@ -30,7 +30,7 @@ Both probes send `Cache-Control: no-store`.
 Successful `/api/v1/*` responses send short public cache headers suitable for a reverse proxy or CDN.
 The JSON envelope includes a wall-clock `generated_at`, so conditional JSON requests must be keyed on read-model freshness if they are added later, not on a body hash.
 
-The static frontend is buildless and not fingerprinted: `index.html` uses a short edge TTL, hand-authored `www/` assets use moderate TTLs with revalidation, and only the vendored versioned D3 file is marked immutable.
+The static frontend is buildless on disk (`www/`): `mmm-api` serves `/` and `/index.html` with a short edge TTL and release-prefixed `/v/<semver>/...` asset URLs, hand-authored `www/` assets use moderate TTLs with revalidation, and only the vendored versioned D3 file is marked immutable.
 Error responses and probe responses are not cached.
 
 ## Common Envelope

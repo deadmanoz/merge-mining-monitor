@@ -1,12 +1,12 @@
 // Findings view: editorial feed and article canvas over the generated findings corpus.
 
-import { markUpdated } from "./api-client.js?v=0.9.3";
-import { INFO_DIALOGS, openInfoDialog } from "./controls.js?v=0.9.3";
-import { FINDINGS } from "./findings.generated.js?v=0.9.3";
-import { CATEGORIES, STATUSES, renderArticle, renderFeed } from "./findings-render.js?v=0.9.3";
-import { $, matchesSourceFilter, state } from "./frontend-state.js?v=0.9.3";
-import { showInTree } from "./tree-jump.js?v=0.9.3";
-import { syncUrl } from "./tree-query-state.js?v=0.9.3";
+import { markUpdated } from "./api-client.js";
+import { INFO_DIALOGS, openInfoDialog } from "./controls.js";
+import { FINDINGS } from "./findings.generated.js";
+import { CATEGORIES, STATUSES, renderArticle, renderFeed } from "./findings-render.js";
+import { $, matchesSourceFilter, state } from "./frontend-state.js";
+import { showInTree } from "./tree-jump.js";
+import { syncUrl } from "./tree-query-state.js";
 
 let mounted = false;
 
