@@ -17,24 +17,12 @@ pub const DEFAULT_RSK_MINER_REGISTRY_JSON: &str =
 /// Attribution namespace `"rsk_miner_address"` for RSK `pool_identity` rows.
 pub const RSK_MINER_ADDRESS_NAMESPACE: &str = "rsk_miner_address";
 
-fn default_source() -> PoolSnapshotSource {
-    PoolSnapshotSource {
-        name: String::new(),
-        upstream_url: None,
-        license: None,
-        notes: None,
-    }
-}
-
 /// Deserialized `data/pools/child-identities/rsk_miner_registry.json`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RskMinerRegistry {
     pub schema_version: u32,
-    #[serde(default)]
     pub generated_at: String,
-    #[serde(default)]
     pub scope: String,
-    #[serde(default = "default_source")]
     pub source: PoolSnapshotSource,
     pub entries: Vec<RskMinerEntry>,
 }
@@ -223,6 +211,9 @@ mod tests {
         let registry = PoolIdentityRegistry::from_rsk_json_str(
             r#"{
                 "schema_version": 1,
+                "generated_at": "2026-05-26",
+                "scope": "test",
+                "source": { "name": "test" },
                 "entries": [
                     {
                         "miner_address": "12d3178a62ef1f520944534ed04504609f7307a1",
@@ -252,6 +243,9 @@ mod tests {
         let err = PoolIdentityRegistry::from_rsk_json_str(
             r#"{
                 "schema_version": 1,
+                "generated_at": "2026-05-26",
+                "scope": "test",
+                "source": { "name": "test" },
                 "entries": [
                     {
                         "miner_address": "12d3178a62ef1f520944534ed04504609f7307a1",
@@ -284,6 +278,9 @@ mod tests {
         let err = PoolIdentityRegistry::from_rsk_json_str(
             r#"{
                 "schema_version": 1,
+                "generated_at": "2026-05-26",
+                "scope": "test",
+                "source": { "name": "test" },
                 "entries": [
                     {
                         "miner_address": "not-hex",
@@ -309,6 +306,9 @@ mod tests {
         let err = PoolIdentityRegistry::from_rsk_json_str(
             r#"{
                 "schema_version": 1,
+                "generated_at": "2026-05-26",
+                "scope": "test",
+                "source": { "name": "test" },
                 "entries": [
                     {
                         "miner_address": "12d3178a62ef1f520944534ed04504609f7307a1",
