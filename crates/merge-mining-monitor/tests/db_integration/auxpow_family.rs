@@ -228,6 +228,10 @@ fn qbit_positive_control() -> (i32, Vec<u8>, BlockHash) {
     let raw = hex::decode(include_str!("../../../../fixtures/qbit/78058.hex").trim())
         .expect("Qbit raw block hex");
     let hash = block_hash_of(&raw);
+    assert_eq!(
+        hash.to_string(),
+        "f2c1b37777ac0407ece840495347d3481d998b411bfd8796308d387526a10f42"
+    );
     (78_058, raw, hash)
 }
 
