@@ -190,6 +190,25 @@ fn resolves_namecoin_child_attribution_sources_and_keeps_parent_independent() {
     assert_eq!(child.match_kind, "coinbase_tag");
     assert_eq!(child.pool_id, ids_by_slug.get("spiderpool").copied());
 
+    for script in [None, Some(b"unrecognized child miner".to_vec())] {
+        let mut unknown = legacy.clone();
+        unknown.child_coinbase_script = script;
+        let resolved =
+            resolve_event_pools_with_child_payout(&unknown, &resolver, &ids_by_slug, None, None);
+        assert!(
+            resolved
+                .attributions
+                .iter()
+                .any(|a| a.side.as_db_str() == "btc_parent")
+        );
+        assert!(
+            !resolved
+                .attributions
+                .iter()
+                .any(|a| a.side.as_db_str() == "child_block")
+        );
+    }
+
     let parsed = namecoin_child_payout_fixture();
 
     let unknown_pool_ids = resolve_event_pools_with_child_payout(

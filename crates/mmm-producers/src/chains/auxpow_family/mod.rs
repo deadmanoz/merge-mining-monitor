@@ -30,7 +30,7 @@ use crate::poller::{ChainPoller, ChainPollerState, HeightProgress, Poller, Resca
 use crate::producer_runtime::{ProducerContext, ProducerRuntime, run_post_backfill_repair};
 use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::auxpow::{
-    ParsedAuxpowBlock, ParsedNamecoinBlock, ParsedQbitAuxpow, attach_child_block_coinbase,
+    ParsedAuxpowBlock, ParsedNamecoinBlock, ParsedQbitAuxpowBlock, attach_child_block_coinbase,
     parse_auxpow_header_blob, parse_child_block_coinbase, parse_namecoin_block,
     parse_verified_classic_block,
 };
@@ -173,8 +173,8 @@ pub enum HeightOutcome {
 pub(super) enum AuxpowFetch {
     /// A classic CAuxPow proof (Namecoin, Syscoin, Fractal).
     Classic(Box<ParsedAuxpowBlock>),
-    /// A verified Qbit extended-header proof.
-    Qbit(Box<ParsedQbitAuxpow>),
+    /// A verified Qbit proof and authenticated child coinbase.
+    Qbit(Box<ParsedQbitAuxpowBlock>),
     NonAuxpow,
     /// The block claimed a proof that failed to decode; the string is the full
     /// error chain, stored as `capture_error.detail` under the hold policy.

@@ -597,7 +597,11 @@ pub fn resolve_event_pools_with_child_payout(
     if let Some(attribution) = parent_attribution.as_ref() {
         attributions.push(attribution.clone());
     }
-    if let Some(attribution) = resolve_child_pool(parsed, resolver, pool_ids_by_slug) {
+    if let Some(attribution) = resolve_child_pool_attribution_from_script(
+        parsed.child_coinbase_script.as_deref(),
+        resolver,
+        pool_ids_by_slug,
+    ) {
         attributions.push(attribution);
     }
     if let Some(params) = child_payout_params {
@@ -825,15 +829,12 @@ fn resolve_btc_pool_match_from_coinbase<'a>(
 /// coinbase script against the resolver (script match only; payout addresses
 /// are handled separately by `resolve_child_payout_attributions`). Maps the
 /// matched slug to a `pool_id` and tags it with the legacy-child-script source.
-fn resolve_child_pool(
-    parsed: &ParsedAuxpowBlock,
+pub fn resolve_child_pool_attribution_from_script(
+    script: Option<&[u8]>,
     resolver: &PoolResolver,
     pool_ids_by_slug: &HashMap<String, i64>,
 ) -> Option<EventPoolAttribution> {
-    let script_match = parsed
-        .child_coinbase_script
-        .as_deref()
-        .and_then(|script| resolver.resolve_coinbase_script(script));
+    let script_match = script.and_then(|script| resolver.resolve_coinbase_script(script));
 
     script_match.as_ref().and_then(|pool_match| {
         pool_ids_by_slug

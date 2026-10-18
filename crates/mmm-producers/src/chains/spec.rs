@@ -102,9 +102,9 @@ pub enum FetchStrategy {
     HeaderBlob { exact_version: i32 },
     /// `getblock <hash> 0` (Qbit): the raw block opens with a Qbit extended
     /// header, which is NOT a classic CAuxPow. The exact header/proof prefix
-    /// is split out by `qbit_extended_header_prefix` and verified by
-    /// `parse_qbit_extended_header`, which rejects trailing bytes; the block
-    /// body is never reinterpreted. `genesis_block_hash` is the display-order
+    /// is verified by the Qbit decoder, then the transaction body is
+    /// authenticated against its header before child tag attribution.
+    /// `genesis_block_hash` is the display-order
     /// mainnet genesis the producer pins at height 0, because the decoder
     /// deliberately authenticates no chain identity.
     QbitExtendedHeader { genesis_block_hash: &'static str },
@@ -395,8 +395,8 @@ pub static CHAINS: [ChainSpec; 8] = [
                 genesis_block_hash: QBIT_GENESIS_BLOCK_HASH,
             },
             raw_block_boolean_verbose: false,
-            // Qbit publishes no child payout registry; only BTC-parent-side
-            // attribution is resolvable.
+            // Child script tags use the pool snapshot; no Qbit payout
+            // address registry is configured.
             child_payout: None,
             // Merged mining is accepted from height 0, so no height is below
             // activation and there is nothing to warn about.

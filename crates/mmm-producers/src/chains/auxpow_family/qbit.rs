@@ -3,10 +3,8 @@
 //! Qbit is the one family chain whose proof is not a classic `CAuxPow`: its
 //! extended header has no `hashBlock` field, so `ParsedQbitAuxpow` is a
 //! distinct type that cannot travel the `ParsedAuxpowBlock` write path. This
-//! module owns everything that follows from that - splitting the exact
-//! extended-header prefix out of a whole RPC block, authenticating native chain
-//! placement (which the decoder deliberately does not do), and projecting the
-//! verified proof into the chain-agnostic `NormalizedEventEvidence`. The shared
+//! module authenticates native chain placement and projects the verified proof
+//! and child coinbase into the chain-agnostic `NormalizedEventEvidence`. The shared
 //! runner in `mod.rs` stays format-agnostic.
 
 use anyhow::{Context, Result, ensure};
@@ -19,20 +17,16 @@ use tracing::debug;
 use super::{AuxpowCaptureContext, AuxpowFetch, HeightOutcome, write_event_in_txn};
 use crate::chains::bitcoind_rpc::BitcoindRpc;
 use crate::chains::spec::{ChainSpec, FamilySpec};
-use mmm_capture::auxpow::{
-    ParsedQbitAuxpow, ParsedQbitBlock, parse_qbit_extended_header, qbit_extended_header_prefix,
-    validates_target,
-};
+use mmm_capture::auxpow::{ParsedQbitAuxpowBlock, parse_qbit_block, validates_target};
 use mmm_capture::capture::{
     ClassificationProof, NormalizedEventEvidence, ResolvedPoolAttributions,
     build_event_payload_from_evidence, now_epoch_seconds,
-    resolve_parent_pool_attribution_from_coinbase,
+    resolve_child_pool_attribution_from_script, resolve_parent_pool_attribution_from_coinbase,
 };
 
 /// Fetch and verify one Qbit height. Qbit's `getblock <hash> 0` returns the
-/// complete block, so the exact extended-header prefix is split out first and
-/// only that is handed to the decoder, which rejects trailing bytes; the block
-/// body is never reinterpreted.
+/// complete block. The decoder verifies its proof and authenticates the child
+/// coinbase against the child transaction merkle root.
 ///
 /// Native placement is authenticated HERE, because the decoder deliberately
 /// does not: `child_height` is a caller claim to it and it pins no chain
@@ -55,27 +49,26 @@ pub(super) async fn fetch_qbit_candidate(
     let claimed_height = u32::try_from(height)
         .with_context(|| format!("{} height {height} is not a native height", family.label))?;
 
-    let parsed = match qbit_extended_header_prefix(&raw, claimed_height)
-        .and_then(|prefix| parse_qbit_extended_header(prefix, claimed_height))
-    {
-        Ok(parsed) => parsed,
+    let child_header = match raw
+        .get(..80)
+        .context("Qbit block is shorter than a header")
+        .and_then(|bytes| {
+            bitcoin::consensus::deserialize::<bitcoin::block::Header>(bytes)
+                .context("parse Qbit child header")
+        }) {
+        Ok(header) => header,
         Err(err) => return Ok(AuxpowFetch::Malformed(format!("{err:#}"))),
-    };
-
-    let child_header = match &parsed {
-        ParsedQbitBlock::Direct(header) => header,
-        ParsedQbitBlock::Auxpow(auxpow) => &auxpow.child_header,
     };
     ensure_qbit_native_placement(
         family.label,
         height,
         block_hash,
-        child_header.hash(),
+        child_header.block_hash(),
         genesis_block_hash,
     )?;
 
-    match parsed {
-        ParsedQbitBlock::Direct(_) => {
+    match parse_qbit_block(&raw, claimed_height) {
+        Ok(None) => {
             debug!(
                 chain = spec.slug,
                 height,
@@ -84,7 +77,8 @@ pub(super) async fn fetch_qbit_candidate(
             );
             Ok(AuxpowFetch::NonAuxpow)
         }
-        ParsedQbitBlock::Auxpow(parsed) => Ok(AuxpowFetch::Qbit(parsed)),
+        Ok(Some(parsed)) => Ok(AuxpowFetch::Qbit(Box::new(parsed))),
+        Err(err) => Ok(AuxpowFetch::Malformed(format!("{err:#}"))),
     }
 }
 
@@ -116,17 +110,16 @@ fn ensure_qbit_native_placement(
 /// Write one Qbit event. The proof is projected straight into
 /// `NormalizedEventEvidence`: the stored `aux_merkle_proof` is the exact
 /// `auxpow_bytes` region `decode_qbit_auxpow_proof` re-accepts, and the child
-/// height is the authenticated RPC height, not a coinbase claim. Child coinbase
-/// fields stay NULL because the extended header carries no child coinbase, and
-/// Qbit publishes no child payout registry, so attribution is BTC-parent-side
-/// only.
+/// height is the authenticated RPC height, checked against the child coinbase.
+/// Child script tags and Bitcoin parent attribution remain separate.
 pub(super) async fn write_qbit_event(
     client: &mut Client,
     context: &AuxpowCaptureContext,
     height: i32,
-    parsed: &ParsedQbitAuxpow,
+    block: &ParsedQbitAuxpowBlock,
 ) -> Result<HeightOutcome> {
-    let attributions = resolve_parent_pool_attribution_from_coinbase(
+    let parsed = &block.proof;
+    let mut attributions = resolve_parent_pool_attribution_from_coinbase(
         &parsed.parent_coinbase_script,
         &parsed.parent_coinbase_output_addresses,
         &context.resolver,
@@ -135,9 +128,14 @@ pub(super) async fn write_qbit_event(
     .into_iter()
     .collect::<Vec<_>>();
 
+    attributions.extend(resolve_child_pool_attribution_from_script(
+        Some(&block.coinbase.child_coinbase_script),
+        &context.resolver,
+        context.base.pool_ids_by_slug(),
+    ));
     let now = now_epoch_seconds()?;
     let mut payload = build_event_payload_from_evidence(
-        qbit_evidence(parsed, height),
+        qbit_evidence(block, height),
         ResolvedPoolAttributions { attributions },
         ClassificationProof::default(),
         now,
@@ -148,10 +146,11 @@ pub(super) async fn write_qbit_event(
 /// Project a verified Qbit proof into the chain-agnostic evidence type. Pure,
 /// so the persisted-field contract is testable from the mainnet control
 /// fixtures without a node or a database.
-fn qbit_evidence(parsed: &ParsedQbitAuxpow, height: i32) -> NormalizedEventEvidence {
+fn qbit_evidence(block: &ParsedQbitAuxpowBlock, height: i32) -> NormalizedEventEvidence {
+    let parsed = &block.proof;
+    let child = &block.coinbase;
     NormalizedEventEvidence {
-        // The authenticated RPC height, not a coinbase claim: the Qbit
-        // extended header carries no child coinbase to read one from.
+        // Native placement and the authenticated child coinbase agree.
         child_height: Some(height),
         child_block_hash: Some(parsed.child_header.hash().to_byte_array().to_vec()),
         child_header_bytes: Some(parsed.child_header.consensus_bytes()),
@@ -170,11 +169,9 @@ fn qbit_evidence(parsed: &ParsedQbitAuxpow, height: i32) -> NormalizedEventEvide
         btc_parent_coinbase_outputs: Some(serialize(&parsed.parent_coinbase_outputs)),
         btc_parent_coinbase_outputs_text: None,
         btc_parent_coinbase_tx_bytes: None,
-        // No child coinbase on the wire, and Qbit publishes no child payout
-        // registry: these stay NULL rather than carrying a placeholder.
-        child_coinbase_txid: None,
-        child_coinbase_script: None,
-        child_coinbase_outputs: None,
+        child_coinbase_txid: Some(child.child_coinbase_txid.to_byte_array().to_vec()),
+        child_coinbase_script: Some(child.child_coinbase_script.clone()),
+        child_coinbase_outputs: Some(serialize(&child.child_coinbase_outputs)),
         aux_merkle_proof: Some(parsed.auxpow_bytes.clone()),
     }
 }
@@ -184,6 +181,7 @@ mod tests {
     use super::super::family_of;
     use super::*;
     use crate::chains::spec::{ChainId, FetchStrategy, by_id};
+    use mmm_capture::auxpow::{ParsedQbitAuxpow, ParsedQbitBlock, parse_qbit_extended_header};
     use serde::Deserialize;
 
     #[derive(Deserialize)]
@@ -195,7 +193,6 @@ mod tests {
     struct QbitControl {
         height: u32,
         header_hex: String,
-        parent_hash: String,
         parent_self_pow: bool,
     }
 
@@ -222,89 +219,38 @@ mod tests {
         }
     }
 
-    /// Every field a Qbit event persists, from the mainnet control. The child
-    /// coinbase columns must stay NULL (the wire format has none) and the
-    /// stored proof must be exactly the bytes `decode_qbit_auxpow_proof`
-    /// re-accepts.
+    /// The full native block projects real child evidence without changing
+    /// the stored proof-byte contract.
     #[test]
-    fn qbit_evidence_projects_every_persisted_field_from_the_control() {
+    fn qbit_evidence_retains_authenticated_child_coinbase() {
         use mmm_capture::auxpow::decode_qbit_auxpow_proof;
-        use mmm_capture::capture::{ParentKind, ResolvedPoolAttributions};
-
-        let (control, parsed) = parsed_positive_control();
-        let evidence = qbit_evidence(&parsed, control.height as i32);
-
-        // Child evidence: the authenticated RPC height and the real header.
-        assert_eq!(evidence.child_height, Some(78_058));
+        let raw =
+            hex::decode(include_str!("../../../../../fixtures/qbit/135331.hex").trim()).unwrap();
+        let block = parse_qbit_block(&raw, 135_331).unwrap().unwrap();
+        let evidence = qbit_evidence(&block, 135_331);
+        assert_eq!(evidence.child_height, Some(135_331));
+        let mut txid = evidence.child_coinbase_txid.unwrap();
+        txid.reverse();
         assert_eq!(
-            evidence.child_block_hash.as_deref().map(hex::encode),
-            Some(hex::encode(parsed.child_header.hash().to_byte_array()))
+            hex::encode(txid),
+            "86b25edbe60c916f39b4d6eec28da7cdb1dcfd366ff76a9a12c10a84aaa2ea08"
         );
-        assert_eq!(
-            evidence.child_header_bytes,
-            Some(parsed.child_header.consensus_bytes())
+        assert!(
+            evidence
+                .child_coinbase_script
+                .unwrap()
+                .windows("七彩神仙鱼".len())
+                .any(|part| part == "七彩神仙鱼".as_bytes())
         );
+        let outputs: Vec<bitcoin::TxOut> =
+            bitcoin::consensus::deserialize(&evidence.child_coinbase_outputs.unwrap()).unwrap();
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(outputs[0].value.to_sat(), 18_394_280_067);
         assert_eq!(
-            evidence.child_block_time,
-            Some(i64::from(parsed.child_header.time()))
-        );
-        assert_eq!(
-            evidence.child_nbits,
-            Some(parsed.child_header.bits().to_consensus())
-        );
-        // Qbit's parent must meet the CHILD target; the proof would not have
-        // parsed otherwise, and the evidence records the re-derivation.
-        assert_eq!(evidence.pow_validates_child_target, Some(true));
-        // No child coinbase exists on the wire: never a placeholder.
-        assert_eq!(evidence.child_coinbase_txid, None);
-        assert_eq!(evidence.child_coinbase_script, None);
-        assert_eq!(evidence.child_coinbase_outputs, None);
-        // The stored proof is exactly the region the Qbit decoder re-accepts.
-        let stored = evidence.aux_merkle_proof.clone().expect("proof stored");
-        assert_eq!(stored, parsed.auxpow_bytes);
-        assert_eq!(
-            decode_qbit_auxpow_proof(&stored)
-                .expect("stored proof re-decodes")
+            decode_qbit_auxpow_proof(&evidence.aux_merkle_proof.unwrap())
+                .unwrap()
                 .parent_header_hash,
-            parsed.parent_header.hash()
-        );
-
-        let payload = build_event_payload_from_evidence(
-            evidence,
-            ResolvedPoolAttributions::default(),
-            ClassificationProof::default(),
-            1_800_000_000,
-        )
-        .expect("build payload");
-        assert_eq!(
-            payload.btc_parent_header_hash,
-            parsed.parent_header.hash().to_byte_array().to_vec()
-        );
-        // The positive control's parent is a full-difficulty Bitcoin block.
-        assert!(payload.pow_validates_btc_target);
-        assert_eq!(
-            payload.btc_parent_header_time,
-            i64::from(parsed.parent_header.time())
-        );
-        assert_eq!(
-            payload.btc_parent_coinbase_txid,
-            Some(parsed.parent_coinbase_txid.to_byte_array().to_vec())
-        );
-        assert_eq!(
-            payload.btc_parent_coinbase_script,
-            Some(parsed.parent_coinbase_script.clone())
-        );
-        // Without classifier proof a PoW-valid parent is Unknown (no placement).
-        assert_eq!(payload.btc_parent_kind, ParentKind::Unknown);
-        assert_eq!(
-            hex::encode(&payload.btc_parent_header_hash),
-            hex::encode(
-                hex::decode(&control.parent_hash)
-                    .expect("decode control parent hash")
-                    .into_iter()
-                    .rev()
-                    .collect::<Vec<u8>>()
-            )
+            block.proof.parent_header.hash()
         );
     }
 

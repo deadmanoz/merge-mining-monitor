@@ -504,3 +504,41 @@ fn prefix_reader_stops_at_the_header_for_a_direct_block() {
         ParsedQbitBlock::Direct(_)
     ));
 }
+
+#[test]
+fn full_block_authenticates_child_body_and_native_height() {
+    let raw = hex::decode(include_str!("../../../../fixtures/qbit/135331.hex").trim()).unwrap();
+    let parsed = parse_qbit_block(&raw, 135_331).unwrap().unwrap();
+    assert_eq!(
+        parsed.proof.child_header.hash().to_string(),
+        "ce1bf600ca526a814cddc626dc091e040978e96d8d2d0f3d900dc50fe9c8ff67"
+    );
+    assert_eq!(
+        parsed.coinbase.child_coinbase_txid.to_string(),
+        "86b25edbe60c916f39b4d6eec28da7cdb1dcfd366ff76a9a12c10a84aaa2ea08"
+    );
+    let mut corrupt = raw.clone();
+    let tag = "七彩神仙鱼".as_bytes();
+    let offset = corrupt
+        .windows(tag.len())
+        .rposition(|bytes| bytes == tag)
+        .unwrap();
+    corrupt[offset] ^= 1;
+    for (bytes, height, reason) in [
+        (corrupt.as_slice(), 135_331, "merkle root"),
+        (
+            &raw[..raw.len() - 1],
+            135_331,
+            "deserialize full child block",
+        ),
+        (raw.as_slice(), 135_332, "coinbase height"),
+        (
+            raw.as_slice(),
+            u32::MAX,
+            "native height exceeds signed range",
+        ),
+    ] {
+        let error = format!("{:#}", parse_qbit_block(bytes, height).unwrap_err());
+        assert!(error.contains(reason), "expected {reason}: {error}");
+    }
+}

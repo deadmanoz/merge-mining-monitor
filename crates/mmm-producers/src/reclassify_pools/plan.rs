@@ -14,7 +14,8 @@ use mmm_capture::attribution_policy::{ExistingAttributionSet, WritePolicy};
 use mmm_capture::auxpow::TxOut;
 use mmm_capture::capture::{
     EventPoolAttribution, published_parent_coinbase_output_addresses,
-    resolve_child_payout_attributions, resolve_parent_pool_attribution_from_coinbase,
+    resolve_child_payout_attributions, resolve_child_pool_attribution_from_script,
+    resolve_parent_pool_attribution_from_coinbase,
     resolve_parent_pool_attribution_from_serialized_coinbase_outputs,
 };
 use mmm_capture::child_payout::{PoolIdentityLookup, params_for_source_code};
@@ -198,22 +199,6 @@ fn resolve_parent_pool_from_published_text(
     resolve_parent_pool_attribution_from_coinbase(script, &addresses, resolver, pool_ids_by_slug)
 }
 
-/// Resolve the child pool attribution for one row from its stored child
-/// coinbase script (tags only). In this replay, child attribution is
-/// coinbase-tag-only for Namecoin-family chains; chain-native payout/reward
-/// addresses are handled separately by `resolve_child_payouts`. Yields an
-/// attribution only when the matched pool slug maps to a seeded `pool_id`.
-fn resolve_child_pool(
-    row: &CandidateRow,
-    resolver: &PoolResolver,
-    pool_ids_by_slug: &HashMap<String, i64>,
-) -> Option<EventPoolAttribution> {
-    let script = row.child_coinbase_script.as_ref()?;
-    let pool_match = resolver.resolve_coinbase_script(script)?;
-    let pool_id = pool_ids_by_slug.get(&pool_match.pool.slug).copied();
-    pool_id.map(|id| EventPoolAttribution::from_legacy_child_pool_match(&pool_match, id))
-}
-
 /// Result of payout re-resolution for one event. `attributions` holds only the
 /// rows the write policy says to write (may include unresolved NULL-pool
 /// observations); `changed` is true iff that vector is non-empty; `corrupt_outputs`
@@ -333,7 +318,11 @@ pub(super) fn plan_batch_updates(
         if resolved_parent.corrupt_outputs {
             stats.corrupt_parent_outputs += 1;
         }
-        let resolved_child = resolve_child_pool(&candidate, resolver, pool_ids_by_slug);
+        let resolved_child = resolve_child_pool_attribution_from_script(
+            candidate.child_coinbase_script.as_deref(),
+            resolver,
+            pool_ids_by_slug,
+        );
         let resolved_child_payout =
             resolve_child_payouts(&candidate, child_payout_identities, config.overwrite);
         if resolved_child_payout.corrupt_outputs {

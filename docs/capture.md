@@ -89,7 +89,7 @@ would skip.
 | RSK | Ethereum-style RSKj JSON-RPC for canonical blocks and uncles. | Stores RSK proof sidecar data and miner beneficiary identity. |
 | Hathor | Public REST API plus Hathor RFC 0006 merged-mining reconstruction. | No self-hosted mainnet node assumption; reward outputs are parsed from persisted funds graph data. |
 | Elastos | JSON-RPC `getblockbyheight`. | Reconstructs the 84-byte child header and verifies the AuxPoW commitment. |
-| Qbit | Core-style raw block RPC: `getblock <hash> 0`, of which only the exact extended-header prefix is decoded. | Qbit's extended header is not a classic CAuxPoW and has no `hashBlock` field, so it uses the dedicated Qbit decoder and is projected straight into normalized evidence. |
+| Qbit | Core-style raw block RPC: `getblock <hash> 0`, whose proof and child transaction body are verified. | Qbit's extended header is not a classic CAuxPoW and has no `hashBlock` field, so it uses the dedicated Qbit decoder and is projected straight into normalized evidence. |
 | Bitcoin Core | `sync-bitcoin-core`. | Writes canonical backbone headers and coinbase evidence for tree browsing; follow mode atomically repairs bounded near-tip or lagged-cursor reorg suffixes and retains the displaced side as stale evidence. |
 
 The bitcoind-family runner (Namecoin, Syscoin, Fractal, Qbit, Terracoin), the Elastos
@@ -287,4 +287,6 @@ One `CaptureFailurePolicy` owns malformed handling, operational-failure retentio
 and successful same-height clearing. Strict classic parsing lives in
 `mmm-capture::auxpow::parse_verified_classic_block`; producers supply expected
 identity and own endpoint checks and persistence, without decoding wire layouts.
-Legacy parsing and Qbit/Elastos proof semantics remain unchanged.
+Legacy parsing and Qbit/Elastos proof semantics remain unchanged. Qbit also authenticates the
+child transaction body against its merkle root and checks the coinbase height
+before retaining child coinbase evidence and matching pool tags.
