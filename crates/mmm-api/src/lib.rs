@@ -23,6 +23,7 @@ pub use version::{
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::Router;
@@ -51,23 +52,15 @@ pub const FRONTEND_ASSET_PREFIX: &str = concat!("/v/", env!("CARGO_PKG_VERSION")
 #[derive(Clone)]
 pub struct AppState {
     pool: Pool,
-    www_dir: PathBuf,
 }
 
 impl AppState {
     pub fn new(pool: Pool) -> Self {
-        Self {
-            pool,
-            www_dir: PathBuf::new(),
-        }
+        Self { pool }
     }
 
     pub(crate) fn pool(&self) -> &Pool {
         &self.pool
-    }
-
-    pub(crate) fn www_dir(&self) -> &Path {
-        &self.www_dir
     }
 }
 
@@ -117,15 +110,24 @@ pub fn build_pool(pg: &PgConfig, max_size: usize) -> Result<Pool> {
         .context("build Postgres connection pool")
 }
 
-pub fn router(mut state: AppState, www_dir: impl AsRef<Path>) -> Router {
-    state.www_dir = www_dir.as_ref().to_path_buf();
+pub fn router(state: AppState, www_dir: impl AsRef<Path>) -> Router {
+    let index_path: Arc<Path> = Arc::from(www_dir.as_ref().join("index.html"));
     let serve_dir = ServeDir::new(www_dir.as_ref()).append_index_html_on_directories(true);
     let versioned_serve_dir =
         ServeDir::new(www_dir.as_ref()).append_index_html_on_directories(false);
 
     Router::new()
-        .route("/", get(handlers::index_html))
-        .route("/index.html", get(handlers::index_html))
+        .route(
+            "/",
+            get({
+                let index_path = Arc::clone(&index_path);
+                move |headers: HeaderMap| handlers::index_html(headers, index_path)
+            }),
+        )
+        .route(
+            "/index.html",
+            get(move |headers: HeaderMap| handlers::index_html(headers, index_path)),
+        )
         .route("/api/v1/tree", get(handlers::tree))
         .route("/api/v1/block/{hash}", get(handlers::block))
         .route("/api/v1/navigator/{target}", get(handlers::navigator))
@@ -134,7 +136,7 @@ pub fn router(mut state: AppState, www_dir: impl AsRef<Path>) -> Router {
         .route("/api/v1/version", get(handlers::version_metadata))
         .route("/health", get(handlers::health))
         .route("/ready", get(handlers::ready))
-        .nest_service(FRONTEND_ASSET_PREFIX, versioned_serve_dir)
+        .nest_service("/v/{version}", versioned_serve_dir)
         .fallback_service(serve_dir)
         .layer(
             ServiceBuilder::new()

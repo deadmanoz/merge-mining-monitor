@@ -2,7 +2,7 @@
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::header::{CACHE_CONTROL, IF_MODIFIED_SINCE, LAST_MODIFIED};
+use axum::http::header::{CACHE_CONTROL, ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED};
 use axum::http::{HeaderMap, Request, StatusCode};
 use mmm_api::{self as api, AppState};
 use mmm_pg::PgConfig;
@@ -365,7 +365,12 @@ async fn cache_headers_match_public_launch_policy() {
 
     let versioned_js = format!("{}/js/app.js", api::FRONTEND_ASSET_PREFIX);
     let versioned_css = format!("{}/css/tokens.css", api::FRONTEND_ASSET_PREFIX);
-    for uri in [versioned_js.as_str(), versioned_css.as_str(), "/js/app.js"] {
+    for uri in [
+        versioned_js.as_str(),
+        versioned_css.as_str(),
+        "/v/0.0.0-previous/js/app.js",
+        "/js/app.js",
+    ] {
         let (status, headers, _) = request(uri).await;
         assert_eq!(status, StatusCode::OK, "{uri}");
         let cache = cache_control(&headers);
@@ -397,6 +402,35 @@ async fn cache_headers_match_public_launch_policy() {
 
 #[tokio::test]
 async fn conditional_static_revalidation_keeps_cache_policy() {
+    for index_uri in ["/", "/index.html"] {
+        let (status, headers, _) = request(index_uri).await;
+        assert_eq!(status, StatusCode::OK, "{index_uri}");
+        let etag = headers
+            .get(ETAG)
+            .expect("ETag header on index HTML")
+            .to_str()
+            .expect("ETag is valid ASCII")
+            .to_owned();
+        assert!(
+            etag.contains(env!("CARGO_PKG_VERSION")),
+            "{index_uri} ETag {etag:?} must embed the release version"
+        );
+
+        let (status, headers, body) = send(
+            Request::builder()
+                .uri(index_uri)
+                .header(IF_NONE_MATCH, &etag)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_MODIFIED, "{index_uri}");
+        assert!(body.is_empty(), "{index_uri}");
+        let cache = cache_control(&headers);
+        assert!(cache.contains("max-age=0"), "{index_uri}: {cache}");
+        assert!(cache.contains("must-revalidate"), "{index_uri}: {cache}");
+    }
+
     let versioned_js = format!("{}/js/app.js", api::FRONTEND_ASSET_PREFIX);
     for uri in [versioned_js.as_str(), "/js/app.js"] {
         let (status, headers, _) = request(uri).await;
