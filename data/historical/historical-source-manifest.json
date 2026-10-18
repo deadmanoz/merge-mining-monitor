@@ -175,7 +175,7 @@
       "parent_only_rows": 0,
       "role": "error_observation",
       "row_count": 121,
-      "sha256": "c7bb5dda94c8a07cbbf8799d44550b6e3bfc32b61e04faaea57ef89712835eb1",
+      "sha256": "ec1ea7ae10d356fbbf4d62542555778998dc0ddaba1e1f8de55b3adb6e725849",
       "size_bytes": 163094,
       "source_chain_counts": {
         "devcoin": 19,
@@ -551,6 +551,6 @@
   "schema_version": 2,
   "scope": "uniform_monitor_evidence_v1",
   "source_repo": "merge-mining-research",
-  "source_repo_commit": "e5b2750f0503db7b1f7d8fe6c74858ea6957a95a",
+  "source_repo_commit": "17f81c8b543ccbce3a210083ba942d8bfcd83af8",
   "total_event_rows": 1298956
 }
