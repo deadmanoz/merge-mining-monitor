@@ -4,7 +4,7 @@ This document defines the release JSON contract for the merge-mining monitor UI.
 Fixture examples live in `fixtures/api/`; fixture coverage is listed by `fixtures/api/manifest.json`.
 
 The current implementation supports Namecoin, RSK, Syscoin, Fractal Bitcoin, Hathor, Elastos, Qbit, and Terracoin capture.
-See `docs/data-model.md` for schema details, `docs/architecture.md` for current code flow, and `docs/tree-semantics.md` for implementation notes on deriving `/api/v1/tree` and orphan navigator responses.
+See `docs/data-model.md` for schema details, `docs/architecture.md` for current code flow, and `agent_docs/tree-semantics.md` for implementation notes on deriving `/api/v1/tree` and orphan navigator responses.
 
 ## Compatibility
 
@@ -244,7 +244,7 @@ GET /api/v1/tree?at_height&at_time&context=compact&from_height&to_height&kinds=n
 | `"height"` | `at_height` (optional `context=compact`) | Exact single-height lookup `H..H` (or bounded fork-explaining context when `context=compact`). Manual UI `tree_height` maps to `at_height&context=compact`. |
 | `"time"` | `at_time` (`YYYY-MM-DDTHH:MM:SSZ`, optional `context=compact`) | Resolves to the complete canonical block at or before `at_time` using deterministic ordering `btc_header_time DESC, btc_height DESC, btc_header_hash ASC`, then renders its height. If none exists, returns an empty non-tip window with `empty_reason = "no_complete_canonical_at_or_before_time"`. Manual UI `tree_time` maps to `at_time&context=compact`. |
 | `"explicit"` | `from_height` and `to_height` | Legacy/internal explicit height range (max 2,016 heights) for direct API callers and backend-generated navigator `tree_window=generated` links (`tree_from`/`tree_to`). Both bounds are required together; supplying only one is `invalid_query`. |
-| `"unheighted_anchor"` | `unheighted_anchor` (64-char hex hash) | Anchor-centered BTC-orphan view: renders the proven `prev_hash`-linked orphan component containing the anchor against a local `±16` canonical context window (`tip_height = null`, `defaulted_to_tip = false`, `empty_reason = null`). The anchor must be an existing PoW-valid `unknown` block in the active `classification` set (else `not_found`). Ignores `kinds`, `source`, and `min_sources`. Falls back to a flat time-ordered strip (250-node cap, null window bounds) when no placement height or in-window canonical attachment exists. See `docs/tree-semantics.md`. |
+| `"unheighted_anchor"` | `unheighted_anchor` (64-char hex hash) | Anchor-centered BTC-orphan view: renders the proven `prev_hash`-linked orphan component containing the anchor against a local `±16` canonical context window (`tip_height = null`, `defaulted_to_tip = false`, `empty_reason = null`). The anchor must be an existing PoW-valid `unknown` block in the active `classification` set (else `not_found`). Ignores `kinds`, `source`, and `min_sources`. Falls back to a flat time-ordered strip (250-node cap, null window bounds) when no placement height or in-window canonical attachment exists. See `agent_docs/tree-semantics.md`. |
 
 #### Query Modifiers And Backbone Integrity
 
@@ -279,7 +279,7 @@ GET /api/v1/tree?at_height&at_time&context=compact&from_height&to_height&kinds=n
 | `competition` | Paired canonical competitor details for `stale` nodes, else `null`. |
 | `branch` | `{ "branch_id": "<id>" }` for stale members (`stale-<btc_height_min>-<root_hash>`) and multi-block orphan component members (`orphan-<root_hash>`), else `null`. Orphan `TreeBranch` entries in `tree.branches[]` use placement heights for `btc_height_min`/`btc_height_max` and `canonical_competitor_hashes: []`. |
 | `placement_height` | Optional; present on placed orphan nodes in `unheighted_anchor` mode only (omitted elsewhere and on `/api/v1/block/:hash`). Derived layout height (`btc_height` stays `null`). |
-| `placement_approx` | Optional; present with `placement_height`. `true` when placement is approximate rather than a validated strict BIP34 height (UI prefixes `~`). See `docs/tree-semantics.md`. |
+| `placement_approx` | Optional; present with `placement_height`. `true` when placement is approximate rather than a validated strict BIP34 height (UI prefixes `~`). See `agent_docs/tree-semantics.md`. |
 
 #### Tree Edge Kinds
 
@@ -296,7 +296,7 @@ Clients must derive hidden context from `edges[]`.
 | `orphan_approx` | anchor-mode fork edge for an approximate placement (weak/excluded/pending root, or a strict root whose predecessor is absent/mismatched), to the nearest in-window canonical | none |
 
 Tree reduction is deterministic: collapsed canonical context is represented by `hidden` edges with `hidden_count` and summarized by `window.hidden_linear_block_count`.
-Responses return at most 500 nodes, yielding `range_too_large` (HTTP 422) when required nodes cannot fit within that cap (see `docs/tree-semantics.md`).
+Responses return at most 500 nodes, yielding `range_too_large` (HTTP 422) when required nodes cannot fit within that cap (see `agent_docs/tree-semantics.md`).
 
 ### `/api/v1/block/:hash`
 
@@ -394,7 +394,7 @@ Ordering is stable and target-specific:
 Single-block stale items round-trip to `/api/v1/block/:hash` and to tree node hashes.
 Stale branch items include only current components whose stale members have a derivable canonical competitor, with `depth >= 2`; one-block stale branches remain single `stale` items and block detail.
 Orphan branch items include only proven prev_hash-linked orphan components with `depth >= 2`; one-block orphan components remain single `orphan` items. Branch endpoints intentionally omit member lists, pool detail, and placement heights; the tree and `/api/v1/block/:hash` endpoints expose those when a branch is selected.
-See `docs/tree-semantics.md` for where `btc_orphan_class` appears across endpoints.
+See `agent_docs/tree-semantics.md` for where `btc_orphan_class` appears across endpoints.
 
 ### `/api/v1/sources`
 

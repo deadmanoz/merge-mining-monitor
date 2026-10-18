@@ -15,8 +15,9 @@ Any operation that iterates over rows, heights, or candidates and performs a rem
    A batch is processed under the lock; the lock is released before the next batch.
 5. **Progress and transport telemetry:** Log progress through `ProgressReporter` (done, total, rate, ETA at a fixed interval, and a `job ended` summary with each RPC client's `RpcMetrics` line whether the job finished or aborted).
    A live poller reports the same counters as per-tick deltas on its `poll tick` line.
-6. **Transport-boundary test:** Carry a test that pins its remote-call count per item at the transport boundary (an `RpcMetrics` snapshot, or the scripted Core fixture in `docs/testing.md`), not at a fake classifier's call count.
-7. **Production-latency timing receipt:** Be timed at production round-trip latency before it ships, with the receipt (items, round trips, wall time) in the PR (`docs/testing.md`).
+6. **Transport-boundary test:** Carry a test that pins its remote-call count per item at the transport boundary via the client's `metrics().snapshot()` (`RpcMetrics` counts dispatched HTTP attempts, JSON-RPC elements, retries, failures, and latency) or the scripted Core RPC fixture (`crates/mmm-bitcoin-core/src/parent_classifier/core_fixture.rs`).
+   `FakeParentClassifier`'s call count measures classifier invocations, not transport requests, and must not be used to pin remote-call budgets.
+7. **Production-latency timing receipt:** Time the operation at the 340 ms production round-trip latency before it ships using `MMM_TEST_RPC_DELAY_MS=340` (for example against `strict_import_classification_rpc_budget` in `mmm-bitcoin-core` or the transport-boundary capture tests in `db_integration`), and record the receipt (items, round trips, wall time) beside `Round-trip budget:` in the PR.
 
 ## Per-Item Database Statements
 

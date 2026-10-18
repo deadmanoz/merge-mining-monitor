@@ -47,32 +47,18 @@ The Qbit payout registry also resolves authenticated child outputs with HRP `qb`
 Unsupported output types are skipped.
 
 Child payout registry entries may specify `confidence: "high"` or `"medium"`; omitting it preserves the existing medium rating.
-This metadata is applied at bootstrap to matching, database-backed identities, without additional queries or a confidence column.
-Unknown payout addresses remain medium-confidence observations without a pool identity.
-Other identity mechanisms retain their existing confidence policies.
-
-The 2026-10-18 retained snapshot supports F2Pool at high confidence: all 4,482 observations with its exact payout script also carry F2Pool native child tags and F2Pool Bitcoin-parent attribution.
-SECPOOL (1,245 observations) and Luxor (1,070) have exclusive parent-pool correlations and remain medium confidence.
-These are pool associations, not independent proof of wallet control.
-The shared wallet spans six Bitcoin parent brands and remains unmapped.
-Matching child tag and payout rows remain separate evidence for the same pool; conflicting known child pools project to Unknown.
+This metadata is applied at bootstrap to matching, database-backed identities without additional queries or a confidence column; unknown payout addresses remain medium-confidence observations without a pool identity.
+Matching child tag and payout rows remain separate evidence for the same pool, while conflicting known child pools project to Unknown.
 
 ## Reclassification
 
-`just reclassify-pools` replays attribution from stored evidence and the embedded registries.
+`just reclassify-pools` replays attribution from stored evidence and the embedded registries (for example `just reclassify-pools --only main --source auxpow:qbit` to enrich stored child outputs in bounded pages without node RPC calls).
 It is fill-null-only by default; pass `--overwrite` only when intentionally re-attributing existing registry-backed rows.
 
 Historical Bitcoin-parent replay uses structured serialized outputs when a full coinbase transaction supplied their values.
 It otherwise falls back to the publication's preserved output text, decoding raw Bitcoin scriptPubKeys and using published payout addresses without requiring a scriptSig marker.
 
 Use `--only` or `--skip-*` flags to limit expensive phases when only one registry changed.
-
-After applying migration `0032` through the backup-first workflow, enrich existing Qbit events with `just reclassify-pools --only main --source auxpow:qbit`.
-This uses stored child outputs in bounded pages and adds no per-event node RPC calls.
-It also adds payout evidence to already tagged F2Pool events; a repeat writes no unchanged attributions.
-Existing resolved payout rows retain the normal `--overwrite` protection.
-The CLI's existing Core-cache startup is separate from the offline replay loop.
-No native-block replay or one-off repair script is required.
 
 The main scan counts eligible events once at startup, then reports completed events, rate and ETA through the shared progress reporter at 30-second intervals, with a final summary on completion or failure.
 The initial total is an estimate while producers add evidence; no snapshot lock spans the replay.

@@ -40,7 +40,7 @@ Use `just` targets, not raw commands, when a target exists:
 
 ## Remote Round Trips And Batch Work
 
-Production round-trip latency to Bitcoin Core, child-chain nodes, and the research VM is ~340 ms (see `agent_docs/round-trip-budget.md` and `docs/testing.md`).
+Production round-trip latency to Bitcoin Core, child-chain nodes, and the research VM is ~340 ms (see `agent_docs/round-trip-budget.md` and `agent_docs/testing.md`).
 Any loop over rows, heights, or candidates that performs a remote call or per-item SQL statement must:
 
 - State a `Round-trip budget:` line in the PR description (`none` when adding no remote or per-item work) for any producer, store, or read-model change.

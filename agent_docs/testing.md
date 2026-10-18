@@ -44,13 +44,7 @@ Concurrent tasks inside each test still exercise the production locking behavior
 
 ## Round-Trip Budgets
 
-Every remote client (the Bitcoin Core client in `mmm-bitcoin-core` and the child-chain clients over the `mmm-rpc` transport) owns an `RpcMetrics` handle that counts dispatched HTTP attempts, JSON-RPC elements, retries, failures, and latency at the transport boundary, readable in tests through the client's `metrics().snapshot()`.
-An attempt is one dispatched request, counted at dispatch and timed through its interpreted response (or until the caller abandons it), and a window's mean latency is over the attempts that completed in it; a retry and a failure belong to the client's retry loop, and a failure is a call that gave up.
-The scripted Core RPC fixture (`crates/mmm-bitcoin-core/src/parent_classifier/core_fixture.rs`) serves `getblockhash`, `getblockheader`, and `getblock` from a canned header chain so the production classifier can be exercised, and counted, for the canonical, stale-competitor, and median-time-past cases.
-Tests that pin a remote-call count per item use these counters; `FakeParentClassifier`'s call count measures how often the classifier is invoked, not how many requests it makes, and is kept for that purpose only.
-
-Batch operations log progress through `ProgressReporter` and end (finished or aborted) with a `job ended` summary and one line per RPC client.
-Before a change to a remote or batch operation ships, pin its per-item request count at the transport boundary and time it at the 340 ms production round-trip latency using `MMM_TEST_RPC_DELAY_MS=340` (for example against `strict_import_classification_rpc_budget` in `mmm-bitcoin-core` or the transport-boundary capture tests in `db_integration`), recording the receipt (items, round trips, wall time) beside `Round-trip budget:` in the PR.
+See [`round-trip-budget.md`](round-trip-budget.md) for the ~340 ms production round-trip rules, `RpcMetrics` (`metrics().snapshot()`) transport-boundary counters, `core_fixture.rs` vs `FakeParentClassifier` test pinning, and `MMM_TEST_RPC_DELAY_MS=340` timing receipts.
 
 ## Frontend Tests
 

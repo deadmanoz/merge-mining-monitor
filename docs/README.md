@@ -2,6 +2,7 @@
 
 These documents describe the project for maintainers, operators, and curious readers.
 They are intentionally human-focused: enough context to understand the system, run it, and change it carefully.
+Contributor and coding-agent implementation references (testing, round-trip budgets, release checklist, and internal tree-reduction semantics) live in [`../agent_docs/README.md`](../agent_docs/README.md).
 
 ## Start Here
 
@@ -15,13 +16,10 @@ They are intentionally human-focused: enough context to understand the system, r
 - `configuration.md` - environment variables and per-chain config contracts.
 - `operations.md` - local setup, migrations, serving, live test deployment, and routine operator commands.
 - `historical-ingest.md` - importing recovered historical AuxPoW evidence.
-- `testing.md` - Rust, Postgres, fixture, and Playwright test layers.
-- `release-versioning.md` - version ownership and release-note behavior.
 
 ## Product And API
 
 - `api-contract.md` - HTTP JSON contract and shared fixture expectations.
-- `tree-semantics.md` - implementation notes for deriving `/api/v1/tree` and orphan navigator responses (compact context, orphan placement, tree reduction).
 - `ui-model.md` - product intent, frontend state model, and user-facing tree behavior.
 
 ## Data And Fixtures
