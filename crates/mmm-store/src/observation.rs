@@ -333,6 +333,8 @@ async fn write_observation<C: GenericClient>(
            AND (o.child_block_time IS NULL OR EXCLUDED.child_block_time IS NULL OR o.child_block_time = EXCLUDED.child_block_time) \
            AND (o.child_header_bytes IS NULL OR EXCLUDED.child_header_bytes IS NULL OR o.child_header_bytes = EXCLUDED.child_header_bytes) \
            AND (o.child_nbits IS NULL OR EXCLUDED.child_nbits IS NULL OR o.child_nbits = EXCLUDED.child_nbits) \
+           AND (o.child_prev_block_hash IS NULL OR EXCLUDED.child_prev_block_hash IS NULL \
+                OR o.child_prev_block_hash = EXCLUDED.child_prev_block_hash) \
            {event_guard} \
          RETURNING id",
         fill = fill_child_evidence_from("EXCLUDED"),
