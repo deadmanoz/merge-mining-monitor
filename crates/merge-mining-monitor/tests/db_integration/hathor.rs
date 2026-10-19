@@ -14,7 +14,10 @@ use mmm_producers::chains::hathor::{
 use mmm_store::upsert_merge_mining_event;
 use tokio_postgres::Client;
 
-use crate::support::db::{advisory_locks_held, displacement_at};
+use crate::support::db::{
+    advisory_locks_held, displacement_at, observation_displacement_at, observation_prev_hash,
+    observations_at,
+};
 use crate::support::exact_observation;
 
 struct FixtureHathorRpc {
@@ -73,6 +76,9 @@ fn hathor_fixture(json: &str) -> (i32, FixtureHathorRpc) {
         version: j["version"].as_i64().unwrap() as i32,
         height,
         is_voided: j["is_voided"].as_bool().unwrap_or(false),
+        timestamp: j["timestamp"].as_i64(),
+        weight: j["weight"].as_f64(),
+        parents: Vec::new(),
     };
     let tx = HathorTransaction {
         raw: j["raw_hex"].as_str().unwrap().to_owned(),
@@ -263,6 +269,20 @@ async fn live_capture_promotes_a_hashless_historical_row_without_revoking_it() -
                 &[&event_id],
             )
             .await?;
+        // A hashless observation of the block beside the exact one carries an nBits the
+        // live payload lacks: promotion folds it into the exact row.
+        client
+            .execute(
+                "INSERT INTO child_block_observation \
+                     (source_id, child_height, observation_kind, btc_parent_header_hash, \
+                      child_nbits, recorded_at) \
+                 SELECT source_id, child_height, observation_kind, btc_parent_header_hash, \
+                        486604799, recorded_at \
+                   FROM child_block_observation \
+                  WHERE source_id = $1 AND child_height = $2",
+                &[&context.source_id(), &height],
+            )
+            .await?;
 
         assert_eq!(
             process_hathor_height(&mut client, &rpc, &context, height).await?,
@@ -289,6 +309,20 @@ async fn live_capture_promotes_a_hashless_historical_row_without_revoking_it() -
             "the promoted row stays active"
         );
         assert!(row.get::<_, bool>(3), "the live sidecar is attached");
+        let folded = client
+            .query_one(
+                "SELECT count(*), max(child_nbits), bool_and(child_block_hash IS NOT NULL) \
+                 FROM child_block_observation WHERE source_id = $1 AND child_height = $2",
+                &[&context.source_id(), &height],
+            )
+            .await?;
+        assert_eq!(
+            folded.get::<_, i64>(0),
+            1,
+            "the hashless observation is folded away"
+        );
+        assert_eq!(folded.get::<_, Option<i64>>(1), Some(486_604_799));
+        assert!(folded.get::<_, bool>(2));
         let pending: i64 = client
             .query_one(
                 "SELECT count(*) FROM poll_pending_reconcile WHERE source_id = $1",
@@ -411,6 +445,41 @@ async fn a_replaced_hathor_block_is_displaced_and_restored_when_it_returns() -> 
     })
 }
 
+/// The fixture block reweighted to a trivial `weight`: a self-consistent block
+/// whose Bitcoin parent misses Bitcoin's target.
+fn trivial_work_near(rpc: &FixtureHathorRpc, weight: f64) -> Result<FixtureHathorRpc> {
+    let raw = hex::decode(&rpc.tx.raw)?;
+    let aux_pow = hex::decode(rpc.tx.aux_pow.as_deref().unwrap())?;
+    let recon = reconstruct_from_blobs(
+        &raw,
+        &aux_pow,
+        bitcoin::BlockHash::from_str(&rpc.meta.tx_id)?,
+    )?;
+    let (forged_raw, forged_hash) =
+        forge_with_weight(&raw, &aux_pow, recon.funds_graph_split, weight)?;
+    Ok(variant_of(rpc, |meta, tx| {
+        meta.tx_id = forged_hash.to_string();
+        tx.raw = hex::encode(&forged_raw);
+        tx.hash = forged_hash.to_string();
+    }))
+}
+
+async fn hathor_sidecars_for(client: &Client, child_block_hash: &[u8]) -> Result<i64> {
+    Ok(client
+        .query_one(
+            "SELECT count(*) FROM hathor_merge_mining_evidence WHERE hathor_block_hash = $1",
+            &[&child_block_hash],
+        )
+        .await?
+        .get(0))
+}
+
+fn displaced_by(rows: &[(Vec<u8>, Option<Vec<u8>>)], hash: &[u8]) -> Option<Vec<u8>> {
+    rows.iter()
+        .find(|(row_hash, _)| row_hash.as_slice() == hash)
+        .and_then(|(_, by)| by.clone())
+}
+
 #[tokio::test]
 async fn a_block_declaring_trivial_work_does_not_displace_the_captured_block() -> Result<()> {
     crate::run_mut_db_test!(client, {
@@ -423,28 +492,167 @@ async fn a_block_declaring_trivial_work_does_not_displace_the_captured_block() -
             HathorHeightOutcome::AuxpowWritten
         );
 
-        let raw = hex::decode(&rpc_a.tx.raw)?;
-        let aux_pow = hex::decode(rpc_a.tx.aux_pow.as_deref().unwrap())?;
-        let recon = reconstruct_from_blobs(
-            &raw,
-            &aux_pow,
-            bitcoin::BlockHash::from_str(&rpc_a.meta.tx_id)?,
-        )?;
-        let (forged_raw, forged_hash) =
-            forge_with_weight(&raw, &aux_pow, recon.funds_graph_split, 1e-6)?;
-        let forged = variant_of(&rpc_a, |meta, tx| {
-            meta.tx_id = forged_hash.to_string();
-            tx.raw = hex::encode(&forged_raw);
-            tx.hash = forged_hash.to_string();
-        });
+        let forged = trivial_work_near(&rpc_a, 1e-6)?;
+        let near_hash = internal_hash(&forged.meta.tx_id);
         assert_eq!(
             process_hathor_height(&mut client, &forged, &context, height).await?,
-            HathorHeightOutcome::NearSkipped
+            HathorHeightOutcome::AuxpowWritten
+        );
+        let mut undisplaced = vec![(hash_a.clone(), None), (near_hash.clone(), None)];
+        undisplaced.sort();
+        assert_eq!(
+            observation_displacement_at(&client, source_id, height).await?,
+            undisplaced,
+            "A stays the chain's block, undisplaced, and the near is recorded beside it"
+        );
+        assert!(
+            displacement_at(&client, source_id, height)
+                .await?
+                .contains(&(hash_a.clone(), None, None))
+        );
+
+        // An event with no sidecar to hold work against (an imported row) keeps
+        // the REST answer from taking the height too.
+        client
+            .execute(
+                "DELETE FROM hathor_merge_mining_evidence WHERE hathor_block_hash = $1",
+                &[&hash_a],
+            )
+            .await?;
+        let another = trivial_work_near(&rpc_a, 2e-6)?;
+        assert_eq!(
+            process_hathor_height(&mut client, &another, &context, height).await?,
+            HathorHeightOutcome::AuxpowWritten
+        );
+        let rows = observation_displacement_at(&client, source_id, height).await?;
+        assert_eq!(displaced_by(&rows, &hash_a), None);
+        assert_eq!(displaced_by(&rows, &near_hash), None);
+        assert_eq!(advisory_locks_held(&client).await?, 0);
+        Ok(())
+    })
+}
+
+#[tokio::test]
+async fn a_height_without_an_event_follows_hathor_across_nears_and_unmerged_blocks() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (height, rpc) = hathor_1971823_fixture();
+        let context = live_context(&client, fake_classifier_synced_to(955_609)).await?;
+        let source_id = context.source_id();
+
+        let first = trivial_work_near(&rpc, 1e-6)?;
+        let first_hash = internal_hash(&first.meta.tx_id);
+        assert_eq!(
+            process_hathor_height(&mut client, &first, &context, height).await?,
+            HathorHeightOutcome::AuxpowWritten
         );
         assert_eq!(
-            displacement_at(&client, source_id, height).await?,
-            vec![(hash_a, None, None)],
-            "A stays the chain's block, undisplaced"
+            observations_at(&client, source_id, height).await?,
+            vec![(first_hash.clone(), "near".to_owned(), true, true)]
+        );
+        assert_eq!(hathor_sidecars_for(&client, &first_hash).await?, 0);
+        // The parent block Hathor's /block_at_height lists first for 1,971,823.
+        assert_eq!(
+            observation_prev_hash(&client, source_id, &first_hash).await?,
+            Some(internal_hash(
+                "00000000000000000e1b2a0daba36e5fd7a29573412005f52fcd950c227fd981"
+            ))
+        );
+
+        let second = trivial_work_near(&rpc, 2e-6)?;
+        let second_hash = internal_hash(&second.meta.tx_id);
+        assert_eq!(
+            process_hathor_height(&mut client, &second, &context, height).await?,
+            HathorHeightOutcome::AuxpowWritten
+        );
+        let rows = observation_displacement_at(&client, source_id, height).await?;
+        assert_eq!(displaced_by(&rows, &first_hash), Some(second_hash.clone()));
+        assert_eq!(displaced_by(&rows, &second_hash), None);
+
+        let parent_display = rpc.meta.tx_id.clone();
+        let unmerged = variant_of(&rpc, |meta, _| {
+            meta.version = 0;
+            meta.tx_id = "00000000000000000000000000000000000000000000000000000000000000aa".into();
+            meta.parents = vec![parent_display.clone()];
+        });
+        let unmerged_hash = internal_hash(&unmerged.meta.tx_id);
+        assert_eq!(
+            process_hathor_height(&mut client, &unmerged, &context, height).await?,
+            HathorHeightOutcome::NonAuxpowSkipped
+        );
+        assert_eq!(unmerged.tx_calls.load(Ordering::SeqCst), 0);
+        let rows = observation_displacement_at(&client, source_id, height).await?;
+        assert_eq!(
+            displaced_by(&rows, &second_hash),
+            Some(unmerged_hash.clone())
+        );
+        assert_eq!(displaced_by(&rows, &unmerged_hash), None);
+        let time: Option<i64> = client
+            .query_one(
+                "SELECT child_block_time FROM child_block_observation \
+                 WHERE source_id = $1 AND child_block_hash = $2 \
+                   AND observation_kind = 'not_merge_mined'",
+                &[&source_id, &unmerged_hash],
+            )
+            .await?
+            .get(0);
+        assert_eq!(time, rpc.meta.timestamp);
+        assert_eq!(
+            observation_prev_hash(&client, source_id, &unmerged_hash).await?,
+            Some(internal_hash(&rpc.meta.tx_id))
+        );
+
+        assert_eq!(
+            rescan_hathor_height(&mut client, &unmerged, &context, height).await?,
+            RescanOutcome::Unchanged,
+            "an unchanged block without AuxPoW skips the full path on rescan"
+        );
+
+        assert_eq!(advisory_locks_held(&client).await?, 0);
+        Ok(())
+    })
+}
+
+#[tokio::test]
+async fn a_malformed_hathor_answer_is_kept_once_its_weight_checks_out() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (height, rpc) = hathor_1971823_fixture();
+        let context = live_context(&client, fake_classifier_synced_to(955_609)).await?;
+        let source_id = context.source_id();
+
+        let misses_its_weight = variant_of(&rpc, |meta, _| {
+            meta.version = 0;
+            meta.tx_id = "00000000000000000000000000000000000000000000000000000000000000aa".into();
+            meta.weight = Some(250.0);
+        });
+        assert_eq!(
+            process_hathor_height(&mut client, &misses_its_weight, &context, height).await?,
+            HathorHeightOutcome::MalformedSkipped
+        );
+
+        // A version-3 answer whose reconstruction fails keeps the block, parent unverified,
+        // once its hash is checked against the weight the answer declares.
+        let tampered = variant_of(&rpc, |_, tx| {
+            let last = tx.raw.pop().unwrap();
+            tx.raw.push(if last == '0' { '1' } else { '0' });
+        });
+        let weightless = variant_of(&tampered, |meta, _| meta.weight = None);
+        assert_eq!(
+            process_hathor_height(&mut client, &weightless, &context, height).await?,
+            HathorHeightOutcome::MalformedSkipped
+        );
+        assert_eq!(observations_at(&client, source_id, height).await?, vec![]);
+        assert_eq!(
+            process_hathor_height(&mut client, &tampered, &context, height).await?,
+            HathorHeightOutcome::MalformedSkipped
+        );
+        assert_eq!(
+            observations_at(&client, source_id, height).await?,
+            vec![(
+                internal_hash(&rpc.meta.tx_id),
+                "unverified_parent".to_owned(),
+                false,
+                false
+            )]
         );
         assert_eq!(advisory_locks_held(&client).await?, 0);
         Ok(())

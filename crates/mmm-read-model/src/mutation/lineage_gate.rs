@@ -1,8 +1,9 @@
 //! Bitcoin-lineage gate on live capture (`mmm_capture::lineage::bitcoin_lineage`).
 //!
 //! Runs under the shared Core-cache lock before classifying or writing a parent:
-//! foreign-lineage parents are never stored (and retract any event this source held
-//! for the child block), while above-horizon pending parents roll back.
+//! foreign-lineage parents are never stored (they retract any event this source held
+//! for the child block, which keeps only a child-side observation), while
+//! above-horizon pending parents roll back.
 
 use anyhow::{Context, Result};
 use bitcoin::block::Header;
@@ -19,7 +20,8 @@ use crate::{load_block_cascade_state, lock_block_hashes, rebuild_parent_read_mod
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureOutcome {
     Written(i64),
-    /// Foreign-lineage parent: nothing written and prior child-block events for this source removed.
+    /// Foreign-lineage parent: prior child-block events for this source removed and only the
+    /// child block's `non_bitcoin_parent` observation written.
     NotBitcoin {
         reason: &'static str,
         core_cache_generation: i64,
@@ -104,7 +106,9 @@ async fn strict_height<C: GenericClient>(
     }))
 }
 
-/// Delete this source's events for a child block whose parent failed the lineage gate and rebuild the parent read model.
+/// Delete this source's events for a child block whose parent failed the lineage gate (and the
+/// block's hashless observations, so only its exact observation remains) and rebuild the parent
+/// read model.
 pub(super) async fn retract_child_block(
     txn: &Transaction<'_>,
     source_id: i64,

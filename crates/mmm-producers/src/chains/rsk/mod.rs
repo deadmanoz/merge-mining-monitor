@@ -12,11 +12,11 @@ pub(crate) mod traverse;
 pub(crate) mod test_fixtures;
 
 #[cfg(any(test, feature = "db-integration"))]
-pub use capture::capture_ready_rsk_inputs_for_test;
-#[cfg(any(test, feature = "db-integration"))]
 pub use capture::{
     BlockOutcome, CaptureDecision, RskCaptureContext, RskCaptureInputs, prepare_rsk_capture,
 };
+#[cfg(any(test, feature = "db-integration"))]
+pub use capture::{capture_ready_rsk_inputs_for_test, capture_rsk_block_for_test};
 #[cfg(any(test, feature = "db-integration"))]
 pub use rpc::RskBlock;
 #[cfg(any(test, feature = "db-integration"))]

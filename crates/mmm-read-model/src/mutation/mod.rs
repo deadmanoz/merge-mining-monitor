@@ -13,7 +13,9 @@ use tracing::debug;
 use crate::source_health_sql::ParentContribution;
 use mmm_bitcoin_core::BitcoinCoreBlockCoinbase;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
-use mmm_capture::capture::{MergeMiningEventPayload, ParentKind, apply_classification_proof};
+use mmm_capture::capture::{
+    ChildBlockObservation, MergeMiningEventPayload, ParentKind, apply_classification_proof,
+};
 use mmm_store::EventWriteOutcome;
 
 mod historical_queue;
@@ -323,30 +325,43 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
         );
     }
 
-    let removed = txn
-        .execute(
-            "DELETE FROM merge_mining_event e \
-             WHERE e.source_id = $1 \
-               AND NOT EXISTS ( \
-                    SELECT 1 FROM historical_event_provenance error_provenance \
-                    WHERE error_provenance.event_id = e.id \
-                      AND (error_provenance.artifact_scope = 'error-block-observations' \
-                           OR error_provenance.publication_ref = 'operator-csv') \
-               ) \
-               AND NOT EXISTS ( \
-                    SELECT 1 FROM historical_event_provenance p \
-                    WHERE p.event_id = e.id \
-                      AND p.publication_ref = $2 \
-                      AND p.chain = $3 \
-               )",
-            &[&source_id, &publication_ref, &chain],
-        )
+    // The publication was the only witness of these child blocks, so their observations go too.
+    let sql = "WITH removed AS ( \
+                 DELETE FROM merge_mining_event e \
+                 WHERE e.source_id = $1 \
+                   AND NOT EXISTS ( \
+                        SELECT 1 FROM historical_event_provenance error_provenance \
+                        WHERE error_provenance.event_id = e.id \
+                          AND (error_provenance.artifact_scope = 'error-block-observations' \
+                               OR error_provenance.publication_ref = 'operator-csv') \
+                   ) \
+                   AND NOT EXISTS ( \
+                        SELECT 1 FROM historical_event_provenance p \
+                        WHERE p.event_id = e.id \
+                          AND p.publication_ref = $2 \
+                          AND p.chain = $3 \
+                   ) \
+                 RETURNING e.source_id, e.child_height, e.child_block_hash, \
+                           e.btc_parent_header_hash \
+             ), removed_exact AS ( \
+                 DELETE FROM child_block_observation o USING removed e \
+                 WHERE o.source_id = e.source_id AND o.child_block_hash = e.child_block_hash \
+             ), removed_hashless AS ( \
+                 DELETE FROM child_block_observation o USING removed e \
+                 WHERE e.child_block_hash IS NULL AND o.child_block_hash IS NULL \
+                   AND o.source_id = e.source_id AND o.child_height = e.child_height \
+                   AND o.btc_parent_header_hash = e.btc_parent_header_hash \
+             ) \
+             SELECT count(*) FROM removed";
+    let removed: i64 = txn
+        .query_one(sql, &[&source_id, &publication_ref, &chain])
         .await
-        .context("remove events absent from authoritative historical snapshot")?;
+        .context("remove events absent from authoritative historical snapshot")?
+        .get(0);
     for hash in parent_hashes {
         enqueue_historical_parent(txn, &hash).await?;
     }
-    Ok(removed)
+    u64::try_from(removed).context("count removed historical events")
 }
 
 /// Recompute source-health state after all durable historical work has drained.
@@ -362,7 +377,8 @@ pub async fn rebuild_historical_source_health(client: &mut Client) -> Result<()>
 }
 
 /// Capture one merge-mining event: acquire child-height lock (when present), shared
-/// Core-view barrier, run lineage gate, classify, lock parent read-model set, bracket
+/// Core-view barrier, run lineage gate (a non-Bitcoin parent retracts the child's events
+/// and records only its child side), classify, lock parent read-model set, bracket
 /// `source_health`, run `upsert`, reconcile in-txn, and cascade dependents after commit.
 async fn capture_event<F>(
     client: &mut Client,
@@ -389,6 +405,14 @@ where
             None => {}
             Some(refused @ CaptureOutcome::NotBitcoin { .. }) => {
                 let changed = lineage_gate::retract_child_block(&txn, source_id, payload).await?;
+                if payload.child_block_hash.is_some() {
+                    mmm_store::upsert_child_only_observation(
+                        &txn,
+                        source_id,
+                        &ChildBlockObservation::non_bitcoin_parent(payload),
+                    )
+                    .await?;
+                }
                 txn.commit()
                     .await
                     .with_context(|| format!("commit {chain_label} retraction"))?;

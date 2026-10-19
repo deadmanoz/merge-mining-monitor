@@ -11,7 +11,9 @@ use tracing::debug;
 use super::{AuxpowCaptureContext, AuxpowFetch, HeightOutcome, write_event_in_txn};
 use crate::chains::bitcoind_rpc::BitcoindRpc;
 use crate::chains::spec::{ChainSpec, FamilySpec};
-use mmm_capture::auxpow::{ParsedQbitAuxpowBlock, parse_qbit_block, validates_target};
+use mmm_capture::auxpow::{
+    ParsedQbitAuxpowBlock, QbitProofError, parse_qbit_block, validates_target,
+};
 use mmm_capture::capture::{
     ClassificationProof, NormalizedEventEvidence, ResolvedPoolAttributions,
     build_event_payload_from_evidence, now_epoch_seconds, resolve_child_payout_attributions,
@@ -41,7 +43,12 @@ pub(super) async fn fetch_qbit_candidate(
                 .context("parse Qbit child header")
         }) {
         Ok(header) => header,
-        Err(err) => return Ok(AuxpowFetch::Malformed(format!("{err:#}"))),
+        Err(err) => {
+            return Ok(AuxpowFetch::Malformed {
+                detail: format!("{err:#}"),
+                header: None,
+            });
+        }
     };
     ensure_qbit_native_placement(
         family.label,
@@ -57,12 +64,17 @@ pub(super) async fn fetch_qbit_candidate(
                 chain = spec.slug,
                 height,
                 block_hash = %block_hash,
-                "skipping directly mined block"
+                "recording directly mined block"
             );
-            Ok(AuxpowFetch::NonAuxpow)
+            Ok(AuxpowFetch::NonAuxpow(child_header))
         }
         Ok(Some(parsed)) => Ok(AuxpowFetch::Qbit(Box::new(parsed))),
-        Err(err) => Ok(AuxpowFetch::Malformed(format!("{err:#}"))),
+        // The placement check above authenticated the child header; only a malformed
+        // AuxPoW proof keeps the block, not one that fails its own checks.
+        Err(err) => Ok(AuxpowFetch::Malformed {
+            header: err.downcast_ref::<QbitProofError>().map(|_| child_header),
+            detail: format!("{err:#}"),
+        }),
     }
 }
 
@@ -134,6 +146,7 @@ fn qbit_evidence(block: &ParsedQbitAuxpowBlock, height: i32) -> NormalizedEventE
         child_header_bytes: Some(parsed.child_header.consensus_bytes()),
         child_block_time: Some(i64::from(parsed.child_header.time())),
         child_nbits: Some(parsed.child_header.bits().to_consensus()),
+        child_prev_block_hash: None,
         btc_parent_header: parsed.parent_header.header,
         pow_validates_child_target: Some(validates_target(
             parsed.parent_header.hash(),

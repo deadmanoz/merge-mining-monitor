@@ -18,8 +18,8 @@ use mmm_capture::capture::EventPoolAttribution;
 use mmm_capture::pool_resolver::{PoolIdentityRegistry, RSK_MINER_ADDRESS_NAMESPACE};
 use mmm_capture::source_registry::RSK_SOURCE_CODE;
 use mmm_store::{
-    get_source_id, late_fill_rsk_pool_identity_id, upsert_event_pool_attributions,
-    upsert_rsk_pool_identities_with_policy,
+    get_source_id, late_fill_rsk_pool_identity_id, sync_event_observation_attribution,
+    upsert_event_pool_attributions, upsert_rsk_pool_identities_with_policy,
 };
 
 use crate::reclassify_pools::{ReclassifyPoolsConfig, ReclassifyPoolsStats};
@@ -348,6 +348,7 @@ async fn apply_rsk_miner_updates(
                 update.observed_at,
             )
             .await?;
+            sync_event_observation_attribution(&txn, update.event_id).await?;
             stats.rsk_miner_attribution_updates += 1;
         }
         if let Some(pool_identity_id) = update.late_fill_pool_identity_id

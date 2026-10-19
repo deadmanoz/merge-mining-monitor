@@ -13,19 +13,24 @@ use bitcoin::consensus::deserialize;
 use tokio_postgres::Client;
 use tracing::{debug, warn};
 
-use crate::chains::rsk::rpc::{RskBlock, RskRpcClient, decode_hex_bytes, decode_quantity_i64};
+use crate::chains::rsk::rpc::{
+    RskBlock, RskRpcClient, decimal_difficulty, decode_hex_bytes, decode_quantity_i64,
+};
 use crate::chains::rsk::traverse::{RskHeightBundle, fetch_rsk_height_bundle};
 use crate::producer_runtime::ProducerContext;
 use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::capture::{
-    ClassificationProof, EventPoolAttribution, MergeMiningEventPayload, NormalizedEventEvidence,
-    RSK_PROOF_FORMAT_OPAQUE, ResolvedPoolAttributions, RskEvidencePayload,
-    build_event_payload_from_evidence, now_epoch_seconds,
+    ChildBlockObservation, ClassificationProof, EventPoolAttribution, MergeMiningEventPayload,
+    NormalizedEventEvidence, ObservationKind, RSK_PROOF_FORMAT_OPAQUE, ResolvedPoolAttributions,
+    RskEvidencePayload, build_event_payload_from_evidence, now_epoch_seconds,
 };
 use mmm_capture::pool_resolver::{PoolIdentityRegistry, PoolResolver};
 use mmm_capture::source_registry::RSK_SOURCE_CODE;
 use mmm_read_model::CaptureOutcome;
-use mmm_store::{upsert_rsk_only_pools, upsert_rsk_pool_identities, write_rsk_capture_in_txn};
+use mmm_store::{
+    RskBlockFacts, record_rsk_child_only_block, record_rsk_observation, upsert_rsk_only_pools,
+    upsert_rsk_pool_identities, write_rsk_capture_in_txn,
+};
 
 #[derive(Debug)]
 pub struct RskCaptureContext {
@@ -249,9 +254,66 @@ where
         observed_at()?,
     )? {
         CaptureDecision::Ready(inputs) => capture_ready_inputs(client, context, *inputs).await,
-        CaptureDecision::NoParentHeaderSkipped => Ok(BlockOutcome::NoParentHeaderSkipped),
-        CaptureDecision::MalformedSkipped => Ok(BlockOutcome::MalformedSkipped),
+        skipped @ (CaptureDecision::NoParentHeaderSkipped | CaptureDecision::MalformedSkipped) => {
+            let placement = (is_uncle, uncle_index, uncle_parent_height);
+            record_unverified_rsk_block(client, context, block, placement, observed_at()?).await?;
+            Ok(
+                if matches!(skipped, CaptureDecision::NoParentHeaderSkipped) {
+                    BlockOutcome::NoParentHeaderSkipped
+                } else {
+                    BlockOutcome::MalformedSkipped
+                },
+            )
+        }
     }
+}
+
+/// Record an RSK block whose Bitcoin parent cannot be checked (no complete parent
+/// header, or malformed merge-mining fields) as an `unverified_parent` observation
+/// with its RSK facts, when its own hash, height and timestamp decode.
+async fn record_unverified_rsk_block(
+    client: &mut Client,
+    context: &RskCaptureContext,
+    block: &RskBlock,
+    (is_uncle, uncle_index, uncle_parent_height): (bool, Option<i32>, Option<i32>),
+    observed_at: i64,
+) -> Result<()> {
+    let Some(block_hash) = validated_byte_length(&block.hash, 32) else {
+        return Ok(());
+    };
+    let Ok(quantities) = decode_rsk_block_quantities(block)? else {
+        return Ok(());
+    };
+    let parent_hash = parent_hash_bytes(block);
+    let difficulty = reported_difficulty(block);
+    let miner = validated_byte_length(&block.miner, 20);
+    let mut observation = ChildBlockObservation::child_only(
+        ObservationKind::UnverifiedParent,
+        quantities.rsk_height,
+        block_hash.clone(),
+        Some(quantities.timestamp),
+        parent_hash,
+        observed_at,
+    );
+    observation.child_pool_id = miner.as_deref().and_then(|bytes| {
+        let entry = context.registry.resolve_rsk_miner(&hex::encode(bytes))?;
+        context
+            .base
+            .pool_ids_by_slug()
+            .get(&entry.entry.pool_slug)
+            .copied()
+    });
+    let facts = RskBlockFacts {
+        rsk_block_hash: &block_hash,
+        is_uncle,
+        uncle_index,
+        uncle_parent_height,
+        child_difficulty_reported: difficulty.as_deref(),
+        rsk_miner: miner.as_deref(),
+    };
+    record_rsk_child_only_block(client, context.source_id(), &observation, &facts)
+        .await
+        .with_context(|| format!("record RSK block {} with an unverified parent", block.hash))
 }
 
 async fn capture_ready_inputs(
@@ -272,9 +334,35 @@ async fn capture_ready_inputs(
         .await?;
     Ok(match outcome {
         CaptureOutcome::Written(_) => BlockOutcome::Written,
-        CaptureOutcome::NotBitcoin { .. } => BlockOutcome::NonBitcoinParent,
+        CaptureOutcome::NotBitcoin { .. } => {
+            // The shared gate wrote the block's child-side observation; add the RSK facts it lacks.
+            record_rsk_observation(&*client, context.source_id(), &inputs.evidence).await?;
+            BlockOutcome::NonBitcoinParent
+        }
         CaptureOutcome::LineagePending(_) => BlockOutcome::LineagePending,
     })
+}
+
+#[cfg(any(test, feature = "db-integration"))]
+#[doc(hidden)]
+pub async fn capture_rsk_block_for_test(
+    client: &mut Client,
+    context: &RskCaptureContext,
+    block: &RskBlock,
+    is_uncle: bool,
+    uncle_index: Option<i32>,
+    uncle_parent_height: Option<i32>,
+) -> Result<BlockOutcome> {
+    capture_block(
+        client,
+        context,
+        block,
+        is_uncle,
+        uncle_index,
+        uncle_parent_height,
+        &now_epoch_seconds,
+    )
+    .await
 }
 
 #[cfg(any(test, feature = "db-integration"))]
@@ -542,6 +630,7 @@ pub fn prepare_rsk_capture(
         child_header_bytes: None,
         child_block_time: Some(timestamp),
         child_nbits: None,
+        child_prev_block_hash: parent_hash_bytes(block),
         btc_parent_header: header,
         // RSK exposes only an RLP-encoded child header with an integer
         // difficulty; no consensus-grade child target is available in this
@@ -592,12 +681,26 @@ pub fn prepare_rsk_capture(
         merkle_proof,
         coinbase_tail,
         proof_format: RSK_PROOF_FORMAT_OPAQUE,
+        child_difficulty_reported: reported_difficulty(block),
     };
 
     Ok(CaptureDecision::Ready(Box::new(RskCaptureInputs {
         payload,
         evidence,
     })))
+}
+
+/// The block's `parentHash`, in the byte order of its own hash.
+fn parent_hash_bytes(block: &RskBlock) -> Option<Vec<u8>> {
+    block
+        .parent_hash
+        .as_deref()
+        .and_then(|raw| validated_byte_length(raw, 32))
+}
+
+/// The block's reported difficulty as a decimal string.
+fn reported_difficulty(block: &RskBlock) -> Option<String> {
+    block.difficulty.as_deref().and_then(decimal_difficulty)
 }
 
 fn validated_byte_length(raw_hex: &str, expected_len: usize) -> Option<Vec<u8>> {

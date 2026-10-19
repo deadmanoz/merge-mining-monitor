@@ -37,6 +37,13 @@ pub struct HathorBlockMeta {
     pub height: i32,
     #[serde(default)]
     pub is_voided: bool,
+    #[serde(default)]
+    pub timestamp: Option<i64>,
+    #[serde(default)]
+    pub weight: Option<f64>,
+    /// Display-order hashes; a block's first parent is its parent block.
+    #[serde(default)]
+    pub parents: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

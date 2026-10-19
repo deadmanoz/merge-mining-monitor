@@ -1,8 +1,13 @@
 //! Elastos per-height capture for live polling and bounded backfills.
 //!
 //! Because `ELASTOS_RPC_URL` may point to an untrusted endpoint, every block is
-//! self-verified (84-byte child header hash, `CAuxPow` commitment, BTC parent
-//! target, child target, and Bitcoin lineage) before any DB write.
+//! self-verified (84-byte child header hash, then for AuxPoW blocks the `CAuxPow`
+//! commitment, child target, and Bitcoin lineage) before any DB write. A parent that
+//! misses Bitcoin's target is captured as a near; a block without AuxPoW is recorded
+//! as a `not_merge_mined` observation, and one whose AuxPoW does not parse or does not
+//! commit to it as `unverified_parent`. That check protects Bitcoin-side evidence, not
+//! the child inventory: which block sits at a height (and a block without AuxPoW) comes
+//! from the endpoint as it answers, so point it at a node you run.
 
 use anyhow::{Context, Result};
 use bitcoin::consensus::serialize;
@@ -17,16 +22,15 @@ use crate::chains::elastos::identity::{
 };
 use crate::chains::elastos::rpc::{ElastosBlock, ElastosRpc, ReconstructedBlock};
 use crate::producer_runtime::ProducerContext;
-use bitcoin::BlockHash;
 use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::auxpow::{
     ELASTOS_AUXPOW_CHAIN_ID, ParsedAuxpowBlock, parse_elastos_auxpow, validates_target,
     verify_auxpow_commitment,
 };
 use mmm_capture::capture::{
-    ClassificationProof, MergeMiningEventPayload, NormalizedEventEvidence,
-    ResolvedPoolAttributions, build_event_payload_from_evidence, now_epoch_seconds,
-    resolve_parent_pool_attribution_from_coinbase,
+    ChildBlockObservation, ClassificationProof, MergeMiningEventPayload, NormalizedEventEvidence,
+    ObservationKind, ResolvedPoolAttributions, build_event_payload_from_evidence,
+    now_epoch_seconds, resolve_parent_pool_attribution_from_coinbase,
 };
 use mmm_capture::child_payout::PoolIdentityLookup;
 use mmm_capture::pool_resolver::PoolResolver;
@@ -36,7 +40,8 @@ use mmm_store::{
     ChildChainHeadOutcome, ChildChainHeadRecord, CurrentBlockParent, EventWriteOutcome,
     EvidenceMarker, finish_child_chain_height_operation, load_pool_identities_by_namespace,
     lock_child_chain_height_session, record_child_chain_block,
-    record_child_chain_block_in_own_transaction, upsert_merge_mining_event_with_attributions,
+    record_child_chain_block_in_own_transaction, upsert_child_only_observation,
+    upsert_merge_mining_event_with_attributions,
 };
 
 #[derive(Debug)]
@@ -99,27 +104,18 @@ impl ElastosCaptureContext {
 pub enum ElastosHeightOutcome {
     AuxpowWritten,
     NonAuxpowSkipped,
-    /// Parent header fails BTC difficulty; Elastos captures only BTC-valid parents.
-    NearSkipped,
     ChildTargetSkipped,
     NonBitcoinParent,
     LineagePending,
     MalformedSkipped,
 }
 
-/// Child block whose AuxPoW commitment verified and whose parent meets the
-/// child target; only proven blocks are recorded as the chain's head at a height.
-#[derive(Debug, Clone, Copy)]
-struct ProvenBlock {
-    hash: BlockHash,
-    parent_hash: BlockHash,
-}
-
 enum ElastosEvaluation {
-    Skip {
-        outcome: ElastosHeightOutcome,
-        proven: Option<ProvenBlock>,
-    },
+    Skip(ElastosHeightOutcome),
+    /// A block with no Bitcoin parent on record: `not_merge_mined` (no AuxPoW, or a
+    /// pre-activation dummy parent) or `unverified_parent` (an authenticated block whose
+    /// AuxPoW does not parse or does not commit to it).
+    ChildOnly(ObservationKind, Box<ReconstructedBlock>),
     Write {
         parsed: Box<ParsedAuxpowBlock>,
         recon: Box<ReconstructedBlock>,
@@ -159,44 +155,79 @@ async fn apply_elastos_evaluation(
     height: i32,
     rpc_block: &ElastosBlock,
 ) -> Result<ElastosHeightOutcome> {
-    let (outcome, proven, core_cache_generation) = match evaluate_elastos_block(height, rpc_block) {
-        ElastosEvaluation::Skip { outcome, proven } => (outcome, proven, None),
+    match evaluate_elastos_block(height, rpc_block) {
+        ElastosEvaluation::Skip(outcome) => Ok(outcome),
+        ElastosEvaluation::ChildOnly(kind, recon) => {
+            upsert_child_only_observation(
+                &*client,
+                context.source_id(),
+                &child_only_observation(kind, &recon, now_epoch_seconds()?),
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "record Elastos {} block at height {height}",
+                    kind.as_db_str()
+                )
+            })?;
+            Ok(if kind == ObservationKind::NotMergeMined {
+                ElastosHeightOutcome::NonAuxpowSkipped
+            } else {
+                ElastosHeightOutcome::MalformedSkipped
+            })
+        }
         ElastosEvaluation::Write { parsed, recon } => {
-            let block = ProvenBlock {
-                hash: recon.block_hash,
-                parent_hash: parsed.parent_header.hash(),
-            };
             let (outcome, core_cache_generation) =
                 write_capture(client, context, rpc_block, &parsed, &recon)
                     .await
                     .with_context(|| format!("Elastos capture at height {height}"))?;
-            (outcome, Some(block), core_cache_generation)
+            // Only a block whose AuxPoW commitment verified and whose parent meets the child
+            // target is recorded as the chain's head at its height; a written event already is.
+            if outcome != ElastosHeightOutcome::AuxpowWritten {
+                let parent_hash = parsed.parent_header.hash();
+                let head_outcome = if outcome == ElastosHeightOutcome::LineagePending {
+                    ChildChainHeadOutcome::Held
+                } else {
+                    ChildChainHeadOutcome::Recorded
+                };
+                record_child_chain_block_in_own_transaction(
+                    client,
+                    context.source_id(),
+                    height,
+                    ChildChainHeadRecord {
+                        block_hash: recon.block_hash.as_ref(),
+                        parent: CurrentBlockParent::Known(parent_hash.as_ref()),
+                        outcome: head_outcome,
+                        evidence: EvidenceMarker::None,
+                        observed_at: now_epoch_seconds()?,
+                        core_cache_generation,
+                    },
+                    None,
+                )
+                .await?;
+            }
+            Ok(outcome)
         }
-    };
-
-    if outcome != ElastosHeightOutcome::AuxpowWritten
-        && let Some(block) = proven
-    {
-        let head_outcome = match outcome {
-            ElastosHeightOutcome::LineagePending => ChildChainHeadOutcome::Held,
-            _ => ChildChainHeadOutcome::Recorded,
-        };
-        record_child_chain_block_in_own_transaction(
-            client,
-            context.source_id(),
-            height,
-            ChildChainHeadRecord {
-                block_hash: block.hash.as_ref(),
-                parent: CurrentBlockParent::Known(block.parent_hash.as_ref()),
-                outcome: head_outcome,
-                evidence: EvidenceMarker::None,
-                observed_at: now_epoch_seconds()?,
-                core_cache_generation,
-            },
-        )
-        .await?;
     }
-    Ok(outcome)
+}
+
+/// Elastos hashes an 84-byte header, so the 80-byte prefix supplies time, bits and the
+/// predecessor but is not stored as the block's header.
+fn child_only_observation(
+    kind: ObservationKind,
+    recon: &ReconstructedBlock,
+    recorded_at: i64,
+) -> ChildBlockObservation {
+    ChildBlockObservation {
+        child_block_hash: Some(recon.block_hash.to_byte_array().to_vec()),
+        child_header_bytes: None,
+        ..ChildBlockObservation::child_only_from_header(
+            kind,
+            recon.height,
+            &recon.prefix_header.header,
+            recorded_at,
+        )
+    }
 }
 
 fn evaluate_elastos_block(requested_height: i32, block: &ElastosBlock) -> ElastosEvaluation {
@@ -206,48 +237,43 @@ fn evaluate_elastos_block(requested_height: i32, block: &ElastosBlock) -> Elasto
             returned = block.height,
             "Elastos RPC returned a different height than requested; skipping"
         );
-        return ElastosEvaluation::Skip {
-            outcome: ElastosHeightOutcome::MalformedSkipped,
-            proven: None,
-        };
+        return ElastosEvaluation::Skip(ElastosHeightOutcome::MalformedSkipped);
     }
 
     let recon = match block.reconstruct() {
         Ok(recon) => recon,
         Err(err) => {
             warn!(height = block.height, error = %err, "Elastos reconstruction/hash guard failed; skipping");
-            return ElastosEvaluation::Skip {
-                outcome: ElastosHeightOutcome::MalformedSkipped,
-                proven: None,
-            };
+            return ElastosEvaluation::Skip(ElastosHeightOutcome::MalformedSkipped);
         }
     };
-    let skip = |outcome, proven| ElastosEvaluation::Skip { outcome, proven };
-
     let Some(auxpow_blob) = recon.auxpow.as_deref() else {
-        return skip(ElastosHeightOutcome::NonAuxpowSkipped, None);
+        return ElastosEvaluation::ChildOnly(ObservationKind::NotMergeMined, Box::new(recon));
     };
 
     let parsed = match parse_elastos_auxpow(recon.prefix_header.clone(), auxpow_blob) {
         Ok(parsed) => parsed,
         Err(err) => {
-            warn!(height = block.height, error = %err, "Elastos auxpow parse failed; skipping");
-            return skip(ElastosHeightOutcome::MalformedSkipped, None);
+            warn!(height = block.height, error = %err, "Elastos auxpow parse failed; recording the block with an unverified parent");
+            return ElastosEvaluation::ChildOnly(
+                ObservationKind::UnverifiedParent,
+                Box::new(recon),
+            );
         }
     };
 
-    if let Some(outcome) = auxpow_gate_skip(block.height, &parsed, &recon) {
-        // Only a block whose commitment verified and whose parent meets the
-        // child target is proven. `NearSkipped` is decided before the child
-        // target check, so it is proven only when that check also passes; the
-        // dummy, commitment and child-target failures never are.
-        let proven = (outcome == ElastosHeightOutcome::NearSkipped
-            && validates_target(parsed.parent_header.hash(), recon.prefix_header.bits()))
-        .then(|| ProvenBlock {
-            hash: recon.block_hash,
-            parent_hash: parsed.parent_header.hash(),
-        });
-        return skip(outcome, proven);
+    match auxpow_gate_skip(block.height, &parsed, &recon) {
+        Some(ElastosHeightOutcome::NonAuxpowSkipped) => {
+            return ElastosEvaluation::ChildOnly(ObservationKind::NotMergeMined, Box::new(recon));
+        }
+        Some(ElastosHeightOutcome::MalformedSkipped) => {
+            return ElastosEvaluation::ChildOnly(
+                ObservationKind::UnverifiedParent,
+                Box::new(recon),
+            );
+        }
+        Some(outcome) => return ElastosEvaluation::Skip(outcome),
+        None => {}
     }
 
     ElastosEvaluation::Write {
@@ -271,15 +297,12 @@ fn auxpow_gate_skip(
 
     // The trust boundary: the full CAuxPow commitment to this child block hash.
     if let Err(err) = verify_auxpow_commitment(parsed, recon.block_hash, ELASTOS_AUXPOW_CHAIN_ID) {
-        warn!(height = block_height, error = %err, "Elastos AuxPoW commitment verification failed; skipping");
+        warn!(height = block_height, error = %err, "Elastos AuxPoW commitment verification failed; recording the block with an unverified parent");
         return Some(ElastosHeightOutcome::MalformedSkipped);
     }
 
-    // BTC parent PoW: Elastos captures only BTC-difficulty-valid parents (never
-    // `near`); the common merge-mined parent only meets Elastos's easier target.
-    if !validates_target(parsed.parent_header.hash(), parsed.parent_header.bits()) {
-        return Some(ElastosHeightOutcome::NearSkipped);
-    }
+    // A parent that misses Bitcoin's target (the common case: it only meets
+    // Elastos's easier target) continues to the lineage-gated capture as a near.
 
     // Child AuxPoW-target PoW: the merged-mining validity the own node gets for
     // free; re-enforced for the untrusted-endpoint path.
@@ -346,7 +369,15 @@ async fn write_capture(
         child_block_hash: Some(recon.block_hash.to_byte_array().to_vec()),
         child_header_bytes: None,
         child_block_time: Some(i64::from(recon.time)),
-        child_nbits: None,
+        child_nbits: Some(recon.prefix_header.bits().to_consensus()),
+        child_prev_block_hash: Some(
+            recon
+                .prefix_header
+                .header
+                .prev_blockhash
+                .to_byte_array()
+                .to_vec(),
+        ),
         btc_parent_header: parsed.parent_header.header,
         pow_validates_child_target: Some(validates_target(
             parsed.parent_header.hash(),
@@ -482,7 +513,7 @@ mod tests {
     }
 
     #[test]
-    fn evaluates_dummy_block_as_nonauxpow_skip() {
+    fn evaluates_dummy_block_as_not_merge_mined() {
         // ELA 100000: a pre-activation dummy (parent bits 0, empty outputs) is
         // filtered before commitment verification.
         let b = block(include_str!(concat!(
@@ -491,10 +522,7 @@ mod tests {
         )));
         assert!(matches!(
             evaluate_elastos_block(b.height, &b),
-            ElastosEvaluation::Skip {
-                outcome: ElastosHeightOutcome::NonAuxpowSkipped,
-                ..
-            }
+            ElastosEvaluation::ChildOnly(ObservationKind::NotMergeMined, _)
         ));
     }
 
@@ -502,7 +530,7 @@ mod tests {
     fn real_post_activation_blocks_clear_commitment() {
         // Real blocks must clear recon + parse + commitment: the verifier
         // generalizes beyond ELA 360062, so the outcome is never Malformed or
-        // NonAuxpow. The final outcome (Write / Near / ChildTarget) is
+        // NonAuxpow. The final outcome (Write / ChildTarget) is
         // parent-dependent, so it is not asserted here.
         for fixture in [
             include_str!(concat!(
@@ -519,11 +547,8 @@ mod tests {
             assert!(
                 !matches!(
                     eval,
-                    ElastosEvaluation::Skip {
-                        outcome: ElastosHeightOutcome::MalformedSkipped
-                            | ElastosHeightOutcome::NonAuxpowSkipped,
-                        ..
-                    }
+                    ElastosEvaluation::Skip(ElastosHeightOutcome::MalformedSkipped)
+                        | ElastosEvaluation::ChildOnly(..)
                 ),
                 "a real Elastos block must clear recon + parse + commitment verification"
             );
@@ -539,10 +564,7 @@ mod tests {
         b.hash = "00".repeat(32);
         assert!(matches!(
             evaluate_elastos_block(b.height, &b),
-            ElastosEvaluation::Skip {
-                outcome: ElastosHeightOutcome::MalformedSkipped,
-                ..
-            }
+            ElastosEvaluation::Skip(ElastosHeightOutcome::MalformedSkipped)
         ));
     }
 
@@ -556,10 +578,7 @@ mod tests {
         )));
         assert!(matches!(
             evaluate_elastos_block(b.height + 1, &b),
-            ElastosEvaluation::Skip {
-                outcome: ElastosHeightOutcome::MalformedSkipped,
-                ..
-            }
+            ElastosEvaluation::Skip(ElastosHeightOutcome::MalformedSkipped)
         ));
     }
 }

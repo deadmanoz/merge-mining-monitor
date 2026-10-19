@@ -57,6 +57,9 @@ fn hathor_fixture_block(tx_id: &str, height: i32, voided: bool) -> HathorBlockMe
         version: 3,
         height,
         is_voided: voided,
+        timestamp: None,
+        weight: None,
+        parents: Vec::new(),
     }
 }
 

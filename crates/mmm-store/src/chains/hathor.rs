@@ -6,13 +6,13 @@ use anyhow::{Context, Result};
 use tokio_postgres::GenericClient;
 use tokio_postgres::types::Json;
 
-use mmm_capture::capture::{HathorEvidencePayload, MergeMiningEventPayload};
+use mmm_capture::capture::{HathorEvidencePayload, MergeMiningEventPayload, ParentKind};
 
 use crate::{EventWriteOutcome, upsert_merge_mining_event_with_attributions};
 
 /// Write a Hathor capture in the caller's transaction (injected as the
 /// `capture_in_txn` upsert closure): upsert the event, then the 1:1 evidence
-/// sidecar.
+/// sidecar for a Bitcoin-valid parent.
 pub async fn write_hathor_capture_in_txn<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -20,7 +20,10 @@ pub async fn write_hathor_capture_in_txn<C: GenericClient>(
     evidence: &HathorEvidencePayload,
 ) -> Result<EventWriteOutcome> {
     let outcome = upsert_merge_mining_event_with_attributions(client, source_id, payload).await?;
-    upsert_hathor_evidence(client, outcome.event_id, evidence).await?;
+    // The sidecar holds Bitcoin-valid evidence only: a near's observation keeps its parent.
+    if payload.btc_parent_kind != ParentKind::Near {
+        upsert_hathor_evidence(client, outcome.event_id, evidence).await?;
+    }
     Ok(outcome)
 }
 
@@ -61,6 +64,24 @@ async fn upsert_hathor_evidence<C: GenericClient>(
         .await
         .context("upsert hathor_merge_mining_evidence")?;
     Ok(())
+}
+
+/// Whether an event other than a near (live or imported, revoked included) is
+/// stored at a child height. Near events leave with the swap migration.
+pub async fn hathor_evidence_event_at_height<C: GenericClient>(
+    client: &C,
+    source_id: i64,
+    height: i32,
+) -> Result<bool> {
+    client
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM merge_mining_event \
+              WHERE source_id = $1 AND child_height = $2 AND btc_parent_kind <> 'near')",
+            &[&source_id, &height],
+        )
+        .await
+        .map(|row| row.get(0))
+        .context("check for a Hathor evidence event at height")
 }
 
 /// The first 45 bytes of each captured block's graph struct at a child height

@@ -18,16 +18,14 @@ fn reconstructed_coinbase_validation_preserves_valid_and_skips_invalid() {
         env!("CARGO_MANIFEST_DIR"),
         "/../../fixtures/hathor/1971823.json"
     )));
-    let HathorParentReconstruction::BtcValid(reconstructed) =
-        reconstruct_or_skip(height, &tx).unwrap()
-    else {
-        panic!("the fixture must reconstruct as a BTC-valid parent");
-    };
+    let reconstructed = reconstruct_or_skip(height, &tx)
+        .unwrap()
+        .expect("the fixture must reconstruct");
     let raw = reconstructed.raw;
     let aux_pow = reconstructed.aux_pow;
     let mut recon = reconstructed.recon;
     let funds_graph = &raw[..recon.funds_graph_len];
-    let intact = build_hathor_capture(&context, &tx, height, &aux_pow, &recon, funds_graph)
+    let intact = build_hathor_capture(&context, &tx, height, &aux_pow, &recon, funds_graph, None)
         .unwrap()
         .expect("fixture coinbase must build");
     assert_eq!(
@@ -39,7 +37,7 @@ fn reconstructed_coinbase_validation_preserves_valid_and_skips_invalid() {
     let pristine_coinbase = recon.full_coinbase.clone();
     recon.full_coinbase.push(0x00);
     let corrupted =
-        build_hathor_capture(&context, &tx, height, &aux_pow, &recon, funds_graph).unwrap();
+        build_hathor_capture(&context, &tx, height, &aux_pow, &recon, funds_graph, None).unwrap();
     assert!(
         corrupted.is_none(),
         "trailing-byte coinbase must skip, not error"
@@ -51,7 +49,8 @@ fn reconstructed_coinbase_validation_preserves_valid_and_skips_invalid() {
     assert!(!non_coinbase.is_coinbase());
     recon.full_coinbase = serialize(&non_coinbase);
 
-    let built = build_hathor_capture(&context, &tx, height, &aux_pow, &recon, funds_graph).unwrap();
+    let built =
+        build_hathor_capture(&context, &tx, height, &aux_pow, &recon, funds_graph, None).unwrap();
     assert!(
         built.is_none(),
         "well-formed non-coinbase transaction must skip"

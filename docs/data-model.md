@@ -10,7 +10,9 @@ Producers append or update base evidence; the read model computes the Bitcoin tr
 | `source` | Registered evidence sources such as `auxpow:namecoin`, `auxpow:rsk`, or `live-chaintip:bitcoin:core`. |
 | `pool` | Stable pool identities loaded from `data/pools/current.json`. |
 | `pool_identity` | Native child-chain identities that map to a pool, such as RSK miner addresses or child reward addresses. |
-| `merge_mining_event` | Source evidence keyed by exact or partial authenticated child identity and its Bitcoin parent header. |
+| `merge_mining_event` | Source evidence keyed by exact or partial authenticated child identity and its Bitcoin parent header; `observation_id` links the event to its child block observation. |
+| `child_block_observation` | One row per child block on every chain, written by live capture, migration 0033's fill and per-chain backfills (see `docs/capture.md`), with the block's own child evidence and its `observation_kind`: `evidence` (an event holds the parent's Bitcoin classification), `near` (the parent misses Bitcoin's target; its header and coinbase are kept on the observation), `not_merge_mined` (no AuxPoW), `non_bitcoin_parent` (the parent failed the lineage gate; no parent field is stored), or `unverified_parent` (the child block is authenticated but its AuxPoW proof is malformed or incomplete; no parent field is stored). Child identities, the child-side pool, and RSK chain role, uncle placement and reported difficulty live here. |
+| `child_miner_identity` | Raw child identifiers seen on any child block (RSK miner, child payout and reward addresses, Elastos minerinfo), keyed like `pool_identity`; a matching `pool_identity` row maps one to a pool. |
 | `historical_event_provenance` | Publication-side chain, source row, classification, validation, and relevance provenance attached to imported events; multiple source rows can map to one event. The `error-block-observations` scope keeps catalogue-backed error witnesses separate from replaceable normal snapshots, while requiring the same archive coordinate to identify the same event across pinned publications. |
 | `historical_reconcile_queue` | Durable parent rebuild state and dependent-cascade seeds for resumable historical imports. |
 | chain sidecars | One-to-one evidence details for chains with extra structured data, such as RSK and Hathor. |
@@ -27,7 +29,7 @@ Producers append or update base evidence; the read model computes the Bitcoin tr
 
 Every stored parent is a Bitcoin header.
 Merge mining lets a child chain commit to any SHA-256 parent, so a proof that verifies says nothing about the parent's chain: a Bitcoin Cash block or share, or another SHA-256 chain's block, verifies just as well.
-The capture lineage gate (`mmm_capture::lineage::bitcoin_lineage`, applied in `mmm_read_model::capture_in_txn`) refuses such a parent before anything is written, and the event is never stored.
+The capture lineage gate (`mmm_capture::lineage::bitcoin_lineage`, applied in `mmm_read_model::capture_in_txn`) refuses such a parent before any parent evidence is written: the event is never stored, and only the child block's `non_bitcoin_parent` observation records that the block exists.
 See [Capture](capture.md#bitcoin-lineage-gate).
 
 `btc_parent_kind` is one of:
@@ -97,6 +99,7 @@ Historical parent-coinbase evidence is also lossless: structured full transactio
 When a child chain replaces the block at `child_height`, the replaced block's `merge_mining_event` remains valid Bitcoin-side evidence (its parent header and coinbase commitment are unchanged), so displacement is recorded on the event rather than through `event_revoked_at`:
 
 - `child_displaced_at` (epoch second observed) and `child_displaced_by` (internal-order hash of the replacing child block) are set or cleared together on `merge_mining_event` and never self-reference.
+  The same pair is kept on `child_block_observation`, by the same rule in the same transaction, so a block without an event (such as a `not_merge_mined` one) is displaced too.
   Already-displaced events keep their first displacement record; a chain that flips back to a block clears its displacement.
 - Bitcoin-side aggregates (`block`, `attestation_proof`, `source_health`, and parent projections) ignore these columns; `event_revoked_at` is reserved for bad evidence.
 - `mmm-store::record_child_chain_block(txn, source, height, record)` is the single write path (called by every live producer except RSK, under a per-height advisory lock taken before the event upsert).

@@ -17,7 +17,7 @@ use mmm_capture::capture::{
 };
 use mmm_capture::source_registry::ELASTOS_SOURCE_CODE;
 use mmm_store::{
-    get_source_id, load_elastos_identity_reresolve_batch,
+    get_source_id, load_elastos_identity_reresolve_batch, sync_event_observation_attribution,
     upsert_event_pool_attributions_without_stale_cleanup,
 };
 
@@ -66,6 +66,7 @@ pub(crate) async fn reresolve_elastos_identity_attributions(
                     row.event_id
                 )
             })?;
+            sync_event_observation_attribution(client, row.event_id).await?;
             stats.elastos_identity_updates += promoted;
         }
     }

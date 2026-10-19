@@ -7,7 +7,12 @@
 //! Displacement".
 
 use anyhow::{Context, Result, ensure};
+use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, GenericClient, Transaction};
+
+use mmm_capture::capture::ChildBlockObservation;
+
+use crate::observation::upsert_child_only_observation;
 
 /// Two-int advisory-lock class for serializing the per-height transition. The
 /// two-int `pg_advisory_xact_lock(int4, int4)` space is disjoint from the
@@ -30,7 +35,7 @@ pub enum CurrentBlockParent<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChildChainHeadOutcome {
     Captured,
-    /// Proof verified and verdict settled, but yields no event (e.g. parent misses Bitcoin target).
+    /// Proof verified and verdict settled, but yields no event: the parent failed the Bitcoin lineage gate.
     Recorded,
     NoAuxpow,
     /// Proof failed or verdict is provisional on the Bitcoin Core cache.
@@ -283,9 +288,10 @@ pub async fn lock_child_chain_height(
 ///
 /// Under [`lock_child_chain_height`] (which callers that also upsert an event must acquire
 /// *before* the event upsert to avoid row-lock vs height-lock deadlocks), upserts
-/// `child_chain_head`, clears displacement on the matching event, and marks any other
-/// undisplaced events at the height as displaced at `observed_at` (preserving first-displacement
-/// timestamps on already-displaced rows and handling hashless rows per [`CurrentBlockParent`]).
+/// `child_chain_head`, clears displacement on the matching event and observation, and marks any
+/// other undisplaced events and observations at the height as displaced at `observed_at`
+/// (preserving first-displacement timestamps on already-displaced rows and handling hashless rows
+/// per [`CurrentBlockParent`]).
 pub async fn record_child_chain_block(
     txn: &Transaction<'_>,
     source_id: i64,
@@ -402,39 +408,22 @@ async fn apply_child_displacement(
 ) -> Result<ChildDisplacementOutcome> {
     let parent_hash = current_parent.parent_hash();
     let hashless_decidable = !matches!(current_parent, CurrentBlockParent::Unknown);
+    let params: [&(dyn ToSql + Sync); 6] = [
+        &source_id,
+        &child_height,
+        &current_block_hash,
+        &parent_hash,
+        &hashless_decidable,
+        &observed_at,
+    ];
     let rows = txn
-        .query(
-            "WITH candidate AS ( \
-                 SELECT id, \
-                        (COALESCE(child_block_hash = $3, FALSE) \
-                         OR (child_block_hash IS NULL \
-                             AND $4::bytea IS NOT NULL \
-                             AND btc_parent_header_hash = $4::bytea)) AS is_current \
-                 FROM merge_mining_event \
-                 WHERE source_id = $1 AND child_height = $2 \
-                   AND NOT (child_block_hash IS NULL AND NOT $5::boolean) \
-             ) \
-             UPDATE merge_mining_event e \
-             SET child_displaced_at = CASE WHEN c.is_current THEN NULL ELSE $6::bigint END, \
-                 child_displaced_by = CASE WHEN c.is_current THEN NULL ELSE $3::bytea END \
-             FROM candidate c \
-             WHERE e.id = c.id \
-               AND ( \
-                 (c.is_current AND e.child_displaced_at IS NOT NULL) \
-                 OR (NOT c.is_current AND e.child_displaced_at IS NULL) \
-               ) \
-             RETURNING e.child_displaced_at IS NULL AS restored",
-            &[
-                &source_id,
-                &child_height,
-                &current_block_hash,
-                &parent_hash,
-                &hashless_decidable,
-                &observed_at,
-            ],
-        )
+        .query(&displacement_sql("merge_mining_event"), &params)
         .await
         .context("record the child chain's current block")?;
+    // Observations carry the same displacement, including blocks without an event.
+    txn.execute(&displacement_sql("child_block_observation"), &params)
+        .await
+        .context("record the child chain's current block on its observations")?;
     let restored = rows.iter().filter(|row| row.get::<_, bool>(0)).count() as u64;
     Ok(ChildDisplacementOutcome {
         restored,
@@ -442,18 +431,51 @@ async fn apply_child_displacement(
     })
 }
 
-/// [`record_child_chain_block`] in its own transaction for blocks that yield no event.
+/// Set displacement on `table`'s rows at `(source_id, child_height)` against the chain's
+/// current block: the current block (or its hashless row) is restored, every other
+/// undisplaced row is displaced, and already-displaced rows keep their first record.
+fn displacement_sql(table: &str) -> String {
+    format!(
+        "WITH candidate AS ( \
+             SELECT id, \
+                    (COALESCE(child_block_hash = $3, FALSE) \
+                     OR (child_block_hash IS NULL \
+                         AND $4::bytea IS NOT NULL \
+                         AND btc_parent_header_hash = $4::bytea)) AS is_current \
+             FROM {table} \
+             WHERE source_id = $1 AND child_height = $2 \
+               AND NOT (child_block_hash IS NULL AND NOT $5::boolean) \
+         ) \
+         UPDATE {table} t \
+         SET child_displaced_at = CASE WHEN c.is_current THEN NULL ELSE $6::bigint END, \
+             child_displaced_by = CASE WHEN c.is_current THEN NULL ELSE $3::bytea END \
+         FROM candidate c \
+         WHERE t.id = c.id \
+           AND ( \
+             (c.is_current AND t.child_displaced_at IS NOT NULL) \
+             OR (NOT c.is_current AND t.child_displaced_at IS NULL) \
+           ) \
+         RETURNING t.child_displaced_at IS NULL AS restored"
+    )
+}
+
+/// [`record_child_chain_block`] in its own transaction for blocks that yield no event,
+/// with the block's child-only observation when it has one.
 pub async fn record_child_chain_block_in_own_transaction(
     client: &mut Client,
     source_id: i64,
     child_height: i32,
     record: ChildChainHeadRecord<'_>,
+    observation: Option<&ChildBlockObservation>,
 ) -> Result<ChildDisplacementOutcome> {
     let txn = client
         .transaction()
         .await
         .context("begin child block record")?;
     let outcome = record_child_chain_block(&txn, source_id, child_height, record).await?;
+    if let Some(observation) = observation {
+        upsert_child_only_observation(&txn, source_id, observation).await?;
+    }
     txn.commit().await.context("commit child block record")?;
     Ok(outcome)
 }

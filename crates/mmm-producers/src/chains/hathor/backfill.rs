@@ -126,9 +126,9 @@ fn hathor_backfill_effect(
 ) -> Result<BackfillHeightEffect> {
     match outcome {
         HathorHeightOutcome::AuxpowWritten => Ok(BackfillHeightEffect::AuxpowWritten),
-        HathorHeightOutcome::NonAuxpowSkipped
-        | HathorHeightOutcome::VoidedSkipped
-        | HathorHeightOutcome::NearSkipped => Ok(BackfillHeightEffect::NonAuxpowSkipped),
+        HathorHeightOutcome::NonAuxpowSkipped | HathorHeightOutcome::VoidedSkipped => {
+            Ok(BackfillHeightEffect::NonAuxpowSkipped)
+        }
         HathorHeightOutcome::NonBitcoinParent => Ok(BackfillHeightEffect::NonBitcoinParent),
         HathorHeightOutcome::MalformedSkipped => Ok(BackfillHeightEffect::MalformedSkipped),
         HathorHeightOutcome::LineagePending => Err(lineage_pending_error(spec, height)),

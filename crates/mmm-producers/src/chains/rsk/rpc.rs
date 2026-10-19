@@ -35,6 +35,8 @@ pub struct RskBlock {
     pub miner: String,
     #[serde(default)]
     pub difficulty: Option<String>,
+    #[serde(rename = "parentHash", default)]
+    pub parent_hash: Option<String>,
     /// `0x`-prefixed 80-byte Bitcoin parent header, or a shorter pre-Orchid/RSKIP-92
     /// fallback signature on early blocks.
     #[serde(rename = "bitcoinMergedMiningHeader", default)]
@@ -138,6 +140,13 @@ pub(crate) fn decode_quantity_i64(raw: &str) -> Result<i64> {
         anyhow::bail!("hex quantity {raw:?} is empty; expected 0x0 for zero");
     }
     i64::from_str_radix(trimmed, 16).with_context(|| format!("parse hex quantity {raw:?} as i64"))
+}
+
+/// Decimal form of an RSK hex difficulty quantity; `None` when it is not a `u128` quantity.
+pub(crate) fn decimal_difficulty(raw: &str) -> Option<String> {
+    u128::from_str_radix(raw.trim().trim_start_matches("0x"), 16)
+        .ok()
+        .map(|value| value.to_string())
 }
 
 pub(crate) fn decode_hex_bytes(raw: &str) -> Result<Vec<u8>> {

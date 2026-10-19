@@ -267,6 +267,61 @@ pub async fn displacement_at(
         .collect())
 }
 
+/// `(child_block_hash, observation_kind, near parent header stored, linked event)` at a height.
+pub async fn observations_at(
+    client: &Client,
+    source_id: i64,
+    height: i32,
+) -> Result<Vec<(Vec<u8>, String, bool, bool)>> {
+    let rows = client
+        .query(
+            "SELECT o.child_block_hash, o.observation_kind, \
+                    o.btc_parent_header_bytes IS NOT NULL, e.id IS NOT NULL \
+             FROM child_block_observation o \
+             LEFT JOIN merge_mining_event e ON e.observation_id = o.id \
+             WHERE o.source_id = $1 AND o.child_height = $2 \
+             ORDER BY o.child_block_hash",
+            &[&source_id, &height],
+        )
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
+        .collect())
+}
+
+/// The stored predecessor of an observed child block.
+pub async fn observation_prev_hash(
+    client: &Client,
+    source_id: i64,
+    child_block_hash: &[u8],
+) -> Result<Option<Vec<u8>>> {
+    Ok(client
+        .query_one(
+            "SELECT child_prev_block_hash FROM child_block_observation \
+             WHERE source_id = $1 AND child_block_hash = $2",
+            &[&source_id, &child_block_hash],
+        )
+        .await?
+        .get(0))
+}
+
+/// `(child_block_hash, child_displaced_by)` for each observation at a height.
+pub async fn observation_displacement_at(
+    client: &Client,
+    source_id: i64,
+    height: i32,
+) -> Result<Vec<(Vec<u8>, Option<Vec<u8>>)>> {
+    let rows = client
+        .query(
+            "SELECT child_block_hash, child_displaced_by FROM child_block_observation \
+             WHERE source_id = $1 AND child_height = $2 ORDER BY child_block_hash",
+            &[&source_id, &height],
+        )
+        .await?;
+    Ok(rows.iter().map(|row| (row.get(0), row.get(1))).collect())
+}
+
 pub async fn advisory_locks_held(client: &Client) -> Result<i64> {
     Ok(client
         .query_one(

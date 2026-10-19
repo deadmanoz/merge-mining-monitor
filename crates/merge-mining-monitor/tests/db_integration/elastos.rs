@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use anyhow::{Context, Result};
 use bitcoin::block::{Header, Version};
 use bitcoin::consensus::serialize;
@@ -14,10 +16,12 @@ use mmm_producers::chains::elastos::{
     ElastosRpc, process_elastos_height,
 };
 use mmm_producers::{ReclassifyPoolsConfig, run_reclassify_pools};
-use mmm_store::get_source_id;
+use mmm_store::{get_source_id, sync_event_observation_attribution};
 use tokio_postgres::Client;
 
-use crate::support::db::{advisory_locks_held, displacement_at};
+use crate::support::db::{
+    advisory_locks_held, displacement_at, observation_prev_hash, observations_at,
+};
 
 use crate::support::default_pool_snapshot;
 use crate::support::seed::{
@@ -91,6 +95,46 @@ async fn core_cache_match_writes_the_event_end_to_end() -> Result<()> {
 }
 
 #[tokio::test]
+async fn a_parent_missing_bitcoins_target_is_captured_as_a_near() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        // Elastos 1,500,000: the parent meets only Elastos's easier target.
+        let block: ElastosBlock = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/elastos/ela-1500000.json"
+        )))?;
+        let height = block.height;
+        let hash = block.reconstruct()?.block_hash.to_byte_array().to_vec();
+        let prev = BlockHash::from_str(&block.previousblockhash)?
+            .to_byte_array()
+            .to_vec();
+        let bits = block.bits;
+        let context =
+            ElastosCaptureContext::new_with_classifier(&client, unknown_classifier()).await?;
+        let rpc = FixtureElastosRpc { block };
+        let outcome = process_elastos_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(outcome, ElastosHeightOutcome::AuxpowWritten);
+        assert_eq!(
+            observations_at(&client, context.source_id(), height).await?,
+            vec![(hash.clone(), "near".to_owned(), true, true)]
+        );
+        assert_eq!(
+            observation_prev_hash(&client, context.source_id(), &hash).await?,
+            Some(prev)
+        );
+        let nbits: Option<i64> = client
+            .query_one(
+                "SELECT child_nbits FROM child_block_observation \
+                 WHERE source_id = $1 AND child_block_hash = $2",
+                &[&context.source_id(), &hash],
+            )
+            .await?
+            .get(0);
+        assert_eq!(nbits, Some(i64::from(bits)));
+        Ok(())
+    })
+}
+
+#[tokio::test]
 async fn a_foreign_parent_retracts_only_its_own_blocks_event() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let block = writable_elastos_block_without_identity();
@@ -109,6 +153,7 @@ async fn a_foreign_parent_retracts_only_its_own_blocks_event() -> Result<()> {
             process_elastos_height(&mut client, &rpc, &context, height).await?,
             ElastosHeightOutcome::AuxpowWritten
         );
+        seed_hashless_copy_of_block(&client, context.source_id(), height).await?;
         let sibling_hash = hash_bytes(0x5a01);
         insert_event(
             &client,
@@ -149,6 +194,12 @@ async fn a_foreign_parent_retracts_only_its_own_blocks_event() -> Result<()> {
         assert_eq!(
             process_elastos_height(&mut client, &rpc, &context, height).await?,
             ElastosHeightOutcome::NonBitcoinParent
+        );
+        let block_hash = block.reconstruct()?.block_hash.to_byte_array().to_vec();
+        assert_eq!(
+            observations_at(&client, context.source_id(), height).await?,
+            vec![(block_hash, "non_bitcoin_parent".to_owned(), false, false)],
+            "only the block's exact child-side observation remains"
         );
         let remaining: Vec<Vec<u8>> = client
             .query(
@@ -212,6 +263,31 @@ async fn live_capture_writes_unmapped_elastos_reward_and_minerinfo() -> Result<(
                     None,
                 ),
             ]
+        );
+
+        // An identity the event no longer carries leaves its observation on the next sync.
+        let identities = "SELECT cardinality(o.child_identity_ids) FROM child_block_observation o \
+                          JOIN merge_mining_event e ON e.observation_id = o.id WHERE e.id = $1";
+        assert_eq!(
+            client
+                .query_one(identities, &[&event_id])
+                .await?
+                .get::<_, i32>(0),
+            2
+        );
+        client
+            .execute(
+                "DELETE FROM event_pool_attribution WHERE event_id = $1 AND namespace = $2",
+                &[&event_id, &ELASTOS_MINERINFO_NAMESPACE],
+            )
+            .await?;
+        sync_event_observation_attribution(&client, event_id).await?;
+        assert_eq!(
+            client
+                .query_one(identities, &[&event_id])
+                .await?
+                .get::<_, i32>(0),
+            1
         );
         Ok(())
     })
@@ -400,6 +476,36 @@ fn writable_binance_elastos_block() -> ElastosBlock {
     writable_elastos_block_with_identity(Some(BINANCE_MINERINFO))
 }
 
+/// A hashless historical row for the block captured at `height`, with its observation.
+async fn seed_hashless_copy_of_block(client: &Client, source_id: i64, height: i32) -> Result<()> {
+    client
+        .execute(
+            "WITH hashless AS ( \
+                INSERT INTO merge_mining_event ( \
+                    source_id, child_height, child_block_time, btc_parent_header_hash, \
+                    btc_parent_prev_header_hash, btc_parent_header_bytes, btc_parent_header_time, \
+                    btc_parent_height, btc_parent_kind, pow_validates_btc_target, \
+                    discovered_at, confirmed_at \
+                ) \
+                SELECT source_id, child_height, child_block_time, btc_parent_header_hash, \
+                       btc_parent_prev_header_hash, btc_parent_header_bytes, btc_parent_header_time, \
+                       btc_parent_height, btc_parent_kind, pow_validates_btc_target, \
+                       discovered_at, confirmed_at \
+                FROM merge_mining_event \
+                WHERE source_id = $1 AND child_height = $2 AND child_block_hash IS NOT NULL \
+                RETURNING source_id, child_height, btc_parent_header_hash \
+             ) \
+             INSERT INTO child_block_observation ( \
+                source_id, child_height, observation_kind, btc_parent_header_hash, recorded_at \
+             ) \
+             SELECT source_id, child_height, 'evidence', btc_parent_header_hash, 1 FROM hashless",
+            &[&source_id, &height],
+        )
+        .await
+        .context("seed a hashless copy of the captured block")?;
+    Ok(())
+}
+
 async fn event_id_at_height(client: &Client, source_id: i64, height: i32) -> Result<i64> {
     Ok(client
         .query_one(
@@ -489,7 +595,36 @@ async fn an_unproven_block_at_a_rescanned_height_leaves_the_record_alone() -> Re
             vec![(hash_a.clone(), None, None)]
         );
         assert_ne!(hash_a, hash_n);
+        // Block M carries A's AuxPoW, which commits to A, not M: M is kept with an
+        // unverified parent and does not displace A either.
+        let mut block_m = block_a.clone();
+        block_m.nonce = block_m.nonce.wrapping_add(2);
+        rehash(&mut block_m)?;
+        let hash_m = block_m.reconstruct()?.block_hash.to_byte_array().to_vec();
+        let rpc = FixtureElastosRpc { block: block_m };
+        let outcome = process_elastos_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(outcome, ElastosHeightOutcome::MalformedSkipped);
+        assert_eq!(
+            displacement_at(&client, source_id, height).await?,
+            vec![(hash_a.clone(), None, None)]
+        );
+        let mut expected = vec![
+            (hash_a.clone(), "evidence".to_owned(), false, true),
+            (hash_n.clone(), "not_merge_mined".to_owned(), false, false),
+            (hash_m, "unverified_parent".to_owned(), false, false),
+        ];
+        expected.sort();
+        assert_eq!(observations_at(&client, source_id, height).await?, expected);
         assert_eq!(advisory_locks_held(&client).await?, 0);
+
+        // An answer that drops A's AuxPoW (the 84-byte hash does not commit to it) leaves
+        // A's proven evidence in place.
+        let mut stripped = block_a.clone();
+        stripped.auxpow = None;
+        let rpc = FixtureElastosRpc { block: stripped };
+        let outcome = process_elastos_height(&mut client, &rpc, &context, height).await?;
+        assert_eq!(outcome, ElastosHeightOutcome::NonAuxpowSkipped);
+        assert_eq!(observations_at(&client, source_id, height).await?, expected);
 
         let rpc = FixtureElastosRpc { block: block_a };
         let outcome = process_elastos_height(&mut client, &rpc, &context, height).await?;

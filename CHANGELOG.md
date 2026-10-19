@@ -6,6 +6,11 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Record every observed child block in a new `child_block_observation` table, filled from existing events by migration 0033: near and evidence blocks with their events, blocks without AuxPoW as `not_merge_mined`, blocks whose parent fails the Bitcoin lineage gate as `non_bitcoin_parent`, and authenticated blocks whose AuxPoW proof is malformed or incomplete (including RSK blocks without a complete parent header) as `unverified_parent`, the last two with no parent field.
+- Keep child identities (RSK miner, payout and reward addresses, Elastos minerinfo) as a `child_miner_identity` set per block, and RSK chain role, uncle placement, parent hash and reported difficulty on the observation.
+- Capture Elastos and Hathor parents that miss Bitcoin's target as nears through the lineage gate instead of discarding them, and record Elastos and Hathor blocks without AuxPoW as `not_merge_mined`.
+- Let a Hathor height that holds no event follow the REST answer, so a replaced near or block without AuxPoW is marked displaced; heights holding a non-near event keep the declared-work floor.
+
 ## [0.9.4] - 2026-10-18
 
 - Refresh the Research publication pin to correct the four child identities for error parent 957,780.

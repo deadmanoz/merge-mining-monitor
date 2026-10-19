@@ -898,6 +898,7 @@ async fn authoritative_import_removes_rows_absent_from_the_snapshot() -> Result<
                     &[&omitted_event],
                 )
                 .await?;
+            seed_event_observation(&client, omitted_event).await?;
 
             let summary = run_manifest_historical_import_for_test(
                 &mut client,
@@ -920,6 +921,22 @@ async fn authoritative_import_removes_rows_absent_from_the_snapshot() -> Result<
                 .await?
                 .get(0);
             assert_eq!(attribution_count, 0);
+            let observations: Vec<Option<Vec<u8>>> = client
+                .query(
+                    "SELECT o.child_block_hash FROM child_block_observation o \
+                     JOIN source s ON s.id = o.source_id WHERE s.code = 'auxpow:devcoin'",
+                    &[],
+                )
+                .await?
+                .iter()
+                .map(|row| row.get(0))
+                .collect();
+            assert_eq!(
+                observations.len(),
+                1,
+                "the omitted block's observation goes with it"
+            );
+            assert_ne!(observations[0], Some(vec![0x44; 32]));
             Ok::<_, anyhow::Error>(())
         }
         .await;
@@ -1831,6 +1848,25 @@ async fn seed_unpublished_event(
         .await
         .context("seed unpublished event")?
         .get(0))
+}
+
+/// Give a raw-seeded event an observation as migration 0033 does for existing events:
+/// matched by child identity and not linked through `observation_id`.
+async fn seed_event_observation(client: &tokio_postgres::Client, event_id: i64) -> Result<()> {
+    client
+        .execute(
+            "INSERT INTO child_block_observation ( \
+                source_id, child_height, child_block_hash, observation_kind, \
+                btc_parent_header_hash, recorded_at \
+             ) \
+             SELECT source_id, child_height, child_block_hash, 'evidence', \
+                    btc_parent_header_hash, 1 \
+             FROM merge_mining_event WHERE id = $1",
+            &[&event_id],
+        )
+        .await
+        .context("seed event observation")?;
+    Ok(())
 }
 
 async fn active_source_event_count(

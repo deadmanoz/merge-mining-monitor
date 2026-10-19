@@ -22,6 +22,24 @@ use super::*;
 /// Qbit mainnet merged-mining chain id (`(version >> 13) & 0xFFFF`).
 pub const QBIT_AUXPOW_CHAIN_ID: u32 = 47;
 
+/// A Qbit AuxPoW proof that is malformed or does not commit to its block, as distinct
+/// from a block that fails its own version, target or body checks. Callers find it with
+/// `anyhow::Error::downcast_ref`.
+#[derive(Debug)]
+pub struct QbitProofError(anyhow::Error);
+
+impl std::fmt::Display for QbitProofError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#}", self.0)
+    }
+}
+
+impl std::error::Error for QbitProofError {}
+
+fn proof_error(err: anyhow::Error) -> anyhow::Error {
+    anyhow::Error::new(QbitProofError(err))
+}
+
 const QBIT_PARENT_BRANCH_CAP: usize = 31;
 const QBIT_CHAIN_BRANCH_CAP: usize = 30;
 
@@ -106,9 +124,17 @@ pub fn parse_qbit_extended_header(raw: &[u8], child_height: u32) -> Result<Parse
     }
 
     let auxpow_start = reader.position();
-    let auxpow = read_qbit_auxpow(&mut reader)?;
-    ensure!(reader.is_eof(), "trailing bytes on Qbit AuxPoW header");
-    verify_qbit_proof(&child_header, &auxpow, child_target)?;
+    let auxpow = read_qbit_auxpow(&mut reader).map_err(proof_error)?;
+    if !reader.is_eof() {
+        return Err(proof_error(anyhow::anyhow!(
+            "trailing bytes on Qbit AuxPoW header"
+        )));
+    }
+    verify_qbit_proof(&child_header, &auxpow).map_err(proof_error)?;
+    ensure!(
+        child_target.is_met_by(auxpow.parent_header.hash()),
+        "Qbit parent proof fails child header target"
+    );
     let auxpow_bytes = raw[auxpow_start..reader.position()].to_vec();
 
     Ok(ParsedQbitBlock::Auxpow(Box::new(ParsedQbitAuxpow {
@@ -138,7 +164,7 @@ pub fn qbit_extended_header_prefix(raw: &[u8], child_height: u32) -> Result<&[u8
     }
     let mut reader = Reader::new(raw);
     reader.skip(Header::SIZE)?;
-    read_qbit_auxpow(&mut reader)?;
+    read_qbit_auxpow(&mut reader).map_err(proof_error)?;
     Ok(&raw[..reader.position()])
 }
 
@@ -254,11 +280,9 @@ fn read_qbit_auxpow(reader: &mut Reader<'_>) -> Result<QbitRawAuxpow> {
     })
 }
 
-fn verify_qbit_proof(
-    child_header: &ParsedHeader,
-    auxpow: &QbitRawAuxpow,
-    child_target: Target,
-) -> Result<()> {
+/// The proof's commitment to `child_header`; the caller checks the parent against the
+/// child target.
+fn verify_qbit_proof(child_header: &ParsedHeader, auxpow: &QbitRawAuxpow) -> Result<()> {
     ensure!(
         auxpow.coinbase_branch.index == 0,
         "Qbit coinbase branch index must be zero (got {})",
@@ -296,11 +320,6 @@ fn verify_qbit_proof(
     ensure!(
         chain_index as u32 == expected_slot,
         "Qbit commitment chain slot {chain_index} != deterministic slot {expected_slot}"
-    );
-
-    ensure!(
-        child_target.is_met_by(auxpow.parent_header.hash()),
-        "Qbit parent proof fails child header target"
     );
     Ok(())
 }
