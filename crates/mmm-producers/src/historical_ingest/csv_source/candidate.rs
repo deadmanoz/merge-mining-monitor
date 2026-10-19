@@ -141,6 +141,7 @@ fn candidate_from_record_with_taxonomy(
             child_header_bytes: child.header_bytes,
             child_block_time: child.block_time,
             child_nbits: child.nbits,
+            child_prev_block_hash: None,
             btc_parent_header: header,
             pow_validates_child_target,
             btc_parent_coinbase_txid: coinbase.txid,

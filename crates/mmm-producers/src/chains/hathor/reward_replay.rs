@@ -13,8 +13,8 @@ use mmm_capture::capture::{CHILD_COINBASE_OUTPUT_SOURCE, CHILD_PAYOUT_REGISTRY_S
 use mmm_capture::child_payout::PoolIdentityLookup;
 use mmm_capture::source_registry::HATHOR_SOURCE_CODE;
 use mmm_store::{
-    get_source_id, load_hathor_reward_replay_batch, update_hathor_reward_audit,
-    upsert_event_pool_attributions_without_stale_cleanup,
+    get_source_id, load_hathor_reward_replay_batch, sync_event_observation_attribution,
+    update_hathor_reward_audit, upsert_event_pool_attributions_without_stale_cleanup,
 };
 
 pub(crate) async fn replay_hathor_reward_attributions(
@@ -95,6 +95,7 @@ pub(crate) async fn replay_hathor_reward_attributions(
                 row.confirmed_at,
             )
             .await?;
+            sync_event_observation_attribution(client, row.event_id).await?;
             stats.child_pool_updates += 1;
             stats.hathor_reward_updates += 1;
         }

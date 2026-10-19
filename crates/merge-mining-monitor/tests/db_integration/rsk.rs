@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier};
 use mmm_store::get_source_id;
@@ -6,7 +6,9 @@ use tokio_postgres::{Client, Row};
 
 use bitcoin::block::Header;
 use bitcoin::consensus::deserialize;
-use mmm_capture::capture::{HistoricalEventProvenance, RSK_PROOF_FORMAT_OPAQUE};
+use mmm_capture::capture::{
+    HistoricalEventProvenance, PoolAttributionSide, RSK_PROOF_FORMAT_OPAQUE,
+};
 use mmm_capture::pool_resolver::{
     PoolIdentityRegistry, PoolSnapshotSource, RSK_MINER_ADDRESS_NAMESPACE, RskMinerEntry,
     RskMinerRegistry,
@@ -14,10 +16,11 @@ use mmm_capture::pool_resolver::{
 use mmm_capture::source_registry::RSK_SOURCE_CODE;
 use mmm_producers::chains::rsk::{
     BlockOutcome, CaptureDecision, RskBlock, RskCaptureContext, capture_ready_rsk_inputs_for_test,
-    load_rsk_block_fixture, prepare_rsk_capture,
+    capture_rsk_block_for_test, load_rsk_block_fixture, prepare_rsk_capture,
 };
 use mmm_store::{upsert_rsk_only_pools, upsert_rsk_pool_identities, write_rsk_capture};
 
+use crate::support::db::observation_prev_hash;
 use crate::support::default_pool_snapshot;
 use crate::support::scenario::canonical_verdict;
 
@@ -34,6 +37,114 @@ async fn rsk_pool_identity_progresses_null_to_resolved_preserving_proof_bytes() 
     crate::run_mut_db_test!(client, {
         run_rsk_pool_identity_progression(&mut client).await
     })
+}
+
+#[tokio::test]
+async fn the_rsk_sidecar_supplies_the_observation_miner_without_child_attribution() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let block = load_rsk_block_fixture("canonical-valid");
+        let context =
+            rsk_context_with_known_miner(&client, ConfiguredParentClassifier::Disabled).await?;
+        let mut inputs = ready_inputs(&context, &block, false, None, None);
+        // Historical imports carry only Bitcoin-parent attributions.
+        inputs
+            .payload
+            .pool_attributions
+            .retain(|row| row.side == PoolAttributionSide::BtcParent);
+        let event_id = write_rsk_capture(
+            &mut client,
+            context.source_id(),
+            &inputs.payload,
+            &inputs.evidence,
+        )
+        .await?;
+        let identifiers: Vec<String> = client
+            .query(
+                "SELECT ci.identifier FROM merge_mining_event e \
+                 JOIN child_block_observation o ON o.id = e.observation_id \
+                 JOIN child_miner_identity ci ON ci.id = ANY (o.child_identity_ids) \
+                 WHERE e.id = $1",
+                &[&event_id],
+            )
+            .await?
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
+        assert_eq!(identifiers, vec![KNOWN_MINER_HEX.to_owned()]);
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn a_refused_rsk_uncle_keeps_its_chain_role_on_the_child_side_observation() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let context =
+            rsk_context_with_known_miner(&client, ConfiguredParentClassifier::Disabled).await?;
+        // The fixture parent is a share whose all-zero prev is the seeded genesis header. Give
+        // it a prev the cache does not hold: its bits then match no Bitcoin epoch, so the
+        // lineage gate refuses the parent.
+        let mut uncle = load_rsk_block_fixture("uncle-valid");
+        uncle
+            .bitcoin_merged_mining_header
+            .as_mut()
+            .context("uncle fixture carries a parent header")?
+            .replace_range(10..74, &"11".repeat(32));
+        uncle.parent_hash = Some(format!("0x{}", "22".repeat(32)));
+        let inputs = ready_inputs(&context, &uncle, true, Some(0), Some(729_000));
+        let outcome = capture_ready_rsk_inputs_for_test(&mut client, &context, inputs).await?;
+        assert_eq!(outcome, BlockOutcome::NonBitcoinParent);
+        assert_child_only_uncle_row(&client, context.source_id(), "non_bitcoin_parent").await?;
+        let uncle_hash = hex::decode(uncle.hash.trim_start_matches("0x"))?;
+        assert_eq!(
+            observation_prev_hash(&client, context.source_id(), &uncle_hash).await?,
+            Some(vec![0x22; 32])
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn an_rsk_uncle_without_a_complete_parent_header_is_kept_with_an_unverified_parent()
+-> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let context =
+            rsk_context_with_known_miner(&client, ConfiguredParentClassifier::Disabled).await?;
+        // A pre-RSKIP-92 fallback signature instead of an 80-byte parent header.
+        let mut uncle = load_rsk_block_fixture("uncle-valid");
+        uncle.bitcoin_merged_mining_header = Some("0x0100".to_owned());
+        let outcome =
+            capture_rsk_block_for_test(&mut client, &context, &uncle, true, Some(0), Some(729_000))
+                .await?;
+        assert_eq!(outcome, BlockOutcome::NoParentHeaderSkipped);
+        assert_child_only_uncle_row(&client, context.source_id(), "unverified_parent").await?;
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+/// The single observation a child-only `uncle-valid` capture leaves, with its RSK facts.
+async fn assert_child_only_uncle_row(client: &Client, source_id: i64, kind: &str) -> Result<()> {
+    let row = client
+        .query_one(
+            "SELECT observation_kind, child_chain_role, uncle_index, uncle_parent_height, \
+                    child_difficulty_reported::text, btc_parent_header_hash IS NULL, \
+                    cardinality(child_identity_ids), child_block_time, child_pool_id IS NOT NULL \
+             FROM child_block_observation WHERE source_id = $1",
+            &[&source_id],
+        )
+        .await?;
+    assert_eq!(row.get::<_, String>(0), kind);
+    assert_eq!(row.get::<_, Option<String>>(1).as_deref(), Some("uncle"));
+    assert_eq!(row.get::<_, Option<i32>>(2), Some(0));
+    assert_eq!(row.get::<_, Option<i32>>(3), Some(729_000));
+    assert_eq!(row.get::<_, Option<String>>(4).as_deref(), Some("4096"));
+    assert!(row.get::<_, bool>(5), "no parent field is stored");
+    assert_eq!(row.get::<_, i32>(6), 1, "the miner identity is kept");
+    assert_eq!(row.get::<_, Option<i64>>(7), Some(0x6553_f101));
+    assert!(
+        row.get::<_, bool>(8),
+        "the registry miner's pool is the child pool"
+    );
+    Ok(())
 }
 
 #[tokio::test]
@@ -330,6 +441,51 @@ async fn assert_rsk_evidence_rows_and_identity(client: &Client) -> Result<()> {
     let identifier: String = identity_row.get(1);
     assert_eq!(namespace, RSK_MINER_ADDRESS_NAMESPACE);
     assert_eq!(identifier, KNOWN_MINER_HEX);
+
+    let observations = client
+        .query(
+            "SELECT o.child_chain_role, o.uncle_index, o.uncle_parent_height, \
+                    o.child_difficulty_reported::text, \
+                    o.child_pool_id IS NOT DISTINCT FROM e.child_miner_pool_id, \
+                    (SELECT ci.identifier FROM child_miner_identity ci \
+                      WHERE ci.id = ANY (o.child_identity_ids)) \
+             FROM merge_mining_event e \
+             JOIN child_block_observation o ON o.id = e.observation_id \
+             ORDER BY e.id",
+            &[],
+        )
+        .await?;
+    let roles = observations
+        .iter()
+        .map(|row| {
+            (
+                row.get::<_, Option<String>>(0),
+                row.get::<_, Option<i32>>(1),
+                row.get::<_, Option<i32>>(2),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        roles,
+        vec![
+            (Some("canonical".to_owned()), None, None),
+            (Some("uncle".to_owned()), Some(0), Some(729_000)),
+        ]
+    );
+    assert_eq!(
+        observations[0].get::<_, Option<String>>(3).as_deref(),
+        Some("4096")
+    );
+    for observation in &observations {
+        assert!(
+            observation.get::<_, bool>(4),
+            "observation pool follows the event"
+        );
+        assert_eq!(
+            observation.get::<_, Option<String>>(5).as_deref(),
+            Some(KNOWN_MINER_HEX)
+        );
+    }
     Ok(())
 }
 

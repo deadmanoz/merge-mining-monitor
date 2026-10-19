@@ -75,6 +75,7 @@ pub(super) fn parse_rsk_sidecar(
         merkle_proof: parse_optional_hex_field(record.get(columns.merkle_proof))?,
         coinbase_tail: parse_optional_hex_field(record.get(columns.coinbase_tail))?,
         proof_format: RSK_PROOF_FORMAT_OPAQUE,
+        child_difficulty_reported: None,
     })
 }
 

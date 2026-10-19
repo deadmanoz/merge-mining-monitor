@@ -4,6 +4,7 @@
 
 use anyhow::{Context, Result, ensure};
 use bitcoin::BlockHash;
+use bitcoin::block::Header;
 use tokio_postgres::Client;
 use tracing::{debug, error, info, warn};
 
@@ -21,8 +22,8 @@ use mmm_capture::auxpow::{
     parse_verified_classic_block,
 };
 use mmm_capture::capture::{
-    ClassificationProof, MergeMiningEventPayload, build_event_payload, now_epoch_seconds,
-    resolve_event_pools_with_child_payout,
+    ChildBlockObservation, ClassificationProof, MergeMiningEventPayload, ObservationKind,
+    build_event_payload, now_epoch_seconds, resolve_event_pools_with_child_payout,
 };
 use mmm_capture::child_payout::PoolIdentityLookup;
 use mmm_capture::pool_resolver::PoolResolver;
@@ -120,8 +121,21 @@ pub enum HeightOutcome {
 pub(super) enum AuxpowFetch {
     Classic(Box<ParsedAuxpowBlock>),
     Qbit(Box<ParsedQbitAuxpowBlock>),
-    NonAuxpow,
-    Malformed(String),
+    /// The block's own 80-byte header, recorded as a `not_merge_mined` observation.
+    NonAuxpow(Header),
+    /// A malformed AuxPoW proof. `header` is the block's own 80-byte header when it
+    /// hashes to the node's block hash, recorded as an `unverified_parent` observation.
+    Malformed {
+        detail: String,
+        header: Option<Header>,
+    },
+}
+
+/// The block's own 80-byte header when the bytes start with one that hashes to
+/// `block_hash`.
+fn authenticated_child_header(bytes: &[u8], block_hash: &BlockHash) -> Option<Header> {
+    let header: Header = bitcoin::consensus::deserialize(bytes.get(..Header::SIZE)?).ok()?;
+    (header.block_hash() == *block_hash).then_some(header)
 }
 
 fn child_header_version(blob: &[u8]) -> Result<i32> {
@@ -219,17 +233,36 @@ async fn process_locked_height(
 ) -> Result<HeightOutcome> {
     let family = context.family();
 
-    let outcome = match fetch_auxpow_candidate(rpc, context, &block_hash, height).await? {
-        AuxpowFetch::Classic(mut parsed) => {
-            attach_child_payout_if_needed(rpc, context, &block_hash, parsed.as_mut()).await?;
-            write_classic_event(client, context, height, &parsed).await?
-        }
-        AuxpowFetch::Qbit(parsed) => write_qbit_event(client, context, height, &parsed).await?,
-        AuxpowFetch::NonAuxpow => HeightOutcome::NonAuxpowSkipped,
-        AuxpowFetch::Malformed(detail) => {
-            record_malformed_height(client, context, height, &block_hash, detail).await?
-        }
-    };
+    // A block that yields no event keeps a child-only observation built from its own header.
+    let (outcome, child_only) =
+        match fetch_auxpow_candidate(rpc, context, &block_hash, height).await? {
+            AuxpowFetch::Classic(mut parsed) => {
+                attach_child_payout_if_needed(rpc, context, &block_hash, parsed.as_mut()).await?;
+                (
+                    write_classic_event(client, context, height, &parsed).await?,
+                    None,
+                )
+            }
+            AuxpowFetch::Qbit(parsed) => (
+                write_qbit_event(client, context, height, &parsed).await?,
+                None,
+            ),
+            AuxpowFetch::NonAuxpow(header) => {
+                ensure!(
+                    header.block_hash() == block_hash,
+                    "{} header at height {height} does not hash to block {block_hash}",
+                    family.label
+                );
+                (
+                    HeightOutcome::NonAuxpowSkipped,
+                    Some((ObservationKind::NotMergeMined, header)),
+                )
+            }
+            AuxpowFetch::Malformed { detail, header } => (
+                record_malformed_height(client, context, height, &block_hash, detail).await?,
+                header.map(|header| (ObservationKind::UnverifiedParent, header)),
+            ),
+        };
 
     let eventless_record = match outcome {
         HeightOutcome::AuxpowWritten
@@ -248,6 +281,10 @@ async fn process_locked_height(
         }
     };
     if let Some((current_parent, head_outcome)) = eventless_record {
+        let observed_at = now_epoch_seconds()?;
+        let observation = child_only.map(|(kind, header)| {
+            ChildBlockObservation::child_only_from_header(kind, height, &header, observed_at)
+        });
         record_child_chain_block_in_own_transaction(
             client,
             context.source_id(),
@@ -257,9 +294,10 @@ async fn process_locked_height(
                 parent: current_parent,
                 outcome: head_outcome,
                 evidence: EvidenceMarker::None,
-                observed_at: now_epoch_seconds()?,
+                observed_at,
                 core_cache_generation: None,
             },
+            observation.as_ref(),
         )
         .await?;
     }
@@ -422,6 +460,7 @@ pub(super) async fn write_event_in_txn(
             observed_at,
             core_cache_generation,
         },
+        None,
     )
     .await?;
     Ok(outcome)
@@ -468,17 +507,19 @@ async fn fetch_raw_block_candidate(
         }
     };
     match parsed {
-        Ok(ParsedNamecoinBlock::NonAuxpow(_)) => {
+        Ok(ParsedNamecoinBlock::NonAuxpow(parsed)) => {
             debug!(
                 chain = spec.slug,
                 height,
                 block_hash = %block_hash,
-                "skipping non-AuxPoW block"
+                "recording non-AuxPoW block"
             );
-            Ok(AuxpowFetch::NonAuxpow)
+            Ok(AuxpowFetch::NonAuxpow(parsed.header))
         }
-        Ok(ParsedNamecoinBlock::Auxpow(parsed)) => parsed_candidate_or_malformed(Ok(parsed)),
-        Err(err) => parsed_candidate_or_malformed(Err(err)),
+        Ok(ParsedNamecoinBlock::Auxpow(parsed)) => parsed_candidate_or_malformed(Ok(parsed), None),
+        Err(err) => {
+            parsed_candidate_or_malformed(Err(err), authenticated_child_header(&raw, block_hash))
+        }
     }
 }
 
@@ -501,17 +542,41 @@ async fn fetch_header_blob_candidate(
             chain = spec.slug,
             height,
             block_hash = %block_hash,
-            "skipping non-merge-mined block"
+            "recording non-merge-mined block"
         );
-        return Ok(AuxpowFetch::NonAuxpow);
+        return Ok(
+            match blob
+                .get(..Header::SIZE)
+                .map(bitcoin::consensus::deserialize::<Header>)
+            {
+                Some(Ok(header)) => AuxpowFetch::NonAuxpow(header),
+                _ => AuxpowFetch::Malformed {
+                    detail: format!(
+                        "{} non-merge-mined header blob at height {height} is not an 80-byte header",
+                        family.label
+                    ),
+                    header: None,
+                },
+            },
+        );
     }
-    parsed_candidate_or_malformed(parse_auxpow_header_blob(&blob).map(Box::new))
+    parsed_candidate_or_malformed(
+        parse_auxpow_header_blob(&blob).map(Box::new),
+        authenticated_child_header(&blob, block_hash),
+    )
 }
 
-fn parsed_candidate_or_malformed(parsed: Result<Box<ParsedAuxpowBlock>>) -> Result<AuxpowFetch> {
+/// `header` is the block's own authenticated header, kept when the proof is malformed.
+fn parsed_candidate_or_malformed(
+    parsed: Result<Box<ParsedAuxpowBlock>>,
+    header: Option<Header>,
+) -> Result<AuxpowFetch> {
     match parsed {
         Ok(parsed) => Ok(AuxpowFetch::Classic(parsed)),
-        Err(err) => Ok(AuxpowFetch::Malformed(format!("{err:#}"))),
+        Err(err) => Ok(AuxpowFetch::Malformed {
+            detail: format!("{err:#}"),
+            header,
+        }),
     }
 }
 

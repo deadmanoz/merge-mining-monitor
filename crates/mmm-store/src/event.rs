@@ -7,9 +7,11 @@ use tokio_postgres::GenericClient;
 use tokio_postgres::types::Json;
 
 use mmm_capture::capture::{
-    CHILD_COINBASE_OUTPUT_SOURCE, CHILD_PAYOUT_REGISTRY_SOURCE, EventPoolAttribution,
-    HistoricalEventProvenance, MergeMiningEventPayload, PoolAttributionSide,
+    CHILD_COINBASE_OUTPUT_SOURCE, CHILD_PAYOUT_REGISTRY_SOURCE, ChildBlockObservation,
+    EventPoolAttribution, HistoricalEventProvenance, MergeMiningEventPayload, PoolAttributionSide,
 };
+
+use crate::observation::{sync_observation_attribution, upsert_event_observation};
 
 /// How an event upsert changed the store's authenticated child-identity state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,12 +147,12 @@ pub async fn upsert_merge_mining_event<C: GenericClient>(
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Exactness {
+pub(crate) enum Exactness {
     Exact,
     Partial,
 }
 
-fn identity_conflict_clause(exactness: Exactness) -> &'static str {
+pub(crate) fn identity_conflict_clause(exactness: Exactness) -> &'static str {
     match exactness {
         Exactness::Exact => {
             "ON CONFLICT (source_id, child_block_hash) \
@@ -475,14 +477,21 @@ fn event_write_outcome(
     EventWriteOutcome::new(event_id, disposition, parent_read_model_changed)
 }
 
-/// Upsert the event row, its complete pool-attribution snapshot (pruning absent rows per source),
-/// and optional historical provenance.
+/// Upsert the event row, its child block observation, its complete pool-attribution
+/// snapshot (pruning absent rows per source), and optional historical provenance.
 pub async fn upsert_merge_mining_event_with_attributions<C: GenericClient>(
     client: &C,
     source_id: i64,
     payload: &MergeMiningEventPayload,
 ) -> Result<EventWriteOutcome> {
     let outcome = upsert_merge_mining_event(client, source_id, payload).await?;
+    let observation_id = upsert_event_observation(
+        client,
+        source_id,
+        &outcome,
+        ChildBlockObservation::from_event_payload(payload),
+    )
+    .await?;
     upsert_event_pool_attributions(
         client,
         outcome.event_id,
@@ -493,6 +502,7 @@ pub async fn upsert_merge_mining_event_with_attributions<C: GenericClient>(
     if let Some(provenance) = &payload.historical_provenance {
         upsert_historical_event_provenance(client, outcome.event_id, provenance).await?;
     }
+    sync_observation_attribution(client, outcome.event_id, observation_id).await?;
     Ok(outcome)
 }
 
@@ -595,6 +605,9 @@ async fn ensure_error_observation_coordinate_identity<C: GenericClient>(
 
 /// Apply a complete pool-attribution snapshot for an event (pruning absent keys per touched source,
 /// unioning child-payout sources) and refresh `child_miner_pool_id`.
+///
+/// Callers run [`crate::sync_event_observation_attribution`] once per event after their
+/// last attribution write, so the event's observation follows.
 pub async fn upsert_event_pool_attributions<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -607,6 +620,9 @@ pub async fn upsert_event_pool_attributions<C: GenericClient>(
 }
 
 /// Upsert attribution rows without deleting absent rows for the same source, then refresh `child_miner_pool_id`.
+///
+/// Callers run [`crate::sync_event_observation_attribution`] once per event after their
+/// last attribution write, so the event's observation follows.
 pub async fn upsert_event_pool_attributions_without_stale_cleanup<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -849,7 +865,9 @@ pub async fn has_child_block_events<C: GenericClient>(
         .get(0))
 }
 
-/// Delete events for one child block (exact hash match or hashless partial match on `btc_parent_header_hash`).
+/// Delete events for one child block (exact hash match or hashless partial match on
+/// `btc_parent_header_hash`) and its hashless observations; the caller rewrites its exact
+/// observation.
 pub async fn delete_child_block_events<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -857,7 +875,7 @@ pub async fn delete_child_block_events<C: GenericClient>(
     child_block_hash: &[u8],
     btc_parent_header_hash: &[u8],
 ) -> Result<u64> {
-    client
+    let deleted = client
         .execute(
             "DELETE FROM merge_mining_event \
               WHERE source_id = $1 AND child_height = $2 \
@@ -871,5 +889,15 @@ pub async fn delete_child_block_events<C: GenericClient>(
             ],
         )
         .await
-        .context("delete events for child block")
+        .context("delete events for child block")?;
+    client
+        .execute(
+            "DELETE FROM child_block_observation \
+             WHERE source_id = $1 AND child_height = $2 \
+               AND child_block_hash IS NULL AND btc_parent_header_hash = $3",
+            &[&source_id, &height, &btc_parent_header_hash],
+        )
+        .await
+        .context("delete hashless observations for child block")?;
+    Ok(deleted)
 }

@@ -43,8 +43,9 @@ use mmm_capture::source_registry::{
 use mmm_read_model::{drive_args, require_positive, update_parent_events};
 use mmm_store::{
     delete_event_pool_attributions_for_source, get_source_id, load_pool_identities_by_namespace,
-    upsert_event_pool_attributions, upsert_event_pool_attributions_without_stale_cleanup,
-    upsert_pool_snapshot, upsert_rsk_only_pools,
+    sync_event_observation_attribution, upsert_event_pool_attributions,
+    upsert_event_pool_attributions_without_stale_cleanup, upsert_pool_snapshot,
+    upsert_rsk_only_pools,
 };
 
 mod plan;
@@ -280,6 +281,7 @@ async fn apply_parent_group(client: &mut Client, group: &ParentUpdateGroup) -> R
                     update.observed_at,
                 )
                 .await?;
+                sync_event_observation_attribution(txn, update.event_id).await?;
             }
             Ok(())
         },

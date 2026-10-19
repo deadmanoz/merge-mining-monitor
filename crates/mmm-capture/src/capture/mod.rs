@@ -74,6 +74,9 @@ pub struct MergeMiningEventPayload {
     pub child_header_bytes: Option<Vec<u8>>,
     pub child_block_time: Option<i64>,
     pub child_nbits: Option<u32>,
+    /// The child block's predecessor (internal byte order) when the chain reports it
+    /// outside an 80-byte header. Observation only: the event does not store it.
+    pub child_prev_block_hash: Option<Vec<u8>>,
     pub btc_parent_header_hash: Vec<u8>,
     pub btc_parent_prev_header_hash: Vec<u8>,
     pub btc_parent_header_bytes: Vec<u8>,
@@ -267,8 +270,10 @@ impl EventPoolAttribution {
     }
 }
 
+mod observation;
 mod sidecars;
 
+pub use observation::{ChildBlockObservation, ChildIdentity, NearParentEvidence, ObservationKind};
 pub use sidecars::{
     HATHOR_PROOF_FORMAT_RFC0006, HathorEvidencePayload, RSK_PROOF_FORMAT_OPAQUE, RskEvidencePayload,
 };
@@ -281,6 +286,9 @@ pub struct NormalizedEventEvidence {
     pub child_header_bytes: Option<Vec<u8>>,
     pub child_block_time: Option<i64>,
     pub child_nbits: Option<u32>,
+    /// The child block's predecessor (internal byte order) when the chain reports it
+    /// outside an 80-byte header. Observation only: the event does not store it.
+    pub child_prev_block_hash: Option<Vec<u8>>,
     pub btc_parent_header: Header,
     pub pow_validates_child_target: Option<bool>,
     pub btc_parent_coinbase_txid: Option<Vec<u8>>,
@@ -330,6 +338,7 @@ pub fn build_event_payload_from_evidence(
         child_header_bytes: evidence.child_header_bytes,
         child_block_time: evidence.child_block_time,
         child_nbits: evidence.child_nbits,
+        child_prev_block_hash: evidence.child_prev_block_hash,
         btc_parent_header_hash: parent_hash.to_byte_array().to_vec(),
         btc_parent_prev_header_hash: evidence
             .btc_parent_header
@@ -402,6 +411,7 @@ fn namecoin_evidence(
         child_header_bytes: Some(parsed.child_header.consensus_bytes()),
         child_block_time: Some(parsed.child_header.time() as i64),
         child_nbits: Some(parsed.child_header.bits().to_consensus()),
+        child_prev_block_hash: None,
         btc_parent_header: parsed.parent_header.header,
         pow_validates_child_target,
         btc_parent_coinbase_txid: Some(parsed.parent_coinbase_txid.to_byte_array().to_vec()),

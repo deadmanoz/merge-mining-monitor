@@ -2,7 +2,7 @@
 //!
 //! Streams the height-sorted archive CSV through [`process_hathor_height`] via
 //! a cache-backed [`HathorRpc`]: structural CSV corruption aborts at the adapter
-//! boundary, while capture-level skips (`NearSkipped`, `MalformedSkipped`, etc.)
+//! boundary, while capture-level skips (`MalformedSkipped`, `NonBitcoinParent`, etc.)
 //! are tallied and recorded in the skip ledger.
 
 use std::io::{BufRead, Write};
@@ -39,6 +39,9 @@ impl CacheRow {
             version: HATHOR_MERGE_MINED_VERSION,
             height: self.height,
             is_voided: false,
+            timestamp: Some(self.timestamp),
+            weight: None,
+            parents: Vec::new(),
         };
         let tx = HathorTransaction {
             raw: format!("{}{}", self.funds_graph_hex, self.aux_pow_hex),
@@ -279,7 +282,6 @@ pub struct HathorCacheSummary {
     pub auxpow_written: u64,
     pub non_auxpow_skipped: u64,
     pub voided_skipped: u64,
-    pub near_skipped: u64,
     pub malformed_skipped: u64,
     pub non_bitcoin_parent: u64,
     pub lineage_pending: u64,
@@ -297,7 +299,6 @@ impl HathorCacheSummary {
             HathorHeightOutcome::AuxpowWritten => self.auxpow_written += 1,
             HathorHeightOutcome::NonAuxpowSkipped => self.non_auxpow_skipped += 1,
             HathorHeightOutcome::VoidedSkipped => self.voided_skipped += 1,
-            HathorHeightOutcome::NearSkipped => self.near_skipped += 1,
             HathorHeightOutcome::MalformedSkipped => self.malformed_skipped += 1,
             HathorHeightOutcome::NonBitcoinParent => self.non_bitcoin_parent += 1,
             HathorHeightOutcome::LineagePending => self.lineage_pending += 1,
@@ -335,7 +336,6 @@ async fn finish_cache_ingest(
         auxpow_written = summary.auxpow_written,
         non_auxpow_skipped = summary.non_auxpow_skipped,
         voided_skipped = summary.voided_skipped,
-        near_skipped = summary.near_skipped,
         malformed_skipped = summary.malformed_skipped,
         non_bitcoin_parent = summary.non_bitcoin_parent,
         lineage_pending = summary.lineage_pending,

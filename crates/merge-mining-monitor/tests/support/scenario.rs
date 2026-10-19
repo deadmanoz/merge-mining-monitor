@@ -175,6 +175,7 @@ impl Scenario {
                             child_header_bytes: None,
                             child_block_time: Some(evidence.observed_at),
                             child_nbits: None,
+                            child_prev_block_hash: None,
                             btc_parent_header: evidence.parent_header,
                             pow_validates_child_target: Some(true),
                             btc_parent_coinbase_txid: None,

@@ -30,6 +30,7 @@ fn classification_proof_updates_payload_height_from_proof_only() {
         child_header_bytes: None,
         child_block_time: Some(1),
         child_nbits: None,
+        child_prev_block_hash: None,
         btc_parent_header_hash: vec![2; 32],
         btc_parent_prev_header_hash: vec![3; 32],
         btc_parent_header_bytes: vec![4; 80],
@@ -81,6 +82,7 @@ fn catalogued_error_block_overrides_external_proof() {
         child_header_bytes: None,
         child_block_time: Some(1),
         child_nbits: None,
+        child_prev_block_hash: None,
         btc_parent_header_hash: bitcoin::BlockHash::from_str(
             "00000000000000000000c3d95a4bdc068dfe0c6d1e7ad13045c6f570e58d9ed7",
         )

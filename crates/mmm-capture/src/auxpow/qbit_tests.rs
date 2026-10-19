@@ -538,9 +538,23 @@ fn full_block_authenticates_child_body_and_native_height() {
             "native height exceeds signed range",
         ),
     ] {
-        let error = format!("{:#}", parse_qbit_block(bytes, height).unwrap_err());
-        assert!(error.contains(reason), "expected {reason}: {error}");
+        let error = parse_qbit_block(bytes, height).unwrap_err();
+        let text = format!("{error:#}");
+        assert!(text.contains(reason), "expected {reason}: {text}");
+        assert!(
+            error.downcast_ref::<QbitProofError>().is_none(),
+            "a block failing its own checks is not a proof failure: {text}"
+        );
     }
+
+    // A changed byte in the parent coinbase breaks the proof's commitment instead.
+    let mut proof_corrupt = raw.clone();
+    proof_corrupt[Header::SIZE + 50] ^= 1;
+    let error = parse_qbit_block(&proof_corrupt, 135_331).unwrap_err();
+    assert!(
+        error.downcast_ref::<QbitProofError>().is_some(),
+        "{error:#}"
+    );
 }
 
 #[test]

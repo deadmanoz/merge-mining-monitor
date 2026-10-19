@@ -6,11 +6,10 @@ use std::str::FromStr;
 use anyhow::Result;
 use bitcoin::BlockHash;
 use bitcoin::pow::Target;
-use tracing::{debug, error};
+use tracing::error;
 
 use crate::chains::hathor::auxpow::{HathorReconstruction, reconstruct_from_blobs};
 use crate::chains::hathor::rpc::HathorTransaction;
-use mmm_capture::auxpow::pow_validates_target;
 
 pub(crate) struct HathorReconstructedParent {
     pub(crate) raw: Vec<u8>,
@@ -34,12 +33,6 @@ impl DeclaredWork {
     }
 }
 
-pub(crate) enum HathorParentReconstruction {
-    BtcValid(HathorReconstructedParent),
-    Near(DeclaredWork),
-    Malformed,
-}
-
 struct HathorReconstructionInputs {
     raw: Vec<u8>,
     aux_pow: Vec<u8>,
@@ -47,25 +40,27 @@ struct HathorReconstructionInputs {
 }
 
 /// Reconstruct the BTC parent from a version-3 transaction and verify that the
-/// hash meets the block's declared Hathor weight target.
+/// hash meets the block's declared Hathor weight target. `None` when the block is
+/// malformed. A parent that misses Bitcoin's target still reconstructs: capture
+/// classifies it as a near.
 pub(crate) fn reconstruct_or_skip(
     height: i32,
     tx: &HathorTransaction,
-) -> Result<HathorParentReconstruction> {
+) -> Result<Option<HathorReconstructedParent>> {
     let Some(inputs) = decode_reconstruction_inputs(height, tx)? else {
-        return Ok(HathorParentReconstruction::Malformed);
+        return Ok(None);
     };
     let recon = match reconstruct_from_blobs(&inputs.raw, &inputs.aux_pow, inputs.expected) {
         Ok(recon) => recon,
         Err(err) => {
             error!(height, error = %err, "Hathor reconstruction failed; skipping");
-            return Ok(HathorParentReconstruction::Malformed);
+            return Ok(None);
         }
     };
 
     let Some(work) = DeclaredWork::read(&inputs.raw, recon.funds_graph_split) else {
         error!(height, "Hathor block declares no readable weight; skipping");
-        return Ok(HathorParentReconstruction::Malformed);
+        return Ok(None);
     };
     if !meets_hathor_target(inputs.expected, work.weight) {
         error!(
@@ -73,25 +68,15 @@ pub(crate) fn reconstruct_or_skip(
             weight = work.weight,
             "Hathor block hash does not meet its declared target; skipping"
         );
-        return Ok(HathorParentReconstruction::Malformed);
+        return Ok(None);
     }
 
-    if !pow_validates_target(&recon.header) {
-        debug!(
-            height,
-            "reconstructed Hathor parent fails its own PoW target; skipping (near)"
-        );
-        return Ok(HathorParentReconstruction::Near(work));
-    }
-
-    Ok(HathorParentReconstruction::BtcValid(
-        HathorReconstructedParent {
-            raw: inputs.raw,
-            aux_pow: inputs.aux_pow,
-            recon,
-            work,
-        },
-    ))
+    Ok(Some(HathorReconstructedParent {
+        raw: inputs.raw,
+        aux_pow: inputs.aux_pow,
+        recon,
+        work,
+    }))
 }
 
 fn decode_reconstruction_inputs(
@@ -136,7 +121,7 @@ fn declared_parent_block(raw: &[u8], funds_graph_split: usize) -> Option<[u8; 32
     raw.get(count_at + 1..count_at + 1 + 32)?.try_into().ok()
 }
 
-fn meets_hathor_target(hash: BlockHash, weight: f64) -> bool {
+pub(crate) fn meets_hathor_target(hash: BlockHash, weight: f64) -> bool {
     hathor_target(weight).is_some_and(|target| target.is_met_by(hash))
 }
 
@@ -165,6 +150,7 @@ fn hathor_target(weight: f64) -> Option<Target> {
 mod tests {
     use super::*;
     use crate::chains::hathor::auxpow::forge_with_weight;
+    use mmm_capture::auxpow::pow_validates_target;
 
     fn fixture() -> (HathorTransaction, i32, f64) {
         let j: serde_json::Value = serde_json::from_str(include_str!(concat!(
@@ -210,10 +196,8 @@ mod tests {
         assert!(meets_hathor_target(expected, declared));
         // A weight far above the work the hash carries is not met.
         assert!(!meets_hathor_target(expected, 200.0));
-        assert!(matches!(
-            reconstruct_or_skip(height, &tx).unwrap(),
-            HathorParentReconstruction::BtcValid(_)
-        ));
+        let parent = reconstruct_or_skip(height, &tx).unwrap().unwrap();
+        assert!(pow_validates_target(&parent.recon.header));
     }
 
     #[test]
@@ -230,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn a_forged_trivial_weight_reconstructs_as_near_with_the_weight_it_declares() {
+    fn a_forged_trivial_weight_reconstructs_a_near_parent_with_the_weight_it_declares() {
         let (tx, height, _) = fixture();
         let raw = hex::decode(&tx.raw).unwrap();
         let aux_pow = hex::decode(tx.aux_pow.as_deref().unwrap()).unwrap();
@@ -245,16 +229,22 @@ mod tests {
             hash: forged_hash.to_string(),
             timestamp: tx.timestamp,
         };
-        match reconstruct_or_skip(height, &forged).unwrap() {
-            HathorParentReconstruction::Near(work) => {
-                assert!((work.weight - 1e-6).abs() < f64::EPSILON, "{}", work.weight);
-                assert_eq!(
-                    work.parent_block,
-                    declared_parent_block(&raw, recon.funds_graph_split)
-                );
-            }
-            _ => panic!("a self-consistent block declaring trivial work reconstructs as near"),
-        }
+        let parent = reconstruct_or_skip(height, &forged)
+            .unwrap()
+            .expect("a self-consistent block declaring trivial work reconstructs");
+        assert!(
+            !pow_validates_target(&parent.recon.header),
+            "its parent is a near"
+        );
+        assert!(
+            (parent.work.weight - 1e-6).abs() < f64::EPSILON,
+            "{}",
+            parent.work.weight
+        );
+        assert_eq!(
+            parent.work.parent_block,
+            declared_parent_block(&raw, recon.funds_graph_split)
+        );
     }
 
     #[test]
@@ -262,9 +252,6 @@ mod tests {
         let (mut tx, height, _) = fixture();
         let last = tx.raw.pop().unwrap();
         tx.raw.push(if last == '0' { '1' } else { '0' });
-        assert!(matches!(
-            reconstruct_or_skip(height, &tx).unwrap(),
-            HathorParentReconstruction::Malformed
-        ));
+        assert!(reconstruct_or_skip(height, &tx).unwrap().is_none());
     }
 }

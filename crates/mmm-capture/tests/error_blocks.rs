@@ -21,6 +21,7 @@ fn catalogued_error_block_header_is_pow_valid_and_classified() {
             child_header_bytes: None,
             child_block_time: None,
             child_nbits: None,
+            child_prev_block_hash: None,
             btc_parent_header: header,
             pow_validates_child_target: None,
             btc_parent_coinbase_txid: None,

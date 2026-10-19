@@ -7,11 +7,12 @@ use std::collections::HashMap;
 use anyhow::{Context, Result, bail};
 use tokio_postgres::{Client, GenericClient};
 
-use mmm_capture::capture::{MergeMiningEventPayload, RskEvidencePayload};
+use mmm_capture::capture::{ChildBlockObservation, MergeMiningEventPayload, RskEvidencePayload};
 use mmm_capture::pool_resolver::{
     PoolIdentityRegistry, RSK_MINER_ADDRESS_NAMESPACE, normalize_rsk_address,
 };
 
+use crate::observation::{insert_child_identities, upsert_child_only_observation};
 use crate::pool::{
     PoolIdentitySeed, upsert_pool_identities_for_namespace_with_policy, upsert_registry_only_pools,
 };
@@ -47,10 +48,10 @@ pub async fn write_rsk_capture(
 }
 
 /// Write an RSK capture in the caller's transaction (injected as the
-/// `capture_in_txn` upsert closure): upsert the shared `merge_mining_event` row
-/// plus the 1:1 `rsk_merge_mining_evidence` sidecar. Production RSK capture
-/// reaches this through `mmm_read_model::capture_in_txn`, which owns
-/// `source_health`; this fn writes only the base + sidecar rows.
+/// `capture_in_txn` upsert closure): upsert the shared `merge_mining_event` row,
+/// the 1:1 `rsk_merge_mining_evidence` sidecar, and the observation's RSK chain
+/// role and miner identity. Production RSK capture reaches this through `mmm_read_model::capture_in_txn`,
+/// which owns `source_health`; this fn writes only base rows.
 pub async fn write_rsk_capture_in_txn<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -59,6 +60,7 @@ pub async fn write_rsk_capture_in_txn<C: GenericClient>(
 ) -> Result<EventWriteOutcome> {
     let outcome = upsert_merge_mining_event_with_attributions(client, source_id, payload).await?;
     upsert_rsk_evidence(client, outcome.event_id, evidence).await?;
+    record_rsk_observation(client, source_id, evidence).await?;
     Ok(outcome)
 }
 
@@ -127,6 +129,105 @@ async fn upsert_rsk_evidence<C: GenericClient>(
     if affected != 1 {
         bail!("RSK evidence contradicts stored immutable sidecar fields");
     }
+    Ok(())
+}
+
+/// The RSK facts an observation keeps beyond the generic child fields.
+#[derive(Debug, Clone, Copy)]
+pub struct RskBlockFacts<'a> {
+    pub rsk_block_hash: &'a [u8],
+    pub is_uncle: bool,
+    pub uncle_index: Option<i32>,
+    pub uncle_parent_height: Option<i32>,
+    pub child_difficulty_reported: Option<&'a str>,
+    pub rsk_miner: Option<&'a [u8]>,
+}
+
+/// Record the RSK block's chain role, uncle placement, reported difficulty and
+/// miner on its observation, matched by the RSK block hash so a block whose parent the lineage
+/// gate refused (and that has no event) keeps them too. The sidecar's miner is the block's child
+/// identity even when the payload carried no child attribution (historical imports supply only
+/// Bitcoin-parent matches).
+pub async fn record_rsk_observation<C: GenericClient>(
+    client: &C,
+    source_id: i64,
+    evidence: &RskEvidencePayload,
+) -> Result<()> {
+    let facts = RskBlockFacts {
+        rsk_block_hash: &evidence.rsk_block_hash,
+        is_uncle: evidence.is_uncle,
+        uncle_index: evidence.uncle_index,
+        uncle_parent_height: evidence.uncle_parent_height,
+        child_difficulty_reported: evidence.child_difficulty_reported.as_deref(),
+        rsk_miner: Some(&evidence.rsk_miner),
+    };
+    record_rsk_block_facts(client, source_id, &facts).await
+}
+
+/// Write an RSK block with no event (an `unverified_parent` block whose Bitcoin parent
+/// header is missing or malformed) and its RSK facts in one transaction. A block that
+/// still has an event keeps its observation untouched.
+pub async fn record_rsk_child_only_block(
+    client: &mut Client,
+    source_id: i64,
+    observation: &ChildBlockObservation,
+    facts: &RskBlockFacts<'_>,
+) -> Result<()> {
+    let txn = client
+        .transaction()
+        .await
+        .context("begin RSK child-only block record")?;
+    if upsert_child_only_observation(&txn, source_id, observation)
+        .await?
+        .is_some()
+    {
+        record_rsk_block_facts(&txn, source_id, facts).await?;
+    }
+    txn.commit()
+        .await
+        .context("commit RSK child-only block record")
+}
+
+async fn record_rsk_block_facts<C: GenericClient>(
+    client: &C,
+    source_id: i64,
+    facts: &RskBlockFacts<'_>,
+) -> Result<()> {
+    let miner = facts.rsk_miner.map(|bytes| {
+        bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    });
+    if let Some(miner) = miner.as_deref() {
+        insert_child_identities(client, &[RSK_MINER_ADDRESS_NAMESPACE], &[miner]).await?;
+    }
+    client
+        .execute(
+            "UPDATE child_block_observation o SET \
+                child_chain_role = CASE WHEN $3 THEN 'uncle' ELSE 'canonical' END, \
+                uncle_index = $4, \
+                uncle_parent_height = $5, \
+                child_difficulty_reported = COALESCE(o.child_difficulty_reported, $6::text::numeric), \
+                child_identity_ids = ARRAY( \
+                    SELECT DISTINCT id FROM unnest(o.child_identity_ids || ARRAY( \
+                        SELECT ci.id FROM child_miner_identity ci \
+                        WHERE ci.namespace = $7 AND ci.identifier = $8)) \
+                    AS merged(id) ORDER BY id) \
+             WHERE o.source_id = $1 AND o.child_block_hash = $2",
+            &[
+                &source_id,
+                &facts.rsk_block_hash,
+                &facts.is_uncle,
+                &facts.uncle_index,
+                &facts.uncle_parent_height,
+                &facts.child_difficulty_reported,
+                &RSK_MINER_ADDRESS_NAMESPACE,
+                &miner,
+            ],
+        )
+        .await
+        .context("record the RSK block's chain role and miner on its observation")?;
     Ok(())
 }
 

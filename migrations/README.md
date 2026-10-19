@@ -62,6 +62,7 @@ SET recheck_pending_generation = recheck_pending_generation + 1,
 | `0030_capture_failure_kind.sql` | Adds `height_capture_failed` to `capture_error.error_kind`. |
 | `0031_drop_hathor_expected_btc_nbits.sql` | Drops obsolete `expected_btc_nbits` from Hathor sidecar. |
 | `0032_add_qbit_payout_namespace.sql` | Adds `qbit_payout_address` to the `pool_identity` namespace check. |
+| `0033_add_child_block_observation.sql` | Adds `child_block_observation` and `child_miner_identity`, filled with one observation per existing event. |
 
 ## Reset Path
 

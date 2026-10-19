@@ -18,10 +18,13 @@ use mmm_store::{
     CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, ChildChainHeadOutcome, ChildChainHeadRecord,
     CurrentBlockParent, EvidenceMarker, get_source_id, record_capture_error,
     record_child_chain_block_in_own_transaction, upsert_merge_mining_event,
+    upsert_merge_mining_event_with_attributions,
 };
 use tokio_postgres::Client;
 
-use crate::support::db::{advisory_locks_held, displacement_at};
+use crate::support::db::{
+    advisory_locks_held, displacement_at, observation_displacement_at, observations_at,
+};
 use crate::support::{exact_observation, namecoin_fixture};
 
 const HEIGHT: i32 = 700;
@@ -108,7 +111,7 @@ async fn terracoin_replay_failure_recovery_and_displacement() -> Result<()> {
         assert_eq!(row.get::<_, i32>(0), height);
         assert_eq!(row.get::<_, String>(1), "height_capture_failed");
         // Processing a different height cannot clear the replay gap.
-        let other = FixtureBitcoindRpc::carrying(height + 1, non_auxpow_block());
+        let other = FixtureBitcoindRpc::carrying(height + 1, non_auxpow_block_with_nonce(8));
         process_auxpow_height(&mut client, &other, &context, height + 1).await?;
         assert_eq!(
             client
@@ -229,19 +232,24 @@ fn qbit_positive_control() -> (i32, Vec<u8>, BlockHash) {
 }
 
 fn non_auxpow_block() -> Vec<u8> {
+    non_auxpow_block_with_nonce(7)
+}
+
+fn non_auxpow_block_with_nonce(nonce: u32) -> Vec<u8> {
     let mut raw = Vec::with_capacity(81);
     raw.extend_from_slice(&0x2000_0000i32.to_le_bytes());
     raw.extend_from_slice(&[0x11; 32]);
     raw.extend_from_slice(&[0x22; 32]);
     raw.extend_from_slice(&1_700_000_000u32.to_le_bytes());
     raw.extend_from_slice(&0x1d00_ffffu32.to_le_bytes());
-    raw.extend_from_slice(&7u32.to_le_bytes());
+    raw.extend_from_slice(&nonce.to_le_bytes());
     raw.push(0);
     raw
 }
 
 #[tokio::test]
-async fn terracoin_parents_from_other_chains_write_nothing_and_cost_no_core_call() -> Result<()> {
+async fn terracoin_parents_from_other_chains_keep_only_the_child_side_and_cost_no_core_call()
+-> Result<()> {
     crate::run_mut_db_test!(client, {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
             "../../../../fixtures/terracoin/lineage-parents.json"
@@ -274,6 +282,10 @@ async fn terracoin_parents_from_other_chains_write_nothing_and_cost_no_core_call
                     "SELECT (SELECT count(*) FROM merge_mining_event \
                               WHERE source_id = $1 AND child_height = $2), \
                             (SELECT outcome FROM child_chain_head \
+                              WHERE source_id = $1 AND child_height = $2), \
+                            (SELECT observation_kind FROM child_block_observation \
+                              WHERE source_id = $1 AND child_height = $2), \
+                            (SELECT btc_parent_header_hash IS NULL FROM child_block_observation \
                               WHERE source_id = $1 AND child_height = $2)",
                     &[&source_id, &height],
                 )
@@ -281,6 +293,13 @@ async fn terracoin_parents_from_other_chains_write_nothing_and_cost_no_core_call
             assert_eq!(row.get::<_, i64>(0), i64::from(bitcoin), "{parent}");
             let head = if bitcoin { "captured" } else { "recorded" };
             assert_eq!(row.get::<_, String>(1), head, "{parent}");
+            let observation = if bitcoin {
+                "near"
+            } else {
+                "non_bitcoin_parent"
+            };
+            assert_eq!(row.get::<_, String>(2), observation, "{parent}");
+            assert_eq!(row.get::<_, bool>(3), !bitcoin, "{parent}");
         }
         assert_eq!(core_metrics.snapshot().http_attempts, 0);
         let blocks: i64 = client
@@ -349,6 +368,23 @@ async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_on
                 .find(|row| row.0 == hash(&block_a))
                 .map(|row| row.1.clone()),
             Some(Some(hash(&block_n)))
+        );
+        let mut expected = vec![
+            (hash(&block_a), "evidence".to_owned(), false, true),
+            (hash(&block_b), "near".to_owned(), true, true),
+            (hash(&block_n), "not_merge_mined".to_owned(), false, false),
+        ];
+        expected.sort();
+        assert_eq!(observations_at(&client, source_id, HEIGHT).await?, expected);
+        let mut expected = vec![
+            (hash(&block_a), Some(hash(&block_n))),
+            (hash(&block_b), Some(hash(&block_a))),
+            (hash(&block_n), None),
+        ];
+        expected.sort();
+        assert_eq!(
+            observation_displacement_at(&client, source_id, HEIGHT).await?,
+            expected
         );
         Ok::<_, anyhow::Error>(())
     })
@@ -478,14 +514,20 @@ async fn rescan_of_a_non_final_record_captures_the_height_again() -> Result<()> 
             ConfiguredParentClassifier::Disabled,
         )
         .await?;
-        let rpc =
-            FixtureBitcoindRpc::carrying(HEIGHT, load_raw_namecoin_fixture("500003-malformed"));
+        let raw = load_raw_namecoin_fixture("500003-malformed");
+        let block_hash = block_hash_of(&raw).to_byte_array().to_vec();
+        let rpc = FixtureBitcoindRpc::carrying(HEIGHT, raw);
         let outcome = process_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
         assert_eq!(outcome, AuxpowHeightOutcome::MalformedSkipped);
         let head = head_at_height(&client, source_id).await?;
         assert_eq!(
             head.as_ref().map(|head| head.0.as_str()),
             Some("unverified")
+        );
+        assert_eq!(
+            observations_at(&client, source_id, HEIGHT).await?,
+            vec![(block_hash, "unverified_parent".to_owned(), false, false)],
+            "the authenticated block is kept though its proof is malformed"
         );
 
         let outcome = rescan_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
@@ -587,6 +629,7 @@ async fn an_open_capture_error_takes_the_full_capture_despite_a_final_head() -> 
                 observed_at: 1_000,
                 core_cache_generation: None,
             },
+            None,
         )
         .await?;
         record_capture_error(
@@ -999,4 +1042,32 @@ async fn assert_qbit_body_held(
         "a malformed body retains the earlier valid witness"
     );
     Ok(())
+}
+
+#[tokio::test]
+async fn a_near_rewritten_without_its_parent_coinbase_keeps_it() -> Result<()> {
+    crate::run_db_test!(client, {
+        let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let near = exact_observation("500001-near-parent", HEIGHT, [0x5b; 32], 2_030)?;
+        assert!(near.btc_parent_coinbase_script.is_some());
+        upsert_merge_mining_event_with_attributions(&client, source_id, &near).await?;
+        let mut bare = near.clone();
+        bare.btc_parent_coinbase_txid = None;
+        bare.btc_parent_coinbase_script = None;
+        bare.btc_parent_coinbase_outputs = None;
+        upsert_merge_mining_event_with_attributions(&client, source_id, &bare).await?;
+        let row = client
+            .query_one(
+                "SELECT observation_kind, btc_parent_coinbase_script \
+                 FROM child_block_observation WHERE source_id = $1 AND child_block_hash = $2",
+                &[&source_id, &[0x5b_u8; 32].as_slice()],
+            )
+            .await?;
+        assert_eq!(row.get::<_, String>(0), "near");
+        assert_eq!(
+            row.get::<_, Option<Vec<u8>>>(1),
+            near.btc_parent_coinbase_script
+        );
+        Ok::<_, anyhow::Error>(())
+    })
 }

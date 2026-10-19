@@ -15,6 +15,8 @@ pub struct RskEvidencePayload {
     pub merkle_proof: Option<Vec<u8>>,
     pub coinbase_tail: Option<Vec<u8>>,
     pub proof_format: &'static str,
+    /// RSK-reported difficulty as a decimal string; written to the observation only.
+    pub child_difficulty_reported: Option<String>,
 }
 
 pub const RSK_PROOF_FORMAT_OPAQUE: &str = "rskj_rpc_opaque";

@@ -1,5 +1,6 @@
-//! Producer-side base-table SQL (`merge_mining_event`, 1:1 chain sidecars, attributions,
-//! cursors, capture errors, child-chain heads, and Core header cache). Never writes derived tables.
+//! Producer-side base-table SQL (`merge_mining_event`, child block observations, 1:1 chain
+//! sidecars, attributions, cursors, capture errors, child-chain heads, and Core header cache).
+//! Never writes derived tables.
 
 mod bitcoin_core_header;
 mod capture_error;
@@ -8,6 +9,7 @@ mod child_displacement;
 mod event;
 mod historical_import;
 mod known_stale;
+mod observation;
 mod pending_reconcile;
 mod poll_cursor;
 mod pool;
@@ -30,13 +32,14 @@ pub use capture_error::{
 };
 pub use chains::elastos::{ElastosIdentityReresolveRow, load_elastos_identity_reresolve_batch};
 pub use chains::hathor::{
-    hathor_sidecar_graph_heads_at_height, load_hathor_reward_replay_batch,
-    update_hathor_reward_audit, write_hathor_capture_in_txn,
+    hathor_evidence_event_at_height, hathor_sidecar_graph_heads_at_height,
+    load_hathor_reward_replay_batch, update_hathor_reward_audit, write_hathor_capture_in_txn,
 };
 #[cfg(any(test, feature = "db-integration"))]
 pub use chains::rsk::write_rsk_capture;
 pub use chains::rsk::{
-    late_fill_rsk_pool_identity_id, upsert_rsk_only_pools, upsert_rsk_pool_identities,
+    RskBlockFacts, late_fill_rsk_pool_identity_id, record_rsk_child_only_block,
+    record_rsk_observation, upsert_rsk_only_pools, upsert_rsk_pool_identities,
     upsert_rsk_pool_identities_with_policy, write_rsk_capture_in_txn,
 };
 pub use child_displacement::{
@@ -57,6 +60,7 @@ pub use historical_import::{
     stream_historical_error_observation_state, stream_historical_publication_state,
 };
 pub use known_stale::{count_known_stale_blocks, is_known_stale_hash, upsert_known_stale_block};
+pub use observation::{sync_event_observation_attribution, upsert_child_only_observation};
 pub use pending_reconcile::{
     PendingReconcileRow, bump_pending_attempts, delete_pending_reconcile, list_pending_reconcile,
     upsert_pending_reconcile,

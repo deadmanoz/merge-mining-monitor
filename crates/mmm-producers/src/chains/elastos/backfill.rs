@@ -111,9 +111,9 @@ fn elastos_backfill_effect(
 ) -> Result<BackfillHeightEffect> {
     Ok(match outcome {
         ElastosHeightOutcome::AuxpowWritten => BackfillHeightEffect::AuxpowWritten,
-        ElastosHeightOutcome::NonAuxpowSkipped
-        | ElastosHeightOutcome::NearSkipped
-        | ElastosHeightOutcome::ChildTargetSkipped => BackfillHeightEffect::NonAuxpowSkipped,
+        ElastosHeightOutcome::NonAuxpowSkipped | ElastosHeightOutcome::ChildTargetSkipped => {
+            BackfillHeightEffect::NonAuxpowSkipped
+        }
         ElastosHeightOutcome::NonBitcoinParent => BackfillHeightEffect::NonBitcoinParent,
         ElastosHeightOutcome::MalformedSkipped => BackfillHeightEffect::MalformedSkipped,
         ElastosHeightOutcome::LineagePending => return Err(lineage_pending_error(spec, height)),
