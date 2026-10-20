@@ -22,7 +22,7 @@ pub(crate) async fn write_event_observation<C: GenericClient>(
 }
 
 /// Point an existing event at its observation.
-pub(crate) async fn link_event_observation<C: GenericClient>(
+async fn link_event_observation<C: GenericClient>(
     client: &C,
     event_id: i64,
     observation_id: i64,
@@ -78,14 +78,13 @@ pub(crate) async fn fold_hashless_observation<C: GenericClient>(
             let folded = client
                 .execute(
                     &format!(
-                        "UPDATE child_block_observation o SET {}, {}, \
+                        "UPDATE child_block_observation o SET {}, \
                              child_difficulty_reported = \
                                  COALESCE(o.child_difficulty_reported, h.child_difficulty_reported), \
                              recorded_at = LEAST(o.recorded_at, h.recorded_at) \
                          FROM child_block_observation h \
                          WHERE o.id = $1 AND h.id = $2 AND {}",
                         fill_child_evidence_from("h"),
-                        fill_near_coinbase_from("o", "h"),
                         child_evidence_agrees("h"),
                     ),
                     &[&exact, &hashless],
@@ -193,21 +192,9 @@ pub async fn sync_event_observation_attribution<C: GenericClient>(
     Ok(())
 }
 
-/// The child evidence an observation keeps once known: a later write or fold fills only
-/// what is still NULL.
-const CHILD_EVIDENCE_COLUMNS: [&str; 9] = [
-    "child_height",
-    "child_block_time",
-    "child_header_bytes",
-    "child_nbits",
-    "child_prev_block_hash",
-    "child_coinbase_txid",
-    "child_coinbase_script",
-    "child_coinbase_outputs",
-    "pow_validates_child_target",
-];
-
-/// The child evidence two records of one block must agree on where both hold it.
+/// The child evidence two records of one block must agree on where both hold it. With
+/// [`CHILD_COINBASE_EVIDENCE`], it is what an observation keeps once known: a later write or
+/// fold fills only what is still NULL.
 const CHECKED_CHILD_EVIDENCE: [&str; 6] = [
     "child_height",
     "child_block_time",
@@ -215,6 +202,13 @@ const CHECKED_CHILD_EVIDENCE: [&str; 6] = [
     "child_nbits",
     "pow_validates_child_target",
     "child_prev_block_hash",
+];
+
+/// The child coinbase an observation keeps once known.
+const CHILD_COINBASE_EVIDENCE: [&str; 3] = [
+    "child_coinbase_txid",
+    "child_coinbase_script",
+    "child_coinbase_outputs",
 ];
 
 /// A predicate that observation `o` and row `other` do not contradict each other's child
@@ -234,8 +228,9 @@ fn child_evidence_agrees(other: &str) -> String {
 /// `SET` items filling observation `o`'s missing child evidence from row `from`, and
 /// merging both rows' identities.
 fn fill_child_evidence_from(from: &str) -> String {
-    CHILD_EVIDENCE_COLUMNS
+    CHECKED_CHILD_EVIDENCE
         .iter()
+        .chain(&CHILD_COINBASE_EVIDENCE)
         .map(|column| format!("{column} = COALESCE(o.{column}, {from}.{column})"))
         .chain(std::iter::once(format!(
             "child_identity_ids = ARRAY(SELECT DISTINCT id FROM \
@@ -245,31 +240,34 @@ fn fill_child_evidence_from(from: &str) -> String {
         .join(", ")
 }
 
-/// `SET` items for a near parent's coinbase: kept and completed from row `from` while
-/// both rows name the same near parent (`kind_row` holds the resulting kind), and
-/// taken from the row that decides the kind otherwise.
-fn fill_near_coinbase_from(kind_row: &str, from: &str) -> String {
-    ["btc_parent_coinbase_txid", "btc_parent_coinbase_script", "btc_parent_coinbase_outputs"]
-        .iter()
-        .map(|column| {
-            format!(
-                "{column} = CASE WHEN {kind_row}.observation_kind = 'near' \
-                     AND {from}.observation_kind = 'near' \
-                     AND o.btc_parent_header_hash IS NOT DISTINCT FROM {from}.btc_parent_header_hash \
-                 THEN COALESCE(o.{column}, {from}.{column}) ELSE {kind_row}.{column} END"
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
+/// `SET` items for a near parent's coinbase and pool. A rewrite naming the same near parent
+/// keeps the stored coinbase where the new write lacks it, and resolves the pool afresh but
+/// keeps the stored one when it resolves none, as the coinbase it comes from is kept; any
+/// other write takes the new values.
+fn near_parent_set() -> String {
+    const SAME_NEAR_PARENT: &str = "EXCLUDED.observation_kind = 'near' \
+        AND o.observation_kind = 'near' \
+        AND o.btc_parent_header_hash IS NOT DISTINCT FROM EXCLUDED.btc_parent_header_hash";
+    [
+        "btc_parent_coinbase_txid",
+        "btc_parent_coinbase_script",
+        "btc_parent_coinbase_outputs",
+    ]
+    .iter()
+    .map(|column| {
+        format!(
+            "{column} = CASE WHEN {SAME_NEAR_PARENT} \
+                 THEN COALESCE(o.{column}, EXCLUDED.{column}) ELSE EXCLUDED.{column} END"
+        )
+    })
+    .chain(std::iter::once(format!(
+        "btc_parent_pool_id = CASE WHEN {SAME_NEAR_PARENT} \
+             THEN COALESCE(EXCLUDED.btc_parent_pool_id, o.btc_parent_pool_id) \
+             ELSE EXCLUDED.btc_parent_pool_id END"
+    )))
+    .collect::<Vec<_>>()
+    .join(", ")
 }
-
-/// A rewrite of the same near parent resolves its pool afresh but keeps the stored one when it
-/// resolves none, as the coinbase it comes from is kept; any other write takes the new value.
-const NEAR_PARENT_POOL_SET: &str = "btc_parent_pool_id = CASE \
-    WHEN EXCLUDED.observation_kind = 'near' AND o.observation_kind = 'near' \
-     AND o.btc_parent_header_hash IS NOT DISTINCT FROM EXCLUDED.btc_parent_header_hash \
-    THEN COALESCE(EXCLUDED.btc_parent_pool_id, o.btc_parent_pool_id) \
-    ELSE EXCLUDED.btc_parent_pool_id END";
 
 async fn write_observation<C: GenericClient>(
     client: &C,
@@ -317,10 +315,9 @@ async fn write_observation<C: GenericClient>(
             btc_parent_header_hash = EXCLUDED.btc_parent_header_hash, \
             btc_parent_header_bytes = EXCLUDED.btc_parent_header_bytes, \
             btc_parent_header_time = EXCLUDED.btc_parent_header_time, \
-            {near_coinbase}, \
             child_pool_id = CASE WHEN $23 THEN NULL \
                 ELSE COALESCE(EXCLUDED.child_pool_id, o.child_pool_id) END, \
-            {near_parent_pool} \
+            {near_parent} \
          WHERE (o.btc_parent_header_hash IS NULL OR EXCLUDED.btc_parent_header_hash IS NULL \
                 OR o.btc_parent_header_hash = EXCLUDED.btc_parent_header_hash) \
            AND {agrees} \
@@ -328,8 +325,7 @@ async fn write_observation<C: GenericClient>(
          RETURNING id",
         agrees = child_evidence_agrees("EXCLUDED"),
         fill = fill_child_evidence_from("EXCLUDED"),
-        near_coinbase = fill_near_coinbase_from("EXCLUDED", "EXCLUDED"),
-        near_parent_pool = NEAR_PARENT_POOL_SET,
+        near_parent = near_parent_set(),
     );
     let row = client
         .query_opt(

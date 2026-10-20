@@ -43,10 +43,12 @@ LOCK TABLE merge_mining_event, rsk_merge_mining_evidence, event_pool_attribution
            historical_event_provenance
     IN SHARE MODE;
 
--- child_block_observation is new: the production wrapper (the deploy repo's
--- migrate-safe.sh) applies the pending 0033 and 0034 as one transaction, and
--- elsewhere autovacuum may not have analyzed it yet.
+-- child_block_observation and merge_mining_event.observation_id are new: the
+-- production wrapper (the deploy repo's migrate-safe.sh) applies the pending 0033
+-- and 0034 as one transaction, and elsewhere autovacuum may not have analyzed them
+-- yet. Without statistics the planner would misjudge the link's two branches below.
 ANALYZE child_block_observation;
+ANALYZE merge_mining_event (observation_id);
 
 -- Each event and its observation: through observation_id, or through the equal
 -- id 0033 gave the events it filled. An observation of another block leaves

@@ -13,17 +13,14 @@ use mmm_capture::child_payout::{
 };
 use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, SYSCOIN_SOURCE_CODE};
 use mmm_producers::{ReclassifyPoolsConfig, ReclassifyPoolsStats, run_reclassify_pools};
-use mmm_store::{
-    CaptureWrite, get_source_id, upsert_event_pool_attributions,
-    upsert_merge_mining_event_with_attributions,
-};
+use mmm_store::{CaptureWrite, get_source_id, upsert_event_pool_attributions};
 use serde_json::json;
 use tokio_postgres::Client;
 
 use crate::support::seed::{
     EventSeed, child_reward_rows, insert_event, insert_pool_identity, pool_id_for_slug,
 };
-use crate::support::{default_pool_snapshot, parse_auxpow_fixture};
+use crate::support::{default_pool_snapshot, event_id_of, parse_auxpow_fixture};
 
 fn parent_pool_attributions(pool_id: i64) -> ResolvedPoolAttributions {
     ResolvedPoolAttributions {
@@ -160,12 +157,7 @@ async fn insert_namecoin_event(client: &mut Client, seed: NamecoinEventSeed) -> 
     payload.btc_parent_coinbase_outputs = seed.parent_coinbase_outputs;
     payload.child_coinbase_script = seed.child_coinbase_script;
     payload.child_coinbase_outputs = None;
-    let txn = client.transaction().await?;
-    let event_id = upsert_merge_mining_event_with_attributions(&txn, seed.source_id, &payload)
-        .await?
-        .event_id;
-    txn.commit().await?;
-    Ok(event_id)
+    event_id_of(crate::support::write_capture_committed(client, seed.source_id, &payload).await?)
 }
 
 #[tokio::test]
