@@ -232,6 +232,23 @@ async fn reclassify_pools_reattributes_a_near_observation_after_a_registry_entry
             Some(f2pool),
             "an unresolved recapture keeps the resolved child pool"
         );
+
+        // A recapture whose known child pools disagree makes the child pool Unknown.
+        let mut conflicting = near.clone();
+        let mut second_payout = conflicting.pool_attributions[0].clone();
+        second_payout.matched_value = "N1otherPayoutAddress0000000000000".to_owned();
+        second_payout.pool_id = Some(spiderpool);
+        conflicting.pool_attributions[0].pool_id = Some(f2pool);
+        conflicting.pool_attributions.push(second_payout);
+        write_capture(&client, source_id, &conflicting).await?;
+        let child_pool: Option<i64> = client
+            .query_one(
+                "SELECT child_pool_id FROM child_block_observation WHERE id = $1",
+                &[&observation_id],
+            )
+            .await?
+            .get(0);
+        assert_eq!(child_pool, None);
         Ok::<_, anyhow::Error>(())
     })
 }

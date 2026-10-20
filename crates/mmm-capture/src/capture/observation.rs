@@ -1,5 +1,7 @@
 //! `child_block_observation` rows: one per observed child block on every chain.
 
+use std::collections::BTreeSet;
+
 use bitcoin::block::Header;
 use bitcoin::consensus::serialize;
 use bitcoin::hashes::Hash as _;
@@ -74,6 +76,9 @@ pub struct ChildBlockObservation {
     pub near_parent: Option<NearParentEvidence>,
     pub child_identities: Vec<ChildIdentity>,
     pub child_pool_id: Option<i64>,
+    /// The block's known child pools disagree, so its child pool is Unknown even over a
+    /// stored one; otherwise a write that resolves none keeps the stored pool.
+    pub child_pools_conflict: bool,
     /// Near rows only: the unique known pool the parent coinbase names.
     pub btc_parent_pool_id: Option<i64>,
     pub recorded_at: i64,
@@ -111,9 +116,7 @@ impl ChildBlockObservation {
     pub fn near(payload: &MergeMiningEventPayload) -> Self {
         debug_assert_eq!(payload.btc_parent_kind, ParentKind::Near);
         let mut observation = Self::from_event_payload(payload);
-        observation.child_identities = child_identities(&payload.pool_attributions);
-        observation.child_pool_id =
-            unique_pool(&payload.pool_attributions, PoolAttributionSide::ChildBlock);
+        observation.set_child_side_attribution(&payload.pool_attributions);
         observation.btc_parent_pool_id =
             unique_pool(&payload.pool_attributions, PoolAttributionSide::BtcParent);
         observation
@@ -123,9 +126,7 @@ impl ChildBlockObservation {
     /// no event, its identities and child pool come from the payload's attributions.
     pub fn non_bitcoin_parent(payload: &MergeMiningEventPayload) -> Self {
         let mut observation = Self::child_side(ObservationKind::NonBitcoinParent, payload);
-        observation.child_identities = child_identities(&payload.pool_attributions);
-        observation.child_pool_id =
-            unique_pool(&payload.pool_attributions, PoolAttributionSide::ChildBlock);
+        observation.set_child_side_attribution(&payload.pool_attributions);
         observation
     }
 
@@ -178,9 +179,18 @@ impl ChildBlockObservation {
             near_parent: None,
             child_identities: Vec::new(),
             child_pool_id: None,
+            child_pools_conflict: false,
             btc_parent_pool_id: None,
             recorded_at,
         }
+    }
+
+    /// The identities and child pool the payload's child-side attributions name.
+    fn set_child_side_attribution(&mut self, attributions: &[EventPoolAttribution]) {
+        self.child_identities = child_identities(attributions);
+        self.child_pool_id = unique_pool(attributions, PoolAttributionSide::ChildBlock);
+        self.child_pools_conflict =
+            known_pools(attributions, PoolAttributionSide::ChildBlock).len() > 1;
     }
 
     fn child_side(kind: ObservationKind, payload: &MergeMiningEventPayload) -> Self {
@@ -205,6 +215,7 @@ impl ChildBlockObservation {
             near_parent: None,
             child_identities: Vec::new(),
             child_pool_id: None,
+            child_pools_conflict: false,
             btc_parent_pool_id: None,
             recorded_at: payload.discovered_at,
         }
@@ -238,12 +249,19 @@ fn child_identities(attributions: &[EventPoolAttribution]) -> Vec<ChildIdentity>
 /// The unique known pool on one attribution side, as `refresh_event_child_miner_pool_id`
 /// derives the child pool.
 fn unique_pool(attributions: &[EventPoolAttribution], side: PoolAttributionSide) -> Option<i64> {
-    let mut pools = attributions
+    let mut pools = known_pools(attributions, side).into_iter();
+    match (pools.next(), pools.next()) {
+        (Some(pool), None) => Some(pool),
+        _ => None,
+    }
+}
+
+fn known_pools(attributions: &[EventPoolAttribution], side: PoolAttributionSide) -> BTreeSet<i64> {
+    attributions
         .iter()
         .filter(|row| row.side == side)
-        .filter_map(|row| row.pool_id);
-    let first = pools.next()?;
-    pools.all(|pool| pool == first).then_some(first)
+        .filter_map(|row| row.pool_id)
+        .collect()
 }
 
 /// `hashPrevBlock` from an 80-byte header (bytes 4..36, internal order).

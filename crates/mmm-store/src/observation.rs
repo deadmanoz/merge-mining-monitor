@@ -303,6 +303,7 @@ async fn write_observation<C: GenericClient>(
     // evidence and near rows store one (`chk_cbo_parent_by_kind`).
     // A rewrite that resolves no child pool keeps the stored one, which reclassify-pools may
     // have resolved after the writer loaded its registry; an event's attributions do the same.
+    // Known child pools that disagree make it Unknown.
     let near = observation.near_parent.as_ref();
     let child_nbits = observation.child_nbits.map(i64::from);
     let sql = format!(
@@ -325,7 +326,8 @@ async fn write_observation<C: GenericClient>(
             btc_parent_header_bytes = EXCLUDED.btc_parent_header_bytes, \
             btc_parent_header_time = EXCLUDED.btc_parent_header_time, \
             {near_coinbase}, \
-            child_pool_id = COALESCE(EXCLUDED.child_pool_id, o.child_pool_id), \
+            child_pool_id = CASE WHEN $23 THEN NULL \
+                ELSE COALESCE(EXCLUDED.child_pool_id, o.child_pool_id) END, \
             {near_parent_pool} \
          WHERE (o.btc_parent_header_hash IS NULL OR EXCLUDED.btc_parent_header_hash IS NULL \
                 OR o.btc_parent_header_hash = EXCLUDED.btc_parent_header_hash) \
@@ -367,6 +369,7 @@ async fn write_observation<C: GenericClient>(
                 &observation.child_pool_id,
                 &observation.btc_parent_pool_id,
                 &observation.recorded_at,
+                &observation.child_pools_conflict,
             ],
         )
         .await

@@ -149,6 +149,8 @@ async fn cmd_reclassify_pools(args: std::env::Args) -> Result<()> {
         parents_reconciled = stats.parents_reconciled,
         rsk_miner_attribution_updates = stats.rsk_miner_attribution_updates,
         rsk_miner_sidecar_late_fills = stats.rsk_miner_sidecar_late_fills,
+        observations_scanned = stats.observations_scanned,
+        observation_pool_updates = stats.observation_pool_updates,
         "re-resolved historical pool attributions"
     );
 
