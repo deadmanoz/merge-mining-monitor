@@ -51,7 +51,7 @@ use mmm_store::{
 
 mod observations;
 mod plan;
-use observations::reresolve_observation_pools;
+use observations::{PoolSources, reresolve_observation_pools};
 use plan::{ParentUpdateGroup, plan_batch_updates};
 
 const DEFAULT_BATCH_SIZE: i64 = 500;
@@ -438,16 +438,29 @@ async fn count_candidates(client: &Client, overwrite: bool, source: Option<i64>)
     Ok(u64::try_from(row.get::<_, i64>(0))?)
 }
 
+/// The pool snapshot and identity registries every phase resolves through.
+struct Seeded {
+    resolver: PoolResolver,
+    registry: PoolIdentityRegistry,
+    pool_ids_by_slug: HashMap<String, i64>,
+    child_payout_identities: PoolIdentityLookup,
+    rsk_identity_ids: HashMap<String, i64>,
+}
+
+impl Seeded {
+    fn pool_sources(&self) -> PoolSources<'_> {
+        PoolSources {
+            resolver: &self.resolver,
+            pool_ids_by_slug: &self.pool_ids_by_slug,
+            child_payout_identities: &self.child_payout_identities,
+        }
+    }
+}
+
 async fn seed_reclassify_pools(
     client: &mut Client,
     config: &ReclassifyPoolsConfig,
-) -> Result<(
-    PoolResolver,
-    PoolIdentityRegistry,
-    HashMap<String, i64>,
-    PoolIdentityLookup,
-    HashMap<String, i64>,
-)> {
+) -> Result<Seeded> {
     let resolver = PoolResolver::from_default_snapshot()
         .context("load embedded pool snapshot for reclassify-pools")?;
     let registry = PoolIdentityRegistry::from_default_rsk_registry()
@@ -496,13 +509,13 @@ async fn seed_reclassify_pools(
     } else {
         HashMap::new()
     };
-    Ok((
+    Ok(Seeded {
         resolver,
         registry,
         pool_ids_by_slug,
         child_payout_identities,
         rsk_identity_ids,
-    ))
+    })
 }
 
 /// The `--source` filter as a source id.
@@ -593,12 +606,12 @@ pub async fn run_reclassify_pools(
     client: &mut Client,
     config: ReclassifyPoolsConfig,
 ) -> Result<ReclassifyPoolsStats> {
-    let (resolver, registry, pool_ids_by_slug, child_payout_identities, rsk_identity_ids) =
-        seed_reclassify_pools(client, &config).await?;
+    let seeded = seed_reclassify_pools(client, &config).await?;
+    let child_payout_identities = &seeded.child_payout_identities;
 
     info!(
         phase = "seed",
-        pools = pool_ids_by_slug.len(),
+        pools = seeded.pool_ids_by_slug.len(),
         "reclassify-pools: seeded pool snapshot and identity registries"
     );
 
@@ -611,9 +624,9 @@ pub async fn run_reclassify_pools(
         );
         reresolve_rsk_miner_identities(
             client,
-            &registry,
-            &pool_ids_by_slug,
-            &rsk_identity_ids,
+            &seeded.registry,
+            &seeded.pool_ids_by_slug,
+            &seeded.rsk_identity_ids,
             &config,
             &mut stats,
         )
@@ -636,9 +649,9 @@ pub async fn run_reclassify_pools(
     if config.run_main {
         run_main_candidate_scan(
             client,
-            &resolver,
-            &pool_ids_by_slug,
-            &child_payout_identities,
+            &seeded.resolver,
+            &seeded.pool_ids_by_slug,
+            child_payout_identities,
             &config,
             &mut stats,
         )
@@ -655,7 +668,7 @@ pub async fn run_reclassify_pools(
             phase = "hathor",
             "reclassify-pools: starting Hathor reward replay"
         );
-        replay_hathor_reward_attributions(client, &child_payout_identities, &config, &mut stats)
+        replay_hathor_reward_attributions(client, child_payout_identities, &config, &mut stats)
             .await?;
         info!(
             phase = "hathor",
@@ -689,8 +702,7 @@ pub async fn run_reclassify_pools(
     }
 
     if config.run_observations {
-        reresolve_observation_pools(client, &resolver, &pool_ids_by_slug, &config, &mut stats)
-            .await?;
+        reresolve_observation_pools(client, &seeded.pool_sources(), &config, &mut stats).await?;
     } else {
         info!(
             phase = "observations",

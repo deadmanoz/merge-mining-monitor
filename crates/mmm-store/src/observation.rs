@@ -290,14 +290,17 @@ async fn write_observation<C: GenericClient>(
     } else {
         Exactness::Partial
     });
-    // An unauthenticated child-only answer never overwrites a proven parent.
-    let kind_guard = if matches!(
-        observation.kind,
-        ObservationKind::NotMergeMined | ObservationKind::UnverifiedParent
-    ) {
-        "AND o.observation_kind NOT IN ('evidence', 'near')"
-    } else {
-        ""
+    let kind_guard = match observation.kind {
+        // An unauthenticated child-only answer never overwrites a proven parent.
+        ObservationKind::NotMergeMined | ObservationKind::UnverifiedParent => {
+            "AND o.observation_kind NOT IN ('evidence', 'near')"
+        }
+        // A child block commits to one parent, so a proven parent never replaces another.
+        ObservationKind::Evidence | ObservationKind::Near => {
+            "AND (o.observation_kind NOT IN ('evidence', 'near') \
+                  OR o.btc_parent_header_hash = EXCLUDED.btc_parent_header_hash)"
+        }
+        ObservationKind::NonBitcoinParent => "",
     };
     // A rewrite that resolves no child pool keeps the stored one, which reclassify-pools may
     // have resolved after the writer loaded its registry; an event's attributions do the same.
@@ -426,9 +429,11 @@ pub(crate) async fn insert_child_identities<C: GenericClient>(
 #[derive(Debug)]
 pub struct ObservationPoolRow {
     pub id: i64,
+    pub source_code: String,
     pub near: bool,
     pub child_identity_ids: Vec<i64>,
     pub child_coinbase_script: Option<Vec<u8>>,
+    pub child_coinbase_outputs: Option<Vec<u8>>,
     pub btc_parent_coinbase_script: Option<Vec<u8>>,
     pub btc_parent_coinbase_outputs: Option<Vec<u8>>,
     pub child_pool_id: Option<i64>,
@@ -437,32 +442,36 @@ pub struct ObservationPoolRow {
 
 /// A keyset page of observations no event backs (nears and child-only rows) whose pools a
 /// pass could change: all of them under `overwrite`, otherwise those missing a pool they
-/// carry something to resolve it from.
+/// carry something to resolve it from (child outputs only from `payout_sources`).
 pub async fn load_observation_pool_batch<C: GenericClient>(
     client: &C,
     cursor: Option<i64>,
     source_id: Option<i64>,
     overwrite: bool,
+    payout_sources: &[&str],
     limit: i64,
 ) -> Result<Vec<ObservationPoolRow>> {
     let rows = client
         .query(
-            "SELECT o.id, o.observation_kind = 'near', o.child_identity_ids, \
-                    o.child_coinbase_script, o.btc_parent_coinbase_script, \
-                    o.btc_parent_coinbase_outputs, o.child_pool_id, o.btc_parent_pool_id \
+            "SELECT o.id, s.code, o.observation_kind = 'near', o.child_identity_ids, \
+                    o.child_coinbase_script, o.child_coinbase_outputs, \
+                    o.btc_parent_coinbase_script, o.btc_parent_coinbase_outputs, \
+                    o.child_pool_id, o.btc_parent_pool_id \
              FROM child_block_observation o \
+             JOIN source s ON s.id = o.source_id \
              WHERE o.observation_kind <> 'evidence' \
                AND ($1::bigint IS NULL OR o.id > $1) \
                AND ($2::bigint IS NULL OR o.source_id = $2) \
                AND ($3 \
                     OR (o.child_pool_id IS NULL \
                         AND (cardinality(o.child_identity_ids) > 0 \
-                             OR o.child_coinbase_script IS NOT NULL)) \
+                             OR o.child_coinbase_script IS NOT NULL \
+                             OR (o.child_coinbase_outputs IS NOT NULL AND s.code = ANY($4)))) \
                     OR (o.observation_kind = 'near' AND o.btc_parent_pool_id IS NULL \
                         AND (o.btc_parent_coinbase_script IS NOT NULL \
                              OR o.btc_parent_coinbase_outputs IS NOT NULL))) \
-             ORDER BY o.id LIMIT $4",
-            &[&cursor, &source_id, &overwrite, &limit],
+             ORDER BY o.id LIMIT $5",
+            &[&cursor, &source_id, &overwrite, &payout_sources, &limit],
         )
         .await
         .context("load an observation pool batch")?;
@@ -470,13 +479,15 @@ pub async fn load_observation_pool_batch<C: GenericClient>(
         .iter()
         .map(|row| ObservationPoolRow {
             id: row.get(0),
-            near: row.get(1),
-            child_identity_ids: row.get(2),
-            child_coinbase_script: row.get(3),
-            btc_parent_coinbase_script: row.get(4),
-            btc_parent_coinbase_outputs: row.get(5),
-            child_pool_id: row.get(6),
-            btc_parent_pool_id: row.get(7),
+            source_code: row.get(1),
+            near: row.get(2),
+            child_identity_ids: row.get(3),
+            child_coinbase_script: row.get(4),
+            child_coinbase_outputs: row.get(5),
+            btc_parent_coinbase_script: row.get(6),
+            btc_parent_coinbase_outputs: row.get(7),
+            child_pool_id: row.get(8),
+            btc_parent_pool_id: row.get(9),
         })
         .collect())
 }
@@ -495,27 +506,52 @@ pub async fn load_child_identity_pools<C: GenericClient>(client: &C) -> Result<H
     Ok(rows.iter().map(|row| (row.get(0), row.get(1))).collect())
 }
 
-/// Set re-resolved `(observation id, child pool, parent pool)` triples in one statement.
+/// Set each loaded row's re-resolved `(child pool, parent pool)` in one statement, and return
+/// how many were set. A row a capture changed since it was loaded keeps what the capture wrote.
 pub async fn update_observation_pools<C: GenericClient>(
     client: &C,
-    updates: &[(i64, Option<i64>, Option<i64>)],
-) -> Result<()> {
+    updates: &[(&ObservationPoolRow, Option<i64>, Option<i64>)],
+) -> Result<u64> {
     if updates.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
-    let ids = updates.iter().map(|update| update.0).collect::<Vec<_>>();
+    let ids = updates.iter().map(|update| update.0.id).collect::<Vec<_>>();
+    let nears = updates
+        .iter()
+        .map(|update| update.0.near)
+        .collect::<Vec<_>>();
+    let loaded_child_pools = updates
+        .iter()
+        .map(|update| update.0.child_pool_id)
+        .collect::<Vec<_>>();
+    let loaded_parent_pools = updates
+        .iter()
+        .map(|update| update.0.btc_parent_pool_id)
+        .collect::<Vec<_>>();
     let child_pools = updates.iter().map(|update| update.1).collect::<Vec<_>>();
     let parent_pools = updates.iter().map(|update| update.2).collect::<Vec<_>>();
     client
         .execute(
             "UPDATE child_block_observation o \
                 SET child_pool_id = u.child_pool_id, btc_parent_pool_id = u.btc_parent_pool_id \
-               FROM unnest($1::bigint[], $2::bigint[], $3::bigint[]) \
-                    AS u(id, child_pool_id, btc_parent_pool_id) \
-              WHERE o.id = u.id",
-            &[&ids, &child_pools, &parent_pools],
+               FROM unnest($1::bigint[], $2::boolean[], $3::bigint[], $4::bigint[], \
+                           $5::bigint[], $6::bigint[]) \
+                    AS u(id, near, loaded_child_pool_id, loaded_parent_pool_id, \
+                         child_pool_id, btc_parent_pool_id) \
+              WHERE o.id = u.id \
+                AND o.observation_kind <> 'evidence' \
+                AND (o.observation_kind = 'near') = u.near \
+                AND o.child_pool_id IS NOT DISTINCT FROM u.loaded_child_pool_id \
+                AND o.btc_parent_pool_id IS NOT DISTINCT FROM u.loaded_parent_pool_id",
+            &[
+                &ids,
+                &nears,
+                &loaded_child_pools,
+                &loaded_parent_pools,
+                &child_pools,
+                &parent_pools,
+            ],
         )
         .await
-        .context("update re-resolved observation pools")?;
-    Ok(())
+        .context("update re-resolved observation pools")
 }

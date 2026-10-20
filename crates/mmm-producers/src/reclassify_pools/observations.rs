@@ -9,6 +9,7 @@ use tokio_postgres::Client;
 use tracing::info;
 
 use mmm_capture::capture::resolve_child_pool_attribution_from_script;
+use mmm_capture::child_payout::PoolIdentityLookup;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_capture::progress::ProgressReporter;
 use mmm_store::{
@@ -16,13 +17,19 @@ use mmm_store::{
     update_observation_pools,
 };
 
-use super::plan::{StoredParentCoinbase, resolve_stored_parent_pool};
-use super::{ReclassifyPoolsConfig, ReclassifyPoolsStats};
+use super::plan::{StoredParentCoinbase, replay_child_payouts, resolve_stored_parent_pool};
+use super::{CHILD_PAYOUT_SOURCE_CODES, ReclassifyPoolsConfig, ReclassifyPoolsStats};
+
+/// What an observation's stored identities, coinbase script and outputs resolve through.
+pub(super) struct PoolSources<'a> {
+    pub(super) resolver: &'a PoolResolver,
+    pub(super) pool_ids_by_slug: &'a HashMap<String, i64>,
+    pub(super) child_payout_identities: &'a PoolIdentityLookup,
+}
 
 pub(super) async fn reresolve_observation_pools(
     client: &Client,
-    resolver: &PoolResolver,
-    pool_ids_by_slug: &HashMap<String, i64>,
+    sources: &PoolSources<'_>,
     config: &ReclassifyPoolsConfig,
     stats: &mut ReclassifyPoolsStats,
 ) -> Result<()> {
@@ -36,6 +43,7 @@ pub(super) async fn reresolve_observation_pools(
             cursor,
             source_id,
             config.overwrite,
+            CHILD_PAYOUT_SOURCE_CODES,
             config.batch_size,
         )
         .await?;
@@ -45,20 +53,15 @@ pub(super) async fn reresolve_observation_pools(
         cursor = Some(last.id);
         let mut updates = Vec::new();
         for row in &rows {
-            if let Some(update) = plan_observation_pools(
-                row,
-                &identity_pools,
-                resolver,
-                pool_ids_by_slug,
-                config,
-                stats,
-            ) {
-                updates.push(update);
+            if let Some((child_pool_id, btc_parent_pool_id)) =
+                plan_observation_pools(row, &identity_pools, sources, config.overwrite, stats)
+            {
+                updates.push((row, child_pool_id, btc_parent_pool_id));
             }
         }
-        update_observation_pools(client, &updates).await?;
+        let applied = update_observation_pools(client, &updates).await?;
         stats.observations_scanned += rows.len();
-        stats.observation_pool_updates += updates.len();
+        stats.observation_pool_updates += usize::try_from(applied)?;
         progress.advance(rows.len() as u64);
     }
     progress.finish();
@@ -71,18 +74,17 @@ pub(super) async fn reresolve_observation_pools(
     Ok(())
 }
 
-/// The observation's re-resolved `(id, child_pool_id, btc_parent_pool_id)`, or `None` when
+/// The observation's re-resolved `(child_pool_id, btc_parent_pool_id)`, or `None` when
 /// nothing changes. A resolved pool fills a missing one, or replaces a different one under
 /// `--overwrite`, which also clears a child pool its matches now contradict; an unresolved pool
 /// never erases a stored one.
 fn plan_observation_pools(
     row: &ObservationPoolRow,
     identity_pools: &HashMap<i64, i64>,
-    resolver: &PoolResolver,
-    pool_ids_by_slug: &HashMap<String, i64>,
-    config: &ReclassifyPoolsConfig,
+    sources: &PoolSources<'_>,
+    overwrite: bool,
     stats: &mut ReclassifyPoolsStats,
-) -> Option<(i64, Option<i64>, Option<i64>)> {
+) -> Option<(Option<i64>, Option<i64>)> {
     let mut child_pools = row
         .child_identity_ids
         .iter()
@@ -91,11 +93,23 @@ fn plan_observation_pools(
     child_pools.extend(
         resolve_child_pool_attribution_from_script(
             row.child_coinbase_script.as_deref(),
-            resolver,
-            pool_ids_by_slug,
+            sources.resolver,
+            sources.pool_ids_by_slug,
         )
         .and_then(|attribution| attribution.pool_id),
     );
+    // Captures from before payout attribution stored the outputs without their identities.
+    match replay_child_payouts(
+        row.id,
+        &row.source_code,
+        row.child_coinbase_outputs.as_deref(),
+        sources.child_payout_identities,
+    ) {
+        Some(payouts) => {
+            child_pools.extend(payouts.iter().filter_map(|attribution| attribution.pool_id));
+        }
+        None => stats.corrupt_child_outputs_skipped += 1,
+    }
     let parent_pool = if row.near {
         let resolution = resolve_stored_parent_pool(
             &StoredParentCoinbase {
@@ -104,8 +118,8 @@ fn plan_observation_pools(
                 outputs: row.btc_parent_coinbase_outputs.as_deref(),
                 outputs_text: None,
             },
-            resolver,
-            pool_ids_by_slug,
+            sources.resolver,
+            sources.pool_ids_by_slug,
         );
         if resolution.corrupt_outputs {
             stats.corrupt_parent_outputs += 1;
@@ -117,18 +131,14 @@ fn plan_observation_pools(
         None
     };
     let child_pool_id = match child_pools.len() {
-        0 | 1 => settle(
-            row.child_pool_id,
-            child_pools.first().copied(),
-            config.overwrite,
-        ),
+        0 | 1 => settle(row.child_pool_id, child_pools.first().copied(), overwrite),
         // Conflicting matches project to Unknown.
-        _ if config.overwrite => None,
+        _ if overwrite => None,
         _ => row.child_pool_id,
     };
-    let btc_parent_pool_id = settle(row.btc_parent_pool_id, parent_pool, config.overwrite);
+    let btc_parent_pool_id = settle(row.btc_parent_pool_id, parent_pool, overwrite);
     ((child_pool_id, btc_parent_pool_id) != (row.child_pool_id, row.btc_parent_pool_id))
-        .then_some((row.id, child_pool_id, btc_parent_pool_id))
+        .then_some((child_pool_id, btc_parent_pool_id))
 }
 
 fn settle(stored: Option<i64>, resolved: Option<i64>, overwrite: bool) -> Option<i64> {

@@ -525,7 +525,11 @@ async fn exact_observation_rejects_a_different_parent_for_the_same_child_hash() 
         let error = upsert_merge_mining_event(&client, source_id, &contradictory)
             .await
             .expect_err("one child ledger identity cannot select two parent observations");
-        assert!(error.to_string().contains("contradicts stored evidence"));
+        assert!(
+            error
+                .to_string()
+                .contains("event observation contradicts the stored child evidence")
+        );
         let count: i64 = client
             .query_one(
                 "SELECT count(*) FROM merge_mining_event WHERE source_id = $1",

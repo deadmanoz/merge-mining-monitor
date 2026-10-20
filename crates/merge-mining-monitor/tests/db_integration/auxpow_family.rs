@@ -1099,6 +1099,15 @@ async fn a_near_rewritten_without_its_parent_coinbase_keeps_it() -> Result<()> {
             Some(f2pool),
             "the parent pool stays with the coinbase it comes from"
         );
+
+        let mut other_parent = bare;
+        other_parent.btc_parent_header_hash = vec![0x77; 32];
+        assert!(
+            write_capture(&client, source_id, &other_parent)
+                .await
+                .is_err(),
+            "a child block commits to one parent"
+        );
         Ok::<_, anyhow::Error>(())
     })
 }

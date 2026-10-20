@@ -181,52 +181,59 @@ fn resolve_child_payouts(
     identities: &PoolIdentityLookup,
     overwrite: bool,
 ) -> ChildPayoutResolution {
-    let Some(params) = params_for_source_code(&row.source_code) else {
-        return unchanged_child_payout();
+    let Some(attributions) = replay_child_payouts(
+        row.id,
+        &row.source_code,
+        row.child_coinbase_outputs.as_deref(),
+        identities,
+    ) else {
+        return ChildPayoutResolution {
+            attributions: Vec::new(),
+            changed: false,
+            corrupt_outputs: true,
+        };
     };
-    let Some(outputs_bytes) = row.child_coinbase_outputs.as_deref() else {
-        return unchanged_child_payout();
-    };
-
-    let outputs: Vec<TxOut> = match deserialize(outputs_bytes) {
-        Ok(outputs) => outputs,
-        Err(err) => {
-            warn!(
-                event_id = row.id,
-                source = row.source_code,
-                error = %err,
-                "skipping corrupt child_coinbase_outputs for child payout replay; \
-                 leaving child payout attribution unchanged for this row"
-            );
-            return ChildPayoutResolution {
-                attributions: Vec::new(),
-                changed: false,
-                corrupt_outputs: true,
-            };
-        }
-    };
-
-    let attributions = resolve_child_payout_attributions(&outputs, params, Some(identities))
+    let attributions = attributions
         .into_iter()
         .filter(|attribution| {
             row.child_payout_attributions
                 .should_write(attribution, WritePolicy::ChildPayout { overwrite })
         })
         .collect::<Vec<_>>();
-    let changed = !attributions.is_empty();
-
     ChildPayoutResolution {
+        changed: !attributions.is_empty(),
         attributions,
-        changed,
         corrupt_outputs: false,
     }
 }
 
-fn unchanged_child_payout() -> ChildPayoutResolution {
-    ChildPayoutResolution {
-        attributions: Vec::new(),
-        changed: false,
-        corrupt_outputs: false,
+/// The payout attributions a stored child coinbase's outputs resolve to: empty for a source
+/// with no payout format or no stored outputs, and `None` (warned) for corrupt outputs.
+/// `id` is the event or observation id, for the warning.
+pub(super) fn replay_child_payouts(
+    id: i64,
+    source_code: &str,
+    outputs: Option<&[u8]>,
+    identities: &PoolIdentityLookup,
+) -> Option<Vec<EventPoolAttribution>> {
+    let (Some(params), Some(outputs)) = (params_for_source_code(source_code), outputs) else {
+        return Some(Vec::new());
+    };
+    match deserialize::<Vec<TxOut>>(outputs) {
+        Ok(outputs) => Some(resolve_child_payout_attributions(
+            &outputs,
+            params,
+            Some(identities),
+        )),
+        Err(err) => {
+            warn!(
+                id,
+                source = source_code,
+                error = %err,
+                "skipping corrupt child_coinbase_outputs for child payout replay"
+            );
+            None
+        }
     }
 }
 
