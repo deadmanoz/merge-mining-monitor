@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result, bail};
+use mmm_capture::pool_resolver::RSK_MINER_ADDRESS_NAMESPACE;
 use tokio_postgres::Client;
 
 use super::super::shared::{
@@ -254,27 +255,36 @@ pub(super) async fn load_pool_attributions_by_event(
 pub(super) fn event_detail_sql(predicate: &str) -> String {
     format!(
         "SELECT e.id, s.id, s.code, s.kind, s.chain, s.instance, \
-                e.child_height, e.child_block_hash, e.child_block_time, \
+                e.child_height, e.child_block_hash, o.child_block_time, \
                 e.btc_parent_header_hash, e.btc_parent_prev_header_hash, \
                 e.btc_parent_header_bytes, e.btc_parent_header_time, \
                 e.btc_parent_kind, \
                 e.btc_parent_coinbase_txid, e.btc_parent_coinbase_script, \
-                e.btc_parent_coinbase_outputs, e.child_coinbase_txid, \
-                e.child_coinbase_script, e.aux_merkle_proof, \
-                e.pow_validates_btc_target, e.pow_validates_child_target, \
+                e.btc_parent_coinbase_outputs, o.child_coinbase_txid, \
+                o.child_coinbase_script, e.aux_merkle_proof, \
+                e.pow_validates_btc_target, o.pow_validates_child_target, \
                 e.difficulty_epoch_ok, e.discovered_at, e.confirmed_at, \
                 e.revoked_at, e.revocation_reason, cmp.id, cmp.slug, cmp.canonical_name, \
-                r.rsk_block_hash, r.rsk_height, \
-                r.is_uncle, r.uncle_index, r.uncle_parent_height, r.rsk_miner, \
+                CASE WHEN r.event_id IS NOT NULL THEN o.child_block_hash END, \
+                CASE WHEN r.event_id IS NOT NULL THEN o.child_height END, \
+                CASE WHEN r.event_id IS NOT NULL THEN o.child_chain_role = 'uncle' END, \
+                o.uncle_index, o.uncle_parent_height, decode(rm.identifier, 'hex'), \
                 r.merge_mining_hash, r.merkle_proof, r.coinbase_tail, \
                 r.proof_format, pi.id, pi.namespace, pi.identifier, \
-                e.child_header_bytes, e.child_nbits, \
-                e.child_displaced_at, e.child_displaced_by \
+                o.child_header_bytes, o.child_nbits, \
+                o.child_displaced_at, o.child_displaced_by \
          FROM merge_mining_event e \
          JOIN source s ON s.id = e.source_id \
-         LEFT JOIN pool cmp ON cmp.id = e.child_miner_pool_id \
+         LEFT JOIN child_block_observation o ON o.id = COALESCE(e.observation_id, e.id) \
+         LEFT JOIN pool cmp ON cmp.id = o.child_pool_id \
          LEFT JOIN rsk_merge_mining_evidence r ON r.event_id = e.id \
-         LEFT JOIN pool_identity pi ON pi.id = r.pool_identity_id \
+         LEFT JOIN LATERAL ( \
+             SELECT ci.identifier FROM child_miner_identity ci \
+             WHERE r.event_id IS NOT NULL AND ci.id = ANY(o.child_identity_ids) \
+               AND ci.namespace = '{RSK_MINER_ADDRESS_NAMESPACE}' \
+             ORDER BY ci.id LIMIT 1) rm ON TRUE \
+         LEFT JOIN pool_identity pi \
+             ON pi.namespace = '{RSK_MINER_ADDRESS_NAMESPACE}' AND pi.identifier = rm.identifier \
          WHERE e.revoked_at IS NULL AND {predicate} \
          ORDER BY e.confirmed_at, s.code, e.child_height NULLS LAST, \
                   e.child_block_hash NULLS LAST, e.id"

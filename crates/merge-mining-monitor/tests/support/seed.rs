@@ -133,7 +133,46 @@ pub async fn insert_event(client: &Client, seed: EventSeed) -> Result<i64> {
             )
             .await?;
     }
+    link_event_observation(client, event_id).await?;
     Ok(event_id)
+}
+
+/// Give a directly inserted event the observation capture would have written for it, and link
+/// it, so readers that join events to observations see the seeded child evidence.
+async fn link_event_observation(client: &Client, event_id: i64) -> Result<()> {
+    client
+        .execute(
+            "WITH observation AS ( \
+                 INSERT INTO child_block_observation ( \
+                     source_id, child_height, child_block_hash, observation_kind, \
+                     child_block_time, child_header_bytes, child_nbits, child_prev_block_hash, \
+                     child_coinbase_txid, child_coinbase_script, child_coinbase_outputs, \
+                     pow_validates_child_target, child_displaced_at, child_displaced_by, \
+                     btc_parent_header_hash, btc_parent_header_bytes, btc_parent_header_time, \
+                     btc_parent_coinbase_txid, btc_parent_coinbase_script, \
+                     btc_parent_coinbase_outputs, recorded_at) \
+                 SELECT e.source_id, e.child_height, e.child_block_hash, \
+                        CASE WHEN e.btc_parent_kind = 'near' THEN 'near' ELSE 'evidence' END, \
+                        e.child_block_time, e.child_header_bytes, e.child_nbits, \
+                        substring(e.child_header_bytes FROM 5 FOR 32), \
+                        e.child_coinbase_txid, e.child_coinbase_script, e.child_coinbase_outputs, \
+                        e.pow_validates_child_target, e.child_displaced_at, e.child_displaced_by, \
+                        e.btc_parent_header_hash, \
+                        CASE WHEN e.btc_parent_kind = 'near' THEN e.btc_parent_header_bytes END, \
+                        CASE WHEN e.btc_parent_kind = 'near' THEN e.btc_parent_header_time END, \
+                        CASE WHEN e.btc_parent_kind = 'near' THEN e.btc_parent_coinbase_txid END, \
+                        CASE WHEN e.btc_parent_kind = 'near' THEN e.btc_parent_coinbase_script END, \
+                        CASE WHEN e.btc_parent_kind = 'near' THEN e.btc_parent_coinbase_outputs END, \
+                        e.discovered_at \
+                   FROM merge_mining_event e WHERE e.id = $1 \
+                 RETURNING id) \
+             UPDATE merge_mining_event SET observation_id = (SELECT id FROM observation) \
+              WHERE id = $1",
+            &[&event_id],
+        )
+        .await?;
+    mmm_store::sync_event_observation_attribution(client, event_id).await?;
+    Ok(())
 }
 
 pub async fn insert_block(

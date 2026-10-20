@@ -19,7 +19,7 @@ Producers append or update base evidence; the read model computes the Bitcoin tr
 | `event_pool_attribution` | Attribution rows connecting an event to a pool with source/provenance details. |
 | `poll_cursor` | Live poll progress. Backfills never move the cursor. |
 | `capture_error` | Producer-owned operational state: one row per `(source_id, height)` a producer could not capture, with the failure kind (`malformed_auxpow_proof` or `height_capture_failed`), a diagnostic detail, and first/last seen times. Written before returning from a failing height and cleared only when that same height is reprocessed successfully; `/api/v1/sources` reads the earliest unresolved height per source. |
-| `child_chain_head` | Producer-owned operational state: one row per `(source_id, child_height)` recording the block hash, parent, outcome, and evidence marker a producer last observed at that height, used by trailing rescans. |
+| `child_chain_head` | Producer-owned operational state: one row per `(source_id, child_height)` recording the block hash, parent, outcome, and evidence marker a producer last observed at that height, used by trailing rescans. Each poll tick prunes rows below the rescan floor (`cursor + 1 - reorg_depth`) in bounded batches; `child_block_observation` keeps the per-block history. |
 | `known_stale_block` | Operator-imported known-stale membership loaded by `import-known-stales` from the upstream `bitcoin-data/stale-blocks` dataset. Consulted as an orphan-classification exclusion gate: a catalogued stale is `excluded`, never labelled strict/weak. |
 | `block` | Derived Bitcoin parent block state: canonical, stale, consensus-invalid error block, or unknown. |
 | `attestation_proof` | Derived proof rows supporting a block. |
@@ -106,7 +106,7 @@ When a child chain replaces the block at `child_height`, the replaced block's `m
   For hashless partial rows, a matching `btc_parent_header_hash` identifies the current block, a different parent or a known non-AuxPoW block displaces it, and an unverified block leaves it untouched.
   Events inserted without a live chain observation (such as historical imports) remain undisplaced until a poller rescan or backfill observes the height.
 - The same write updates `child_chain_head` (`(source_id, child_height)` -> observed block hash, nullable parent hash, `outcome` in `captured`/`recorded`/`non_auxpow`/`unverified`/`held`, nullable `evidence_marker`, and `observed_at`).
-  Trailing rescans compare a single block-hash lookup against `child_chain_head`: an unchanged hash with a final outcome (`captured`, `recorded`, `non_auxpow`) and unchanged `evidence_marker` skips full proof fetch/capture, whereas a changed hash, missing row, open `capture_error`, or provisional `unverified` parent verdict re-captures the height.
+  Trailing rescans compare a single block-hash lookup against `child_chain_head`: an unchanged hash with a final outcome (`captured`, `recorded`, `non_auxpow`) and unchanged `evidence_marker` skips full proof fetch/capture, whereas a changed hash, missing row, open `capture_error`, or provisional `unverified` parent verdict re-captures the height. Heights below the rescan floor have no row once a tick has pruned them; no rescan reaches them.
 
 ## Read-Model Rules
 

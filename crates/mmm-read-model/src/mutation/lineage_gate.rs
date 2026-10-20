@@ -11,7 +11,7 @@ use bitcoin::consensus::deserialize;
 use tokio_postgres::{GenericClient, Transaction};
 
 use mmm_capture::btc_orphan::strict_bip34_height_from_evidence;
-use mmm_capture::capture::MergeMiningEventPayload;
+use mmm_capture::capture::{ChildBlockObservation, MergeMiningEventPayload};
 use mmm_capture::lineage::{Lineage, ParentLineageInput, bitcoin_lineage};
 
 use super::PrimarySourceHealthBracket;
@@ -107,20 +107,22 @@ async fn strict_height<C: GenericClient>(
 }
 
 /// Delete this source's events for a child block whose parent failed the lineage gate (and the
-/// block's hashless observations, so only its exact observation remains) and rebuild the parent
-/// read model.
+/// block's hashless observations), rewrite its exact observation as `non_bitcoin_parent`, and
+/// rebuild the parent read model. The rewrite sits inside the source-health bracket so a
+/// refused near leaves the near count.
 pub(super) async fn retract_child_block(
     txn: &Transaction<'_>,
     source_id: i64,
     payload: &MergeMiningEventPayload,
 ) -> Result<Vec<Vec<u8>>> {
-    let (Some(height), Some(child_hash)) =
-        (payload.child_height, payload.child_block_hash.as_deref())
-    else {
+    let Some(child_hash) = payload.child_block_hash.as_deref() else {
         return Ok(Vec::new());
     };
+    let observation = ChildBlockObservation::non_bitcoin_parent(payload);
     let parent = &payload.btc_parent_header_hash;
+    let height = payload.child_height;
     if !mmm_store::has_child_block_events(txn, source_id, height, child_hash, parent).await? {
+        mmm_store::upsert_child_only_observation(txn, source_id, &observation).await?;
         return Ok(Vec::new());
     }
     let mut hashes = vec![parent.clone(), payload.btc_parent_prev_header_hash.clone()];
@@ -130,6 +132,7 @@ pub(super) async fn retract_child_block(
     let before = load_block_cascade_state(txn, parent).await?;
     let bracket = PrimarySourceHealthBracket::open(txn, parent).await?;
     mmm_store::delete_child_block_events(txn, source_id, height, child_hash, parent).await?;
+    mmm_store::upsert_child_only_observation(txn, source_id, &observation).await?;
     rebuild_parent_read_model(txn, parent, None, None).await?;
     bracket.close(txn).await?;
     let after = load_block_cascade_state(txn, parent).await?;

@@ -9,6 +9,9 @@ This changelog starts with the initial release.
 - Record every observed child block in a new `child_block_observation` table, filled from existing events by migration 0033: near and evidence blocks with their events, blocks without AuxPoW as `not_merge_mined`, blocks whose parent fails the Bitcoin lineage gate as `non_bitcoin_parent`, and authenticated blocks whose AuxPoW proof is malformed or incomplete (including RSK blocks without a complete parent header) as `unverified_parent`, the last two with no parent field.
 - Keep child identities (RSK miner, payout and reward addresses, Elastos minerinfo) as a `child_miner_identity` set per block, and RSK chain role, uncle placement, parent hash and reported difficulty on the observation.
 - Capture Elastos and Hathor parents that miss Bitcoin's target as nears through the lineage gate instead of discarding them, and record Elastos and Hathor blocks without AuxPoW as `not_merge_mined`.
+- Count source-health near parents from near observations: `counts.events` now counts evidence events only, and `last_seen_at` counts each near from when it was first recorded (re-capturing an unchanged near does not refresh it). Run `just rebuild-source-health` once after upgrading, with pollers stopped, so stored counters adopt the new definition.
+- Prune `child_chain_head` to each source's rescan window after every poll tick, in bounded batches; observations keep the per-block history. Elastos and Hathor near heads recorded before migration 0033 have no observation, so their pruned blocks return through backfill.
+- Read event-detail child evidence, RSK placement and miner, and the tree's child pool from observations, and compare historical publication state through them.
 - Let a Hathor height that holds no event follow the REST answer, so a replaced near or block without AuxPoW is marked displaced; heights holding a non-near event keep the declared-work floor.
 
 ## [0.9.4] - 2026-10-18

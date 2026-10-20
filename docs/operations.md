@@ -146,9 +146,9 @@ Re-run the range once the node can serve them.
 
 ### Activating Or Resetting A Live Source After Historical Import
 
-When first starting a live poller (`poll-qbit`, `poll-terracoin`, etc.) against a database that already holds the source's imported Research publication — or after a controlled cursor reset — seed `<PREFIX>_START_HEIGHT` at or below the publication's proven contiguous coverage tip `C` (for example `C + 1 - reorg_depth` so the initial overlap tick live-captures `C` and populates `child_chain_head`).
+When first starting a live poller (`poll-qbit`, `poll-terracoin`, etc.) against a database that already holds the source's imported Research publication (or after a controlled cursor reset) seed `<PREFIX>_START_HEIGHT` at or below the publication's proven contiguous coverage tip `C` (for example `C + 1 - reorg_depth` so the initial overlap tick live-captures `C` and populates `child_chain_head`).
 Without `<PREFIX>_START_HEIGHT`, the poller seeds its cursor at `tip - reorg_depth` on the live node, leaving an uncaptured gap above `C` while `/api/v1/sources` still reports `live`.
-Remove `<PREFIX>_START_HEIGHT` from `.env` only after `C` has been recorded in `child_chain_head` with no open `capture_error` rows, then restart for normal cursor-based resume.
+Remove `<PREFIX>_START_HEIGHT` from `.env` only after `hash(C)` appears in `child_chain_head` with no open `capture_error` rows (pollers keep chain heads from the override height up while it is set), then restart for normal cursor-based resume.
 
 ## Bitcoin Core Backbone
 
@@ -185,7 +185,7 @@ Do not delete the displaced branch: it is stale-block evidence.
 `just rebuild-source-health` recomputes the per-source `/api/v1/sources` rollup counters.
 It is required on a fresh database and after bulk backfills: `/api/v1/sources` fails closed until the first rebuild sets `source_health_ready`.
 Run it during a quiescent window (pollers stopped) so it sees a stable base.
-Counters are maintained incrementally afterward, so re-running it is only needed to repair drift.
+Counters are maintained incrementally afterward, so re-running it is only needed to repair drift or once after an upgrade that changes a counter's definition (the release that takes near counts from `child_block_observation` is one).
 `import-all` rebuilds source health once after all durable historical parent and dependent work has drained, so no separate rebuild is required after that command.
 
 `reconcile-read-model --start-height` and `--end-height` are child-height bounds.

@@ -13,9 +13,7 @@ use tracing::debug;
 use crate::source_health_sql::ParentContribution;
 use mmm_bitcoin_core::BitcoinCoreBlockCoinbase;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
-use mmm_capture::capture::{
-    ChildBlockObservation, MergeMiningEventPayload, ParentKind, apply_classification_proof,
-};
+use mmm_capture::capture::{MergeMiningEventPayload, ParentKind, apply_classification_proof};
 use mmm_store::EventWriteOutcome;
 
 mod historical_queue;
@@ -405,14 +403,6 @@ where
             None => {}
             Some(refused @ CaptureOutcome::NotBitcoin { .. }) => {
                 let changed = lineage_gate::retract_child_block(&txn, source_id, payload).await?;
-                if payload.child_block_hash.is_some() {
-                    mmm_store::upsert_child_only_observation(
-                        &txn,
-                        source_id,
-                        &ChildBlockObservation::non_bitcoin_parent(payload),
-                    )
-                    .await?;
-                }
                 txn.commit()
                     .await
                     .with_context(|| format!("commit {chain_label} retraction"))?;

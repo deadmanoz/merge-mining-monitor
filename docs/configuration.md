@@ -13,10 +13,10 @@ Prefixes: `NAMECOIN`, `RSK`, `SYSCOIN`, `FRACTAL`, `HATHOR`, `ELASTOS`, `QBIT`, 
 | `<PREFIX>_RPC_USER` / `<PREFIX>_RPC_PASSWORD` | all but Hathor | Auth policy is chain-specific and pinned by tests. Set both unless that chain explicitly allows unauthenticated access or cookie auth. |
 | `<PREFIX>_RPC_COOKIEFILE` | Syscoin, Fractal, Qbit | Bitcoin Core-style `user:password` cookie file used when the user/password pair is unset. |
 | `<PREFIX>_RPC_TIMEOUT_SECS` | all | Whole-request HTTP timeout, default 15 seconds. |
-| `<PREFIX>_START_HEIGHT` | all | Explicit live cursor seed override. Use once for first deploy or controlled reset, then remove. |
+| `<PREFIX>_START_HEIGHT` | all | Explicit live cursor seed override. Use once for first deploy or controlled reset, then remove. While set, `child_chain_head` rows from this height up are not pruned. |
 | `<PREFIX>_POLL_INTERVAL_SECONDS` | all | Live tick interval, default 30 seconds. |
 | `<PREFIX>_BATCH_SIZE` | all | Maximum number of new heights the cursor advances per tick (default 100); a tick attempts up to `reorg_depth + batch_size` heights in total. |
-| `<PREFIX>_REORG_DEPTH` | all | Trailing rescan window in blocks (defaults: `0`, except `64` for RSK/Terracoin and `20` for Hathor): each tick re-processes this many heights ending at the persisted cursor before advancing by up to `<PREFIX>_BATCH_SIZE`. Rescanned heights whose block hash changed mark the earlier event displaced (`docs/data-model.md`, Child Displacement; Hathor displacement floor stays bounded at a 32-block fork). |
+| `<PREFIX>_REORG_DEPTH` | all | Trailing rescan window in blocks (defaults: `0`, except `64` for RSK/Terracoin and `20` for Hathor): each tick re-processes this many heights ending at the persisted cursor before advancing by up to `<PREFIX>_BATCH_SIZE`. Rescanned heights whose block hash changed mark the earlier event displaced (`docs/data-model.md`, Child Displacement; Hathor displacement floor stays bounded at a 32-block fork). `child_chain_head` keeps rows only for this window; each tick prunes older ones. |
 | `<PREFIX>_MAX_BACKFILL_RANGE` | Hathor, Elastos | Backfill range cap. |
 | `<PREFIX>_ALLOW_LARGE_BACKFILL` | Hathor, Elastos | Exact `"1"` boolean to lift the range cap. |
 | `<PREFIX>_RPC_BACKFILL_DELAY_MS` | Hathor, Elastos | Per-height backfill delay. |

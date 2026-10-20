@@ -3,7 +3,10 @@ use std::time::Duration;
 use anyhow::Result;
 use mmm_capture::source_registry::NAMECOIN_SOURCE_CODE;
 use mmm_producers::{ChainPoller, ChainPollerState, HeightProgress, Poller, PollerConfig};
-use mmm_store::{get_source_id, load_poll_cursor, upsert_poll_cursor_with_target};
+use mmm_store::{
+    get_source_id, load_poll_cursor, lock_child_chain_height_session,
+    upsert_poll_cursor_with_target,
+};
 use tokio_postgres::Client;
 
 use crate::support::db::connect_to_schema;
@@ -244,6 +247,69 @@ async fn poller_override_seeds_fresh_and_does_not_downgrade_on_replay() -> Resul
         let chain2 = fake_chain(&schema, 5_000, None).await?;
         let _poller2 = Poller::new(chain2, override_config).await?;
         assert_eq!(load_poll_cursor(&client, source_id).await?, Some(5_000));
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+/// Seed `child_chain_head` rows at heights 990..=1,000 behind a cursor at 1,000.
+async fn seed_chain_heads_behind_cursor(client: &Client, source_id: i64) -> Result<()> {
+    upsert_poll_cursor_with_target(client, source_id, 1_000, None).await?;
+    client
+        .execute(
+            "INSERT INTO child_chain_head \
+                 (source_id, child_height, block_hash, outcome, core_cache_generation, observed_at) \
+             SELECT $1, h, decode(lpad(to_hex(h), 64, '0'), 'hex'), 'captured', 0, 1 \
+               FROM generate_series(990, 1_000) AS h",
+            &[&source_id],
+        )
+        .await?;
+    Ok(())
+}
+
+async fn chain_head_heights(client: &Client, source_id: i64) -> Result<Vec<i32>> {
+    Ok(client
+        .query(
+            "SELECT child_height FROM child_chain_head WHERE source_id = $1 ORDER BY 1",
+            &[&source_id],
+        )
+        .await?
+        .iter()
+        .map(|row| row.get(0))
+        .collect())
+}
+
+#[tokio::test]
+async fn a_tick_prunes_chain_heads_below_the_rescan_floor() -> Result<()> {
+    crate::run_db_test!(client, schema, {
+        let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        seed_chain_heads_behind_cursor(&client, source_id).await?;
+        let chain = fake_chain(&schema, 1_003, None).await?;
+        Poller::new(chain, monotonic_poll_config(4))
+            .await?
+            .poll_tick()
+            .await?;
+        // The cursor reached 1,003, so the rescan window starts at 1,000.
+        assert_eq!(chain_head_heights(&client, source_id).await?, vec![1_000]);
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn pruning_keeps_heads_from_the_start_override_and_locked_heights() -> Result<()> {
+    crate::run_db_test!(client, schema, {
+        let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        seed_chain_heads_behind_cursor(&client, source_id).await?;
+        // Another session mid-rescan at 990 holds its height lock.
+        lock_child_chain_height_session(&client, source_id, 990).await?;
+        let config = PollerConfig {
+            start_height_override: Some(992),
+            ..monotonic_poll_config(4)
+        };
+        let chain = fake_chain(&schema, 1_003, None).await?;
+        Poller::new(chain, config).await?.poll_tick().await?;
+        let mut expected = vec![990];
+        expected.extend(992..=1_000);
+        assert_eq!(chain_head_heights(&client, source_id).await?, expected);
         Ok::<_, anyhow::Error>(())
     })
 }

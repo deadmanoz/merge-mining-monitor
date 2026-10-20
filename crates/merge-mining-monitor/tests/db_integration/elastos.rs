@@ -173,6 +173,8 @@ async fn a_foreign_parent_retracts_only_its_own_blocks_event() -> Result<()> {
         .await?;
 
         let reconstructed = block.reconstruct()?;
+        // An exact event stored without a child height is still this block's event to retract.
+        clear_exact_event_height(&client, context.source_id(), &reconstructed.block_hash).await?;
         let auxpow = reconstructed
             .auxpow
             .as_deref()
@@ -196,15 +198,20 @@ async fn a_foreign_parent_retracts_only_its_own_blocks_event() -> Result<()> {
             ElastosHeightOutcome::NonBitcoinParent
         );
         let block_hash = block.reconstruct()?.block_hash.to_byte_array().to_vec();
+        let mut expected = vec![
+            (block_hash, "non_bitcoin_parent".to_owned(), false, false),
+            (sibling_hash.clone(), "near".to_owned(), true, true),
+        ];
+        expected.sort();
         assert_eq!(
             observations_at(&client, context.source_id(), height).await?,
-            vec![(block_hash, "non_bitcoin_parent".to_owned(), false, false)],
-            "only the block's exact child-side observation remains"
+            expected,
+            "the refused block keeps only its child-side observation; the sibling is untouched"
         );
         let remaining: Vec<Vec<u8>> = client
             .query(
                 "SELECT child_block_hash FROM merge_mining_event \
-                 WHERE source_id = $1 AND child_height = $2",
+                 WHERE source_id = $1 AND (child_height = $2 OR child_height IS NULL)",
                 &[&context.source_id(), &height],
             )
             .await?
@@ -477,6 +484,23 @@ fn writable_binance_elastos_block() -> ElastosBlock {
 }
 
 /// A hashless historical row for the block captured at `height`, with its observation.
+/// Store the block's exact event without a child height, as a hash-only identity.
+async fn clear_exact_event_height(
+    client: &Client,
+    source_id: i64,
+    block_hash: &BlockHash,
+) -> Result<()> {
+    client
+        .execute(
+            "UPDATE merge_mining_event SET child_height = NULL \
+             WHERE source_id = $1 AND child_block_hash = $2",
+            &[&source_id, &block_hash.to_byte_array().to_vec()],
+        )
+        .await
+        .context("clear the exact event's child height")?;
+    Ok(())
+}
+
 async fn seed_hashless_copy_of_block(client: &Client, source_id: i64, height: i32) -> Result<()> {
     client
         .execute(

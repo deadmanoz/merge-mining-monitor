@@ -95,6 +95,7 @@ pub(super) async fn load_active_events_for_tree(
         .unheighted_to
         .map(|date| epoch_start_of_day(date) + 86_399)
         .unwrap_or(0);
+    // Near rows skip the observation lookup: a near parent's tree node never shows a child pool.
     let rows = client
         .query(
             "SELECT e.id, e.source_id, s.code, s.kind, s.chain, e.child_height, \
@@ -104,7 +105,10 @@ pub(super) async fn load_active_events_for_tree(
                     cmp.id, cmp.slug, cmp.canonical_name \
              FROM merge_mining_event e \
              JOIN source s ON s.id = e.source_id \
-             LEFT JOIN pool cmp ON cmp.id = e.child_miner_pool_id \
+             LEFT JOIN child_block_observation o \
+                 ON o.id = CASE WHEN e.btc_parent_kind <> 'near' \
+                                THEN COALESCE(e.observation_id, e.id) END \
+             LEFT JOIN pool cmp ON cmp.id = o.child_pool_id \
              WHERE e.revoked_at IS NULL \
                AND ($1::boolean OR s.code = ANY($2::text[])) \
                AND ( \

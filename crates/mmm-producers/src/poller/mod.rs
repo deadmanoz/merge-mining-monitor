@@ -23,9 +23,13 @@ use mmm_read_model::{
     ReconcileReadModelConfig, is_reconcile_budget_exhausted, run_reconcile_read_model,
 };
 use mmm_rpc::{RpcMetrics, RpcMetricsSnapshot};
-use mmm_store::{load_poll_cursor, upsert_poll_cursor_with_target};
+use mmm_store::{load_poll_cursor, prune_child_chain_heads_below, upsert_poll_cursor_with_target};
 
 use crate::live_loop::{LiveProducer, TickOutcome, run_live_loop};
+
+/// Most `child_chain_head` rows one tick prunes. Each pruned row holds an advisory lock until
+/// the statement ends, so concurrent pollers stay well inside Postgres's shared lock table.
+const CHAIN_HEAD_PRUNE_BATCH: i64 = 250;
 
 #[cfg(test)]
 pub(crate) use crate::live_loop::{PollLoopDecision, wait_for_next_tick_or_shutdown};
@@ -283,11 +287,41 @@ impl<C: ChainPoller> Poller<C> {
         self.drain_pending_best_effort().await;
         let tip = self.fetch_tip_and_persist_target().await?;
         summary.tip = Some(tip);
-        let Some(window) = self.tick_window(tip) else {
-            return Ok(());
+        let result = match self.tick_window(tip) {
+            Some(window) => {
+                self.run_window_and_persist_progress(window, tip, summary)
+                    .await
+            }
+            None => Ok(()),
         };
-        self.run_window_and_persist_progress(window, tip, summary)
-            .await
+        self.prune_chain_heads_best_effort().await;
+        result
+    }
+
+    /// Drop `child_chain_head` rows the rescan window no longer reaches, a bounded batch per
+    /// tick so a long backlog drains over several ticks. While a start override is set, heads
+    /// from the override up stay: they prove the live replay reached the activation tip.
+    async fn prune_chain_heads_best_effort(&self) {
+        let rescan_floor = rescan_floor(self.cursor, self.config.reorg_depth);
+        let floor = self
+            .config
+            .start_height_override
+            .map_or(rescan_floor, |start| rescan_floor.min(start));
+        if let Err(err) = prune_child_chain_heads_below(
+            self.chain.client(),
+            self.chain.source_id(),
+            floor,
+            CHAIN_HEAD_PRUNE_BATCH,
+        )
+        .await
+        {
+            warn!(
+                chain = self.chain.name(),
+                floor,
+                error = %err,
+                "failed to prune child_chain_head; continuing"
+            );
+        }
     }
 
     fn log_starting(&self) {
@@ -566,6 +600,11 @@ struct TickWindow {
     end: i32,
 }
 
+/// The lowest height a tick's trailing rescan reaches from `cursor`.
+fn rescan_floor(cursor: i32, reorg_depth: i32) -> i32 {
+    cursor.saturating_add(1).saturating_sub(reorg_depth)
+}
+
 fn compute_tick_window(
     effective_start: i32,
     cursor: i32,
@@ -573,7 +612,7 @@ fn compute_tick_window(
     reorg_depth: i32,
     batch_size: i32,
 ) -> Option<TickWindow> {
-    let rescan_start = effective_start.max(cursor.saturating_add(1).saturating_sub(reorg_depth));
+    let rescan_start = effective_start.max(rescan_floor(cursor, reorg_depth));
     let end = tip.min(cursor.saturating_add(batch_size));
     if end < rescan_start {
         None
