@@ -2,7 +2,7 @@
 //!
 //! Promotes unresolved Elastos child attributions (`pool_id IS NULL`) whose
 //! persisted `(namespace, matched_value)` now matches a `pool_identity`,
-//! refreshing `merge_mining_event.child_miner_pool_id` without re-fetching blocks.
+//! refreshing the block observation's child pool without re-fetching blocks.
 
 use anyhow::{Context, Result};
 use tokio_postgres::Client;

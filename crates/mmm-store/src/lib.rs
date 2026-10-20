@@ -40,9 +40,8 @@ pub use chains::hathor::{
 #[cfg(any(test, feature = "db-integration"))]
 pub use chains::rsk::write_rsk_capture;
 pub use chains::rsk::{
-    RskBlockFacts, late_fill_rsk_pool_identity_id, record_rsk_child_only_block,
-    record_rsk_observation, upsert_rsk_only_pools, upsert_rsk_pool_identities,
-    upsert_rsk_pool_identities_with_policy, write_rsk_capture_in_txn,
+    RskBlockFacts, record_rsk_child_only_block, record_rsk_observation, upsert_rsk_only_pools,
+    upsert_rsk_pool_identities, upsert_rsk_pool_identities_with_policy, write_rsk_capture_in_txn,
 };
 pub use child_displacement::{
     ChildChainHead, ChildChainHeadOutcome, ChildChainHeadRecord, ChildDisplacementOutcome,
@@ -51,10 +50,13 @@ pub use child_displacement::{
     record_child_chain_block, record_child_chain_block_in_own_transaction,
     reobserve_child_chain_block_in_own_transaction,
 };
+// The bare event write, without attributions or a required transaction, is for tests.
+#[cfg(any(test, feature = "db-integration"))]
+pub use event::upsert_merge_mining_event;
 pub use event::{
     EventWriteDisposition, EventWriteOutcome, child_block_is_counted, delete_child_block_events,
     delete_event_pool_attributions_for_source, upsert_event_pool_attributions,
-    upsert_event_pool_attributions_without_stale_cleanup, upsert_merge_mining_event,
+    upsert_event_pool_attributions_without_stale_cleanup,
     upsert_merge_mining_event_with_attributions,
 };
 pub use historical_import::{

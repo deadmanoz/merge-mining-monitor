@@ -387,21 +387,31 @@ async fn crowd_window_with_error_blocks(client: &Client, ts: i64) -> Result<()> 
         .await?;
     client
         .execute(
-            "INSERT INTO merge_mining_event ( \
-                source_id, child_height, child_block_hash, child_block_time, \
+            "WITH o AS ( \
+                 INSERT INTO child_block_observation ( \
+                     source_id, child_height, child_block_hash, observation_kind, \
+                     child_block_time, pow_validates_child_target, btc_parent_header_hash, \
+                     recorded_at \
+                 ) \
+                 SELECT $2, 1000 + g, decode(lpad(to_hex(6000000 + g), 64, '0'), 'hex'), \
+                        'evidence', $1::bigint + g, TRUE, \
+                        decode(lpad(to_hex(5000000 + g), 64, '0'), 'hex'), $1::bigint + g \
+                 FROM generate_series(1, 468) AS g \
+                 RETURNING id, child_height - 1000 AS g) \
+             INSERT INTO merge_mining_event ( \
+                source_id, child_height, child_block_hash, \
                 btc_parent_header_hash, btc_parent_prev_header_hash, \
                 btc_parent_header_bytes, btc_parent_header_time, btc_parent_height, \
-                btc_parent_kind, pow_validates_btc_target, pow_validates_child_target, \
-                discovered_at, confirmed_at \
+                btc_parent_kind, pow_validates_btc_target, \
+                discovered_at, confirmed_at, observation_id \
              ) \
              SELECT $2, 1000 + g, decode(lpad(to_hex(6000000 + g), 64, '0'), 'hex'), \
-                    $1::bigint + g, \
                     decode(lpad(to_hex(5000000 + g), 64, '0'), 'hex'), \
                     decode(lpad(to_hex(4999999 + g), 64, '0'), 'hex'), \
                     decode(lpad(to_hex(5000000 + g), 160, '0'), 'hex'), \
-                    $1::bigint + g, 34 + (g % 33), 'error_block', TRUE, TRUE, \
-                    $1::bigint + g, $1::bigint + g \
-             FROM generate_series(1, 468) AS g",
+                    $1::bigint + g, 34 + (g % 33), 'error_block', TRUE, \
+                    $1::bigint + g, $1::bigint + g, o.id \
+             FROM o",
             &[&ts, &namecoin],
         )
         .await?;

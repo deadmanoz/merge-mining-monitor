@@ -338,7 +338,7 @@ pub(crate) fn ensure_live_core_lockstep(block: &BlockInput) -> Result<()> {
     Ok(())
 }
 
-/// Rebuild per-source `attestation_proof` rows for `hash` from non-`near` events.
+/// Rebuild per-source `attestation_proof` rows for `hash` from its events.
 /// Active sources reflect the active set; all-revoked sources retain historical
 /// evidence marked with the latest revocation.
 pub(crate) async fn rebuild_auxpow_proofs<C: GenericClient>(client: &C, hash: &[u8]) -> Result<()> {
@@ -356,7 +356,6 @@ pub(crate) async fn rebuild_auxpow_proofs<C: GenericClient>(client: &C, hash: &[
                     (array_agg(revocation_reason ORDER BY revoked_at DESC NULLS LAST, id ASC))[1] AS revocation_reason \
              FROM merge_mining_event \
              WHERE btc_parent_header_hash = $1 \
-               AND btc_parent_kind <> 'near' \
              GROUP BY source_id",
             &[&hash],
         )
@@ -441,8 +440,7 @@ async fn delete_proofs_without_evidence<C: GenericClient>(client: &C, hash: &[u8
                AND NOT EXISTS ( \
                    SELECT 1 FROM merge_mining_event e \
                    WHERE e.btc_parent_header_hash = $1 \
-                     AND e.source_id = ap.source_id \
-                     AND e.btc_parent_kind <> 'near')",
+                     AND e.source_id = ap.source_id)",
             &[&hash],
         )
         .await

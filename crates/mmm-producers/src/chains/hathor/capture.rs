@@ -546,9 +546,9 @@ async fn write_reconstructed(
 /// Gate `child_chain_head` updates against untrusted REST responses: where a block
 /// was captured at `height`, require `work.weight >= captured.weight - 2 * 0.25 * fork_depth`
 /// (`fork_depth = 1` when sharing a parent block, else `fork_window`). Where none was,
-/// the head is recorded only if no event other than a near is stored at the height (an
-/// imported event has no sidecar to hold work against), so the REST answer can displace
-/// observations and near events there but never Bitcoin-relevant evidence.
+/// the head is recorded only if no event is stored at the height (an imported event has no
+/// sidecar to hold work against), so the REST answer can displace observations there but
+/// never Bitcoin-relevant evidence.
 async fn may_record_current_block<C: GenericClient>(
     client: &C,
     context: &HathorCaptureContext,

@@ -122,7 +122,7 @@ fn historical_state_sql(
                 {error_block_reason}, e.id \
          FROM historical_event_provenance p \
          JOIN merge_mining_event e ON e.id = p.event_id \
-         LEFT JOIN child_block_observation o ON o.id = COALESCE(e.observation_id, e.id) \
+         JOIN child_block_observation o ON o.id = e.observation_id \
          LEFT JOIN rsk_merge_mining_evidence r ON r.event_id = e.id \
          LEFT JOIN LATERAL ( \
              SELECT ci.identifier FROM child_miner_identity ci \

@@ -83,25 +83,29 @@ pub struct EventSeed {
     pub pool_id: Option<i64>,
 }
 
+/// An event and the observation capture writes for it, linked; the seed's pool is both
+/// the event's Bitcoin-parent attribution and the observation's child pool.
 pub async fn insert_event(client: &Client, seed: EventSeed) -> Result<i64> {
+    anyhow::ensure!(
+        seed.kind != "near",
+        "a near has no event; seed it with insert_near_observation"
+    );
+    let observation_id = insert_seed_observation(client, &seed).await?;
     let event_id = client
         .query_one(
             "INSERT INTO merge_mining_event ( \
-                source_id, child_height, child_block_hash, child_block_time, child_miner_pool_id, \
+                source_id, child_height, child_block_hash, \
                 btc_parent_header_hash, btc_parent_prev_header_hash, btc_parent_header_bytes, \
                 btc_parent_header_time, btc_parent_height, btc_parent_kind, \
-                pow_validates_btc_target, pow_validates_child_target, \
-                discovered_at, confirmed_at \
+                pow_validates_btc_target, discovered_at, confirmed_at, observation_id \
              ) VALUES ( \
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, TRUE, $13, $13 \
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $7, $7, $11 \
              ) \
              RETURNING id",
             &[
                 &seed.source_id,
                 &seed.child_height,
                 &seed.child_hash,
-                &(seed.parent_time + seed.child_height as i64),
-                &seed.pool_id,
                 &seed.parent_hash,
                 &seed.prev_hash,
                 &header_bytes(&seed.parent_hash, &seed.prev_hash),
@@ -109,7 +113,7 @@ pub async fn insert_event(client: &Client, seed: EventSeed) -> Result<i64> {
                 &seed.btc_height,
                 &seed.kind,
                 &seed.pow_validates_btc_target,
-                &seed.parent_time,
+                &observation_id,
             ],
         )
         .await?
@@ -133,46 +137,45 @@ pub async fn insert_event(client: &Client, seed: EventSeed) -> Result<i64> {
             )
             .await?;
     }
-    link_event_observation(client, event_id).await?;
     Ok(event_id)
 }
 
-/// Give a directly inserted event the observation capture would have written for it, and link
-/// it, so readers that join events to observations see the seeded child evidence.
-async fn link_event_observation(client: &Client, event_id: i64) -> Result<()> {
-    client
-        .execute(
-            "WITH observation AS ( \
-                 INSERT INTO child_block_observation ( \
-                     source_id, child_height, child_block_hash, observation_kind, \
-                     child_block_time, child_header_bytes, child_nbits, child_prev_block_hash, \
-                     child_coinbase_txid, child_coinbase_script, child_coinbase_outputs, \
-                     pow_validates_child_target, child_displaced_at, child_displaced_by, \
-                     btc_parent_header_hash, btc_parent_header_bytes, btc_parent_header_time, \
-                     btc_parent_coinbase_txid, btc_parent_coinbase_script, \
-                     btc_parent_coinbase_outputs, recorded_at) \
-                 SELECT e.source_id, e.child_height, e.child_block_hash, \
-                        CASE WHEN e.btc_parent_kind = 'near' THEN 'near' ELSE 'evidence' END, \
-                        e.child_block_time, e.child_header_bytes, e.child_nbits, \
-                        substring(e.child_header_bytes FROM 5 FOR 32), \
-                        e.child_coinbase_txid, e.child_coinbase_script, e.child_coinbase_outputs, \
-                        e.pow_validates_child_target, e.child_displaced_at, e.child_displaced_by, \
-                        e.btc_parent_header_hash, \
-                        CASE WHEN e.btc_parent_kind = 'near' THEN e.btc_parent_header_bytes END, \
-                        CASE WHEN e.btc_parent_kind = 'near' THEN e.btc_parent_header_time END, \
-                        CASE WHEN e.btc_parent_kind = 'near' THEN e.btc_parent_coinbase_txid END, \
-                        CASE WHEN e.btc_parent_kind = 'near' THEN e.btc_parent_coinbase_script END, \
-                        CASE WHEN e.btc_parent_kind = 'near' THEN e.btc_parent_coinbase_outputs END, \
-                        e.discovered_at \
-                   FROM merge_mining_event e WHERE e.id = $1 \
-                 RETURNING id) \
-             UPDATE merge_mining_event SET observation_id = (SELECT id FROM observation) \
-              WHERE id = $1",
-            &[&event_id],
+/// A near parent as capture records it: the observation alone, keeping the parent header,
+/// with the seed's pool as both its child and parent pool.
+pub async fn insert_near_observation(client: &Client, seed: EventSeed) -> Result<i64> {
+    anyhow::ensure!(seed.kind == "near", "insert_near_observation seeds a near");
+    insert_seed_observation(client, &seed).await
+}
+
+async fn insert_seed_observation(client: &Client, seed: &EventSeed) -> Result<i64> {
+    let near = seed.kind == "near";
+    let near_header = near.then(|| header_bytes(&seed.parent_hash, &seed.prev_hash));
+    Ok(client
+        .query_one(
+            "INSERT INTO child_block_observation ( \
+                source_id, child_height, child_block_hash, observation_kind, child_block_time, \
+                pow_validates_child_target, btc_parent_header_hash, btc_parent_header_bytes, \
+                btc_parent_header_time, child_pool_id, btc_parent_pool_id, recorded_at \
+             ) VALUES ( \
+                $1, $2, $3, $4, $5, TRUE, $6, $7, $8, $9, $10, $11 \
+             ) \
+             RETURNING id",
+            &[
+                &seed.source_id,
+                &seed.child_height,
+                &seed.child_hash,
+                &if near { "near" } else { "evidence" },
+                &(seed.parent_time + i64::from(seed.child_height)),
+                &seed.parent_hash,
+                &near_header,
+                &near.then_some(seed.parent_time),
+                &seed.pool_id,
+                &seed.pool_id.filter(|_| near),
+                &seed.parent_time,
+            ],
         )
-        .await?;
-    mmm_store::sync_event_observation_attribution(client, event_id).await?;
-    Ok(())
+        .await?
+        .get(0))
 }
 
 pub async fn insert_block(

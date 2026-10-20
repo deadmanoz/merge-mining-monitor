@@ -20,7 +20,7 @@ use mmm_producers::chains::{
 use mmm_store::{
     CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, ChildChainHeadOutcome, ChildChainHeadRecord,
     CurrentBlockParent, EvidenceMarker, get_source_id, record_capture_error,
-    record_child_chain_block_in_own_transaction, upsert_merge_mining_event, write_capture,
+    record_child_chain_block_in_own_transaction, upsert_merge_mining_event,
 };
 use tokio_postgres::Client;
 
@@ -139,10 +139,10 @@ async fn terracoin_replay_failure_recovery_and_displacement() -> Result<()> {
         // The ordinary shared displacement path retains the earlier witness.
         let replacement = FixtureBitcoindRpc::carrying(height, non_auxpow_block());
         process_auxpow_height(&mut client, &replacement, &context, height).await?;
-        let row = client.query_one("SELECT child_displaced_by IS NOT NULL, revoked_at IS NULL FROM merge_mining_event WHERE source_id=21", &[]).await?;
+        let row = client.query_one("SELECT o.child_displaced_by IS NOT NULL, e.revoked_at IS NULL FROM merge_mining_event e JOIN child_block_observation o ON o.id = e.observation_id WHERE e.source_id=21", &[]).await?;
         assert!(row.get::<_, bool>(0) && row.get::<_, bool>(1));
         process_auxpow_height(&mut client, &rpc, &context, height).await?;
-        let row = client.query_one("SELECT child_displaced_by IS NULL, child_height FROM merge_mining_event WHERE source_id=21", &[]).await?;
+        let row = client.query_one("SELECT o.child_displaced_by IS NULL, e.child_height FROM merge_mining_event e JOIN child_block_observation o ON o.id = e.observation_id WHERE e.source_id=21", &[]).await?;
         assert!(row.get::<_, bool>(0));
         assert_eq!(row.get::<_, i32>(1), height);
         assert_eq!(advisory_locks_held(&client).await?, 0);
@@ -486,7 +486,7 @@ async fn rescan_with_a_matching_hash_still_displaces_an_imported_sibling() -> Re
         process_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
 
         let sibling_hash = [0x5b; 32];
-        let sibling = exact_observation("500001-near-parent", HEIGHT, sibling_hash, 2_030)?;
+        let sibling = crate::support::second_parent_event(HEIGHT, sibling_hash, 2_030)?;
         upsert_merge_mining_event(&client, source_id, &sibling).await?;
         assert!(
             displacement_at(&client, source_id, HEIGHT)
@@ -678,12 +678,12 @@ async fn an_open_capture_error_takes_the_full_capture_despite_a_final_head() -> 
         let outcome = rescan_auxpow_height(&mut client, &rpc, &context, height).await?;
         assert_eq!(outcome, RescanOutcome::Unchanged);
         steps.expect("Qbit unchanged final rescan", 1, 0);
-        let existing_id: i64 = client.query_one("UPDATE merge_mining_event SET child_coinbase_txid=NULL, child_coinbase_script=NULL, child_coinbase_outputs=NULL WHERE source_id=$1 RETURNING id", &[&source_id]).await?.get(0);
+        let existing_id: i64 = client.query_one("UPDATE child_block_observation o SET child_coinbase_txid=NULL, child_coinbase_script=NULL, child_coinbase_outputs=NULL FROM merge_mining_event e WHERE e.observation_id = o.id AND e.source_id=$1 RETURNING e.id", &[&source_id]).await?.get(0);
         for _ in 0..2 {
             process_auxpow_height(&mut client, &rpc, &context, height).await?;
             steps.expect("Qbit repeated capture", 2, 0);
         }
-        let stored = client.query_one("SELECT count(*), bool_and(child_coinbase_script IS NOT NULL), min(id) FROM merge_mining_event WHERE source_id=$1", &[&source_id]).await?;
+        let stored = client.query_one("SELECT count(*), bool_and(o.child_coinbase_script IS NOT NULL), min(e.id) FROM merge_mining_event e JOIN child_block_observation o ON o.id = e.observation_id WHERE e.source_id=$1", &[&source_id]).await?;
         assert_eq!(stored.get::<_, i64>(0), 1);
         assert!(stored.get::<_, bool>(1));
         assert_eq!(stored.get::<_, i64>(2), existing_id);
@@ -951,9 +951,10 @@ fn read_json_request(stream: &mut std::net::TcpStream) -> Option<serde_json::Val
 async fn assert_qbit_child_evidence(client: &Client, source_id: i64) -> Result<()> {
     let row = client
         .query_one(
-            "SELECT e.child_coinbase_txid IS NOT NULL, e.child_coinbase_script IS NOT NULL, \
-             e.child_coinbase_outputs IS NOT NULL, p.slug FROM merge_mining_event e \
-             LEFT JOIN pool p ON p.id=e.child_miner_pool_id WHERE e.source_id=$1",
+            "SELECT o.child_coinbase_txid IS NOT NULL, o.child_coinbase_script IS NOT NULL, \
+             o.child_coinbase_outputs IS NOT NULL, p.slug FROM merge_mining_event e \
+             JOIN child_block_observation o ON o.id = e.observation_id \
+             LEFT JOIN pool p ON p.id=o.child_pool_id WHERE e.source_id=$1",
             &[&source_id],
         )
         .await?;
@@ -1050,7 +1051,7 @@ async fn assert_qbit_body_held(
 
 #[tokio::test]
 async fn a_near_rewritten_without_its_parent_coinbase_keeps_it() -> Result<()> {
-    crate::run_db_test!(client, {
+    crate::run_mut_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         let (_, pool_ids_by_slug) = crate::support::default_pool_snapshot(&client).await?;
         let f2pool = pool_ids_by_slug["f2pool"];
@@ -1067,13 +1068,13 @@ async fn a_near_rewritten_without_its_parent_coinbase_keeps_it() -> Result<()> {
             confidence: PoolAttributionConfidence::High,
             details: serde_json::json!({}),
         });
-        write_capture(&client, source_id, &near).await?;
+        crate::support::write_capture_committed(&mut client, source_id, &near).await?;
         let mut bare = near.clone();
         bare.btc_parent_coinbase_txid = None;
         bare.btc_parent_coinbase_script = None;
         bare.btc_parent_coinbase_outputs = None;
         bare.pool_attributions.clear();
-        write_capture(&client, source_id, &bare).await?;
+        crate::support::write_capture_committed(&mut client, source_id, &bare).await?;
         let events: i64 = client
             .query_one(
                 "SELECT count(*) FROM merge_mining_event WHERE source_id = $1",
@@ -1103,7 +1104,7 @@ async fn a_near_rewritten_without_its_parent_coinbase_keeps_it() -> Result<()> {
         let mut other_parent = bare;
         other_parent.btc_parent_header_hash = vec![0x77; 32];
         assert!(
-            write_capture(&client, source_id, &other_parent)
+            crate::support::write_capture_committed(&mut client, source_id, &other_parent)
                 .await
                 .is_err(),
             "a child block commits to one parent"

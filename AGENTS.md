@@ -21,6 +21,7 @@ Use `just` targets, not raw commands, when a target exists:
 
 - **Crate ownership:** `mmm-pg` opens connections, `mmm-capture` owns offline parsing/resolution, `mmm-rpc` owns HTTP transport, `mmm-bitcoin-core` is the only Core RPC linker, `mmm-store` writes producer base tables, `mmm-read-model` writes derived tables, `mmm-producers` owns engines, and `mmm-api` serves read-only HTTP views without importing producer internals.
 - **Base vs derived tables (`docs/data-model.md`):** Producers write only `merge_mining_event`, `child_block_observation` (with its `child_miner_identity` dimension), 1:1 chain sidecars, attribution rows, and operational state (`poll_cursor`, `poll_pending_reconcile`, `capture_error`, and `child_chain_head`, pruned to each source's rescan window) through `mmm-store`; historical ingest attaches `historical_event_provenance` and operators import `known_stale_block`.
+  `merge_mining_event` holds only Bitcoin-relevant evidence linked to its observation; nears and blocks without a Bitcoin parent are observations only.
   `block`, `attestation_proof`, and `source_health` are derived exclusively through `mmm-read-model`.
 - **Error catalogue (`data/consensus/error_blocks.csv`):** A PoW-valid match (including reviewed body-invalid parents) is an `error_block` with `error_block_reason`, never stale or orphan evidence.
   Refresh both the historical manifest and error catalogue together via `just gen-research-publication-pins`.

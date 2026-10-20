@@ -1,13 +1,12 @@
 //! Child-side displacement: which block the child chain carries at a height.
 //!
-//! A child chain can replace the block it carries at a height. The event
-//! captured for the replaced block is still valid Bitcoin-side evidence, so it
-//! is never revoked for that reason; it is marked displaced instead, and every
+//! A child chain can replace the block it carries at a height. The replaced
+//! block's observation is marked displaced; an event backing it is still valid
+//! Bitcoin-side evidence, so it is never revoked for that reason, and every
 //! Bitcoin-side aggregate keeps reading it. See `docs/data-model.md`, "Child
 //! Displacement".
 
 use anyhow::{Context, Result, ensure};
-use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, GenericClient, Transaction};
 
 use mmm_capture::capture::ChildBlockObservation;
@@ -194,10 +193,10 @@ impl CurrentBlockParent<'_> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ChildDisplacementOutcome {
-    /// Events whose displacement was cleared because their block is the
+    /// Observed blocks whose displacement was cleared because the block is the
     /// chain's block at the height again.
     pub restored: u64,
-    /// Events newly marked displaced by the current block.
+    /// Observed blocks newly marked displaced by the current block.
     pub displaced: u64,
 }
 
@@ -293,8 +292,8 @@ pub async fn lock_child_chain_height(
 ///
 /// Under [`lock_child_chain_height`] (which callers that also upsert an event must acquire
 /// *before* the event upsert to avoid row-lock vs height-lock deadlocks), upserts
-/// `child_chain_head`, clears displacement on the matching event and observation, and marks any
-/// other undisplaced events and observations at the height as displaced at `observed_at`
+/// `child_chain_head`, clears displacement on the matching observation, and marks any other
+/// undisplaced observations at the height as displaced at `observed_at`
 /// (preserving first-displacement timestamps on already-displaced rows and handling hashless rows
 /// per [`CurrentBlockParent`]).
 pub async fn record_child_chain_block(
@@ -441,55 +440,46 @@ async fn apply_child_displacement(
 ) -> Result<ChildDisplacementOutcome> {
     let parent_hash = current_parent.parent_hash();
     let hashless_decidable = !matches!(current_parent, CurrentBlockParent::Unknown);
-    let params: [&(dyn ToSql + Sync); 6] = [
-        &source_id,
-        &child_height,
-        &current_block_hash,
-        &parent_hash,
-        &hashless_decidable,
-        &observed_at,
-    ];
+    // The current block (or its hashless row) is restored, every other undisplaced row is
+    // displaced, and already-displaced rows keep their first record.
     let rows = txn
-        .query(&displacement_sql("merge_mining_event"), &params)
+        .query(
+            "WITH candidate AS ( \
+                 SELECT id, \
+                        (COALESCE(child_block_hash = $3, FALSE) \
+                         OR (child_block_hash IS NULL \
+                             AND $4::bytea IS NOT NULL \
+                             AND btc_parent_header_hash = $4::bytea)) AS is_current \
+                 FROM child_block_observation \
+                 WHERE source_id = $1 AND child_height = $2 \
+                   AND NOT (child_block_hash IS NULL AND NOT $5::boolean) \
+             ) \
+             UPDATE child_block_observation t \
+             SET child_displaced_at = CASE WHEN c.is_current THEN NULL ELSE $6::bigint END, \
+                 child_displaced_by = CASE WHEN c.is_current THEN NULL ELSE $3::bytea END \
+             FROM candidate c \
+             WHERE t.id = c.id \
+               AND ( \
+                 (c.is_current AND t.child_displaced_at IS NOT NULL) \
+                 OR (NOT c.is_current AND t.child_displaced_at IS NULL) \
+               ) \
+             RETURNING t.child_displaced_at IS NULL AS restored",
+            &[
+                &source_id,
+                &child_height,
+                &current_block_hash,
+                &parent_hash,
+                &hashless_decidable,
+                &observed_at,
+            ],
+        )
         .await
         .context("record the child chain's current block")?;
-    // Observations carry the same displacement, including blocks without an event.
-    txn.execute(&displacement_sql("child_block_observation"), &params)
-        .await
-        .context("record the child chain's current block on its observations")?;
     let restored = rows.iter().filter(|row| row.get::<_, bool>(0)).count() as u64;
     Ok(ChildDisplacementOutcome {
         restored,
         displaced: rows.len() as u64 - restored,
     })
-}
-
-/// Set displacement on `table`'s rows at `(source_id, child_height)` against the chain's
-/// current block: the current block (or its hashless row) is restored, every other
-/// undisplaced row is displaced, and already-displaced rows keep their first record.
-fn displacement_sql(table: &str) -> String {
-    format!(
-        "WITH candidate AS ( \
-             SELECT id, \
-                    (COALESCE(child_block_hash = $3, FALSE) \
-                     OR (child_block_hash IS NULL \
-                         AND $4::bytea IS NOT NULL \
-                         AND btc_parent_header_hash = $4::bytea)) AS is_current \
-             FROM {table} \
-             WHERE source_id = $1 AND child_height = $2 \
-               AND NOT (child_block_hash IS NULL AND NOT $5::boolean) \
-         ) \
-         UPDATE {table} t \
-         SET child_displaced_at = CASE WHEN c.is_current THEN NULL ELSE $6::bigint END, \
-             child_displaced_by = CASE WHEN c.is_current THEN NULL ELSE $3::bytea END \
-         FROM candidate c \
-         WHERE t.id = c.id \
-           AND ( \
-             (c.is_current AND t.child_displaced_at IS NOT NULL) \
-             OR (NOT c.is_current AND t.child_displaced_at IS NULL) \
-           ) \
-         RETURNING t.child_displaced_at IS NULL AS restored"
-    )
 }
 
 /// [`record_child_chain_block`] in its own transaction for blocks that yield no event,

@@ -26,6 +26,8 @@ mod hathor_reward_replay;
 mod historical_ingest;
 #[path = "db_integration/known_stale.rs"]
 mod known_stale;
+#[path = "db_integration/migration_0034.rs"]
+mod migration_0034;
 #[path = "db_integration/mutation.rs"]
 mod mutation;
 #[path = "db_integration/orphan_classification.rs"]

@@ -1,11 +1,12 @@
-//! RSK producer base-table SQL: the event + `rsk_merge_mining_evidence` sidecar
-//! capture writers, and the RSK pool / `pool_identity` adapters over the generic
+//! RSK producer base-table SQL: the capture writer (the event with its
+//! `rsk_merge_mining_evidence` proof sidecar, or a near's observation, plus the block's RSK
+//! facts on its observation), and the RSK pool / `pool_identity` adapters over the generic
 //! `crate::pool` helpers.
 
 use std::collections::HashMap;
 
 use anyhow::{Context, Result, bail};
-use tokio_postgres::{Client, GenericClient};
+use tokio_postgres::{Client, GenericClient, Transaction};
 
 use mmm_capture::capture::{ChildBlockObservation, MergeMiningEventPayload, RskEvidencePayload};
 use mmm_capture::pool_resolver::{
@@ -19,8 +20,7 @@ use crate::pool::{
 use crate::{CaptureWrite, write_capture};
 
 /// Low-level fixture writer for one RSK block (canonical or uncle): opens its own
-/// transaction and upserts the shared `merge_mining_event` row plus the 1:1
-/// `rsk_merge_mining_evidence` sidecar.
+/// transaction and writes it as [`write_rsk_capture_in_txn`] does.
 ///
 /// TEST/FIXTURE ONLY: this bypasses `mmm_read_model::capture_in_txn`, so it does NOT
 /// maintain `source_health`. Production RSK capture goes through `capture_in_txn`
@@ -52,8 +52,8 @@ pub async fn write_rsk_capture(
 /// sidecar, or a near's observation alone, then the observation's RSK chain role and
 /// miner identity. Production RSK capture reaches this through `mmm_read_model::capture_in_txn`,
 /// which owns `source_health`; this fn writes only base rows.
-pub async fn write_rsk_capture_in_txn<C: GenericClient>(
-    client: &C,
+pub async fn write_rsk_capture_in_txn(
+    client: &Transaction<'_>,
     source_id: i64,
     payload: &MergeMiningEventPayload,
     evidence: &RskEvidencePayload,
@@ -66,6 +66,7 @@ pub async fn write_rsk_capture_in_txn<C: GenericClient>(
     Ok(write)
 }
 
+/// The event's RSK merge-mining proof; the block's own facts are on its observation.
 async fn upsert_rsk_evidence<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -74,21 +75,9 @@ async fn upsert_rsk_evidence<C: GenericClient>(
     let affected = client
         .execute(
             "INSERT INTO rsk_merge_mining_evidence ( \
-                event_id, rsk_block_hash, rsk_height, is_uncle, uncle_index, \
-                uncle_parent_height, rsk_miner, pool_identity_id, \
-                merge_mining_hash, merkle_proof, coinbase_tail, \
-                proof_format \
-             ) VALUES ( \
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12 \
-             ) \
+                event_id, merge_mining_hash, merkle_proof, coinbase_tail, proof_format \
+             ) VALUES ($1, $2, $3, $4, $5) \
              ON CONFLICT (event_id) DO UPDATE SET \
-                pool_identity_id = COALESCE( \
-                    rsk_merge_mining_evidence.pool_identity_id, \
-                    EXCLUDED.pool_identity_id \
-                ), \
-                is_uncle = EXCLUDED.is_uncle, \
-                uncle_index = EXCLUDED.uncle_index, \
-                uncle_parent_height = EXCLUDED.uncle_parent_height, \
                 merkle_proof = COALESCE( \
                     rsk_merge_mining_evidence.merkle_proof, \
                     EXCLUDED.merkle_proof \
@@ -97,14 +86,8 @@ async fn upsert_rsk_evidence<C: GenericClient>(
                     rsk_merge_mining_evidence.coinbase_tail, \
                     EXCLUDED.coinbase_tail \
                 ) \
-             WHERE rsk_merge_mining_evidence.rsk_block_hash = EXCLUDED.rsk_block_hash \
-               AND rsk_merge_mining_evidence.rsk_height = EXCLUDED.rsk_height \
-               AND rsk_merge_mining_evidence.rsk_miner = EXCLUDED.rsk_miner \
-               AND rsk_merge_mining_evidence.merge_mining_hash = EXCLUDED.merge_mining_hash \
+             WHERE rsk_merge_mining_evidence.merge_mining_hash = EXCLUDED.merge_mining_hash \
                AND rsk_merge_mining_evidence.proof_format = EXCLUDED.proof_format \
-               AND (rsk_merge_mining_evidence.pool_identity_id IS NULL \
-                    OR EXCLUDED.pool_identity_id IS NULL \
-                    OR rsk_merge_mining_evidence.pool_identity_id = EXCLUDED.pool_identity_id) \
                AND (rsk_merge_mining_evidence.merkle_proof IS NULL \
                     OR EXCLUDED.merkle_proof IS NULL \
                     OR rsk_merge_mining_evidence.merkle_proof = EXCLUDED.merkle_proof) \
@@ -113,13 +96,6 @@ async fn upsert_rsk_evidence<C: GenericClient>(
                     OR rsk_merge_mining_evidence.coinbase_tail = EXCLUDED.coinbase_tail)",
             &[
                 &event_id,
-                &evidence.rsk_block_hash,
-                &evidence.rsk_height,
-                &evidence.is_uncle,
-                &evidence.uncle_index,
-                &evidence.uncle_parent_height,
-                &evidence.rsk_miner,
-                &evidence.pool_identity_id,
                 &evidence.merge_mining_hash,
                 &evidence.merkle_proof,
                 &evidence.coinbase_tail,
@@ -147,8 +123,8 @@ pub struct RskBlockFacts<'a> {
 
 /// Record the RSK block's chain role, uncle placement, reported difficulty and
 /// miner on its observation, matched by the RSK block hash so a block whose parent the lineage
-/// gate refused (and that has no event) keeps them too. The sidecar's miner is the block's child
-/// identity even when the payload carried no child attribution (historical imports supply only
+/// gate refused (and that has no event) keeps them too. The miner is the block's child identity
+/// even when the payload carried no child attribution (historical imports supply only
 /// Bitcoin-parent matches).
 pub async fn record_rsk_observation<C: GenericClient>(
     client: &C,
@@ -204,7 +180,7 @@ async fn record_rsk_block_facts<C: GenericClient>(
     if let Some(miner) = miner.as_deref() {
         insert_child_identities(client, &[RSK_MINER_ADDRESS_NAMESPACE], &[miner]).await?;
     }
-    client
+    let updated = client
         .execute(
             "UPDATE child_block_observation o SET \
                 child_chain_role = CASE WHEN $3 THEN 'uncle' ELSE 'canonical' END, \
@@ -216,7 +192,11 @@ async fn record_rsk_block_facts<C: GenericClient>(
                         SELECT ci.id FROM child_miner_identity ci \
                         WHERE ci.namespace = $7 AND ci.identifier = $8)) \
                     AS merged(id) ORDER BY id) \
-             WHERE o.source_id = $1 AND o.child_block_hash = $2",
+             WHERE o.source_id = $1 AND o.child_block_hash = $2 \
+               AND NOT EXISTS ( \
+                   SELECT 1 FROM child_miner_identity ci \
+                    WHERE ci.id = ANY (o.child_identity_ids) \
+                      AND ci.namespace = $7 AND ci.identifier <> $8)",
             &[
                 &source_id,
                 &facts.rsk_block_hash,
@@ -230,6 +210,10 @@ async fn record_rsk_block_facts<C: GenericClient>(
         )
         .await
         .context("record the RSK block's chain role and miner on its observation")?;
+    // The RSK block hash commits to its miner.
+    if updated == 0 {
+        bail!("RSK block facts contradict the stored miner or have no observation");
+    }
     Ok(())
 }
 
@@ -291,27 +275,4 @@ pub async fn upsert_rsk_pool_identities_with_policy(
         "rerun with --overwrite to remap",
     )
     .await
-}
-
-/// Late-fill the RSK sidecar's pool identity pointer from a replayed miner
-/// registry match. This is intentionally one-way: unresolved or stale replay
-/// evidence must never erase or replace an already-recorded identity.
-pub async fn late_fill_rsk_pool_identity_id<C: GenericClient>(
-    client: &C,
-    event_id: i64,
-    pool_identity_id: i64,
-) -> Result<bool> {
-    let changed = client
-        .execute(
-            "UPDATE rsk_merge_mining_evidence \
-                SET pool_identity_id = $2 \
-              WHERE event_id = $1 \
-                AND pool_identity_id IS NULL",
-            &[&event_id, &pool_identity_id],
-        )
-        .await
-        .with_context(|| {
-            format!("late-fill rsk_merge_mining_evidence.pool_identity_id event={event_id}")
-        })?;
-    Ok(changed > 0)
 }

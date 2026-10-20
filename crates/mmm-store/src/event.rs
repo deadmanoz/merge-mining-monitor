@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, bail};
-use tokio_postgres::GenericClient;
 use tokio_postgres::types::Json;
+use tokio_postgres::{GenericClient, Transaction};
 
 use mmm_capture::capture::{
     CHILD_COINBASE_OUTPUT_SOURCE, CHILD_PAYOUT_REGISTRY_SOURCE, ChildBlockObservation,
@@ -13,8 +13,7 @@ use mmm_capture::capture::{
 };
 
 use crate::observation::{
-    fold_hashless_observation, link_event_observation, sync_observation_attribution,
-    write_event_observation,
+    fold_hashless_observation, sync_event_observation_attribution, write_event_observation,
 };
 
 /// How an event upsert changed the store's authenticated child-identity state.
@@ -102,11 +101,17 @@ impl ParentReadModelInput {
 /// reject contradictory non-null values. Parent-output text is the exception:
 /// it is a mutable publication projection, while the separately stored binary
 /// outputs and full coinbase transaction remain fail-closed evidence.
+///
+/// The event and its observation are separate statements, so callers write inside a
+/// transaction and a rejected write rolls back both.
 pub async fn upsert_merge_mining_event<C: GenericClient>(
     client: &C,
     source_id: i64,
     payload: &MergeMiningEventPayload,
 ) -> Result<EventWriteOutcome> {
+    if payload.btc_parent_kind == ParentKind::Near {
+        bail!("a near is recorded as an observation, not an event");
+    }
     if payload.child_block_hash.is_none() && payload.child_height.is_none() {
         bail!("merge-mining observation requires a child hash or child height");
     }
@@ -120,10 +125,11 @@ pub async fn upsert_merge_mining_event<C: GenericClient>(
                     matching_partial_event_id(client, source_id, child_height, payload).await?
             {
                 let event_id = promote_partial_event(client, id, payload).await?;
+                // The fold leaves the event linked to the observation of its hash, which the
+                // write then fills.
                 fold_hashless_observation(client, event_id).await?;
                 let observation_id =
                     write_event_observation(client, source_id, &observation).await?;
-                link_event_observation(client, event_id, observation_id).await?;
                 return Ok(EventWriteOutcome::new(
                     event_id,
                     observation_id,
@@ -173,8 +179,8 @@ async fn upsert_hashless_event<C: GenericClient>(
             // The hashless payload describes the exact event's block.
             observation.child_height = height.or(observation.child_height);
             observation.child_block_hash = Some(hash);
+            // The exact event is already linked to this block's observation.
             let observation_id = write_event_observation(client, source_id, &observation).await?;
-            link_event_observation(client, *id, observation_id).await?;
             Ok(EventWriteOutcome::new(
                 *id,
                 observation_id,
@@ -277,47 +283,29 @@ async fn promote_partial_event<C: GenericClient>(
     event_id: i64,
     payload: &MergeMiningEventPayload,
 ) -> Result<i64> {
-    let child_nbits = payload.child_nbits.map(i64::from);
     let row = client
         .query_opt(
             "UPDATE merge_mining_event SET \
                 child_block_hash = $2, \
-                child_header_bytes = COALESCE(child_header_bytes, $3), \
-                child_block_time = COALESCE(child_block_time, $4), \
-                child_nbits = COALESCE(child_nbits, $5), \
-                pow_validates_child_target = COALESCE(pow_validates_child_target, $17), \
-                confirmed_at = GREATEST(confirmed_at, $6), \
-                child_coinbase_txid = COALESCE(child_coinbase_txid, $7), \
-                child_coinbase_script = COALESCE(child_coinbase_script, $8), \
-                child_coinbase_outputs = COALESCE(child_coinbase_outputs, $9), \
-                btc_parent_coinbase_txid = COALESCE(btc_parent_coinbase_txid, $10), \
-                btc_parent_coinbase_script = COALESCE(btc_parent_coinbase_script, $11), \
-                btc_parent_coinbase_outputs = COALESCE(btc_parent_coinbase_outputs, $12), \
-                btc_parent_coinbase_outputs_text = COALESCE($13, btc_parent_coinbase_outputs_text), \
-                btc_parent_coinbase_tx_bytes = COALESCE(btc_parent_coinbase_tx_bytes, $14), \
-                aux_merkle_proof = COALESCE(aux_merkle_proof, $15) \
+                confirmed_at = GREATEST(confirmed_at, $3), \
+                btc_parent_coinbase_txid = COALESCE(btc_parent_coinbase_txid, $4), \
+                btc_parent_coinbase_script = COALESCE(btc_parent_coinbase_script, $5), \
+                btc_parent_coinbase_outputs = COALESCE(btc_parent_coinbase_outputs, $6), \
+                btc_parent_coinbase_outputs_text = COALESCE($7, btc_parent_coinbase_outputs_text), \
+                btc_parent_coinbase_tx_bytes = COALESCE(btc_parent_coinbase_tx_bytes, $8), \
+                aux_merkle_proof = COALESCE(aux_merkle_proof, $9) \
              WHERE id = $1 \
                AND child_block_hash IS NULL \
-               AND btc_parent_header_bytes = $16 \
-               AND (child_header_bytes IS NULL OR $3::bytea IS NULL OR child_header_bytes = $3) \
-               AND (child_block_time IS NULL OR $4::bigint IS NULL OR child_block_time = $4) \
-               AND (child_nbits IS NULL OR $5::bigint IS NULL OR child_nbits = $5) \
-               AND (pow_validates_child_target IS NULL OR $17::boolean IS NULL OR pow_validates_child_target = $17) \
-               AND (btc_parent_coinbase_txid IS NULL OR $10::bytea IS NULL OR btc_parent_coinbase_txid = $10) \
-               AND (btc_parent_coinbase_script IS NULL OR $11::bytea IS NULL OR btc_parent_coinbase_script = $11) \
-               AND (btc_parent_coinbase_outputs IS NULL OR $12::bytea IS NULL OR btc_parent_coinbase_outputs = $12) \
-               AND (btc_parent_coinbase_tx_bytes IS NULL OR $14::bytea IS NULL OR btc_parent_coinbase_tx_bytes = $14) \
+               AND btc_parent_header_bytes = $10 \
+               AND (btc_parent_coinbase_txid IS NULL OR $4::bytea IS NULL OR btc_parent_coinbase_txid = $4) \
+               AND (btc_parent_coinbase_script IS NULL OR $5::bytea IS NULL OR btc_parent_coinbase_script = $5) \
+               AND (btc_parent_coinbase_outputs IS NULL OR $6::bytea IS NULL OR btc_parent_coinbase_outputs = $6) \
+               AND (btc_parent_coinbase_tx_bytes IS NULL OR $8::bytea IS NULL OR btc_parent_coinbase_tx_bytes = $8) \
              RETURNING id",
             &[
                 &event_id,
                 &payload.child_block_hash,
-                &payload.child_header_bytes,
-                &payload.child_block_time,
-                &child_nbits,
                 &payload.confirmed_at,
-                &payload.child_coinbase_txid,
-                &payload.child_coinbase_script,
-                &payload.child_coinbase_outputs,
                 &payload.btc_parent_coinbase_txid,
                 &payload.btc_parent_coinbase_script,
                 &payload.btc_parent_coinbase_outputs,
@@ -325,7 +313,6 @@ async fn promote_partial_event<C: GenericClient>(
                 &payload.btc_parent_coinbase_tx_bytes,
                 &payload.aux_merkle_proof,
                 &payload.btc_parent_header_bytes,
-                &payload.pow_validates_child_target,
             ],
         )
         .await
@@ -351,21 +338,10 @@ async fn fill_existing_event<C: GenericClient>(
                 btc_parent_coinbase_outputs = COALESCE(btc_parent_coinbase_outputs, $5), \
                 btc_parent_coinbase_outputs_text = COALESCE($6, btc_parent_coinbase_outputs_text), \
                 btc_parent_coinbase_tx_bytes = COALESCE(btc_parent_coinbase_tx_bytes, $7), \
-                child_header_bytes = COALESCE(child_header_bytes, $16), \
-                child_block_time = COALESCE(child_block_time, $8), \
-                child_nbits = COALESCE(child_nbits, $9), \
-                pow_validates_child_target = COALESCE(pow_validates_child_target, $17), \
-                child_coinbase_txid = COALESCE(child_coinbase_txid, $10), \
-                child_coinbase_script = COALESCE(child_coinbase_script, $11), \
-                child_coinbase_outputs = COALESCE(child_coinbase_outputs, $12), \
-                aux_merkle_proof = COALESCE(aux_merkle_proof, $13) \
+                aux_merkle_proof = COALESCE(aux_merkle_proof, $8) \
              WHERE id = $1 \
-               AND btc_parent_header_hash = $14 \
-               AND btc_parent_header_bytes = $15 \
-               AND (child_header_bytes IS NULL OR $16::bytea IS NULL OR child_header_bytes = $16) \
-               AND (child_block_time IS NULL OR $8::bigint IS NULL OR child_block_time = $8) \
-               AND (child_nbits IS NULL OR $9::bigint IS NULL OR child_nbits = $9) \
-               AND (pow_validates_child_target IS NULL OR $17::boolean IS NULL OR pow_validates_child_target = $17) \
+               AND btc_parent_header_hash = $9 \
+               AND btc_parent_header_bytes = $10 \
                AND (btc_parent_coinbase_txid IS NULL OR $3::bytea IS NULL OR btc_parent_coinbase_txid = $3) \
                AND (btc_parent_coinbase_script IS NULL OR $4::bytea IS NULL OR btc_parent_coinbase_script = $4) \
                AND (btc_parent_coinbase_outputs IS NULL OR $5::bytea IS NULL OR btc_parent_coinbase_outputs = $5) \
@@ -379,16 +355,9 @@ async fn fill_existing_event<C: GenericClient>(
                 &payload.btc_parent_coinbase_outputs,
                 &payload.btc_parent_coinbase_outputs_text,
                 &payload.btc_parent_coinbase_tx_bytes,
-                &payload.child_block_time,
-                &payload.child_nbits.map(i64::from),
-                &payload.child_coinbase_txid,
-                &payload.child_coinbase_script,
-                &payload.child_coinbase_outputs,
                 &payload.aux_merkle_proof,
                 &payload.btc_parent_header_hash,
                 &payload.btc_parent_header_bytes,
-                &payload.child_header_bytes,
-                &payload.pow_validates_child_target,
             ],
         )
         .await
@@ -410,7 +379,6 @@ async fn insert_event<C: GenericClient>(
     // The observation is written first, so a new event is inserted already linked.
     let observation_id = write_event_observation(client, source_id, observation).await?;
     let btc_parent_kind = payload.btc_parent_kind.as_db_str();
-    let child_nbits = payload.child_nbits.map(i64::from);
     let sql = insert_event_sql(identity_conflict_clause(exactness));
     let preserve_observation_time = payload.historical_provenance.is_some();
     let row = client
@@ -420,9 +388,6 @@ async fn insert_event<C: GenericClient>(
                 &source_id,
                 &payload.child_height,
                 &payload.child_block_hash,
-                &payload.child_header_bytes,
-                &payload.child_block_time,
-                &child_nbits,
                 &payload.btc_parent_header_hash,
                 &payload.btc_parent_prev_header_hash,
                 &payload.btc_parent_header_bytes,
@@ -430,16 +395,12 @@ async fn insert_event<C: GenericClient>(
                 &payload.btc_parent_height,
                 &btc_parent_kind,
                 &payload.pow_validates_btc_target,
-                &payload.pow_validates_child_target,
                 &payload.difficulty_epoch_ok,
                 &payload.btc_parent_coinbase_txid,
                 &payload.btc_parent_coinbase_script,
                 &payload.btc_parent_coinbase_outputs,
                 &payload.btc_parent_coinbase_outputs_text,
                 &payload.btc_parent_coinbase_tx_bytes,
-                &payload.child_coinbase_txid,
-                &payload.child_coinbase_script,
-                &payload.child_coinbase_outputs,
                 &payload.aux_merkle_proof,
                 &payload.discovered_at,
                 &payload.confirmed_at,
@@ -467,49 +428,34 @@ async fn insert_event<C: GenericClient>(
 fn insert_event_sql(conflict: &str) -> String {
     format!(
         "INSERT INTO merge_mining_event ( \
-            source_id, child_height, child_block_hash, child_header_bytes, \
-            child_block_time, child_nbits, \
+            source_id, child_height, child_block_hash, \
             btc_parent_header_hash, btc_parent_prev_header_hash, \
             btc_parent_header_bytes, btc_parent_header_time, \
             btc_parent_height, btc_parent_kind, \
-            pow_validates_btc_target, pow_validates_child_target, \
-            difficulty_epoch_ok, btc_parent_coinbase_txid, \
+            pow_validates_btc_target, difficulty_epoch_ok, btc_parent_coinbase_txid, \
             btc_parent_coinbase_script, btc_parent_coinbase_outputs, \
             btc_parent_coinbase_outputs_text, btc_parent_coinbase_tx_bytes, \
-            child_coinbase_txid, child_coinbase_script, child_coinbase_outputs, \
             aux_merkle_proof, discovered_at, confirmed_at, revoked_at, revocation_reason, \
             observation_id \
          ) VALUES ( \
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, \
-            $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, \
-            $21, $22, $23, $24, $25, $26, $27, $28, $30 \
+            $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $23 \
          ) \
          {conflict} \
             observation_id = EXCLUDED.observation_id, \
-            confirmed_at = CASE WHEN $29 \
+            confirmed_at = CASE WHEN $22 \
                 THEN merge_mining_event.confirmed_at \
                 ELSE GREATEST(merge_mining_event.confirmed_at, EXCLUDED.confirmed_at) END, \
             child_height = COALESCE(merge_mining_event.child_height, EXCLUDED.child_height), \
-            child_header_bytes = COALESCE(merge_mining_event.child_header_bytes, EXCLUDED.child_header_bytes), \
-            child_block_time = COALESCE(merge_mining_event.child_block_time, EXCLUDED.child_block_time), \
-            child_nbits = COALESCE(merge_mining_event.child_nbits, EXCLUDED.child_nbits), \
-            pow_validates_child_target = COALESCE(merge_mining_event.pow_validates_child_target, EXCLUDED.pow_validates_child_target), \
             btc_parent_coinbase_txid = COALESCE(merge_mining_event.btc_parent_coinbase_txid, EXCLUDED.btc_parent_coinbase_txid), \
             btc_parent_coinbase_script = COALESCE(merge_mining_event.btc_parent_coinbase_script, EXCLUDED.btc_parent_coinbase_script), \
             btc_parent_coinbase_outputs = COALESCE(merge_mining_event.btc_parent_coinbase_outputs, EXCLUDED.btc_parent_coinbase_outputs), \
             btc_parent_coinbase_outputs_text = COALESCE(EXCLUDED.btc_parent_coinbase_outputs_text, merge_mining_event.btc_parent_coinbase_outputs_text), \
             btc_parent_coinbase_tx_bytes = COALESCE(merge_mining_event.btc_parent_coinbase_tx_bytes, EXCLUDED.btc_parent_coinbase_tx_bytes), \
-            child_coinbase_txid = COALESCE(merge_mining_event.child_coinbase_txid, EXCLUDED.child_coinbase_txid), \
-            child_coinbase_script = COALESCE(merge_mining_event.child_coinbase_script, EXCLUDED.child_coinbase_script), \
-            child_coinbase_outputs = COALESCE(merge_mining_event.child_coinbase_outputs, EXCLUDED.child_coinbase_outputs), \
             aux_merkle_proof = COALESCE(merge_mining_event.aux_merkle_proof, EXCLUDED.aux_merkle_proof) \
          WHERE merge_mining_event.btc_parent_header_hash = EXCLUDED.btc_parent_header_hash \
            AND merge_mining_event.btc_parent_header_bytes = EXCLUDED.btc_parent_header_bytes \
            AND (merge_mining_event.child_height IS NULL OR EXCLUDED.child_height IS NULL OR merge_mining_event.child_height = EXCLUDED.child_height) \
-           AND (merge_mining_event.child_header_bytes IS NULL OR EXCLUDED.child_header_bytes IS NULL OR merge_mining_event.child_header_bytes = EXCLUDED.child_header_bytes) \
-           AND (merge_mining_event.child_block_time IS NULL OR EXCLUDED.child_block_time IS NULL OR merge_mining_event.child_block_time = EXCLUDED.child_block_time) \
-           AND (merge_mining_event.child_nbits IS NULL OR EXCLUDED.child_nbits IS NULL OR merge_mining_event.child_nbits = EXCLUDED.child_nbits) \
-           AND (merge_mining_event.pow_validates_child_target IS NULL OR EXCLUDED.pow_validates_child_target IS NULL OR merge_mining_event.pow_validates_child_target = EXCLUDED.pow_validates_child_target) \
            AND (merge_mining_event.btc_parent_coinbase_txid IS NULL OR EXCLUDED.btc_parent_coinbase_txid IS NULL OR merge_mining_event.btc_parent_coinbase_txid = EXCLUDED.btc_parent_coinbase_txid) \
            AND (merge_mining_event.btc_parent_coinbase_script IS NULL OR EXCLUDED.btc_parent_coinbase_script IS NULL OR merge_mining_event.btc_parent_coinbase_script = EXCLUDED.btc_parent_coinbase_script) \
            AND (merge_mining_event.btc_parent_coinbase_outputs IS NULL OR EXCLUDED.btc_parent_coinbase_outputs IS NULL OR merge_mining_event.btc_parent_coinbase_outputs = EXCLUDED.btc_parent_coinbase_outputs) \
@@ -549,14 +495,11 @@ fn event_write_outcome(
 /// Upsert the event row, its child block observation, its complete pool-attribution
 /// snapshot (pruning absent rows per source), and optional historical provenance. A near
 /// has no event: capture records it through [`write_capture`].
-pub async fn upsert_merge_mining_event_with_attributions<C: GenericClient>(
-    client: &C,
+pub async fn upsert_merge_mining_event_with_attributions(
+    client: &Transaction<'_>,
     source_id: i64,
     payload: &MergeMiningEventPayload,
 ) -> Result<EventWriteOutcome> {
-    if payload.btc_parent_kind == ParentKind::Near {
-        bail!("a near is recorded as an observation, not an event");
-    }
     let outcome = upsert_merge_mining_event(client, source_id, payload).await?;
     upsert_event_pool_attributions(
         client,
@@ -568,7 +511,7 @@ pub async fn upsert_merge_mining_event_with_attributions<C: GenericClient>(
     if let Some(provenance) = &payload.historical_provenance {
         upsert_historical_event_provenance(client, outcome.event_id, provenance).await?;
     }
-    sync_observation_attribution(client, outcome.event_id, outcome.observation_id).await?;
+    sync_event_observation_attribution(client, outcome.event_id).await?;
     Ok(outcome)
 }
 
@@ -670,7 +613,7 @@ async fn ensure_error_observation_coordinate_identity<C: GenericClient>(
 }
 
 /// Apply a complete pool-attribution snapshot for an event (pruning absent keys per touched source,
-/// unioning child-payout sources) and refresh `child_miner_pool_id`.
+/// unioning child-payout sources).
 ///
 /// Callers run [`crate::sync_event_observation_attribution`] once per event after their
 /// last attribution write, so the event's observation follows.
@@ -681,11 +624,10 @@ pub async fn upsert_event_pool_attributions<C: GenericClient>(
     observed_at: i64,
 ) -> Result<()> {
     delete_stale_event_pool_attributions_for_sources(client, event_id, attributions).await?;
-    upsert_event_pool_attribution_rows(client, event_id, attributions, observed_at).await?;
-    refresh_event_child_miner_pool_id(client, event_id).await
+    upsert_event_pool_attribution_rows(client, event_id, attributions, observed_at).await
 }
 
-/// Upsert attribution rows without deleting absent rows for the same source, then refresh `child_miner_pool_id`.
+/// Upsert attribution rows without deleting absent rows for the same source.
 ///
 /// Callers run [`crate::sync_event_observation_attribution`] once per event after their
 /// last attribution write, so the event's observation follows.
@@ -695,8 +637,7 @@ pub async fn upsert_event_pool_attributions_without_stale_cleanup<C: GenericClie
     attributions: &[EventPoolAttribution],
     observed_at: i64,
 ) -> Result<()> {
-    upsert_event_pool_attribution_rows(client, event_id, attributions, observed_at).await?;
-    refresh_event_child_miner_pool_id(client, event_id).await
+    upsert_event_pool_attribution_rows(client, event_id, attributions, observed_at).await
 }
 
 /// Upsert `event_pool_attribution` rows without letting an unknown (`pool_id IS NULL`) re-capture
@@ -784,31 +725,6 @@ async fn upsert_event_pool_attribution_rows<C: GenericClient>(
     Ok(())
 }
 
-/// Recompute `merge_mining_event.child_miner_pool_id` (unique known `child_block` pool, else `NULL`).
-async fn refresh_event_child_miner_pool_id<C: GenericClient>(
-    client: &C,
-    event_id: i64,
-) -> Result<()> {
-    client
-        .execute(
-            "UPDATE merge_mining_event \
-             SET child_miner_pool_id = ( \
-                SELECT CASE WHEN count(DISTINCT pool_id) = 1 \
-                            THEN min(pool_id) \
-                            ELSE NULL END \
-                FROM event_pool_attribution \
-                WHERE event_id = $1 \
-                  AND side = 'child_block' \
-                  AND pool_id IS NOT NULL \
-             ) \
-             WHERE id = $1",
-            &[&event_id],
-        )
-        .await
-        .with_context(|| format!("refresh child miner pool for event {event_id}"))?;
-    Ok(())
-}
-
 async fn delete_stale_event_pool_attributions_for_sources<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -883,7 +799,7 @@ fn is_child_payout_source(source: &str) -> bool {
     )
 }
 
-/// Delete all `event_pool_attribution` rows for `(event_id, side, source)` and refresh `child_miner_pool_id`.
+/// Delete all `event_pool_attribution` rows for `(event_id, side, source)`.
 pub async fn delete_event_pool_attributions_for_source<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -901,7 +817,6 @@ pub async fn delete_event_pool_attributions_for_source<C: GenericClient>(
         .with_context(|| {
             format!("delete {source} {side} pool attributions for event {event_id}")
         })?;
-    refresh_event_child_miner_pool_id(client, event_id).await?;
     Ok(())
 }
 
@@ -940,7 +855,7 @@ pub async fn child_block_is_counted<C: GenericClient>(
 }
 
 /// Delete one child block's events (matched as [`child_block_is_counted`] matches them) and
-/// its hashless observations; the caller rewrites its exact observation.
+/// their hashless observations; the caller rewrites its exact observation.
 pub async fn delete_child_block_events<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -948,13 +863,20 @@ pub async fn delete_child_block_events<C: GenericClient>(
     child_block_hash: &[u8],
     btc_parent_header_hash: &[u8],
 ) -> Result<u64> {
-    let deleted = client
-        .execute(
-            "DELETE FROM merge_mining_event \
-              WHERE source_id = $1 \
-                AND (child_block_hash = $3 \
-                     OR (child_block_hash IS NULL AND child_height = $2 \
-                         AND btc_parent_header_hash = $4))",
+    let deleted: i64 = client
+        .query_one(
+            "WITH deleted AS ( \
+                 DELETE FROM merge_mining_event \
+                  WHERE source_id = $1 \
+                    AND (child_block_hash = $3 \
+                         OR (child_block_hash IS NULL AND child_height = $2 \
+                             AND btc_parent_header_hash = $4)) \
+                 RETURNING observation_id \
+             ), hashless AS ( \
+                 DELETE FROM child_block_observation o USING deleted d \
+                  WHERE o.id = d.observation_id AND o.child_block_hash IS NULL \
+             ) \
+             SELECT count(*) FROM deleted",
             &[
                 &source_id,
                 &height,
@@ -963,15 +885,7 @@ pub async fn delete_child_block_events<C: GenericClient>(
             ],
         )
         .await
-        .context("delete events for child block")?;
-    client
-        .execute(
-            "DELETE FROM child_block_observation \
-             WHERE source_id = $1 AND child_height = $2 \
-               AND child_block_hash IS NULL AND btc_parent_header_hash = $3",
-            &[&source_id, &height, &btc_parent_header_hash],
-        )
-        .await
-        .context("delete hashless observations for child block")?;
-    Ok(deleted)
+        .context("delete events for child block")?
+        .get(0);
+    Ok(u64::try_from(deleted)?)
 }

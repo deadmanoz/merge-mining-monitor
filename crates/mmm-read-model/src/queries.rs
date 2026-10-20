@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Aggregate active (non-`near`, non-revoked) auxpow attestations for a parent.
+/// Aggregate active (non-revoked) auxpow attestations for a parent.
 /// Returns `None` when no active event references `hash`.
 pub(crate) async fn load_parent_rollup<C: GenericClient>(
     client: &C,
@@ -15,7 +15,6 @@ pub(crate) async fn load_parent_rollup<C: GenericClient>(
                 FROM merge_mining_event e \
                 JOIN source s ON s.id = e.source_id \
                 WHERE e.btc_parent_header_hash = $1 \
-                  AND e.btc_parent_kind <> 'near' \
                   AND e.revoked_at IS NULL \
              ) \
              SELECT count(*)::int, \
@@ -66,7 +65,6 @@ pub(crate) async fn load_representative_active_event<C: GenericClient>(
                     btc_parent_coinbase_script, btc_parent_coinbase_outputs \
              FROM merge_mining_event \
              WHERE btc_parent_header_hash = $1 \
-               AND btc_parent_kind <> 'near' \
                AND revoked_at IS NULL \
              ORDER BY (btc_parent_coinbase_script IS NULL), child_height NULLS LAST, id \
              LIMIT 1",
@@ -89,7 +87,6 @@ pub(crate) async fn ensure_active_parent_headers_match<C: GenericClient>(
             "SELECT id \
              FROM merge_mining_event \
              WHERE btc_parent_header_hash = $1 \
-               AND btc_parent_kind <> 'near' \
                AND revoked_at IS NULL \
                AND btc_parent_header_bytes <> $2 \
              LIMIT 1",
@@ -186,13 +183,12 @@ pub(crate) fn parent_kind_from_db(value: &str) -> Result<ParentKind> {
         "canonical" => Ok(ParentKind::Canonical),
         "stale" => Ok(ParentKind::Stale),
         "error_block" => Ok(ParentKind::ErrorBlock),
-        "near" => Ok(ParentKind::Near),
         "unknown" => Ok(ParentKind::Unknown),
         other => bail!("unknown merge_mining_event.btc_parent_kind {other:?}"),
     }
 }
 
-/// Lowest-`child_height`/`id` active non-`near` event attesting `hash`.
+/// Lowest-`child_height`/`id` active event attesting `hash`.
 pub(crate) async fn find_anchor_event_for_block<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -202,7 +198,6 @@ pub(crate) async fn find_anchor_event_for_block<C: GenericClient>(
             "SELECT id \
              FROM merge_mining_event \
              WHERE btc_parent_header_hash = $1 \
-               AND btc_parent_kind <> 'near' \
                AND revoked_at IS NULL \
              ORDER BY child_height NULLS LAST, id \
              LIMIT 1",
@@ -213,7 +208,7 @@ pub(crate) async fn find_anchor_event_for_block<C: GenericClient>(
     Ok(row.map(|row| row.get(0)))
 }
 
-/// Active, PoW-validating non-`near` events whose parent `prev_hash` equals `hash`.
+/// Active, PoW-validating events whose parent `prev_hash` equals `hash`.
 pub(crate) async fn find_child_events<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -223,7 +218,6 @@ pub(crate) async fn find_child_events<C: GenericClient>(
             "SELECT id \
              FROM merge_mining_event \
              WHERE btc_parent_prev_header_hash = $1 \
-               AND btc_parent_kind <> 'near' \
                AND pow_validates_btc_target \
                AND revoked_at IS NULL \
              ORDER BY child_height NULLS LAST, id",
@@ -278,8 +272,7 @@ pub(crate) enum ReconcileCandidate {
 const RECONCILE_CANDIDATES_SQL: &str = "WITH parent_scope AS ( \
                 SELECT e.btc_parent_header_hash, COALESCE(min(e.child_height)::bigint, 2147483648::bigint) AS sort_child_height, min(e.id) AS sort_event_id \
                 FROM merge_mining_event e \
-                WHERE e.btc_parent_kind <> 'near' \
-                  AND e.revoked_at IS NULL \
+                WHERE e.revoked_at IS NULL \
                   AND ($1::int IS NULL OR e.child_height >= $1) \
                   AND ($2::int IS NULL OR e.child_height <= $2) \
                   AND ($3::bigint IS NULL OR e.source_id = $3) \
@@ -293,7 +286,7 @@ const RECONCILE_CANDIDATES_SQL: &str = "WITH parent_scope AS ( \
                        bool_or(e.difficulty_epoch_ok) AS difficulty_epoch_ok \
                 FROM merge_mining_event e \
                 JOIN source s ON s.id = e.source_id \
-                WHERE e.btc_parent_kind <> 'near' AND e.revoked_at IS NULL \
+                WHERE e.revoked_at IS NULL \
                 GROUP BY e.btc_parent_header_hash \
              ), representative_source AS ( \
                 SELECT DISTINCT ON (e.btc_parent_header_hash) \
@@ -303,8 +296,7 @@ const RECONCILE_CANDIDATES_SQL: &str = "WITH parent_scope AS ( \
                 JOIN parent_scope ps ON ps.btc_parent_header_hash = e.btc_parent_header_hash \
                 LEFT JOIN block b ON b.btc_header_hash = e.btc_parent_header_hash \
                 LEFT JOIN block canonical_b ON canonical_b.btc_header_hash = b.canonical_competitor_hash \
-                WHERE e.btc_parent_kind <> 'near' \
-                  AND e.revoked_at IS NULL \
+                WHERE e.revoked_at IS NULL \
                 ORDER BY e.btc_parent_header_hash, e.child_height NULLS LAST, e.id \
              ), representative_event AS ( \
                 SELECT btc_parent_header_hash, expected_kind, \
@@ -325,7 +317,7 @@ const RECONCILE_CANDIDATES_SQL: &str = "WITH parent_scope AS ( \
              ), proof_scope AS ( \
                 SELECT e.btc_parent_header_hash, e.source_id, jsonb_agg(e.id ORDER BY e.id) AS ids \
                 FROM merge_mining_event e \
-                WHERE e.btc_parent_kind <> 'near' AND e.revoked_at IS NULL \
+                WHERE e.revoked_at IS NULL \
                 GROUP BY e.btc_parent_header_hash, e.source_id \
              ), event_candidates AS ( \
                 SELECT 'event'::text AS kind, min(e.id) AS event_id, NULL::bytea AS hash, \
@@ -340,7 +332,7 @@ const RECONCILE_CANDIDATES_SQL: &str = "WITH parent_scope AS ( \
                 LEFT JOIN attestation_proof ap ON ap.btc_header_hash = p.btc_parent_header_hash \
                                                AND ap.source_id = p.source_id \
                                                AND ap.proof_kind = 'auxpow' \
-                WHERE e.btc_parent_kind <> 'near' AND e.revoked_at IS NULL \
+                WHERE e.revoked_at IS NULL \
                   AND (b.btc_header_hash IS NULL \
                        OR b.total_attestations IS DISTINCT FROM pr.total_attestations \
                        OR b.distinct_sources IS DISTINCT FROM pr.distinct_sources + CASE WHEN b.core_attested THEN 1 ELSE 0 END \

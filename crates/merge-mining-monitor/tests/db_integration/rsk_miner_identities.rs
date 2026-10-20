@@ -17,8 +17,7 @@ const KNOWN_MINER: &str = "12d3178a62ef1f520944534ed04504609f7307a1";
 const PRIORITY_UNKNOWN_MINER: &str = "0fd9b9b567a459c6c9645ab0847785aef13dfe1b";
 
 #[tokio::test]
-async fn reclassify_pools_materializes_rsk_unresolved_and_late_fills_registry_match() -> Result<()>
-{
+async fn reclassify_pools_materializes_rsk_unresolved_and_registry_matches() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let unresolved_event_id =
             insert_rsk_event(&client, 8_800_001, PRIORITY_UNKNOWN_MINER, 1_780_000_000).await?;
@@ -34,17 +33,13 @@ async fn reclassify_pools_materializes_rsk_unresolved_and_late_fills_registry_ma
         assert_eq!(attribution.source, RSK_RPC_MINER_SOURCE);
         assert_eq!(attribution.matched_value, PRIORITY_UNKNOWN_MINER);
 
-        let sidecar_identity = late_filled_sidecar_identity(&client, resolved_event_id).await?;
-
         let attribution = rsk_attribution(&client, resolved_event_id).await?;
         assert!(attribution.pool_id.is_some());
-        assert_eq!(attribution.pool_identity_id, Some(sidecar_identity));
         assert_eq!(attribution.source, RSK_MINER_REGISTRY_SOURCE);
         assert_eq!(attribution.identifier.as_deref(), Some(KNOWN_MINER));
 
         let again = reclassify_pools(&mut client).await?;
         assert_eq!(again.rsk_miner_attribution_updates, 0);
-        assert_eq!(again.rsk_miner_sidecar_late_fills, 0);
 
         Ok::<_, anyhow::Error>(())
     })
@@ -85,8 +80,7 @@ async fn reclassify_pools_requires_overwrite_before_remapping_existing_identity(
 }
 
 #[tokio::test]
-async fn reclassify_pools_requires_overwrite_before_late_filling_conflicting_sidecar() -> Result<()>
-{
+async fn reclassify_pools_requires_overwrite_before_remapping_an_attribution() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let event_id = insert_rsk_event(&client, 8_800_004, KNOWN_MINER, 1_780_000_175).await?;
         let f2pool_id = f2pool_id(&client).await?;
@@ -96,9 +90,8 @@ async fn reclassify_pools_requires_overwrite_before_late_filling_conflicting_sid
 
         let err = reclassify_pools(&mut client)
             .await
-            .expect_err("default reclassification must not late-fill conflicting sidecar identity");
+            .expect_err("default reclassification must not remap a resolved attribution");
         assert!(format!("{err:#}").contains("--overwrite"));
-        assert_eq!(sidecar_identity(&client, event_id).await?, None);
         assert_eq!(
             event_attribution_pool_id(&client, event_id).await?,
             Some(antpool_id)
@@ -106,7 +99,6 @@ async fn reclassify_pools_requires_overwrite_before_late_filling_conflicting_sid
 
         let stats = reclassify_pools_with_overwrite(&mut client).await?;
         assert_resolved_rsk_stats(&stats);
-        assert!(sidecar_identity(&client, event_id).await?.is_some());
         assert_eq!(
             event_attribution_pool_id(&client, event_id).await?,
             Some(f2pool_id)
@@ -152,7 +144,6 @@ async fn second_run_rescans_without_rewriting() -> Result<()> {
         let second = reclassify_pools(&mut client).await?;
         assert_eq!(second.rsk_miner_rows_scanned, 2);
         assert_eq!(second.rsk_miner_attribution_updates, 0);
-        assert_eq!(second.rsk_miner_sidecar_late_fills, 0);
         Ok::<_, anyhow::Error>(())
     })
 }
@@ -167,13 +158,11 @@ async fn revoked_rsk_events_are_excluded_until_restored() -> Result<()> {
         let first = reclassify_pools(&mut client).await?;
         assert_eq!(first.rsk_miner_rows_scanned, 1);
         assert_eq!(first.rsk_miner_attribution_updates, 1);
-        assert_eq!(first.rsk_miner_sidecar_late_fills, 1);
 
         set_revoked(&client, revoked, false).await?;
         let second = reclassify_pools(&mut client).await?;
         assert_eq!(second.rsk_miner_rows_scanned, 2);
         assert_eq!(second.rsk_miner_attribution_updates, 1);
-        assert_eq!(second.rsk_miner_sidecar_late_fills, 1);
         Ok::<_, anyhow::Error>(())
     })
 }
@@ -212,11 +201,6 @@ async fn seed_remap_conflict_aborts_before_scanning() -> Result<()> {
             attributions, 0,
             "conflict check must abort before the scan writes attributions"
         );
-        assert_eq!(
-            sidecar_identity(&client, unprocessed).await?,
-            None,
-            "conflict check must abort before the scan late-fills sidecars"
-        );
         Ok::<_, anyhow::Error>(())
     })
 }
@@ -243,75 +227,19 @@ async fn insert_rsk_event(
     let parent_hash = repeated_bytes(child_height, 0x20);
     let prev_hash = repeated_bytes(child_height, 0x30);
     let header_bytes = vec![0u8; 80];
-    let event_id: i64 = client
+    // The block's observation carries the miner, as capture records it.
+    let observation_id: i64 = client
         .query_one(
-            "INSERT INTO merge_mining_event ( \
-                source_id, child_height, child_block_hash, child_block_time, \
-                btc_parent_header_hash, btc_parent_prev_header_hash, \
-                btc_parent_header_bytes, btc_parent_header_time, btc_parent_kind, \
-                pow_validates_btc_target, pow_validates_child_target, \
-                discovered_at, confirmed_at \
-             ) VALUES ( \
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, true, NULL, $10, $11 \
-             ) RETURNING id",
-            &[
-                &source_id,
-                &child_height,
-                &child_block_hash,
-                &confirmed_at,
-                &parent_hash,
-                &prev_hash,
-                &header_bytes,
-                &confirmed_at,
-                &"unknown",
-                &confirmed_at,
-                &confirmed_at,
-            ],
-        )
-        .await?
-        .get(0);
-    let rsk_miner = hex::decode(miner_address)?;
-    let rsk_block_hash = repeated_bytes(child_height, 0x40);
-    let merge_mining_hash = repeated_bytes(child_height, 0x50);
-    let coinbase_tail = Some(vec![0x52_u8, 0x53, 0x4b]);
-    let pool_identity_id: Option<i64> = None;
-    client
-        .execute(
-            "INSERT INTO rsk_merge_mining_evidence ( \
-                event_id, rsk_block_hash, rsk_height, is_uncle, uncle_index, \
-                uncle_parent_height, rsk_miner, pool_identity_id, merge_mining_hash, \
-                coinbase_tail, proof_format \
-             ) VALUES ( \
-                $1, $2, $3, $4, NULL, NULL, $5, $6, $7, $8, 'rskj_rpc_opaque' \
-             )",
-            &[
-                &event_id,
-                &rsk_block_hash,
-                &child_height,
-                &false,
-                &rsk_miner,
-                &pool_identity_id,
-                &merge_mining_hash,
-                &coinbase_tail,
-            ],
-        )
-        .await?;
-    // The block's observation carries the miner, as capture and migration 0033 record it.
-    client
-        .execute(
             "WITH identity AS ( \
                  INSERT INTO child_miner_identity (namespace, identifier) \
                  VALUES ('rsk_miner_address', $4) \
                  ON CONFLICT (namespace, identifier) DO UPDATE SET identifier = EXCLUDED.identifier \
-                 RETURNING id), \
-             observation AS ( \
-                 INSERT INTO child_block_observation ( \
-                     source_id, child_height, child_block_hash, observation_kind, \
-                     btc_parent_header_hash, child_identity_ids, recorded_at) \
-                 SELECT $1, $2, $3, 'evidence', $5, ARRAY[identity.id], $6 FROM identity \
                  RETURNING id) \
-             UPDATE merge_mining_event SET observation_id = (SELECT id FROM observation) \
-              WHERE id = $7",
+             INSERT INTO child_block_observation ( \
+                 source_id, child_height, child_block_hash, observation_kind, \
+                 btc_parent_header_hash, child_identity_ids, recorded_at) \
+             SELECT $1, $2, $3, 'evidence', $5, ARRAY[identity.id], $6 FROM identity \
+             RETURNING id",
             &[
                 &source_id,
                 &child_height,
@@ -319,7 +247,42 @@ async fn insert_rsk_event(
                 &miner_address.to_ascii_lowercase(),
                 &parent_hash,
                 &confirmed_at,
+            ],
+        )
+        .await?
+        .get(0);
+    let event_id: i64 = client
+        .query_one(
+            "INSERT INTO merge_mining_event ( \
+                source_id, child_height, child_block_hash, \
+                btc_parent_header_hash, btc_parent_prev_header_hash, \
+                btc_parent_header_bytes, btc_parent_header_time, btc_parent_kind, \
+                pow_validates_btc_target, discovered_at, confirmed_at, observation_id \
+             ) VALUES ( \
+                $1, $2, $3, $4, $5, $6, $7, 'unknown', true, $7, $7, $8 \
+             ) RETURNING id",
+            &[
+                &source_id,
+                &child_height,
+                &child_block_hash,
+                &parent_hash,
+                &prev_hash,
+                &header_bytes,
+                &confirmed_at,
+                &observation_id,
+            ],
+        )
+        .await?
+        .get(0);
+    client
+        .execute(
+            "INSERT INTO rsk_merge_mining_evidence ( \
+                event_id, merge_mining_hash, coinbase_tail, proof_format \
+             ) VALUES ($1, $2, $3, 'rskj_rpc_opaque')",
+            &[
                 &event_id,
+                &repeated_bytes(child_height, 0x50),
+                &Some(vec![0x52_u8, 0x53, 0x4b]),
             ],
         )
         .await?;
@@ -337,7 +300,6 @@ fn assert_resolved_rsk_stats(stats: &ReclassifyPoolsStats) {
     assert_eq!(stats.rsk_miner_registry_resolved_rows, 1);
     assert_eq!(stats.rsk_miner_unresolved_rows, 0);
     assert_eq!(stats.rsk_miner_attribution_updates, 1);
-    assert_eq!(stats.rsk_miner_sidecar_late_fills, 1);
 }
 
 fn assert_mixed_rsk_stats(stats: &ReclassifyPoolsStats) {
@@ -345,7 +307,6 @@ fn assert_mixed_rsk_stats(stats: &ReclassifyPoolsStats) {
     assert_eq!(stats.rsk_miner_registry_resolved_rows, 1);
     assert_eq!(stats.rsk_miner_unresolved_rows, 1);
     assert_eq!(stats.rsk_miner_attribution_updates, 2);
-    assert_eq!(stats.rsk_miner_sidecar_late_fills, 1);
 }
 
 async fn reclassify_pools(client: &mut Client) -> Result<ReclassifyPoolsStats> {
@@ -388,21 +349,6 @@ async fn rsk_attribution(client: &Client, event_id: i64) -> Result<RskAttributio
         matched_value: row.get(3),
         identifier: row.get(4),
     })
-}
-
-async fn late_filled_sidecar_identity(client: &Client, event_id: i64) -> Result<i64> {
-    let identity_id = sidecar_identity(client, event_id).await?;
-    identity_id.ok_or_else(|| anyhow::anyhow!("sidecar identity late-filled"))
-}
-
-async fn sidecar_identity(client: &Client, event_id: i64) -> Result<Option<i64>> {
-    Ok(client
-        .query_one(
-            "SELECT pool_identity_id FROM rsk_merge_mining_evidence WHERE event_id = $1",
-            &[&event_id],
-        )
-        .await?
-        .get(0))
 }
 
 async fn f2pool_id(client: &Client) -> Result<i64> {

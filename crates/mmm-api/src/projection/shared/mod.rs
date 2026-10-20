@@ -409,7 +409,6 @@ pub(crate) async fn load_strict_bip34_height<C: tokio_postgres::GenericClient>(
              JOIN source s ON s.id = e.source_id \
              WHERE e.btc_parent_header_hash = $1 \
                AND e.revoked_at IS NULL \
-               AND e.btc_parent_kind <> 'near' \
                AND e.btc_parent_coinbase_script IS NOT NULL \
                AND s.chain = ANY($2) \
              ORDER BY e.id",

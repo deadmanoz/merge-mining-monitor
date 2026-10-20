@@ -246,8 +246,8 @@ fn child_identities(attributions: &[EventPoolAttribution]) -> Vec<ChildIdentity>
     identities
 }
 
-/// The unique known pool on one attribution side, as `refresh_event_child_miner_pool_id`
-/// derives the child pool.
+/// The unique known pool on one attribution side, as an evidence observation's child pool
+/// is derived from its event's attribution rows.
 fn unique_pool(attributions: &[EventPoolAttribution], side: PoolAttributionSide) -> Option<i64> {
     let mut pools = known_pools(attributions, side).into_iter();
     match (pools.next(), pools.next()) {

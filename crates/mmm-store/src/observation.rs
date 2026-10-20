@@ -38,28 +38,6 @@ pub(crate) async fn link_event_observation<C: GenericClient>(
     Ok(())
 }
 
-/// The observation holding an event's child block: its `observation_id`, or, for an event
-/// written before migration 0033 (unlinked until the swap migration), the observation with
-/// its child identity. Each lookup is an equality on one identity index.
-async fn event_observation_id<C: GenericClient>(client: &C, event_id: i64) -> Result<Option<i64>> {
-    Ok(client
-        .query_one(
-            "SELECT COALESCE( \
-                 e.observation_id, \
-                 (SELECT o.id FROM child_block_observation o \
-                   WHERE o.source_id = e.source_id AND o.child_block_hash = e.child_block_hash), \
-                 (SELECT o.id FROM child_block_observation o \
-                   WHERE e.child_block_hash IS NULL AND o.source_id = e.source_id \
-                     AND o.child_block_hash IS NULL AND o.child_height = e.child_height \
-                     AND o.btc_parent_header_hash = e.btc_parent_header_hash)) \
-             FROM merge_mining_event e WHERE e.id = $1",
-            &[&event_id],
-        )
-        .await
-        .context("find the event's observation")?
-        .get(0))
-}
-
 /// Give the hashless observation of an event's child block the hash the event now
 /// carries; when an exact observation of that block already exists, carry the
 /// hashless one's identities and any child evidence the exact row lacks into it, point
@@ -73,9 +51,7 @@ pub(crate) async fn fold_hashless_observation<C: GenericClient>(
         .query_one(
             "SELECT \
                 (SELECT o.id FROM child_block_observation o \
-                  WHERE o.source_id = e.source_id AND o.child_block_hash IS NULL \
-                    AND o.child_height = e.child_height \
-                    AND o.btc_parent_header_hash = e.btc_parent_header_hash), \
+                  WHERE o.id = e.observation_id AND o.child_block_hash IS NULL), \
                 (SELECT o.id FROM child_block_observation o \
                   WHERE o.source_id = e.source_id AND o.child_block_hash = e.child_block_hash) \
              FROM merge_mining_event e WHERE e.id = $1",
@@ -155,27 +131,13 @@ pub async fn upsert_child_only_observation<C: GenericClient>(
     Ok(written)
 }
 
-/// Bring the event's observation's identities and pools in line with the event's
-/// attribution rows (plus an RSK sidecar's miner), dropping identities the event no
-/// longer carries. Run once per event after its last attribution write (three
-/// statements: the observation lookup, the identity insert and the update).
+/// Bring the event's observation's identities and child pool in line with the event's
+/// attribution rows (keeping the RSK miner identity the observation records), dropping
+/// identities the event no longer carries. Run once per event after its last attribution
+/// write (two statements: the identity insert and the update).
 pub async fn sync_event_observation_attribution<C: GenericClient>(
     client: &C,
     event_id: i64,
-) -> Result<()> {
-    match event_observation_id(client, event_id).await? {
-        Some(observation_id) => {
-            sync_observation_attribution(client, event_id, observation_id).await
-        }
-        None => Ok(()),
-    }
-}
-
-/// [`sync_event_observation_attribution`] for a caller that already holds the observation id.
-pub(crate) async fn sync_observation_attribution<C: GenericClient>(
-    client: &C,
-    event_id: i64,
-    observation_id: i64,
 ) -> Result<()> {
     // Inserted first and resolved in the next statement; see `insert_child_identities`.
     client
@@ -188,37 +150,37 @@ pub(crate) async fn sync_observation_attribution<C: GenericClient>(
         )
         .await
         .context("insert the event's child miner identities")?;
+    // The RSK miner identity is the observation's own, recorded with the block's facts.
     client
         .execute(
-            "UPDATE child_block_observation o SET \
+            "WITH n AS ( \
+                 SELECT o.id, \
+                        ARRAY( \
+                            SELECT id FROM ( \
+                                SELECT ci.id FROM child_miner_identity ci \
+                                JOIN event_pool_attribution a \
+                                  ON a.namespace = ci.namespace AND a.matched_value = ci.identifier \
+                                WHERE a.event_id = $1 AND a.side = 'child_block' \
+                                  AND a.namespace NOT LIKE 'btc\\_%' \
+                                UNION \
+                                SELECT ci.id FROM child_miner_identity ci \
+                                WHERE ci.id = ANY (o.child_identity_ids) AND ci.namespace = $2 \
+                            ) attributed ORDER BY id) AS child_identity_ids, \
+                        (SELECT CASE WHEN count(DISTINCT a.pool_id) = 1 THEN min(a.pool_id) END \
+                           FROM event_pool_attribution a \
+                          WHERE a.event_id = $1 AND a.side = 'child_block' \
+                            AND a.pool_id IS NOT NULL) AS child_pool_id \
+                   FROM child_block_observation o \
+                  WHERE o.id = (SELECT observation_id FROM merge_mining_event WHERE id = $1) \
+             ) \
+             UPDATE child_block_observation o SET \
                  child_identity_ids = n.child_identity_ids, \
-                 child_pool_id = n.child_pool_id, \
-                 btc_parent_pool_id = CASE WHEN o.observation_kind = 'near' THEN n.btc_parent_pool_id END \
-             FROM ( \
-                 SELECT ARRAY( \
-                     SELECT id FROM ( \
-                         SELECT ci.id FROM child_miner_identity ci \
-                         JOIN event_pool_attribution a \
-                           ON a.namespace = ci.namespace AND a.matched_value = ci.identifier \
-                         WHERE a.event_id = e.id AND a.side = 'child_block' \
-                           AND a.namespace NOT LIKE 'btc\\_%' \
-                         UNION \
-                         SELECT ci.id FROM child_miner_identity ci \
-                         JOIN rsk_merge_mining_evidence r ON r.event_id = e.id \
-                         WHERE ci.namespace = $3 AND ci.identifier = encode(r.rsk_miner, 'hex') \
-                     ) attributed ORDER BY id) AS child_identity_ids, \
-                     e.child_miner_pool_id AS child_pool_id, \
-                     (SELECT CASE WHEN count(DISTINCT a.pool_id) = 1 THEN min(a.pool_id) END \
-                        FROM event_pool_attribution a \
-                       WHERE a.event_id = e.id AND a.side = 'btc_parent' \
-                         AND a.pool_id IS NOT NULL) AS btc_parent_pool_id \
-                 FROM merge_mining_event e WHERE e.id = $1 \
-             ) n \
-             WHERE o.id = $2 \
-               AND (o.child_identity_ids, o.child_pool_id, o.btc_parent_pool_id) IS DISTINCT FROM \
-                   (n.child_identity_ids, n.child_pool_id, \
-                    CASE WHEN o.observation_kind = 'near' THEN n.btc_parent_pool_id END)",
-            &[&event_id, &observation_id, &RSK_MINER_ADDRESS_NAMESPACE],
+                 child_pool_id = n.child_pool_id \
+             FROM n \
+             WHERE o.id = n.id \
+               AND (o.child_identity_ids, o.child_pool_id) IS DISTINCT FROM \
+                   (n.child_identity_ids, n.child_pool_id)",
+            &[&event_id, &RSK_MINER_ADDRESS_NAMESPACE],
         )
         .await
         .context("sync the event observation's child attribution")?;
@@ -335,6 +297,8 @@ async fn write_observation<C: GenericClient>(
            AND (o.child_block_time IS NULL OR EXCLUDED.child_block_time IS NULL OR o.child_block_time = EXCLUDED.child_block_time) \
            AND (o.child_header_bytes IS NULL OR EXCLUDED.child_header_bytes IS NULL OR o.child_header_bytes = EXCLUDED.child_header_bytes) \
            AND (o.child_nbits IS NULL OR EXCLUDED.child_nbits IS NULL OR o.child_nbits = EXCLUDED.child_nbits) \
+           AND (o.pow_validates_child_target IS NULL OR EXCLUDED.pow_validates_child_target IS NULL \
+                OR o.pow_validates_child_target = EXCLUDED.pow_validates_child_target) \
            AND (o.child_prev_block_hash IS NULL OR EXCLUDED.child_prev_block_hash IS NULL \
                 OR o.child_prev_block_hash = EXCLUDED.child_prev_block_hash) \
            {kind_guard} \

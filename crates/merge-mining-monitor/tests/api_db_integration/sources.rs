@@ -16,7 +16,8 @@ use time::Month;
 use tokio_postgres::Client;
 
 use crate::support::seed::{
-    EventSeed, day_epoch, hash_bytes, insert_block, insert_event, insert_orphan,
+    EventSeed, day_epoch, hash_bytes, insert_block, insert_event, insert_near_observation,
+    insert_orphan,
 };
 
 use crate::helpers::format_projection_error;
@@ -117,7 +118,7 @@ async fn seed_source_status_projection_rows(client: &Client) -> Result<(i64, i64
     let stale_ts = ts - 10 * 24 * 60 * 60;
     let parent = hash_bytes(0xb101);
     for child_height in [140, 141] {
-        insert_event(
+        insert_near_observation(
             client,
             EventSeed {
                 source_id: namecoin,
@@ -145,7 +146,7 @@ async fn seed_source_status_projection_rows(client: &Client) -> Result<(i64, i64
         None,
     )
     .await?;
-    insert_event(
+    insert_near_observation(
         client,
         EventSeed {
             source_id: rsk,
@@ -438,22 +439,23 @@ async fn sources_projection_maps_strict_and_weak_orphan_counts() -> Result<()> {
         .into_iter()
         .enumerate()
         {
-            insert_event(
-                &client,
-                EventSeed {
-                    source_id: namecoin,
-                    child_height: 10 + i as i32,
-                    child_hash: hash_bytes(0xB000 + i as u32),
-                    parent_hash: parent.clone(),
-                    prev_hash: hash_bytes(0xA000),
-                    parent_time: ts,
-                    kind,
-                    pow_validates_btc_target: pow_ok,
-                    btc_height: None,
-                    pool_id: None,
-                },
-            )
-            .await?;
+            let seed = EventSeed {
+                source_id: namecoin,
+                child_height: 10 + i as i32,
+                child_hash: hash_bytes(0xB000 + i as u32),
+                parent_hash: parent.clone(),
+                prev_hash: hash_bytes(0xA000),
+                parent_time: ts,
+                kind,
+                pow_validates_btc_target: pow_ok,
+                btc_height: None,
+                pool_id: None,
+            };
+            if kind == "near" {
+                insert_near_observation(&client, seed).await?;
+            } else {
+                insert_event(&client, seed).await?;
+            }
         }
         insert_event(
             &client,

@@ -10,7 +10,7 @@ use serde_json::json;
 use tokio_postgres::Client;
 
 use crate::support::default_pool_snapshot;
-use crate::support::seed::insert_pool_identity;
+use crate::support::seed::{EventSeed, insert_event, insert_pool_identity};
 
 #[tokio::test]
 async fn child_payout_source_upgrade_preserves_row_when_snapshot_is_mixed() -> Result<()> {
@@ -117,29 +117,20 @@ fn child_payout(
 }
 
 async fn insert_minimal_event(client: &Client, source_id: i64) -> Result<i64> {
-    Ok(client
-        .query_one(
-            "INSERT INTO merge_mining_event ( \
-                source_id, child_height, child_block_hash, child_block_time, \
-                btc_parent_header_hash, btc_parent_prev_header_hash, \
-                btc_parent_header_bytes, btc_parent_header_time, \
-                btc_parent_kind, pow_validates_btc_target, pow_validates_child_target, \
-                btc_parent_coinbase_script, child_coinbase_script, \
-                discovered_at, confirmed_at \
-             ) VALUES ( \
-                $1, 501199, $2, 1700000000, $3, $4, $5, 1700000000, \
-                'unknown', true, true, $6, $7, 100, 200 \
-             ) RETURNING id",
-            &[
-                &source_id,
-                &vec![0xb0_u8; 32],
-                &vec![0xb1_u8; 32],
-                &vec![0xb2_u8; 32],
-                &vec![0_u8; 80],
-                &Some(b"\x03\x01\x02\x03/no-pool/".to_vec()),
-                &Some(b"\x03\x01\x02\x03/no-child-tag/".to_vec()),
-            ],
-        )
-        .await?
-        .get(0))
+    insert_event(
+        client,
+        EventSeed {
+            source_id,
+            child_height: 501_199,
+            child_hash: vec![0xb0_u8; 32],
+            parent_hash: vec![0xb1_u8; 32],
+            prev_hash: vec![0xb2_u8; 32],
+            parent_time: 1_700_000_000,
+            kind: "unknown",
+            pow_validates_btc_target: true,
+            btc_height: None,
+            pool_id: None,
+        },
+    )
+    .await
 }

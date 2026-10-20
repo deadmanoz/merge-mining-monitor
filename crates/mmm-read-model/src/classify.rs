@@ -105,7 +105,7 @@ pub fn resolve_parent_classification(
     Ok(catalogue_classification)
 }
 
-/// Update active non-`near` `merge_mining_event` rows for this parent header without
+/// Update active `merge_mining_event` rows for this parent header without
 /// demoting proven canonical/stale rows on a transient `unknown`.
 pub(crate) async fn apply_event_classification<C: GenericClient>(
     client: &C,
@@ -138,7 +138,6 @@ pub(crate) async fn apply_event_classification<C: GenericClient>(
                  difficulty_epoch_ok = COALESCE($4, difficulty_epoch_ok) \
              WHERE btc_parent_header_hash = $1 \
                AND revoked_at IS NULL \
-               AND btc_parent_kind <> 'near' \
                AND ($2 <> 'unknown' OR btc_parent_kind IN ('unknown', 'error_block'))",
             &[
                 &event.btc_parent_header_hash,

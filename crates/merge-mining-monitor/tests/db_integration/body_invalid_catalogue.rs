@@ -62,10 +62,10 @@ fn classifier(parents: &[ReviewedParent]) -> Result<ConfiguredParentClassifier> 
 
 async fn evidence_snapshot(client: &Client) -> Result<Vec<String>> {
     Ok(client.query(
-        "SELECT json_build_array(id, source_id, child_height, child_block_hash, \
-         btc_parent_header_hash, btc_parent_header_bytes, btc_parent_coinbase_script, \
-         btc_parent_coinbase_outputs, aux_merkle_proof, child_header_bytes, child_block_time, child_nbits)::text \
-         FROM merge_mining_event ORDER BY id", &[],
+        "SELECT json_build_array(e.id, e.source_id, e.child_height, e.child_block_hash, \
+         e.btc_parent_header_hash, e.btc_parent_header_bytes, e.btc_parent_coinbase_script, \
+         e.btc_parent_coinbase_outputs, e.aux_merkle_proof, o.child_header_bytes, o.child_block_time, o.child_nbits)::text \
+         FROM merge_mining_event e JOIN child_block_observation o ON o.id = e.observation_id ORDER BY e.id", &[],
     ).await?.into_iter().map(|row| row.get(0)).collect())
 }
 
