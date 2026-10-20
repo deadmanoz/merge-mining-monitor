@@ -73,7 +73,8 @@ pub(super) async fn reresolve_observation_pools(
 
 /// The observation's re-resolved `(id, child_pool_id, btc_parent_pool_id)`, or `None` when
 /// nothing changes. A resolved pool fills a missing one, or replaces a different one under
-/// `--overwrite`; an unresolved pool never erases a stored one.
+/// `--overwrite`, which also clears a child pool its matches now contradict; an unresolved pool
+/// never erases a stored one.
 fn plan_observation_pools(
     row: &ObservationPoolRow,
     identity_pools: &HashMap<i64, i64>,
@@ -95,9 +96,6 @@ fn plan_observation_pools(
         )
         .and_then(|attribution| attribution.pool_id),
     );
-    let child_pool = (child_pools.len() == 1)
-        .then(|| child_pools.first().copied())
-        .flatten();
     let parent_pool = if row.near {
         let resolution = resolve_stored_parent_pool(
             &StoredParentCoinbase {
@@ -118,7 +116,16 @@ fn plan_observation_pools(
     } else {
         None
     };
-    let child_pool_id = settle(row.child_pool_id, child_pool, config.overwrite);
+    let child_pool_id = match child_pools.len() {
+        0 | 1 => settle(
+            row.child_pool_id,
+            child_pools.first().copied(),
+            config.overwrite,
+        ),
+        // Conflicting matches project to Unknown.
+        _ if config.overwrite => None,
+        _ => row.child_pool_id,
+    };
     let btc_parent_pool_id = settle(row.btc_parent_pool_id, parent_pool, config.overwrite);
     ((child_pool_id, btc_parent_pool_id) != (row.child_pool_id, row.btc_parent_pool_id))
         .then_some((row.id, child_pool_id, btc_parent_pool_id))

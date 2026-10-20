@@ -46,7 +46,7 @@ use mmm_store::{
     delete_event_pool_attributions_for_source, get_source_id, load_pool_identities_by_namespace,
     sync_event_observation_attribution, upsert_event_pool_attributions,
     upsert_event_pool_attributions_without_stale_cleanup, upsert_pool_snapshot,
-    upsert_rsk_only_pools,
+    upsert_rsk_only_pools, upsert_rsk_pool_identities_with_policy,
 };
 
 mod observations;
@@ -440,11 +440,13 @@ async fn count_candidates(client: &Client, overwrite: bool, source: Option<i64>)
 
 async fn seed_reclassify_pools(
     client: &mut Client,
+    config: &ReclassifyPoolsConfig,
 ) -> Result<(
     PoolResolver,
     PoolIdentityRegistry,
     HashMap<String, i64>,
     PoolIdentityLookup,
+    HashMap<String, i64>,
 )> {
     let resolver = PoolResolver::from_default_snapshot()
         .context("load embedded pool snapshot for reclassify-pools")?;
@@ -481,11 +483,25 @@ async fn seed_reclassify_pools(
     .await
     .context("load child payout pool identities")?;
     apply_child_payout_confidence(&mut child_payout_identities, &pool_ids_by_slug)?;
+    // The RSK and observation passes resolve RSK miners through these mappings.
+    let rsk_identity_ids = if config.run_rsk || config.run_observations {
+        upsert_rsk_pool_identities_with_policy(
+            client,
+            &registry,
+            &pool_ids_by_slug,
+            config.overwrite,
+        )
+        .await
+        .context("seed RSK miner pool identities")?
+    } else {
+        HashMap::new()
+    };
     Ok((
         resolver,
         registry,
         pool_ids_by_slug,
         child_payout_identities,
+        rsk_identity_ids,
     ))
 }
 
@@ -577,8 +593,8 @@ pub async fn run_reclassify_pools(
     client: &mut Client,
     config: ReclassifyPoolsConfig,
 ) -> Result<ReclassifyPoolsStats> {
-    let (resolver, registry, pool_ids_by_slug, child_payout_identities) =
-        seed_reclassify_pools(client).await?;
+    let (resolver, registry, pool_ids_by_slug, child_payout_identities, rsk_identity_ids) =
+        seed_reclassify_pools(client, &config).await?;
 
     info!(
         phase = "seed",
@@ -593,8 +609,15 @@ pub async fn run_reclassify_pools(
             phase = "rsk",
             "reclassify-pools: starting RSK miner-identity pass"
         );
-        reresolve_rsk_miner_identities(client, &registry, &pool_ids_by_slug, &config, &mut stats)
-            .await?;
+        reresolve_rsk_miner_identities(
+            client,
+            &registry,
+            &pool_ids_by_slug,
+            &rsk_identity_ids,
+            &config,
+            &mut stats,
+        )
+        .await?;
         info!(
             phase = "rsk",
             rows_scanned = stats.rsk_miner_rows_scanned,

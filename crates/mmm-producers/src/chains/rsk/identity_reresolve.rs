@@ -19,7 +19,7 @@ use mmm_capture::pool_resolver::{PoolIdentityRegistry, RSK_MINER_ADDRESS_NAMESPA
 use mmm_capture::source_registry::RSK_SOURCE_CODE;
 use mmm_store::{
     get_source_id, late_fill_rsk_pool_identity_id, sync_event_observation_attribution,
-    upsert_event_pool_attributions, upsert_rsk_pool_identities_with_policy,
+    upsert_event_pool_attributions,
 };
 
 use crate::reclassify_pools::{ReclassifyPoolsConfig, ReclassifyPoolsStats};
@@ -80,17 +80,10 @@ pub(crate) async fn reresolve_rsk_miner_identities(
     client: &mut Client,
     registry: &PoolIdentityRegistry,
     pool_ids_by_slug: &HashMap<String, i64>,
+    identity_ids_by_address: &HashMap<String, i64>,
     config: &ReclassifyPoolsConfig,
     stats: &mut ReclassifyPoolsStats,
 ) -> Result<()> {
-    let identity_ids_by_address = upsert_rsk_pool_identities_with_policy(
-        client,
-        registry,
-        pool_ids_by_slug,
-        config.overwrite,
-    )
-    .await
-    .context("seed RSK miner pool identities")?;
     let rsk_source_id = get_source_id(client, RSK_SOURCE_CODE).await?;
 
     let mut cursor = None;
@@ -117,7 +110,7 @@ pub(crate) async fn reresolve_rsk_miner_identities(
                 row,
                 registry,
                 pool_ids_by_slug,
-                &identity_ids_by_address,
+                identity_ids_by_address,
             )?;
             stats.rsk_miner_rows_scanned += 1;
             if resolved.is_some() {

@@ -299,6 +299,8 @@ async fn write_observation<C: GenericClient>(
     } else {
         ""
     };
+    // A rewrite that resolves no child pool keeps the stored one, which reclassify-pools may
+    // have resolved after the writer loaded its registry; an event's attributions do the same.
     let near = observation.near_parent.as_ref();
     let child_nbits = observation.child_nbits.map(i64::from);
     let sql = format!(
@@ -321,7 +323,7 @@ async fn write_observation<C: GenericClient>(
             btc_parent_header_bytes = EXCLUDED.btc_parent_header_bytes, \
             btc_parent_header_time = EXCLUDED.btc_parent_header_time, \
             {near_coinbase}, \
-            child_pool_id = EXCLUDED.child_pool_id, \
+            child_pool_id = COALESCE(EXCLUDED.child_pool_id, o.child_pool_id), \
             {near_parent_pool} \
          WHERE (o.child_height IS NULL OR EXCLUDED.child_height IS NULL OR o.child_height = EXCLUDED.child_height) \
            AND (o.child_block_time IS NULL OR EXCLUDED.child_block_time IS NULL OR o.child_block_time = EXCLUDED.child_block_time) \

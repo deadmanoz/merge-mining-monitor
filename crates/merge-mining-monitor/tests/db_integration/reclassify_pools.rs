@@ -217,6 +217,21 @@ async fn reclassify_pools_reattributes_a_near_observation_after_a_registry_entry
 
         let again = run_reclassify_pools(&mut client, observations_only).await?;
         assert_eq!(again.observation_pool_updates, 0);
+
+        // A poller still holding the old registry recaptures the near.
+        write_capture(&client, source_id, &near).await?;
+        let child_pool: Option<i64> = client
+            .query_one(
+                "SELECT child_pool_id FROM child_block_observation WHERE id = $1",
+                &[&observation_id],
+            )
+            .await?
+            .get(0);
+        assert_eq!(
+            child_pool,
+            Some(f2pool),
+            "an unresolved recapture keeps the resolved child pool"
+        );
         Ok::<_, anyhow::Error>(())
     })
 }
