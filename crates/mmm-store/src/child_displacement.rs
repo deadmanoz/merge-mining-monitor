@@ -201,9 +201,11 @@ pub struct ChildDisplacementOutcome {
     pub displaced: u64,
 }
 
-/// The advisory-lock key for one `(source_id, child_height)`: the class in
-/// key one, a hash of the pair in key two.
-const CHILD_CHAIN_LOCK_KEY: &str = "$1, hashint8(($2::bigint << 32) | $3::bigint)";
+/// The advisory-lock key for one `(source_id, child_height)`: the class (`$1`) in key one, a
+/// hash of the source (`$2`) and `height` (a placeholder or column) in key two.
+fn child_chain_lock_key(height: &str) -> String {
+    format!("$1, hashint8(($2::bigint << 32) | {height}::bigint)")
+}
 
 /// Hold the per-height lock at session level across a producer's observation
 /// of the child chain and the writes that follow, so that what a producer
@@ -220,7 +222,7 @@ pub async fn lock_child_chain_height_session(
 ) -> Result<()> {
     client
         .execute(
-            &format!("SELECT pg_advisory_lock({CHILD_CHAIN_LOCK_KEY})"),
+            &format!("SELECT pg_advisory_lock({})", child_chain_lock_key("$3")),
             &[
                 &CHILD_CHAIN_LOCK_CLASS,
                 &source_id,
@@ -242,7 +244,7 @@ pub async fn finish_child_chain_height_operation<T>(
 ) -> Result<T> {
     let unlock = client
         .execute(
-            &format!("SELECT pg_advisory_unlock({CHILD_CHAIN_LOCK_KEY})"),
+            &format!("SELECT pg_advisory_unlock({})", child_chain_lock_key("$3")),
             &[
                 &CHILD_CHAIN_LOCK_CLASS,
                 &source_id,
@@ -272,7 +274,10 @@ pub async fn lock_child_chain_height(
     child_height: i32,
 ) -> Result<()> {
     txn.execute(
-        &format!("SELECT pg_advisory_xact_lock({CHILD_CHAIN_LOCK_KEY})"),
+        &format!(
+            "SELECT pg_advisory_xact_lock({})",
+            child_chain_lock_key("$3")
+        ),
         &[
             &CHILD_CHAIN_LOCK_CLASS,
             &source_id,
@@ -349,6 +354,34 @@ pub async fn record_child_chain_block(
         observed_at,
     )
     .await
+}
+
+/// Delete up to `limit` of a source's `child_chain_head` rows below `floor` (the lowest
+/// height a rescan still reaches), oldest first. Observations keep the per-block history;
+/// the head is rescan state only. A height whose lock another session holds (a rescan
+/// between reading and re-observing its head) is left for a later prune.
+pub async fn prune_child_chain_heads_below(
+    client: &Client,
+    source_id: i64,
+    floor: i32,
+    limit: i64,
+) -> Result<u64> {
+    client
+        .execute(
+            &format!(
+                "DELETE FROM child_chain_head \
+                  WHERE source_id = $2 AND child_height IN ( \
+                      SELECT child_height FROM ( \
+                          SELECT child_height FROM child_chain_head \
+                           WHERE source_id = $2 AND child_height < $3 \
+                           ORDER BY child_height LIMIT $4) candidates \
+                       WHERE pg_try_advisory_xact_lock({}))",
+                child_chain_lock_key("child_height")
+            ),
+            &[&CHILD_CHAIN_LOCK_CLASS, &source_id, &floor, &limit],
+        )
+        .await
+        .context("prune child_chain_head below the rescan floor")
 }
 
 /// Refresh `observed_at` and re-apply displacement for an unchanged `child_chain_head` block

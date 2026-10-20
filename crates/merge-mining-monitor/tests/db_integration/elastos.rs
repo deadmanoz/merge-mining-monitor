@@ -196,10 +196,15 @@ async fn a_foreign_parent_retracts_only_its_own_blocks_event() -> Result<()> {
             ElastosHeightOutcome::NonBitcoinParent
         );
         let block_hash = block.reconstruct()?.block_hash.to_byte_array().to_vec();
+        let mut expected = vec![
+            (block_hash, "non_bitcoin_parent".to_owned(), false, false),
+            (sibling_hash.clone(), "near".to_owned(), true, true),
+        ];
+        expected.sort();
         assert_eq!(
             observations_at(&client, context.source_id(), height).await?,
-            vec![(block_hash, "non_bitcoin_parent".to_owned(), false, false)],
-            "only the block's exact child-side observation remains"
+            expected,
+            "the refused block keeps only its child-side observation; the sibling is untouched"
         );
         let remaining: Vec<Vec<u8>> = client
             .query(

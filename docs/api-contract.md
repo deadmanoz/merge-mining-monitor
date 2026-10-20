@@ -139,7 +139,7 @@ Source codes are case-sensitive and must be lowercase.
 
 The `source` registry object has `id`, `code`, `kind`, `chain`, `instance`, `created_at`, `last_seen_at`, `status`, `sync`, and `counts`.
 A nested `source_ref` uses only `id`, `code`, `kind`, `chain`, and `instance`.
-`last_seen_at` is a derived API field: for AuxPoW sources it is `source_health.last_event_seen`; live-chaintip freshness is carried by `sync` progress and leaves `last_seen_at` null.
+`last_seen_at` is a derived API field: for AuxPoW sources it is `source_health.last_event_seen`, the latest evidence event or near observation, counting a near from when it was first recorded (re-capturing an unchanged near does not refresh it); live-chaintip freshness is carried by `sync` progress and leaves `last_seen_at` null.
 
 Source enums:
 
@@ -421,7 +421,7 @@ Response fields:
 | `bitcoin-core-backbone` | Derived from `bitcoin_core_sync_state`: no row -> `not_started`; `last_error_code` set -> `error`; row older than 1 hour -> `stale`; fresh row with no target or no contiguous progress -> `not_started`; fresh row below target -> `catching_up`; fresh row at/beyond target -> `live`. |
 | `historical`, `partial`, `surveyed`, `catalogued` | Reports the lifecycle token as both `sync.mode` and `sync.state` with `null` progress fields. |
 
-Per-source `counts` (`counts.events`, distinct-parent `near`/`unknown`/`canonical`/`stale`/`error_block`, and `strict_orphan`/`weak_orphan`) are served from precomputed `source_health` (O(sources)).
+Per-source `counts` (`counts.events`, distinct-parent `near`/`unknown`/`canonical`/`stale`/`error_block`, and `strict_orphan`/`weak_orphan`) are served from precomputed `source_health` (O(sources)). `counts.events` counts active evidence events (parents that meet Bitcoin's target); `counts.near` counts distinct near parents from near observations, which event revocation does not change: revocation covers evidence events.
 This endpoint **fails closed** (HTTP 500 `internal_error`) rather than returning zeros when `source_health_ready` is false (run `reconcile-read-model --rebuild-source-health` after initial schema creation or bulk backfills) or if any active `unknown` parent fails its Bitcoin target.
 
 ### `/api/v1/competitions`

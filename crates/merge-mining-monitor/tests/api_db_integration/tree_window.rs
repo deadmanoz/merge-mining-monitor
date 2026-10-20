@@ -432,7 +432,7 @@ async fn tree_node_infers_child_miner_when_coinbase_unknown() -> Result<()> {
         // A stale node whose Bitcoin coinbase miner is unknown but whose RSK
         // child event resolves a pool: the tree label falls back to the
         // child-inferred miner rather than "unknown miner". The tree path needs
-        // no RSK sidecar (it reads merge_mining_event.child_miner_pool_id only).
+        // no RSK sidecar (it reads the observation's child_pool_id only).
         let rsk = get_source_id(&client, RSK_SOURCE_CODE).await?;
         let f2pool = insert_pool(&client, "f2pool", "F2Pool").await?;
         let ts = day_epoch(2026, Month::May, 10);

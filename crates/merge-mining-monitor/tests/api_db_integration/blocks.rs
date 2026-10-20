@@ -5,11 +5,12 @@ use bitcoin::{BlockHash, CompactTarget, TxMerkleNode};
 use mmm_api::projection::{self, ProjectionError};
 use mmm_bitcoin_core::BitcoinCoreBlockCoinbase;
 use mmm_bitcoin_core::ConfiguredParentClassifier;
+use mmm_capture::capture::{RSK_PROOF_FORMAT_OPAQUE, RskEvidencePayload};
 use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, RSK_SOURCE_CODE};
 use mmm_read_model::{CoreCanonicalWrite, write_core_canonical};
 use mmm_store::{
     ChildChainHeadOutcome, ChildChainHeadRecord, CurrentBlockParent, EvidenceMarker, get_source_id,
-    record_child_chain_block,
+    record_child_chain_block, record_rsk_observation, sync_event_observation_attribution,
 };
 use serde_json::json;
 use time::Month;
@@ -229,7 +230,8 @@ async fn block_hydrates_rsk_uncle_sidecar_fields() -> Result<()> {
         .await?;
         client
             .execute(
-                "UPDATE merge_mining_event SET pow_validates_child_target = NULL WHERE id = $1",
+                "UPDATE child_block_observation SET pow_validates_child_target = NULL \
+                 WHERE id = (SELECT observation_id FROM merge_mining_event WHERE id = $1)",
                 &[&event_id],
             )
             .await?;
@@ -254,6 +256,27 @@ async fn block_hydrates_rsk_uncle_sidecar_fields() -> Result<()> {
             .await?;
         insert_rsk_child_pool_attribution(&client, event_id, rsk_miner, rskpool, identity, ts)
             .await?;
+        // The RSK capture writer's facts, so the reader sees what capture records.
+        record_rsk_observation(
+            &client,
+            rsk,
+            &RskEvidencePayload {
+                rsk_block_hash: child_hash.clone(),
+                rsk_height: 810_002,
+                is_uncle: true,
+                uncle_index: Some(1),
+                uncle_parent_height: Some(810_005),
+                rsk_miner: rsk_miner_bytes,
+                pool_identity_id: Some(identity),
+                merge_mining_hash: hash_bytes(0xc301),
+                merkle_proof: None,
+                coinbase_tail: None,
+                proof_format: RSK_PROOF_FORMAT_OPAQUE,
+                child_difficulty_reported: None,
+            },
+        )
+        .await?;
+        sync_event_observation_attribution(&client, event_id).await?;
         client
             .execute(
                 "UPDATE pool_identity SET pool_id = $1 WHERE id = $2",

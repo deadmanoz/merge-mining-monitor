@@ -45,8 +45,9 @@ pub use chains::rsk::{
 pub use child_displacement::{
     ChildChainHead, ChildChainHeadOutcome, ChildChainHeadRecord, ChildDisplacementOutcome,
     CurrentBlockParent, EvidenceMarker, finish_child_chain_height_operation, load_child_chain_head,
-    lock_child_chain_height, lock_child_chain_height_session, record_child_chain_block,
-    record_child_chain_block_in_own_transaction, reobserve_child_chain_block_in_own_transaction,
+    lock_child_chain_height, lock_child_chain_height_session, prune_child_chain_heads_below,
+    record_child_chain_block, record_child_chain_block_in_own_transaction,
+    reobserve_child_chain_block_in_own_transaction,
 };
 pub use event::{
     EventWriteDisposition, EventWriteOutcome, delete_child_block_events,

@@ -43,7 +43,9 @@ async fn sources_counts_events_without_classifier_observation_counts() -> Result
             Some(150),
         );
         assert_eq!(namecoin_row.sync.latest_evidence_at, Some(ts));
-        assert_eq!(namecoin_row.counts.events, 2);
+        // Both seeded events are nears: they count as near parents, not as evidence events,
+        // and their observations still keep the source fresh.
+        assert_eq!(namecoin_row.counts.events, 0);
         assert_eq!(namecoin_row.counts.near, 1);
         let rsk_row = source_row(&payload, RSK_SOURCE_CODE);
         assert_eq!(rsk_row.status, "stale");
@@ -56,7 +58,7 @@ async fn sources_counts_events_without_classifier_observation_counts() -> Result
             Some(150),
         );
         assert_eq!(rsk_row.sync.latest_evidence_at, Some(stale_ts));
-        assert_eq!(rsk_row.counts.events, 1);
+        assert_eq!(rsk_row.counts.events, 0);
         assert_eq!(rsk_row.counts.near, 1);
         let bitcoin_row = source_row(&payload, BITCOIN_SOURCE_CODE);
         assert_eq!(bitcoin_row.status, "not_started");

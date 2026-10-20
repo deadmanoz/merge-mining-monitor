@@ -1,6 +1,7 @@
 //! Read-only database state used to plan historical publication imports.
 
 use anyhow::{Context, Result};
+use mmm_capture::pool_resolver::RSK_MINER_ADDRESS_NAMESPACE;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, Row, RowStream};
 
@@ -92,31 +93,54 @@ impl HistoricalPublicationStateRow {
     }
 }
 
+/// The publication-state SELECT both streams share, decoded positionally by
+/// [`HistoricalPublicationStateRow::from_row`]. They differ only in the error-block reason
+/// column and its join, and in the artifact scope they select.
+fn historical_state_sql(
+    error_block_reason: &str,
+    block_join: &str,
+    scope_predicate: &str,
+) -> String {
+    format!(
+        "SELECT p.chain, p.source_kind, p.source_path, p.source_row_number, \
+                p.artifact_scope, p.provenance, p.classification, p.btc_height, \
+                p.validation_status, p.btc_stale_relevance, p.relevance_reason, \
+                e.child_height, e.child_block_hash, sha256(o.child_header_bytes), \
+                o.child_block_time, o.child_nbits, o.pow_validates_child_target, \
+                e.btc_parent_header_hash, e.btc_parent_prev_header_hash, \
+                e.btc_parent_header_time, e.btc_parent_coinbase_txid, \
+                sha256(e.btc_parent_coinbase_script), \
+                sha256(e.btc_parent_coinbase_outputs), \
+                sha256(convert_to(e.btc_parent_coinbase_outputs_text, 'UTF8')), \
+                sha256(e.btc_parent_coinbase_tx_bytes), \
+                CASE WHEN r.event_id IS NOT NULL THEN o.child_block_hash END, \
+                CASE WHEN r.event_id IS NOT NULL THEN o.child_height END, \
+                CASE WHEN r.event_id IS NOT NULL THEN o.child_chain_role = 'uncle' END, \
+                o.uncle_index, o.uncle_parent_height, decode(rm.identifier, 'hex'), \
+                r.merge_mining_hash, \
+                sha256(r.merkle_proof), sha256(r.coinbase_tail), r.proof_format, \
+                {error_block_reason}, e.id \
+         FROM historical_event_provenance p \
+         JOIN merge_mining_event e ON e.id = p.event_id \
+         LEFT JOIN child_block_observation o ON o.id = COALESCE(e.observation_id, e.id) \
+         LEFT JOIN rsk_merge_mining_evidence r ON r.event_id = e.id \
+         LEFT JOIN LATERAL ( \
+             SELECT ci.identifier FROM child_miner_identity ci \
+             WHERE r.event_id IS NOT NULL AND ci.id = ANY(o.child_identity_ids) \
+               AND ci.namespace = '{RSK_MINER_ADDRESS_NAMESPACE}' \
+             ORDER BY ci.id LIMIT 1) rm ON TRUE \
+         {block_join} \
+         WHERE p.publication_ref <> 'operator-csv' \
+           AND p.artifact_scope {scope_predicate} \
+         ORDER BY p.chain, p.source_path, p.source_row_number, p.publication_ref"
+    )
+}
+
 /// Stream all non-operator publication provenance across research pins.
 pub async fn stream_historical_publication_state(client: &Client) -> Result<RowStream> {
     client
         .query_raw(
-            "SELECT p.chain, p.source_kind, p.source_path, p.source_row_number, \
-                    p.artifact_scope, p.provenance, p.classification, p.btc_height, \
-                    p.validation_status, p.btc_stale_relevance, p.relevance_reason, \
-                    e.child_height, e.child_block_hash, sha256(e.child_header_bytes), \
-                    e.child_block_time, e.child_nbits, e.pow_validates_child_target, \
-                    e.btc_parent_header_hash, e.btc_parent_prev_header_hash, \
-                    e.btc_parent_header_time, e.btc_parent_coinbase_txid, \
-                    sha256(e.btc_parent_coinbase_script), \
-                    sha256(e.btc_parent_coinbase_outputs), \
-                    sha256(convert_to(e.btc_parent_coinbase_outputs_text, 'UTF8')), \
-                    sha256(e.btc_parent_coinbase_tx_bytes), \
-                    r.rsk_block_hash, r.rsk_height, r.is_uncle, r.uncle_index, \
-                    r.uncle_parent_height, r.rsk_miner, r.merge_mining_hash, \
-                    sha256(r.merkle_proof), sha256(r.coinbase_tail), r.proof_format, \
-                    NULL::text, e.id \
-             FROM historical_event_provenance p \
-             JOIN merge_mining_event e ON e.id = p.event_id \
-             LEFT JOIN rsk_merge_mining_evidence r ON r.event_id = e.id \
-             WHERE p.publication_ref <> 'operator-csv' \
-               AND p.artifact_scope <> 'error-block-observations' \
-             ORDER BY p.chain, p.source_path, p.source_row_number, p.publication_ref",
+            historical_state_sql("NULL::text", "", "<> 'error-block-observations'").as_str(),
             std::iter::empty::<&(dyn ToSql + Sync)>(),
         )
         .await
@@ -128,28 +152,12 @@ pub async fn stream_historical_publication_state(client: &Client) -> Result<RowS
 pub async fn stream_historical_error_observation_state(client: &Client) -> Result<RowStream> {
     client
         .query_raw(
-            "SELECT p.chain, p.source_kind, p.source_path, p.source_row_number, \
-                    p.artifact_scope, p.provenance, p.classification, p.btc_height, \
-                    p.validation_status, p.btc_stale_relevance, p.relevance_reason, \
-                    e.child_height, e.child_block_hash, sha256(e.child_header_bytes), \
-                    e.child_block_time, e.child_nbits, e.pow_validates_child_target, \
-                    e.btc_parent_header_hash, e.btc_parent_prev_header_hash, \
-                    e.btc_parent_header_time, e.btc_parent_coinbase_txid, \
-                    sha256(e.btc_parent_coinbase_script), \
-                    sha256(e.btc_parent_coinbase_outputs), \
-                    sha256(convert_to(e.btc_parent_coinbase_outputs_text, 'UTF8')), \
-                    sha256(e.btc_parent_coinbase_tx_bytes), \
-                    r.rsk_block_hash, r.rsk_height, r.is_uncle, r.uncle_index, \
-                    r.uncle_parent_height, r.rsk_miner, r.merge_mining_hash, \
-                    sha256(r.merkle_proof), sha256(r.coinbase_tail), r.proof_format, \
-                    b.error_block_reason, e.id \
-             FROM historical_event_provenance p \
-             JOIN merge_mining_event e ON e.id = p.event_id \
-             LEFT JOIN rsk_merge_mining_evidence r ON r.event_id = e.id \
-             LEFT JOIN block b ON b.btc_header_hash = e.btc_parent_header_hash \
-             WHERE p.publication_ref <> 'operator-csv' \
-               AND p.artifact_scope = 'error-block-observations' \
-             ORDER BY p.chain, p.source_path, p.source_row_number, p.publication_ref",
+            historical_state_sql(
+                "b.error_block_reason",
+                "LEFT JOIN block b ON b.btc_header_hash = e.btc_parent_header_hash",
+                "= 'error-block-observations'",
+            )
+            .as_str(),
             std::iter::empty::<&(dyn ToSql + Sync)>(),
         )
         .await
