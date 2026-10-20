@@ -170,41 +170,28 @@ fn resolve_parent_pool_from_published_text(
     resolve_parent_pool_attribution_from_coinbase(script, &addresses, resolver, pool_ids_by_slug)
 }
 
-struct ChildPayoutResolution {
-    attributions: Vec<EventPoolAttribution>,
-    changed: bool,
-    corrupt_outputs: bool,
-}
-
+/// The payout attributions a candidate's stored child outputs add or change, or `None` when
+/// the outputs are corrupt.
 fn resolve_child_payouts(
     row: &CandidateRow,
     identities: &PoolIdentityLookup,
     overwrite: bool,
-) -> ChildPayoutResolution {
-    let Some(attributions) = replay_child_payouts(
+) -> Option<Vec<EventPoolAttribution>> {
+    let attributions = replay_child_payouts(
         row.id,
         &row.source_code,
         row.child_coinbase_outputs.as_deref(),
         identities,
-    ) else {
-        return ChildPayoutResolution {
-            attributions: Vec::new(),
-            changed: false,
-            corrupt_outputs: true,
-        };
-    };
-    let attributions = attributions
-        .into_iter()
-        .filter(|attribution| {
-            row.child_payout_attributions
-                .should_write(attribution, WritePolicy::ChildPayout { overwrite })
-        })
-        .collect::<Vec<_>>();
-    ChildPayoutResolution {
-        changed: !attributions.is_empty(),
-        attributions,
-        corrupt_outputs: false,
-    }
+    )?;
+    Some(
+        attributions
+            .into_iter()
+            .filter(|attribution| {
+                row.child_payout_attributions
+                    .should_write(attribution, WritePolicy::ChildPayout { overwrite })
+            })
+            .collect(),
+    )
 }
 
 /// The payout attributions a stored child coinbase's outputs resolve to: empty for a source
@@ -287,11 +274,12 @@ pub(super) fn plan_batch_updates(
             resolver,
             pool_ids_by_slug,
         );
-        let resolved_child_payout =
-            resolve_child_payouts(&candidate, child_payout_identities, config.overwrite);
-        if resolved_child_payout.corrupt_outputs {
-            stats.corrupt_child_outputs_skipped += 1;
-        }
+        let child_payout_attributions =
+            resolve_child_payouts(&candidate, child_payout_identities, config.overwrite)
+                .unwrap_or_else(|| {
+                    stats.corrupt_child_outputs_skipped += 1;
+                    Vec::new()
+                });
 
         let parent_source_changed = should_write_attribution(
             &candidate.parent_attribution,
@@ -303,7 +291,7 @@ pub(super) fn plan_batch_updates(
             resolved_child.as_ref(),
             config.overwrite,
         );
-        let child_payout_changed = resolved_child_payout.changed;
+        let child_payout_changed = !child_payout_attributions.is_empty();
         let mut attributions = Vec::new();
         if parent_source_changed && let Some(attribution) = resolved_parent.attribution {
             attributions.push(attribution);
@@ -311,11 +299,6 @@ pub(super) fn plan_batch_updates(
         if child_source_changed && let Some(attribution) = resolved_child {
             attributions.push(attribution);
         }
-        let child_payout_attributions = if child_payout_changed {
-            resolved_child_payout.attributions
-        } else {
-            Vec::new()
-        };
 
         if !parent_source_changed && !child_source_changed && !child_payout_changed {
             continue;

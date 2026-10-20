@@ -9,8 +9,6 @@ use tokio_postgres::Client;
 use tracing::info;
 
 use mmm_capture::capture::resolve_child_pool_attribution_from_script;
-use mmm_capture::child_payout::PoolIdentityLookup;
-use mmm_capture::pool_resolver::PoolResolver;
 use mmm_capture::progress::ProgressReporter;
 use mmm_store::{
     ObservationPoolRow, load_child_identity_pools, load_observation_pool_batch,
@@ -18,18 +16,11 @@ use mmm_store::{
 };
 
 use super::plan::{StoredParentCoinbase, replay_child_payouts, resolve_stored_parent_pool};
-use super::{CHILD_PAYOUT_SOURCE_CODES, ReclassifyPoolsConfig, ReclassifyPoolsStats};
-
-/// What an observation's stored identities, coinbase script and outputs resolve through.
-pub(super) struct PoolSources<'a> {
-    pub(super) resolver: &'a PoolResolver,
-    pub(super) pool_ids_by_slug: &'a HashMap<String, i64>,
-    pub(super) child_payout_identities: &'a PoolIdentityLookup,
-}
+use super::{CHILD_PAYOUT_SOURCE_CODES, ReclassifyPoolsConfig, ReclassifyPoolsStats, Seeded};
 
 pub(super) async fn reresolve_observation_pools(
     client: &Client,
-    sources: &PoolSources<'_>,
+    seeded: &Seeded,
     config: &ReclassifyPoolsConfig,
     stats: &mut ReclassifyPoolsStats,
 ) -> Result<()> {
@@ -54,7 +45,7 @@ pub(super) async fn reresolve_observation_pools(
         let mut updates = Vec::new();
         for row in &rows {
             if let Some((child_pool_id, btc_parent_pool_id)) =
-                plan_observation_pools(row, &identity_pools, sources, config.overwrite, stats)
+                plan_observation_pools(row, &identity_pools, seeded, config.overwrite, stats)
             {
                 updates.push((row, child_pool_id, btc_parent_pool_id));
             }
@@ -81,7 +72,7 @@ pub(super) async fn reresolve_observation_pools(
 fn plan_observation_pools(
     row: &ObservationPoolRow,
     identity_pools: &HashMap<i64, i64>,
-    sources: &PoolSources<'_>,
+    seeded: &Seeded,
     overwrite: bool,
     stats: &mut ReclassifyPoolsStats,
 ) -> Option<(Option<i64>, Option<i64>)> {
@@ -93,17 +84,18 @@ fn plan_observation_pools(
     child_pools.extend(
         resolve_child_pool_attribution_from_script(
             row.child_coinbase_script.as_deref(),
-            sources.resolver,
-            sources.pool_ids_by_slug,
+            &seeded.resolver,
+            &seeded.pool_ids_by_slug,
         )
         .and_then(|attribution| attribution.pool_id),
     );
-    // Captures from before payout attribution stored the outputs without their identities.
+    // A capture made before its source had payout attribution kept the outputs but no payout
+    // identities; replaying the outputs resolves the pool, though not those identities.
     match replay_child_payouts(
         row.id,
         &row.source_code,
         row.child_coinbase_outputs.as_deref(),
-        sources.child_payout_identities,
+        &seeded.child_payout_identities,
     ) {
         Some(payouts) => {
             child_pools.extend(payouts.iter().filter_map(|attribution| attribution.pool_id));
@@ -118,8 +110,8 @@ fn plan_observation_pools(
                 outputs: row.btc_parent_coinbase_outputs.as_deref(),
                 outputs_text: None,
             },
-            sources.resolver,
-            sources.pool_ids_by_slug,
+            &seeded.resolver,
+            &seeded.pool_ids_by_slug,
         );
         if resolution.corrupt_outputs {
             stats.corrupt_parent_outputs += 1;

@@ -51,7 +51,7 @@ use mmm_store::{
 
 mod observations;
 mod plan;
-use observations::{PoolSources, reresolve_observation_pools};
+use observations::reresolve_observation_pools;
 use plan::{ParentUpdateGroup, plan_batch_updates};
 
 const DEFAULT_BATCH_SIZE: i64 = 500;
@@ -447,16 +447,6 @@ struct Seeded {
     rsk_identity_ids: HashMap<String, i64>,
 }
 
-impl Seeded {
-    fn pool_sources(&self) -> PoolSources<'_> {
-        PoolSources {
-            resolver: &self.resolver,
-            pool_ids_by_slug: &self.pool_ids_by_slug,
-            child_payout_identities: &self.child_payout_identities,
-        }
-    }
-}
-
 async fn seed_reclassify_pools(
     client: &mut Client,
     config: &ReclassifyPoolsConfig,
@@ -532,9 +522,7 @@ async fn source_filter(client: &Client, config: &ReclassifyPoolsConfig) -> Resul
 
 async fn run_main_candidate_scan(
     client: &mut Client,
-    resolver: &PoolResolver,
-    pool_ids_by_slug: &HashMap<String, i64>,
-    child_payout_identities: &PoolIdentityLookup,
+    seeded: &Seeded,
     config: &ReclassifyPoolsConfig,
     stats: &mut ReclassifyPoolsStats,
 ) -> Result<()> {
@@ -560,9 +548,9 @@ async fn run_main_candidate_scan(
         batch_index += 1;
         let groups = plan_batch_updates(
             &rows,
-            resolver,
-            pool_ids_by_slug,
-            child_payout_identities,
+            &seeded.resolver,
+            &seeded.pool_ids_by_slug,
+            &seeded.child_payout_identities,
             config,
             stats,
         );
@@ -607,7 +595,6 @@ pub async fn run_reclassify_pools(
     config: ReclassifyPoolsConfig,
 ) -> Result<ReclassifyPoolsStats> {
     let seeded = seed_reclassify_pools(client, &config).await?;
-    let child_payout_identities = &seeded.child_payout_identities;
 
     info!(
         phase = "seed",
@@ -647,15 +634,7 @@ pub async fn run_reclassify_pools(
     }
 
     if config.run_main {
-        run_main_candidate_scan(
-            client,
-            &seeded.resolver,
-            &seeded.pool_ids_by_slug,
-            child_payout_identities,
-            &config,
-            &mut stats,
-        )
-        .await?;
+        run_main_candidate_scan(client, &seeded, &config, &mut stats).await?;
     } else {
         info!(
             phase = "main_scan",
@@ -668,8 +647,13 @@ pub async fn run_reclassify_pools(
             phase = "hathor",
             "reclassify-pools: starting Hathor reward replay"
         );
-        replay_hathor_reward_attributions(client, child_payout_identities, &config, &mut stats)
-            .await?;
+        replay_hathor_reward_attributions(
+            client,
+            &seeded.child_payout_identities,
+            &config,
+            &mut stats,
+        )
+        .await?;
         info!(
             phase = "hathor",
             reward_updates = stats.hathor_reward_updates,
@@ -702,7 +686,7 @@ pub async fn run_reclassify_pools(
     }
 
     if config.run_observations {
-        reresolve_observation_pools(client, &seeded.pool_sources(), &config, &mut stats).await?;
+        reresolve_observation_pools(client, &seeded, &config, &mut stats).await?;
     } else {
         info!(
             phase = "observations",

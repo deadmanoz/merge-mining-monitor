@@ -290,18 +290,17 @@ async fn write_observation<C: GenericClient>(
     } else {
         Exactness::Partial
     });
-    let kind_guard = match observation.kind {
-        // An unauthenticated child-only answer never overwrites a proven parent.
-        ObservationKind::NotMergeMined | ObservationKind::UnverifiedParent => {
-            "AND o.observation_kind NOT IN ('evidence', 'near')"
-        }
-        // A child block commits to one parent, so a proven parent never replaces another.
-        ObservationKind::Evidence | ObservationKind::Near => {
-            "AND (o.observation_kind NOT IN ('evidence', 'near') \
-                  OR o.btc_parent_header_hash = EXCLUDED.btc_parent_header_hash)"
-        }
-        ObservationKind::NonBitcoinParent => "",
+    // An unauthenticated child-only answer never overwrites a proven parent.
+    let kind_guard = if matches!(
+        observation.kind,
+        ObservationKind::NotMergeMined | ObservationKind::UnverifiedParent
+    ) {
+        "AND o.observation_kind NOT IN ('evidence', 'near')"
+    } else {
+        ""
     };
+    // A child block commits to one parent, so a stored parent is never contradicted; only
+    // evidence and near rows store one (`chk_cbo_parent_by_kind`).
     // A rewrite that resolves no child pool keeps the stored one, which reclassify-pools may
     // have resolved after the writer loaded its registry; an event's attributions do the same.
     let near = observation.near_parent.as_ref();
@@ -328,7 +327,9 @@ async fn write_observation<C: GenericClient>(
             {near_coinbase}, \
             child_pool_id = COALESCE(EXCLUDED.child_pool_id, o.child_pool_id), \
             {near_parent_pool} \
-         WHERE (o.child_height IS NULL OR EXCLUDED.child_height IS NULL OR o.child_height = EXCLUDED.child_height) \
+         WHERE (o.btc_parent_header_hash IS NULL OR EXCLUDED.btc_parent_header_hash IS NULL \
+                OR o.btc_parent_header_hash = EXCLUDED.btc_parent_header_hash) \
+           AND (o.child_height IS NULL OR EXCLUDED.child_height IS NULL OR o.child_height = EXCLUDED.child_height) \
            AND (o.child_block_time IS NULL OR EXCLUDED.child_block_time IS NULL OR o.child_block_time = EXCLUDED.child_block_time) \
            AND (o.child_header_bytes IS NULL OR EXCLUDED.child_header_bytes IS NULL OR o.child_header_bytes = EXCLUDED.child_header_bytes) \
            AND (o.child_nbits IS NULL OR EXCLUDED.child_nbits IS NULL OR o.child_nbits = EXCLUDED.child_nbits) \

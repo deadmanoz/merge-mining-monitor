@@ -29,10 +29,11 @@ pub const CHILD_PAYOUT_REGISTRY_SOURCE: &str = "child_payout_registry";
 pub const RSK_MINER_REGISTRY_SOURCE: &str = "rsk_miner_registry";
 pub const RSK_RPC_MINER_SOURCE: &str = "rsk_rpc_miner";
 
-/// BTC parent classification stored on `merge_mining_event.btc_parent_kind`.
-/// Distinct from `BlockKind` (`block.kind`) because `merge_mining_event` also
-/// records `Near` headers that fail the BTC PoW target (folded into `Unknown`
-/// when deriving `block` rows). Orphan status lives on `block.btc_orphan_class`.
+/// BTC parent classification of a capture, stored on `merge_mining_event.btc_parent_kind`.
+/// Distinct from `BlockKind` (`block.kind`) because a capture can also find a `Near` header
+/// that fails the BTC PoW target, which is recorded only as a `child_block_observation`
+/// (rows from before migration 0034 still carry it). Orphan status lives on
+/// `block.btc_orphan_class`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParentKind {
     Canonical,
