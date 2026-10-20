@@ -345,7 +345,6 @@ pub(super) fn parent_kind_from_db(raw: &str) -> Result<ParentKind> {
     match raw {
         "canonical" => Ok(ParentKind::Canonical),
         "error_block" => Ok(ParentKind::ErrorBlock),
-        "near" => Ok(ParentKind::Near),
         "stale" => Ok(ParentKind::Stale),
         "unknown" => Ok(ParentKind::Unknown),
         _ => bail!("unknown parent kind {raw:?}"),
