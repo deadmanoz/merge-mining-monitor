@@ -575,6 +575,39 @@ async fn exact_partial_refinement_rejects_contradictory_child_evidence() -> Resu
 }
 
 #[tokio::test]
+async fn promotion_refuses_a_partial_row_contradicting_the_blocks_exact_observation() -> Result<()>
+{
+    crate::run_mut_db_test!(client, {
+        let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let exact = exact_payload(1_011, 2_011)?;
+        let mut partial = partial_payload(1_011, 2_010)?;
+        partial.child_block_time = exact.child_block_time.map(|time| time + 1);
+        upsert_merge_mining_event(&client, source_id, &partial).await?;
+        // An earlier capture recorded the block, with the exact payload's time, but no event.
+        client
+            .execute(
+                "INSERT INTO child_block_observation ( \
+                    source_id, child_height, child_block_hash, observation_kind, \
+                    child_block_time, recorded_at \
+                 ) VALUES ($1, 1011, $2, 'unverified_parent', $3, 1)",
+                &[&source_id, &exact.child_block_hash, &exact.child_block_time],
+            )
+            .await?;
+
+        let txn = client.transaction().await?;
+        let error = upsert_merge_mining_event(&txn, source_id, &exact)
+            .await
+            .expect_err("the partial row's time contradicts the block's exact observation");
+        txn.rollback().await?;
+        assert!(
+            format!("{error:#}").contains("contradicts the block's exact observation"),
+            "{error:#}"
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
 async fn observation_requires_a_child_hash_height_or_header() -> Result<()> {
     crate::run_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;

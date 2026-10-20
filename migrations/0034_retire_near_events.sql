@@ -43,8 +43,8 @@ LOCK TABLE merge_mining_event, rsk_merge_mining_evidence, event_pool_attribution
            historical_event_provenance
     IN SHARE MODE;
 
--- 0033 may have created child_block_observation in this same transaction,
--- where autovacuum cannot gather its statistics.
+-- child_block_observation is new: the production wrapper applies 0033 in this
+-- same transaction, and elsewhere autovacuum may not have analyzed it yet.
 ANALYZE child_block_observation;
 
 -- Each event and its observation: through observation_id, or through the equal

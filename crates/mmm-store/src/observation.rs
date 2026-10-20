@@ -75,21 +75,27 @@ pub(crate) async fn fold_hashless_observation<C: GenericClient>(
                 .context("promote the event's hashless observation")?;
         }
         (Some(hashless), Some(exact)) => {
-            client
+            let folded = client
                 .execute(
                     &format!(
                         "UPDATE child_block_observation o SET {}, {}, \
                              child_difficulty_reported = \
                                  COALESCE(o.child_difficulty_reported, h.child_difficulty_reported), \
                              recorded_at = LEAST(o.recorded_at, h.recorded_at) \
-                         FROM child_block_observation h WHERE o.id = $1 AND h.id = $2",
+                         FROM child_block_observation h \
+                         WHERE o.id = $1 AND h.id = $2 AND {}",
                         fill_child_evidence_from("h"),
                         fill_near_coinbase_from("o", "h"),
+                        child_evidence_agrees("h"),
                     ),
                     &[&exact, &hashless],
                 )
                 .await
                 .context("fold the hashless observation into the exact one")?;
+            ensure!(
+                folded == 1,
+                "the hashless observation contradicts the block's exact observation"
+            );
             link_event_observation(client, event_id, exact).await?;
             client
                 .execute(
@@ -201,6 +207,30 @@ const CHILD_EVIDENCE_COLUMNS: [&str; 9] = [
     "pow_validates_child_target",
 ];
 
+/// The child evidence two records of one block must agree on where both hold it.
+const CHECKED_CHILD_EVIDENCE: [&str; 6] = [
+    "child_height",
+    "child_block_time",
+    "child_header_bytes",
+    "child_nbits",
+    "pow_validates_child_target",
+    "child_prev_block_hash",
+];
+
+/// A predicate that observation `o` and row `other` do not contradict each other's child
+/// evidence.
+fn child_evidence_agrees(other: &str) -> String {
+    CHECKED_CHILD_EVIDENCE
+        .iter()
+        .map(|column| {
+            format!(
+                "(o.{column} IS NULL OR {other}.{column} IS NULL OR o.{column} = {other}.{column})"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
+
 /// `SET` items filling observation `o`'s missing child evidence from row `from`, and
 /// merging both rows' identities.
 fn fill_child_evidence_from(from: &str) -> String {
@@ -293,16 +323,10 @@ async fn write_observation<C: GenericClient>(
             {near_parent_pool} \
          WHERE (o.btc_parent_header_hash IS NULL OR EXCLUDED.btc_parent_header_hash IS NULL \
                 OR o.btc_parent_header_hash = EXCLUDED.btc_parent_header_hash) \
-           AND (o.child_height IS NULL OR EXCLUDED.child_height IS NULL OR o.child_height = EXCLUDED.child_height) \
-           AND (o.child_block_time IS NULL OR EXCLUDED.child_block_time IS NULL OR o.child_block_time = EXCLUDED.child_block_time) \
-           AND (o.child_header_bytes IS NULL OR EXCLUDED.child_header_bytes IS NULL OR o.child_header_bytes = EXCLUDED.child_header_bytes) \
-           AND (o.child_nbits IS NULL OR EXCLUDED.child_nbits IS NULL OR o.child_nbits = EXCLUDED.child_nbits) \
-           AND (o.pow_validates_child_target IS NULL OR EXCLUDED.pow_validates_child_target IS NULL \
-                OR o.pow_validates_child_target = EXCLUDED.pow_validates_child_target) \
-           AND (o.child_prev_block_hash IS NULL OR EXCLUDED.child_prev_block_hash IS NULL \
-                OR o.child_prev_block_hash = EXCLUDED.child_prev_block_hash) \
+           AND {agrees} \
            {kind_guard} \
          RETURNING id",
+        agrees = child_evidence_agrees("EXCLUDED"),
         fill = fill_child_evidence_from("EXCLUDED"),
         near_coinbase = fill_near_coinbase_from("EXCLUDED", "EXCLUDED"),
         near_parent_pool = NEAR_PARENT_POOL_SET,
