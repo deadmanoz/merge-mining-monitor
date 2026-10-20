@@ -7,6 +7,9 @@ use bitcoin::block::Header;
 use bitcoin::consensus::deserialize;
 use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier, ParentClassification};
+use mmm_capture::capture::{
+    BTC_POOL_SNAPSHOT_SOURCE, EventPoolAttribution, PoolAttributionConfidence, PoolAttributionSide,
+};
 use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, QBIT_SOURCE_CODE, TERRACOIN_SOURCE_CODE};
 use mmm_capture::test_support::load_raw_namecoin_fixture;
 use mmm_producers::RescanOutcome;
@@ -17,8 +20,7 @@ use mmm_producers::chains::{
 use mmm_store::{
     CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, ChildChainHeadOutcome, ChildChainHeadRecord,
     CurrentBlockParent, EvidenceMarker, get_source_id, record_capture_error,
-    record_child_chain_block_in_own_transaction, upsert_merge_mining_event,
-    upsert_merge_mining_event_with_attributions,
+    record_child_chain_block_in_own_transaction, upsert_merge_mining_event, write_capture,
 };
 use tokio_postgres::Client;
 
@@ -290,7 +292,8 @@ async fn terracoin_parents_from_other_chains_keep_only_the_child_side_and_cost_n
                     &[&source_id, &height],
                 )
                 .await?;
-            assert_eq!(row.get::<_, i64>(0), i64::from(bitcoin), "{parent}");
+            // A Bitcoin share is a near (an observation only); a foreign parent is refused.
+            assert_eq!(row.get::<_, i64>(0), 0, "{parent}");
             let head = if bitcoin { "captured" } else { "recorded" };
             assert_eq!(row.get::<_, String>(1), head, "{parent}");
             let observation = if bitcoin {
@@ -337,41 +340,42 @@ async fn rescanned_height_records_the_chains_block_and_displaces_the_replaced_on
         );
         assert_eq!(advisory_locks_held(&client).await?, 0);
 
+        // Block B's parent is a near: only its observation is written.
         let rpc = FixtureBitcoindRpc::carrying(HEIGHT, block_b.clone());
         let outcome = process_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
         assert_eq!(outcome, AuxpowHeightOutcome::AuxpowWritten);
-        let mut expected = vec![
-            (hash(&block_a), Some(hash(&block_b)), None),
-            (hash(&block_b), None, None),
-        ];
-        expected.sort();
-        assert_eq!(displacement_at(&client, source_id, HEIGHT).await?, expected);
+        assert_eq!(
+            displacement_at(&client, source_id, HEIGHT).await?,
+            vec![(hash(&block_a), Some(hash(&block_b)), None)]
+        );
 
         let rpc = FixtureBitcoindRpc::carrying(HEIGHT, block_a.clone());
         process_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
+        assert_eq!(
+            displacement_at(&client, source_id, HEIGHT).await?,
+            vec![(hash(&block_a), None, None)]
+        );
         let mut expected = vec![
-            (hash(&block_a), None, None),
-            (hash(&block_b), Some(hash(&block_a)), None),
+            (hash(&block_a), None),
+            (hash(&block_b), Some(hash(&block_a))),
         ];
         expected.sort();
-        assert_eq!(displacement_at(&client, source_id, HEIGHT).await?, expected);
+        assert_eq!(
+            observation_displacement_at(&client, source_id, HEIGHT).await?,
+            expected
+        );
 
         let rpc = FixtureBitcoindRpc::carrying(HEIGHT, block_n.clone());
         let outcome = process_auxpow_height(&mut client, &rpc, &context, HEIGHT).await?;
         assert_eq!(outcome, AuxpowHeightOutcome::NonAuxpowSkipped);
-        let rows = displacement_at(&client, source_id, HEIGHT).await?;
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().all(|row| row.2.is_none()));
-        assert_eq!(advisory_locks_held(&client).await?, 0);
         assert_eq!(
-            rows.iter()
-                .find(|row| row.0 == hash(&block_a))
-                .map(|row| row.1.clone()),
-            Some(Some(hash(&block_n)))
+            displacement_at(&client, source_id, HEIGHT).await?,
+            vec![(hash(&block_a), Some(hash(&block_n)), None)]
         );
+        assert_eq!(advisory_locks_held(&client).await?, 0);
         let mut expected = vec![
             (hash(&block_a), "evidence".to_owned(), false, true),
-            (hash(&block_b), "near".to_owned(), true, true),
+            (hash(&block_b), "near".to_owned(), true, false),
             (hash(&block_n), "not_merge_mined".to_owned(), false, false),
         ];
         expected.sort();
@@ -1048,17 +1052,39 @@ async fn assert_qbit_body_held(
 async fn a_near_rewritten_without_its_parent_coinbase_keeps_it() -> Result<()> {
     crate::run_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
-        let near = exact_observation("500001-near-parent", HEIGHT, [0x5b; 32], 2_030)?;
+        let (_, pool_ids_by_slug) = crate::support::default_pool_snapshot(&client).await?;
+        let f2pool = pool_ids_by_slug["f2pool"];
+        let mut near = exact_observation("500001-near-parent", HEIGHT, [0x5b; 32], 2_030)?;
         assert!(near.btc_parent_coinbase_script.is_some());
-        upsert_merge_mining_event_with_attributions(&client, source_id, &near).await?;
+        near.pool_attributions.push(EventPoolAttribution {
+            side: PoolAttributionSide::BtcParent,
+            namespace: "btc_coinbase_tag",
+            match_kind: "coinbase_tag",
+            matched_value: "f2pool".to_owned(),
+            pool_id: Some(f2pool),
+            pool_identity_id: None,
+            source: BTC_POOL_SNAPSHOT_SOURCE,
+            confidence: PoolAttributionConfidence::High,
+            details: serde_json::json!({}),
+        });
+        write_capture(&client, source_id, &near).await?;
         let mut bare = near.clone();
         bare.btc_parent_coinbase_txid = None;
         bare.btc_parent_coinbase_script = None;
         bare.btc_parent_coinbase_outputs = None;
-        upsert_merge_mining_event_with_attributions(&client, source_id, &bare).await?;
+        bare.pool_attributions.clear();
+        write_capture(&client, source_id, &bare).await?;
+        let events: i64 = client
+            .query_one(
+                "SELECT count(*) FROM merge_mining_event WHERE source_id = $1",
+                &[&source_id],
+            )
+            .await?
+            .get(0);
+        assert_eq!(events, 0, "a near writes no event");
         let row = client
             .query_one(
-                "SELECT observation_kind, btc_parent_coinbase_script \
+                "SELECT observation_kind, btc_parent_coinbase_script, btc_parent_pool_id \
                  FROM child_block_observation WHERE source_id = $1 AND child_block_hash = $2",
                 &[&source_id, &[0x5b_u8; 32].as_slice()],
             )
@@ -1067,6 +1093,20 @@ async fn a_near_rewritten_without_its_parent_coinbase_keeps_it() -> Result<()> {
         assert_eq!(
             row.get::<_, Option<Vec<u8>>>(1),
             near.btc_parent_coinbase_script
+        );
+        assert_eq!(
+            row.get::<_, Option<i64>>(2),
+            Some(f2pool),
+            "the parent pool stays with the coinbase it comes from"
+        );
+
+        let mut other_parent = bare;
+        other_parent.btc_parent_header_hash = vec![0x77; 32];
+        assert!(
+            write_capture(&client, source_id, &other_parent)
+                .await
+                .is_err(),
+            "a child block commits to one parent"
         );
         Ok::<_, anyhow::Error>(())
     })

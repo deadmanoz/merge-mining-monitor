@@ -1,56 +1,41 @@
 //! `child_block_observation` and `child_miner_identity` writes.
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result, bail, ensure};
 use tokio_postgres::GenericClient;
 
 use mmm_capture::capture::{ChildBlockObservation, ObservationKind};
 use mmm_capture::pool_resolver::RSK_MINER_ADDRESS_NAMESPACE;
 
-use crate::event::{EventWriteDisposition, EventWriteOutcome, Exactness, identity_conflict_clause};
+use crate::event::{Exactness, identity_conflict_clause};
 
-/// Write the observation for an event the caller just upserted and link it through
-/// `observation_id`.
-///
-/// The event upsert owns identity resolution, and its disposition says what the
-/// observation needs: a promoted event's hashless observation learns the hash too (or is
-/// folded into an exact observation that already exists), and a hashless payload that an
-/// exact event satisfied takes that event's identity. Otherwise the payload's identity
-/// is the event's.
-pub(crate) async fn upsert_event_observation<C: GenericClient>(
+/// Write an event's observation, before the event itself when it is new, and return its id.
+pub(crate) async fn write_event_observation<C: GenericClient>(
     client: &C,
     source_id: i64,
-    outcome: &EventWriteOutcome,
-    mut observation: ChildBlockObservation,
+    observation: &ChildBlockObservation,
 ) -> Result<i64> {
-    match outcome.disposition {
-        EventWriteDisposition::Promoted => {
-            fold_hashless_observation(client, outcome.event_id).await?;
-        }
-        EventWriteDisposition::SatisfiedByExistingExact => {
-            let event = client
-                .query_one(
-                    "SELECT child_height, child_block_hash FROM merge_mining_event WHERE id = $1",
-                    &[&outcome.event_id],
-                )
-                .await
-                .context("load the exact event's child identity")?;
-            observation.child_height = event.get::<_, Option<i32>>(0).or(observation.child_height);
-            observation.child_block_hash = event.get(1);
-        }
-        EventWriteDisposition::Inserted | EventWriteDisposition::Updated => {}
-    }
-    let observation_id = write_observation(client, source_id, &observation)
+    write_observation(client, source_id, observation)
         .await?
-        .context("event observation contradicts the stored child evidence")?;
+        .context("event observation contradicts the stored child evidence")
+}
+
+/// Point an existing event at its observation.
+pub(crate) async fn link_event_observation<C: GenericClient>(
+    client: &C,
+    event_id: i64,
+    observation_id: i64,
+) -> Result<()> {
     client
         .execute(
             "UPDATE merge_mining_event SET observation_id = $2 \
              WHERE id = $1 AND observation_id IS DISTINCT FROM $2",
-            &[&outcome.event_id, &observation_id],
+            &[&event_id, &observation_id],
         )
         .await
         .context("link the event to its observation")?;
-    Ok(observation_id)
+    Ok(())
 }
 
 /// The observation holding an event's child block: its `observation_id`, or, for an event
@@ -77,9 +62,13 @@ async fn event_observation_id<C: GenericClient>(client: &C, event_id: i64) -> Re
 
 /// Give the hashless observation of an event's child block the hash the event now
 /// carries; when an exact observation of that block already exists, carry the
-/// hashless one's identities and any child evidence the exact row lacks into it and
-/// delete it. Displacement stays the exact row's: it is decided per block hash.
-async fn fold_hashless_observation<C: GenericClient>(client: &C, event_id: i64) -> Result<()> {
+/// hashless one's identities and any child evidence the exact row lacks into it, point
+/// the event at it and delete the hashless one. Displacement stays the exact row's: it
+/// is decided per block hash.
+pub(crate) async fn fold_hashless_observation<C: GenericClient>(
+    client: &C,
+    event_id: i64,
+) -> Result<()> {
     let row = client
         .query_one(
             "SELECT \
@@ -125,13 +114,7 @@ async fn fold_hashless_observation<C: GenericClient>(client: &C, event_id: i64) 
                 )
                 .await
                 .context("fold the hashless observation into the exact one")?;
-            client
-                .execute(
-                    "UPDATE merge_mining_event SET observation_id = NULL WHERE observation_id = $1",
-                    &[&hashless],
-                )
-                .await
-                .context("unlink the hashless observation")?;
+            link_event_observation(client, event_id, exact).await?;
             client
                 .execute(
                     "DELETE FROM child_block_observation WHERE id = $1",
@@ -146,11 +129,12 @@ async fn fold_hashless_observation<C: GenericClient>(client: &C, event_id: i64) 
 }
 
 /// Write a block that has no event (`not_merge_mined`, `non_bitcoin_parent`,
-/// `unverified_parent`). It never overwrites the observation of a child block that
-/// still has an event: a `not_merge_mined` or `unverified_parent` answer for such a
-/// block (an endpoint's unauthenticated claim) leaves its proven evidence in place and
-/// returns `None`. A `non_bitcoin_parent` write follows its event's retraction in the
-/// same transaction, so a refusal there is a contradiction and fails.
+/// `unverified_parent`). A `not_merge_mined` or `unverified_parent` answer (an
+/// endpoint's unauthenticated claim) never overwrites an evidence or near observation:
+/// it leaves the proven parent in place and returns `None`. A `non_bitcoin_parent`
+/// write follows the lineage gate's retraction of the block's events under its locks
+/// and source-health bracket, so it overwrites any kind; a refusal there is a
+/// contradiction and fails.
 pub async fn upsert_child_only_observation<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -158,7 +142,7 @@ pub async fn upsert_child_only_observation<C: GenericClient>(
 ) -> Result<Option<i64>> {
     ensure!(
         observation.kind.is_child_only(),
-        "an evidence or near observation is written with its event"
+        "an evidence or near observation is written through the capture path"
     );
     ensure!(
         observation.child_block_hash.is_some(),
@@ -287,6 +271,14 @@ fn fill_near_coinbase_from(kind_row: &str, from: &str) -> String {
         .join(", ")
 }
 
+/// A rewrite of the same near parent resolves its pool afresh but keeps the stored one when it
+/// resolves none, as the coinbase it comes from is kept; any other write takes the new value.
+const NEAR_PARENT_POOL_SET: &str = "btc_parent_pool_id = CASE \
+    WHEN EXCLUDED.observation_kind = 'near' AND o.observation_kind = 'near' \
+     AND o.btc_parent_header_hash IS NOT DISTINCT FROM EXCLUDED.btc_parent_header_hash \
+    THEN COALESCE(EXCLUDED.btc_parent_pool_id, o.btc_parent_pool_id) \
+    ELSE EXCLUDED.btc_parent_pool_id END";
+
 async fn write_observation<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -298,13 +290,20 @@ async fn write_observation<C: GenericClient>(
     } else {
         Exactness::Partial
     });
-    // A block with no event never overwrites the observation of one that has an event.
-    let event_guard = if observation.kind.is_child_only() {
-        "AND NOT EXISTS (SELECT 1 FROM merge_mining_event e \
-                         WHERE e.source_id = o.source_id AND e.child_block_hash = o.child_block_hash)"
+    // An unauthenticated child-only answer never overwrites a proven parent.
+    let kind_guard = if matches!(
+        observation.kind,
+        ObservationKind::NotMergeMined | ObservationKind::UnverifiedParent
+    ) {
+        "AND o.observation_kind NOT IN ('evidence', 'near')"
     } else {
         ""
     };
+    // A child block commits to one parent, so a stored parent is never contradicted; only
+    // evidence and near rows store one (`chk_cbo_parent_by_kind`).
+    // A rewrite that resolves no child pool keeps the stored one, which reclassify-pools may
+    // have resolved after the writer loaded its registry; an event's attributions do the same.
+    // Known child pools that disagree make it Unknown.
     let near = observation.near_parent.as_ref();
     let child_nbits = observation.child_nbits.map(i64::from);
     let sql = format!(
@@ -315,10 +314,10 @@ async fn write_observation<C: GenericClient>(
             pow_validates_child_target, \
             btc_parent_header_hash, btc_parent_header_bytes, btc_parent_header_time, \
             btc_parent_coinbase_txid, btc_parent_coinbase_script, btc_parent_coinbase_outputs, \
-            child_identity_ids, child_pool_id, recorded_at \
+            child_identity_ids, child_pool_id, btc_parent_pool_id, recorded_at \
          ) VALUES ( \
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
-            $13, $14, $15, $16, $17, $18, $19, $20, $21 \
+            $13, $14, $15, $16, $17, $18, $19, $20, $21, $22 \
          ) \
          {conflict} \
             observation_kind = EXCLUDED.observation_kind, \
@@ -327,18 +326,22 @@ async fn write_observation<C: GenericClient>(
             btc_parent_header_bytes = EXCLUDED.btc_parent_header_bytes, \
             btc_parent_header_time = EXCLUDED.btc_parent_header_time, \
             {near_coinbase}, \
-            child_pool_id = EXCLUDED.child_pool_id, \
-            btc_parent_pool_id = NULL \
-         WHERE (o.child_height IS NULL OR EXCLUDED.child_height IS NULL OR o.child_height = EXCLUDED.child_height) \
+            child_pool_id = CASE WHEN $23 THEN NULL \
+                ELSE COALESCE(EXCLUDED.child_pool_id, o.child_pool_id) END, \
+            {near_parent_pool} \
+         WHERE (o.btc_parent_header_hash IS NULL OR EXCLUDED.btc_parent_header_hash IS NULL \
+                OR o.btc_parent_header_hash = EXCLUDED.btc_parent_header_hash) \
+           AND (o.child_height IS NULL OR EXCLUDED.child_height IS NULL OR o.child_height = EXCLUDED.child_height) \
            AND (o.child_block_time IS NULL OR EXCLUDED.child_block_time IS NULL OR o.child_block_time = EXCLUDED.child_block_time) \
            AND (o.child_header_bytes IS NULL OR EXCLUDED.child_header_bytes IS NULL OR o.child_header_bytes = EXCLUDED.child_header_bytes) \
            AND (o.child_nbits IS NULL OR EXCLUDED.child_nbits IS NULL OR o.child_nbits = EXCLUDED.child_nbits) \
            AND (o.child_prev_block_hash IS NULL OR EXCLUDED.child_prev_block_hash IS NULL \
                 OR o.child_prev_block_hash = EXCLUDED.child_prev_block_hash) \
-           {event_guard} \
+           {kind_guard} \
          RETURNING id",
         fill = fill_child_evidence_from("EXCLUDED"),
         near_coinbase = fill_near_coinbase_from("EXCLUDED", "EXCLUDED"),
+        near_parent_pool = NEAR_PARENT_POOL_SET,
     );
     let row = client
         .query_opt(
@@ -364,7 +367,9 @@ async fn write_observation<C: GenericClient>(
                 &near.and_then(|parent| parent.coinbase_outputs.as_deref()),
                 &identity_ids,
                 &observation.child_pool_id,
+                &observation.btc_parent_pool_id,
                 &observation.recorded_at,
+                &observation.child_pools_conflict,
             ],
         )
         .await
@@ -422,4 +427,135 @@ pub(crate) async fn insert_child_identities<C: GenericClient>(
         .await
         .context("insert child miner identities")?;
     Ok(())
+}
+
+/// An observation no event backs, as `reclassify-pools` re-resolves its pools.
+#[derive(Debug)]
+pub struct ObservationPoolRow {
+    pub id: i64,
+    pub source_code: String,
+    pub near: bool,
+    pub child_identity_ids: Vec<i64>,
+    pub child_coinbase_script: Option<Vec<u8>>,
+    pub child_coinbase_outputs: Option<Vec<u8>>,
+    pub btc_parent_coinbase_script: Option<Vec<u8>>,
+    pub btc_parent_coinbase_outputs: Option<Vec<u8>>,
+    pub child_pool_id: Option<i64>,
+    pub btc_parent_pool_id: Option<i64>,
+}
+
+/// A keyset page of observations no event backs (nears and child-only rows) whose pools a
+/// pass could change: all of them under `overwrite`, otherwise those missing a pool they
+/// carry something to resolve it from (child outputs only from `payout_sources`).
+pub async fn load_observation_pool_batch<C: GenericClient>(
+    client: &C,
+    cursor: Option<i64>,
+    source_id: Option<i64>,
+    overwrite: bool,
+    payout_sources: &[&str],
+    limit: i64,
+) -> Result<Vec<ObservationPoolRow>> {
+    let rows = client
+        .query(
+            "SELECT o.id, s.code, o.observation_kind = 'near', o.child_identity_ids, \
+                    o.child_coinbase_script, o.child_coinbase_outputs, \
+                    o.btc_parent_coinbase_script, o.btc_parent_coinbase_outputs, \
+                    o.child_pool_id, o.btc_parent_pool_id \
+             FROM child_block_observation o \
+             JOIN source s ON s.id = o.source_id \
+             WHERE o.observation_kind <> 'evidence' \
+               AND ($1::bigint IS NULL OR o.id > $1) \
+               AND ($2::bigint IS NULL OR o.source_id = $2) \
+               AND ($3 \
+                    OR (o.child_pool_id IS NULL \
+                        AND (cardinality(o.child_identity_ids) > 0 \
+                             OR o.child_coinbase_script IS NOT NULL \
+                             OR (o.child_coinbase_outputs IS NOT NULL AND s.code = ANY($4)))) \
+                    OR (o.observation_kind = 'near' AND o.btc_parent_pool_id IS NULL \
+                        AND (o.btc_parent_coinbase_script IS NOT NULL \
+                             OR o.btc_parent_coinbase_outputs IS NOT NULL))) \
+             ORDER BY o.id LIMIT $5",
+            &[&cursor, &source_id, &overwrite, &payout_sources, &limit],
+        )
+        .await
+        .context("load an observation pool batch")?;
+    Ok(rows
+        .iter()
+        .map(|row| ObservationPoolRow {
+            id: row.get(0),
+            source_code: row.get(1),
+            near: row.get(2),
+            child_identity_ids: row.get(3),
+            child_coinbase_script: row.get(4),
+            child_coinbase_outputs: row.get(5),
+            btc_parent_coinbase_script: row.get(6),
+            btc_parent_coinbase_outputs: row.get(7),
+            child_pool_id: row.get(8),
+            btc_parent_pool_id: row.get(9),
+        })
+        .collect())
+}
+
+/// Each child identity's current registry pool, for identities the registry maps.
+pub async fn load_child_identity_pools<C: GenericClient>(client: &C) -> Result<HashMap<i64, i64>> {
+    let rows = client
+        .query(
+            "SELECT ci.id, pi.pool_id FROM child_miner_identity ci \
+             JOIN pool_identity pi ON pi.namespace = ci.namespace AND pi.identifier = ci.identifier \
+             WHERE pi.pool_id IS NOT NULL",
+            &[],
+        )
+        .await
+        .context("load child identity pools")?;
+    Ok(rows.iter().map(|row| (row.get(0), row.get(1))).collect())
+}
+
+/// Set each loaded row's re-resolved `(child pool, parent pool)` in one statement, and return
+/// how many were set. A row a capture changed since it was loaded keeps what the capture wrote.
+pub async fn update_observation_pools<C: GenericClient>(
+    client: &C,
+    updates: &[(&ObservationPoolRow, Option<i64>, Option<i64>)],
+) -> Result<u64> {
+    if updates.is_empty() {
+        return Ok(0);
+    }
+    let ids = updates.iter().map(|update| update.0.id).collect::<Vec<_>>();
+    let nears = updates
+        .iter()
+        .map(|update| update.0.near)
+        .collect::<Vec<_>>();
+    let loaded_child_pools = updates
+        .iter()
+        .map(|update| update.0.child_pool_id)
+        .collect::<Vec<_>>();
+    let loaded_parent_pools = updates
+        .iter()
+        .map(|update| update.0.btc_parent_pool_id)
+        .collect::<Vec<_>>();
+    let child_pools = updates.iter().map(|update| update.1).collect::<Vec<_>>();
+    let parent_pools = updates.iter().map(|update| update.2).collect::<Vec<_>>();
+    client
+        .execute(
+            "UPDATE child_block_observation o \
+                SET child_pool_id = u.child_pool_id, btc_parent_pool_id = u.btc_parent_pool_id \
+               FROM unnest($1::bigint[], $2::boolean[], $3::bigint[], $4::bigint[], \
+                           $5::bigint[], $6::bigint[]) \
+                    AS u(id, near, loaded_child_pool_id, loaded_parent_pool_id, \
+                         child_pool_id, btc_parent_pool_id) \
+              WHERE o.id = u.id \
+                AND o.observation_kind <> 'evidence' \
+                AND (o.observation_kind = 'near') = u.near \
+                AND o.child_pool_id IS NOT DISTINCT FROM u.loaded_child_pool_id \
+                AND o.btc_parent_pool_id IS NOT DISTINCT FROM u.loaded_parent_pool_id",
+            &[
+                &ids,
+                &nears,
+                &loaded_child_pools,
+                &loaded_parent_pools,
+                &child_pools,
+                &parent_pools,
+            ],
+        )
+        .await
+        .context("update re-resolved observation pools")
 }

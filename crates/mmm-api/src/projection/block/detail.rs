@@ -87,8 +87,32 @@ fn marker_projection_for(family: ChainFamily, marker: &AuxMarker) -> AuxMarkerPr
     }
 }
 
+/// A child block's view of its parent's coinbase, as commitment derivation reads it.
+pub(super) trait ParentCoinbase {
+    /// Lower first: the representative row when several qualify.
+    fn order(&self) -> i64;
+    fn chain(&self) -> Option<&str>;
+    fn parent_coinbase_txid(&self) -> Option<&[u8]>;
+    fn parent_coinbase_script(&self) -> Option<&[u8]>;
+}
+
+impl ParentCoinbase for EventDetailRow {
+    fn order(&self) -> i64 {
+        self.id
+    }
+    fn chain(&self) -> Option<&str> {
+        self.source.chain.as_deref()
+    }
+    fn parent_coinbase_txid(&self) -> Option<&[u8]> {
+        self.btc_parent_coinbase_txid.as_deref()
+    }
+    fn parent_coinbase_script(&self) -> Option<&[u8]> {
+        self.btc_parent_coinbase_script.as_deref()
+    }
+}
+
 /// Derive parent-level merge-mining commitment (`NamecoinFamily > Qbit > Rsk > Hathor`).
-pub(super) fn derive_commitment(rows: &[EventDetailRow]) -> Option<Commitment> {
+pub(super) fn derive_commitment<R: ParentCoinbase>(rows: &[R]) -> Option<Commitment> {
     if let Some(commitment) = coinbase_commitment(rows, ChainFamily::NamecoinFamily, "namecoin-aux")
     {
         return Some(commitment);
@@ -98,7 +122,7 @@ pub(super) fn derive_commitment(rows: &[EventDetailRow]) -> Option<Commitment> {
     }
     if rows
         .iter()
-        .any(|r| chain_family(r.source.chain.as_deref()) == ChainFamily::Rsk)
+        .any(|r| chain_family(r.chain()) == ChainFamily::Rsk)
     {
         return Some(Commitment {
             format: "rsk-opaque",
@@ -109,7 +133,7 @@ pub(super) fn derive_commitment(rows: &[EventDetailRow]) -> Option<Commitment> {
     }
     if rows
         .iter()
-        .any(|r| chain_family(r.source.chain.as_deref()) == ChainFamily::Hathor)
+        .any(|r| chain_family(r.chain()) == ChainFamily::Hathor)
     {
         return Some(Commitment {
             format: "hathor-rfc0006",
@@ -123,22 +147,21 @@ pub(super) fn derive_commitment(rows: &[EventDetailRow]) -> Option<Commitment> {
 
 /// Select the lowest-id member of `family` whose coinbase scriptSig decodes a `0xfabe6d6d` marker,
 /// or the lowest-id member with a null marker.
-fn coinbase_commitment(
-    rows: &[EventDetailRow],
+fn coinbase_commitment<R: ParentCoinbase>(
+    rows: &[R],
     family: ChainFamily,
     format: &'static str,
 ) -> Option<Commitment> {
-    let mut members: Vec<&EventDetailRow> = rows
+    let mut members: Vec<&R> = rows
         .iter()
-        .filter(|r| chain_family(r.source.chain.as_deref()) == family)
+        .filter(|r| chain_family(r.chain()) == family)
         .collect();
     if members.is_empty() {
         return None;
     }
-    members.sort_by_key(|r| r.id);
+    members.sort_by_key(|r| r.order());
     let decoded = members.iter().find_map(|r| {
-        r.btc_parent_coinbase_script
-            .as_deref()
+        r.parent_coinbase_script()
             .and_then(decode_aux_marker)
             .map(|marker| (*r, marker))
     });
@@ -149,10 +172,9 @@ fn coinbase_commitment(
     Some(Commitment {
         format,
         parent_coinbase_txid: rep
-            .btc_parent_coinbase_txid
-            .as_deref()
+            .parent_coinbase_txid()
             .and_then(|bytes| display_hash(bytes).ok()),
-        parent_coinbase_script_hex: rep.btc_parent_coinbase_script.as_deref().map(hex::encode),
+        parent_coinbase_script_hex: rep.parent_coinbase_script().map(hex::encode),
         marker: marker.as_ref().map(|m| marker_projection_for(family, m)),
     })
 }

@@ -168,29 +168,27 @@ pub(crate) fn optional_bool(
     }
 }
 
+/// The tree's node kinds, in canonical order. A near parent is not a tree node: its page is
+/// `/api/v1/block/{hash}`.
+const TREE_KINDS: [ParentKind; 4] = [
+    ParentKind::Canonical,
+    ParentKind::ErrorBlock,
+    ParentKind::Stale,
+    ParentKind::Unknown,
+];
+
 pub(crate) fn normalized_kinds(raw: Option<&str>) -> Result<Vec<ParentKind>, ApiError> {
     let parsed = parse_kinds(raw)?;
-    let values = if parsed.is_empty() {
-        vec![
-            ParentKind::Canonical,
-            ParentKind::ErrorBlock,
-            ParentKind::Near,
-            ParentKind::Stale,
-            ParentKind::Unknown,
-        ]
-    } else {
-        parsed
-    };
-    Ok([
-        ParentKind::Canonical,
-        ParentKind::ErrorBlock,
-        ParentKind::Near,
-        ParentKind::Stale,
-        ParentKind::Unknown,
-    ]
-    .into_iter()
-    .filter(|kind| values.contains(kind))
-    .collect())
+    if parsed.contains(&ParentKind::Near) {
+        return Err(ApiError::invalid_query(
+            "near parents are not tree nodes; open /api/v1/block/{hash}",
+            json!({ "kinds": raw }),
+        ));
+    }
+    Ok(TREE_KINDS
+        .into_iter()
+        .filter(|kind| parsed.is_empty() || parsed.contains(kind))
+        .collect())
 }
 
 /// Default the orphan-class filter to `strict+weak` when `classification=` is absent,

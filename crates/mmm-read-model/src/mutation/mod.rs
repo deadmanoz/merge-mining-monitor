@@ -13,8 +13,8 @@ use tracing::debug;
 use crate::source_health_sql::ParentContribution;
 use mmm_bitcoin_core::BitcoinCoreBlockCoinbase;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
-use mmm_capture::capture::{MergeMiningEventPayload, ParentKind, apply_classification_proof};
-use mmm_store::EventWriteOutcome;
+use mmm_capture::capture::{MergeMiningEventPayload, apply_classification_proof};
+use mmm_store::{CaptureWrite, EventWriteOutcome};
 
 mod historical_queue;
 use historical_queue::enqueue_historical_parent;
@@ -233,7 +233,7 @@ pub async fn capture_in_txn<F>(
     upsert: F,
 ) -> Result<CaptureOutcome>
 where
-    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
+    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<CaptureWrite>,
 {
     capture_event(client, source_id, classifier, payload, chain_label, upsert).await
 }
@@ -387,7 +387,7 @@ async fn capture_event<F>(
     upsert: F,
 ) -> Result<CaptureOutcome>
 where
-    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
+    F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<CaptureWrite>,
 {
     let mut attempts = 0;
     let (outcome, changed_hashes) = loop {
@@ -422,19 +422,21 @@ where
         lock_block_hash(&txn, &payload.btc_parent_header_hash).await?;
         let bracket =
             PrimarySourceHealthBracket::open(&txn, &payload.btc_parent_header_hash).await?;
-        let outcome = upsert(&txn, source_id, payload).await?;
-        let reconcile_result = if payload.btc_parent_kind != ParentKind::Near {
-            reconcile_one_event_in_txn(
-                &txn,
-                outcome.event_id,
-                classifier,
-                preclassified.clone().map(PreclassifiedParent::trusted),
-                PrimaryDiff::Wrapper(&bracket),
-                None,
-            )
-            .await
-        } else {
-            Ok(Vec::new())
+        let write = upsert(&txn, source_id, payload).await?;
+        let reconcile_result = match write {
+            CaptureWrite::Event(written) => {
+                reconcile_one_event_in_txn(
+                    &txn,
+                    written.event_id,
+                    classifier,
+                    preclassified.clone().map(PreclassifiedParent::trusted),
+                    PrimaryDiff::Wrapper(&bracket),
+                    None,
+                )
+                .await
+            }
+            // A near has no event and no parent read model; the bracket counts it.
+            CaptureWrite::Near { .. } => Ok(Vec::new()),
         };
         match reconcile_result {
             Ok(changed_hashes) => {
@@ -442,7 +444,7 @@ where
                 txn.commit()
                     .await
                     .with_context(|| format!("commit {chain_label} capture transaction"))?;
-                break (CaptureOutcome::Written(outcome.event_id), changed_hashes);
+                break (CaptureOutcome::Written(write), changed_hashes);
             }
             Err(err) if is_reconcile_lock_set_changed(&err) && attempts + 1 < retry_attempts() => {
                 txn.rollback().await.with_context(|| {

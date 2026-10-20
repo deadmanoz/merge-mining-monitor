@@ -92,16 +92,14 @@ pub(super) fn project_blocks(
         .collect()
 }
 
-/// Project `Near`/`Unknown` parents that have AuxPoW events but no `block` row (`btc_orphan_class = None`).
+/// Project `Unknown` parents that have AuxPoW events but no `block` row (`btc_orphan_class = None`).
 pub(super) fn project_direct_events(
     events: &[EventRow],
     block_hashes: &HashSet<Vec<u8>>,
 ) -> Result<Vec<ParentProjection>> {
     let mut grouped: BTreeMap<Vec<u8>, Vec<&EventRow>> = BTreeMap::new();
     for event in events {
-        if block_hashes.contains(&event.parent_hash)
-            || !matches!(event.kind, ParentKind::Near | ParentKind::Unknown)
-        {
+        if block_hashes.contains(&event.parent_hash) || event.kind != ParentKind::Unknown {
             continue;
         }
         grouped
@@ -112,11 +110,7 @@ pub(super) fn project_direct_events(
 
     let mut projections = Vec::new();
     for (hash, events) in grouped {
-        let kind = if events.iter().any(|event| event.kind == ParentKind::Unknown) {
-            ParentKind::Unknown
-        } else {
-            ParentKind::Near
-        };
+        let kind = ParentKind::Unknown;
         ensure_unknown_btc_target(
             kind,
             events.iter().map(|event| event.pow_validates_btc_target),
@@ -126,10 +120,8 @@ pub(super) fn project_direct_events(
             .iter()
             .min_by_key(|event| event.id)
             .expect("grouped from at least one event");
-        let source_summary = source_summary_from_sources(
-            events.iter().map(|event| &event.source),
-            kind != ParentKind::Near,
-        );
+        let source_summary =
+            source_summary_from_sources(events.iter().map(|event| &event.source), true);
         projections.push(ParentProjection {
             hash_bytes: hash.clone(),
             hash: display_hash(&hash)?,

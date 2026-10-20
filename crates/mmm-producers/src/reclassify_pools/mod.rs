@@ -1,9 +1,10 @@
 //! Offline historical pool re-resolution (`reclassify-pools`).
 //!
 //! Seeds the embedded `PoolResolver`, RSK-only slugs, and child identity
-//! registries, then runs four phase-gated passes: RSK miner-address sidecar
+//! registries, then runs five phase-gated passes: RSK miner-address
 //! re-resolution, keyset-paged coinbase/payout replay (`plan`), Hathor
-//! `funds_graph` reward replay, and Elastos identity promotion.
+//! `funds_graph` reward replay, Elastos identity promotion, and the pools of
+//! observations no event backs (`observations`).
 //! Parent-group attribution updates and their read-model reconciliation commit
 //! atomically per parent via `mmm_read_model::update_parent_events` (classifier
 //! disabled), with fill-missing-only by default and `--overwrite` to refresh
@@ -45,10 +46,12 @@ use mmm_store::{
     delete_event_pool_attributions_for_source, get_source_id, load_pool_identities_by_namespace,
     sync_event_observation_attribution, upsert_event_pool_attributions,
     upsert_event_pool_attributions_without_stale_cleanup, upsert_pool_snapshot,
-    upsert_rsk_only_pools,
+    upsert_rsk_only_pools, upsert_rsk_pool_identities_with_policy,
 };
 
+mod observations;
 mod plan;
+use observations::reresolve_observation_pools;
 use plan::{ParentUpdateGroup, plan_batch_updates};
 
 const DEFAULT_BATCH_SIZE: i64 = 500;
@@ -62,6 +65,7 @@ const CHILD_PAYOUT_SOURCE_CODES: &[&str] = &[
 // eligible events the scan processes. Params: overwrite, parent source,
 // child-tag source, payout source codes, optional source ID.
 const CANDIDATE_FILTER_SQL: &str = r"e.revoked_at IS NULL
+      AND e.btc_parent_kind <> 'near'
       AND (e.btc_parent_coinbase_script IS NOT NULL
            OR e.btc_parent_coinbase_outputs IS NOT NULL
            OR e.btc_parent_coinbase_outputs_text IS NOT NULL
@@ -113,6 +117,7 @@ pub struct ReclassifyPoolsConfig {
     pub run_main: bool,
     pub run_hathor: bool,
     pub run_elastos: bool,
+    pub run_observations: bool,
     pub source: Option<String>,
 }
 
@@ -125,6 +130,7 @@ impl Default for ReclassifyPoolsConfig {
             run_main: true,
             run_hathor: true,
             run_elastos: true,
+            run_observations: true,
             source: None,
         }
     }
@@ -182,6 +188,11 @@ impl ReclassifyPoolsConfig {
                     any_skip = true;
                     true
                 }
+                "--skip-observations" => {
+                    config.run_observations = false;
+                    any_skip = true;
+                    true
+                }
                 _ => false,
             })
         })?;
@@ -195,14 +206,16 @@ impl ReclassifyPoolsConfig {
             config.run_main = false;
             config.run_hathor = false;
             config.run_elastos = false;
+            config.run_observations = false;
             match phase.as_str() {
                 "rsk" => config.run_rsk = true,
                 "main" => config.run_main = true,
                 "hathor" => config.run_hathor = true,
                 "elastos" => config.run_elastos = true,
+                "observations" => config.run_observations = true,
                 other => bail!(
                     "reclassify-pools: unknown --only phase {other:?} \
-                     (expected one of: rsk, main, hathor, elastos)"
+                     (expected one of: rsk, main, hathor, elastos, observations)"
                 ),
             }
         }
@@ -227,6 +240,8 @@ pub struct ReclassifyPoolsStats {
     pub rsk_miner_unresolved_rows: usize,
     pub rsk_miner_attribution_updates: usize,
     pub rsk_miner_sidecar_late_fills: usize,
+    pub observations_scanned: usize,
+    pub observation_pool_updates: usize,
 }
 
 async fn apply_parent_group(client: &mut Client, group: &ParentUpdateGroup) -> Result<()> {
@@ -423,14 +438,19 @@ async fn count_candidates(client: &Client, overwrite: bool, source: Option<i64>)
     Ok(u64::try_from(row.get::<_, i64>(0))?)
 }
 
+/// The pool snapshot and identity registries every phase resolves through.
+struct Seeded {
+    resolver: PoolResolver,
+    registry: PoolIdentityRegistry,
+    pool_ids_by_slug: HashMap<String, i64>,
+    child_payout_identities: PoolIdentityLookup,
+    rsk_identity_ids: HashMap<String, i64>,
+}
+
 async fn seed_reclassify_pools(
     client: &mut Client,
-) -> Result<(
-    PoolResolver,
-    PoolIdentityRegistry,
-    HashMap<String, i64>,
-    PoolIdentityLookup,
-)> {
+    config: &ReclassifyPoolsConfig,
+) -> Result<Seeded> {
     let resolver = PoolResolver::from_default_snapshot()
         .context("load embedded pool snapshot for reclassify-pools")?;
     let registry = PoolIdentityRegistry::from_default_rsk_registry()
@@ -466,31 +486,48 @@ async fn seed_reclassify_pools(
     .await
     .context("load child payout pool identities")?;
     apply_child_payout_confidence(&mut child_payout_identities, &pool_ids_by_slug)?;
-    Ok((
+    // The RSK and observation passes resolve RSK miners through these mappings.
+    let rsk_identity_ids = if config.run_rsk || config.run_observations {
+        upsert_rsk_pool_identities_with_policy(
+            client,
+            &registry,
+            &pool_ids_by_slug,
+            config.overwrite,
+        )
+        .await
+        .context("seed RSK miner pool identities")?
+    } else {
+        HashMap::new()
+    };
+    Ok(Seeded {
         resolver,
         registry,
         pool_ids_by_slug,
         child_payout_identities,
-    ))
+        rsk_identity_ids,
+    })
+}
+
+/// The `--source` filter as a source id.
+async fn source_filter(client: &Client, config: &ReclassifyPoolsConfig) -> Result<Option<i64>> {
+    match &config.source {
+        Some(code) => Ok(Some(
+            get_source_id(client, code)
+                .await
+                .with_context(|| format!("resolve --source {code:?}"))?,
+        )),
+        None => Ok(None),
+    }
 }
 
 async fn run_main_candidate_scan(
     client: &mut Client,
-    resolver: &PoolResolver,
-    pool_ids_by_slug: &HashMap<String, i64>,
-    child_payout_identities: &PoolIdentityLookup,
+    seeded: &Seeded,
     config: &ReclassifyPoolsConfig,
     stats: &mut ReclassifyPoolsStats,
 ) -> Result<()> {
     let progress = ProgressReporter::new("reclassify-pools-main", None);
-    let source_filter = match &config.source {
-        Some(code) => Some(
-            get_source_id(client, code)
-                .await
-                .with_context(|| format!("resolve --source {code:?}"))?,
-        ),
-        None => None,
-    };
+    let source_filter = source_filter(client, config).await?;
 
     info!(
         phase = "main_scan",
@@ -511,9 +548,9 @@ async fn run_main_candidate_scan(
         batch_index += 1;
         let groups = plan_batch_updates(
             &rows,
-            resolver,
-            pool_ids_by_slug,
-            child_payout_identities,
+            &seeded.resolver,
+            &seeded.pool_ids_by_slug,
+            &seeded.child_payout_identities,
             config,
             stats,
         );
@@ -557,12 +594,11 @@ pub async fn run_reclassify_pools(
     client: &mut Client,
     config: ReclassifyPoolsConfig,
 ) -> Result<ReclassifyPoolsStats> {
-    let (resolver, registry, pool_ids_by_slug, child_payout_identities) =
-        seed_reclassify_pools(client).await?;
+    let seeded = seed_reclassify_pools(client, &config).await?;
 
     info!(
         phase = "seed",
-        pools = pool_ids_by_slug.len(),
+        pools = seeded.pool_ids_by_slug.len(),
         "reclassify-pools: seeded pool snapshot and identity registries"
     );
 
@@ -573,8 +609,15 @@ pub async fn run_reclassify_pools(
             phase = "rsk",
             "reclassify-pools: starting RSK miner-identity pass"
         );
-        reresolve_rsk_miner_identities(client, &registry, &pool_ids_by_slug, &config, &mut stats)
-            .await?;
+        reresolve_rsk_miner_identities(
+            client,
+            &seeded.registry,
+            &seeded.pool_ids_by_slug,
+            &seeded.rsk_identity_ids,
+            &config,
+            &mut stats,
+        )
+        .await?;
         info!(
             phase = "rsk",
             rows_scanned = stats.rsk_miner_rows_scanned,
@@ -591,15 +634,7 @@ pub async fn run_reclassify_pools(
     }
 
     if config.run_main {
-        run_main_candidate_scan(
-            client,
-            &resolver,
-            &pool_ids_by_slug,
-            &child_payout_identities,
-            &config,
-            &mut stats,
-        )
-        .await?;
+        run_main_candidate_scan(client, &seeded, &config, &mut stats).await?;
     } else {
         info!(
             phase = "main_scan",
@@ -612,8 +647,13 @@ pub async fn run_reclassify_pools(
             phase = "hathor",
             "reclassify-pools: starting Hathor reward replay"
         );
-        replay_hathor_reward_attributions(client, &child_payout_identities, &config, &mut stats)
-            .await?;
+        replay_hathor_reward_attributions(
+            client,
+            &seeded.child_payout_identities,
+            &config,
+            &mut stats,
+        )
+        .await?;
         info!(
             phase = "hathor",
             reward_updates = stats.hathor_reward_updates,
@@ -642,6 +682,15 @@ pub async fn run_reclassify_pools(
         info!(
             phase = "elastos",
             "reclassify-pools: skipping Elastos identity re-resolution (gated by --only/--skip)"
+        );
+    }
+
+    if config.run_observations {
+        reresolve_observation_pools(client, &seeded, &config, &mut stats).await?;
+    } else {
+        info!(
+            phase = "observations",
+            "reclassify-pools: skipping observation pass (gated by --only/--skip)"
         );
     }
 

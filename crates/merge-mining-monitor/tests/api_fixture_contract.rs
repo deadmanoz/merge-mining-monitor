@@ -205,6 +205,24 @@ fn assert_block_fixture_contract(file: &str, fixture: &Value) {
     for event in events {
         assert_event_detail_fixture_contract(file, event);
     }
+    // A near parent's page carries its child block observations and no event details.
+    if let Some(observations) = fixture.get("observations") {
+        let observations = observations
+            .as_array()
+            .unwrap_or_else(|| panic!("{file} observations must be an array"));
+        assert!(
+            !observations.is_empty(),
+            "{file} omits an empty observations array"
+        );
+        assert!(
+            events.is_empty(),
+            "{file} near page must not carry event details"
+        );
+        assert_eq!(block.get("kind").and_then(Value::as_str), Some("near"));
+        for observation in observations {
+            assert_event_detail_fixture_contract(file, observation);
+        }
+    }
 }
 
 fn assert_event_detail_fixture_contract(file: &str, event: &Value) {

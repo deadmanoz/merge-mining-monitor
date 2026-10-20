@@ -24,8 +24,8 @@ use {
     },
     mmm_read_model::capture_in_txn,
     mmm_store::{
-        get_source_id, load_bitcoin_core_nbits_table, upsert_merge_mining_event,
-        upsert_pool_snapshot,
+        CaptureWrite, get_source_id, load_bitcoin_core_nbits_table, upsert_merge_mining_event,
+        upsert_pool_snapshot, write_capture,
     },
     std::collections::HashMap,
     tokio_postgres::Client,
@@ -135,6 +135,7 @@ pub fn namecoin_event_payload(
     )
 }
 
+/// Capture a payload through the production path and return the event it wrote.
 #[cfg(feature = "db-integration")]
 pub async fn capture_test_payload(
     client: &mut Client,
@@ -142,24 +143,43 @@ pub async fn capture_test_payload(
     classifier: &ConfiguredParentClassifier,
     payload: &mut MergeMiningEventPayload,
 ) -> Result<i64> {
-    written_event_id(
-        capture_in_txn(
-            client,
-            source_id,
-            classifier,
-            payload,
-            "test",
-            async |txn, sid, p| upsert_merge_mining_event(txn, sid, p).await,
-        )
-        .await?,
+    written_event_id(capture_test_outcome(client, source_id, classifier, payload).await?)
+}
+
+/// Capture a payload through the production path and return its outcome.
+#[cfg(feature = "db-integration")]
+pub async fn capture_test_outcome(
+    client: &mut Client,
+    source_id: i64,
+    classifier: &ConfiguredParentClassifier,
+    payload: &mut MergeMiningEventPayload,
+) -> Result<mmm_read_model::CaptureOutcome> {
+    capture_in_txn(
+        client,
+        source_id,
+        classifier,
+        payload,
+        "test",
+        async |txn, sid, p| write_capture(txn, sid, p).await,
     )
+    .await
 }
 
 #[cfg(feature = "db-integration")]
 pub fn written_event_id(outcome: mmm_read_model::CaptureOutcome) -> Result<i64> {
     match outcome {
-        mmm_read_model::CaptureOutcome::Written(event_id) => Ok(event_id),
+        mmm_read_model::CaptureOutcome::Written(write) => event_id_of(write),
         refused => anyhow::bail!("the lineage gate refused the fixture parent: {refused:?}"),
+    }
+}
+
+/// The event a capture wrote; a near records only its observation.
+pub fn event_id_of(write: CaptureWrite) -> Result<i64> {
+    match write {
+        CaptureWrite::Event(written) => Ok(written.event_id),
+        CaptureWrite::Near { .. } => {
+            anyhow::bail!("the fixture parent is a near, which records no event")
+        }
     }
 }
 

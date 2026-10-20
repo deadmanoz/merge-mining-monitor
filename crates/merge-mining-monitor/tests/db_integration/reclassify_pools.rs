@@ -14,7 +14,8 @@ use mmm_capture::child_payout::{
 use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, SYSCOIN_SOURCE_CODE};
 use mmm_producers::{ReclassifyPoolsConfig, ReclassifyPoolsStats, run_reclassify_pools};
 use mmm_store::{
-    get_source_id, upsert_event_pool_attributions, upsert_merge_mining_event_with_attributions,
+    CaptureWrite, get_source_id, upsert_event_pool_attributions,
+    upsert_merge_mining_event_with_attributions, write_capture,
 };
 use serde_json::json;
 use tokio_postgres::Client;
@@ -161,6 +162,95 @@ async fn insert_namecoin_event(client: &Client, seed: NamecoinEventSeed) -> Resu
             .await?
             .event_id,
     )
+}
+
+#[tokio::test]
+async fn reclassify_pools_reattributes_a_near_observation_after_a_registry_entry() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let payout = "N1nearPayoutAddress000000000000000";
+        let parsed = parse_auxpow_fixture("500001-near-parent")?;
+        let mut near = build_event_payload(
+            &parsed,
+            Some(500_200),
+            ResolvedPoolAttributions {
+                attributions: vec![EventPoolAttribution {
+                    side: PoolAttributionSide::ChildBlock,
+                    namespace: NAMECOIN_PAYOUT_ADDRESS_NAMESPACE,
+                    match_kind: "payout_address",
+                    matched_value: payout.to_owned(),
+                    pool_id: None,
+                    pool_identity_id: None,
+                    source: CHILD_PAYOUT_REGISTRY_SOURCE,
+                    confidence: PoolAttributionConfidence::High,
+                    details: json!({}),
+                }],
+            },
+            ClassificationProof::default(),
+            1_000,
+        )?;
+        near.child_block_hash = Some(vec![0xb1; 32]);
+        near.btc_parent_coinbase_script =
+            Some(b"\x03\x01\x02\x03/SpiderPool/837/\x00\x00".to_vec());
+        let CaptureWrite::Near { observation_id } =
+            write_capture(&client, source_id, &near).await?
+        else {
+            anyhow::bail!("the fixture parent must be a near");
+        };
+        // The registry learns who the payout address belongs to after capture.
+        let (_, pool_ids_by_slug) = default_pool_snapshot(&client).await?;
+        let f2pool = pool_ids_by_slug["f2pool"];
+        insert_pool_identity(&client, f2pool, NAMECOIN_PAYOUT_ADDRESS_NAMESPACE, payout).await?;
+
+        let observations_only = ReclassifyPoolsConfig::from_args(["--only", "observations"])?;
+        let stats = run_reclassify_pools(&mut client, observations_only.clone()).await?;
+        assert_eq!(stats.observation_pool_updates, 1);
+        let pools: (Option<i64>, Option<i64>) = client
+            .query_one(
+                "SELECT child_pool_id, btc_parent_pool_id FROM child_block_observation WHERE id = $1",
+                &[&observation_id],
+            )
+            .await
+            .map(|row| (row.get(0), row.get(1)))?;
+        let spiderpool = pool_id_for_slug(&client, "spiderpool").await?;
+        assert_eq!(pools, (Some(f2pool), Some(spiderpool)));
+
+        let again = run_reclassify_pools(&mut client, observations_only).await?;
+        assert_eq!(again.observation_pool_updates, 0);
+
+        // A poller still holding the old registry recaptures the near.
+        write_capture(&client, source_id, &near).await?;
+        let child_pool: Option<i64> = client
+            .query_one(
+                "SELECT child_pool_id FROM child_block_observation WHERE id = $1",
+                &[&observation_id],
+            )
+            .await?
+            .get(0);
+        assert_eq!(
+            child_pool,
+            Some(f2pool),
+            "an unresolved recapture keeps the resolved child pool"
+        );
+
+        // A recapture whose known child pools disagree makes the child pool Unknown.
+        let mut conflicting = near.clone();
+        let mut second_payout = conflicting.pool_attributions[0].clone();
+        second_payout.matched_value = "N1otherPayoutAddress0000000000000".to_owned();
+        second_payout.pool_id = Some(spiderpool);
+        conflicting.pool_attributions[0].pool_id = Some(f2pool);
+        conflicting.pool_attributions.push(second_payout);
+        write_capture(&client, source_id, &conflicting).await?;
+        let child_pool: Option<i64> = client
+            .query_one(
+                "SELECT child_pool_id FROM child_block_observation WHERE id = $1",
+                &[&observation_id],
+            )
+            .await?
+            .get(0);
+        assert_eq!(child_pool, None);
+        Ok::<_, anyhow::Error>(())
+    })
 }
 
 #[tokio::test]

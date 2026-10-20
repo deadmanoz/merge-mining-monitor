@@ -132,7 +132,7 @@ These dimensions are modelled by the API contract but not yet exposed as rail co
 ## Visual Semantics
 
 Canonical, stale, error-block, and the visible strict/weak orphan signal are visually distinct by fill color alone on uniform rounded blocks (no shape/size encoding or per-kind text label on the block).
-Near, pending, and excluded remain backend refinements outside the left rail and default legend.
+Pending and excluded remain backend refinements outside the left rail and default legend; a near parent is not a tree node, and its page lists the child blocks that name it.
 
 Each block shows its Bitcoin height and best-available miner (`display_miner_pool`): the strict `bitcoin_miner_pool` when known, or the chain-agnostic `child_inferred` miner when the Bitcoin coinbase miner is Unknown (for example an RSK-only stale block).
 The drawer keeps `Bitcoin miner` strict and adds an `Inferred miner` row when `display_miner_basis` is `child_inferred`.
@@ -180,7 +180,7 @@ Avoid wording that implies every stale event is a single isolated block.
 Loading states should preserve the selected filters and visible layout.
 
 Empty states should name the active filter or range that removed all results.
-For example, an empty near view should say there are no near misses in the selected window rather than saying no data exists.
+For example, an empty orphan view should say there are no orphans in the selected window rather than saying no data exists.
 
 Error states should show the API error code and message.
 Range errors should prompt the user to narrow the range or choose coarser granularity.

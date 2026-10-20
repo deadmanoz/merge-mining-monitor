@@ -34,7 +34,7 @@ See [Capture](capture.md#bitcoin-lineage-gate).
 
 `btc_parent_kind` is one of:
 
-- `near` - a Bitcoin share: the parent is a Bitcoin header that fails its own target.
+- `near` - a Bitcoin share: the parent is a Bitcoin header that fails its own target. Capture records a near as a `near` observation with its parent header, coinbase and pools, and writes no event; near events stored before that remain until the swap migration removes them.
 - `unknown` - a Bitcoin header that meets its own target, but no Bitcoin-chain membership proof is available.
 - `canonical` - Bitcoin Core proves the parent is on the active chain.
 - `stale` - Bitcoin Core proves the parent is a valid off-chain Bitcoin block.

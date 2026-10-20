@@ -82,9 +82,18 @@ pub(super) struct ParentUpdateGroup {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct ParentResolution {
-    attribution: Option<EventPoolAttribution>,
-    corrupt_outputs: bool,
+pub(super) struct ParentResolution {
+    pub(super) attribution: Option<EventPoolAttribution>,
+    pub(super) corrupt_outputs: bool,
+}
+
+/// A stored parent coinbase, as the main and observation phases resolve its pool.
+pub(super) struct StoredParentCoinbase<'a> {
+    /// The event or observation id, for the corrupt-outputs warning.
+    pub(super) id: i64,
+    pub(super) script: Option<&'a [u8]>,
+    pub(super) outputs: Option<&'a [u8]>,
+    pub(super) outputs_text: Option<&'a str>,
 }
 
 fn resolve_parent_pool(
@@ -92,13 +101,27 @@ fn resolve_parent_pool(
     resolver: &PoolResolver,
     pool_ids_by_slug: &HashMap<String, i64>,
 ) -> ParentResolution {
-    let script = row
-        .btc_parent_coinbase_script
-        .as_deref()
-        .unwrap_or_default();
+    resolve_stored_parent_pool(
+        &StoredParentCoinbase {
+            id: row.id,
+            script: row.btc_parent_coinbase_script.as_deref(),
+            outputs: row.btc_parent_coinbase_outputs.as_deref(),
+            outputs_text: row.btc_parent_coinbase_outputs_text.as_deref(),
+        },
+        resolver,
+        pool_ids_by_slug,
+    )
+}
+
+pub(super) fn resolve_stored_parent_pool(
+    coinbase: &StoredParentCoinbase<'_>,
+    resolver: &PoolResolver,
+    pool_ids_by_slug: &HashMap<String, i64>,
+) -> ParentResolution {
+    let script = coinbase.script.unwrap_or_default();
     match resolve_parent_pool_attribution_from_serialized_coinbase_outputs(
         script,
-        row.btc_parent_coinbase_outputs.as_deref(),
+        coinbase.outputs,
         resolver,
         pool_ids_by_slug,
     ) {
@@ -108,7 +131,7 @@ fn resolve_parent_pool(
         },
         Ok(None) => ParentResolution {
             attribution: resolve_parent_pool_from_published_text(
-                row,
+                coinbase.outputs_text,
                 script,
                 resolver,
                 pool_ids_by_slug,
@@ -117,14 +140,14 @@ fn resolve_parent_pool(
         },
         Err(err) => {
             warn!(
-                event_id = row.id,
+                id = coinbase.id,
                 error = %err,
                 "btc_parent_coinbase_outputs is corrupt; \
                  trying preserved publication text"
             );
             ParentResolution {
                 attribution: resolve_parent_pool_from_published_text(
-                    row,
+                    coinbase.outputs_text,
                     script,
                     resolver,
                     pool_ids_by_slug,
@@ -136,76 +159,68 @@ fn resolve_parent_pool(
 }
 
 fn resolve_parent_pool_from_published_text(
-    row: &CandidateRow,
+    outputs_text: Option<&str>,
     script: &[u8],
     resolver: &PoolResolver,
     pool_ids_by_slug: &HashMap<String, i64>,
 ) -> Option<EventPoolAttribution> {
-    let addresses = row
-        .btc_parent_coinbase_outputs_text
-        .as_deref()
+    let addresses = outputs_text
         .map(published_parent_coinbase_output_addresses)
         .unwrap_or_default();
     resolve_parent_pool_attribution_from_coinbase(script, &addresses, resolver, pool_ids_by_slug)
 }
 
-struct ChildPayoutResolution {
-    attributions: Vec<EventPoolAttribution>,
-    changed: bool,
-    corrupt_outputs: bool,
-}
-
+/// The payout attributions a candidate's stored child outputs add or change, or `None` when
+/// the outputs are corrupt.
 fn resolve_child_payouts(
     row: &CandidateRow,
     identities: &PoolIdentityLookup,
     overwrite: bool,
-) -> ChildPayoutResolution {
-    let Some(params) = params_for_source_code(&row.source_code) else {
-        return unchanged_child_payout();
-    };
-    let Some(outputs_bytes) = row.child_coinbase_outputs.as_deref() else {
-        return unchanged_child_payout();
-    };
-
-    let outputs: Vec<TxOut> = match deserialize(outputs_bytes) {
-        Ok(outputs) => outputs,
-        Err(err) => {
-            warn!(
-                event_id = row.id,
-                source = row.source_code,
-                error = %err,
-                "skipping corrupt child_coinbase_outputs for child payout replay; \
-                 leaving child payout attribution unchanged for this row"
-            );
-            return ChildPayoutResolution {
-                attributions: Vec::new(),
-                changed: false,
-                corrupt_outputs: true,
-            };
-        }
-    };
-
-    let attributions = resolve_child_payout_attributions(&outputs, params, Some(identities))
-        .into_iter()
-        .filter(|attribution| {
-            row.child_payout_attributions
-                .should_write(attribution, WritePolicy::ChildPayout { overwrite })
-        })
-        .collect::<Vec<_>>();
-    let changed = !attributions.is_empty();
-
-    ChildPayoutResolution {
-        attributions,
-        changed,
-        corrupt_outputs: false,
-    }
+) -> Option<Vec<EventPoolAttribution>> {
+    let attributions = replay_child_payouts(
+        row.id,
+        &row.source_code,
+        row.child_coinbase_outputs.as_deref(),
+        identities,
+    )?;
+    Some(
+        attributions
+            .into_iter()
+            .filter(|attribution| {
+                row.child_payout_attributions
+                    .should_write(attribution, WritePolicy::ChildPayout { overwrite })
+            })
+            .collect(),
+    )
 }
 
-fn unchanged_child_payout() -> ChildPayoutResolution {
-    ChildPayoutResolution {
-        attributions: Vec::new(),
-        changed: false,
-        corrupt_outputs: false,
+/// The payout attributions a stored child coinbase's outputs resolve to: empty for a source
+/// with no payout format or no stored outputs, and `None` (warned) for corrupt outputs.
+/// `id` is the event or observation id, for the warning.
+pub(super) fn replay_child_payouts(
+    id: i64,
+    source_code: &str,
+    outputs: Option<&[u8]>,
+    identities: &PoolIdentityLookup,
+) -> Option<Vec<EventPoolAttribution>> {
+    let (Some(params), Some(outputs)) = (params_for_source_code(source_code), outputs) else {
+        return Some(Vec::new());
+    };
+    match deserialize::<Vec<TxOut>>(outputs) {
+        Ok(outputs) => Some(resolve_child_payout_attributions(
+            &outputs,
+            params,
+            Some(identities),
+        )),
+        Err(err) => {
+            warn!(
+                id,
+                source = source_code,
+                error = %err,
+                "skipping corrupt child_coinbase_outputs for child payout replay"
+            );
+            None
+        }
     }
 }
 
@@ -259,11 +274,12 @@ pub(super) fn plan_batch_updates(
             resolver,
             pool_ids_by_slug,
         );
-        let resolved_child_payout =
-            resolve_child_payouts(&candidate, child_payout_identities, config.overwrite);
-        if resolved_child_payout.corrupt_outputs {
-            stats.corrupt_child_outputs_skipped += 1;
-        }
+        let child_payout_attributions =
+            resolve_child_payouts(&candidate, child_payout_identities, config.overwrite)
+                .unwrap_or_else(|| {
+                    stats.corrupt_child_outputs_skipped += 1;
+                    Vec::new()
+                });
 
         let parent_source_changed = should_write_attribution(
             &candidate.parent_attribution,
@@ -275,7 +291,7 @@ pub(super) fn plan_batch_updates(
             resolved_child.as_ref(),
             config.overwrite,
         );
-        let child_payout_changed = resolved_child_payout.changed;
+        let child_payout_changed = !child_payout_attributions.is_empty();
         let mut attributions = Vec::new();
         if parent_source_changed && let Some(attribution) = resolved_parent.attribution {
             attributions.push(attribution);
@@ -283,11 +299,6 @@ pub(super) fn plan_batch_updates(
         if child_source_changed && let Some(attribution) = resolved_child {
             attributions.push(attribution);
         }
-        let child_payout_attributions = if child_payout_changed {
-            resolved_child_payout.attributions
-        } else {
-            Vec::new()
-        };
 
         if !parent_source_changed && !child_source_changed && !child_payout_changed {
             continue;

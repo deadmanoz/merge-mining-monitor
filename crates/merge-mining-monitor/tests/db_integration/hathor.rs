@@ -547,7 +547,7 @@ async fn a_height_without_an_event_follows_hathor_across_nears_and_unmerged_bloc
         );
         assert_eq!(
             observations_at(&client, source_id, height).await?,
-            vec![(first_hash.clone(), "near".to_owned(), true, true)]
+            vec![(first_hash.clone(), "near".to_owned(), true, false)]
         );
         assert_eq!(hathor_sidecars_for(&client, &first_hash).await?, 0);
         // The parent block Hathor's /block_at_height lists first for 1,971,823.

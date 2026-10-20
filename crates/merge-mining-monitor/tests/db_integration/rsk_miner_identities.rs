@@ -296,6 +296,33 @@ async fn insert_rsk_event(
             ],
         )
         .await?;
+    // The block's observation carries the miner, as capture and migration 0033 record it.
+    client
+        .execute(
+            "WITH identity AS ( \
+                 INSERT INTO child_miner_identity (namespace, identifier) \
+                 VALUES ('rsk_miner_address', $4) \
+                 ON CONFLICT (namespace, identifier) DO UPDATE SET identifier = EXCLUDED.identifier \
+                 RETURNING id), \
+             observation AS ( \
+                 INSERT INTO child_block_observation ( \
+                     source_id, child_height, child_block_hash, observation_kind, \
+                     btc_parent_header_hash, child_identity_ids, recorded_at) \
+                 SELECT $1, $2, $3, 'evidence', $5, ARRAY[identity.id], $6 FROM identity \
+                 RETURNING id) \
+             UPDATE merge_mining_event SET observation_id = (SELECT id FROM observation) \
+              WHERE id = $7",
+            &[
+                &source_id,
+                &child_height,
+                &child_block_hash,
+                &miner_address.to_ascii_lowercase(),
+                &parent_hash,
+                &confirmed_at,
+                &event_id,
+            ],
+        )
+        .await?;
     Ok(event_id)
 }
 

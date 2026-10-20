@@ -304,7 +304,7 @@ test("a catalogued error block is a standalone tree node with its rejection reas
       nodes: [errorBlock],
       edges: [],
       legend: {
-        kinds: ["canonical", "stale", "error_block", "unknown", "near"],
+        kinds: ["canonical", "stale", "error_block", "unknown"],
         edge_kinds: ["canonical", "stale_entry", "stale", "hidden"],
       },
     }),
@@ -348,7 +348,7 @@ test("an unmapped consensus rule token falls back to the raw value with no help 
       nodes: [errorBlock],
       edges: [],
       legend: {
-        kinds: ["canonical", "stale", "error_block", "unknown", "near"],
+        kinds: ["canonical", "stale", "error_block", "unknown"],
         edge_kinds: ["canonical", "stale_entry", "stale", "hidden"],
       },
     }),

@@ -4,7 +4,7 @@
     {
       "file": "tree.json",
       "endpoint_family": "/api/v1/tree",
-      "scenario": "Explicit tree window with canonical context, stale forks, child evidence, and edge variants"
+      "scenario": "Explicit tree window with canonical context, stale forks, child evidence, and edge variants (near parents are not tree nodes)"
     },
     {
       "file": "tree-unheighted-anchor.json",
@@ -24,7 +24,7 @@
     {
       "file": "block-rsk-near.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "RSK canonical and Namecoin evidence for the same near parent"
+      "scenario": "Near parent page built from RSK canonical and Namecoin child block observations, with no event details"
     },
     {
       "file": "block-stale-rsk-inferred.json",
@@ -39,7 +39,7 @@
     {
       "file": "block-rsk-uncle-near.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "RSK uncle evidence for a near parent with nullable child header and nBits"
+      "scenario": "Near parent page with an RSK uncle observation, nullable child header and nBits"
     },
     {
       "file": "block-body-invalid-error.json",

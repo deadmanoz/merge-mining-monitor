@@ -520,7 +520,7 @@ async fn tree_validates_queries_before_db_checkout() {
             "range_too_large",
         ),
         (
-            "/api/v1/tree?from_height=1&to_height=2&include_near=yes".to_owned(),
+            "/api/v1/tree?from_height=1&to_height=2&include_unheighted=yes".to_owned(),
             StatusCode::BAD_REQUEST,
             "invalid_query",
         ),

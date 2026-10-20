@@ -276,7 +276,12 @@ function renderBlockDetailPayload(payload) {
     detailSection("Parent block (Bitcoin)", renderParentBlock(block)),
     payload.commitment ? detailSectionHelp("Merge-mining commitment", "commitment", renderCommitment(payload.commitment)) : "",
     detailSection("Sources & capture", renderSourcesAndCapture(block.source_summary)),
-    detailSection("Auxiliary blocks", renderEvents(payload.event_details || [], block.header?.time)),
+    detailSection(
+      "Auxiliary blocks",
+      payload.observations?.length
+        ? renderObservations(payload.observations, block.header?.time)
+        : renderEvents(payload.event_details || [], block.header?.time),
+    ),
     payload.competition ? detailSection("Competition", renderCompetition(payload.competition)) : "",
     !payload.competition && block.kind === "error_block"
       ? detailSection("Competition", `<div class="empty">This block never raced. It carries full Bitcoin proof of work but breaks a consensus rule, so it was never a valid contender for its height and has no canonical competitor.</div>`)
@@ -417,22 +422,33 @@ function renderSourcesAndCapture(summary = {}) {
   return kvRows(rows);
 }
 
+// Summary line and first rows shared by an event and an observation of a child block.
+function childBlockSummary(child, knownChildPool, suffix) {
+  const poolSuffix = knownChildPool ? ` · ${esc(knownChildPool.name)}` : "";
+  return `${esc(chainDisplayName(child.child_chain))} · ${esc(child.child_height ?? "height unavailable")}${suffix}${poolSuffix}`;
+}
+
+function childBlockRows(child, parentHeaderTime) {
+  return [
+    ["Source", formatSourceRef(child.source)],
+    ["Child Hash", unavailableEvidence(child.child_block_hash, (hash) => explorerCopyValue(hash, child.child_chain, {
+      hash,
+      height: child.child_height,
+    }))],
+    ["Child Header", unavailableEvidence(child.child_header_hex)],
+    ["Child Time", `${childTimeCell(child.child_block_time, parentHeaderTime)} ${auxpowInfoButton("child_time")}`],
+    ["Child nBits", unavailableEvidence(child.child_nbits)],
+  ];
+}
+
 function renderEvents(events, parentHeaderTime) {
   if (!events.length) return `<div class="empty">No auxiliary blocks</div>`;
   return events.map((event) => {
     const knownChildPool = event.child_miner_pool?.known ? event.child_miner_pool : null;
-    const poolSuffix = knownChildPool ? ` · ${esc(knownChildPool.name)}` : "";
     const slotSuffix = event.slot_index != null ? ` · slot ${esc(event.slot_index)}` : "";
-    const summary = `${esc(chainDisplayName(event.child_chain))} · ${esc(event.child_height ?? "height unavailable")}${slotSuffix}${poolSuffix}`;
+    const summary = childBlockSummary(event, knownChildPool, slotSuffix);
     const rows = [
-      ["Source", formatSourceRef(event.source)],
-      ["Child Hash", unavailableEvidence(event.child_block_hash, (hash) => explorerCopyValue(hash, event.child_chain, {
-        hash,
-        height: event.child_height,
-      }))],
-      ["Child Header", unavailableEvidence(event.child_header_hex)],
-      ["Child Time", `${childTimeCell(event.child_block_time, parentHeaderTime)} ${auxpowInfoButton("child_time")}`],
-      ["Child nBits", unavailableEvidence(event.child_nbits)],
+      ...childBlockRows(event, parentHeaderTime),
       ["PoW (parent_target / aux_target)", `${formatScalar(event.pow_validates_btc_target)} / ${formatScalar(event.pow_validates_child_target)} ${auxpowInfoButton("targets")}`],
     ];
     if (event.slot_index != null) rows.push(["Slot index", `${formatScalar(event.slot_index)} ${auxpowInfoButton("slot_index")}`]);
@@ -443,6 +459,28 @@ function renderEvents(events, parentHeaderTime) {
       ? renderAuxProof(event.aux_proof)
       : renderUndecodedProof(event.aux_merkle_proof_hex);
     return `<details class="event-block"><summary>${summary}</summary>${kvRows(rows)}${rsk}${auxProof}</details>`;
+  }).join("");
+}
+
+// A near parent's child blocks: observations, which keep no proof bytes.
+function renderObservations(observations, parentHeaderTime) {
+  return observations.map((observation) => {
+    const knownChildPool = observation.child_pool?.known ? observation.child_pool : null;
+    const uncle = observation.child_chain_role === "uncle";
+    const summary = childBlockSummary(observation, knownChildPool, uncle ? " · uncle" : "");
+    const rows = [
+      ...childBlockRows(observation, parentHeaderTime),
+      ["PoW (aux_target)", `${formatScalar(observation.pow_validates_child_target)} ${auxpowInfoButton("targets")}`],
+    ];
+    if (uncle) {
+      rows.push(["Uncle Index", formatScalar(observation.uncle_index)]);
+      rows.push(["Referencing Height", formatScalar(observation.uncle_parent_height)]);
+    }
+    for (const identity of observation.child_identities || []) {
+      rows.push([identity.namespace, copyValue(identity.identifier)]);
+    }
+    if (knownChildPool) rows.push(["Child miner", poolName(knownChildPool)]);
+    return `<details class="event-block"><summary>${summary}</summary>${kvRows(rows)}</details>`;
   }).join("");
 }
 

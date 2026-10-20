@@ -180,7 +180,11 @@ pub(super) async fn load_event_details_by_hash(
     hash: &[u8],
 ) -> Result<Vec<EventDetailRow>> {
     let rows = client
-        .query(&event_detail_sql("e.btc_parent_header_hash = $1"), &[&hash])
+        .query(
+            // A near's page reads its observations; pre-swap near events are left out.
+            &event_detail_sql("e.btc_parent_header_hash = $1 AND e.btc_parent_kind <> 'near'"),
+            &[&hash],
+        )
         .await
         .context("load block event details by hash")?;
     map_event_detail_rows(rows)

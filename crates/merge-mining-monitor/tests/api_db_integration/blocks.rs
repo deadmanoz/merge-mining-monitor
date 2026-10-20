@@ -10,7 +10,7 @@ use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, RSK_SOURCE_CODE};
 use mmm_read_model::{CoreCanonicalWrite, write_core_canonical};
 use mmm_store::{
     ChildChainHeadOutcome, ChildChainHeadRecord, CurrentBlockParent, EvidenceMarker, get_source_id,
-    record_child_chain_block, record_rsk_observation, sync_event_observation_attribution,
+    record_child_chain_block, record_rsk_observation,
 };
 use serde_json::json;
 use time::Month;
@@ -64,8 +64,12 @@ async fn block_projects_direct_near_without_double_counting_sources() -> Result<
             payload.block.source_summary.sources,
             vec![NAMECOIN_SOURCE_CODE]
         );
-        assert_eq!(payload.block.bitcoin_miner_pool.id, None);
-        assert_eq!(payload.event_details.len(), 2);
+        // The parent coinbase names AntPool; display still infers no miner for a near.
+        assert_eq!(payload.block.bitcoin_miner_pool.id, Some(antpool));
+        assert_eq!(payload.block.display_miner_pool.id, None);
+        // A near has no events: one observation per child block, one distinct source.
+        assert!(payload.event_details.is_empty());
+        assert_eq!(payload.observations.len(), 2);
         assert!(payload.proofs.is_empty());
 
         Ok::<_, anyhow::Error>(())
@@ -131,22 +135,31 @@ async fn block_projects_core_coinbase_tag_before_and_after_event_details() -> Re
         assert!(payload.event_details.is_empty());
         assert!(payload.commitment.is_none());
 
-        let event_coinbase_script = b"\x00/eventpool/\x00  EVENT  ".to_vec();
-        let event_id = capture_child_event(
-            &mut client,
-            ChildEvidence::new(
-                "canonical-evt",
-                NAMECOIN_SOURCE_CODE,
-                111,
-                0x95,
-                header,
-                canonical_verdict(&header, 331_675),
-                1_401_234_577,
-            )
-            .with_parent_coinbase_script(event_coinbase_script),
+        // The seeded header misses its own target, so a capture would record a near; the
+        // projection under test needs evidence, so the event is seeded directly.
+        let namecoin = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let event_id = insert_event(
+            &client,
+            EventSeed {
+                source_id: namecoin,
+                child_height: 111,
+                child_hash: hash_bytes(0x95),
+                parent_hash: hash.clone(),
+                prev_hash: header.prev_blockhash.to_byte_array().to_vec(),
+                parent_time: 1_401_234_577,
+                kind: "canonical",
+                pow_validates_btc_target: true,
+                btc_height: Some(331_675),
+                pool_id: None,
+            },
         )
         .await?;
-        let namecoin = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        client
+            .execute(
+                "UPDATE merge_mining_event SET btc_parent_coinbase_script = $2 WHERE id = $1",
+                &[&event_id, &b"\x00/eventpool/\x00  EVENT  ".to_vec()],
+            )
+            .await?;
         insert_attestation_proof(&client, &hash, namecoin, &[event_id], 1_401_234_577).await?;
 
         let payload = project_block(&client, &hash).await?;
@@ -201,7 +214,7 @@ async fn seed_core_kncminer_block(
 }
 
 #[tokio::test]
-async fn block_hydrates_rsk_uncle_sidecar_fields() -> Result<()> {
+async fn block_hydrates_an_rsk_uncle_near_observation() -> Result<()> {
     crate::run_db_test!(client, {
         let rsk = get_source_id(&client, RSK_SOURCE_CODE).await?;
         let rskpool = insert_pool(&client, "rskpool", "RSKPool").await?;
@@ -236,26 +249,6 @@ async fn block_hydrates_rsk_uncle_sidecar_fields() -> Result<()> {
             )
             .await?;
         let rsk_miner_bytes = hex::decode(rsk_miner)?;
-        client
-            .execute(
-                "INSERT INTO rsk_merge_mining_evidence ( \
-                    event_id, rsk_block_hash, rsk_height, is_uncle, uncle_index, \
-                    uncle_parent_height, rsk_miner, pool_identity_id, merge_mining_hash, \
-                    proof_format \
-                 ) VALUES ( \
-                    $1, $2, 810002, TRUE, 1, 810005, $3, $4, $5, 'rskj_rpc_opaque' \
-                 )",
-                &[
-                    &event_id,
-                    &child_hash,
-                    &rsk_miner_bytes,
-                    &identity,
-                    &hash_bytes(0xc301),
-                ],
-            )
-            .await?;
-        insert_rsk_child_pool_attribution(&client, event_id, rsk_miner, rskpool, identity, ts)
-            .await?;
         // The RSK capture writer's facts, so the reader sees what capture records.
         record_rsk_observation(
             &client,
@@ -276,7 +269,6 @@ async fn block_hydrates_rsk_uncle_sidecar_fields() -> Result<()> {
             },
         )
         .await?;
-        sync_event_observation_attribution(&client, event_id).await?;
         client
             .execute(
                 "UPDATE pool_identity SET pool_id = $1 WHERE id = $2",
@@ -286,73 +278,41 @@ async fn block_hydrates_rsk_uncle_sidecar_fields() -> Result<()> {
 
         let payload = project_block(&client, &parent).await?;
         assert_eq!(payload.block.coinbase_tag.as_deref(), None);
-        let detail = &payload.event_details[0];
-        let rsk_detail = detail.rsk.as_ref().expect("rsk sidecar");
-        assert_eq!(detail.source, RSK_SOURCE_CODE);
-        assert_eq!(detail.pow_validates_child_target, None);
-        assert_eq!(rsk_detail.block_hash, hex::encode(&child_hash));
-        assert!(rsk_detail.is_uncle);
-        assert_eq!(rsk_detail.uncle_index, Some(1));
-        assert_eq!(rsk_detail.uncle_referencing_height, Some(810_005));
+        assert!(
+            payload.event_details.is_empty(),
+            "a near page has no event details"
+        );
+        let observation = &payload.observations[0];
+        assert_eq!(observation.source, RSK_SOURCE_CODE);
+        assert_eq!(observation.pow_validates_child_target, None);
         assert_eq!(
-            rsk_detail
+            observation.child_block_hash.as_deref(),
+            Some(hex::encode(&child_hash).as_str())
+        );
+        assert_eq!(observation.child_chain_role.as_deref(), Some("uncle"));
+        assert_eq!(observation.uncle_index, Some(1));
+        assert_eq!(observation.uncle_parent_height, Some(810_005));
+        let miner = observation
+            .child_identities
+            .iter()
+            .find(|identity| identity.namespace == "rsk_miner_address")
+            .expect("rsk miner identity");
+        assert_eq!(miner.identifier, rsk_miner);
+        assert_eq!(
+            miner
                 .pool_identity
                 .as_ref()
-                .map(|identity| identity.identifier.as_str()),
-            Some(rsk_miner)
+                .map(|pool_identity| pool_identity.id),
+            Some(identity)
         );
-        assert_identity_backed_child_pool(detail, identity, remapped_pool);
+        assert_eq!(
+            miner.pool.id,
+            Some(remapped_pool),
+            "the identity projects the current pool_identity.pool_id"
+        );
 
         Ok::<_, anyhow::Error>(())
     })
-}
-
-async fn insert_rsk_child_pool_attribution(
-    client: &Client,
-    event_id: i64,
-    rsk_miner: &str,
-    pool_id: i64,
-    pool_identity_id: i64,
-    seen_at: i64,
-) -> Result<()> {
-    client
-        .execute(
-            "INSERT INTO event_pool_attribution ( \
-                event_id, side, namespace, match_kind, matched_value, pool_id, pool_identity_id, \
-                source, confidence, details, first_seen_at, last_seen_at \
-             ) VALUES ( \
-                $1, 'child_block', 'rsk_miner_address', 'rsk_miner_registry', $2, $3, $4, \
-                'rsk_miner_registry', 'high', '{}'::jsonb, $5, $5 \
-             )",
-            &[&event_id, &rsk_miner, &pool_id, &pool_identity_id, &seen_at],
-        )
-        .await?;
-    Ok(())
-}
-
-fn assert_identity_backed_child_pool(
-    detail: &mmm_api::projection::EventDetail,
-    identity_id: i64,
-    expected_pool_id: i64,
-) {
-    let child_attribution = detail
-        .pool_attributions
-        .child_block
-        .iter()
-        .find(|attribution| attribution.namespace == "rsk_miner_address")
-        .expect("rsk miner child attribution");
-    assert_eq!(
-        child_attribution.pool.id,
-        Some(expected_pool_id),
-        "identity-backed attribution should project the current pool_identity.pool_id"
-    );
-    assert_eq!(
-        child_attribution
-            .pool_identity
-            .as_ref()
-            .map(|identity| identity.id),
-        Some(identity_id)
-    );
 }
 
 #[tokio::test]
@@ -546,7 +506,7 @@ async fn block_returns_not_found_for_valid_hash_without_evidence() -> Result<()>
 }
 
 #[tokio::test]
-async fn block_projects_child_displacement_on_event_details() -> Result<()> {
+async fn block_projects_child_displacement_on_near_observations() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let namecoin = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         let ts = day_epoch(2026, Month::May, 10);
@@ -595,10 +555,10 @@ async fn block_projects_child_displacement_on_event_details() -> Result<()> {
         txn.commit().await?;
 
         let displaced = project_block(&client, &displaced_parent).await?;
-        assert_eq!(displaced.event_details.len(), 1);
-        assert_eq!(displaced.event_details[0].child_displaced_at, Some(ts + 60));
+        assert_eq!(displaced.observations.len(), 1);
+        assert_eq!(displaced.observations[0].child_displaced_at, Some(ts + 60));
         assert_eq!(
-            displaced.event_details[0].child_displaced_by.as_deref(),
+            displaced.observations[0].child_displaced_by.as_deref(),
             Some(display_hash(&current_child).as_str())
         );
         // Displacement is child-side only: the parent still projects as before.
@@ -606,9 +566,9 @@ async fn block_projects_child_displacement_on_event_details() -> Result<()> {
         assert_eq!(displaced.block.source_summary.distinct_sources, 1);
 
         let current = project_block(&client, &current_parent).await?;
-        assert_eq!(current.event_details.len(), 1);
-        assert_eq!(current.event_details[0].child_displaced_at, None);
-        assert_eq!(current.event_details[0].child_displaced_by, None);
+        assert_eq!(current.observations.len(), 1);
+        assert_eq!(current.observations[0].child_displaced_at, None);
+        assert_eq!(current.observations[0].child_displaced_by, None);
 
         Ok::<_, anyhow::Error>(())
     })

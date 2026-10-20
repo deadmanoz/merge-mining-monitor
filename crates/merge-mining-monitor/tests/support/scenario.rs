@@ -17,7 +17,7 @@ use mmm_capture::capture::{
 use mmm_read_model::{
     CoreCanonicalWrite, capture_in_txn, revoke_merge_mining_event, write_core_canonical,
 };
-use mmm_store::{get_source_id, upsert_merge_mining_event_with_attributions};
+use mmm_store::{get_source_id, write_capture};
 use tokio_postgres::Client;
 
 pub fn canonical_verdict(header: &Header, height: i32) -> ParentClassification {
@@ -202,9 +202,7 @@ impl Scenario {
                             &classifier,
                             &mut payload,
                             "scenario",
-                            async |txn, sid, p| {
-                                upsert_merge_mining_event_with_attributions(txn, sid, p).await
-                            },
+                            async |txn, sid, p| write_capture(txn, sid, p).await,
                         )
                         .await?,
                     )?;

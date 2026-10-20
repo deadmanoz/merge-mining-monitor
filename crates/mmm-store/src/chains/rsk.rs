@@ -16,7 +16,7 @@ use crate::observation::{insert_child_identities, upsert_child_only_observation}
 use crate::pool::{
     PoolIdentitySeed, upsert_pool_identities_for_namespace_with_policy, upsert_registry_only_pools,
 };
-use crate::{EventWriteOutcome, upsert_merge_mining_event_with_attributions};
+use crate::{CaptureWrite, write_capture};
 
 /// Low-level fixture writer for one RSK block (canonical or uncle): opens its own
 /// transaction and upserts the shared `merge_mining_event` row plus the 1:1
@@ -33,35 +33,37 @@ pub async fn write_rsk_capture(
     source_id: i64,
     payload: &MergeMiningEventPayload,
     evidence: &RskEvidencePayload,
-) -> Result<i64> {
+) -> Result<CaptureWrite> {
     let txn = client
         .transaction()
         .await
         .context("begin RSK capture transaction")?;
 
-    let outcome = write_rsk_capture_in_txn(&txn, source_id, payload, evidence).await?;
+    let write = write_rsk_capture_in_txn(&txn, source_id, payload, evidence).await?;
 
     txn.commit()
         .await
         .context("commit RSK capture transaction")?;
-    Ok(outcome.event_id)
+    Ok(write)
 }
 
 /// Write an RSK capture in the caller's transaction (injected as the
-/// `capture_in_txn` upsert closure): upsert the shared `merge_mining_event` row,
-/// the 1:1 `rsk_merge_mining_evidence` sidecar, and the observation's RSK chain
-/// role and miner identity. Production RSK capture reaches this through `mmm_read_model::capture_in_txn`,
+/// `capture_in_txn` upsert closure): the event with its 1:1 `rsk_merge_mining_evidence`
+/// sidecar, or a near's observation alone, then the observation's RSK chain role and
+/// miner identity. Production RSK capture reaches this through `mmm_read_model::capture_in_txn`,
 /// which owns `source_health`; this fn writes only base rows.
 pub async fn write_rsk_capture_in_txn<C: GenericClient>(
     client: &C,
     source_id: i64,
     payload: &MergeMiningEventPayload,
     evidence: &RskEvidencePayload,
-) -> Result<EventWriteOutcome> {
-    let outcome = upsert_merge_mining_event_with_attributions(client, source_id, payload).await?;
-    upsert_rsk_evidence(client, outcome.event_id, evidence).await?;
+) -> Result<CaptureWrite> {
+    let write = write_capture(client, source_id, payload).await?;
+    if let CaptureWrite::Event(outcome) = write {
+        upsert_rsk_evidence(client, outcome.event_id, evidence).await?;
+    }
     record_rsk_observation(client, source_id, evidence).await?;
-    Ok(outcome)
+    Ok(write)
 }
 
 async fn upsert_rsk_evidence<C: GenericClient>(
