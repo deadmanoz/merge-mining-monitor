@@ -34,7 +34,7 @@ use mmm_store::{
     has_capture_error, load_child_chain_head, load_pool_identities_by_namespace,
     lock_child_chain_height_session, record_capture_error, record_child_chain_block,
     record_child_chain_block_in_own_transaction, reobserve_child_chain_block_in_own_transaction,
-    upsert_merge_mining_event_with_attributions,
+    write_capture,
 };
 use qbit::{fetch_qbit_candidate, write_qbit_event};
 pub use validation::ensure_mainnet_endpoint;
@@ -408,8 +408,7 @@ pub(super) async fn write_event_in_txn(
             payload,
             context.family().label,
             async |txn, source_id, payload| {
-                let outcome =
-                    upsert_merge_mining_event_with_attributions(txn, source_id, payload).await?;
+                let write = write_capture(txn, source_id, payload).await?;
                 record_child_chain_block(
                     txn,
                     source_id,
@@ -428,7 +427,7 @@ pub(super) async fn write_event_in_txn(
                     },
                 )
                 .await?;
-                Ok(outcome)
+                Ok(write)
             },
         )
         .await?;

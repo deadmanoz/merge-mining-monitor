@@ -13,13 +13,15 @@ use tokio_postgres::{GenericClient, Transaction};
 use mmm_capture::btc_orphan::strict_bip34_height_from_evidence;
 use mmm_capture::capture::{ChildBlockObservation, MergeMiningEventPayload};
 use mmm_capture::lineage::{Lineage, ParentLineageInput, bitcoin_lineage};
+use mmm_store::CaptureWrite;
 
 use super::PrimarySourceHealthBracket;
 use crate::{load_block_cascade_state, lock_block_hashes, rebuild_parent_read_model};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureOutcome {
-    Written(i64),
+    /// What the capture wrote: an event, or a near's observation alone.
+    Written(CaptureWrite),
     /// Foreign-lineage parent: prior child-block events for this source removed and only the
     /// child block's `non_bitcoin_parent` observation written.
     NotBitcoin {
@@ -106,10 +108,10 @@ async fn strict_height<C: GenericClient>(
     }))
 }
 
-/// Delete this source's events for a child block whose parent failed the lineage gate (and the
-/// block's hashless observations), rewrite its exact observation as `non_bitcoin_parent`, and
-/// rebuild the parent read model. The rewrite sits inside the source-health bracket so a
-/// refused near leaves the near count.
+/// Rewrite a child block whose parent failed the lineage gate as `non_bitcoin_parent`. When
+/// the block counts toward source health (an event or its near observation), its events and
+/// hashless observations are deleted and the rewrite and parent rebuild run inside the
+/// source-health bracket, so a refused near leaves the near count.
 pub(super) async fn retract_child_block(
     txn: &Transaction<'_>,
     source_id: i64,
@@ -121,7 +123,7 @@ pub(super) async fn retract_child_block(
     let observation = ChildBlockObservation::non_bitcoin_parent(payload);
     let parent = &payload.btc_parent_header_hash;
     let height = payload.child_height;
-    if !mmm_store::has_child_block_events(txn, source_id, height, child_hash, parent).await? {
+    if !mmm_store::child_block_is_counted(txn, source_id, height, child_hash, parent).await? {
         mmm_store::upsert_child_only_observation(txn, source_id, &observation).await?;
         return Ok(Vec::new());
     }

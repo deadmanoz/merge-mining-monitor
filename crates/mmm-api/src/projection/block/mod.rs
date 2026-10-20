@@ -20,6 +20,9 @@ use crate::query::kind_as_str;
 
 mod detail;
 mod loaders;
+mod near;
+
+use near::ObservationDetail;
 
 use detail::{
     coinbase_tag_from_commitment, coinbase_tag_from_core_block, contributing_event_ids,
@@ -36,6 +39,9 @@ pub struct BlockPayload {
     pub block: ApiBlock,
     pub proofs: Vec<ApiProof>,
     pub event_details: Vec<EventDetail>,
+    /// A near parent's child block observations (it has no events); omitted when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub observations: Vec<ObservationDetail>,
     pub competition: Option<TreeCompetition>,
     pub stale_branch: Option<BlockStaleBranch>,
     pub commitment: Option<Commitment>,
@@ -211,16 +217,22 @@ pub struct BlockStaleBranch {
     pub child_stale_hashes: Vec<String>,
 }
 
-/// `/api/v1/block/{hash}` projection entry: routes on `block` read-model presence vs direct `merge_mining_event` fallback.
+/// `/api/v1/block/{hash}` projection entry: the `block` read model, else active events (an
+/// `unknown` parent), else near observations (a `near` parent), else not found.
 pub async fn block(client: &Client, hash: &str) -> Result<BlockPayload, ProjectionError> {
     let hash_bytes = stored_hash_from_display(hash)?;
     let block_row = load_block_detail(client, &hash_bytes).await?;
     let sources = load_sources(client).await?;
 
-    match block_row {
-        Some(row) => block_from_read_model(client, hash, row, &sources).await,
-        None => block_from_direct_events(client, hash, &hash_bytes).await,
+    if let Some(row) = block_row {
+        return block_from_read_model(client, hash, row, &sources).await;
     }
+    if let Some(payload) = block_from_direct_events(client, hash, &hash_bytes).await? {
+        return Ok(payload);
+    }
+    near::block_from_near_observations(client, hash, &hash_bytes)
+        .await?
+        .ok_or_else(|| ProjectionError::Api(ApiError::not_found(hash)))
 }
 
 fn block_source_summary(
@@ -324,6 +336,7 @@ async fn block_from_read_model(
         },
         proofs,
         event_details,
+        observations: Vec::new(),
         competition,
         stale_branch,
         commitment,
@@ -334,16 +347,13 @@ async fn block_from_direct_events(
     client: &Client,
     hash: &str,
     hash_bytes: &[u8],
-) -> Result<BlockPayload, ProjectionError> {
+) -> Result<Option<BlockPayload>, ProjectionError> {
     let events = load_event_details_by_hash(client, hash_bytes).await?;
     if events.is_empty() {
-        return Err(ProjectionError::Api(ApiError::not_found(hash)));
+        return Ok(None);
     }
-    let kind = if events.iter().any(|event| event.kind == ParentKind::Unknown) {
-        ParentKind::Unknown
-    } else {
-        ParentKind::Near
-    };
+    // Without a `block` row, an event-backed parent is unknown: a near has no events.
+    let kind = ParentKind::Unknown;
     ensure_unknown_btc_target(
         kind,
         events.iter().map(|event| event.pow_validates_btc_target),
@@ -354,10 +364,8 @@ async fn block_from_direct_events(
         .iter()
         .min_by_key(|event| event.id)
         .expect("empty handled above");
-    let source_summary = source_summary_from_sources(
-        events.iter().map(|event| &event.source),
-        kind != ParentKind::Near,
-    );
+    let source_summary =
+        source_summary_from_sources(events.iter().map(|event| &event.source), true);
     let bitcoin_miner_pool = unknown_pool();
     let header = header_projection(&first.parent_header_bytes)?;
     let commitment = derive_commitment(&events);
@@ -366,7 +374,7 @@ async fn block_from_direct_events(
     let pool_attributions = load_pool_attributions_by_event(client, &event_ids).await?;
     let rendered_events = render_event_details(events, &pool_attributions)?;
 
-    Ok(BlockPayload {
+    Ok(Some(BlockPayload {
         block: ApiBlock {
             hash: hash.to_owned(),
             height: None,
@@ -378,7 +386,7 @@ async fn block_from_direct_events(
             coinbase_tag,
             header,
             bitcoin_miner_pool,
-            // Near/unknown direct-event parents are not validated Bitcoin blocks,
+            // Direct-event unknown parents are not validated Bitcoin blocks,
             // so we never infer a miner for them: display stays unknown.
             display_miner_pool: unknown_pool(),
             display_miner_basis: DisplayMinerBasis::Unknown.as_str(),
@@ -386,8 +394,9 @@ async fn block_from_direct_events(
         },
         proofs: Vec::new(),
         event_details: rendered_events,
+        observations: Vec::new(),
         competition: None,
         stale_branch: None,
         commitment,
-    })
+    }))
 }

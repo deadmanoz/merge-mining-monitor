@@ -7,17 +7,17 @@ use mmm_capture::auxpow::parse_bip34_height;
 use mmm_capture::capture::{ClassificationProof, ParentKind};
 use mmm_capture::source_registry::RSK_SOURCE_CODE;
 use mmm_read_model::{
-    compute_source_health_from_base, invalidate_source_health_in_transaction,
+    CaptureOutcome, compute_source_health_from_base, invalidate_source_health_in_transaction,
     rebuild_source_health, reconcile_from_merge_mining_event, restore_merge_mining_event,
     revoke_merge_mining_event,
 };
-use mmm_store::get_source_id;
+use mmm_store::{CaptureWrite, get_source_id};
 use tokio_postgres::Client;
 
 use crate::support::scenario::{orphan_candidate_verdict, stale_verdict_with_competitor_header};
 use crate::support::{
-    NamecoinEventFixture, capture_test_payload, classified_proof, namecoin_event_payload,
-    parse_auxpow_fixture,
+    NamecoinEventFixture, capture_test_outcome, capture_test_payload, classified_proof,
+    namecoin_event_payload, parse_auxpow_fixture,
 };
 /// The comparable per-source counters: (events, last_event_seen, near, unknown,
 /// canonical, stale, error_block, strict_orphan, weak_orphan). Excludes the `updated_at` audit
@@ -260,7 +260,12 @@ async fn source_health_incremental_matches_recompute() -> Result<()> {
             ClassificationProof::default(),
             300,
         )?;
-        capture_test_payload(&mut client, namecoin, &classifier, &mut near_payload).await?;
+        let near_outcome =
+            capture_test_outcome(&mut client, namecoin, &classifier, &mut near_payload).await?;
+        assert!(matches!(
+            near_outcome,
+            CaptureOutcome::Written(CaptureWrite::Near { .. })
+        ));
         assert_source_health_matches_recompute(&client, "after near capture").await?;
 
         revoke_merge_mining_event(&mut client, nc_event, "test_revoke", &classifier).await?;

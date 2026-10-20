@@ -33,7 +33,7 @@ impl ObservationKind {
         }
     }
 
-    /// No event holds this block's Bitcoin side.
+    /// The observation carries no Bitcoin parent (neither evidence nor near).
     pub fn is_child_only(self) -> bool {
         !matches!(self, Self::Evidence | Self::Near)
     }
@@ -74,6 +74,8 @@ pub struct ChildBlockObservation {
     pub near_parent: Option<NearParentEvidence>,
     pub child_identities: Vec<ChildIdentity>,
     pub child_pool_id: Option<i64>,
+    /// Near rows only: the unique known pool the parent coinbase names.
+    pub btc_parent_pool_id: Option<i64>,
     pub recorded_at: i64,
 }
 
@@ -104,12 +106,26 @@ impl ChildBlockObservation {
         observation
     }
 
+    /// A near payload's observation, which no event backs: its identities and both pools
+    /// come from the payload's attributions.
+    pub fn near(payload: &MergeMiningEventPayload) -> Self {
+        debug_assert_eq!(payload.btc_parent_kind, ParentKind::Near);
+        let mut observation = Self::from_event_payload(payload);
+        observation.child_identities = child_identities(&payload.pool_attributions);
+        observation.child_pool_id =
+            unique_pool(&payload.pool_attributions, PoolAttributionSide::ChildBlock);
+        observation.btc_parent_pool_id =
+            unique_pool(&payload.pool_attributions, PoolAttributionSide::BtcParent);
+        observation
+    }
+
     /// The child side of a payload whose parent failed the Bitcoin lineage gate. With
     /// no event, its identities and child pool come from the payload's attributions.
     pub fn non_bitcoin_parent(payload: &MergeMiningEventPayload) -> Self {
         let mut observation = Self::child_side(ObservationKind::NonBitcoinParent, payload);
         observation.child_identities = child_identities(&payload.pool_attributions);
-        observation.child_pool_id = unique_child_pool(&payload.pool_attributions);
+        observation.child_pool_id =
+            unique_pool(&payload.pool_attributions, PoolAttributionSide::ChildBlock);
         observation
     }
 
@@ -162,6 +178,7 @@ impl ChildBlockObservation {
             near_parent: None,
             child_identities: Vec::new(),
             child_pool_id: None,
+            btc_parent_pool_id: None,
             recorded_at,
         }
     }
@@ -188,6 +205,7 @@ impl ChildBlockObservation {
             near_parent: None,
             child_identities: Vec::new(),
             child_pool_id: None,
+            btc_parent_pool_id: None,
             recorded_at: payload.discovered_at,
         }
     }
@@ -217,11 +235,12 @@ fn child_identities(attributions: &[EventPoolAttribution]) -> Vec<ChildIdentity>
     identities
 }
 
-/// The unique known child-side pool, as `refresh_event_child_miner_pool_id` derives it.
-fn unique_child_pool(attributions: &[EventPoolAttribution]) -> Option<i64> {
+/// The unique known pool on one attribution side, as `refresh_event_child_miner_pool_id`
+/// derives the child pool.
+fn unique_pool(attributions: &[EventPoolAttribution], side: PoolAttributionSide) -> Option<i64> {
     let mut pools = attributions
         .iter()
-        .filter(|row| row.side == PoolAttributionSide::ChildBlock)
+        .filter(|row| row.side == side)
         .filter_map(|row| row.pool_id);
     let first = pools.next()?;
     pools.all(|pool| pool == first).then_some(first)

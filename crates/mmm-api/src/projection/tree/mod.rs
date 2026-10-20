@@ -167,7 +167,7 @@ fn tree_window_from_resolved(
 
 fn base_tree_legend() -> TreeLegend {
     TreeLegend {
-        kinds: vec!["canonical", "stale", "error_block", "unknown", "near"],
+        kinds: vec!["canonical", "stale", "error_block", "unknown"],
         edge_kinds: vec!["canonical", "stale_entry", "stale", "hidden"],
     }
 }
@@ -249,18 +249,15 @@ fn select_tree_candidates(
         }
     }
 
-    if query.include_unheighted {
-        // Direct-event unknowns have no `block` row (pending by construction); only emit
-        // them when `pending` is in `query.classification`.
-        let include_pending_unknowns = query.classification.contains(&Classification::Pending);
+    // Direct-event unknowns have no `block` row (pending by construction); only emit them
+    // when `pending` is in `query.classification`.
+    if query.include_unheighted
+        && query.classification.contains(&Classification::Pending)
+        && kind_selected(&query.kinds, ParentKind::Unknown)
+    {
         let direct = project_direct_events(all_events, direct_projection_hashes)?;
         for mut projection in direct {
-            let is_selected = kind_selected(&query.kinds, projection.kind);
-            let allowed_kind = (projection.kind == ParentKind::Unknown && include_pending_unknowns)
-                || (projection.kind == ParentKind::Near && query.include_near);
-            if allowed_kind
-                && is_selected
-                && projection.source_summary.distinct_sources >= query.min_sources
+            if projection.source_summary.distinct_sources >= query.min_sources
                 && unheighted_in_range(&projection, query).map_err(ProjectionError::Api)?
             {
                 projection.evidence = true;

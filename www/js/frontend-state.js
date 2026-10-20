@@ -3,7 +3,7 @@ import { inputDateTimeToUtc, utcDateTimeToInput } from "./tree-lookup.js";
 
 
 const API_BASE = "/api/v1";
-const KINDS = ["canonical", "stale", "error_block", "unknown", "near"];
+const KINDS = ["canonical", "stale", "error_block", "unknown"];
 const VISIBLE_KIND_CONTROLS = ["canonical", "stale", "error_block"];
 const KIND_HELP = {
   canonical: {

@@ -17,7 +17,7 @@ use mmm_read_model::{
     CaptureOutcome, ReconcileReadModelConfig, capture_in_txn, is_reconcile_budget_exhausted,
     run_reconcile_read_model,
 };
-use mmm_store::{self, EventWriteOutcome, get_source_id, upsert_pool_snapshot};
+use mmm_store::{self, CaptureWrite, get_source_id, upsert_pool_snapshot};
 
 use crate::bitcoin_epoch_cache::refresh_bitcoin_core_header_cache;
 
@@ -78,7 +78,7 @@ impl ProducerContext {
         upsert: F,
     ) -> Result<CaptureOutcome>
     where
-        F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<EventWriteOutcome>,
+        F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<CaptureWrite>,
     {
         let outcome = capture_in_txn(
             client,

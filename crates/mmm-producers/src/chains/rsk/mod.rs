@@ -5,6 +5,7 @@
 pub(crate) mod backfill;
 pub(crate) mod capture;
 pub(crate) mod identity_reresolve;
+mod proof;
 pub(crate) mod rpc;
 pub(crate) mod traverse;
 

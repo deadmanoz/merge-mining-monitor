@@ -13,6 +13,7 @@ use bitcoin::consensus::deserialize;
 use tokio_postgres::Client;
 use tracing::{debug, warn};
 
+use crate::chains::rsk::proof::coinbase_only_txid;
 use crate::chains::rsk::rpc::{
     RskBlock, RskRpcClient, decimal_difficulty, decode_hex_bytes, decode_quantity_i64,
 };
@@ -624,6 +625,7 @@ pub fn prepare_rsk_capture(
             .copied()
     });
 
+    let btc_parent_coinbase_txid = coinbase_only_txid(&header, merkle_proof.as_deref());
     let evidence_for_event = NormalizedEventEvidence {
         child_height: Some(rsk_height),
         child_block_hash: Some(block_hash_bytes.clone()),
@@ -637,11 +639,11 @@ pub fn prepare_rsk_capture(
         // slice, so the column stays NULL until a future classifier slice
         // can derive one.
         pow_validates_child_target: None,
-        // BTC parent coinbase fields are irrecoverable post-RSKIP-92
-        // midstate compression; the proof bytes live in
-        // rsk_merge_mining_evidence.merkle_proof instead of
+        // The parent coinbase is irrecoverable from RSKIP-92 midstate compression;
+        // its txid is known only when the proof shows a coinbase-only parent. The
+        // proof bytes live in rsk_merge_mining_evidence.merkle_proof instead of
         // merge_mining_event.aux_merkle_proof.
-        btc_parent_coinbase_txid: None,
+        btc_parent_coinbase_txid,
         btc_parent_coinbase_script: None,
         btc_parent_coinbase_outputs: None,
         btc_parent_coinbase_outputs_text: None,

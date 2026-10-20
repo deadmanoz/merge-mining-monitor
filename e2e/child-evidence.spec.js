@@ -77,6 +77,43 @@ test("the block drawer renders authenticated and unavailable child evidence hone
   await expect(events.nth(1)).toContainText("2023-11-14T22:13:20Z");
 });
 
+test("a near parent's drawer lists its child block observations", async ({ page }) => {
+  const nearHash = "c".repeat(64);
+  await stubApi(page, [], {
+    treePayload: (params) => treeEnvelope(params, { nodes: [] }),
+    blockPayload: (hash) =>
+      blockPayload(hash, {
+        generated_at: GENERATED_AT,
+        block: { ...blockPayload(hash).block, kind: "near", height: null },
+        event_details: [],
+        observations: [{
+          observation_id: 9801,
+          source: "auxpow:rsk",
+          child_chain: "rsk",
+          child_height: 810_002,
+          child_block_hash: "07".repeat(32),
+          child_header_hex: null,
+          child_block_time: null,
+          child_nbits: null,
+          child_chain_role: "uncle",
+          uncle_index: 1,
+          uncle_parent_height: 810_005,
+          pow_validates_child_target: null,
+          child_identities: [{ namespace: "rsk_miner_address", identifier: "22".repeat(20) }],
+          child_pool: { id: 9, slug: "rskpool", name: "RSKPool", known: true },
+        }],
+      }),
+  });
+
+  await page.goto(`/?selected=${nearHash}`);
+  const observations = page.locator("#drawer details.event-block");
+  await expect(observations).toHaveCount(1);
+  await expect(observations.locator("summary")).toContainText("810002 · uncle · RSKPool");
+  await observations.locator("summary").click();
+  await expect(observations).toContainText("Referencing Height");
+  await expect(observations).toContainText("22".repeat(20));
+});
+
 test("Qbit auxiliary summaries show child pools and leave the shared wallet unlabelled", async ({ page }) => {
   const nodes = [makeNode(HASH, 700000, null, "canonical", { id: 1, prev_id: null })];
   const childPools = [

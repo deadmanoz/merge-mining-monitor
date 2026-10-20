@@ -620,8 +620,7 @@ async fn write_capture(
             &mut payload,
             "Hathor",
             async |txn, source_id, payload| {
-                let outcome =
-                    write_hathor_capture_in_txn(txn, source_id, payload, &sidecar).await?;
+                let write = write_hathor_capture_in_txn(txn, source_id, payload, &sidecar).await?;
                 if may_record_current_block(txn, context, height, work).await? {
                     record_child_chain_block(
                         txn,
@@ -640,7 +639,7 @@ async fn write_capture(
                     )
                     .await?;
                 }
-                Ok(outcome)
+                Ok(write)
             },
         )
         .await?;

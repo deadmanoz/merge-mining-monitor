@@ -4,6 +4,7 @@
 
 mod bitcoin_core_header;
 mod capture_error;
+mod capture_write;
 mod chains;
 mod child_displacement;
 mod event;
@@ -30,6 +31,7 @@ pub use capture_error::{
     CAPTURE_ERROR_HEIGHT_CAPTURE_FAILED, CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error,
     has_capture_error, record_capture_error,
 };
+pub use capture_write::{CaptureWrite, write_capture};
 pub use chains::elastos::{ElastosIdentityReresolveRow, load_elastos_identity_reresolve_batch};
 pub use chains::hathor::{
     hathor_evidence_event_at_height, hathor_sidecar_graph_heads_at_height,
@@ -50,10 +52,10 @@ pub use child_displacement::{
     reobserve_child_chain_block_in_own_transaction,
 };
 pub use event::{
-    EventWriteDisposition, EventWriteOutcome, delete_child_block_events,
-    delete_event_pool_attributions_for_source, has_child_block_events,
-    upsert_event_pool_attributions, upsert_event_pool_attributions_without_stale_cleanup,
-    upsert_merge_mining_event, upsert_merge_mining_event_with_attributions,
+    EventWriteDisposition, EventWriteOutcome, child_block_is_counted, delete_child_block_events,
+    delete_event_pool_attributions_for_source, upsert_event_pool_attributions,
+    upsert_event_pool_attributions_without_stale_cleanup, upsert_merge_mining_event,
+    upsert_merge_mining_event_with_attributions,
 };
 pub use historical_import::{
     HistoricalBaseEventRow, HistoricalFinalizationState, HistoricalPublicationStateRow,
@@ -61,7 +63,10 @@ pub use historical_import::{
     stream_historical_error_observation_state, stream_historical_publication_state,
 };
 pub use known_stale::{count_known_stale_blocks, is_known_stale_hash, upsert_known_stale_block};
-pub use observation::{sync_event_observation_attribution, upsert_child_only_observation};
+pub use observation::{
+    ObservationPoolRow, load_child_identity_pools, load_observation_pool_batch,
+    sync_event_observation_attribution, update_observation_pools, upsert_child_only_observation,
+};
 pub use pending_reconcile::{
     PendingReconcileRow, bump_pending_attempts, delete_pending_reconcile, list_pending_reconcile,
     upsert_pending_reconcile,

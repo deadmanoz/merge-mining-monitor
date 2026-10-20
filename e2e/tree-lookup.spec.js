@@ -451,7 +451,7 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
         nodes: [makeNode(hash, height, null, "error_block", { id: 1, prev_id: null })],
         edges: [],
         legend: {
-          kinds: ["canonical", "stale", "error_block", "unknown", "near"],
+          kinds: ["canonical", "stale", "error_block", "unknown"],
           edge_kinds: ["canonical", "stale_entry", "stale", "hidden"],
         },
       });
@@ -613,7 +613,7 @@ test("a shared link to an error block adopts that navigator target", async ({ pa
         nodes: [makeNode(hash, height, null, "error_block", { id: 1, prev_id: null })],
         edges: [],
         legend: {
-          kinds: ["canonical", "stale", "error_block", "unknown", "near"],
+          kinds: ["canonical", "stale", "error_block", "unknown"],
           edge_kinds: ["canonical", "stale_entry", "stale", "hidden"],
         },
       });

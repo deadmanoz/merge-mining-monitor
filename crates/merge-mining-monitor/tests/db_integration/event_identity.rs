@@ -295,6 +295,7 @@ async fn exact_observation_satisfies_later_partial_observation() -> Result<()> {
             EventWriteDisposition::SatisfiedByExistingExact
         );
         assert_eq!(partial.event_id, exact.event_id);
+        assert_eq!(partial.observation_id, exact.observation_id);
         let count: i64 = client
             .query_one(
                 "SELECT count(*) FROM merge_mining_event WHERE source_id = $1",
@@ -366,6 +367,23 @@ async fn exact_observation_promotes_existing_partial_observation() -> Result<()>
         assert_eq!(partial.disposition, EventWriteDisposition::Inserted);
         assert_eq!(exact_outcome.disposition, EventWriteDisposition::Promoted);
         assert_eq!(exact_outcome.event_id, partial.event_id);
+        // The hashless observation learns the hash and stays the event's.
+        assert_eq!(exact_outcome.observation_id, partial.observation_id);
+        let linked: (Option<i64>, Option<Vec<u8>>) = client
+            .query_one(
+                "SELECT e.observation_id, o.child_block_hash FROM merge_mining_event e \
+                 JOIN child_block_observation o ON o.id = e.observation_id WHERE e.id = $1",
+                &[&exact_outcome.event_id],
+            )
+            .await
+            .map(|row| (row.get(0), row.get(1)))?;
+        assert_eq!(
+            linked,
+            (
+                Some(exact_outcome.observation_id),
+                exact.child_block_hash.clone()
+            )
+        );
         let row = client
             .query_one(
                 "SELECT child_block_hash, child_header_bytes, child_block_time, child_nbits, \
@@ -471,7 +489,12 @@ async fn exact_observation_rejects_contradictory_child_evidence() -> Result<()> 
         let error = upsert_merge_mining_event(&client, source_id, &contradictory)
             .await
             .expect_err("contradictory non-null evidence must be rejected");
-        assert!(error.to_string().contains("contradicts stored evidence"));
+        // The observation, written before the event, holds the child evidence.
+        assert!(
+            error
+                .to_string()
+                .contains("event observation contradicts the stored child evidence")
+        );
         Ok::<_, anyhow::Error>(())
     })
 }

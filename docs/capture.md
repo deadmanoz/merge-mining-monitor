@@ -15,7 +15,7 @@ Child height, hash, header, time, and `nBits` are independent optional evidence;
 For a live child block, the poller advances from cursor selection to source fetching, AuxPoW parsing and pool attribution.
 The capture then passes the [Bitcoin lineage gate](#bitcoin-lineage-gate): a parent that is not a Bitcoin header is never stored.
 Parent classification starts with the parent's own target and Bitcoin Core placement.
-Target failures become `near`; Core-known parents become `canonical` or `stale`.
+Target failures become `near`, which only the child block's observation records (a near has no event); Core-known parents become `canonical` or `stale`.
 For a Core-absent target-valid parent with a known predecessor, the classifier verifies its expected `nBits` and reads the exact eleven linked predecessor headers to apply Bitcoin's median-time-past rule.
 A timestamp at or below that median becomes `error_block` with the `time_below_mtp` reason.
 The pinned consensus-invalid catalogue remains the fallback for rules not yet derived live, and cross-checks a live MTP verdict when both are available.

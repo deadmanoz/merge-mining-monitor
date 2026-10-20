@@ -33,7 +33,6 @@ pub struct TreeQuery {
     pub source_filter: Vec<String>,
     /// Orphan-class filter for unknown parents (defaults to `strict+weak`).
     pub classification: Vec<Classification>,
-    pub include_near: bool,
     pub include_unheighted: bool,
     pub unheighted_from: Option<Date>,
     pub unheighted_to: Option<Date>,
@@ -53,7 +52,6 @@ struct TreeLookupControls {
     to_height: Option<i32>,
     exact: ExactTreeLookup,
     context: TreeContextPolicy,
-    include_near: bool,
     include_unheighted: bool,
     unheighted_from: Option<Date>,
     unheighted_to: Option<Date>,
@@ -114,7 +112,6 @@ pub fn parse_tree_query(raw: Option<&str>) -> Result<TreeQuery, ApiError> {
             "kinds",
             "classification",
             "source",
-            "include_near",
             "include_unheighted",
             "unheighted_from",
             "unheighted_to",
@@ -147,7 +144,6 @@ pub fn parse_tree_query(raw: Option<&str>) -> Result<TreeQuery, ApiError> {
         kinds,
         source_filter,
         classification,
-        include_near: controls.include_near,
         include_unheighted: controls.include_unheighted,
         unheighted_from: controls.unheighted_from,
         unheighted_to: controls.unheighted_to,
@@ -164,7 +160,6 @@ fn parse_tree_lookup_controls(
     let to_height = optional_i32(params, "to_height")?;
     validate_tree_height_window(from_height, to_height)?;
     let exact = parse_exact_tree_lookup(params)?;
-    let include_near = optional_bool(params, "include_near")?.unwrap_or(false);
     let include_unheighted = optional_bool(params, "include_unheighted")?.unwrap_or(false);
     let context = parse_tree_context(params)?;
     let min_sources = optional_usize(params, "min_sources")?.unwrap_or(1);
@@ -200,7 +195,6 @@ fn parse_tree_lookup_controls(
         to_height,
         exact,
         context,
-        include_near,
         include_unheighted,
         unheighted_from,
         unheighted_to,
@@ -240,7 +234,6 @@ fn tree_query_echo(
         "kinds": kind_strings(kinds),
         "classification": classification_strings(classification),
         "sources": query_sources,
-        "include_near": controls.include_near,
         "min_sources": controls.min_sources,
         "include_unheighted": controls.include_unheighted,
     });

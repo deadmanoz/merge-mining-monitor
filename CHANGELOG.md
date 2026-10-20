@@ -6,6 +6,10 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Record a near (a parent that misses Bitcoin's target) as its child block observation alone, with its child identities, child pool and parent pool, and no event, RSK sidecar or attribution rows; every event is now written linked to its observation.
+- Record an RSK parent's coinbase txid as the header's merkle root when the merge-mining proof shows a coinbase-only template (an empty hash list, or a one-transaction tree in early history), so empty templates stay detectable on RSK nears.
+- Serve a near parent's `/api/v1/block/{hash}` page from its observations, with `event_details: []` and a new `observations` array, and take its `bitcoin_miner_pool` from the parent pool; `/api/v1/tree` no longer accepts the `near` kind or `include_near`.
+- Add an `observations` phase to `reclassify-pools` that re-resolves the pools of child blocks no event backs; the main and RSK phases now cover evidence events only.
 - Record every observed child block in a new `child_block_observation` table, filled from existing events by migration 0033: near and evidence blocks with their events, blocks without AuxPoW as `not_merge_mined`, blocks whose parent fails the Bitcoin lineage gate as `non_bitcoin_parent`, and authenticated blocks whose AuxPoW proof is malformed or incomplete (including RSK blocks without a complete parent header) as `unverified_parent`, the last two with no parent field.
 - Keep child identities (RSK miner, payout and reward addresses, Elastos minerinfo) as a `child_miner_identity` set per block, and RSK chain role, uncle placement, parent hash and reported difficulty on the observation.
 - Capture Elastos and Hathor parents that miss Bitcoin's target as nears through the lineage gate instead of discarding them, and record Elastos and Hathor blocks without AuxPoW as `not_merge_mined`.

@@ -97,11 +97,7 @@ async fn core_cache_match_writes_the_event_end_to_end() -> Result<()> {
 #[tokio::test]
 async fn a_parent_missing_bitcoins_target_is_captured_as_a_near() -> Result<()> {
     crate::run_mut_db_test!(client, {
-        // Elastos 1,500,000: the parent meets only Elastos's easier target.
-        let block: ElastosBlock = serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/elastos/ela-1500000.json"
-        )))?;
+        let block = near_elastos_block();
         let height = block.height;
         let hash = block.reconstruct()?.block_hash.to_byte_array().to_vec();
         let prev = BlockHash::from_str(&block.previousblockhash)?
@@ -115,7 +111,21 @@ async fn a_parent_missing_bitcoins_target_is_captured_as_a_near() -> Result<()> 
         assert_eq!(outcome, ElastosHeightOutcome::AuxpowWritten);
         assert_eq!(
             observations_at(&client, context.source_id(), height).await?,
-            vec![(hash.clone(), "near".to_owned(), true, true)]
+            vec![(hash.clone(), "near".to_owned(), true, false)],
+            "a near is an observation with no event"
+        );
+        let parent_pool: Option<String> = client
+            .query_one(
+                "SELECT p.slug FROM child_block_observation o \
+                 LEFT JOIN pool p ON p.id = o.btc_parent_pool_id \
+                 WHERE o.source_id = $1 AND o.child_block_hash = $2",
+                &[&context.source_id(), &hash],
+            )
+            .await?
+            .get(0);
+        assert!(
+            parent_pool.is_some(),
+            "the near keeps the pool its parent coinbase names"
         );
         assert_eq!(
             observation_prev_hash(&client, context.source_id(), &hash).await?,
@@ -132,6 +142,73 @@ async fn a_parent_missing_bitcoins_target_is_captured_as_a_near() -> Result<()> 
         assert_eq!(nbits, Some(i64::from(bits)));
         Ok(())
     })
+}
+
+#[tokio::test]
+async fn a_refused_near_leaves_the_near_count() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let block = near_elastos_block();
+        let height = block.height;
+        let hash = block.reconstruct()?.block_hash.to_byte_array().to_vec();
+        let context =
+            ElastosCaptureContext::new_with_classifier(&client, unknown_classifier()).await?;
+        let rpc = FixtureElastosRpc {
+            block: block.clone(),
+        };
+        assert_eq!(
+            process_elastos_height(&mut client, &rpc, &context, height).await?,
+            ElastosHeightOutcome::AuxpowWritten
+        );
+        assert_eq!(near_parents(&client, context.source_id()).await?, 1);
+
+        contradict_parent_epoch(&client, &block).await?;
+        assert_eq!(
+            process_elastos_height(&mut client, &rpc, &context, height).await?,
+            ElastosHeightOutcome::NonBitcoinParent
+        );
+        assert_eq!(
+            observations_at(&client, context.source_id(), height).await?,
+            vec![(hash, "non_bitcoin_parent".to_owned(), false, false)]
+        );
+        assert_eq!(
+            near_parents(&client, context.source_id()).await?,
+            0,
+            "the refused near leaves the near count"
+        );
+        Ok(())
+    })
+}
+
+/// Make the cached Bitcoin epoch of `block`'s parent contradict the parent's bits.
+async fn contradict_parent_epoch(client: &Client, block: &ElastosBlock) -> Result<()> {
+    let reconstructed = block.reconstruct()?;
+    let auxpow = reconstructed
+        .auxpow
+        .as_deref()
+        .context("Elastos fixture must carry AuxPoW")?;
+    let parsed = parse_elastos_auxpow(reconstructed.prefix_header, auxpow)?;
+    let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
+        .context("Elastos fixture must carry a BIP34 parent height")?;
+    client
+        .execute(
+            "UPDATE bitcoin_core_header SET bits = $1 WHERE height = $2",
+            &[
+                &i64::from(parsed.parent_header.bits().to_consensus() ^ 1),
+                &daa_epoch_start(parent_height),
+            ],
+        )
+        .await?;
+    Ok(())
+}
+
+async fn near_parents(client: &Client, source_id: i64) -> Result<i64> {
+    Ok(client
+        .query_one(
+            "SELECT COALESCE((SELECT near_parents FROM source_health WHERE source_id = $1), 0)",
+            &[&source_id],
+        )
+        .await?
+        .get(0))
 }
 
 #[tokio::test]
@@ -175,23 +252,7 @@ async fn a_foreign_parent_retracts_only_its_own_blocks_event() -> Result<()> {
         let reconstructed = block.reconstruct()?;
         // An exact event stored without a child height is still this block's event to retract.
         clear_exact_event_height(&client, context.source_id(), &reconstructed.block_hash).await?;
-        let auxpow = reconstructed
-            .auxpow
-            .as_deref()
-            .context("Elastos fixture must carry AuxPoW")?;
-        let parsed = parse_elastos_auxpow(reconstructed.prefix_header, auxpow)?;
-        let parent_height = parse_bip34_height(&parsed.parent_coinbase_script)
-            .context("Elastos fixture must carry a BIP34 parent height")?;
-        let mismatching_bits = parsed.parent_header.bits().to_consensus() ^ 1;
-        client
-            .execute(
-                "UPDATE bitcoin_core_header SET bits = $1 WHERE height = $2",
-                &[
-                    &i64::from(mismatching_bits),
-                    &daa_epoch_start(parent_height),
-                ],
-            )
-            .await?;
+        contradict_parent_epoch(&client, &block).await?;
 
         assert_eq!(
             process_elastos_height(&mut client, &rpc, &context, height).await?,
@@ -459,6 +520,15 @@ fn writable_elastos_block_without_identity() -> ElastosBlock {
         "/../../fixtures/elastos/ela-360062.json"
     )))
     .expect("deserialize Elastos 360062 fixture")
+}
+
+/// Elastos 1,500,000: the parent meets only Elastos's easier target, so the capture is a near.
+fn near_elastos_block() -> ElastosBlock {
+    serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/elastos/ela-1500000.json"
+    )))
+    .expect("deserialize Elastos 1500000 fixture")
 }
 
 fn writable_elastos_block_with_identity(minerinfo: Option<&str>) -> ElastosBlock {

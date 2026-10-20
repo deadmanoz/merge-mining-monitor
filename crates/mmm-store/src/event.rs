@@ -8,10 +8,14 @@ use tokio_postgres::types::Json;
 
 use mmm_capture::capture::{
     CHILD_COINBASE_OUTPUT_SOURCE, CHILD_PAYOUT_REGISTRY_SOURCE, ChildBlockObservation,
-    EventPoolAttribution, HistoricalEventProvenance, MergeMiningEventPayload, PoolAttributionSide,
+    EventPoolAttribution, HistoricalEventProvenance, MergeMiningEventPayload, ParentKind,
+    PoolAttributionSide,
 };
 
-use crate::observation::{sync_observation_attribution, upsert_event_observation};
+use crate::observation::{
+    fold_hashless_observation, link_event_observation, sync_observation_attribution,
+    write_event_observation,
+};
 
 /// How an event upsert changed the store's authenticated child-identity state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +30,8 @@ pub enum EventWriteDisposition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EventWriteOutcome {
     pub event_id: i64,
+    /// The event's child block observation, linked through `observation_id`.
+    pub observation_id: i64,
     pub disposition: EventWriteDisposition,
     /// Whether this write changed an input consumed by the parent read model.
     /// Presentation-only projections, provenance, and sidecars do not require
@@ -36,11 +42,13 @@ pub struct EventWriteOutcome {
 impl EventWriteOutcome {
     const fn new(
         event_id: i64,
+        observation_id: i64,
         disposition: EventWriteDisposition,
         parent_read_model_changed: bool,
     ) -> Self {
         Self {
             event_id,
+            observation_id,
             disposition,
             parent_read_model_changed,
         }
@@ -102,47 +110,82 @@ pub async fn upsert_merge_mining_event<C: GenericClient>(
     if payload.child_block_hash.is_none() && payload.child_height.is_none() {
         bail!("merge-mining observation requires a child hash or child height");
     }
+    let observation = ChildBlockObservation::from_event_payload(payload);
     match payload.child_block_hash.as_deref() {
         Some(child_hash) => {
-            if let Some(existing) = exact_event_parent_input(client, source_id, child_hash).await? {
-                return insert_event(client, source_id, payload, Exactness::Exact, Some(existing))
-                    .await;
-            }
-            if let Some(child_height) = payload.child_height
+            let existing = exact_event_parent_input(client, source_id, child_hash).await?;
+            if existing.is_none()
+                && let Some(child_height) = payload.child_height
                 && let Some(id) =
                     matching_partial_event_id(client, source_id, child_height, payload).await?
             {
                 let event_id = promote_partial_event(client, id, payload).await?;
+                fold_hashless_observation(client, event_id).await?;
+                let observation_id =
+                    write_event_observation(client, source_id, &observation).await?;
+                link_event_observation(client, event_id, observation_id).await?;
                 return Ok(EventWriteOutcome::new(
                     event_id,
+                    observation_id,
                     EventWriteDisposition::Promoted,
                     true,
                 ));
             }
-            insert_event(client, source_id, payload, Exactness::Exact, None).await
+            insert_event(
+                client,
+                source_id,
+                payload,
+                Exactness::Exact,
+                existing,
+                &observation,
+            )
+            .await
         }
-        None => {
-            let child_height = payload
-                .child_height
-                .expect("hashless identity checked to have a height");
-            let exact_ids =
-                matching_exact_event_ids(client, source_id, child_height, payload).await?;
-            match exact_ids.as_slice() {
-                [] => insert_event(client, source_id, payload, Exactness::Partial, None).await,
-                [id] => {
-                    fill_existing_event(client, *id, payload).await?;
-                    Ok(EventWriteOutcome::new(
-                        *id,
-                        EventWriteDisposition::SatisfiedByExistingExact,
-                        true,
-                    ))
-                }
-                _ => bail!(
-                    "hashless observation ambiguously matches {} exact events for source {source_id} child height {child_height}",
-                    exact_ids.len()
-                ),
-            }
+        None => upsert_hashless_event(client, source_id, payload, observation).await,
+    }
+}
+
+/// A hashless payload: a new partial event, or the one exact event it describes.
+async fn upsert_hashless_event<C: GenericClient>(
+    client: &C,
+    source_id: i64,
+    payload: &MergeMiningEventPayload,
+    mut observation: ChildBlockObservation,
+) -> Result<EventWriteOutcome> {
+    let child_height = payload
+        .child_height
+        .expect("hashless identity checked to have a height");
+    let exact_ids = matching_exact_event_ids(client, source_id, child_height, payload).await?;
+    match exact_ids.as_slice() {
+        [] => {
+            insert_event(
+                client,
+                source_id,
+                payload,
+                Exactness::Partial,
+                None,
+                &observation,
+            )
+            .await
         }
+        [id] => {
+            let (height, hash) = fill_existing_event(client, *id, payload).await?;
+            // The hashless payload describes the exact event's block.
+            observation.child_height = height.or(observation.child_height);
+            observation.child_block_hash = Some(hash);
+            let observation_id = write_event_observation(client, source_id, &observation).await?;
+            link_event_observation(client, *id, observation_id).await?;
+            Ok(EventWriteOutcome::new(
+                *id,
+                observation_id,
+                EventWriteDisposition::SatisfiedByExistingExact,
+                true,
+            ))
+        }
+        _ => bail!(
+            "hashless observation ambiguously matches {} exact events for source {source_id} child height {child_height}",
+            exact_ids.len()
+        ),
     }
 }
 
@@ -292,11 +335,13 @@ async fn promote_partial_event<C: GenericClient>(
     })
 }
 
+/// Fill an exact event from a hashless payload of its block; returns the event's child
+/// height and hash.
 async fn fill_existing_event<C: GenericClient>(
     client: &C,
     event_id: i64,
     payload: &MergeMiningEventPayload,
-) -> Result<()> {
+) -> Result<(Option<i32>, Vec<u8>)> {
     let row = client
         .query_opt(
             "UPDATE merge_mining_event SET \
@@ -325,7 +370,7 @@ async fn fill_existing_event<C: GenericClient>(
                AND (btc_parent_coinbase_script IS NULL OR $4::bytea IS NULL OR btc_parent_coinbase_script = $4) \
                AND (btc_parent_coinbase_outputs IS NULL OR $5::bytea IS NULL OR btc_parent_coinbase_outputs = $5) \
                AND (btc_parent_coinbase_tx_bytes IS NULL OR $7::bytea IS NULL OR btc_parent_coinbase_tx_bytes = $7) \
-             RETURNING id",
+             RETURNING child_height, child_block_hash",
             &[
                 &event_id,
                 &payload.confirmed_at,
@@ -348,10 +393,10 @@ async fn fill_existing_event<C: GenericClient>(
         )
         .await
         .context("fill exact event from partial observation")?;
-    if row.is_none() {
+    let Some(row) = row else {
         bail!("partial child evidence contradicts existing exact observation");
-    }
-    Ok(())
+    };
+    Ok((row.get(0), row.get(1)))
 }
 
 async fn insert_event<C: GenericClient>(
@@ -360,62 +405,13 @@ async fn insert_event<C: GenericClient>(
     payload: &MergeMiningEventPayload,
     exactness: Exactness,
     previous_parent_input: Option<ParentReadModelInput>,
+    observation: &ChildBlockObservation,
 ) -> Result<EventWriteOutcome> {
+    // The observation is written first, so a new event is inserted already linked.
+    let observation_id = write_event_observation(client, source_id, observation).await?;
     let btc_parent_kind = payload.btc_parent_kind.as_db_str();
     let child_nbits = payload.child_nbits.map(i64::from);
-    let conflict = identity_conflict_clause(exactness);
-    let sql = format!(
-        "INSERT INTO merge_mining_event ( \
-            source_id, child_height, child_block_hash, child_header_bytes, \
-            child_block_time, child_nbits, \
-            btc_parent_header_hash, btc_parent_prev_header_hash, \
-            btc_parent_header_bytes, btc_parent_header_time, \
-            btc_parent_height, btc_parent_kind, \
-            pow_validates_btc_target, pow_validates_child_target, \
-            difficulty_epoch_ok, btc_parent_coinbase_txid, \
-            btc_parent_coinbase_script, btc_parent_coinbase_outputs, \
-            btc_parent_coinbase_outputs_text, btc_parent_coinbase_tx_bytes, \
-            child_coinbase_txid, child_coinbase_script, child_coinbase_outputs, \
-            aux_merkle_proof, discovered_at, confirmed_at, revoked_at, revocation_reason \
-         ) VALUES ( \
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, \
-            $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, \
-            $21, $22, $23, $24, $25, $26, $27, $28 \
-         ) \
-         {conflict} \
-            confirmed_at = CASE WHEN $29 \
-                THEN merge_mining_event.confirmed_at \
-                ELSE GREATEST(merge_mining_event.confirmed_at, EXCLUDED.confirmed_at) END, \
-            child_height = COALESCE(merge_mining_event.child_height, EXCLUDED.child_height), \
-            child_header_bytes = COALESCE(merge_mining_event.child_header_bytes, EXCLUDED.child_header_bytes), \
-            child_block_time = COALESCE(merge_mining_event.child_block_time, EXCLUDED.child_block_time), \
-            child_nbits = COALESCE(merge_mining_event.child_nbits, EXCLUDED.child_nbits), \
-            pow_validates_child_target = COALESCE(merge_mining_event.pow_validates_child_target, EXCLUDED.pow_validates_child_target), \
-            btc_parent_coinbase_txid = COALESCE(merge_mining_event.btc_parent_coinbase_txid, EXCLUDED.btc_parent_coinbase_txid), \
-            btc_parent_coinbase_script = COALESCE(merge_mining_event.btc_parent_coinbase_script, EXCLUDED.btc_parent_coinbase_script), \
-            btc_parent_coinbase_outputs = COALESCE(merge_mining_event.btc_parent_coinbase_outputs, EXCLUDED.btc_parent_coinbase_outputs), \
-            btc_parent_coinbase_outputs_text = COALESCE(EXCLUDED.btc_parent_coinbase_outputs_text, merge_mining_event.btc_parent_coinbase_outputs_text), \
-            btc_parent_coinbase_tx_bytes = COALESCE(merge_mining_event.btc_parent_coinbase_tx_bytes, EXCLUDED.btc_parent_coinbase_tx_bytes), \
-            child_coinbase_txid = COALESCE(merge_mining_event.child_coinbase_txid, EXCLUDED.child_coinbase_txid), \
-            child_coinbase_script = COALESCE(merge_mining_event.child_coinbase_script, EXCLUDED.child_coinbase_script), \
-            child_coinbase_outputs = COALESCE(merge_mining_event.child_coinbase_outputs, EXCLUDED.child_coinbase_outputs), \
-            aux_merkle_proof = COALESCE(merge_mining_event.aux_merkle_proof, EXCLUDED.aux_merkle_proof) \
-         WHERE merge_mining_event.btc_parent_header_hash = EXCLUDED.btc_parent_header_hash \
-           AND merge_mining_event.btc_parent_header_bytes = EXCLUDED.btc_parent_header_bytes \
-           AND (merge_mining_event.child_height IS NULL OR EXCLUDED.child_height IS NULL OR merge_mining_event.child_height = EXCLUDED.child_height) \
-           AND (merge_mining_event.child_header_bytes IS NULL OR EXCLUDED.child_header_bytes IS NULL OR merge_mining_event.child_header_bytes = EXCLUDED.child_header_bytes) \
-           AND (merge_mining_event.child_block_time IS NULL OR EXCLUDED.child_block_time IS NULL OR merge_mining_event.child_block_time = EXCLUDED.child_block_time) \
-           AND (merge_mining_event.child_nbits IS NULL OR EXCLUDED.child_nbits IS NULL OR merge_mining_event.child_nbits = EXCLUDED.child_nbits) \
-           AND (merge_mining_event.pow_validates_child_target IS NULL OR EXCLUDED.pow_validates_child_target IS NULL OR merge_mining_event.pow_validates_child_target = EXCLUDED.pow_validates_child_target) \
-           AND (merge_mining_event.btc_parent_coinbase_txid IS NULL OR EXCLUDED.btc_parent_coinbase_txid IS NULL OR merge_mining_event.btc_parent_coinbase_txid = EXCLUDED.btc_parent_coinbase_txid) \
-           AND (merge_mining_event.btc_parent_coinbase_script IS NULL OR EXCLUDED.btc_parent_coinbase_script IS NULL OR merge_mining_event.btc_parent_coinbase_script = EXCLUDED.btc_parent_coinbase_script) \
-           AND (merge_mining_event.btc_parent_coinbase_outputs IS NULL OR EXCLUDED.btc_parent_coinbase_outputs IS NULL OR merge_mining_event.btc_parent_coinbase_outputs = EXCLUDED.btc_parent_coinbase_outputs) \
-           AND (merge_mining_event.btc_parent_coinbase_tx_bytes IS NULL OR EXCLUDED.btc_parent_coinbase_tx_bytes IS NULL OR merge_mining_event.btc_parent_coinbase_tx_bytes = EXCLUDED.btc_parent_coinbase_tx_bytes) \
-         RETURNING id, (xmax = 0) AS inserted, \
-                   child_height, btc_parent_kind, btc_parent_height, \
-                   difficulty_epoch_ok, btc_parent_coinbase_script, \
-                   btc_parent_coinbase_outputs, discovered_at, confirmed_at, revoked_at"
-    );
+    let sql = insert_event_sql(identity_conflict_clause(exactness));
     let preserve_observation_time = payload.historical_provenance.is_some();
     let row = client
         .query_opt(
@@ -450,18 +446,86 @@ async fn insert_event<C: GenericClient>(
                 &payload.revoked_at,
                 &payload.revocation_reason,
                 &preserve_observation_time,
+                &observation_id,
             ],
         )
         .await
         .context("upsert merge_mining_event")?;
-    row.map(|row| event_write_outcome(&row, previous_parent_input.as_ref(), payload))
-        .ok_or_else(|| anyhow::anyhow!("merge-mining observation contradicts stored evidence"))
+    row.map(|row| {
+        event_write_outcome(
+            &row,
+            previous_parent_input.as_ref(),
+            payload,
+            observation_id,
+        )
+    })
+    .ok_or_else(|| anyhow::anyhow!("merge-mining observation contradicts stored evidence"))
+}
+
+/// The event upsert's SQL for one identity arbiter (`{conflict}`); the conflict update fills
+/// only missing evidence, and the `WHERE` rejects contradictory non-null values.
+fn insert_event_sql(conflict: &str) -> String {
+    format!(
+        "INSERT INTO merge_mining_event ( \
+            source_id, child_height, child_block_hash, child_header_bytes, \
+            child_block_time, child_nbits, \
+            btc_parent_header_hash, btc_parent_prev_header_hash, \
+            btc_parent_header_bytes, btc_parent_header_time, \
+            btc_parent_height, btc_parent_kind, \
+            pow_validates_btc_target, pow_validates_child_target, \
+            difficulty_epoch_ok, btc_parent_coinbase_txid, \
+            btc_parent_coinbase_script, btc_parent_coinbase_outputs, \
+            btc_parent_coinbase_outputs_text, btc_parent_coinbase_tx_bytes, \
+            child_coinbase_txid, child_coinbase_script, child_coinbase_outputs, \
+            aux_merkle_proof, discovered_at, confirmed_at, revoked_at, revocation_reason, \
+            observation_id \
+         ) VALUES ( \
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, \
+            $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, \
+            $21, $22, $23, $24, $25, $26, $27, $28, $30 \
+         ) \
+         {conflict} \
+            observation_id = EXCLUDED.observation_id, \
+            confirmed_at = CASE WHEN $29 \
+                THEN merge_mining_event.confirmed_at \
+                ELSE GREATEST(merge_mining_event.confirmed_at, EXCLUDED.confirmed_at) END, \
+            child_height = COALESCE(merge_mining_event.child_height, EXCLUDED.child_height), \
+            child_header_bytes = COALESCE(merge_mining_event.child_header_bytes, EXCLUDED.child_header_bytes), \
+            child_block_time = COALESCE(merge_mining_event.child_block_time, EXCLUDED.child_block_time), \
+            child_nbits = COALESCE(merge_mining_event.child_nbits, EXCLUDED.child_nbits), \
+            pow_validates_child_target = COALESCE(merge_mining_event.pow_validates_child_target, EXCLUDED.pow_validates_child_target), \
+            btc_parent_coinbase_txid = COALESCE(merge_mining_event.btc_parent_coinbase_txid, EXCLUDED.btc_parent_coinbase_txid), \
+            btc_parent_coinbase_script = COALESCE(merge_mining_event.btc_parent_coinbase_script, EXCLUDED.btc_parent_coinbase_script), \
+            btc_parent_coinbase_outputs = COALESCE(merge_mining_event.btc_parent_coinbase_outputs, EXCLUDED.btc_parent_coinbase_outputs), \
+            btc_parent_coinbase_outputs_text = COALESCE(EXCLUDED.btc_parent_coinbase_outputs_text, merge_mining_event.btc_parent_coinbase_outputs_text), \
+            btc_parent_coinbase_tx_bytes = COALESCE(merge_mining_event.btc_parent_coinbase_tx_bytes, EXCLUDED.btc_parent_coinbase_tx_bytes), \
+            child_coinbase_txid = COALESCE(merge_mining_event.child_coinbase_txid, EXCLUDED.child_coinbase_txid), \
+            child_coinbase_script = COALESCE(merge_mining_event.child_coinbase_script, EXCLUDED.child_coinbase_script), \
+            child_coinbase_outputs = COALESCE(merge_mining_event.child_coinbase_outputs, EXCLUDED.child_coinbase_outputs), \
+            aux_merkle_proof = COALESCE(merge_mining_event.aux_merkle_proof, EXCLUDED.aux_merkle_proof) \
+         WHERE merge_mining_event.btc_parent_header_hash = EXCLUDED.btc_parent_header_hash \
+           AND merge_mining_event.btc_parent_header_bytes = EXCLUDED.btc_parent_header_bytes \
+           AND (merge_mining_event.child_height IS NULL OR EXCLUDED.child_height IS NULL OR merge_mining_event.child_height = EXCLUDED.child_height) \
+           AND (merge_mining_event.child_header_bytes IS NULL OR EXCLUDED.child_header_bytes IS NULL OR merge_mining_event.child_header_bytes = EXCLUDED.child_header_bytes) \
+           AND (merge_mining_event.child_block_time IS NULL OR EXCLUDED.child_block_time IS NULL OR merge_mining_event.child_block_time = EXCLUDED.child_block_time) \
+           AND (merge_mining_event.child_nbits IS NULL OR EXCLUDED.child_nbits IS NULL OR merge_mining_event.child_nbits = EXCLUDED.child_nbits) \
+           AND (merge_mining_event.pow_validates_child_target IS NULL OR EXCLUDED.pow_validates_child_target IS NULL OR merge_mining_event.pow_validates_child_target = EXCLUDED.pow_validates_child_target) \
+           AND (merge_mining_event.btc_parent_coinbase_txid IS NULL OR EXCLUDED.btc_parent_coinbase_txid IS NULL OR merge_mining_event.btc_parent_coinbase_txid = EXCLUDED.btc_parent_coinbase_txid) \
+           AND (merge_mining_event.btc_parent_coinbase_script IS NULL OR EXCLUDED.btc_parent_coinbase_script IS NULL OR merge_mining_event.btc_parent_coinbase_script = EXCLUDED.btc_parent_coinbase_script) \
+           AND (merge_mining_event.btc_parent_coinbase_outputs IS NULL OR EXCLUDED.btc_parent_coinbase_outputs IS NULL OR merge_mining_event.btc_parent_coinbase_outputs = EXCLUDED.btc_parent_coinbase_outputs) \
+           AND (merge_mining_event.btc_parent_coinbase_tx_bytes IS NULL OR EXCLUDED.btc_parent_coinbase_tx_bytes IS NULL OR merge_mining_event.btc_parent_coinbase_tx_bytes = EXCLUDED.btc_parent_coinbase_tx_bytes) \
+         RETURNING id, (xmax = 0) AS inserted, \
+                   child_height, btc_parent_kind, btc_parent_height, \
+                   difficulty_epoch_ok, btc_parent_coinbase_script, \
+                   btc_parent_coinbase_outputs, discovered_at, confirmed_at, revoked_at"
+    )
 }
 
 fn event_write_outcome(
     row: &tokio_postgres::Row,
     previous_parent_input: Option<&ParentReadModelInput>,
     payload: &MergeMiningEventPayload,
+    observation_id: i64,
 ) -> EventWriteOutcome {
     let event_id = row.get(0);
     let inserted: bool = row.get(1);
@@ -474,24 +538,26 @@ fn event_write_outcome(
     let parent_read_model_changed = inserted
         || previous_parent_input != Some(&current_parent_input)
         || !current_parent_input.classification_matches(payload);
-    EventWriteOutcome::new(event_id, disposition, parent_read_model_changed)
+    EventWriteOutcome::new(
+        event_id,
+        observation_id,
+        disposition,
+        parent_read_model_changed,
+    )
 }
 
 /// Upsert the event row, its child block observation, its complete pool-attribution
-/// snapshot (pruning absent rows per source), and optional historical provenance.
+/// snapshot (pruning absent rows per source), and optional historical provenance. A near
+/// has no event: capture records it through [`write_capture`].
 pub async fn upsert_merge_mining_event_with_attributions<C: GenericClient>(
     client: &C,
     source_id: i64,
     payload: &MergeMiningEventPayload,
 ) -> Result<EventWriteOutcome> {
+    if payload.btc_parent_kind == ParentKind::Near {
+        bail!("a near is recorded as an observation, not an event");
+    }
     let outcome = upsert_merge_mining_event(client, source_id, payload).await?;
-    let observation_id = upsert_event_observation(
-        client,
-        source_id,
-        &outcome,
-        ChildBlockObservation::from_event_payload(payload),
-    )
-    .await?;
     upsert_event_pool_attributions(
         client,
         outcome.event_id,
@@ -502,7 +568,7 @@ pub async fn upsert_merge_mining_event_with_attributions<C: GenericClient>(
     if let Some(provenance) = &payload.historical_provenance {
         upsert_historical_event_provenance(client, outcome.event_id, provenance).await?;
     }
-    sync_observation_attribution(client, outcome.event_id, observation_id).await?;
+    sync_observation_attribution(client, outcome.event_id, outcome.observation_id).await?;
     Ok(outcome)
 }
 
@@ -839,9 +905,10 @@ pub async fn delete_event_pool_attributions_for_source<C: GenericClient>(
     Ok(())
 }
 
-/// Whether this source holds an event for one child block: its exact hash, whatever height the
-/// event stored, or (with a height) a hashless partial match on `btc_parent_header_hash`.
-pub async fn has_child_block_events<C: GenericClient>(
+/// Whether a refused child block needs the source-health bracket: it has an event (its exact
+/// hash, whatever height the event stored, or with a height a hashless partial match on
+/// `btc_parent_header_hash`) or a near observation.
+pub async fn child_block_is_counted<C: GenericClient>(
     client: &C,
     source_id: i64,
     height: Option<i32>,
@@ -855,7 +922,11 @@ pub async fn has_child_block_events<C: GenericClient>(
                   WHERE source_id = $1 \
                     AND (child_block_hash = $3 \
                          OR (child_block_hash IS NULL AND child_height = $2 \
-                             AND btc_parent_header_hash = $4)))",
+                             AND btc_parent_header_hash = $4))) \
+                 OR EXISTS ( \
+                 SELECT 1 FROM child_block_observation \
+                  WHERE source_id = $1 AND child_block_hash = $3 \
+                    AND observation_kind = 'near')",
             &[
                 &source_id,
                 &height,
@@ -864,12 +935,12 @@ pub async fn has_child_block_events<C: GenericClient>(
             ],
         )
         .await
-        .context("check events for child block")?
+        .context("check events and near observation for child block")?
         .get(0))
 }
 
-/// Delete the events [`has_child_block_events`] finds for one child block, and its hashless
-/// observations; the caller rewrites its exact observation.
+/// Delete one child block's events (matched as [`child_block_is_counted`] matches them) and
+/// its hashless observations; the caller rewrites its exact observation.
 pub async fn delete_child_block_events<C: GenericClient>(
     client: &C,
     source_id: i64,

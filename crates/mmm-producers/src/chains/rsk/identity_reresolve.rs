@@ -1,7 +1,7 @@
 //! RSK miner-address identity reclassification for `reclassify-pools`.
 //!
-//! RSK already persists the child-chain miner beneficiary in
-//! `rsk_merge_mining_evidence.rsk_miner`. This module reuses that persisted
+//! RSK already persists each block's miner beneficiary as its observation's
+//! `rsk_miner_address` identity. For evidence events this module reuses that
 //! value through the embedded `rsk_miner_address` registry, materializes the
 //! event-level provenance rows that newer captures write live, and late-fills
 //! the sidecar's `pool_identity_id`. It never fetches Rootstock blocks and
@@ -135,12 +135,13 @@ pub(crate) async fn reresolve_rsk_miner_identities(
     Ok(())
 }
 
-/// Keyset page query over active RSK events. Both `e.id > $3` and `r.event_id > $3`
-/// are required so the planner bounds the `rsk_evidence_event_unique` index scan
-/// rather than re-walking from the start of the index on every page.
+/// Keyset page query over active RSK evidence events (a near's observation is re-resolved by
+/// the observation phase). Both `e.id > $3` and `r.event_id > $3` are required so the planner
+/// bounds the `rsk_evidence_event_unique` index scan rather than re-walking from the start of
+/// the index on every page. The miner is the observation's `rsk_miner_address` identity.
 const RSK_MINER_BATCH_SQL: &str = r"
 SELECT e.id,
-       encode(r.rsk_miner, 'hex') AS miner,
+       miner.identifier AS miner,
        r.pool_identity_id AS sidecar_pool_identity_id,
        e.confirmed_at,
        attr.row_count,
@@ -151,6 +152,12 @@ SELECT e.id,
        attr.details
 FROM rsk_merge_mining_evidence r
 JOIN merge_mining_event e ON e.id = r.event_id
+JOIN child_block_observation o ON o.id = COALESCE(e.observation_id, e.id)
+JOIN LATERAL (
+    SELECT ci.identifier FROM child_miner_identity ci
+    WHERE ci.id = ANY(o.child_identity_ids) AND ci.namespace = $2
+    ORDER BY ci.id LIMIT 1
+) miner ON true
 LEFT JOIN LATERAL (
     SELECT count(*)::bigint AS row_count,
            CASE WHEN count(*) = 1 THEN min(a.pool_id) ELSE NULL END AS pool_id,
@@ -163,10 +170,11 @@ LEFT JOIN LATERAL (
       AND a.side = 'child_block'
       AND a.namespace = $2
       AND a.match_kind = 'miner_address'
-      AND a.matched_value = encode(r.rsk_miner, 'hex')
+      AND a.matched_value = miner.identifier
 ) attr ON true
 WHERE e.source_id = $1
   AND e.revoked_at IS NULL
+  AND e.btc_parent_kind <> 'near'
   AND ($3::bigint IS NULL OR e.id > $3)
   AND ($3::bigint IS NULL OR r.event_id > $3)
 ORDER BY e.id

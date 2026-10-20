@@ -276,17 +276,22 @@ async fn writes_pre_floor_full_header_event() -> Result<()> {
         let outcome = capture_ready_rsk_inputs_for_test(&mut client, &context, inputs).await?;
         assert_eq!(outcome, BlockOutcome::Written);
 
+        // A near is recorded as its observation, with no event.
         let row = client
             .query_one(
-                "SELECT child_height, btc_parent_kind, btc_parent_header_hash \
-                 FROM merge_mining_event \
-                 WHERE source_id = $1 AND child_block_hash = $2",
+                "SELECT o.child_height, o.observation_kind, o.btc_parent_header_hash, \
+                        EXISTS (SELECT 1 FROM merge_mining_event e \
+                                 WHERE e.source_id = o.source_id \
+                                   AND e.child_block_hash = o.child_block_hash) \
+                 FROM child_block_observation o \
+                 WHERE o.source_id = $1 AND o.child_block_hash = $2",
                 &[&context.source_id(), &child_block_hash],
             )
             .await?;
         assert_eq!(row.get::<_, Option<i32>>(0), Some(112_829));
         assert_eq!(row.get::<_, String>(1), "near");
         assert_eq!(row.get::<_, Vec<u8>>(2), parent_hash);
+        assert!(!row.get::<_, bool>(3));
 
         Ok::<_, anyhow::Error>(())
     })
@@ -367,9 +372,8 @@ async fn run_rsk_canonical_and_uncle(client: &mut Client) -> Result<()> {
         write_ready_rsk_capture(client, &context, &canonical, false, None, None).await?;
     assert_eq!(first_event_id, second_event_id);
 
-    let uncle_event_id =
-        write_ready_rsk_capture(client, &context, &uncle, true, Some(0), Some(729_000)).await?;
-    assert_ne!(uncle_event_id, first_event_id);
+    // The uncle's parent misses Bitcoin's target: it is a near, recorded as its observation.
+    write_ready_rsk_capture(client, &context, &uncle, true, Some(0), Some(729_000)).await?;
 
     let count_row = client
         .query_one(
@@ -378,7 +382,7 @@ async fn run_rsk_canonical_and_uncle(client: &mut Client) -> Result<()> {
         )
         .await?;
     let count: i64 = count_row.get(0);
-    assert_eq!(count, 2);
+    assert_eq!(count, 1);
 
     let canonical_row = client
         .query_one(
@@ -421,15 +425,17 @@ async fn assert_rsk_evidence_rows_and_identity(client: &Client) -> Result<()> {
             &[],
         )
         .await?;
-    assert_eq!(evidence_rows.len(), 2);
-    let (canonical_evidence, uncle_evidence) = (&evidence_rows[0], &evidence_rows[1]);
+    assert_eq!(
+        evidence_rows.len(),
+        1,
+        "only the canonical block has an event"
+    );
+    let canonical_evidence = &evidence_rows[0];
     assert_evidence_row_role(canonical_evidence, false, None, None);
     let canonical_pool_identity: Option<i64> = canonical_evidence.get(4);
     let canonical_proof_format: String = canonical_evidence.get(5);
     assert!(canonical_pool_identity.is_some());
     assert_eq!(canonical_proof_format, RSK_PROOF_FORMAT_OPAQUE);
-
-    assert_evidence_row_role(uncle_evidence, true, Some(0), Some(729_000));
 
     let identity_row = client
         .query_one(
@@ -445,13 +451,13 @@ async fn assert_rsk_evidence_rows_and_identity(client: &Client) -> Result<()> {
     let observations = client
         .query(
             "SELECT o.child_chain_role, o.uncle_index, o.uncle_parent_height, \
-                    o.child_difficulty_reported::text, \
-                    o.child_pool_id IS NOT DISTINCT FROM e.child_miner_pool_id, \
+                    o.child_difficulty_reported::text, o.observation_kind, o.child_pool_id, \
                     (SELECT ci.identifier FROM child_miner_identity ci \
-                      WHERE ci.id = ANY (o.child_identity_ids)) \
-             FROM merge_mining_event e \
-             JOIN child_block_observation o ON o.id = e.observation_id \
-             ORDER BY e.id",
+                      WHERE ci.id = ANY (o.child_identity_ids)), \
+                    (SELECT e.child_miner_pool_id FROM merge_mining_event e \
+                      WHERE e.observation_id = o.id) \
+             FROM child_block_observation o \
+             ORDER BY o.child_chain_role",
             &[],
         )
         .await?;
@@ -462,27 +468,46 @@ async fn assert_rsk_evidence_rows_and_identity(client: &Client) -> Result<()> {
                 row.get::<_, Option<String>>(0),
                 row.get::<_, Option<i32>>(1),
                 row.get::<_, Option<i32>>(2),
+                row.get::<_, String>(4),
             )
         })
         .collect::<Vec<_>>();
     assert_eq!(
         roles,
         vec![
-            (Some("canonical".to_owned()), None, None),
-            (Some("uncle".to_owned()), Some(0), Some(729_000)),
+            (
+                Some("canonical".to_owned()),
+                None,
+                None,
+                "evidence".to_owned()
+            ),
+            (
+                Some("uncle".to_owned()),
+                Some(0),
+                Some(729_000),
+                "near".to_owned()
+            ),
         ]
     );
     assert_eq!(
         observations[0].get::<_, Option<String>>(3).as_deref(),
         Some("4096")
     );
+    let canonical_pool: Option<i64> = observations[0].get(5);
+    assert!(canonical_pool.is_some());
+    assert_eq!(
+        observations[0].get::<_, Option<i64>>(7),
+        canonical_pool,
+        "the evidence observation's pool follows its event"
+    );
+    assert_eq!(
+        observations[1].get::<_, Option<i64>>(5),
+        canonical_pool,
+        "the near observation's pool comes from its own attributions"
+    );
     for observation in &observations {
-        assert!(
-            observation.get::<_, bool>(4),
-            "observation pool follows the event"
-        );
         assert_eq!(
-            observation.get::<_, Option<String>>(5).as_deref(),
+            observation.get::<_, Option<String>>(6).as_deref(),
             Some(KNOWN_MINER_HEX)
         );
     }

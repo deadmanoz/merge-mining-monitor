@@ -11,7 +11,6 @@
     "kinds": [
       "canonical",
       "error_block",
-      "near",
       "stale",
       "unknown"
     ],
@@ -24,7 +23,6 @@
       "auxpow:rsk",
       "live-chaintip:bitcoin:core"
     ],
-    "include_near": true,
     "min_sources": 1,
     "include_unheighted": true,
     "unheighted_from": "2026-05-01",
@@ -456,52 +454,6 @@
       "child_chain_evidence": []
     },
     {
-      "id": 9,
-      "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "height": null,
-      "kind": "near",
-      "btc_orphan_class": null,
-      "prev_id": null,
-      "prev_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-      "bitcoin_miner_pool": {
-        "id": 7,
-        "slug": "antpool",
-        "name": "AntPool",
-        "known": true
-      },
-      "display_miner_pool": {
-        "id": 7,
-        "slug": "antpool",
-        "name": "AntPool",
-        "known": true
-      },
-      "display_miner_basis": "bitcoin_coinbase",
-      "source_summary": {
-        "sources": [
-          "auxpow:namecoin"
-        ],
-        "distinct_sources": 1,
-        "auxpow_chain_count": 1,
-        "live_observed": false,
-        "pow_validates_btc_target": false
-      },
-      "branch": null,
-      "proof_state": {
-        "has_live_observation": false,
-        "has_auxpow_evidence": true
-      },
-      "competition": null,
-      "child_chain_evidence": [
-        {
-          "source": "auxpow:namecoin",
-          "child_chain": "namecoin",
-          "event_count": 1,
-          "child_height_min": 150004,
-          "child_height_max": 150004
-        }
-      ]
-    },
-    {
       "id": 10,
       "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "height": null,
@@ -623,8 +575,7 @@
       "canonical",
       "stale",
       "error_block",
-      "unknown",
-      "near"
+      "unknown"
     ],
     "edge_kinds": [
       "canonical",

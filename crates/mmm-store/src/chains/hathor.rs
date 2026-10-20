@@ -6,25 +6,24 @@ use anyhow::{Context, Result};
 use tokio_postgres::GenericClient;
 use tokio_postgres::types::Json;
 
-use mmm_capture::capture::{HathorEvidencePayload, MergeMiningEventPayload, ParentKind};
+use mmm_capture::capture::{HathorEvidencePayload, MergeMiningEventPayload};
 
-use crate::{EventWriteOutcome, upsert_merge_mining_event_with_attributions};
+use crate::{CaptureWrite, write_capture};
 
 /// Write a Hathor capture in the caller's transaction (injected as the
-/// `capture_in_txn` upsert closure): upsert the event, then the 1:1 evidence
-/// sidecar for a Bitcoin-valid parent.
+/// `capture_in_txn` upsert closure): the event with its 1:1 evidence sidecar, or a
+/// near's observation alone (which keeps its parent).
 pub async fn write_hathor_capture_in_txn<C: GenericClient>(
     client: &C,
     source_id: i64,
     payload: &MergeMiningEventPayload,
     evidence: &HathorEvidencePayload,
-) -> Result<EventWriteOutcome> {
-    let outcome = upsert_merge_mining_event_with_attributions(client, source_id, payload).await?;
-    // The sidecar holds Bitcoin-valid evidence only: a near's observation keeps its parent.
-    if payload.btc_parent_kind != ParentKind::Near {
+) -> Result<CaptureWrite> {
+    let write = write_capture(client, source_id, payload).await?;
+    if let CaptureWrite::Event(outcome) = write {
         upsert_hathor_evidence(client, outcome.event_id, evidence).await?;
     }
-    Ok(outcome)
+    Ok(write)
 }
 
 async fn upsert_hathor_evidence<C: GenericClient>(

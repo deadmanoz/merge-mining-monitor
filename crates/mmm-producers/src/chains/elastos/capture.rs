@@ -37,11 +37,10 @@ use mmm_capture::pool_resolver::PoolResolver;
 use mmm_capture::source_registry::ELASTOS_SOURCE_CODE;
 use mmm_read_model::CaptureOutcome;
 use mmm_store::{
-    ChildChainHeadOutcome, ChildChainHeadRecord, CurrentBlockParent, EventWriteOutcome,
-    EvidenceMarker, finish_child_chain_height_operation, load_pool_identities_by_namespace,
+    CaptureWrite, ChildChainHeadOutcome, ChildChainHeadRecord, CurrentBlockParent, EvidenceMarker,
+    finish_child_chain_height_operation, load_pool_identities_by_namespace,
     lock_child_chain_height_session, record_child_chain_block,
     record_child_chain_block_in_own_transaction, upsert_child_only_observation,
-    upsert_merge_mining_event_with_attributions,
 };
 
 #[derive(Debug)]
@@ -318,8 +317,8 @@ async fn upsert_and_record_block(
     source_id: i64,
     payload: &MergeMiningEventPayload,
     observed_at: i64,
-) -> Result<EventWriteOutcome> {
-    let outcome = upsert_merge_mining_event_with_attributions(txn, source_id, payload).await?;
+) -> Result<CaptureWrite> {
+    let write = mmm_store::write_capture(txn, source_id, payload).await?;
     let child_height = payload
         .child_height
         .context("Elastos event payload carries no child height")?;
@@ -341,7 +340,7 @@ async fn upsert_and_record_block(
         },
     )
     .await?;
-    Ok(outcome)
+    Ok(write)
 }
 
 async fn write_capture(

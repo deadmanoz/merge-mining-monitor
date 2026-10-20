@@ -59,6 +59,7 @@ Historical Bitcoin-parent replay uses structured serialized outputs when a full 
 It otherwise falls back to the publication's preserved output text, decoding raw Bitcoin scriptPubKeys and using published payout addresses without requiring a scriptSig marker.
 
 Use `--only` or `--skip-*` flags to limit expensive phases when only one registry changed.
+The phases are `rsk`, `main`, `hathor`, `elastos` and `observations`: the main and RSK phases re-attribute evidence events, and the `observations` phase re-resolves the pools of child blocks no event backs (nears and child-only rows) from their stored identities and coinbases, the near parent pool included.
 
 The main scan counts eligible events once at startup, then reports completed events, rate and ETA through the shared progress reporter at 30-second intervals, with a final summary on completion or failure.
 The initial total is an estimate while producers add evidence; no snapshot lock spans the replay.

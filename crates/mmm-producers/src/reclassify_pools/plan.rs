@@ -82,9 +82,18 @@ pub(super) struct ParentUpdateGroup {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct ParentResolution {
-    attribution: Option<EventPoolAttribution>,
-    corrupt_outputs: bool,
+pub(super) struct ParentResolution {
+    pub(super) attribution: Option<EventPoolAttribution>,
+    pub(super) corrupt_outputs: bool,
+}
+
+/// A stored parent coinbase, as the main and observation phases resolve its pool.
+pub(super) struct StoredParentCoinbase<'a> {
+    /// The event or observation id, for the corrupt-outputs warning.
+    pub(super) id: i64,
+    pub(super) script: Option<&'a [u8]>,
+    pub(super) outputs: Option<&'a [u8]>,
+    pub(super) outputs_text: Option<&'a str>,
 }
 
 fn resolve_parent_pool(
@@ -92,13 +101,27 @@ fn resolve_parent_pool(
     resolver: &PoolResolver,
     pool_ids_by_slug: &HashMap<String, i64>,
 ) -> ParentResolution {
-    let script = row
-        .btc_parent_coinbase_script
-        .as_deref()
-        .unwrap_or_default();
+    resolve_stored_parent_pool(
+        &StoredParentCoinbase {
+            id: row.id,
+            script: row.btc_parent_coinbase_script.as_deref(),
+            outputs: row.btc_parent_coinbase_outputs.as_deref(),
+            outputs_text: row.btc_parent_coinbase_outputs_text.as_deref(),
+        },
+        resolver,
+        pool_ids_by_slug,
+    )
+}
+
+pub(super) fn resolve_stored_parent_pool(
+    coinbase: &StoredParentCoinbase<'_>,
+    resolver: &PoolResolver,
+    pool_ids_by_slug: &HashMap<String, i64>,
+) -> ParentResolution {
+    let script = coinbase.script.unwrap_or_default();
     match resolve_parent_pool_attribution_from_serialized_coinbase_outputs(
         script,
-        row.btc_parent_coinbase_outputs.as_deref(),
+        coinbase.outputs,
         resolver,
         pool_ids_by_slug,
     ) {
@@ -108,7 +131,7 @@ fn resolve_parent_pool(
         },
         Ok(None) => ParentResolution {
             attribution: resolve_parent_pool_from_published_text(
-                row,
+                coinbase.outputs_text,
                 script,
                 resolver,
                 pool_ids_by_slug,
@@ -117,14 +140,14 @@ fn resolve_parent_pool(
         },
         Err(err) => {
             warn!(
-                event_id = row.id,
+                id = coinbase.id,
                 error = %err,
                 "btc_parent_coinbase_outputs is corrupt; \
                  trying preserved publication text"
             );
             ParentResolution {
                 attribution: resolve_parent_pool_from_published_text(
-                    row,
+                    coinbase.outputs_text,
                     script,
                     resolver,
                     pool_ids_by_slug,
@@ -136,14 +159,12 @@ fn resolve_parent_pool(
 }
 
 fn resolve_parent_pool_from_published_text(
-    row: &CandidateRow,
+    outputs_text: Option<&str>,
     script: &[u8],
     resolver: &PoolResolver,
     pool_ids_by_slug: &HashMap<String, i64>,
 ) -> Option<EventPoolAttribution> {
-    let addresses = row
-        .btc_parent_coinbase_outputs_text
-        .as_deref()
+    let addresses = outputs_text
         .map(published_parent_coinbase_output_addresses)
         .unwrap_or_default();
     resolve_parent_pool_attribution_from_coinbase(script, &addresses, resolver, pool_ids_by_slug)

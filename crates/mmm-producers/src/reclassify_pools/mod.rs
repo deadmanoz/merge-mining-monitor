@@ -1,9 +1,10 @@
 //! Offline historical pool re-resolution (`reclassify-pools`).
 //!
 //! Seeds the embedded `PoolResolver`, RSK-only slugs, and child identity
-//! registries, then runs four phase-gated passes: RSK miner-address sidecar
+//! registries, then runs five phase-gated passes: RSK miner-address
 //! re-resolution, keyset-paged coinbase/payout replay (`plan`), Hathor
-//! `funds_graph` reward replay, and Elastos identity promotion.
+//! `funds_graph` reward replay, Elastos identity promotion, and the pools of
+//! observations no event backs (`observations`).
 //! Parent-group attribution updates and their read-model reconciliation commit
 //! atomically per parent via `mmm_read_model::update_parent_events` (classifier
 //! disabled), with fill-missing-only by default and `--overwrite` to refresh
@@ -48,7 +49,9 @@ use mmm_store::{
     upsert_rsk_only_pools,
 };
 
+mod observations;
 mod plan;
+use observations::reresolve_observation_pools;
 use plan::{ParentUpdateGroup, plan_batch_updates};
 
 const DEFAULT_BATCH_SIZE: i64 = 500;
@@ -62,6 +65,7 @@ const CHILD_PAYOUT_SOURCE_CODES: &[&str] = &[
 // eligible events the scan processes. Params: overwrite, parent source,
 // child-tag source, payout source codes, optional source ID.
 const CANDIDATE_FILTER_SQL: &str = r"e.revoked_at IS NULL
+      AND e.btc_parent_kind <> 'near'
       AND (e.btc_parent_coinbase_script IS NOT NULL
            OR e.btc_parent_coinbase_outputs IS NOT NULL
            OR e.btc_parent_coinbase_outputs_text IS NOT NULL
@@ -113,6 +117,7 @@ pub struct ReclassifyPoolsConfig {
     pub run_main: bool,
     pub run_hathor: bool,
     pub run_elastos: bool,
+    pub run_observations: bool,
     pub source: Option<String>,
 }
 
@@ -125,6 +130,7 @@ impl Default for ReclassifyPoolsConfig {
             run_main: true,
             run_hathor: true,
             run_elastos: true,
+            run_observations: true,
             source: None,
         }
     }
@@ -182,6 +188,11 @@ impl ReclassifyPoolsConfig {
                     any_skip = true;
                     true
                 }
+                "--skip-observations" => {
+                    config.run_observations = false;
+                    any_skip = true;
+                    true
+                }
                 _ => false,
             })
         })?;
@@ -195,14 +206,16 @@ impl ReclassifyPoolsConfig {
             config.run_main = false;
             config.run_hathor = false;
             config.run_elastos = false;
+            config.run_observations = false;
             match phase.as_str() {
                 "rsk" => config.run_rsk = true,
                 "main" => config.run_main = true,
                 "hathor" => config.run_hathor = true,
                 "elastos" => config.run_elastos = true,
+                "observations" => config.run_observations = true,
                 other => bail!(
                     "reclassify-pools: unknown --only phase {other:?} \
-                     (expected one of: rsk, main, hathor, elastos)"
+                     (expected one of: rsk, main, hathor, elastos, observations)"
                 ),
             }
         }
@@ -227,6 +240,8 @@ pub struct ReclassifyPoolsStats {
     pub rsk_miner_unresolved_rows: usize,
     pub rsk_miner_attribution_updates: usize,
     pub rsk_miner_sidecar_late_fills: usize,
+    pub observations_scanned: usize,
+    pub observation_pool_updates: usize,
 }
 
 async fn apply_parent_group(client: &mut Client, group: &ParentUpdateGroup) -> Result<()> {
@@ -474,6 +489,18 @@ async fn seed_reclassify_pools(
     ))
 }
 
+/// The `--source` filter as a source id.
+async fn source_filter(client: &Client, config: &ReclassifyPoolsConfig) -> Result<Option<i64>> {
+    match &config.source {
+        Some(code) => Ok(Some(
+            get_source_id(client, code)
+                .await
+                .with_context(|| format!("resolve --source {code:?}"))?,
+        )),
+        None => Ok(None),
+    }
+}
+
 async fn run_main_candidate_scan(
     client: &mut Client,
     resolver: &PoolResolver,
@@ -483,14 +510,7 @@ async fn run_main_candidate_scan(
     stats: &mut ReclassifyPoolsStats,
 ) -> Result<()> {
     let progress = ProgressReporter::new("reclassify-pools-main", None);
-    let source_filter = match &config.source {
-        Some(code) => Some(
-            get_source_id(client, code)
-                .await
-                .with_context(|| format!("resolve --source {code:?}"))?,
-        ),
-        None => None,
-    };
+    let source_filter = source_filter(client, config).await?;
 
     info!(
         phase = "main_scan",
@@ -642,6 +662,16 @@ pub async fn run_reclassify_pools(
         info!(
             phase = "elastos",
             "reclassify-pools: skipping Elastos identity re-resolution (gated by --only/--skip)"
+        );
+    }
+
+    if config.run_observations {
+        reresolve_observation_pools(client, &resolver, &pool_ids_by_slug, &config, &mut stats)
+            .await?;
+    } else {
+        info!(
+            phase = "observations",
+            "reclassify-pools: skipping observation pass (gated by --only/--skip)"
         );
     }
 

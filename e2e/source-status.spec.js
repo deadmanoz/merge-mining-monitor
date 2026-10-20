@@ -380,7 +380,7 @@ test("renders source capture progress in the topbar, popover, and source rail", 
   );
   await expect(popover.locator(".source-status-header-help").nth(1)).toHaveAttribute(
     "title",
-    "Newest accepted AuxPoW evidence timestamp. This can be older than the live cursor when recent blocks yield no stored evidence: near shares the chain does not keep, or parents from other chains, which are never stored.",
+    "Newest accepted AuxPoW evidence, or newest near share first recorded. This can be older than the live cursor when recent blocks carry neither: blocks without AuxPoW, or parents from other chains, which are never stored as evidence.",
   );
   await expect(popover).not.toContainText("Capture Cursor");
   await expect(popover).not.toContainText("live capture: live");

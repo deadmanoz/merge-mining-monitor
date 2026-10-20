@@ -45,8 +45,6 @@ function blockLegendRows(nodeKinds) {
   for (const kind of nodeKinds) {
     if (kind === "unknown") {
       rows.push(...ORPHAN_LEGEND);
-    } else if (kind === "near") {
-      continue;
     } else {
       rows.push({ label: kind.replaceAll("_", " "), swatchClass: `fill-${kind}` });
     }

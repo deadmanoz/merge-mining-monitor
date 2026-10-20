@@ -20,8 +20,8 @@ use mmm_read_model::{
     reconcile_authoritative_historical_source_in_transaction, write_historical_base_in_transaction,
 };
 use mmm_store::{
-    EventWriteDisposition, upsert_merge_mining_event_with_attributions, upsert_pool_snapshot,
-    write_rsk_capture_in_txn,
+    CaptureWrite, EventWriteDisposition, upsert_merge_mining_event_with_attributions,
+    upsert_pool_snapshot, write_rsk_capture_in_txn,
 };
 use tokio_postgres::{Client, Transaction};
 use tracing::info;
@@ -854,7 +854,12 @@ async fn import_candidate(
                         source_id: i64,
                         payload: &mmm_capture::capture::MergeMiningEventPayload| {
         match rsk_evidence {
-            Some(evidence) => write_rsk_capture_in_txn(txn, source_id, payload, evidence).await,
+            Some(evidence) => {
+                match write_rsk_capture_in_txn(txn, source_id, payload, evidence).await? {
+                    CaptureWrite::Event(outcome) => Ok(outcome),
+                    CaptureWrite::Near { .. } => bail!("historical import never records a near"),
+                }
+            }
             None => upsert_merge_mining_event_with_attributions(txn, source_id, payload).await,
         }
     };
