@@ -839,10 +839,12 @@ pub async fn delete_event_pool_attributions_for_source<C: GenericClient>(
     Ok(())
 }
 
+/// Whether this source holds an event for one child block: its exact hash, whatever height the
+/// event stored, or (with a height) a hashless partial match on `btc_parent_header_hash`.
 pub async fn has_child_block_events<C: GenericClient>(
     client: &C,
     source_id: i64,
-    height: i32,
+    height: Option<i32>,
     child_block_hash: &[u8],
     btc_parent_header_hash: &[u8],
 ) -> Result<bool> {
@@ -850,9 +852,10 @@ pub async fn has_child_block_events<C: GenericClient>(
         .query_one(
             "SELECT EXISTS ( \
                  SELECT 1 FROM merge_mining_event \
-                  WHERE source_id = $1 AND child_height = $2 \
+                  WHERE source_id = $1 \
                     AND (child_block_hash = $3 \
-                         OR (child_block_hash IS NULL AND btc_parent_header_hash = $4)))",
+                         OR (child_block_hash IS NULL AND child_height = $2 \
+                             AND btc_parent_header_hash = $4)))",
             &[
                 &source_id,
                 &height,
@@ -865,22 +868,22 @@ pub async fn has_child_block_events<C: GenericClient>(
         .get(0))
 }
 
-/// Delete events for one child block (exact hash match or hashless partial match on
-/// `btc_parent_header_hash`) and its hashless observations; the caller rewrites its exact
-/// observation.
+/// Delete the events [`has_child_block_events`] finds for one child block, and its hashless
+/// observations; the caller rewrites its exact observation.
 pub async fn delete_child_block_events<C: GenericClient>(
     client: &C,
     source_id: i64,
-    height: i32,
+    height: Option<i32>,
     child_block_hash: &[u8],
     btc_parent_header_hash: &[u8],
 ) -> Result<u64> {
     let deleted = client
         .execute(
             "DELETE FROM merge_mining_event \
-              WHERE source_id = $1 AND child_height = $2 \
+              WHERE source_id = $1 \
                 AND (child_block_hash = $3 \
-                     OR (child_block_hash IS NULL AND btc_parent_header_hash = $4))",
+                     OR (child_block_hash IS NULL AND child_height = $2 \
+                         AND btc_parent_header_hash = $4))",
             &[
                 &source_id,
                 &height,

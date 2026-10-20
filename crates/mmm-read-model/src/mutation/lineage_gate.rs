@@ -120,18 +120,11 @@ pub(super) async fn retract_child_block(
     };
     let observation = ChildBlockObservation::non_bitcoin_parent(payload);
     let parent = &payload.btc_parent_header_hash;
-    let height = match payload.child_height {
-        Some(height)
-            if mmm_store::has_child_block_events(txn, source_id, height, child_hash, parent)
-                .await? =>
-        {
-            height
-        }
-        _ => {
-            mmm_store::upsert_child_only_observation(txn, source_id, &observation).await?;
-            return Ok(Vec::new());
-        }
-    };
+    let height = payload.child_height;
+    if !mmm_store::has_child_block_events(txn, source_id, height, child_hash, parent).await? {
+        mmm_store::upsert_child_only_observation(txn, source_id, &observation).await?;
+        return Ok(Vec::new());
+    }
     let mut hashes = vec![parent.clone(), payload.btc_parent_prev_header_hash.clone()];
     hashes.sort();
     hashes.dedup();
