@@ -6,6 +6,7 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Refresh the Research publication pin and error-block catalogue to reclassify Namecoin-witnessed AntPool blocks 494,933 and 544,568 as error blocks (`bad-cb-amount`).
 - Record a near (a parent that misses Bitcoin's target) as its child block observation alone, with its child identities, child pool and parent pool, and no event, RSK sidecar or attribution rows; every event is now written linked to its observation.
 - Record an RSK parent's coinbase txid as the header's merkle root when the merge-mining proof shows a coinbase-only template (an empty hash list, or a one-transaction tree in early history), so empty templates stay detectable on RSK nears.
 - Serve a near parent's `/api/v1/block/{hash}` page from its observations, with `event_details: []` and a new `observations` array, and take its `bitcoin_miner_pool` from the parent pool; `/api/v1/tree` no longer accepts the `near` kind or `include_near`.

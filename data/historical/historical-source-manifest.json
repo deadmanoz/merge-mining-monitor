@@ -165,7 +165,7 @@
       "chain": "error-block-observations",
       "counts": {
         "canonical": 0,
-        "error_block": 121,
+        "error_block": 123,
         "stale": 0,
         "stale_descendant": 0,
         "strict_btc_orphan": 0,
@@ -174,9 +174,9 @@
       "csv_path": "results/monitor-evidence/error-block-observations_monitor_evidence.csv",
       "parent_only_rows": 0,
       "role": "error_observation",
-      "row_count": 121,
-      "sha256": "ec1ea7ae10d356fbbf4d62542555778998dc0ddaba1e1f8de55b3adb6e725849",
-      "size_bytes": 163094,
+      "row_count": 123,
+      "sha256": "628d006c8ac61edd7574838d6d665a2e608e608a81c7a1832338fc3a1497af92",
+      "size_bytes": 166195,
       "source_chain_counts": {
         "devcoin": 19,
         "elastos": 5,
@@ -187,7 +187,7 @@
         "huntercoin": 3,
         "i0coin": 6,
         "ixcoin": 20,
-        "namecoin": 49,
+        "namecoin": 51,
         "rsk": 7,
         "syscoin": 5,
         "unobtanium": 1,
@@ -342,7 +342,7 @@
       "chain": "namecoin",
       "counts": {
         "canonical": 456660,
-        "stale": 1641,
+        "stale": 1639,
         "stale_descendant": 22,
         "strict_btc_orphan": 8,
         "weak_btc_orphan": 8
@@ -350,9 +350,9 @@
       "csv_path": "results/monitor-evidence/namecoin_monitor_evidence.csv",
       "parent_only_rows": 456660,
       "role": "event",
-      "row_count": 458339,
-      "sha256": "51b006c4f0ea293023defb9d6f03e79469f2bbfc3f5f23f0231be0acf3b114fe",
-      "size_bytes": 404788079
+      "row_count": 458337,
+      "sha256": "6c104bd094c5c264dd7511935388c87da32d1caba7f639fe37eb43fd4e840fa3",
+      "size_bytes": 404786336
     },
     {
       "chain": "qbit",
@@ -515,10 +515,10 @@
       "size_bytes": 29686248
     }
   ],
-  "error_observation_rows": 121,
+  "error_observation_rows": 123,
   "manifest_generator": "scripts/gen-historical-source-manifest.sh",
   "publication_manifest_path": "results/monitor-evidence/monitor-evidence-manifest.json",
-  "publication_manifest_sha256": "efd3261c55914d3c044ecc927465673bf17bdb3e916fc4c46c6b2f5f568935d9",
+  "publication_manifest_sha256": "ed94f56b4c95808672b672de546136b98e9d20c0d2ddf892d39e7c2e6ebfbe47",
   "required_columns": [
     "chain",
     "source_kind",
@@ -551,6 +551,6 @@
   "schema_version": 2,
   "scope": "uniform_monitor_evidence_v1",
   "source_repo": "merge-mining-research",
-  "source_repo_commit": "17f81c8b543ccbce3a210083ba942d8bfcd83af8",
-  "total_event_rows": 1298956
+  "source_repo_commit": "f95823c262aaca45cf031c87ade8c55d0fd9ca3e",
+  "total_event_rows": 1298954
 }

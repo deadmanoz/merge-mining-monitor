@@ -127,5 +127,25 @@ mod tests {
                 rejection_reason: TIME_BELOW_MTP,
             })
         );
+        let antpool_494933 =
+            BlockHash::from_str("000000000000000000903fc1c651867a99512af2a9f6a804c31a9382de1fced9")
+                .unwrap();
+        assert_eq!(
+            lookup(&antpool_494933.to_byte_array()),
+            Some(ErrorBlock {
+                height: 494_933,
+                rejection_reason: "bad-cb-amount",
+            })
+        );
+        let antpool_544568 =
+            BlockHash::from_str("000000000000000000253cee00eb8260deac882b2a63855152def7e220d202cd")
+                .unwrap();
+        assert_eq!(
+            lookup(&antpool_544568.to_byte_array()),
+            Some(ErrorBlock {
+                height: 544_568,
+                rejection_reason: "bad-cb-amount",
+            })
+        );
     }
 }
