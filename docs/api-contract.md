@@ -179,7 +179,7 @@ API-computed miner and branch entities:
 - `bitcoin_miner_pool`: miner/pool resolved strictly from Bitcoin parent coinbase evidence (never child-chain evidence).
 - `child_miner_pool`: miner/pool resolved for one child-chain event from that child chain's block evidence (`Unknown` when unresolved).
 - `display_miner_pool`: presentation-layer best-available miner/pool on tree nodes and block details (never overrides `bitcoin_miner_pool`).
-  Equals `bitcoin_miner_pool` when known; when `bitcoin_miner_pool` is `Unknown` (e.g., an RSK-only stale block with no recoverable Bitcoin coinbase), falls back to the single distinct known `child_miner_pool` across active events for the parent (zero or conflicting known child pools resolve to `Unknown`).
+  Equals `bitcoin_miner_pool` when known, except on a near page, where it is always `Unknown`; when `bitcoin_miner_pool` is `Unknown` (e.g., an RSK-only stale block with no recoverable Bitcoin coinbase), falls back to the single distinct known `child_miner_pool` across active events for the parent (zero or conflicting known child pools resolve to `Unknown`).
 - `display_miner_basis`: how `display_miner_pool` was resolved: `bitcoin_coinbase` | `child_inferred` | `unknown`.
   Near pages and direct-projected `unknown` parents are never child-inferred.
 - `stale_branch`: one or more stale blocks linked by parent-child edges, with branch depth, member hashes, and canonical competitor references.

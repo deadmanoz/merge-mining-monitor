@@ -168,13 +168,18 @@ pub async fn capture_test_outcome(
 #[cfg(feature = "db-integration")]
 pub fn written_event_id(outcome: mmm_read_model::CaptureOutcome) -> Result<i64> {
     match outcome {
-        mmm_read_model::CaptureOutcome::Written(CaptureWrite::Event(written)) => {
-            Ok(written.event_id)
-        }
-        mmm_read_model::CaptureOutcome::Written(CaptureWrite::Near { .. }) => {
+        mmm_read_model::CaptureOutcome::Written(write) => event_id_of(write),
+        refused => anyhow::bail!("the lineage gate refused the fixture parent: {refused:?}"),
+    }
+}
+
+/// The event a capture wrote; a near records only its observation.
+pub fn event_id_of(write: CaptureWrite) -> Result<i64> {
+    match write {
+        CaptureWrite::Event(written) => Ok(written.event_id),
+        CaptureWrite::Near { .. } => {
             anyhow::bail!("the fixture parent is a near, which records no event")
         }
-        refused => anyhow::bail!("the lineage gate refused the fixture parent: {refused:?}"),
     }
 }
 

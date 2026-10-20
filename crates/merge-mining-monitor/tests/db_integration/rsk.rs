@@ -18,11 +18,13 @@ use mmm_producers::chains::rsk::{
     BlockOutcome, CaptureDecision, RskBlock, RskCaptureContext, capture_ready_rsk_inputs_for_test,
     capture_rsk_block_for_test, load_rsk_block_fixture, prepare_rsk_capture,
 };
-use mmm_store::{upsert_rsk_only_pools, upsert_rsk_pool_identities, write_rsk_capture};
+use mmm_store::{
+    CaptureWrite, upsert_rsk_only_pools, upsert_rsk_pool_identities, write_rsk_capture,
+};
 
 use crate::support::db::observation_prev_hash;
-use crate::support::default_pool_snapshot;
 use crate::support::scenario::canonical_verdict;
+use crate::support::{default_pool_snapshot, event_id_of};
 
 const KNOWN_MINER_HEX: &str = "12d3178a62ef1f520944534ed04504609f7307a1";
 const SECOND_MINER_HEX: &str = "4e5dabc28e4a0f5e5b19fcb56b28c5a1989352c1";
@@ -51,13 +53,15 @@ async fn the_rsk_sidecar_supplies_the_observation_miner_without_child_attributio
             .payload
             .pool_attributions
             .retain(|row| row.side == PoolAttributionSide::BtcParent);
-        let event_id = write_rsk_capture(
-            &mut client,
-            context.source_id(),
-            &inputs.payload,
-            &inputs.evidence,
-        )
-        .await?;
+        let event_id = event_id_of(
+            write_rsk_capture(
+                &mut client,
+                context.source_id(),
+                &inputs.payload,
+                &inputs.evidence,
+            )
+            .await?,
+        )?;
         let identifiers: Vec<String> = client
             .query(
                 "SELECT ci.identifier FROM merge_mining_event e \
@@ -154,13 +158,15 @@ async fn contradictory_rsk_sidecar_rolls_back_historical_provenance() -> Result<
         let context =
             rsk_context_with_known_miner(&client, ConfiguredParentClassifier::Disabled).await?;
         let inputs = ready_inputs(&context, &block, false, None, None);
-        let event_id = write_rsk_capture(
-            &mut client,
-            context.source_id(),
-            &inputs.payload,
-            &inputs.evidence,
-        )
-        .await?;
+        let event_id = event_id_of(
+            write_rsk_capture(
+                &mut client,
+                context.source_id(),
+                &inputs.payload,
+                &inputs.evidence,
+            )
+            .await?,
+        )?;
         let stored_miner = inputs.evidence.rsk_miner.clone();
 
         for (source_row_number, corrupt_miner) in [(1_i64, true), (2_i64, false)] {
@@ -304,16 +310,18 @@ async fn rsk_role_flip_replay_refreshes_sidecar_role() -> Result<()> {
             rsk_context_with_known_miner(&client, ConfiguredParentClassifier::Disabled).await?;
         let block = load_rsk_block_fixture("canonical-valid");
 
-        let canonical_event_id =
-            write_ready_rsk_capture(&mut client, &context, &block, false, None, None).await?;
+        let canonical_event_id = event_id_of(
+            write_ready_rsk_capture(&mut client, &context, &block, false, None, None).await?,
+        )?;
         let canonical_role = rsk_evidence_role(&client, canonical_event_id).await?;
         assert_rsk_role(&canonical_role, false, None, None);
         let canonical_pool_identity = canonical_role.pool_identity_id;
         assert!(canonical_pool_identity.is_some());
 
-        let replay_event_id =
+        let replay_event_id = event_id_of(
             write_ready_rsk_capture(&mut client, &context, &block, true, Some(0), Some(729_005))
-                .await?;
+                .await?,
+        )?;
         assert_eq!(replay_event_id, canonical_event_id);
 
         let uncle_role = rsk_evidence_role(&client, canonical_event_id).await?;
@@ -366,14 +374,19 @@ async fn run_rsk_canonical_and_uncle(client: &mut Client) -> Result<()> {
     let canonical = load_rsk_block_fixture("canonical-valid");
     let uncle = load_rsk_block_fixture("uncle-valid");
 
-    let first_event_id =
-        write_ready_rsk_capture(client, &context, &canonical, false, None, None).await?;
-    let second_event_id =
-        write_ready_rsk_capture(client, &context, &canonical, false, None, None).await?;
+    let first_event_id = event_id_of(
+        write_ready_rsk_capture(client, &context, &canonical, false, None, None).await?,
+    )?;
+    let second_event_id = event_id_of(
+        write_ready_rsk_capture(client, &context, &canonical, false, None, None).await?,
+    )?;
     assert_eq!(first_event_id, second_event_id);
 
     // The uncle's parent misses Bitcoin's target: it is a near, recorded as its observation.
-    write_ready_rsk_capture(client, &context, &uncle, true, Some(0), Some(729_000)).await?;
+    assert!(matches!(
+        write_ready_rsk_capture(client, &context, &uncle, true, Some(0), Some(729_000)).await?,
+        CaptureWrite::Near { .. }
+    ));
 
     let count_row = client
         .query_one(
@@ -521,7 +534,7 @@ async fn write_ready_rsk_capture(
     is_uncle: bool,
     uncle_index: Option<i32>,
     uncle_parent_height: Option<i32>,
-) -> Result<i64> {
+) -> Result<CaptureWrite> {
     let inputs = ready_inputs(context, block, is_uncle, uncle_index, uncle_parent_height);
     write_rsk_capture(
         client,
@@ -553,13 +566,15 @@ async fn run_rsk_pool_identity_progression(client: &mut Client) -> Result<()> {
     let stable_merge_mining_hash = v1_inputs.evidence.merge_mining_hash.clone();
     let stable_block_hash = v1_inputs.evidence.rsk_block_hash.clone();
 
-    let event_id = write_rsk_capture(
-        client,
-        context_v1.source_id(),
-        &v1_inputs.payload,
-        &v1_inputs.evidence,
-    )
-    .await?;
+    let event_id = event_id_of(
+        write_rsk_capture(
+            client,
+            context_v1.source_id(),
+            &v1_inputs.payload,
+            &v1_inputs.evidence,
+        )
+        .await?,
+    )?;
 
     let row = client
         .query_one(
@@ -580,13 +595,15 @@ async fn run_rsk_pool_identity_progression(client: &mut Client) -> Result<()> {
 
     let v2_inputs = ready_inputs(&context_v2, &block, false, None, None);
     assert!(v2_inputs.evidence.pool_identity_id.is_some());
-    let replayed_event_id = write_rsk_capture(
-        client,
-        context_v2.source_id(),
-        &v2_inputs.payload,
-        &v2_inputs.evidence,
-    )
-    .await?;
+    let replayed_event_id = event_id_of(
+        write_rsk_capture(
+            client,
+            context_v2.source_id(),
+            &v2_inputs.payload,
+            &v2_inputs.evidence,
+        )
+        .await?,
+    )?;
     assert_eq!(replayed_event_id, event_id);
 
     let row = client

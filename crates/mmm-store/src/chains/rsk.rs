@@ -33,7 +33,7 @@ pub async fn write_rsk_capture(
     source_id: i64,
     payload: &MergeMiningEventPayload,
     evidence: &RskEvidencePayload,
-) -> Result<i64> {
+) -> Result<CaptureWrite> {
     let txn = client
         .transaction()
         .await
@@ -44,10 +44,7 @@ pub async fn write_rsk_capture(
     txn.commit()
         .await
         .context("commit RSK capture transaction")?;
-    Ok(match write {
-        CaptureWrite::Event(outcome) => outcome.event_id,
-        CaptureWrite::Near { observation_id } => observation_id,
-    })
+    Ok(write)
 }
 
 /// Write an RSK capture in the caller's transaction (injected as the
