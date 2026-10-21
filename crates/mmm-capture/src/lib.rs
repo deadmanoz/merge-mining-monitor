@@ -17,6 +17,7 @@ pub mod pool_resolver;
 #[cfg(any(test, feature = "artifact-generation"))]
 pub mod pool_snapshot_gen;
 pub mod progress;
+pub mod protocol_commitment;
 pub mod source_registry;
 
 #[cfg(any(test, feature = "test-support"))]
