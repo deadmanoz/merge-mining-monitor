@@ -8,13 +8,14 @@ use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use anyhow::{Context, Result};
+use bitcoin::{Amount, ScriptBuf, TxOut};
 use tokio_postgres::{Client, GenericClient};
 use tracing::{info, warn};
 
 use mmm_capture::progress::ProgressReporter;
 use mmm_capture::protocol_commitment::{
     CommitmentPayload, DECODER_VERSION, DecodeStatus, ProtocolCommitment,
-    decode_serialized_protocol_commitments,
+    decode_protocol_commitments, decode_serialized_protocol_commitments,
 };
 
 use crate::mutation::run_exclusive_core_canonical_view_transaction;
@@ -193,6 +194,27 @@ impl ScriptColumns {
         self.core_binding_hash.push(binding_hash);
         self.exsat_account.push(account);
     }
+
+    async fn insert<C: GenericClient>(&self, client: &C, sql: &str) -> Result<()> {
+        client
+            .execute(
+                sql,
+                &[
+                    &self.script,
+                    &self.protocol,
+                    &self.decode_status,
+                    &self.malformed_reason,
+                    &self.version,
+                    &self.core_validator,
+                    &self.core_reward_address,
+                    &self.core_binding_hash,
+                    &self.exsat_account,
+                ],
+            )
+            .await
+            .context("insert protocol commitment scripts")?;
+        Ok(())
+    }
 }
 
 /// Fact and undecodable rows for a batch of headers.
@@ -272,23 +294,7 @@ async fn refresh<C: GenericClient>(
         for commitment in derived.scripts.values() {
             columns.push(commitment);
         }
-        client
-            .execute(
-                insert_scripts_sql,
-                &[
-                    &columns.script,
-                    &columns.protocol,
-                    &columns.decode_status,
-                    &columns.malformed_reason,
-                    &columns.version,
-                    &columns.core_validator,
-                    &columns.core_reward_address,
-                    &columns.core_binding_hash,
-                    &columns.exsat_account,
-                ],
-            )
-            .await
-            .context("insert protocol commitment scripts")?;
+        columns.insert(client, insert_scripts_sql).await?;
     }
     client
         .execute(
@@ -311,13 +317,14 @@ async fn refresh<C: GenericClient>(
     Ok(())
 }
 
-/// Refresh every header with evidence or derived rows, a page per exclusive canonical-view
-/// hold, rewriting each script those pages reach with the compiled decoder, and record the
-/// decoder version once the walk finishes.
+/// Re-derive every stored script, then refresh every header with evidence or derived rows, a
+/// page per exclusive canonical-view hold (rewriting each script those pages reach, so scripts
+/// inserted meanwhile are covered too), and record the decoder version once the walk finishes.
 pub(crate) async fn rebuild_protocol_commitments(
     client: &mut Client,
     batch_size: i64,
 ) -> Result<()> {
+    rederive_stored_scripts(client, batch_size).await?;
     let progress = ProgressReporter::new("rebuild-protocol-commitments", None);
     let mut cursor: Vec<u8> = Vec::new();
     loop {
@@ -369,4 +376,38 @@ pub(crate) async fn rebuild_protocol_commitments(
         "rebuilt protocol commitments"
     );
     Ok(())
+}
+
+/// Rewrite every stored script with the compiled decoder, a page at a time and outside the
+/// barrier: inline refreshes only insert scripts the dimension lacks. This reaches scripts no
+/// fact refers to, which the header walk cannot, before a later coinbase declares them again.
+async fn rederive_stored_scripts(client: &Client, batch_size: i64) -> Result<()> {
+    let mut cursor = 0_i64;
+    loop {
+        let rows = client
+            .query(
+                "SELECT id, script FROM protocol_commitment_script \
+                  WHERE id > $1 ORDER BY id LIMIT $2",
+                &[&cursor, &batch_size],
+            )
+            .await
+            .context("page protocol commitment scripts")?;
+        let Some(last) = rows.last() else {
+            return Ok(());
+        };
+        cursor = last.get(0);
+        let mut columns = ScriptColumns::default();
+        for row in &rows {
+            let output = TxOut {
+                value: Amount::ZERO,
+                script_pubkey: ScriptBuf::from_bytes(row.get(1)),
+            };
+            if let Some(commitment) = decode_protocol_commitments(&[output]).first() {
+                columns.push(commitment);
+            }
+        }
+        if !columns.script.is_empty() {
+            columns.insert(client, &REDERIVE_SCRIPTS_SQL).await?;
+        }
+    }
 }

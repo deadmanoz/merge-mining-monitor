@@ -192,7 +192,7 @@ Counters are maintained incrementally afterward, so re-running it is only needed
 
 `just rebuild-protocol-commitments` (optionally with `--batch-size N`, default 100 headers per page) fills the derived CORE and exSat `protocol_commitment` tables from stored coinbase outputs.
 Run it once after migration `0035` and again after any release that raises the protocol-commitment decoder version.
-It refreshes every header with a `block` row, a near observation with stored outputs or derived rows, one page per exclusive canonical-view hold so live capture and Core writes wait at most one page, and rewrites each script those pages reach with the compiled decoder.
+It re-derives every stored script with the compiled decoder, then refreshes every header with a `block` row, a near observation with stored outputs or derived rows, one page per exclusive canonical-view hold so live capture and Core writes wait at most one page.
 It records `protocol_commitments_decoder_version` only after the walk finishes; an interrupted run leaves the version unchanged, and a rerun is idempotent.
 Producers keep the tables current afterward.
 

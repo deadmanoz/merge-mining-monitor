@@ -166,6 +166,31 @@ async fn rebuild(client: &mut Client) -> Result<()> {
     Ok(())
 }
 
+/// Store the exSat declaration of `ant` as an older decoder might have read it, with no fact
+/// referring to it, and return its script.
+async fn insert_stale_orphan_script(client: &Client) -> Result<Vec<u8>> {
+    let script = hex::decode("6a09455853415401000d13")?;
+    client
+        .execute(
+            "INSERT INTO protocol_commitment_script \
+                    (protocol, script, decode_status, malformed_reason) \
+             VALUES ('exsat', $1, 'malformed', 'invalid_account')",
+            &[&script],
+        )
+        .await?;
+    Ok(script)
+}
+
+async fn exsat_account(client: &Client, script: &[u8]) -> Result<Option<String>> {
+    Ok(client
+        .query_one(
+            "SELECT exsat_account FROM protocol_commitment_script WHERE script = $1",
+            &[&script],
+        )
+        .await?
+        .get(0))
+}
+
 /// `outputs` plus a CORE declaration followed by 10,000 incompressible bytes, and its vout.
 fn with_long_core_output(outputs: &[u8]) -> Result<(Vec<u8>, i32)> {
     let mut outputs: Vec<TxOut> = deserialize(outputs)?;
@@ -325,9 +350,15 @@ async fn near_commitments_survive_corrupt_blobs_and_the_rebuild_drops_orphans() 
                 .await?;
             Ok(())
         };
+        let ant = insert_stale_orphan_script(&client).await?;
         set_outputs(&client, &[0xff]).await?;
         rebuild(&mut client).await?;
         assert!(near_rows(&client).await?.is_empty());
+        assert_eq!(
+            exsat_account(&client, &ant).await?.as_deref(),
+            Some("ant"),
+            "the rebuild re-derives orphaned scripts"
+        );
         let undecodable: String = client
             .query_one(
                 "SELECT evidence_source FROM protocol_commitment_undecodable \
