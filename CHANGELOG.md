@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-20
+
 - Refresh the Research publication pin and error-block catalogue to reclassify Namecoin-witnessed AntPool blocks 494,933 and 544,568 as error blocks (`bad-cb-amount`).
 - Remove near events with migration 0034, which copy-and-swaps `merge_mining_event`, `rsk_merge_mining_evidence` and `event_pool_attribution` into slim tables, keeping every id: events drop the child columns their observation holds and require a unique `observation_id`, the RSK sidecar keeps only the merge-mining proof, an observation whose only event was a revoked near becomes `unverified_parent`, and RSK nears whose proof shows a coinbase-only parent gain its coinbase txid. `/api/v1/sources` fails closed until `just rebuild-source-health` runs.
 - Record a near (a parent that misses Bitcoin's target) as its child block observation alone, with its child identities, child pool and parent pool, and no event, RSK sidecar or attribution rows; every event is now written linked to its observation.

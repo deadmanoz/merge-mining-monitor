@@ -1,5 +1,12 @@
 # Release Notes
 
+## [0.10.0] - 2026-10-20
+
+- Record each observed child block once as a child-block observation, including nears (parents that miss Bitcoin's target), and keep merge-mining events for evidence only, cutting the database to about a third of its size.
+- Serve a near parent's block page from its child-block observations, with its Bitcoin miner resolved from the parent coinbase, and count only evidence events in each source's event total.
+- Capture Elastos and Hathor nears through the Bitcoin lineage gate, and detect empty-template RSK nears from their merge-mining proof.
+- Reclassify the Namecoin-witnessed AntPool blocks 494,933 and 544,568 as error blocks: their coinbases claim more than the block reward.
+
 ## [0.9.4] - 2026-10-18
 
 - Identify Qbit payouts to F2Pool, SECPOOL and Luxor while keeping tag and payout evidence separate.

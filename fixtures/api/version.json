@@ -1,12 +1,24 @@
 {
   "schema_version": "v1",
   "generated_at": 1792333752,
-  "version": "0.9.4",
+  "version": "0.10.0",
   "release_notes": {
     "source": "RELEASE_NOTES.md",
-    "release_count": 31,
+    "release_count": 32,
     "truncated": false,
     "releases": [
+      {
+        "version": "0.10.0",
+        "date": "2026-10-20",
+        "items": [
+          "Record each observed child block once as a child-block observation, including nears (parents that miss Bitcoin's target), and keep merge-mining events for evidence only, cutting the database to about a third of its size.",
+          "Serve a near parent's block page from its child-block observations, with its Bitcoin miner resolved from the parent coinbase, and count only evidence events in each source's event total.",
+          "Capture Elastos and Hathor nears through the Bitcoin lineage gate, and detect empty-template RSK nears from their merge-mining proof.",
+          "Reclassify the Namecoin-witnessed AntPool blocks 494,933 and 544,568 as error blocks: their coinbases claim more than the block reward."
+        ],
+        "item_count": 4,
+        "truncated": false
+      },
       {
         "version": "0.9.4",
         "date": "2026-10-18",
