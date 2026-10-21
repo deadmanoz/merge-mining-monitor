@@ -6,6 +6,7 @@
 mod cli_args;
 mod known_stale_reclassify;
 mod mutation;
+mod pending_cascade;
 mod source_health_sql;
 mod unknown_reclassify;
 
@@ -35,6 +36,7 @@ pub use mutation::{
     drain_historical_reconcile_queue_with_budget_for_test,
     reconcile_proven_canonical_batch_for_test,
 };
+pub use pending_cascade::pending_cascades_settled;
 pub use source_health_sql::invalidate_source_health_in_transaction;
 #[cfg(any(test, feature = "db-integration"))]
 pub use source_health_sql::{compute_source_health_from_base, rebuild_source_health};

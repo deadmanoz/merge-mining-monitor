@@ -31,9 +31,6 @@ use crate::live_loop::{LiveProducer, TickOutcome, run_live_loop};
 /// the statement ends, so concurrent pollers stay well inside Postgres's shared lock table.
 const CHAIN_HEAD_PRUNE_BATCH: i64 = 250;
 
-#[cfg(test)]
-pub(crate) use crate::live_loop::{PollLoopDecision, wait_for_next_tick_or_shutdown};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeightProgress {
     Advance,

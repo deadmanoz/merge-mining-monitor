@@ -345,19 +345,3 @@ async fn tick_policy_cursor_ahead_of_tip_only_replays() -> Result<()> {
     assert_eq!(processed, 3);
     Ok(())
 }
-
-#[tokio::test]
-async fn wait_for_next_tick_continues_when_interval_elapses() -> Result<()> {
-    let decision =
-        wait_for_next_tick_or_shutdown(Duration::from_millis(1), std::future::pending()).await?;
-    assert_eq!(decision, PollLoopDecision::Continue);
-    Ok(())
-}
-
-#[tokio::test]
-async fn wait_for_next_tick_stops_when_shutdown_fires() -> Result<()> {
-    let decision =
-        wait_for_next_tick_or_shutdown(Duration::from_secs(60), std::future::ready(Ok(()))).await?;
-    assert_eq!(decision, PollLoopDecision::Shutdown);
-    Ok(())
-}

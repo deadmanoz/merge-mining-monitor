@@ -1,11 +1,17 @@
 //! Shared live-producer `tick -> wait -> sleep/shutdown` loop skeleton.
 
 use std::future::Future;
+use std::pin::pin;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use mmm_read_model::pending_cascades_settled;
 use tokio::time::sleep;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
+
+/// Longest shutdown waits for a running dependent cascade, inside the deployed
+/// 90 s `TimeoutStopSec`.
+const CASCADE_SETTLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TickOutcome {
@@ -56,39 +62,48 @@ pub(crate) async fn run_live_loop<P: LiveProducer>(mut producer: P) -> Result<()
     producer.log_starting();
 
     loop {
-        let tick_result = producer.tick().await;
+        // A tick can outlast the service stop timeout (sequential remote calls
+        // at ~340 ms, RPC retries, lock waits), so shutdown drops it at its
+        // current await point. Uncommitted work rolls back and resumes from the
+        // persisted cursors and reconcile queues on the next start. Only a
+        // committed write's in-memory dependent cascade gets time to finish.
+        let Some(tick_result) = until_shutdown(producer.tick(), shutdown.recv()).await? else {
+            break;
+        };
         producer.log_tick_result(&tick_result);
         let wait = producer.wait_after_tick(tick_result)?;
-
-        match wait_for_next_tick_or_shutdown(wait, shutdown.recv()).await? {
-            PollLoopDecision::Continue => {}
-            PollLoopDecision::Shutdown => {
-                producer.log_shutdown();
-                return Ok(());
-            }
-        }
+        let Some(()) = until_shutdown(sleep(wait), shutdown.recv()).await? else {
+            break;
+        };
     }
+    producer.log_shutdown();
+    Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PollLoopDecision {
-    Continue,
-    Shutdown,
-}
-
-pub(crate) async fn wait_for_next_tick_or_shutdown(
-    poll_interval: Duration,
+/// Drive `work` to completion unless `shutdown` resolves first. After shutdown,
+/// keep driving `work` only while a dependent cascade is still running (at most
+/// [`CASCADE_SETTLE_TIMEOUT`]), then drop it and return `None`.
+async fn until_shutdown<T>(
+    work: impl Future<Output = T>,
     shutdown: impl Future<Output = Result<()>>,
-) -> Result<PollLoopDecision> {
+) -> Result<Option<T>> {
+    let mut work = pin!(work);
     tokio::select! {
-        // Biased shutdown-first so SIGINT/SIGTERM wins even when poll_interval is zero.
+        // Biased shutdown-first so SIGINT/SIGTERM wins even when `work` is ready at once.
         biased;
-        result = shutdown => {
-            result?;
-            Ok(PollLoopDecision::Shutdown)
-        }
-        () = sleep(poll_interval) => Ok(PollLoopDecision::Continue),
+        result = shutdown => result?,
+        output = &mut work => return Ok(Some(output)),
     }
+    tokio::select! {
+        biased;
+        () = pending_cascades_settled() => {}
+        _ = work => {}
+        () = sleep(CASCADE_SETTLE_TIMEOUT) => warn!(
+            timeout_secs = CASCADE_SETTLE_TIMEOUT.as_secs(),
+            "shutdown abandoned a dependent cascade still running; its remaining dependents may be stale"
+        ),
+    }
+    Ok(None)
 }
 
 #[cfg(unix)]
@@ -127,5 +142,18 @@ impl ShutdownSignals {
 
     pub(crate) async fn recv(&mut self) -> Result<()> {
         tokio::signal::ctrl_c().await.context("listen for SIGINT")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn until_shutdown_abandons_unfinished_work() -> Result<()> {
+        let output =
+            until_shutdown(std::future::pending::<()>(), std::future::ready(Ok(()))).await?;
+        assert_eq!(output, None);
+        Ok(())
     }
 }

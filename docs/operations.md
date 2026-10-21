@@ -124,6 +124,8 @@ just backfill-terracoin START END
 Every poll tick logs one `poll tick` line with the cursor, tip, rescanned and new height counts, whether any height held, how many non-Bitcoin parents the lineage gate refused (`non_bitcoin`, never stored; see `docs/capture.md`), tick duration, and per-tick RPC deltas (`attempts`, `elements`, `retries`, `failures`, `latency_avg_ms`) for the child chain and Bitcoin Core.
 Batch jobs (backfills, reconciles, scheduled rechecks, queue drains) log progress (`done`, `total`, `rate`, `ETA`) at most every 30 seconds through `ProgressReporter` and always finish with a `job ended` summary plus cumulative per-client metrics including `latency_max_ms`.
 Because production round-trip latency is ~340 ms per remote call, `attempts` per tick or per height is the primary diagnostic when a job is slower than expected.
+Live producers (`poll-*` and `sync-bitcoin-core --follow`) stop on SIGINT or SIGTERM without finishing the current tick: a write that has already committed first finishes its dependent cascade (for up to 60 s), any open transaction rolls back, and the next start resumes from the persisted cursors and reconcile queues.
+Exit can still wait up to 15 s for an in-flight Bitcoin Core call to return.
 
 Accept a newly activated live source by its parent mix, not only by its cursor.
 The first ticks should show `non_bitcoin` counts in line with the chain's known parents (most Terracoin parents are Bitcoin Cash headers, so most of its ticks refuse some) and no open `capture_error` rows.

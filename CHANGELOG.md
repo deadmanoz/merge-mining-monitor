@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Stop live producers (`poll-*` and `sync-bitcoin-core --follow`) on SIGINT or SIGTERM without finishing the current tick, after any committed write finishes its dependent cascade (for up to 60 s), so a tick slowed by remote latency or RPC retries no longer runs past the service stop timeout and gets the unit killed and marked failed.
+
 ## [0.10.0] - 2026-10-20
 
 - Refresh the Research publication pin and error-block catalogue to reclassify Namecoin-witnessed AntPool blocks 494,933 and 544,568 as error blocks (`bad-cb-amount`).
