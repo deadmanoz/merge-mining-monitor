@@ -2,12 +2,16 @@ use anyhow::{Context, Result};
 use bitcoin::block::{Header, Version};
 use bitcoin::hashes::Hash as _;
 use bitcoin::{BlockHash, CompactTarget, TxMerkleNode};
-use mmm_api::projection::{self, ProjectionError};
+use mmm_api::projection::{self, ProjectionError, ProtocolCommitments};
 use mmm_bitcoin_core::BitcoinCoreBlockCoinbase;
 use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::capture::{RSK_PROOF_FORMAT_OPAQUE, RskEvidencePayload};
+use mmm_capture::protocol_commitment::DECODER_VERSION;
 use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, RSK_SOURCE_CODE};
-use mmm_read_model::{CoreCanonicalWrite, write_core_canonical};
+use mmm_producers::seed_protocol_account_identities;
+use mmm_read_model::{
+    CoreCanonicalWrite, ReconcileReadModelConfig, run_reconcile_read_model, write_core_canonical,
+};
 use mmm_store::{
     ChildChainHeadOutcome, ChildChainHeadRecord, CurrentBlockParent, EvidenceMarker, get_source_id,
     record_child_chain_block, record_rsk_observation,
@@ -16,13 +20,15 @@ use serde_json::json;
 use time::Month;
 use tokio_postgres::Client;
 
-use crate::support::scenario::{ChildEvidence, canonical_verdict, capture_child_event};
+use crate::support::scenario::{ChildEvidence, Scenario, canonical_verdict, capture_child_event};
 use crate::support::seed::{
     EventSeed, day_epoch, display_hash, hash_bytes, header_hash_bytes, insert_attestation_proof,
     insert_block, insert_event, insert_near_observation, insert_pool, insert_pool_identity,
     set_block_pool,
 };
-use crate::support::{default_pool_snapshot, header_meeting_bits};
+use crate::support::{
+    coinbase_outputs_fixture, default_pool_snapshot, header_meeting_bits, secpool_blocks,
+};
 
 use crate::helpers::format_projection_error;
 
@@ -185,14 +191,7 @@ async fn seed_core_kncminer_block(
     let kncminer = *pool_ids_by_slug
         .get("kncminer")
         .context("default snapshot missing kncminer")?;
-    let header = Header {
-        version: Version::ONE,
-        prev_blockhash: BlockHash::all_zeros(),
-        merkle_root: TxMerkleNode::all_zeros(),
-        time,
-        bits: CompactTarget::from_consensus(0x1d00_ffff),
-        nonce,
-    };
+    let header = synthetic_core_header(time, nonce);
     write_core_canonical(
         client,
         CoreCanonicalWrite {
@@ -569,6 +568,206 @@ async fn block_projects_child_displacement_on_near_observations() -> Result<()> 
         assert_eq!(current.observations.len(), 1);
         assert_eq!(current.observations[0].child_displaced_at, None);
         assert_eq!(current.observations[0].child_displaced_by, None);
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+fn synthetic_core_header(time: u32, nonce: u32) -> Header {
+    Header {
+        version: Version::ONE,
+        prev_blockhash: BlockHash::all_zeros(),
+        merkle_root: TxMerkleNode::all_zeros(),
+        time,
+        bits: CompactTarget::from_consensus(0x1d00_ffff),
+        nonce,
+    }
+}
+
+async fn protocol_commitments(client: &Client, hash: &[u8]) -> Result<Option<ProtocolCommitments>> {
+    Ok(project_block(client, hash).await?.protocol_commitments)
+}
+
+#[tokio::test]
+async fn block_serves_protocol_commitments_once_derived_for_the_decoder() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let (_, mut pool_ids) = default_pool_snapshot(&client).await?;
+        seed_protocol_account_identities(&client, &mut pool_ids).await?;
+        let [_, secpool] = secpool_blocks()?;
+        Scenario::new()
+            .core_canonical_with_coinbase(secpool.header, secpool.height, secpool.coinbase.clone())
+            .apply(&mut client)
+            .await?;
+        assert!(
+            protocol_commitments(&client, &secpool.hash)
+                .await?
+                .is_none(),
+            "null until a rebuild records the running decoder's version"
+        );
+        let nested = synthetic_core_header(1_722_000_000, 853_776);
+        Scenario::new()
+            .core_canonical_with_coinbase(
+                nested,
+                853_776,
+                BitcoinCoreBlockCoinbase {
+                    txid: vec![0x34; 32],
+                    script: b"/Braiins/".to_vec(),
+                    outputs: coinbase_outputs_fixture(853_776)?,
+                },
+            )
+            .apply(&mut client)
+            .await?;
+        client
+            .execute(
+                "UPDATE read_model_invariant SET protocol_commitments_decoder_version = $1",
+                &[&DECODER_VERSION],
+            )
+            .await?;
+
+        let section = protocol_commitments(&client, &secpool.hash)
+            .await?
+            .context("derived for the running decoder")?;
+        assert_eq!(section.outputs, "decoded");
+        let entries: Vec<_> = section
+            .entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.vout,
+                    entry.protocol.as_str(),
+                    entry.upstream_selected,
+                    entry.core_reward_address.as_deref(),
+                    entry.exsat_account.as_deref(),
+                    entry.declared_account_pool.slug.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            entries,
+            [
+                (
+                    3,
+                    "core",
+                    Some(true),
+                    Some("0x942c01262fa046fdb8ba0dfce3753405c74aed0e"),
+                    None,
+                    Some("secpool")
+                ),
+                (
+                    4,
+                    "exsat",
+                    None,
+                    None,
+                    Some("antpoole.sat"),
+                    Some("antpool")
+                ),
+            ]
+        );
+        let section = protocol_commitments(&client, &nested.block_hash().to_byte_array())
+            .await?
+            .context("derived for the running decoder")?;
+        let entry = &section.entries[0];
+        assert_eq!(
+            (
+                entry.decode_status.as_str(),
+                entry.malformed_reason.as_deref(),
+                entry.declared_account_pool.known,
+                entry.evidence_source.as_str(),
+            ),
+            ("malformed", Some("nested_header"), false, "bitcoin_core")
+        );
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn block_protocol_commitments_report_the_state_of_stored_outputs() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        let namecoin = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let f2pool_outputs = coinbase_outputs_fixture(868_400)?;
+        let seed = |child_height: i32, parent: u32, kind: &'static str| EventSeed {
+            source_id: namecoin,
+            child_height,
+            child_hash: hash_bytes(0x9700 + parent),
+            parent_hash: hash_bytes(parent),
+            prev_hash: hash_bytes(0x9600),
+            parent_time: 1_730_000_000,
+            kind,
+            pow_validates_btc_target: kind != "near",
+            btc_height: None,
+            pool_id: None,
+        };
+        let near = hash_bytes(0x9601);
+        insert_near_observation(&client, seed(301, 0x9601, "near")).await?;
+        let unreconciled = hash_bytes(0x9602);
+        let event_id = insert_event(&client, seed(302, 0x9602, "unknown")).await?;
+        let (no_outputs, corrupt) = (hash_bytes(0x9603), hash_bytes(0x9604));
+        for hash in [&no_outputs, &corrupt] {
+            insert_block(
+                &client,
+                hash,
+                &hash_bytes(0x9600),
+                Some(868_400),
+                "canonical",
+                1_730_000_000,
+                None,
+            )
+            .await?;
+        }
+        client
+            .execute(
+                "UPDATE child_block_observation SET btc_parent_coinbase_outputs = $2 \
+                  WHERE observation_kind = 'near' AND btc_parent_header_hash = $1",
+                &[&near, &f2pool_outputs],
+            )
+            .await?;
+        client
+            .execute(
+                "UPDATE merge_mining_event SET btc_parent_coinbase_outputs = $2 WHERE id = $1",
+                &[&event_id, &f2pool_outputs],
+            )
+            .await?;
+        client
+            .execute(
+                "UPDATE block SET btc_coinbase_outputs = '\\xff' WHERE btc_header_hash = $1",
+                &[&corrupt],
+            )
+            .await?;
+        run_reconcile_read_model(
+            &mut client,
+            &ConfiguredParentClassifier::Disabled,
+            ReconcileReadModelConfig {
+                rebuild_protocol_commitments: true,
+                ..ReconcileReadModelConfig::default()
+            },
+        )
+        .await?;
+
+        let near_section = protocol_commitments(&client, &near)
+            .await?
+            .context("near")?;
+        assert_eq!(near_section.outputs, "decoded");
+        assert_eq!(
+            near_section
+                .entries
+                .iter()
+                .map(|entry| (entry.vout, entry.evidence_source.as_str()))
+                .collect::<Vec<_>>(),
+            [(3, "near_observation"), (4, "near_observation")]
+        );
+        for (hash, outputs) in [(&no_outputs, "unavailable"), (&corrupt, "undecodable")] {
+            let section = protocol_commitments(&client, hash)
+                .await?
+                .context(outputs)?;
+            assert_eq!((section.outputs, section.entries.len()), (outputs, 0));
+        }
+        assert!(
+            protocol_commitments(&client, &unreconciled)
+                .await?
+                .is_none(),
+            "a parent without a block row has no derived rows yet"
+        );
 
         Ok::<_, anyhow::Error>(())
     })

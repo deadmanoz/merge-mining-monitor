@@ -19,7 +19,7 @@ pub use sources::sources;
 pub use tree::tree;
 #[cfg(feature = "db-integration")]
 pub use {
-    block::{BlockPayload, EventDetail},
+    block::{BlockPayload, EventDetail, ProtocolCommitments},
     competitions::CompetitionsPayload,
     navigator::{NavigatorItem, NavigatorPayload, NavigatorView, OrphanClassCounts},
     sources::{SourceEndpointRecord, SourcesPayload},

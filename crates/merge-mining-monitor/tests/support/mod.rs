@@ -59,6 +59,53 @@ const BTC_400000_HEADER_HEX: &str = "0400000039fa821848781f027a2e6dfabbf6bda920d
 #[cfg(feature = "db-integration")]
 const BTC_400000_COINBASE_SCRIPTSIG_HEX: &str = "03801a060004cc2acf560433c30f37085d4a39ad543b0c000a425720537570706f727420384d200a666973686572206a696e78696e092f425720506f6f6c2f";
 
+/// A real Core block: its header and the coinbase columns Core sync stores.
+#[cfg(feature = "db-integration")]
+pub struct CoreBlock {
+    pub height: i32,
+    pub hash: Vec<u8>,
+    pub header: Header,
+    pub coinbase: mmm_bitcoin_core::BitcoinCoreBlockCoinbase,
+}
+
+/// SecPool blocks 895,743 (CORE only) and 895,755 (CORE and exSat `antpoole.sat`).
+#[cfg(feature = "db-integration")]
+pub fn secpool_blocks() -> Result<[CoreBlock; 2]> {
+    use anyhow::Context as _;
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/bitcoin/secpool-exsat-transition.json"
+    )))?;
+    let block = |index: usize| -> Result<CoreBlock> {
+        let entry = &fixture["blocks"][index];
+        let text = |field: &str| entry[field].as_str().context("fixture field");
+        let header: Header = deserialize(&hex::decode(text("header")?)?)?;
+        assert_eq!(header.block_hash().to_string(), text("hash")?);
+        let tx: bitcoin::Transaction = deserialize(&hex::decode(text("coinbase_tx")?)?)?;
+        Ok(CoreBlock {
+            height: i32::try_from(entry["height"].as_i64().context("height")?)?,
+            hash: seed::header_hash_bytes(&header),
+            header,
+            coinbase: mmm_bitcoin_core::BitcoinCoreBlockCoinbase {
+                txid: tx.compute_txid().to_byte_array().to_vec(),
+                script: tx.input[0].script_sig.to_bytes(),
+                outputs: serialize(&tx.output),
+            },
+        })
+    };
+    Ok([block(0)?, block(1)?])
+}
+
+/// The serialized coinbase outputs of `fixtures/bitcoin/coinbase-outputs-<height>.hex`.
+#[cfg(feature = "db-integration")]
+pub fn coinbase_outputs_fixture(height: u32) -> Result<Vec<u8>> {
+    let path = format!(
+        "{}/../../fixtures/bitcoin/coinbase-outputs-{height}.hex",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    Ok(hex::decode(std::fs::read_to_string(path)?.trim())?)
+}
+
 #[cfg(feature = "db-integration")]
 pub fn btc_400000_header() -> Result<Header> {
     Ok(deserialize(&hex::decode(BTC_400000_HEADER_HEX)?)?)

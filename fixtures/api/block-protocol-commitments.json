@@ -1,0 +1,92 @@
+{
+  "schema_version": "v1",
+  "generated_at": 1779792000,
+  "block": {
+    "hash": "00000000000000000001718956300bcc55ebe00bb173371d5e8bcc2b86e35716",
+    "height": 895755,
+    "kind": "canonical",
+    "btc_orphan_class": null,
+    "error_block_reason": null,
+    "coinbase_tag": "Mined by Secpool    / mmgx",
+    "header": {
+      "version": 621027328,
+      "prev_hash": "000000000000000000007909108f351c086820d9f4ea544bb4ac29cbfc49f4eb",
+      "merkle_root": "f24212c74c7c54966abe84d34e49e76d817c9e66323e7ac3445c91d02036c851",
+      "time": 1746677467,
+      "bits": "17025ced",
+      "nonce": 2397487650
+    },
+    "bitcoin_miner_pool": {
+      "id": 121,
+      "slug": "secpool",
+      "name": "SecPool",
+      "known": true
+    },
+    "display_miner_pool": {
+      "id": 121,
+      "slug": "secpool",
+      "name": "SecPool",
+      "known": true
+    },
+    "display_miner_basis": "bitcoin_coinbase",
+    "source_summary": {
+      "sources": [
+        "live-chaintip:bitcoin:core"
+      ],
+      "distinct_sources": 1,
+      "auxpow_chain_count": 0,
+      "live_observed": true,
+      "pow_validates_btc_target": true
+    }
+  },
+  "proofs": [],
+  "event_details": [],
+  "competition": null,
+  "stale_branch": null,
+  "commitment": null,
+  "protocol_commitments": {
+    "outputs": "decoded",
+    "entries": [
+      {
+        "protocol": "core",
+        "vout": 3,
+        "decode_status": "valid",
+        "malformed_reason": null,
+        "version": 1,
+        "script_hex": "6a2d434f524501a21cbd3caa4fe89bccd1d716c92ce4533e4d4733942c01262fa046fdb8ba0dfce3753405c74aed0e",
+        "evidence_source": "bitcoin_core",
+        "upstream_selected": true,
+        "core_validator": "0xa21cbd3caa4fe89bccd1d716c92ce4533e4d4733",
+        "core_reward_address": "0x942c01262fa046fdb8ba0dfce3753405c74aed0e",
+        "core_binding_hash": null,
+        "exsat_account": null,
+        "declared_account_pool": {
+          "id": 121,
+          "slug": "secpool",
+          "name": "SecPool",
+          "known": true
+        }
+      },
+      {
+        "protocol": "exsat",
+        "vout": 4,
+        "decode_status": "valid",
+        "malformed_reason": null,
+        "version": 1,
+        "script_hex": "6a12455853415401000d130f0e0e0b041f120013",
+        "evidence_source": "bitcoin_core",
+        "upstream_selected": null,
+        "core_validator": null,
+        "core_reward_address": null,
+        "core_binding_hash": null,
+        "exsat_account": "antpoole.sat",
+        "declared_account_pool": {
+          "id": 11,
+          "slug": "antpool",
+          "name": "AntPool",
+          "known": true
+        }
+      }
+    ]
+  }
+}

@@ -91,6 +91,32 @@ const AUXPOW_HELP = {
       "Its side mask is this chain's slot index, so the number of siblings is log2(merkle_size).",
     ],
   },
+  protocol_commitments: {
+    name: "Protocol commitments",
+    meta: "Core DAO and exSat declarations in the Bitcoin coinbase",
+    body: [
+      "Some coinbases carry OP_RETURN declarations for Core DAO's delegated proof of work (CORE: a validator and a reward address) and for exSat (EXSAT: a synchronizer account).",
+      "A declaration names a protocol account. It does not say who mined the block, who built its template, or which account the protocol credited.",
+      "Protocol account association is the pool this project's registry links to the declared account, from the protocol's own listing or from which pool's blocks carry it.",
+      "Core DAO reads one CORE output per block, marked \"read by Core DAO\". exSat can credit a registered payout address that appears before its marker, so which declaration it credits cannot be read from the coinbase. A malformed declaration keeps its raw script and names no account.",
+    ],
+  },
+};
+
+const PROTOCOL_LABELS = { core: "CORE", exsat: "exSat" };
+// Every declaration of a header is decoded from the same outputs, so the summary names them once.
+const PROTOCOL_EVIDENCE = {
+  bitcoin_core: "the Bitcoin Core coinbase",
+  auxpow_event: "an AuxPoW event's parent coinbase",
+  near_observation: "a near observation's parent coinbase",
+};
+const MALFORMED_REASONS = {
+  wrong_push_length: "The magic is not in a direct push of the expected length",
+  nested_header: "Nested header: the push repeats the CORE header, so Core DAO's parser reads header bytes as the validator",
+  trailing_bytes: "Bytes follow the declaration",
+  truncated: "The declaration is cut short",
+  account_byte_out_of_range: "An account byte is outside exSat's symbol set",
+  invalid_account: "The account is empty, longer than 12 symbols, or ends in \".\"",
 };
 
 function auxpowHelpFor(topic) {
@@ -287,6 +313,8 @@ function renderBlockDetailPayload(payload) {
       ? detailSection("Competition", `<div class="empty">This block never raced. It carries full Bitcoin proof of work but breaks a consensus rule, so it was never a valid contender for its height and has no canonical competitor.</div>`)
       : "",
     payload.stale_branch ? detailSection("Stale Branch", renderStaleBranch(payload.stale_branch, block.hash)) : "",
+    // Protocol declarations come last: merge mining and the stale-block context lead.
+    detailSectionHelp("Protocol commitments", "protocol_commitments", renderProtocolCommitments(payload.protocol_commitments)),
   ].join("");
 }
 
@@ -335,6 +363,49 @@ function renderCommitment(commitment) {
     rows.push(["Marker", `<span class="false-value">none decoded</span>`]);
   }
   return kvRows(rows);
+}
+
+// CORE and exSat declarations: `null` until derived, else the coinbase outputs' state and entries.
+function renderProtocolCommitments(section) {
+  if (!section) {
+    return `<div class="empty">Not derived yet. Declarations appear once the commitment rebuild has run, or once this parent is reconciled.</div>`;
+  }
+  if (section.outputs === "unavailable") {
+    return `<div class="empty">This header's coinbase outputs are not stored (for example an RSK-only parent), so its declarations are unknown.</div>`;
+  }
+  if (section.outputs === "undecodable") {
+    return `<div class="empty">The stored coinbase outputs could not be decoded, so this header's declarations are unknown.</div>`;
+  }
+  const entries = section.entries;
+  if (!entries.length) return `<div class="empty">No CORE or exSat declaration in this coinbase.</div>`;
+  const source = PROTOCOL_EVIDENCE[entries[0].evidence_source] || entries[0].evidence_source;
+  const count = `${entries.length} declaration${entries.length === 1 ? "" : "s"}`;
+  return `<div class="protocol-commitment-summary">${esc(count)}, decoded from ${esc(source)}</div>${entries.map(renderProtocolCommitment).join("")}`;
+}
+
+function renderProtocolCommitment(entry) {
+  const valid = entry.decode_status === "valid";
+  const status = entry.decode_status.replace("_", " ");
+  const selection = entry.protocol === "core"
+    ? (entry.upstream_selected ? `<span class="state-pill">read by Core DAO</span>` : "")
+    : `<span class="state-pill">selection undetermined</span>`;
+  const head = `<div class="protocol-commitment-head"><strong>${esc(PROTOCOL_LABELS[entry.protocol] || entry.protocol)}</strong> <span class="protocol-commitment-vout">vout ${esc(entry.vout)}</span> <span class="state-pill ${valid ? "kind-canonical" : "kind-stale"}">${esc(status)}</span> ${selection}</div>`;
+  const rows = [];
+  if (!valid) {
+    const problem = entry.decode_status === "malformed"
+      ? MALFORMED_REASONS[entry.malformed_reason] || entry.malformed_reason
+      : `Version ${entry.version}; only version 1 is defined`;
+    rows.push(["Problem", esc(problem)]);
+  }
+  rows.push(["Protocol account association", valid
+    ? poolName(entry.declared_account_pool)
+    : `<span class="null-value">none: not a valid declaration</span>`]);
+  if (entry.core_reward_address) rows.push(["Reward address", copyValue(entry.core_reward_address)]);
+  if (entry.core_validator) rows.push(["Validator", copyValue(entry.core_validator)]);
+  if (entry.core_binding_hash) rows.push(["Binding hash", copyValue(entry.core_binding_hash)]);
+  if (entry.exsat_account) rows.push(["Account", copyValue(entry.exsat_account)]);
+  const raw = `<details class="collapse"${valid ? "" : " open"}><summary>Raw script</summary>${kvRows([["Script", copyValue(entry.script_hex)]])}</details>`;
+  return `<div class="event-block protocol-commitment">${head}${kvRows(rows)}${raw}</div>`;
 }
 
 function detailSection(title, body) {

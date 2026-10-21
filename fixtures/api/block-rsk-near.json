@@ -139,5 +139,6 @@
     "parent_coinbase_txid": "1919191919191919191919191919191919191919191919191919191919191919",
     "parent_coinbase_script_hex": "03e4f505",
     "marker": null
-  }
+  },
+  "protocol_commitments": null
 }

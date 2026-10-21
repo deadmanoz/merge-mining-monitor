@@ -1,9 +1,7 @@
-use anyhow::{Context, Result};
-use bitcoin::block::Header;
+use anyhow::Result;
 use bitcoin::consensus::{deserialize, serialize};
-use bitcoin::hashes::Hash as _;
-use bitcoin::{Amount, ScriptBuf, Transaction, TxOut};
-use mmm_bitcoin_core::{BitcoinCoreBlockCoinbase, ConfiguredParentClassifier};
+use bitcoin::{Amount, ScriptBuf, TxOut};
+use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::capture::ClassificationProof;
 use mmm_capture::identity_registry::IdentityRegistryEntry;
 use mmm_capture::protocol_commitment::{DECODER_VERSION, EXSAT_ACCOUNT_NAMESPACE};
@@ -18,43 +16,9 @@ use crate::support::scenario::{
 };
 use crate::support::seed::{hash_bytes, pool_id_for_slug};
 use crate::support::{
-    NamecoinEventFixture, capture_test_outcome, default_pool_snapshot, namecoin_event_payload,
-    parse_auxpow_fixture,
+    CoreBlock, NamecoinEventFixture, capture_test_outcome, default_pool_snapshot,
+    namecoin_event_payload, parse_auxpow_fixture, secpool_blocks,
 };
-
-/// A real Core block: its header and the coinbase columns Core sync stores.
-struct CoreBlock {
-    height: i32,
-    hash: Vec<u8>,
-    header: Header,
-    coinbase: BitcoinCoreBlockCoinbase,
-}
-
-/// SecPool blocks 895,743 (CORE only) and 895,755 (CORE and exSat `antpoole.sat`).
-fn secpool_blocks() -> Result<[CoreBlock; 2]> {
-    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../fixtures/bitcoin/secpool-exsat-transition.json"
-    )))?;
-    let block = |index: usize| -> Result<CoreBlock> {
-        let entry = &fixture["blocks"][index];
-        let text = |field: &str| entry[field].as_str().context("fixture field");
-        let header: Header = deserialize(&hex::decode(text("header")?)?)?;
-        assert_eq!(header.block_hash().to_string(), text("hash")?);
-        let tx: Transaction = deserialize(&hex::decode(text("coinbase_tx")?)?)?;
-        Ok(CoreBlock {
-            height: i32::try_from(entry["height"].as_i64().context("height")?)?,
-            hash: header.block_hash().to_byte_array().to_vec(),
-            header,
-            coinbase: BitcoinCoreBlockCoinbase {
-                txid: tx.compute_txid().to_byte_array().to_vec(),
-                script: tx.input[0].script_sig.to_bytes(),
-                outputs: serialize(&tx.output),
-            },
-        })
-    };
-    Ok([block(0)?, block(1)?])
-}
 
 fn event_evidence(
     key: &'static str,
