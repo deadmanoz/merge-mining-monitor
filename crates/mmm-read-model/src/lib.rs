@@ -1,4 +1,5 @@
-//! Derived read-model reconciliation (`block`, `attestation_proof`, and `source_health`).
+//! Derived read-model reconciliation (`block`, `attestation_proof`, `source_health`, and
+//! `protocol_commitment`).
 //!
 //! Base-evidence mutations enter through root-level mutation helpers that enforce
 //! advisory lock ordering, preclassification, source-health brackets, and dependent cascades.
@@ -7,6 +8,7 @@ mod cli_args;
 mod known_stale_reclassify;
 mod mutation;
 mod pending_cascade;
+mod protocol_commitments;
 mod source_health_sql;
 mod unknown_reclassify;
 
@@ -73,6 +75,7 @@ use mmm_capture::progress::ProgressReporter;
 use mmm_store::get_source_id;
 
 use mutation::PrimaryDiff;
+use protocol_commitments::refresh_protocol_commitments;
 
 // Advisory-lock domain for per-parent-header read-model reconciliation.
 const BLOCK_LOCK_SEED: i64 = 6_022_140_767_761_816_313;
@@ -234,6 +237,8 @@ pub struct ReconcileReadModelConfig {
     pub max_iterations: usize,
     /// Rebuild `source_health` from base tables and set `source_health_ready = TRUE`.
     pub rebuild_source_health: bool,
+    /// Rebuild the protocol commitment tables and record the decoder version.
+    pub rebuild_protocol_commitments: bool,
 }
 
 impl Default for ReconcileReadModelConfig {
@@ -246,6 +251,7 @@ impl Default for ReconcileReadModelConfig {
             batch_size: DEFAULT_BATCH_SIZE,
             max_iterations: DEFAULT_MAX_ITERATIONS,
             rebuild_source_health: false,
+            rebuild_protocol_commitments: false,
         }
     }
 }
@@ -289,6 +295,10 @@ impl ReconcileReadModelConfig {
                 }
                 "--rebuild-source-health" => {
                     config.rebuild_source_health = true;
+                    true
+                }
+                "--rebuild-protocol-commitments" => {
+                    config.rebuild_protocol_commitments = true;
                     true
                 }
                 _ => false,
@@ -460,7 +470,8 @@ pub(crate) async fn lock_payload_parent_read_model_in_txn<C: GenericClient>(
     lock_block_hashes(client, &hashes).await
 }
 
-/// Run the read-model reconciliation driver (`--rebuild-source-health`, `--all`, or `--missing-only`).
+/// Run the read-model reconciliation driver (`--rebuild-source-health`,
+/// `--rebuild-protocol-commitments`, `--all`, or `--missing-only`).
 pub async fn run_reconcile_read_model(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -469,6 +480,10 @@ pub async fn run_reconcile_read_model(
     if config.rebuild_source_health {
         crate::source_health_sql::rebuild_source_health(client).await?;
         tracing::info!("rebuilt source_health from base tables");
+        return Ok(0);
+    }
+    if config.rebuild_protocol_commitments {
+        protocol_commitments::rebuild_protocol_commitments(client, config.batch_size).await?;
         return Ok(0);
     }
 
@@ -712,6 +727,7 @@ mod config_args_tests {
         assert_eq!(config.end_height, None);
         assert_eq!(config.source_code, None);
         assert!(!config.rebuild_source_health);
+        assert!(!config.rebuild_protocol_commitments);
     }
 
     #[test]
@@ -729,6 +745,7 @@ mod config_args_tests {
             "--max-iterations",
             "3",
             "--rebuild-source-health",
+            "--rebuild-protocol-commitments",
         ])
         .expect("full flag set");
         assert!(!config.missing_only);
@@ -738,6 +755,7 @@ mod config_args_tests {
         assert_eq!(config.batch_size, 10);
         assert_eq!(config.max_iterations, 3);
         assert!(config.rebuild_source_health);
+        assert!(config.rebuild_protocol_commitments);
     }
 
     #[test]

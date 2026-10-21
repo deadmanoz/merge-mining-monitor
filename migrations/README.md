@@ -64,6 +64,7 @@ SET recheck_pending_generation = recheck_pending_generation + 1,
 | `0032_add_qbit_payout_namespace.sql` | Adds `qbit_payout_address` to the `pool_identity` namespace check. |
 | `0033_add_child_block_observation.sql` | Adds `child_block_observation` and `child_miner_identity`, filled with one observation per existing event. |
 | `0034_retire_near_events.sql` | Copy-and-swaps `merge_mining_event`, `rsk_merge_mining_evidence` and `event_pool_attribution` into their slim shapes without near events or moved child columns; revoked-only nears become `unverified_parent`. |
+| `0035_add_protocol_commitments.sql` | Adds the derived `protocol_commitment`, `protocol_commitment_script` and `protocol_commitment_undecodable` tables, the decoder-version readiness column, and the `core_reward_address` and `exsat_account` identity namespaces; the tables start empty until `just rebuild-protocol-commitments`. |
 
 ## Reset Path
 

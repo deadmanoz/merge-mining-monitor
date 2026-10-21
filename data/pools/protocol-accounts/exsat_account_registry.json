@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "description": "exSat synchronizer accounts declared in Bitcoin coinbase EXSAT commitments, associated with the pools exSat lists for them. A declaration names an exSat account; it does not establish who built the block or which account exSat credited, because exSat can credit a registered payout address ahead of the marker. xsatsync.sat, the exSat Foundation's own synchronizer, is not mapped.",
+  "generated_on": "2026-10-19",
+  "observation_rule": "first_party_registration: exSat's mainnet synchronizer configuration lists the account for the pool, with the pool's mining addresses. Notes give the declaring-block counts as of generated_on.",
+  "entries": [
+    {
+      "identifier": "antpoole.sat",
+      "pool_slug": "antpool",
+      "pool_canonical_name": "AntPool",
+      "evidence": {
+        "basis": "first_party_registration",
+        "source": "exsat-network/configurations src/mainnet-synchronizers.json at 536097c lists antpoole.sat for Antpool with mining addresses 39C7fxSzEACPjM78Z7xdPxhf7mKxJwvfMJ and 37jKPSmbEGwgfacCr2nayn1wTaqMAbA94Z (first listed in 922ba10)",
+        "recorded_on": "2024-10-21"
+      },
+      "note": "Requested in exsat-network/configurations issue #37, opened by AntPoolDev on 2024-10-18. AntPool blocks first declare it at 871,439 (2024-11-22). Of 21,795 carrying blocks, 18,409 are AntPool's; SecPool blocks have also declared it since 895,755 (3,001 blocks) and Mining Squared blocks did from 890,245 to 944,073 (382 blocks)."
+    },
+    {
+      "identifier": "f2pool.sat",
+      "pool_slug": "f2pool",
+      "pool_canonical_name": "F2Pool",
+      "evidence": {
+        "basis": "first_party_registration",
+        "source": "exsat-network/configurations src/mainnet-synchronizers.json at 536097c lists f2pool.sat for F2Pool with mining address 1KGG9kvV5zXiqyQAMfY32sGt9eFLMmgpgX (first listed in 0921ecd)",
+        "recorded_on": "2024-10-21"
+      },
+      "note": "12,177 F2Pool blocks declare it, from 866,190 to 972,099."
+    },
+    {
+      "identifier": "viabtc21.sat",
+      "pool_slug": "viabtc",
+      "pool_canonical_name": "ViaBTC",
+      "evidence": {
+        "basis": "first_party_registration",
+        "source": "exsat-network/configurations src/mainnet-synchronizers.json at 536097c lists viabtc21.sat for ViaBTC with mining addresses 1PuJjnF476W3zXfVYmJfGnouzFDAXakkL4 and 18cBEMRxXHqzWWCxZNtU91F5sbUNKhL5PX (first listed in 922ba10)",
+        "recorded_on": "2024-10-21"
+      },
+      "note": "10,944 ViaBTC blocks declare it, from 866,942 to 958,823."
+    },
+    {
+      "identifier": "spider.sat",
+      "pool_slug": "spiderpool",
+      "pool_canonical_name": "SpiderPool",
+      "evidence": {
+        "basis": "first_party_registration",
+        "source": "exsat-network/configurations src/mainnet-synchronizers.json at 536097c lists spider.sat for SpiderPool with mining address 1BM1sAcrfV6d4zPKytzziu4McLQDsFC2Qc (first listed in 0921ecd)",
+        "recorded_on": "2024-10-21"
+      },
+      "note": "5,705 SpiderPool blocks declare it, from 866,905 to 972,219."
+    },
+    {
+      "identifier": "maxipool.sat",
+      "pool_slug": "maxipool",
+      "pool_canonical_name": "MaxiPool",
+      "evidence": {
+        "basis": "first_party_registration",
+        "source": "exsat-network/configurations src/mainnet-synchronizers.json at 536097c lists maxipool.sat for MaxiPool with mining address 36r3YqAXWpyqNcczjCBdHrYZ3m8X56WDzx (first listed in 922ba10)",
+        "recorded_on": "2024-10-21"
+      },
+      "note": "No declaring block observed."
+    }
+  ]
+}

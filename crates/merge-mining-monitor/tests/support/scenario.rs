@@ -7,8 +7,8 @@ use anyhow::{Context, Result};
 use bitcoin::block::Header;
 use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::{
-    ClassifiedHeader, ConfiguredParentClassifier, FakeParentClassifier, HeightSource,
-    ParentClassification,
+    BitcoinCoreBlockCoinbase, ClassifiedHeader, ConfiguredParentClassifier, FakeParentClassifier,
+    HeightSource, ParentClassification,
 };
 use mmm_capture::capture::{
     NormalizedEventEvidence, ParentKind, ResolvedPoolAttributions,
@@ -89,6 +89,7 @@ pub struct ChildEvidence {
     pub verdict: ParentClassification,
     pub observed_at: i64,
     pub parent_coinbase_script: Option<Vec<u8>>,
+    pub parent_coinbase_outputs: Option<Vec<u8>>,
 }
 
 impl ChildEvidence {
@@ -112,6 +113,7 @@ impl ChildEvidence {
             verdict,
             observed_at,
             parent_coinbase_script: None,
+            parent_coinbase_outputs: None,
         }
     }
 
@@ -119,10 +121,19 @@ impl ChildEvidence {
         self.parent_coinbase_script = Some(script);
         self
     }
+
+    pub fn with_parent_coinbase_outputs(mut self, outputs: Vec<u8>) -> Self {
+        self.parent_coinbase_outputs = Some(outputs);
+        self
+    }
 }
 
 enum Step {
-    CoreCanonical { header: Header, height: i32 },
+    CoreCanonical {
+        header: Header,
+        height: i32,
+        coinbase: Option<BitcoinCoreBlockCoinbase>,
+    },
     Child(Box<ChildEvidence>),
 }
 
@@ -137,7 +148,25 @@ impl Scenario {
     }
 
     pub fn core_canonical(mut self, header: Header, height: i32) -> Self {
-        self.steps.push(Step::CoreCanonical { header, height });
+        self.steps.push(Step::CoreCanonical {
+            header,
+            height,
+            coinbase: None,
+        });
+        self
+    }
+
+    pub fn core_canonical_with_coinbase(
+        mut self,
+        header: Header,
+        height: i32,
+        coinbase: BitcoinCoreBlockCoinbase,
+    ) -> Self {
+        self.steps.push(Step::CoreCanonical {
+            header,
+            height,
+            coinbase: Some(coinbase),
+        });
         self
     }
 
@@ -150,13 +179,17 @@ impl Scenario {
         let mut event_ids = BTreeMap::new();
         for step in self.steps {
             match step {
-                Step::CoreCanonical { header, height } => {
+                Step::CoreCanonical {
+                    header,
+                    height,
+                    coinbase,
+                } => {
                     write_core_canonical(
                         client,
                         CoreCanonicalWrite {
                             header: &header,
                             height,
-                            coinbase: None,
+                            coinbase,
                         },
                         async |_txn| Ok(()),
                         "scenario core spine",
@@ -180,7 +213,7 @@ impl Scenario {
                             pow_validates_child_target: Some(true),
                             btc_parent_coinbase_txid: None,
                             btc_parent_coinbase_script: evidence.parent_coinbase_script,
-                            btc_parent_coinbase_outputs: None,
+                            btc_parent_coinbase_outputs: evidence.parent_coinbase_outputs,
                             btc_parent_coinbase_outputs_text: None,
                             btc_parent_coinbase_tx_bytes: None,
                             child_coinbase_txid: None,

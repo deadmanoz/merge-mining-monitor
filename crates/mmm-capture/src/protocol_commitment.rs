@@ -24,6 +24,11 @@ use bitcoin::opcodes::all::{OP_PUSHDATA1, OP_PUSHDATA2, OP_PUSHDATA4};
 /// rebuilt.
 pub const DECODER_VERSION: i32 = 1;
 
+/// `pool_identity` namespace of declared CORE reward addresses (`0x` plus 40 lowercase hex).
+pub const CORE_REWARD_ADDRESS_NAMESPACE: &str = "core_reward_address";
+/// `pool_identity` namespace of declared exSat synchronizer accounts.
+pub const EXSAT_ACCOUNT_NAMESPACE: &str = "exsat_account";
+
 const CORE_MAGIC: &[u8] = b"CORE";
 const EXSAT_MAGIC: &[u8] = b"EXSAT";
 const SUPPORTED_VERSION: u8 = 1;
@@ -42,6 +47,15 @@ const EXSAT_ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz12345.";
 pub enum CommitmentProtocol {
     Core,
     Exsat,
+}
+
+impl CommitmentProtocol {
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Core => "core",
+            Self::Exsat => "exsat",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,12 +85,35 @@ pub enum MalformedReason {
     InvalidAccount,
 }
 
+impl MalformedReason {
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            Self::WrongPushLength => "wrong_push_length",
+            Self::NestedHeader => "nested_header",
+            Self::TrailingBytes => "trailing_bytes",
+            Self::Truncated => "truncated",
+            Self::AccountByteOutOfRange => "account_byte_out_of_range",
+            Self::InvalidAccount => "invalid_account",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecodeStatus {
     Valid(CommitmentPayload),
     Malformed(MalformedReason),
     /// The version byte after the magic, when it is not 1.
     UnsupportedVersion(u8),
+}
+
+impl DecodeStatus {
+    pub fn as_db_str(&self) -> &'static str {
+        match self {
+            Self::Valid(_) => "valid",
+            Self::Malformed(_) => "malformed",
+            Self::UnsupportedVersion(_) => "unsupported_version",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +125,14 @@ pub struct ProtocolCommitment {
     /// For CORE, whether Core DAO's parser takes this output, whatever `status` says; `None` for
     /// exSat, whose choice the coinbase cannot decide.
     pub upstream_selected: Option<bool>,
+}
+
+impl ProtocolCommitment {
+    /// The byte after the magic, when the script reaches it.
+    pub fn version(&self) -> Option<u8> {
+        let (_, version_at) = recognize(&self.script)?;
+        self.script.get(version_at).copied()
+    }
 }
 
 /// Decode the CORE and exSat commitments among coinbase `outputs`, in output order.
@@ -133,6 +178,15 @@ pub fn decode_protocol_commitments(outputs: &[TxOut]) -> Vec<ProtocolCommitment>
 fn core_dao_reads(script: &[u8]) -> bool {
     script.len() >= CORE_SCRIPT_LEN
         && script[DIRECT_MAGIC_AT..CORE_HEADER.len()] == CORE_HEADER[DIRECT_MAGIC_AT..]
+}
+
+/// Whether `account` is an exSat account name a valid declaration can carry.
+pub fn is_exsat_account(account: &str) -> bool {
+    (1..=EXSAT_MAX_ACCOUNT_LEN).contains(&account.len())
+        && account
+            .bytes()
+            .all(|symbol| EXSAT_ALPHABET.contains(&symbol))
+        && !account.ends_with('.')
 }
 
 /// Decode consensus-serialized `Vec<TxOut>` coinbase outputs, as stored in Postgres.

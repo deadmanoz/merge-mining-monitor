@@ -9,6 +9,7 @@ use tokio_postgres::Client;
 
 use crate::bitcoin_epoch_cache::refresh_bitcoin_core_header_cache;
 use crate::live_loop::{LiveProducer, TickOutcome, run_live_loop};
+use crate::protocol_account_registry::seed_protocol_account_identities;
 
 use super::{
     BitcoinCoreBackboneSource, BitcoinCoreBackboneTip, BitcoinCoreSyncConfig, BitcoinCoreSyncStats,
@@ -17,9 +18,10 @@ use super::{
     repair_near_tip_backbone_to_target, run_sync_bitcoin_core, update_sync_error,
     verify_live_backbone_window,
 };
+use mmm_capture::pool_resolver::PoolResolver;
 use mmm_capture::source_registry::BITCOIN_SOURCE_CODE;
 use mmm_read_model::drain_core_reconcile_queue;
-use mmm_store::get_source_id;
+use mmm_store::{get_source_id, upsert_pool_snapshot};
 
 /// Consecutive no-forward-progress batches below tip before the live producer fail-stops.
 const FOLLOW_STALL_EXIT_THRESHOLD: usize = 5;
@@ -574,7 +576,8 @@ where
 ///
 /// Transient batch errors are retried up to `FOLLOW_STALL_EXIT_THRESHOLD`
 /// consecutive below-tip stalls; backbone integrity errors outside the bounded
-/// repair window fail-stop immediately.
+/// repair window fail-stop immediately. The protocol-account registries are seeded once at
+/// start; each batch upserts only the pool snapshot.
 pub async fn run_sync_bitcoin_core_follow<S>(
     client: &mut Client,
     source: &S,
@@ -584,6 +587,9 @@ pub async fn run_sync_bitcoin_core_follow<S>(
 where
     S: BitcoinCoreBackboneSource,
 {
+    let resolver = PoolResolver::from_default_snapshot().context("load embedded pool snapshot")?;
+    let mut pool_ids_by_slug = upsert_pool_snapshot(client, resolver.snapshot()).await?;
+    seed_protocol_account_identities(client, &mut pool_ids_by_slug).await?;
     run_live_loop(
         BitcoinCoreLiveProducer::start(client, source, header_cache_classifier, config, None)
             .await?,

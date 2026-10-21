@@ -151,8 +151,8 @@ pub(crate) async fn apply_event_classification<C: GenericClient>(
     Ok(())
 }
 
-/// Rebuild the `block` row and AuxPoW `attestation_proof` rows for `hash` from its current
-/// event rollup, or retire derived rows when no active events remain.
+/// Rebuild the `block` row, AuxPoW `attestation_proof` rows and protocol commitments for `hash`
+/// from its current event rollup, or retire derived rows when no active events remain.
 pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
     client: &C,
     hash: &[u8],
@@ -163,6 +163,7 @@ pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
 
     let Some(rollup) = rollup else {
         retire_zero_active_block(client, hash).await?;
+        refresh_protocol_commitments(client, &[hash.to_vec()]).await?;
         return Ok(());
     };
 
@@ -252,6 +253,7 @@ pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
     };
     upsert_block_row(client, &block, BlockWriteMode::EventRollup).await?;
     rebuild_auxpow_proofs(client, hash).await?;
+    refresh_protocol_commitments(client, &[hash.to_vec()]).await?;
 
     Ok(())
 }

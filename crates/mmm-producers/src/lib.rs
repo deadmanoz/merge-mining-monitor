@@ -14,6 +14,7 @@ mod known_stale_import;
 mod live_loop;
 mod poller;
 mod producer_runtime;
+mod protocol_account_registry;
 mod reclassify_pools;
 
 #[cfg(any(test, feature = "db-integration"))]
@@ -48,4 +49,6 @@ pub use poller::{
     ChainPoller, ChainPollerState, HeightProgress, Poller, PollerConfig, RescanOutcome,
 };
 pub use producer_runtime::connect_core_required_from_env;
+#[cfg(feature = "db-integration")]
+pub use protocol_account_registry::seed_protocol_account_identities;
 pub use reclassify_pools::{ReclassifyPoolsConfig, ReclassifyPoolsStats, run_reclassify_pools};

@@ -11,6 +11,7 @@ use tokio_postgres::{Client, GenericClient, Transaction};
 use tracing::debug;
 
 use crate::pending_cascade::PendingCascade;
+use crate::protocol_commitments::refresh_protocol_commitments;
 use crate::source_health_sql::ParentContribution;
 use mmm_bitcoin_core::BitcoinCoreBlockCoinbase;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
@@ -433,7 +434,16 @@ where
                 )
                 .await
             }
-            // A near has no event and no parent read model; the bracket counts it.
+            // A near has no event or `block` row; the bracket counts it. Only its parent outputs
+            // can change the parent's protocol commitments.
+            CaptureWrite::Near { .. } if payload.btc_parent_coinbase_outputs.is_some() => {
+                refresh_protocol_commitments(
+                    &txn,
+                    std::slice::from_ref(&payload.btc_parent_header_hash),
+                )
+                .await
+                .map(|()| Vec::new())
+            }
             CaptureWrite::Near { .. } => Ok(Vec::new()),
         };
         match reconcile_result {

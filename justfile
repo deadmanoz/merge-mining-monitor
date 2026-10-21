@@ -186,6 +186,10 @@ reconcile-read-model *args:
 rebuild-source-health:
     cargo run -- reconcile-read-model --rebuild-source-health
 
+# Rebuild the CORE/exSat protocol commitment tables from stored coinbase outputs and record the decoder version.
+rebuild-protocol-commitments *args:
+    cargo run -- reconcile-read-model --rebuild-protocol-commitments {{args}}
+
 revoke-merge-mining-event event_id reason:
     cargo run -- revoke-merge-mining-event {{event_id}} "{{reason}}"
 

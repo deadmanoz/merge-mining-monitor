@@ -29,12 +29,18 @@ async fn proven_core_canonical_queue_is_rebuilt_in_bulk() -> Result<()> {
         )
         .await?;
         let header_bytes = serialize(&header);
+        // Parent outputs declaring the exSat account `ant`.
+        let outputs = serialize(&vec![bitcoin::TxOut {
+            value: bitcoin::Amount::ZERO,
+            script_pubkey: bitcoin::ScriptBuf::from_bytes(hex::decode("6a09455853415401000d13")?),
+        }]);
         client
             .execute(
                 "UPDATE merge_mining_event \
-                 SET btc_parent_header_bytes = $2, difficulty_epoch_ok = TRUE \
+                 SET btc_parent_header_bytes = $2, difficulty_epoch_ok = TRUE, \
+                     btc_parent_coinbase_outputs = $3 \
                  WHERE id = $1",
-                &[&event_id, &header_bytes],
+                &[&event_id, &header_bytes, &outputs],
             )
             .await?;
         insert_block(
@@ -94,6 +100,14 @@ async fn proven_core_canonical_queue_is_rebuilt_in_bulk() -> Result<()> {
             .await?
             .get(0);
         assert_eq!(proof_ids, vec![event_id]);
+        let commitment_source: String = client
+            .query_one(
+                "SELECT evidence_source FROM protocol_commitment WHERE btc_header_hash = $1",
+                &[&parent_hash],
+            )
+            .await?
+            .get(0);
+        assert_eq!(commitment_source, "auxpow_event");
         let queued: i64 = client
             .query_one("SELECT count(*) FROM historical_reconcile_queue", &[])
             .await?

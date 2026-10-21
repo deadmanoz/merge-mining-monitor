@@ -1,0 +1,283 @@
+{
+  "schema_version": 1,
+  "description": "Core DAO delegated proof of work reward addresses declared in Bitcoin coinbase CORE commitments, associated with the pools whose blocks carry them. An association says which pool's blocks declare the address, not who controls it or which account Core DAO credited. Core DAO validators are not mapped: one validator serves many unrelated pools.",
+  "generated_on": "2026-10-19",
+  "observation_rule": "empirical_association: at least 20 Core-attested canonical blocks carry the identifier and at least 90% of those whose miner resolves resolve to the mapped pool, counting payout-attributed blocks for their pool. Counts and heights are as of generated_on; docs/attribution.md shows a query of this shape.",
+  "entries": [
+    {
+      "identifier": "0xe6d18fda214e5b9f350ffc7b6cf3058b9026e765",
+      "pool_slug": "foundry-usa",
+      "pool_canonical_name": "Foundry USA",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 26330,
+        "resolved_blocks": 26330,
+        "pool_blocks": 26330,
+        "first_height": 868130,
+        "last_height": 964319
+      }
+    },
+    {
+      "identifier": "0x4e3ecda72cb7961caa4b541b1e322bcfe0b5a030",
+      "pool_slug": "antpool",
+      "pool_canonical_name": "AntPool",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 26678,
+        "resolved_blocks": 26678,
+        "pool_blocks": 26296,
+        "first_height": 839748,
+        "last_height": 972223
+      },
+      "note": "The other 382 carrying blocks are Mining Squared blocks (2025-03-31 to 2026-04-07), which also declare the exSat account antpoole.sat."
+    },
+    {
+      "identifier": "0xe7ec323813c943336c579e238228a8ebd096a7e5",
+      "pool_slug": "f2pool",
+      "pool_canonical_name": "F2Pool",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 15963,
+        "resolved_blocks": 15963,
+        "pool_blocks": 15963,
+        "first_height": 832958,
+        "last_height": 972202
+      }
+    },
+    {
+      "identifier": "0x5997be5a09d05bb9bac27ec60419d0b373f32b20",
+      "pool_slug": "antpool",
+      "pool_canonical_name": "AntPool",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 10379,
+        "resolved_blocks": 10379,
+        "pool_blocks": 10378,
+        "first_height": 796556,
+        "last_height": 839736
+      }
+    },
+    {
+      "identifier": "0x96a6689031f48a857d344e1a42fdb272bb15d621",
+      "pool_slug": "spiderpool",
+      "pool_canonical_name": "SpiderPool",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 8421,
+        "resolved_blocks": 8421,
+        "pool_blocks": 8420,
+        "first_height": 826260,
+        "last_height": 972219
+      }
+    },
+    {
+      "identifier": "0x6a931d9de30a5f313a566775a135cf47d40c0ccd",
+      "pool_slug": "viabtc",
+      "pool_canonical_name": "ViaBTC",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 6699,
+        "resolved_blocks": 6699,
+        "pool_blocks": 6699,
+        "first_height": 907132,
+        "last_height": 972221
+      }
+    },
+    {
+      "identifier": "0xbdb2a04b4ccf74792cc6753c27c5fd5f1d6458bf",
+      "pool_slug": "f2pool",
+      "pool_canonical_name": "F2Pool",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 5199,
+        "resolved_blocks": 5199,
+        "pool_blocks": 5199,
+        "first_height": 777943,
+        "last_height": 832928
+      }
+    },
+    {
+      "identifier": "0x942c01262fa046fdb8ba0dfce3753405c74aed0e",
+      "pool_slug": "secpool",
+      "pool_canonical_name": "SecPool",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 4540,
+        "resolved_blocks": 4536,
+        "pool_blocks": 4536,
+        "first_height": 839663,
+        "last_height": 972178
+      },
+      "note": "From 895,755 (2025-05-08) SecPool blocks also declare the exSat account antpoole.sat."
+    },
+    {
+      "identifier": "0xf459cc4ca322d298304ff163b2a360d756c5db84",
+      "pool_slug": "luxor",
+      "pool_canonical_name": "Luxor",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 3930,
+        "resolved_blocks": 3930,
+        "pool_blocks": 3930,
+        "first_height": 839744,
+        "last_height": 972204
+      }
+    },
+    {
+      "identifier": "0x221456a6c24c9891680d295eb6bc57c6fb68e8f1",
+      "pool_slug": "binance-pool",
+      "pool_canonical_name": "Binance Pool",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 2870,
+        "resolved_blocks": 2870,
+        "pool_blocks": 2870,
+        "first_height": 839743,
+        "last_height": 972086
+      }
+    },
+    {
+      "identifier": "0xe45a362277420c1b31d6b9b16779418e79babb9f",
+      "pool_slug": "btc-com",
+      "pool_canonical_name": "BTC.com",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 1019,
+        "resolved_blocks": 1019,
+        "pool_blocks": 1019,
+        "first_height": 839761,
+        "last_height": 972119
+      }
+    },
+    {
+      "identifier": "0x0b5996b2e8a83bdb76300105f7d4c2a797996045",
+      "pool_slug": "white-pool",
+      "pool_canonical_name": "WhitePool",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 574,
+        "resolved_blocks": 574,
+        "pool_blocks": 574,
+        "first_height": 856296,
+        "last_height": 972185
+      }
+    },
+    {
+      "identifier": "0xe5db209a1e53c1a041d682b438db9b7a8a2a799c",
+      "pool_slug": "binance-pool",
+      "pool_canonical_name": "Binance Pool",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 505,
+        "resolved_blocks": 505,
+        "pool_blocks": 505,
+        "first_height": 827710,
+        "last_height": 839727
+      }
+    },
+    {
+      "identifier": "0x3d81f61600af32dd72a5ac21aaf1274a3862af6d",
+      "pool_slug": "ultimus-pool",
+      "pool_canonical_name": "Ultimus Pool",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 464,
+        "resolved_blocks": 464,
+        "pool_blocks": 464,
+        "first_height": 840319,
+        "last_height": 968574
+      }
+    },
+    {
+      "identifier": "0x6c51d0a14cf736ef54162903168e1231d1fbbf76",
+      "pool_slug": "foundry-usa",
+      "pool_canonical_name": "Foundry USA",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 316,
+        "resolved_blocks": 316,
+        "pool_blocks": 316,
+        "first_height": 866893,
+        "last_height": 867963
+      }
+    },
+    {
+      "identifier": "0x3c7b98aaed6ca05db422aa1d87ecc2c42947ccfe",
+      "pool_slug": "luxor",
+      "pool_canonical_name": "Luxor",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 316,
+        "resolved_blocks": 316,
+        "pool_blocks": 316,
+        "first_height": 827982,
+        "last_height": 839622
+      }
+    },
+    {
+      "identifier": "0xe5346b4b847dd74d6586c5528c075b6c0dbd63db",
+      "pool_slug": "btc-com",
+      "pool_canonical_name": "BTC.com",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 200,
+        "resolved_blocks": 200,
+        "pool_blocks": 200,
+        "first_height": 827945,
+        "last_height": 839737
+      }
+    },
+    {
+      "identifier": "0x89cb67f872a92783a7bf9e193f275e4d67602246",
+      "pool_slug": "redrock-pool",
+      "pool_canonical_name": "RedRock Pool",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 70,
+        "resolved_blocks": 70,
+        "pool_blocks": 70,
+        "first_height": 910338,
+        "last_height": 958236
+      }
+    },
+    {
+      "identifier": "0x2e50087fb834747606ed01ad67ad0f32129ab431",
+      "pool_slug": "foundry-usa",
+      "pool_canonical_name": "Foundry USA",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 51,
+        "resolved_blocks": 51,
+        "pool_blocks": 51,
+        "first_height": 867964,
+        "last_height": 868133
+      }
+    },
+    {
+      "identifier": "0x9941346ede3bbe6e918b6f6cfee8c353edc46c2d",
+      "pool_slug": "ultimus-pool",
+      "pool_canonical_name": "Ultimus Pool",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 46,
+        "resolved_blocks": 46,
+        "pool_blocks": 46,
+        "first_height": 828571,
+        "last_height": 839652
+      }
+    },
+    {
+      "identifier": "0xf3d98112ccc69a22d6b2580178b538eec66a4844",
+      "pool_slug": "bitfufu",
+      "pool_canonical_name": "BitFuFu",
+      "evidence": {
+        "basis": "empirical_association",
+        "carrying_blocks": 31,
+        "resolved_blocks": 31,
+        "pool_blocks": 31,
+        "first_height": 872580,
+        "last_height": 894245
+      }
+    }
+  ]
+}

@@ -170,6 +170,36 @@ pub async fn upsert_identity_registry(
     .await
 }
 
+/// Make `namespace`'s `pool_identity` rows equal `entries`, remapping changed identifiers and
+/// deleting unlisted ones. Only for namespaces no attribution row references, whose pools are
+/// resolved at read time.
+pub async fn reconcile_identity_registry(
+    client: &Client,
+    namespace: &str,
+    entries: &[IdentityRegistryEntry<'_>],
+    pool_ids_by_slug: &mut HashMap<String, i64>,
+) -> Result<()> {
+    upsert_identity_registry(
+        client,
+        namespace,
+        namespace,
+        entries,
+        true,
+        "",
+        pool_ids_by_slug,
+    )
+    .await?;
+    let listed: Vec<&str> = entries.iter().map(|entry| entry.identifier).collect();
+    client
+        .execute(
+            "DELETE FROM pool_identity WHERE namespace = $1 AND identifier <> ALL($2::text[])",
+            &[&namespace, &listed],
+        )
+        .await
+        .with_context(|| format!("delete unlisted {namespace} pool identities"))?;
+    Ok(())
+}
+
 /// Load `pool_identity` rows for `namespaces` into a `(namespace, identifier)` lookup.
 pub async fn load_pool_identities_by_namespace<C: GenericClient>(
     client: &C,
