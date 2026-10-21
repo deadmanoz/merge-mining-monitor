@@ -10,6 +10,7 @@ use bitcoin::hashes::Hash as _;
 use tokio_postgres::{Client, GenericClient, Transaction};
 use tracing::debug;
 
+use crate::pending_cascade::PendingCascade;
 use crate::source_health_sql::ParentContribution;
 use mmm_bitcoin_core::BitcoinCoreBlockCoinbase;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
@@ -159,32 +160,34 @@ pub(crate) enum PrimaryDiff<'a> {
 #[must_use = "a committed read-model mutation must cascade its dependents; call .cascade()"]
 pub struct CommittedParentMutation {
     changed_hashes: Vec<Vec<u8>>,
+    /// Holds live-producer shutdown off until [`cascade`](Self::cascade) returns.
+    _pending: PendingCascade,
 }
 
 impl CommittedParentMutation {
+    /// Build immediately before `commit()`, so a drop mid-commit is still fenced.
+    fn before_commit(changed_hashes: Vec<Vec<u8>>) -> Self {
+        Self {
+            changed_hashes,
+            _pending: PendingCascade::open(),
+        }
+    }
+
     /// Reconcile dependents of the committed change under `DEFAULT_CASCADE_BUDGET`.
     pub async fn cascade(
         self,
         client: &mut Client,
         classifier: &ConfiguredParentClassifier,
     ) -> Result<()> {
-        cascade_changed(
+        cascade_changed_with_nbits_table(
             client,
             classifier,
             self.changed_hashes,
             DEFAULT_CASCADE_BUDGET,
+            None,
         )
         .await
     }
-}
-
-async fn cascade_changed(
-    client: &mut Client,
-    classifier: &ConfiguredParentClassifier,
-    changed_hashes: Vec<Vec<u8>>,
-    cascade_budget: usize,
-) -> Result<()> {
-    cascade_changed_with_nbits_table(client, classifier, changed_hashes, cascade_budget, None).await
 }
 
 async fn cascade_changed_with_nbits_table(
@@ -384,7 +387,7 @@ where
     F: AsyncFn(&Transaction<'_>, i64, &MergeMiningEventPayload) -> Result<CaptureWrite>,
 {
     let mut attempts = 0;
-    let (outcome, changed_hashes) = loop {
+    let (outcome, committed) = loop {
         let txn = client
             .transaction()
             .await
@@ -397,10 +400,11 @@ where
             None => {}
             Some(refused @ CaptureOutcome::NotBitcoin { .. }) => {
                 let changed = lineage_gate::retract_child_block(&txn, source_id, payload).await?;
+                let committed = CommittedParentMutation::before_commit(changed);
                 txn.commit()
                     .await
                     .with_context(|| format!("commit {chain_label} retraction"))?;
-                break (refused, changed);
+                break (refused, committed);
             }
             Some(refused) => {
                 txn.rollback()
@@ -435,10 +439,11 @@ where
         match reconcile_result {
             Ok(changed_hashes) => {
                 bracket.close(&txn).await?;
+                let committed = CommittedParentMutation::before_commit(changed_hashes);
                 txn.commit()
                     .await
                     .with_context(|| format!("commit {chain_label} capture transaction"))?;
-                break (CaptureOutcome::Written(write), changed_hashes);
+                break (CaptureOutcome::Written(write), committed);
             }
             Err(err) if is_reconcile_lock_set_changed(&err) && attempts + 1 < retry_attempts() => {
                 txn.rollback().await.with_context(|| {
@@ -452,7 +457,7 @@ where
             }
         }
     };
-    cascade_changed(client, classifier, changed_hashes, DEFAULT_CASCADE_BUDGET).await?;
+    committed.cascade(client, classifier).await?;
     Ok(outcome)
 }
 
@@ -490,7 +495,7 @@ pub(crate) async fn set_event_revocation(
     let op = change.op();
     let now = mmm_capture::capture::now_epoch_seconds()?;
     let mut attempt = 0;
-    let changed_hashes = loop {
+    let committed = loop {
         let retry_available = attempt + 1 < retry_attempts();
         let txn = client
             .transaction()
@@ -525,10 +530,11 @@ pub(crate) async fn set_event_revocation(
         {
             Ok(hashes) => {
                 bracket.close(&txn).await?;
+                let committed = CommittedParentMutation::before_commit(hashes);
                 txn.commit()
                     .await
                     .with_context(|| format!("commit {op} reconcile"))?;
-                break hashes;
+                break committed;
             }
             Err(err) if is_reconcile_lock_set_changed(&err) && retry_available => {
                 txn.rollback()
@@ -543,7 +549,7 @@ pub(crate) async fn set_event_revocation(
             }
         }
     };
-    cascade_changed(client, classifier, changed_hashes, DEFAULT_CASCADE_BUDGET).await
+    committed.cascade(client, classifier).await
 }
 
 async fn apply_revocation_change(
@@ -604,7 +610,7 @@ where
     F: AsyncFn(&Transaction<'_>) -> Result<()>,
 {
     let mut attempts = 0;
-    let changed_hashes = loop {
+    let committed = loop {
         let txn = client
             .transaction()
             .await
@@ -638,10 +644,11 @@ where
         };
         match reconcile_result {
             Ok(changed_hashes) => {
+                let committed = CommittedParentMutation::before_commit(changed_hashes);
                 txn.commit()
                     .await
                     .with_context(|| format!("commit {label} transaction"))?;
-                break changed_hashes;
+                break committed;
             }
             Err(err) if is_reconcile_lock_set_changed(&err) && attempts + 1 < retry_attempts() => {
                 txn.rollback().await.with_context(|| {
@@ -655,7 +662,8 @@ where
             }
         }
     };
-    cascade_changed(client, classifier, changed_hashes, DEFAULT_CASCADE_BUDGET)
+    committed
+        .cascade(client, classifier)
         .await
         .with_context(|| {
             format!(
@@ -727,12 +735,12 @@ where
         upsert_core_canonical_header_with_coinbase(txn, write.header, write.height, write.coinbase)
             .await?;
         in_txn_extra(txn).await?;
-        bracket.close(txn).await
+        bracket.close(txn).await?;
+        Ok(CommittedParentMutation::before_commit(vec![
+            hash_bytes.clone(),
+        ]))
     })
-    .await?;
-    Ok(CommittedParentMutation {
-        changed_hashes: vec![hash_bytes],
-    })
+    .await
 }
 
 /// Locally revoke one merge-mining event and reconcile its parent read model in the same transaction.

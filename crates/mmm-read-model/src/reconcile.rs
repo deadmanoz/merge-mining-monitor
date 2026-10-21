@@ -53,6 +53,8 @@ pub(crate) async fn drain_reconcile_queue(
     budget: Option<usize>,
     nbits_table: Option<&mmm_capture::nbits_table::NbitsTable>,
 ) -> Result<ReconcileStats> {
+    // Each item commits on its own and the queue lives only in memory.
+    let _pending = crate::pending_cascade::PendingCascade::open();
     let mut stats = ReconcileStats {
         parents_reconciled: 0,
         descendants_reconciled: 0,
