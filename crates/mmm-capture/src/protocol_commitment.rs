@@ -101,9 +101,6 @@ pub fn decode_protocol_commitments(outputs: &[TxOut]) -> Vec<ProtocolCommitment>
             }
             let script = output.script_pubkey.as_bytes();
             let (protocol, version_at) = recognize(script)?;
-            if protocol == CommitmentProtocol::Core && vout == 0 {
-                return None;
-            }
             let status = match script.get(version_at) {
                 None => DecodeStatus::Malformed(MalformedReason::Truncated),
                 Some(&SUPPORTED_VERSION) => match protocol {
@@ -125,7 +122,7 @@ pub fn decode_protocol_commitments(outputs: &[TxOut]) -> Vec<ProtocolCommitment>
     // Core DAO takes the first CORE output from vout 1 that passes its check.
     if let Some(selected) = commitments
         .iter_mut()
-        .find(|c| c.upstream_selected.is_some() && core_dao_reads(&c.script))
+        .find(|c| c.upstream_selected.is_some() && c.vout > 0 && core_dao_reads(&c.script))
     {
         selected.upstream_selected = Some(true);
     }
@@ -301,11 +298,6 @@ mod tests {
     fn classifies_layout_edges() {
         let payload = format!("{VALIDATOR}{ANTPOOL_REWARD}");
         let core_script = format!("6a2d434f524501{payload}");
-        assert_eq!(
-            classify_one(0, &core_script),
-            None,
-            "Core DAO never reads vout 0"
-        );
         let cases = [
             (
                 format!("{core_script}{}", "11".repeat(32)),
@@ -347,7 +339,14 @@ mod tests {
     fn marks_the_core_output_core_dao_reads() {
         let core_script = format!("6a2d434f524501{VALIDATOR}{ANTPOOL_REWARD}");
         let version_2 = format!("6a2d434f524502{VALIDATOR}{ANTPOOL_REWARD}");
-        let outputs = ["", &version_2, &core_script, &core_script, EXSAT_ANT].map(|script| TxOut {
+        let outputs = [
+            &core_script,
+            &version_2,
+            &core_script,
+            &core_script,
+            EXSAT_ANT,
+        ]
+        .map(|script| TxOut {
             script_pubkey: ScriptBuf::from_bytes(hex::decode(script).unwrap()),
             ..TxOut::NULL
         });
@@ -356,7 +355,8 @@ mod tests {
             .map(|c| c.upstream_selected);
         assert_eq!(
             selected.collect::<Vec<_>>(),
-            [Some(false), Some(true), Some(false), None]
+            [Some(false), Some(false), Some(true), Some(false), None],
+            "vout 0 is kept but never selected"
         );
         let nested = &fixture_commitments(853_776)[0];
         assert_eq!(
