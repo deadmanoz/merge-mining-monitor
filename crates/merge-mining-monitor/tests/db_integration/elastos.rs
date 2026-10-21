@@ -241,8 +241,8 @@ async fn a_foreign_parent_retracts_only_its_own_blocks_event() -> Result<()> {
                 parent_hash: hash_bytes(0x5b01),
                 prev_hash: hash_bytes(0x5b00),
                 parent_time: 1_800_000_000,
-                kind: "near",
-                pow_validates_btc_target: false,
+                kind: "unknown",
+                pow_validates_btc_target: true,
                 btc_height: None,
                 pool_id: None,
             },
@@ -261,7 +261,7 @@ async fn a_foreign_parent_retracts_only_its_own_blocks_event() -> Result<()> {
         let block_hash = block.reconstruct()?.block_hash.to_byte_array().to_vec();
         let mut expected = vec![
             (block_hash, "non_bitcoin_parent".to_owned(), false, false),
-            (sibling_hash.clone(), "near".to_owned(), true, true),
+            (sibling_hash.clone(), "evidence".to_owned(), false, true),
         ];
         expected.sort();
         assert_eq!(
@@ -286,8 +286,9 @@ async fn a_foreign_parent_retracts_only_its_own_blocks_event() -> Result<()> {
         );
         let sibling = client
             .query_one(
-                "SELECT revoked_at, child_displaced_by FROM merge_mining_event \
-                 WHERE source_id = $1 AND child_height = $2 AND child_block_hash = $3",
+                "SELECT e.revoked_at, o.child_displaced_by FROM merge_mining_event e \
+                 JOIN child_block_observation o ON o.id = e.observation_id \
+                 WHERE e.source_id = $1 AND e.child_height = $2 AND e.child_block_hash = $3",
                 &[&context.source_id(), &height, &sibling_hash],
             )
             .await?;
@@ -480,8 +481,9 @@ async fn reclassify_pools_reresolves_existing_elastos_minerinfo_without_rpc() ->
 
         let row = client
             .query_one(
-                "SELECT a.pool_id, a.pool_identity_id, a.source, e.child_miner_pool_id \
+                "SELECT a.pool_id, a.pool_identity_id, a.source, o.child_pool_id \
                  FROM event_pool_attribution a JOIN merge_mining_event e ON e.id = a.event_id \
+                 JOIN child_block_observation o ON o.id = e.observation_id \
                  WHERE a.event_id = $1 AND a.namespace = $2 AND a.matched_value = '🐟'",
                 &[&event_id, &ELASTOS_MINERINFO_NAMESPACE],
             )
@@ -574,25 +576,31 @@ async fn clear_exact_event_height(
 async fn seed_hashless_copy_of_block(client: &Client, source_id: i64, height: i32) -> Result<()> {
     client
         .execute(
-            "WITH hashless AS ( \
-                INSERT INTO merge_mining_event ( \
-                    source_id, child_height, child_block_time, btc_parent_header_hash, \
+            "WITH exact AS ( \
+                SELECT e.*, o.child_block_time FROM merge_mining_event e \
+                JOIN child_block_observation o ON o.id = e.observation_id \
+                WHERE e.source_id = $1 AND e.child_height = $2 AND e.child_block_hash IS NOT NULL \
+             ), hashless AS ( \
+                INSERT INTO child_block_observation ( \
+                    source_id, child_height, observation_kind, child_block_time, \
+                    btc_parent_header_hash, recorded_at \
+                ) \
+                SELECT source_id, child_height, 'evidence', child_block_time, \
+                       btc_parent_header_hash, 1 \
+                FROM exact \
+                RETURNING id \
+             ) \
+             INSERT INTO merge_mining_event ( \
+                source_id, child_height, btc_parent_header_hash, \
+                btc_parent_prev_header_hash, btc_parent_header_bytes, btc_parent_header_time, \
+                btc_parent_height, btc_parent_kind, pow_validates_btc_target, \
+                discovered_at, confirmed_at, observation_id \
+             ) \
+             SELECT source_id, child_height, btc_parent_header_hash, \
                     btc_parent_prev_header_hash, btc_parent_header_bytes, btc_parent_header_time, \
                     btc_parent_height, btc_parent_kind, pow_validates_btc_target, \
-                    discovered_at, confirmed_at \
-                ) \
-                SELECT source_id, child_height, child_block_time, btc_parent_header_hash, \
-                       btc_parent_prev_header_hash, btc_parent_header_bytes, btc_parent_header_time, \
-                       btc_parent_height, btc_parent_kind, pow_validates_btc_target, \
-                       discovered_at, confirmed_at \
-                FROM merge_mining_event \
-                WHERE source_id = $1 AND child_height = $2 AND child_block_hash IS NOT NULL \
-                RETURNING source_id, child_height, btc_parent_header_hash \
-             ) \
-             INSERT INTO child_block_observation ( \
-                source_id, child_height, observation_kind, btc_parent_header_hash, recorded_at \
-             ) \
-             SELECT source_id, child_height, 'evidence', btc_parent_header_hash, 1 FROM hashless",
+                    discovered_at, confirmed_at, (SELECT id FROM hashless) \
+             FROM exact",
             &[&source_id, &height],
         )
         .await

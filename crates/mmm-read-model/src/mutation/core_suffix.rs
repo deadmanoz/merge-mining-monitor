@@ -807,7 +807,6 @@ async fn expand_core_reconcile_work(
                  SELECT e.btc_parent_header_hash AS dependent_hash \
                  FROM merge_mining_event e \
                  WHERE e.btc_parent_prev_header_hash = $1 \
-                   AND e.btc_parent_kind <> 'near' \
                    AND e.pow_validates_btc_target \
                    AND e.revoked_at IS NULL \
                  UNION \

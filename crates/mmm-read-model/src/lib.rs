@@ -97,7 +97,7 @@ struct MergeMiningEvent {
 
 impl MergeMiningEvent {
     fn skips_parent_read_model(&self) -> bool {
-        self.btc_parent_kind == ParentKind::Near || !self.pow_validates_btc_target
+        !self.pow_validates_btc_target
     }
 }
 
@@ -542,7 +542,7 @@ pub(crate) fn classifier_progress(
     }
 }
 
-/// Keyset-paginated full rescan of non-`near` events within the optional height/source window.
+/// Keyset-paginated full rescan of events within the optional height/source window.
 async fn run_reconcile_all_read_model(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -564,8 +564,7 @@ async fn run_reconcile_all_read_model(
             .query(
                 "SELECT id, COALESCE(child_height::bigint, 2147483648::bigint) AS sort_child_height \
                  FROM merge_mining_event \
-                 WHERE btc_parent_kind <> 'near' \
-                   AND ($1::int IS NULL OR child_height >= $1) \
+                 WHERE ($1::int IS NULL OR child_height >= $1) \
                    AND ($2::int IS NULL OR child_height <= $2) \
                    AND ($3::bigint IS NULL OR source_id = $3) \
                    AND ($5::bigint IS NULL OR (COALESCE(child_height::bigint, 2147483648::bigint), id) > ($5::bigint, $6::bigint)) \

@@ -320,15 +320,20 @@ async fn insert_event_with_real_parent_header(
     let parent_time = header.time as i64;
     Ok(client
         .query_one(
-            "INSERT INTO merge_mining_event ( \
-                source_id, child_height, child_block_hash, child_block_time, \
+            "WITH o AS ( \
+                 INSERT INTO child_block_observation ( \
+                     source_id, child_height, child_block_hash, observation_kind, \
+                     child_block_time, pow_validates_child_target, btc_parent_header_hash, \
+                     recorded_at \
+                 ) VALUES ($1, $2, $3, 'evidence', $4, TRUE, $5, $8) \
+                 RETURNING id) \
+             INSERT INTO merge_mining_event ( \
+                source_id, child_height, child_block_hash, \
                 btc_parent_header_hash, btc_parent_prev_header_hash, btc_parent_header_bytes, \
                 btc_parent_header_time, btc_parent_height, btc_parent_kind, \
-                pow_validates_btc_target, pow_validates_child_target, \
-                discovered_at, confirmed_at \
-             ) VALUES ( \
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE, TRUE, $8, $8 \
-             ) RETURNING id",
+                pow_validates_btc_target, discovered_at, confirmed_at, observation_id \
+             ) SELECT $1, $2, $3, $5, $6, $7, $8, $9, $10, TRUE, $8, $8, o.id FROM o \
+             RETURNING id",
             &[
                 &source_id,
                 &child_height,

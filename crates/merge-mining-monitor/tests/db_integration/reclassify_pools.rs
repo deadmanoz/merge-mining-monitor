@@ -13,15 +13,14 @@ use mmm_capture::child_payout::{
 };
 use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, SYSCOIN_SOURCE_CODE};
 use mmm_producers::{ReclassifyPoolsConfig, ReclassifyPoolsStats, run_reclassify_pools};
-use mmm_store::{
-    CaptureWrite, get_source_id, upsert_event_pool_attributions,
-    upsert_merge_mining_event_with_attributions, write_capture,
-};
+use mmm_store::{CaptureWrite, get_source_id, upsert_event_pool_attributions};
 use serde_json::json;
 use tokio_postgres::Client;
 
-use crate::support::seed::{child_reward_rows, insert_pool_identity, pool_id_for_slug};
-use crate::support::{default_pool_snapshot, parse_auxpow_fixture};
+use crate::support::seed::{
+    EventSeed, child_reward_rows, insert_event, insert_pool_identity, pool_id_for_slug,
+};
+use crate::support::{default_pool_snapshot, event_id_of, parse_auxpow_fixture};
 
 fn parent_pool_attributions(pool_id: i64) -> ResolvedPoolAttributions {
     ResolvedPoolAttributions {
@@ -90,7 +89,8 @@ async fn run_reclassify_pools_overwrite(client: &mut Client) -> Result<Reclassif
 async fn set_child_outputs(client: &Client, event_id: i64, outputs: Vec<u8>) -> Result<()> {
     client
         .execute(
-            "UPDATE merge_mining_event SET child_coinbase_outputs = $2 WHERE id = $1",
+            "UPDATE child_block_observation SET child_coinbase_outputs = $2 \
+             WHERE id = (SELECT observation_id FROM merge_mining_event WHERE id = $1)",
             &[&event_id, &Some(outputs)],
         )
         .await?;
@@ -134,7 +134,7 @@ impl NamecoinEventSeed {
     }
 }
 
-async fn insert_namecoin_event(client: &Client, seed: NamecoinEventSeed) -> Result<i64> {
+async fn insert_namecoin_event(client: &mut Client, seed: NamecoinEventSeed) -> Result<i64> {
     let parsed = parse_auxpow_fixture("500000-valid-parent")?;
     let mut header = parsed.parent_header.header;
     header.nonce = header.nonce.wrapping_add(seed.nonce_bump);
@@ -157,11 +157,7 @@ async fn insert_namecoin_event(client: &Client, seed: NamecoinEventSeed) -> Resu
     payload.btc_parent_coinbase_outputs = seed.parent_coinbase_outputs;
     payload.child_coinbase_script = seed.child_coinbase_script;
     payload.child_coinbase_outputs = None;
-    Ok(
-        upsert_merge_mining_event_with_attributions(client, seed.source_id, &payload)
-            .await?
-            .event_id,
-    )
+    event_id_of(crate::support::write_capture_committed(client, seed.source_id, &payload).await?)
 }
 
 #[tokio::test]
@@ -193,7 +189,7 @@ async fn reclassify_pools_reattributes_a_near_observation_after_a_registry_entry
         near.btc_parent_coinbase_script =
             Some(b"\x03\x01\x02\x03/SpiderPool/837/\x00\x00".to_vec());
         let CaptureWrite::Near { observation_id } =
-            write_capture(&client, source_id, &near).await?
+            crate::support::write_capture_committed(&mut client, source_id, &near).await?
         else {
             anyhow::bail!("the fixture parent must be a near");
         };
@@ -219,7 +215,7 @@ async fn reclassify_pools_reattributes_a_near_observation_after_a_registry_entry
         assert_eq!(again.observation_pool_updates, 0);
 
         // A poller still holding the old registry recaptures the near.
-        write_capture(&client, source_id, &near).await?;
+        crate::support::write_capture_committed(&mut client, source_id, &near).await?;
         let child_pool: Option<i64> = client
             .query_one(
                 "SELECT child_pool_id FROM child_block_observation WHERE id = $1",
@@ -240,7 +236,7 @@ async fn reclassify_pools_reattributes_a_near_observation_after_a_registry_entry
         second_payout.pool_id = Some(spiderpool);
         conflicting.pool_attributions[0].pool_id = Some(f2pool);
         conflicting.pool_attributions.push(second_payout);
-        write_capture(&client, source_id, &conflicting).await?;
+        crate::support::write_capture_committed(&mut client, source_id, &conflicting).await?;
         let child_pool: Option<i64> = client
             .query_one(
                 "SELECT child_pool_id FROM child_block_observation WHERE id = $1",
@@ -261,7 +257,7 @@ async fn reclassify_pools_fills_parent_pool_from_tag_and_outputs() -> Result<()>
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         let script = b"\x03\x01\x02\x03/SpiderPool/837/\x00\x00".to_vec();
         let tag_event_id = insert_namecoin_event(
-            &client,
+            &mut client,
             NamecoinEventSeed {
                 parent_coinbase_script: Some(script),
                 ..NamecoinEventSeed::new(source_id, 500_100, 0xa1, 7)
@@ -281,7 +277,7 @@ async fn reclassify_pools_fills_parent_pool_from_tag_and_outputs() -> Result<()>
         let outputs_bytes = serialize(&outputs);
         let script = b"\x03\xde\xad\xbe/no-such-pool-tag/".to_vec();
         let outputs_event_id = insert_namecoin_event(
-            &client,
+            &mut client,
             NamecoinEventSeed {
                 parent_coinbase_script: Some(script),
                 parent_coinbase_outputs: Some(outputs_bytes),
@@ -319,7 +315,7 @@ async fn reclassify_pools_overwrite_reattributes_existing_btc_coinbase_pool() ->
         let spiderpool_id = pool_id_for_slug(&client, "spiderpool").await?;
 
         let event_id = insert_namecoin_event(
-            &client,
+            &mut client,
             NamecoinEventSeed {
                 resolved_pools: parent_pool_attributions(antpool_id),
                 parent_coinbase_script: Some(b"\x03\x01\x02\x03/SpiderPool/702/\x00".to_vec()),
@@ -330,7 +326,7 @@ async fn reclassify_pools_overwrite_reattributes_existing_btc_coinbase_pool() ->
 
         // Same resolved pool, but stale provenance tuple (`test_seed` vs `coinbase_tag`).
         let stale_same_pool_event_id = insert_namecoin_event(
-            &client,
+            &mut client,
             NamecoinEventSeed {
                 resolved_pools: parent_pool_attributions(spiderpool_id),
                 parent_coinbase_script: Some(b"\x03\x01\x02\x03/SpiderPool/702/\x00".to_vec()),
@@ -379,7 +375,7 @@ async fn reclassify_pools_fills_child_tag_and_payout_from_outputs() -> Result<()
         )
         .await?;
         let namecoin_event_id = insert_namecoin_event(
-            &client,
+            &mut client,
             NamecoinEventSeed {
                 child_coinbase_script: Some(b"\x03\x01\x02\x03/SpiderPool/513/\x00".to_vec()),
                 ..NamecoinEventSeed::new(namecoin, 500_410, 0xf2, 38)
@@ -389,7 +385,7 @@ async fn reclassify_pools_fills_child_tag_and_payout_from_outputs() -> Result<()
         set_child_outputs(&client, namecoin_event_id, child_outputs.clone()).await?;
 
         let syscoin_event_id = insert_namecoin_event(
-            &client,
+            &mut client,
             NamecoinEventSeed {
                 child_coinbase_script: Some(b"\x03\x01\x02\x03/no-child-tag/".to_vec()),
                 ..NamecoinEventSeed::new(syscoin, 2_248_410, 0xf7, 43)
@@ -453,34 +449,23 @@ async fn reclassify_pools_never_alters_rsk_miner_address_attribution() -> Result
         let rsk_source_id = get_source_id(&client, "auxpow:rsk").await?;
         let parent_hash: Vec<u8> = vec![0xb1; 32];
         let prev_hash: Vec<u8> = vec![0xb0; 32];
-        let header_bytes: Vec<u8> = vec![0x00; 80];
         let child_block_hash: Vec<u8> = vec![0xc1; 32];
-        let event_id: i64 = client
-            .query_one(
-                "INSERT INTO merge_mining_event ( \
-                    source_id, child_height, child_block_hash, child_block_time, \
-                    btc_parent_header_hash, btc_parent_prev_header_hash, \
-                    btc_parent_header_bytes, btc_parent_header_time, \
-                    btc_parent_kind, pow_validates_btc_target, pow_validates_child_target, \
-                    btc_parent_coinbase_script, child_coinbase_script, \
-                    discovered_at, confirmed_at \
-                 ) VALUES ( \
-                    $1, $2, $3, $4, $5, $6, $7, $8, 'unknown', true, false, \
-                    NULL, NULL, 10, 20 \
-                 ) RETURNING id",
-                &[
-                    &rsk_source_id,
-                    &600_000_i32,
-                    &child_block_hash,
-                    &1_700_000_000_i64,
-                    &parent_hash,
-                    &prev_hash,
-                    &header_bytes,
-                    &1_700_000_000_i64,
-                ],
-            )
-            .await?
-            .get(0);
+        let event_id = insert_event(
+            &client,
+            EventSeed {
+                source_id: rsk_source_id,
+                child_height: 600_000,
+                child_hash: child_block_hash,
+                parent_hash,
+                prev_hash,
+                parent_time: 1_700_000_000,
+                kind: "unknown",
+                pow_validates_btc_target: true,
+                btc_height: None,
+                pool_id: None,
+            },
+        )
+        .await?;
         upsert_event_pool_attributions(
             &client,
             event_id,
@@ -532,7 +517,7 @@ async fn source_filter_scopes_main_scan_to_one_source() -> Result<()> {
         let spiderpool_id = pool_id_for_slug(&client, "spiderpool").await?;
 
         let namecoin_event_id = insert_namecoin_event(
-            &client,
+            &mut client,
             NamecoinEventSeed {
                 parent_coinbase_script: Some(b"\x03\x01\x02\x03/SpiderPool/901/\x00".to_vec()),
                 ..NamecoinEventSeed::new(namecoin, 500_900, 0xd1, 61)
@@ -540,7 +525,7 @@ async fn source_filter_scopes_main_scan_to_one_source() -> Result<()> {
         )
         .await?;
         let syscoin_event_id = insert_namecoin_event(
-            &client,
+            &mut client,
             NamecoinEventSeed {
                 parent_coinbase_script: Some(b"\x03\x01\x02\x03/SpiderPool/902/\x00".to_vec()),
                 ..NamecoinEventSeed::new(syscoin, 2_500_902, 0xd2, 62)

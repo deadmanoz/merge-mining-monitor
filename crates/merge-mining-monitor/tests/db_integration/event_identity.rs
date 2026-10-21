@@ -36,13 +36,13 @@ fn partial_payload(child_height: i32, observed_at: i64) -> Result<MergeMiningEve
 }
 
 #[tokio::test]
-async fn migration_pairs_child_displacement_and_rejects_self_displacement() -> Result<()> {
+async fn observation_displacement_pairs_and_rejects_self_displacement() -> Result<()> {
     crate::run_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         let payload = exact_payload(1_020, 2_020)?;
-        let event_id = upsert_merge_mining_event(&client, source_id, &payload)
+        let observation_id = upsert_merge_mining_event(&client, source_id, &payload)
             .await?
-            .event_id;
+            .observation_id;
         let own_hash = payload
             .child_block_hash
             .as_ref()
@@ -50,41 +50,26 @@ async fn migration_pairs_child_displacement_and_rejects_self_displacement() -> R
             .clone();
         let other_hash = vec![0x11u8; 32];
 
-        // 0022 adds the constraints NOT VALID; 0023 must have validated them.
-        let validated: Vec<bool> = client
-            .query(
-                "SELECT convalidated FROM pg_constraint \
-                 WHERE conrelid = 'merge_mining_event'::regclass \
-                   AND conname LIKE 'chk_mme_child_displace%' \
-                 ORDER BY conname",
-                &[],
-            )
-            .await?
-            .iter()
-            .map(|row| row.get(0))
-            .collect();
-        assert_eq!(validated, vec![true, true, true]);
-
         // The pair constraint: a time without a displacing hash is rejected.
         let half_set = client
             .execute(
-                "UPDATE merge_mining_event SET child_displaced_at = 3_000 WHERE id = $1",
-                &[&event_id],
+                "UPDATE child_block_observation SET child_displaced_at = 3_000 WHERE id = $1",
+                &[&observation_id],
             )
             .await
             .expect_err("child_displaced_at without child_displaced_by must be rejected");
         assert_eq!(
             half_set.as_db_error().and_then(|error| error.constraint()),
-            Some("chk_mme_child_displacement_pair")
+            Some("chk_cbo_child_displacement_pair")
         );
 
         // A block is never displaced by itself.
         let self_displaced = client
             .execute(
-                "UPDATE merge_mining_event \
+                "UPDATE child_block_observation \
                  SET child_displaced_at = 3_000, child_displaced_by = $2 \
                  WHERE id = $1",
-                &[&event_id, &own_hash],
+                &[&observation_id, &own_hash],
             )
             .await
             .expect_err("a block displaced by its own hash must be rejected");
@@ -92,36 +77,35 @@ async fn migration_pairs_child_displacement_and_rejects_self_displacement() -> R
             self_displaced
                 .as_db_error()
                 .and_then(|error| error.constraint()),
-            Some("chk_mme_child_displaced_by_other_block")
+            Some("chk_cbo_child_displaced_by_other_block")
         );
 
         // A different 32-byte hash plus a time is the valid displaced state, and
         // clearing both together returns the row to not displaced.
         client
             .execute(
-                "UPDATE merge_mining_event \
+                "UPDATE child_block_observation \
                  SET child_displaced_at = 3_000, child_displaced_by = $2 \
                  WHERE id = $1",
-                &[&event_id, &other_hash],
+                &[&observation_id, &other_hash],
             )
             .await?;
         let row = client
             .query_one(
-                "SELECT child_displaced_at, child_displaced_by, revoked_at \
-                 FROM merge_mining_event WHERE id = $1",
-                &[&event_id],
+                "SELECT child_displaced_at, child_displaced_by \
+                 FROM child_block_observation WHERE id = $1",
+                &[&observation_id],
             )
             .await?;
         assert_eq!(row.get::<_, Option<i64>>(0), Some(3_000));
         assert_eq!(row.get::<_, Option<Vec<u8>>>(1), Some(other_hash));
-        assert_eq!(row.get::<_, Option<i64>>(2), None);
 
         client
             .execute(
-                "UPDATE merge_mining_event \
+                "UPDATE child_block_observation \
                  SET child_displaced_at = NULL, child_displaced_by = NULL \
                  WHERE id = $1",
-                &[&event_id],
+                &[&observation_id],
             )
             .await?;
         Ok::<_, anyhow::Error>(())
@@ -329,8 +313,8 @@ async fn partial_observation_fills_and_checks_an_exact_events_child_header() -> 
         assert_eq!(partial_outcome.event_id, exact_outcome.event_id);
         let stored: Option<Vec<u8>> = client
             .query_one(
-                "SELECT child_header_bytes FROM merge_mining_event WHERE id = $1",
-                &[&exact_outcome.event_id],
+                "SELECT child_header_bytes FROM child_block_observation WHERE id = $1",
+                &[&exact_outcome.observation_id],
             )
             .await?
             .get(0);
@@ -344,7 +328,7 @@ async fn partial_observation_fills_and_checks_an_exact_events_child_header() -> 
         assert!(
             error
                 .to_string()
-                .contains("partial child evidence contradicts existing exact observation")
+                .contains("event observation contradicts the stored child evidence")
         );
         Ok::<_, anyhow::Error>(())
     })
@@ -386,11 +370,12 @@ async fn exact_observation_promotes_existing_partial_observation() -> Result<()>
         );
         let row = client
             .query_one(
-                "SELECT child_block_hash, child_header_bytes, child_block_time, child_nbits, \
-                        btc_parent_coinbase_txid, btc_parent_coinbase_script, \
-                        btc_parent_coinbase_outputs, aux_merkle_proof, \
-                        pow_validates_child_target \
-                 FROM merge_mining_event WHERE id = $1",
+                "SELECT e.child_block_hash, o.child_header_bytes, o.child_block_time, \
+                        o.child_nbits, e.btc_parent_coinbase_txid, e.btc_parent_coinbase_script, \
+                        e.btc_parent_coinbase_outputs, e.aux_merkle_proof, \
+                        o.pow_validates_child_target \
+                 FROM merge_mining_event e \
+                 JOIN child_block_observation o ON o.id = e.observation_id WHERE e.id = $1",
                 &[&exact_outcome.event_id],
             )
             .await?;
@@ -436,8 +421,8 @@ async fn exact_observation_fills_and_checks_the_child_target_verdict() -> Result
         assert_eq!(refined_outcome.event_id, initial_outcome.event_id);
         let stored: Option<bool> = client
             .query_one(
-                "SELECT pow_validates_child_target FROM merge_mining_event WHERE id = $1",
-                &[&initial_outcome.event_id],
+                "SELECT pow_validates_child_target FROM child_block_observation WHERE id = $1",
+                &[&initial_outcome.observation_id],
             )
             .await?
             .get(0);
@@ -447,7 +432,11 @@ async fn exact_observation_fills_and_checks_the_child_target_verdict() -> Result
         let error = upsert_merge_mining_event(&client, source_id, &refined)
             .await
             .expect_err("a contradictory child-target verdict must be rejected");
-        assert!(error.to_string().contains("contradicts stored evidence"));
+        assert!(
+            error
+                .to_string()
+                .contains("event observation contradicts the stored child evidence")
+        );
         Ok::<_, anyhow::Error>(())
     })
 }
@@ -544,7 +533,7 @@ async fn exact_observation_rejects_a_different_parent_for_the_same_child_hash() 
 
 #[tokio::test]
 async fn exact_partial_refinement_rejects_contradictory_child_evidence() -> Result<()> {
-    crate::run_db_test!(client, {
+    crate::run_mut_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
 
         let exact_after_partial = exact_payload(1_007, 2_007)?;
@@ -553,13 +542,16 @@ async fn exact_partial_refinement_rejects_contradictory_child_evidence() -> Resu
             .child_block_time
             .map(|child_time| child_time + 1);
         upsert_merge_mining_event(&client, source_id, &partial_first).await?;
-        let promotion_error = upsert_merge_mining_event(&client, source_id, &exact_after_partial)
+        // Capture writes in a transaction, so a rejected write rolls back.
+        let txn = client.transaction().await?;
+        let promotion_error = upsert_merge_mining_event(&txn, source_id, &exact_after_partial)
             .await
             .expect_err("an exact refinement must not replace contradictory partial evidence");
+        txn.rollback().await?;
         assert!(
             promotion_error
                 .to_string()
-                .contains("exact refinement contradicts")
+                .contains("event observation contradicts the stored child evidence")
         );
 
         let exact_first = exact_payload(1_008, 2_008)?;
@@ -568,13 +560,48 @@ async fn exact_partial_refinement_rejects_contradictory_child_evidence() -> Resu
             .child_block_time
             .map(|child_time| child_time + 1);
         upsert_merge_mining_event(&client, source_id, &exact_first).await?;
-        let fill_error = upsert_merge_mining_event(&client, source_id, &partial_after_exact)
+        let txn = client.transaction().await?;
+        let fill_error = upsert_merge_mining_event(&txn, source_id, &partial_after_exact)
             .await
             .expect_err("partial evidence must not overwrite a contradictory exact observation");
+        txn.rollback().await?;
         assert!(
             fill_error
                 .to_string()
-                .contains("partial child evidence contradicts")
+                .contains("event observation contradicts the stored child evidence")
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+#[tokio::test]
+async fn promotion_refuses_a_partial_row_contradicting_the_blocks_exact_observation() -> Result<()>
+{
+    crate::run_mut_db_test!(client, {
+        let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let exact = exact_payload(1_011, 2_011)?;
+        let mut partial = partial_payload(1_011, 2_010)?;
+        partial.child_block_time = exact.child_block_time.map(|time| time + 1);
+        upsert_merge_mining_event(&client, source_id, &partial).await?;
+        // An earlier capture recorded the block, with the exact payload's time, but no event.
+        client
+            .execute(
+                "INSERT INTO child_block_observation ( \
+                    source_id, child_height, child_block_hash, observation_kind, \
+                    child_block_time, recorded_at \
+                 ) VALUES ($1, 1011, $2, 'unverified_parent', $3, 1)",
+                &[&source_id, &exact.child_block_hash, &exact.child_block_time],
+            )
+            .await?;
+
+        let txn = client.transaction().await?;
+        let error = upsert_merge_mining_event(&txn, source_id, &exact)
+            .await
+            .expect_err("the partial row's time contradicts the block's exact observation");
+        txn.rollback().await?;
+        assert!(
+            format!("{error:#}").contains("contradicts the block's exact observation"),
+            "{error:#}"
         );
         Ok::<_, anyhow::Error>(())
     })

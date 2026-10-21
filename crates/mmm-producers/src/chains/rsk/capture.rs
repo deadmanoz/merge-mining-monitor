@@ -678,7 +678,6 @@ pub fn prepare_rsk_capture(
         uncle_index,
         uncle_parent_height,
         rsk_miner: miner_bytes,
-        pool_identity_id,
         merge_mining_hash,
         merkle_proof,
         coinbase_tail,
@@ -881,7 +880,6 @@ mod tests {
         assert!(!inputs.evidence.is_uncle);
         assert_eq!(inputs.evidence.uncle_index, None);
         assert_eq!(inputs.evidence.uncle_parent_height, None);
-        assert_eq!(inputs.evidence.pool_identity_id, Some(9001));
         assert_eq!(inputs.evidence.rsk_height, 729_000);
         assert_eq!(inputs.evidence.proof_format, RSK_PROOF_FORMAT_OPAQUE);
 
@@ -890,7 +888,6 @@ mod tests {
         assert!(!inputs.payload.pow_validates_btc_target);
         assert_eq!(inputs.payload.pow_validates_child_target, None);
         // Unknown miner remains observed provenance without pool resolution.
-        assert_eq!(inputs.evidence.pool_identity_id, None);
         assert_single_miner_attribution(&inputs, UNKNOWN_MINER_HEX, None, None, "rsk_rpc_miner");
     }
 

@@ -3,8 +3,8 @@
 //! updates.
 
 use anyhow::{Context, Result};
-use tokio_postgres::GenericClient;
 use tokio_postgres::types::Json;
+use tokio_postgres::{GenericClient, Transaction};
 
 use mmm_capture::capture::{HathorEvidencePayload, MergeMiningEventPayload};
 
@@ -13,8 +13,8 @@ use crate::{CaptureWrite, write_capture};
 /// Write a Hathor capture in the caller's transaction (injected as the
 /// `capture_in_txn` upsert closure): the event with its 1:1 evidence sidecar, or a
 /// near's observation alone (which keeps its parent).
-pub async fn write_hathor_capture_in_txn<C: GenericClient>(
-    client: &C,
+pub async fn write_hathor_capture_in_txn(
+    client: &Transaction<'_>,
     source_id: i64,
     payload: &MergeMiningEventPayload,
     evidence: &HathorEvidencePayload,
@@ -65,8 +65,7 @@ async fn upsert_hathor_evidence<C: GenericClient>(
     Ok(())
 }
 
-/// Whether an event other than a near (live or imported, revoked included) is
-/// stored at a child height. Near events leave with the swap migration.
+/// Whether an event (live or imported, revoked included) is stored at a child height.
 pub async fn hathor_evidence_event_at_height<C: GenericClient>(
     client: &C,
     source_id: i64,
@@ -75,7 +74,7 @@ pub async fn hathor_evidence_event_at_height<C: GenericClient>(
     client
         .query_one(
             "SELECT EXISTS (SELECT 1 FROM merge_mining_event \
-              WHERE source_id = $1 AND child_height = $2 AND btc_parent_kind <> 'near')",
+              WHERE source_id = $1 AND child_height = $2)",
             &[&source_id, &height],
         )
         .await

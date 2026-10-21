@@ -185,7 +185,7 @@ Do not delete the displaced branch: it is stale-block evidence.
 `just rebuild-source-health` recomputes the per-source `/api/v1/sources` rollup counters.
 It is required on a fresh database and after bulk backfills: `/api/v1/sources` fails closed until the first rebuild sets `source_health_ready`.
 Run it during a quiescent window (pollers stopped) so it sees a stable base.
-Counters are maintained incrementally afterward, so re-running it is only needed to repair drift or once after an upgrade that changes a counter's definition (the release that takes near counts from `child_block_observation` is one).
+Counters are maintained incrementally afterward, so re-running it is only needed to repair drift or once after an upgrade that changes a counter's definition (the release that takes near counts from `child_block_observation` is one, and its migration 0034 clears `source_health_ready`, so `/api/v1/sources` fails closed until the rebuild runs).
 `import-all` rebuilds source health once after all durable historical parent and dependent work has drained, so no separate rebuild is required after that command.
 
 `reconcile-read-model --start-height` and `--end-height` are child-height bounds.

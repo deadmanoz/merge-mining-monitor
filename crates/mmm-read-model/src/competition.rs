@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Retire or demote a parent `block` row when no active non-`near` events remain.
+/// Retire or demote a parent `block` row when no active events remain.
 /// Core-attested blocks and blocks referenced via `canonical_competitor_hash` are
 /// demoted in place; all others and their proofs are deleted.
 pub(crate) async fn retire_zero_active_block<C: GenericClient>(
@@ -179,7 +179,7 @@ pub(crate) async fn resolve_persisted_core_coinbase_bitcoin_miner_pool_id<C: Gen
     resolve_bitcoin_miner_pool_id_from_coinbase(client, Some(&script), outputs.as_deref()).await
 }
 
-/// First valid strict BIP34 coinbase height from an active non-`near` event on
+/// First valid strict BIP34 coinbase height from an active event on
 /// [`btc_orphan::STRICT_BIP34_CHAINS`]. Mirrored by the declared read-only copy
 /// in `crates/mmm-api/src/projection/shared/mod.rs`.
 pub(crate) async fn load_strict_bip34_height<C: GenericClient>(
@@ -194,7 +194,6 @@ pub(crate) async fn load_strict_bip34_height<C: GenericClient>(
              JOIN source s ON s.id = e.source_id \
              WHERE e.btc_parent_header_hash = $1 \
                AND e.revoked_at IS NULL \
-               AND e.btc_parent_kind <> 'near' \
                AND e.btc_parent_coinbase_script IS NOT NULL \
                AND s.chain = ANY($2) \
              ORDER BY e.id",

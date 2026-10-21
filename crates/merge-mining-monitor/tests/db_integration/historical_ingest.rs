@@ -410,9 +410,10 @@ async fn live_child_hash_byte_order_matches_historical_identity() -> Result<()> 
             );
             let stored = client
                 .query_one(
-                    "SELECT id, child_block_hash, child_header_bytes \
-                     FROM merge_mining_event \
-                     WHERE source_id = (SELECT id FROM source WHERE code = 'auxpow:namecoin')",
+                    "SELECT e.id, e.child_block_hash, o.child_header_bytes \
+                     FROM merge_mining_event e \
+                     JOIN child_block_observation o ON o.id = e.observation_id \
+                     WHERE e.source_id = (SELECT id FROM source WHERE code = 'auxpow:namecoin')",
                     &[],
                 )
                 .await?;
@@ -898,7 +899,6 @@ async fn authoritative_import_removes_rows_absent_from_the_snapshot() -> Result<
                     &[&omitted_event],
                 )
                 .await?;
-            seed_event_observation(&client, omitted_event).await?;
 
             let summary = run_manifest_historical_import_for_test(
                 &mut client,
@@ -1765,14 +1765,20 @@ async fn seed_identity_event(
     let parent_time = i64::from(header.time);
     Ok(client
         .query_one(
-            "INSERT INTO merge_mining_event ( \
-                source_id, child_height, child_block_hash, child_block_time, \
+            "WITH o AS ( \
+                 INSERT INTO child_block_observation ( \
+                     source_id, child_height, child_block_hash, observation_kind, \
+                     btc_parent_header_hash, recorded_at \
+                 ) VALUES ($1, $2, $3, 'evidence', $4, $8) \
+                 RETURNING id) \
+             INSERT INTO merge_mining_event ( \
+                source_id, child_height, child_block_hash, \
                 btc_parent_header_hash, btc_parent_prev_header_hash, \
                 btc_parent_header_bytes, btc_parent_header_time, btc_parent_height, \
                 btc_parent_kind, pow_validates_btc_target, difficulty_epoch_ok, \
-                discovered_at, confirmed_at \
-             ) VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, NULL, \
-                       'unknown', TRUE, NULL, $8, $8) \
+                discovered_at, confirmed_at, observation_id \
+             ) SELECT $1, $2, $3, $4, $5, $6, $7, NULL, \
+                      'unknown', TRUE, NULL, $8, $8, o.id FROM o \
              RETURNING id",
             &[
                 &source_id,
@@ -1826,47 +1832,43 @@ async fn seed_unpublished_event(
     let source_id = get_source_id(client, source_code).await?;
     Ok(client
         .query_one(
-            "INSERT INTO merge_mining_event ( \
-                source_id, child_height, child_block_hash, child_block_time, \
+            "WITH template AS ( \
+                 SELECT e.*, o.child_block_time, o.pow_validates_child_target \
+                 FROM merge_mining_event e \
+                 JOIN child_block_observation o ON o.id = e.observation_id \
+                 WHERE e.source_id = $1 \
+                 ORDER BY e.id \
+                 LIMIT 1 \
+             ), observation AS ( \
+                 INSERT INTO child_block_observation ( \
+                     source_id, child_height, child_block_hash, observation_kind, \
+                     child_block_time, pow_validates_child_target, btc_parent_header_hash, \
+                     recorded_at \
+                 ) \
+                 SELECT $1, $2, $3, 'evidence', child_block_time, pow_validates_child_target, \
+                        btc_parent_header_hash, discovered_at \
+                 FROM template \
+                 RETURNING id \
+             ) \
+             INSERT INTO merge_mining_event ( \
+                source_id, child_height, child_block_hash, \
                 btc_parent_header_hash, btc_parent_prev_header_hash, \
                 btc_parent_header_bytes, btc_parent_header_time, \
                 btc_parent_height, btc_parent_kind, pow_validates_btc_target, \
-                pow_validates_child_target, difficulty_epoch_ok, discovered_at, confirmed_at \
+                difficulty_epoch_ok, discovered_at, confirmed_at, observation_id \
              ) \
-             SELECT $1, $2, $3, child_block_time, btc_parent_header_hash, \
+             SELECT $1, $2, $3, btc_parent_header_hash, \
                     btc_parent_prev_header_hash, btc_parent_header_bytes, \
                     btc_parent_header_time, btc_parent_height, btc_parent_kind, \
-                    pow_validates_btc_target, pow_validates_child_target, \
-                    difficulty_epoch_ok, discovered_at, confirmed_at \
-             FROM merge_mining_event \
-             WHERE source_id = $1 \
-             ORDER BY id \
-             LIMIT 1 \
+                    pow_validates_btc_target, difficulty_epoch_ok, discovered_at, confirmed_at, \
+                    (SELECT id FROM observation) \
+             FROM template \
              RETURNING id",
             &[&source_id, &child_height, &child_hash],
         )
         .await
         .context("seed unpublished event")?
         .get(0))
-}
-
-/// Give a raw-seeded event an observation as migration 0033 does for existing events:
-/// matched by child identity and not linked through `observation_id`.
-async fn seed_event_observation(client: &tokio_postgres::Client, event_id: i64) -> Result<()> {
-    client
-        .execute(
-            "INSERT INTO child_block_observation ( \
-                source_id, child_height, child_block_hash, observation_kind, \
-                btc_parent_header_hash, recorded_at \
-             ) \
-             SELECT source_id, child_height, child_block_hash, 'evidence', \
-                    btc_parent_header_hash, 1 \
-             FROM merge_mining_event WHERE id = $1",
-            &[&event_id],
-        )
-        .await
-        .context("seed event observation")?;
-    Ok(())
 }
 
 async fn active_source_event_count(

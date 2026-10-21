@@ -19,7 +19,8 @@ use tokio_postgres::Client;
 use crate::support::scenario::{ChildEvidence, canonical_verdict, capture_child_event};
 use crate::support::seed::{
     EventSeed, day_epoch, display_hash, hash_bytes, header_hash_bytes, insert_attestation_proof,
-    insert_block, insert_event, insert_pool, insert_pool_identity, set_block_pool,
+    insert_block, insert_event, insert_near_observation, insert_pool, insert_pool_identity,
+    set_block_pool,
 };
 use crate::support::{default_pool_snapshot, header_meeting_bits};
 
@@ -39,7 +40,7 @@ async fn block_projects_direct_near_without_double_counting_sources() -> Result<
         let ts = day_epoch(2026, Month::May, 10);
         let parent = hash_bytes(0x9101);
         for child_height in [100, 101] {
-            insert_event(
+            insert_near_observation(
                 &client,
                 EventSeed {
                     source_id: namecoin,
@@ -225,7 +226,7 @@ async fn block_hydrates_an_rsk_uncle_near_observation() -> Result<()> {
         let ts = day_epoch(2026, Month::May, 10);
         let parent = hash_bytes(0xc101);
         let child_hash = hash_bytes(0xc201);
-        let event_id = insert_event(
+        let observation_id = insert_near_observation(
             &client,
             EventSeed {
                 source_id: rsk,
@@ -244,8 +245,8 @@ async fn block_hydrates_an_rsk_uncle_near_observation() -> Result<()> {
         client
             .execute(
                 "UPDATE child_block_observation SET pow_validates_child_target = NULL \
-                 WHERE id = (SELECT observation_id FROM merge_mining_event WHERE id = $1)",
-                &[&event_id],
+                 WHERE id = $1",
+                &[&observation_id],
             )
             .await?;
         let rsk_miner_bytes = hex::decode(rsk_miner)?;
@@ -260,7 +261,6 @@ async fn block_hydrates_an_rsk_uncle_near_observation() -> Result<()> {
                 uncle_index: Some(1),
                 uncle_parent_height: Some(810_005),
                 rsk_miner: rsk_miner_bytes,
-                pool_identity_id: Some(identity),
                 merge_mining_hash: hash_bytes(0xc301),
                 merkle_proof: None,
                 coinbase_tail: None,
@@ -520,7 +520,7 @@ async fn block_projects_child_displacement_on_near_observations() -> Result<()> 
             (displaced_child.clone(), displaced_parent.clone()),
             (current_child.clone(), current_parent.clone()),
         ] {
-            insert_event(
+            insert_near_observation(
                 &client,
                 EventSeed {
                     source_id: namecoin,

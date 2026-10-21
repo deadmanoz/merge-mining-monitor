@@ -146,7 +146,8 @@ async fn hathor_state_machine_drives_capture_void_and_hold() -> Result<()> {
     async fn displaced(client: &Client, source_id: i64) -> Result<bool> {
         Ok(client
             .query_one(
-                "SELECT child_displaced_at IS NOT NULL FROM merge_mining_event WHERE source_id=$1",
+                "SELECT o.child_displaced_at IS NOT NULL FROM merge_mining_event e \
+                 JOIN child_block_observation o ON o.id = e.observation_id WHERE e.source_id=$1",
                 &[&source_id],
             )
             .await?

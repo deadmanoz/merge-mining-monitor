@@ -19,6 +19,25 @@ pub async fn new_test_db() -> Result<(Client, String)> {
     Ok((client, schema))
 }
 
+/// A throwaway schema with only the migrations before `version` applied, for a migration's
+/// data test, and the migrations left to apply with [`apply_migration_paths`].
+pub async fn new_test_db_before(
+    version: &str,
+) -> Result<(Client, String, Vec<std::path::PathBuf>)> {
+    let client = connect(&PgConfig::from_env()?).await?;
+    let schema = unique_schema();
+    create_schema(&client, &schema).await?;
+    let (applied, remaining): (Vec<_>, Vec<_>) = migration_paths()?.into_iter().partition(|path| {
+        path.file_name()
+            .is_some_and(|name| name.to_string_lossy().as_ref() < version)
+    });
+    apply_migration_paths(&client, &schema, applied).await?;
+    client
+        .batch_execute(&format!("SET search_path TO {schema}, public;"))
+        .await?;
+    Ok((client, schema, remaining))
+}
+
 pub async fn teardown_test_db(client: &Client, schema: &str, result: Result<()>) -> Result<()> {
     drop_schema(client, schema).await?;
     result
@@ -202,7 +221,7 @@ fn core_header_hash(height: i32) -> Vec<u8> {
     hash
 }
 
-async fn apply_migration_paths(
+pub async fn apply_migration_paths(
     client: &Client,
     schema: &str,
     migrations: Vec<std::path::PathBuf>,
@@ -254,10 +273,11 @@ pub async fn displacement_at(
 ) -> Result<Vec<(Vec<u8>, Option<Vec<u8>>, Option<i64>)>> {
     let rows = client
         .query(
-            "SELECT child_block_hash, child_displaced_by, revoked_at \
-             FROM merge_mining_event \
-             WHERE source_id = $1 AND child_height = $2 \
-             ORDER BY child_block_hash",
+            "SELECT e.child_block_hash, o.child_displaced_by, e.revoked_at \
+             FROM merge_mining_event e \
+             JOIN child_block_observation o ON o.id = e.observation_id \
+             WHERE e.source_id = $1 AND e.child_height = $2 \
+             ORDER BY e.child_block_hash",
             &[&source_id, &height],
         )
         .await?;

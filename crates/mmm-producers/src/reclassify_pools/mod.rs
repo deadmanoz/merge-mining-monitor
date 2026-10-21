@@ -62,17 +62,16 @@ const CHILD_PAYOUT_SOURCE_CODES: &[&str] = &[
     QBIT_SOURCE_CODE,
 ];
 // Shared by the initial count and every page so progress measures the same
-// eligible events the scan processes. Params: overwrite, parent source,
-// child-tag source, payout source codes, optional source ID.
+// eligible events the scan processes; `o` is the event's observation. Params:
+// overwrite, parent source, child-tag source, payout source codes, optional source ID.
 const CANDIDATE_FILTER_SQL: &str = r"e.revoked_at IS NULL
-      AND e.btc_parent_kind <> 'near'
       AND (e.btc_parent_coinbase_script IS NOT NULL
            OR e.btc_parent_coinbase_outputs IS NOT NULL
            OR e.btc_parent_coinbase_outputs_text IS NOT NULL
-           OR e.child_coinbase_script IS NOT NULL
-           OR (s.code = ANY($4::text[]) AND e.child_coinbase_outputs IS NOT NULL))
+           OR o.child_coinbase_script IS NOT NULL
+           OR (s.code = ANY($4::text[]) AND o.child_coinbase_outputs IS NOT NULL))
       AND ($1
-           OR (s.code = ANY($4::text[]) AND e.child_coinbase_outputs IS NOT NULL)
+           OR (s.code = ANY($4::text[]) AND o.child_coinbase_outputs IS NOT NULL)
            OR ((e.btc_parent_coinbase_script IS NOT NULL
                 OR e.btc_parent_coinbase_outputs IS NOT NULL
                 OR e.btc_parent_coinbase_outputs_text IS NOT NULL)
@@ -82,7 +81,7 @@ const CANDIDATE_FILTER_SQL: &str = r"e.revoked_at IS NULL
                      AND a.side = 'btc_parent'
                      AND a.source = $2
                ))
-           OR (e.child_coinbase_script IS NOT NULL
+           OR (o.child_coinbase_script IS NOT NULL
                AND NOT EXISTS (
                    SELECT 1 FROM event_pool_attribution a
                    WHERE a.event_id = e.id
@@ -239,7 +238,6 @@ pub struct ReclassifyPoolsStats {
     pub rsk_miner_registry_resolved_rows: usize,
     pub rsk_miner_unresolved_rows: usize,
     pub rsk_miner_attribution_updates: usize,
-    pub rsk_miner_sidecar_late_fills: usize,
     pub observations_scanned: usize,
     pub observation_pool_updates: usize,
 }
@@ -318,10 +316,11 @@ fn candidate_batch_sql() -> String {
 WITH candidates AS MATERIALIZED (
     SELECT e.id, e.btc_parent_header_hash, s.code AS source_code,
            e.btc_parent_coinbase_script, e.btc_parent_coinbase_outputs,
-           e.btc_parent_coinbase_outputs_text, e.child_coinbase_script,
-           e.child_coinbase_outputs, e.confirmed_at
+           e.btc_parent_coinbase_outputs_text, o.child_coinbase_script,
+           o.child_coinbase_outputs, e.confirmed_at
     FROM merge_mining_event e
     JOIN source s ON s.id = e.source_id
+    JOIN child_block_observation o ON o.id = e.observation_id
     WHERE {CANDIDATE_FILTER_SQL}
       AND ($6::bigint IS NULL OR e.id > $6)
     ORDER BY e.id
@@ -420,6 +419,7 @@ async fn load_candidate_batch(
 async fn count_candidates(client: &Client, overwrite: bool, source: Option<i64>) -> Result<u64> {
     let sql = format!(
         "SELECT count(*) FROM merge_mining_event e JOIN source s ON s.id = e.source_id \
+         JOIN child_block_observation o ON o.id = e.observation_id \
          WHERE {CANDIDATE_FILTER_SQL}"
     );
     let row = client
@@ -623,7 +623,6 @@ pub async fn run_reclassify_pools(
             rows_scanned = stats.rsk_miner_rows_scanned,
             registry_resolved = stats.rsk_miner_registry_resolved_rows,
             attribution_updates = stats.rsk_miner_attribution_updates,
-            sidecar_late_fills = stats.rsk_miner_sidecar_late_fills,
             "reclassify-pools: RSK miner-identity pass complete"
         );
     } else {

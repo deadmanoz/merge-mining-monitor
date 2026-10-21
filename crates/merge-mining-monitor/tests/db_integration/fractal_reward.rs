@@ -87,7 +87,8 @@ async fn set_child_coinbase_outputs(
 ) -> Result<()> {
     client
         .execute(
-            "UPDATE merge_mining_event SET child_coinbase_outputs = $2 WHERE id = $1",
+            "UPDATE child_block_observation SET child_coinbase_outputs = $2 \
+             WHERE id = (SELECT observation_id FROM merge_mining_event WHERE id = $1)",
             &[&event_id, &child_coinbase_outputs],
         )
         .await?;

@@ -10,12 +10,12 @@ Producers append or update base evidence; the read model computes the Bitcoin tr
 | `source` | Registered evidence sources such as `auxpow:namecoin`, `auxpow:rsk`, or `live-chaintip:bitcoin:core`. |
 | `pool` | Stable pool identities loaded from `data/pools/current.json`. |
 | `pool_identity` | Native child-chain identities that map to a pool, such as RSK miner addresses or child reward addresses. |
-| `merge_mining_event` | Source evidence keyed by exact or partial authenticated child identity and its Bitcoin parent header; `observation_id` links the event to its child block observation. |
+| `merge_mining_event` | Bitcoin-relevant source evidence (`canonical`, `stale`, `error_block` or `unknown` parents) keyed by exact or partial authenticated child identity and its Bitcoin parent header; `observation_id` (required, unique) links the event to its child block observation, which holds the child fields, identities and child pool. |
 | `child_block_observation` | One row per child block on every chain, written by live capture, migration 0033's fill and per-chain backfills (see `docs/capture.md`), with the block's own child evidence and its `observation_kind`: `evidence` (an event holds the parent's Bitcoin classification), `near` (the parent misses Bitcoin's target; its header and coinbase are kept on the observation), `not_merge_mined` (no AuxPoW), `non_bitcoin_parent` (the parent failed the lineage gate; no parent field is stored), or `unverified_parent` (the child block is authenticated but its AuxPoW proof is malformed or incomplete; no parent field is stored). Child identities, the child-side pool, and RSK chain role, uncle placement and reported difficulty live here. |
 | `child_miner_identity` | Raw child identifiers seen on any child block (RSK miner, child payout and reward addresses, Elastos minerinfo), keyed like `pool_identity`; a matching `pool_identity` row maps one to a pool. |
 | `historical_event_provenance` | Publication-side chain, source row, classification, validation, and relevance provenance attached to imported events; multiple source rows can map to one event. The `error-block-observations` scope keeps catalogue-backed error witnesses separate from replaceable normal snapshots, while requiring the same archive coordinate to identify the same event across pinned publications. |
 | `historical_reconcile_queue` | Durable parent rebuild state and dependent-cascade seeds for resumable historical imports. |
-| chain sidecars | One-to-one evidence details for chains with extra structured data, such as RSK and Hathor. |
+| chain sidecars | One-to-one evidence details for chains with extra structured data: the RSK merge-mining proof (`merge_mining_hash`, `merkle_proof`, `coinbase_tail`, `proof_format`; the block's hash, height, uncle placement and miner are on its observation) and the Hathor RFC 0006 proof and funds graph. |
 | `event_pool_attribution` | Attribution rows connecting an event to a pool with source/provenance details. |
 | `poll_cursor` | Live poll progress. Backfills never move the cursor. |
 | `capture_error` | Producer-owned operational state: one row per `(source_id, height)` a producer could not capture, with the failure kind (`malformed_auxpow_proof` or `height_capture_failed`), a diagnostic detail, and first/last seen times. Written before returning from a failing height and cleared only when that same height is reprocessed successfully; `/api/v1/sources` reads the earliest unresolved height per source. |
@@ -32,9 +32,9 @@ Merge mining lets a child chain commit to any SHA-256 parent, so a proof that ve
 The capture lineage gate (`mmm_capture::lineage::bitcoin_lineage`, applied in `mmm_read_model::capture_in_txn`) refuses such a parent before any parent evidence is written: the event is never stored, and only the child block's `non_bitcoin_parent` observation records that the block exists.
 See [Capture](capture.md#bitcoin-lineage-gate).
 
-`btc_parent_kind` is one of:
+A capture classifies its parent as one of the following; `merge_mining_event.btc_parent_kind` holds every kind but `near`:
 
-- `near` - a Bitcoin share: the parent is a Bitcoin header that fails its own target. Capture records a near as a `near` observation with its parent header, coinbase and pools, and writes no event; near events stored before that remain until the swap migration removes them.
+- `near` - a Bitcoin share: the parent is a Bitcoin header that fails its own target. Capture records a near only as a `near` observation with its parent header, coinbase and pools; `merge_mining_event` never holds one.
 - `unknown` - a Bitcoin header that meets its own target, but no Bitcoin-chain membership proof is available.
 - `canonical` - Bitcoin Core proves the parent is on the active chain.
 - `stale` - Bitcoin Core proves the parent is a valid off-chain Bitcoin block.
@@ -96,15 +96,14 @@ Historical parent-coinbase evidence is also lossless: structured full transactio
 
 ## Child Displacement
 
-When a child chain replaces the block at `child_height`, the replaced block's `merge_mining_event` remains valid Bitcoin-side evidence (its parent header and coinbase commitment are unchanged), so displacement is recorded on the event rather than through `event_revoked_at`:
+When a child chain replaces the block at `child_height`, the replaced block's observation records the displacement; an event backing it remains valid Bitcoin-side evidence (its parent header and coinbase commitment are unchanged), so it is never revoked for that reason:
 
-- `child_displaced_at` (epoch second observed) and `child_displaced_by` (internal-order hash of the replacing child block) are set or cleared together on `merge_mining_event` and never self-reference.
-  The same pair is kept on `child_block_observation`, by the same rule in the same transaction, so a block without an event (such as a `not_merge_mined` one) is displaced too.
-  Already-displaced events keep their first displacement record; a chain that flips back to a block clears its displacement.
+- `child_displaced_at` (epoch second observed) and `child_displaced_by` (internal-order hash of the replacing child block) are set or cleared together on `child_block_observation` and never self-reference, for every observed block whether or not an event backs it.
+  Already-displaced observations keep their first displacement record; a chain that flips back to a block clears its displacement.
 - Bitcoin-side aggregates (`block`, `attestation_proof`, `source_health`, and parent projections) ignore these columns; `event_revoked_at` is reserved for bad evidence.
 - `mmm-store::record_child_chain_block(txn, source, height, record)` is the single write path (called by every live producer except RSK, under a per-height advisory lock taken before the event upsert).
   For hashless partial rows, a matching `btc_parent_header_hash` identifies the current block, a different parent or a known non-AuxPoW block displaces it, and an unverified block leaves it untouched.
-  Events inserted without a live chain observation (such as historical imports) remain undisplaced until a poller rescan or backfill observes the height.
+  Blocks recorded without a live chain observation (such as historical imports) remain undisplaced until a poller rescan or backfill observes the height.
 - The same write updates `child_chain_head` (`(source_id, child_height)` -> observed block hash, nullable parent hash, `outcome` in `captured`/`recorded`/`non_auxpow`/`unverified`/`held`, nullable `evidence_marker`, and `observed_at`).
   Trailing rescans compare a single block-hash lookup against `child_chain_head`: an unchanged hash with a final outcome (`captured`, `recorded`, `non_auxpow`) and unchanged `evidence_marker` skips full proof fetch/capture, whereas a changed hash, missing row, open `capture_error`, or provisional `unverified` parent verdict re-captures the height. Heights below the rescan floor have no row once a tick has pruned them; no rescan reaches them.
 
@@ -121,6 +120,6 @@ When a child chain replaces the block at `child_height`, the replaced block's `m
 
 ## Migrations
 
-Public migration history starts with `0001_canonical_schema.sql` (squashed baseline schema) and `0002_seed_sources.sql` (registry-generated source seed for fresh databases), followed by append-only numbered forward migrations (`0003` through `0032`).
+Public migration history starts with `0001_canonical_schema.sql` (squashed baseline schema) and `0002_seed_sources.sql` (registry-generated source seed for fresh databases), followed by append-only numbered forward migrations (`0003` through `0034`).
 After a migration has reached a persistent database, never edit it; add a new forward migration instead (regenerating `0002` only alongside an idempotent forward migration when adding a source).
 Run all real database migrations through `just db-migrate-dev` or `just db-migrate-deploy` (`scripts/migrate-safe.sh`); see `migrations/README.md` for baseline-reset and scheduled-recheck conventions.

@@ -1,7 +1,7 @@
 //! The write a capture makes: an event, or a near's observation alone.
 
 use anyhow::Result;
-use tokio_postgres::GenericClient;
+use tokio_postgres::Transaction;
 
 use mmm_capture::capture::{ChildBlockObservation, MergeMiningEventPayload, ParentKind};
 
@@ -17,9 +17,10 @@ pub enum CaptureWrite {
 }
 
 /// Write one captured child block: a near as its observation alone, anything else as an
-/// event with its observation, attributions and provenance.
-pub async fn write_capture<C: GenericClient>(
-    client: &C,
+/// event with its observation, attributions and provenance. The writes span several
+/// statements, so a rejected one rolls back with the caller's transaction.
+pub async fn write_capture(
+    client: &Transaction<'_>,
     source_id: i64,
     payload: &MergeMiningEventPayload,
 ) -> Result<CaptureWrite> {

@@ -31,9 +31,8 @@ pub const RSK_RPC_MINER_SOURCE: &str = "rsk_rpc_miner";
 
 /// BTC parent classification of a capture, stored on `merge_mining_event.btc_parent_kind`.
 /// Distinct from `BlockKind` (`block.kind`) because a capture can also find a `Near` header
-/// that fails the BTC PoW target, which is recorded only as a `child_block_observation`
-/// (rows from before the swap migration still carry it). Orphan status lives on
-/// `block.btc_orphan_class`.
+/// that fails the BTC PoW target, which is recorded only as a `child_block_observation`.
+/// Orphan status lives on `block.btc_orphan_class`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParentKind {
     Canonical,

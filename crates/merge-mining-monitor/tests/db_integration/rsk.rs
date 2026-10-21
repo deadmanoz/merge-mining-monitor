@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::{ConfiguredParentClassifier, FakeParentClassifier};
 use mmm_store::get_source_id;
-use tokio_postgres::{Client, Row};
+use tokio_postgres::Client;
 
 use bitcoin::block::Header;
 use bitcoin::consensus::deserialize;
@@ -196,23 +196,28 @@ async fn contradictory_rsk_sidecar_rolls_back_historical_provenance() -> Result<
                 write_rsk_capture(&mut client, context.source_id(), &payload, &contradictory)
                     .await
                     .expect_err("contradictory immutable RSK evidence must fail");
-            assert!(
-                format!("{error:#}").contains("immutable sidecar fields"),
-                "{error:#}"
-            );
+            let expected = if corrupt_miner {
+                "contradict the stored miner"
+            } else {
+                "immutable sidecar fields"
+            };
+            assert!(format!("{error:#}").contains(expected), "{error:#}");
         }
 
         let row = client
             .query_one(
-                "SELECT r.rsk_miner, count(p.event_id)::bigint \
-                 FROM rsk_merge_mining_evidence r \
-                 LEFT JOIN historical_event_provenance p ON p.event_id = r.event_id \
-                 WHERE r.event_id = $1 \
-                 GROUP BY r.rsk_miner",
+                "SELECT ci.identifier, count(p.event_id)::bigint \
+                 FROM merge_mining_event e \
+                 JOIN child_block_observation o ON o.id = e.observation_id \
+                 JOIN child_miner_identity ci \
+                   ON ci.id = ANY (o.child_identity_ids) AND ci.namespace = 'rsk_miner_address' \
+                 LEFT JOIN historical_event_provenance p ON p.event_id = e.id \
+                 WHERE e.id = $1 \
+                 GROUP BY ci.identifier",
                 &[&event_id],
             )
             .await?;
-        assert_eq!(row.get::<_, Vec<u8>>(0), stored_miner);
+        assert_eq!(row.get::<_, String>(0), hex::encode(stored_miner));
         assert_eq!(
             row.get::<_, i64>(1),
             0,
@@ -399,9 +404,10 @@ async fn run_rsk_canonical_and_uncle(client: &mut Client) -> Result<()> {
 
     let canonical_row = client
         .query_one(
-            "SELECT btc_parent_kind, pow_validates_btc_target, pow_validates_child_target, \
-                    btc_parent_height \
-             FROM merge_mining_event WHERE id = $1",
+            "SELECT e.btc_parent_kind, e.pow_validates_btc_target, o.pow_validates_child_target, \
+                    e.btc_parent_height \
+             FROM merge_mining_event e \
+             JOIN child_block_observation o ON o.id = e.observation_id WHERE e.id = $1",
             &[&first_event_id],
         )
         .await?;
@@ -432,9 +438,7 @@ async fn run_rsk_canonical_and_uncle(client: &mut Client) -> Result<()> {
 async fn assert_rsk_evidence_rows_and_identity(client: &Client) -> Result<()> {
     let evidence_rows = client
         .query(
-            "SELECT event_id, is_uncle, uncle_index, uncle_parent_height, \
-                    pool_identity_id, proof_format \
-             FROM rsk_merge_mining_evidence ORDER BY event_id",
+            "SELECT event_id, proof_format FROM rsk_merge_mining_evidence ORDER BY event_id",
             &[],
         )
         .await?;
@@ -443,12 +447,13 @@ async fn assert_rsk_evidence_rows_and_identity(client: &Client) -> Result<()> {
         1,
         "only the canonical block has an event"
     );
-    let canonical_evidence = &evidence_rows[0];
-    assert_evidence_row_role(canonical_evidence, false, None, None);
-    let canonical_pool_identity: Option<i64> = canonical_evidence.get(4);
-    let canonical_proof_format: String = canonical_evidence.get(5);
+    let canonical_event_id: i64 = evidence_rows[0].get(0);
+    assert_eq!(
+        evidence_rows[0].get::<_, String>(1),
+        RSK_PROOF_FORMAT_OPAQUE
+    );
+    let canonical_pool_identity = miner_pool_identity(client, canonical_event_id).await?;
     assert!(canonical_pool_identity.is_some());
-    assert_eq!(canonical_proof_format, RSK_PROOF_FORMAT_OPAQUE);
 
     let identity_row = client
         .query_one(
@@ -467,8 +472,9 @@ async fn assert_rsk_evidence_rows_and_identity(client: &Client) -> Result<()> {
                     o.child_difficulty_reported::text, o.observation_kind, o.child_pool_id, \
                     (SELECT ci.identifier FROM child_miner_identity ci \
                       WHERE ci.id = ANY (o.child_identity_ids)), \
-                    (SELECT e.child_miner_pool_id FROM merge_mining_event e \
-                      WHERE e.observation_id = o.id) \
+                    (SELECT a.pool_id FROM event_pool_attribution a \
+                       JOIN merge_mining_event e ON e.id = a.event_id \
+                      WHERE e.observation_id = o.id AND a.side = 'child_block') \
              FROM child_block_observation o \
              ORDER BY o.child_chain_role",
             &[],
@@ -576,14 +582,7 @@ async fn run_rsk_pool_identity_progression(client: &mut Client) -> Result<()> {
         .await?,
     )?;
 
-    let row = client
-        .query_one(
-            "SELECT pool_identity_id FROM rsk_merge_mining_evidence WHERE event_id = $1",
-            &[&event_id],
-        )
-        .await?;
-    let initial_identity: Option<i64> = row.get(0);
-    assert_eq!(initial_identity, None);
+    assert_eq!(miner_pool_identity(client, event_id).await?, None);
 
     let (_, mut pool_ids_v2) = default_pool_snapshot(client).await?;
     let richer_registry = rsk_registry_with_second_miner();
@@ -594,7 +593,6 @@ async fn run_rsk_pool_identity_progression(client: &mut Client) -> Result<()> {
         RskCaptureContext::from_parts(richer_registry, richer_identity_ids, pool_ids_v2, source_id);
 
     let v2_inputs = ready_inputs(&context_v2, &block, false, None, None);
-    assert!(v2_inputs.evidence.pool_identity_id.is_some());
     let replayed_event_id = event_id_of(
         write_rsk_capture(
             client,
@@ -608,15 +606,17 @@ async fn run_rsk_pool_identity_progression(client: &mut Client) -> Result<()> {
 
     let row = client
         .query_one(
-            "SELECT pool_identity_id, merge_mining_hash, rsk_block_hash \
-             FROM rsk_merge_mining_evidence WHERE event_id = $1",
+            "SELECT r.merge_mining_hash, o.child_block_hash \
+             FROM rsk_merge_mining_evidence r \
+             JOIN merge_mining_event e ON e.id = r.event_id \
+             JOIN child_block_observation o ON o.id = e.observation_id \
+             WHERE r.event_id = $1",
             &[&event_id],
         )
         .await?;
-    let resolved_identity: Option<i64> = row.get(0);
-    let stored_merge_mining_hash: Vec<u8> = row.get(1);
-    let stored_block_hash: Vec<u8> = row.get(2);
-    assert!(resolved_identity.is_some());
+    let stored_merge_mining_hash: Vec<u8> = row.get(0);
+    let stored_block_hash: Vec<u8> = row.get(1);
+    assert!(miner_pool_identity(client, event_id).await?.is_some());
     assert_eq!(stored_merge_mining_hash, stable_merge_mining_hash);
     assert_eq!(stored_block_hash, stable_block_hash);
 
@@ -665,8 +665,10 @@ struct RskEvidenceRole {
 async fn rsk_evidence_role(client: &Client, event_id: i64) -> Result<RskEvidenceRole> {
     let row = client
         .query_one(
-            "SELECT is_uncle, uncle_index, uncle_parent_height, pool_identity_id \
-             FROM rsk_merge_mining_evidence WHERE event_id = $1",
+            "SELECT o.child_chain_role = 'uncle', o.uncle_index, o.uncle_parent_height \
+             FROM merge_mining_event e \
+             JOIN child_block_observation o ON o.id = e.observation_id \
+             WHERE e.id = $1",
             &[&event_id],
         )
         .await?;
@@ -674,8 +676,20 @@ async fn rsk_evidence_role(client: &Client, event_id: i64) -> Result<RskEvidence
         is_uncle: row.get(0),
         uncle_index: row.get(1),
         uncle_parent_height: row.get(2),
-        pool_identity_id: row.get(3),
+        pool_identity_id: miner_pool_identity(client, event_id).await?,
     })
+}
+
+/// The pool identity the event's RSK miner attribution resolved to.
+async fn miner_pool_identity(client: &Client, event_id: i64) -> Result<Option<i64>> {
+    Ok(client
+        .query_one(
+            "SELECT pool_identity_id FROM event_pool_attribution \
+             WHERE event_id = $1 AND namespace = $2",
+            &[&event_id, &RSK_MINER_ADDRESS_NAMESPACE],
+        )
+        .await?
+        .get(0))
 }
 
 fn assert_rsk_role(
@@ -687,17 +701,6 @@ fn assert_rsk_role(
     assert_eq!(role.is_uncle, is_uncle);
     assert_eq!(role.uncle_index, uncle_index);
     assert_eq!(role.uncle_parent_height, uncle_parent_height);
-}
-
-fn assert_evidence_row_role(
-    row: &Row,
-    is_uncle: bool,
-    uncle_index: Option<i32>,
-    uncle_parent_height: Option<i32>,
-) {
-    assert_eq!(row.get::<_, bool>(1), is_uncle);
-    assert_eq!(row.get::<_, Option<i32>>(2), uncle_index);
-    assert_eq!(row.get::<_, Option<i32>>(3), uncle_parent_height);
 }
 
 fn rsk_registry_with_known_miner() -> PoolIdentityRegistry {

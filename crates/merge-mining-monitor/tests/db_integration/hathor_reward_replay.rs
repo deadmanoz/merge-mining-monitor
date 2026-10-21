@@ -11,7 +11,9 @@ use serde_json::{Value, json};
 use tokio_postgres::Client;
 
 use crate::support::default_pool_snapshot;
-use crate::support::seed::{child_reward_rows, insert_pool_identity, pool_id_for_slug};
+use crate::support::seed::{
+    EventSeed, child_reward_rows, insert_event, insert_pool_identity, pool_id_for_slug,
+};
 
 const ZULUPOOL_REWARD_ADDRESS: &str = "HFhvehg9Uy1YBg9bJ7eTRWwgoc6B4e1vmP";
 
@@ -141,28 +143,22 @@ async fn insert_hathor_reward_sidecar_event(
 ) -> Result<i64> {
     let source_id = get_source_id(client, HATHOR_SOURCE_CODE).await?;
     let child_block_hash = vec![child_hash_fill; 32];
-    let event_id: i64 = client
-        .query_one(
-            "INSERT INTO merge_mining_event ( \
-                source_id, child_height, child_block_hash, child_block_time, \
-                btc_parent_header_hash, btc_parent_prev_header_hash, btc_parent_header_bytes, \
-                btc_parent_header_time, btc_parent_kind, pow_validates_btc_target, \
-                pow_validates_child_target, discovered_at, confirmed_at \
-             ) VALUES ( \
-                $1, $2, $3, 1700000000, $4, $5, $6, 1700000000, \
-                'unknown', true, NULL, 1700000001, 1700000001 \
-             ) RETURNING id",
-            &[
-                &source_id,
-                &child_height,
-                &child_block_hash,
-                &vec![0xc0_u8; 32],
-                &vec![0xbf_u8; 32],
-                &vec![0x00_u8; 80],
-            ],
-        )
-        .await?
-        .get(0);
+    let event_id = insert_event(
+        client,
+        EventSeed {
+            source_id,
+            child_height,
+            child_hash: child_block_hash.clone(),
+            parent_hash: vec![0xc0_u8; 32],
+            prev_hash: vec![0xbf_u8; 32],
+            parent_time: 1_700_000_000,
+            kind: "unknown",
+            pow_validates_btc_target: true,
+            btc_height: None,
+            pool_id: None,
+        },
+    )
+    .await?;
     let aux_pow = vec![0x01_u8];
     client
         .execute(

@@ -70,7 +70,6 @@ pub(super) fn parse_rsk_sidecar(
         uncle_index,
         uncle_parent_height,
         rsk_miner: miner,
-        pool_identity_id: None,
         merge_mining_hash,
         merkle_proof: parse_optional_hex_field(record.get(columns.merkle_proof))?,
         coinbase_tail: parse_optional_hex_field(record.get(columns.coinbase_tail))?,
@@ -140,7 +139,6 @@ mod tests {
         assert_eq!(block.uncle_index, None);
         assert_eq!(block.uncle_parent_height, None);
         assert_eq!(block.rsk_miner, hex::decode(RSK_MINER).unwrap());
-        assert_eq!(block.pool_identity_id, None);
         assert_eq!(block.merge_mining_hash, hex::decode(RSK_MM_HASH).unwrap());
         assert_eq!(block.merkle_proof.as_deref(), Some(&[0x04, 0x05][..]));
         assert_eq!(block.coinbase_tail, None);

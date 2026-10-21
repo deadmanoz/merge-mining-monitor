@@ -7,6 +7,7 @@ This changelog starts with the initial release.
 ## [Unreleased]
 
 - Refresh the Research publication pin and error-block catalogue to reclassify Namecoin-witnessed AntPool blocks 494,933 and 544,568 as error blocks (`bad-cb-amount`).
+- Remove near events with migration 0034, which copy-and-swaps `merge_mining_event`, `rsk_merge_mining_evidence` and `event_pool_attribution` into slim tables, keeping every id: events drop the child columns their observation holds and require a unique `observation_id`, the RSK sidecar keeps only the merge-mining proof, an observation whose only event was a revoked near becomes `unverified_parent`, and RSK nears whose proof shows a coinbase-only parent gain its coinbase txid. `/api/v1/sources` fails closed until `just rebuild-source-health` runs.
 - Record a near (a parent that misses Bitcoin's target) as its child block observation alone, with its child identities, child pool and parent pool, and no event, RSK sidecar or attribution rows; every event is now written linked to its observation.
 - Record an RSK parent's coinbase txid as the header's merkle root when the merge-mining proof shows a coinbase-only template (an empty hash list, or a one-transaction tree in early history), so empty templates stay detectable on RSK nears.
 - Serve a near parent's `/api/v1/block/{hash}` page from its observations, with `event_details: []` and a new `observations` array, and take its `bitcoin_miner_pool` from the parent pool; `/api/v1/tree` no longer accepts the `near` kind or `include_near`.
@@ -17,7 +18,7 @@ This changelog starts with the initial release.
 - Count source-health near parents from near observations: `counts.events` now counts evidence events only, and `last_seen_at` counts each near from when it was first recorded (re-capturing an unchanged near does not refresh it). Run `just rebuild-source-health` once after upgrading, with pollers stopped, so stored counters adopt the new definition.
 - Prune `child_chain_head` to each source's rescan window after every poll tick, in bounded batches; observations keep the per-block history. Elastos and Hathor near heads recorded before migration 0033 have no observation, so their pruned blocks return through backfill.
 - Read event-detail child evidence, RSK placement and miner, and the tree's child pool from observations, and compare historical publication state through them.
-- Let a Hathor height that holds no event follow the REST answer, so a replaced near or block without AuxPoW is marked displaced; heights holding a non-near event keep the declared-work floor.
+- Let a Hathor height that holds no event follow the REST answer, so a replaced near or block without AuxPoW is marked displaced; heights holding an event keep the declared-work floor.
 
 ## [0.9.4] - 2026-10-18
 

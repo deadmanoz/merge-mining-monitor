@@ -106,14 +106,17 @@ async fn assert_payout(
     slug: Option<&str>,
     confidence: &str,
 ) -> Result<()> {
-    let row = client.query_one(
-        "SELECT e.btc_parent_header_hash, e.child_miner_pool_id, a.pool_id, a.pool_identity_id, \
+    let row = client
+        .query_one(
+            "SELECT e.btc_parent_header_hash, o.child_pool_id, a.pool_id, a.pool_identity_id, \
          a.source, a.confidence, p.slug, a.matched_value, a.details \
          FROM merge_mining_event e JOIN event_pool_attribution a ON a.event_id=e.id \
+         JOIN child_block_observation o ON o.id = e.observation_id \
          LEFT JOIN pool p ON p.id=a.pool_id \
          WHERE e.source_id=$1 AND e.child_height=$2 AND a.namespace='qbit_payout_address'",
-        &[&source_id, &height],
-    ).await?;
+            &[&source_id, &height],
+        )
+        .await?;
     assert_eq!(row.get::<_, Option<String>>(6).as_deref(), slug);
     assert_eq!(row.get::<_, String>(5), confidence);
     assert_eq!(row.get::<_, Option<i64>>(1), row.get::<_, Option<i64>>(2));
@@ -167,7 +170,7 @@ async fn preserved_evidence(client: &Client, source_id: i64) -> Result<Value> {
     Ok(client
         .query_one(
             "SELECT jsonb_build_object( \
-         'events', (SELECT jsonb_agg(to_jsonb(e) - 'child_miner_pool_id' ORDER BY e.id) \
+         'events', (SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id) \
                     FROM merge_mining_event e WHERE e.source_id=$1), \
          'parent_attributions', (SELECT jsonb_agg(to_jsonb(a) ORDER BY a.id) \
                     FROM event_pool_attribution a JOIN merge_mining_event e ON e.id=a.event_id \
@@ -199,7 +202,8 @@ async fn qbit_payout_only_and_conflicting_child_tags_keep_existing_resolution_po
         // the curated F2Pool payout at high confidence without a matching tag.
         client
             .execute(
-                "UPDATE merge_mining_event SET child_coinbase_script=NULL WHERE id=$1",
+                "UPDATE child_block_observation SET child_coinbase_script=NULL \
+                 WHERE id = (SELECT observation_id FROM merge_mining_event WHERE id=$1)",
                 &[&event_id],
             )
             .await?;
@@ -212,7 +216,8 @@ async fn qbit_payout_only_and_conflicting_child_tags_keep_existing_resolution_po
         run_reclassify_pools(&mut client, replay_config()?).await?;
         let row = client.query_one(
             "SELECT p.slug, a.confidence FROM merge_mining_event e \
-             JOIN pool p ON p.id=e.child_miner_pool_id \
+             JOIN child_block_observation o ON o.id = e.observation_id \
+             JOIN pool p ON p.id=o.child_pool_id \
              JOIN event_pool_attribution a ON a.event_id=e.id AND a.side='child_block' WHERE e.id=$1",
             &[&event_id],
         ).await?;
@@ -230,10 +235,12 @@ async fn qbit_payout_only_and_conflicting_child_tags_keep_existing_resolution_po
         );
         conflict.source = BTC_POOL_SNAPSHOT_LEGACY_CHILD_SCRIPT_SOURCE;
         mmm_store::upsert_event_pool_attributions(&client, event_id, &[conflict], 1_000).await?;
+        mmm_store::sync_event_observation_attribution(&client, event_id).await?;
         assert!(
             client
                 .query_one(
-                    "SELECT child_miner_pool_id FROM merge_mining_event WHERE id=$1",
+                    "SELECT o.child_pool_id FROM merge_mining_event e \
+                     JOIN child_block_observation o ON o.id = e.observation_id WHERE e.id=$1",
                     &[&event_id]
                 )
                 .await?

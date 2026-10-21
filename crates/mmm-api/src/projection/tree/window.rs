@@ -104,7 +104,7 @@ pub(super) async fn load_active_events_for_tree(
                     cmp.id, cmp.slug, cmp.canonical_name \
              FROM merge_mining_event e \
              JOIN source s ON s.id = e.source_id \
-             LEFT JOIN child_block_observation o ON o.id = COALESCE(e.observation_id, e.id) \
+             JOIN child_block_observation o ON o.id = e.observation_id \
              LEFT JOIN pool cmp ON cmp.id = o.child_pool_id \
              WHERE e.revoked_at IS NULL \
                AND ($1::boolean OR s.code = ANY($2::text[])) \

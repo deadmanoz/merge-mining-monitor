@@ -345,7 +345,6 @@ pub(super) fn parent_kind_from_db(raw: &str) -> Result<ParentKind> {
     match raw {
         "canonical" => Ok(ParentKind::Canonical),
         "error_block" => Ok(ParentKind::ErrorBlock),
-        "near" => Ok(ParentKind::Near),
         "stale" => Ok(ParentKind::Stale),
         "unknown" => Ok(ParentKind::Unknown),
         _ => bail!("unknown parent kind {raw:?}"),
@@ -409,7 +408,6 @@ pub(crate) async fn load_strict_bip34_height<C: tokio_postgres::GenericClient>(
              JOIN source s ON s.id = e.source_id \
              WHERE e.btc_parent_header_hash = $1 \
                AND e.revoked_at IS NULL \
-               AND e.btc_parent_kind <> 'near' \
                AND e.btc_parent_coinbase_script IS NOT NULL \
                AND s.chain = ANY($2) \
              ORDER BY e.id",

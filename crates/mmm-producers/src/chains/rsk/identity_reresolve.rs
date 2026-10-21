@@ -2,10 +2,9 @@
 //!
 //! RSK already persists each block's miner beneficiary as its observation's
 //! `rsk_miner_address` identity. For evidence events this module reuses that
-//! value through the embedded `rsk_miner_address` registry, materializes the
-//! event-level provenance rows that newer captures write live, and late-fills
-//! the sidecar's `pool_identity_id`. It never fetches Rootstock blocks and
-//! never treats explorer labels as authority.
+//! value through the embedded `rsk_miner_address` registry and materializes the
+//! event-level provenance rows that newer captures write live. It never fetches
+//! Rootstock blocks and never treats explorer labels as authority.
 
 use std::collections::HashMap;
 
@@ -18,8 +17,7 @@ use mmm_capture::capture::EventPoolAttribution;
 use mmm_capture::pool_resolver::{PoolIdentityRegistry, RSK_MINER_ADDRESS_NAMESPACE};
 use mmm_capture::source_registry::RSK_SOURCE_CODE;
 use mmm_store::{
-    get_source_id, late_fill_rsk_pool_identity_id, sync_event_observation_attribution,
-    upsert_event_pool_attributions,
+    get_source_id, sync_event_observation_attribution, upsert_event_pool_attributions,
 };
 
 use crate::reclassify_pools::{ReclassifyPoolsConfig, ReclassifyPoolsStats};
@@ -28,7 +26,6 @@ use crate::reclassify_pools::{ReclassifyPoolsConfig, ReclassifyPoolsStats};
 struct ReplayRow {
     event_id: i64,
     miner_address: String,
-    sidecar_pool_identity_id: Option<i64>,
     observed_at: i64,
     current_attribution: ExistingRskMinerAttribution,
 }
@@ -70,9 +67,6 @@ struct ResolvedRskMinerIdentity {
 struct PlannedRskMinerUpdate {
     event_id: i64,
     attribution: EventPoolAttribution,
-    write_attribution: bool,
-    /// Filled only when sidecar `pool_identity_id` is NULL (one-way fill).
-    late_fill_pool_identity_id: Option<i64>,
     observed_at: i64,
 }
 
@@ -135,7 +129,6 @@ pub(crate) async fn reresolve_rsk_miner_identities(
 const RSK_MINER_BATCH_SQL: &str = r"
 SELECT e.id,
        miner.identifier AS miner,
-       r.pool_identity_id AS sidecar_pool_identity_id,
        e.confirmed_at,
        attr.row_count,
        attr.pool_id,
@@ -145,7 +138,7 @@ SELECT e.id,
        attr.details
 FROM rsk_merge_mining_evidence r
 JOIN merge_mining_event e ON e.id = r.event_id
-JOIN child_block_observation o ON o.id = COALESCE(e.observation_id, e.id)
+JOIN child_block_observation o ON o.id = e.observation_id
 JOIN LATERAL (
     SELECT ci.identifier FROM child_miner_identity ci
     WHERE ci.id = ANY(o.child_identity_ids) AND ci.namespace = $2
@@ -167,7 +160,6 @@ LEFT JOIN LATERAL (
 ) attr ON true
 WHERE e.source_id = $1
   AND e.revoked_at IS NULL
-  AND e.btc_parent_kind <> 'near'
   AND ($3::bigint IS NULL OR e.id > $3)
   AND ($3::bigint IS NULL OR r.event_id > $3)
 ORDER BY e.id
@@ -197,15 +189,14 @@ async fn load_rsk_miner_batch(
         .map(|row| ReplayRow {
             event_id: row.get(0),
             miner_address: row.get(1),
-            sidecar_pool_identity_id: row.get(2),
-            observed_at: row.get(3),
+            observed_at: row.get(2),
             current_attribution: ExistingRskMinerAttribution {
-                row_count: row.get(4),
-                pool_id: row.get(5),
-                pool_identity_id: row.get(6),
-                source: row.get(7),
-                confidence: row.get(8),
-                details: row.get(9),
+                row_count: row.get(3),
+                pool_id: row.get(4),
+                pool_identity_id: row.get(5),
+                source: row.get(6),
+                confidence: row.get(7),
+                details: row.get(8),
             },
         })
         .collect())
@@ -272,19 +263,9 @@ fn plan_rsk_miner_update(
             new_pool = attribution.pool_id.unwrap_or_default()
         );
     }
-    let late_fill_pool_identity_id = resolved
-        .map(|identity| identity.pool_identity_id)
-        .filter(|_| row.sidecar_pool_identity_id.is_none());
-
-    if !write_attribution && late_fill_pool_identity_id.is_none() {
-        return Ok(None);
-    }
-
-    Ok(Some(PlannedRskMinerUpdate {
+    Ok(write_attribution.then_some(PlannedRskMinerUpdate {
         event_id: row.event_id,
         attribution,
-        write_attribution,
-        late_fill_pool_identity_id,
         observed_at: row.observed_at,
     }))
 }
@@ -341,22 +322,15 @@ async fn apply_rsk_miner_updates(
         .await
         .context("begin RSK miner identity reclassification transaction")?;
     for update in updates {
-        if update.write_attribution {
-            upsert_event_pool_attributions(
-                &txn,
-                update.event_id,
-                std::slice::from_ref(&update.attribution),
-                update.observed_at,
-            )
-            .await?;
-            sync_event_observation_attribution(&txn, update.event_id).await?;
-            stats.rsk_miner_attribution_updates += 1;
-        }
-        if let Some(pool_identity_id) = update.late_fill_pool_identity_id
-            && late_fill_rsk_pool_identity_id(&txn, update.event_id, pool_identity_id).await?
-        {
-            stats.rsk_miner_sidecar_late_fills += 1;
-        }
+        upsert_event_pool_attributions(
+            &txn,
+            update.event_id,
+            std::slice::from_ref(&update.attribution),
+            update.observed_at,
+        )
+        .await?;
+        sync_event_observation_attribution(&txn, update.event_id).await?;
+        stats.rsk_miner_attribution_updates += 1;
     }
     txn.commit()
         .await

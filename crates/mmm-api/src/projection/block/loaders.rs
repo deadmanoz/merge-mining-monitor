@@ -180,11 +180,7 @@ pub(super) async fn load_event_details_by_hash(
     hash: &[u8],
 ) -> Result<Vec<EventDetailRow>> {
     let rows = client
-        .query(
-            // A near's page reads its observations; pre-swap near events are left out.
-            &event_detail_sql("e.btc_parent_header_hash = $1 AND e.btc_parent_kind <> 'near'"),
-            &[&hash],
-        )
+        .query(&event_detail_sql("e.btc_parent_header_hash = $1"), &[&hash])
         .await
         .context("load block event details by hash")?;
     map_event_detail_rows(rows)
@@ -279,7 +275,7 @@ pub(super) fn event_detail_sql(predicate: &str) -> String {
                 o.child_displaced_at, o.child_displaced_by \
          FROM merge_mining_event e \
          JOIN source s ON s.id = e.source_id \
-         LEFT JOIN child_block_observation o ON o.id = COALESCE(e.observation_id, e.id) \
+         JOIN child_block_observation o ON o.id = e.observation_id \
          LEFT JOIN pool cmp ON cmp.id = o.child_pool_id \
          LEFT JOIN rsk_merge_mining_evidence r ON r.event_id = e.id \
          LEFT JOIN LATERAL ( \

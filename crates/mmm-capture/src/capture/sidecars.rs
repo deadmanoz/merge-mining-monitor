@@ -1,7 +1,7 @@
 //! Per-chain 1:1 capture evidence sidecar payloads (RSK, Hathor).
 
-/// 1:1 `rsk_merge_mining_evidence` payload. `pool_identity_id` is NULL until
-/// the RSK miner address resolves in the embedded identity registry.
+/// An RSK block's capture evidence: the merge-mining proof the
+/// `rsk_merge_mining_evidence` sidecar keeps, and the block facts its observation keeps.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RskEvidencePayload {
     pub rsk_block_hash: Vec<u8>,
@@ -10,7 +10,6 @@ pub struct RskEvidencePayload {
     pub uncle_index: Option<i32>,
     pub uncle_parent_height: Option<i32>,
     pub rsk_miner: Vec<u8>,
-    pub pool_identity_id: Option<i64>,
     pub merge_mining_hash: Vec<u8>,
     pub merkle_proof: Option<Vec<u8>>,
     pub coinbase_tail: Option<Vec<u8>>,

@@ -339,16 +339,10 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
                           AND p.publication_ref = $2 \
                           AND p.chain = $3 \
                    ) \
-                 RETURNING e.source_id, e.child_height, e.child_block_hash, \
-                           e.btc_parent_header_hash \
-             ), removed_exact AS ( \
+                 RETURNING e.observation_id \
+             ), removed_observations AS ( \
                  DELETE FROM child_block_observation o USING removed e \
-                 WHERE o.source_id = e.source_id AND o.child_block_hash = e.child_block_hash \
-             ), removed_hashless AS ( \
-                 DELETE FROM child_block_observation o USING removed e \
-                 WHERE e.child_block_hash IS NULL AND o.child_block_hash IS NULL \
-                   AND o.source_id = e.source_id AND o.child_height = e.child_height \
-                   AND o.btc_parent_header_hash = e.btc_parent_header_hash \
+                 WHERE o.id = e.observation_id \
              ) \
              SELECT count(*) FROM removed";
     let removed: i64 = txn

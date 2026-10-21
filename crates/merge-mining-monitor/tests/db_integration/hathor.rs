@@ -18,7 +18,6 @@ use crate::support::db::{
     advisory_locks_held, displacement_at, observation_displacement_at, observation_prev_hash,
     observations_at,
 };
-use crate::support::exact_observation;
 
 struct FixtureHathorRpc {
     meta: HathorBlockMeta,
@@ -164,7 +163,7 @@ async fn rescan_of_an_unchanged_hathor_height_skips_the_transaction_fetch() -> R
         assert_eq!(active, 1);
         assert_eq!(advisory_locks_held(&client).await?, 0);
 
-        let imported = exact_observation("500001-near-parent", height, [0x5b; 32], 2_030)?;
+        let imported = crate::support::second_parent_event(height, [0x5b; 32], 2_030)?;
         let imported_id = upsert_merge_mining_event(&client, context.source_id(), &imported)
             .await?
             .event_id;
@@ -269,18 +268,22 @@ async fn live_capture_promotes_a_hashless_historical_row_without_revoking_it() -
                 &[&event_id],
             )
             .await?;
-        // A hashless observation of the block beside the exact one carries an nBits the
+        // The hashless row's own observation, beside the exact one, carries an nBits the
         // live payload lacks: promotion folds it into the exact row.
         client
             .execute(
-                "INSERT INTO child_block_observation \
-                     (source_id, child_height, observation_kind, btc_parent_header_hash, \
-                      child_nbits, recorded_at) \
-                 SELECT source_id, child_height, observation_kind, btc_parent_header_hash, \
-                        486604799, recorded_at \
-                   FROM child_block_observation \
-                  WHERE source_id = $1 AND child_height = $2",
-                &[&context.source_id(), &height],
+                "WITH hashless AS ( \
+                     INSERT INTO child_block_observation \
+                         (source_id, child_height, observation_kind, btc_parent_header_hash, \
+                          child_nbits, recorded_at) \
+                     SELECT source_id, child_height, observation_kind, btc_parent_header_hash, \
+                            486604799, recorded_at \
+                       FROM child_block_observation \
+                      WHERE source_id = $1 AND child_height = $2 \
+                     RETURNING id) \
+                 UPDATE merge_mining_event SET observation_id = (SELECT id FROM hashless) \
+                  WHERE id = $3",
+                &[&context.source_id(), &height, &event_id],
             )
             .await?;
 

@@ -85,37 +85,28 @@ pub struct ChildBlockObservation {
 }
 
 impl ChildBlockObservation {
-    /// The observation an event payload describes: `Near` for a target-failing
-    /// parent, `Evidence` otherwise. Its identities and pools are left empty: the
-    /// store takes them from the event's attribution rows in the same transaction.
+    /// The evidence observation an event payload describes. Its identities and pools are
+    /// left empty: the store takes them from the event's attribution rows in the same
+    /// transaction.
     pub fn from_event_payload(payload: &MergeMiningEventPayload) -> Self {
-        let near = payload.btc_parent_kind == ParentKind::Near;
-        let mut observation = Self::child_side(
-            if near {
-                ObservationKind::Near
-            } else {
-                ObservationKind::Evidence
-            },
-            payload,
-        );
+        let mut observation = Self::child_side(ObservationKind::Evidence, payload);
         observation.btc_parent_header_hash = Some(payload.btc_parent_header_hash.clone());
-        if near {
-            observation.near_parent = Some(NearParentEvidence {
-                header_bytes: payload.btc_parent_header_bytes.clone(),
-                header_time: payload.btc_parent_header_time,
-                coinbase_txid: payload.btc_parent_coinbase_txid.clone(),
-                coinbase_script: payload.btc_parent_coinbase_script.clone(),
-                coinbase_outputs: payload.btc_parent_coinbase_outputs.clone(),
-            });
-        }
         observation
     }
 
-    /// A near payload's observation, which no event backs: its identities and both pools
-    /// come from the payload's attributions.
+    /// A near payload's observation, which no event backs: it keeps the parent header and
+    /// coinbase, and its identities and both pools come from the payload's attributions.
     pub fn near(payload: &MergeMiningEventPayload) -> Self {
         debug_assert_eq!(payload.btc_parent_kind, ParentKind::Near);
-        let mut observation = Self::from_event_payload(payload);
+        let mut observation = Self::child_side(ObservationKind::Near, payload);
+        observation.btc_parent_header_hash = Some(payload.btc_parent_header_hash.clone());
+        observation.near_parent = Some(NearParentEvidence {
+            header_bytes: payload.btc_parent_header_bytes.clone(),
+            header_time: payload.btc_parent_header_time,
+            coinbase_txid: payload.btc_parent_coinbase_txid.clone(),
+            coinbase_script: payload.btc_parent_coinbase_script.clone(),
+            coinbase_outputs: payload.btc_parent_coinbase_outputs.clone(),
+        });
         observation.set_child_side_attribution(&payload.pool_attributions);
         observation.btc_parent_pool_id =
             unique_pool(&payload.pool_attributions, PoolAttributionSide::BtcParent);
@@ -246,8 +237,8 @@ fn child_identities(attributions: &[EventPoolAttribution]) -> Vec<ChildIdentity>
     identities
 }
 
-/// The unique known pool on one attribution side, as `refresh_event_child_miner_pool_id`
-/// derives the child pool.
+/// The unique known pool on one attribution side, as an evidence observation's child pool
+/// is derived from its event's attribution rows.
 fn unique_pool(attributions: &[EventPoolAttribution], side: PoolAttributionSide) -> Option<i64> {
     let mut pools = known_pools(attributions, side).into_iter();
     match (pools.next(), pools.next()) {

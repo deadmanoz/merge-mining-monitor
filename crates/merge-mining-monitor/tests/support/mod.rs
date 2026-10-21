@@ -315,3 +315,31 @@ pub fn exact_observation(
     payload.pow_validates_child_target = None;
     Ok(payload)
 }
+
+/// [`exact_observation`] of the `500001-near-parent` fixture as unknown evidence. Its parent
+/// misses Bitcoin's target, so a near has no event; store tests that need an event on a
+/// second parent use it in that role.
+#[cfg(feature = "db-integration")]
+pub fn second_parent_event(
+    height: i32,
+    hash: [u8; 32],
+    observed_at: i64,
+) -> Result<MergeMiningEventPayload> {
+    let mut payload = exact_observation("500001-near-parent", height, hash, observed_at)?;
+    payload.btc_parent_kind = ParentKind::Unknown;
+    payload.pow_validates_btc_target = true;
+    Ok(payload)
+}
+
+/// [`mmm_store::write_capture`] in its own committed transaction, as capture writes.
+#[cfg(feature = "db-integration")]
+pub async fn write_capture_committed(
+    client: &mut tokio_postgres::Client,
+    source_id: i64,
+    payload: &MergeMiningEventPayload,
+) -> Result<CaptureWrite> {
+    let txn = client.transaction().await?;
+    let write = mmm_store::write_capture(&txn, source_id, payload).await?;
+    txn.commit().await?;
+    Ok(write)
+}

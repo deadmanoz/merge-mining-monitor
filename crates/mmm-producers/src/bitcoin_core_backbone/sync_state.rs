@@ -230,7 +230,6 @@ pub(super) async fn skipped_complete_has_missing_dependents<C: GenericClient>(
                  FROM merge_mining_event e \
                  LEFT JOIN block b ON b.btc_header_hash = e.btc_parent_header_hash \
                  WHERE e.btc_parent_prev_header_hash = $1 \
-                   AND e.btc_parent_kind <> 'near' \
                    AND e.pow_validates_btc_target \
                    AND e.revoked_at IS NULL \
                    AND b.btc_header_hash IS NULL \

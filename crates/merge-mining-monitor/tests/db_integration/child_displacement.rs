@@ -11,7 +11,7 @@ use mmm_store::{
 use tokio_postgres::Client;
 
 use crate::support::db::connect_to_schema;
-use crate::support::exact_observation;
+use crate::support::{exact_observation, second_parent_event};
 
 const HEIGHT: i32 = 1_030;
 const HASH_A: [u8; 32] = [0x0a; 32];
@@ -20,6 +20,10 @@ const HASH_C: [u8; 32] = [0x0c; 32];
 
 fn exact_at_height(fixture: &str, hash: [u8; 32]) -> Result<MergeMiningEventPayload> {
     exact_observation(fixture, HEIGHT, hash, 2_030)
+}
+
+fn second_parent_at_height(hash: [u8; 32]) -> Result<MergeMiningEventPayload> {
+    second_parent_event(HEIGHT, hash, 2_030)
 }
 
 async fn record(
@@ -54,10 +58,11 @@ async fn rows_at_height(
 ) -> Result<Vec<(Option<Vec<u8>>, Option<i64>, Option<Vec<u8>>, Option<i64>)>> {
     let rows = client
         .query(
-            "SELECT child_block_hash, child_displaced_at, child_displaced_by, revoked_at \
-             FROM merge_mining_event \
-             WHERE source_id = $1 AND child_height = $2 \
-             ORDER BY child_block_hash NULLS FIRST",
+            "SELECT e.child_block_hash, o.child_displaced_at, o.child_displaced_by, e.revoked_at \
+             FROM merge_mining_event e \
+             JOIN child_block_observation o ON o.id = e.observation_id \
+             WHERE e.source_id = $1 AND e.child_height = $2 \
+             ORDER BY e.child_block_hash NULLS FIRST",
             &[&source_id, &HEIGHT],
         )
         .await?;
@@ -162,7 +167,7 @@ async fn seed_a_beside_a_hashless_sibling(
     source_id: i64,
 ) -> Result<(Vec<u8>, Vec<u8>)> {
     let a = exact_at_height("500000-valid-parent", HASH_A)?;
-    let mut hashless = exact_at_height("500001-near-parent", HASH_C)?;
+    let mut hashless = second_parent_at_height(HASH_C)?;
     hashless.child_block_hash = None;
     hashless.child_block_time = None;
     upsert_merge_mining_event(&*client, source_id, &a).await?;
@@ -375,7 +380,7 @@ async fn a_parentless_record_leaves_a_hashless_row_alone() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         const HASH_X: [u8; 32] = [0x1f; 32];
-        let mut hashless = exact_at_height("500001-near-parent", HASH_X)?;
+        let mut hashless = second_parent_at_height(HASH_X)?;
         hashless.child_block_hash = None;
         hashless.child_block_time = None;
         upsert_merge_mining_event(&client, source_id, &hashless).await?;
@@ -393,7 +398,7 @@ async fn a_parentless_record_leaves_a_hashless_row_alone() -> Result<()> {
             vec![(None, None, None, None)]
         );
 
-        let exact = exact_at_height("500001-near-parent", HASH_X)?;
+        let exact = second_parent_at_height(HASH_X)?;
         let outcome = upsert_merge_mining_event(&client, source_id, &exact).await?;
         assert_eq!(outcome.disposition, EventWriteDisposition::Promoted);
         let outcome = record(
@@ -418,7 +423,7 @@ async fn a_block_with_no_auxpow_displaces_hashless_rows() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let source_id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
         const HASH_N: [u8; 32] = [0x2e; 32];
-        let mut hashless = exact_at_height("500001-near-parent", HASH_C)?;
+        let mut hashless = second_parent_at_height(HASH_C)?;
         hashless.child_block_hash = None;
         hashless.child_block_time = None;
         upsert_merge_mining_event(&client, source_id, &hashless).await?;

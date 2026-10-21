@@ -267,14 +267,12 @@ WITH eligible AS MATERIALIZED (
           SELECT 1
           FROM merge_mining_event e
           WHERE e.btc_parent_header_hash = q.btc_parent_header_hash
-            AND e.btc_parent_kind <> 'near'
             AND e.revoked_at IS NULL
       )
       AND NOT EXISTS (
           SELECT 1
           FROM merge_mining_event e
           WHERE e.btc_parent_header_hash = q.btc_parent_header_hash
-            AND e.btc_parent_kind <> 'near'
             AND e.revoked_at IS NULL
             AND (
                 e.btc_parent_kind <> 'canonical'
@@ -300,7 +298,6 @@ rollups AS MATERIALIZED (
     FROM eligible x
     JOIN merge_mining_event e
       ON e.btc_parent_header_hash = x.btc_parent_header_hash
-     AND e.btc_parent_kind <> 'near'
      AND e.revoked_at IS NULL
     JOIN source s ON s.id = e.source_id
     GROUP BY e.btc_parent_header_hash
@@ -344,7 +341,6 @@ proof_rollups AS MATERIALIZED (
     FROM eligible x
     JOIN merge_mining_event e
       ON e.btc_parent_header_hash = x.btc_parent_header_hash
-     AND e.btc_parent_kind <> 'near'
     GROUP BY e.btc_parent_header_hash, e.source_id
 ),
 updated_proofs AS (
@@ -389,7 +385,6 @@ dangling_proofs AS (
           SELECT 1 FROM merge_mining_event e
           WHERE e.btc_parent_header_hash = ap.btc_header_hash
             AND e.source_id = ap.source_id
-            AND e.btc_parent_kind <> 'near'
       )
 ),
 completed AS (
@@ -711,7 +706,6 @@ async fn lock_historical_parent_events<C: GenericClient>(
         .query(
             "SELECT id FROM merge_mining_event \
              WHERE btc_parent_header_hash = $1 \
-               AND btc_parent_kind <> 'near' \
                AND revoked_at IS NULL \
              ORDER BY id \
              FOR UPDATE",

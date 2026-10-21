@@ -150,7 +150,6 @@ pub(crate) async fn snapshot_parent_contribution<C: GenericClient>(
                  SELECT source_id, btc_parent_kind, pow_validates_btc_target, confirmed_at \
                  FROM merge_mining_event \
                  WHERE btc_parent_header_hash = $1 AND revoked_at IS NULL \
-                   AND btc_parent_kind <> 'near' \
              ), near_sources AS ( \
                  SELECT source_id, max(recorded_at) AS last_recorded_at \
                  FROM child_block_observation \
@@ -249,8 +248,7 @@ async fn apply_one_source_delta<C: GenericClient>(
                 "UPDATE source_health \
                     SET last_event_seen = GREATEST( \
                             (SELECT max(confirmed_at) FROM merge_mining_event \
-                              WHERE source_id = $1 AND revoked_at IS NULL \
-                                AND btc_parent_kind <> 'near'), \
+                              WHERE source_id = $1 AND revoked_at IS NULL), \
                             (SELECT max(recorded_at) FROM child_block_observation \
                               WHERE source_id = $1 AND observation_kind = 'near') \
                         ), updated_at = $2 \
@@ -407,7 +405,7 @@ pub async fn compute_source_health_from_base<C: GenericClient>(
                         (array_agg(b.btc_orphan_class) FILTER (WHERE b.btc_orphan_class IS NOT NULL))[1] AS block_orphan_class \
                  FROM merge_mining_event e \
                  LEFT JOIN block b ON b.btc_header_hash = e.btc_parent_header_hash \
-                 WHERE e.revoked_at IS NULL AND e.btc_parent_kind <> 'near' \
+                 WHERE e.revoked_at IS NULL \
                  GROUP BY e.btc_parent_header_hash \
              ), parent_current AS ( \
                  SELECT btc_parent_header_hash, \
@@ -429,7 +427,7 @@ pub async fn compute_source_health_from_base<C: GenericClient>(
                         (count(DISTINCT e.btc_parent_header_hash) FILTER (WHERE pc.current_kind = 'unknown' AND pc.orphan_class = 'weak_btc_orphan'))::bigint AS weak_orphan_count \
                  FROM merge_mining_event e \
                  JOIN parent_current pc ON pc.btc_parent_header_hash = e.btc_parent_header_hash \
-                 WHERE e.revoked_at IS NULL AND e.btc_parent_kind <> 'near' GROUP BY e.source_id \
+                 WHERE e.revoked_at IS NULL GROUP BY e.source_id \
              ) \
              SELECT COALESCE(pc.source_id, nc.source_id) AS source_id, \
                     COALESCE(pc.events, 0), GREATEST(pc.last_event_seen, nc.last_near_seen), \
@@ -470,7 +468,7 @@ pub async fn compute_source_health_from_base<C: GenericClient>(
                         bool_or(NOT e.pow_validates_btc_target) AS has_failed_target \
                  FROM merge_mining_event e \
                  LEFT JOIN block b ON b.btc_header_hash = e.btc_parent_header_hash \
-                 WHERE e.revoked_at IS NULL AND e.btc_parent_kind <> 'near' \
+                 WHERE e.revoked_at IS NULL \
                  GROUP BY e.btc_parent_header_hash \
              ) \
              SELECT count(*)::bigint FROM parent_rollup \
