@@ -61,6 +61,12 @@ test("a malformed declaration names no account and shows its raw script", async 
   await expect(section.locator("details.collapse")).toHaveAttribute("open", "");
 });
 
+test("a CORE declaration Core DAO does not read says so", async ({ page }) => {
+  const [core] = fixture.protocol_commitments.entries;
+  const section = await openDrawer(page, { outputs: "decoded", entries: [{ ...core, upstream_selected: false }] });
+  await expect(section).toContainText("not read by Core DAO");
+});
+
 const states = [
   ["not derived yet", null, "Not derived yet."],
   ["no declarations", { outputs: "decoded", entries: [] }, "No CORE or exSat declaration in this coinbase."],

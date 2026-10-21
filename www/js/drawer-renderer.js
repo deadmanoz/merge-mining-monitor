@@ -98,7 +98,7 @@ const AUXPOW_HELP = {
       "Some coinbases carry OP_RETURN declarations for Core DAO's delegated proof of work (CORE: a validator and a reward address) and for exSat (EXSAT: a synchronizer account).",
       "A declaration names a protocol account. It does not say who mined the block, who built its template, or which account the protocol credited.",
       "Protocol account association is the pool this project's registry links to the declared account, from the protocol's own listing or from which pool's blocks carry it.",
-      "Core DAO reads one CORE output per block, marked \"read by Core DAO\". exSat can credit a registered payout address that appears before its marker, so which declaration it credits cannot be read from the coinbase. A malformed declaration keeps its raw script and names no account.",
+      "Core DAO reads one CORE output per block, marked \"read by Core DAO\"; any other CORE output is marked \"not read by Core DAO\". exSat can credit a registered payout address that appears before its marker, so which declaration it credits cannot be read from the coinbase. A malformed declaration keeps its raw script and names no account.",
     ],
   },
 };
@@ -387,7 +387,7 @@ function renderProtocolCommitment(entry) {
   const valid = entry.decode_status === "valid";
   const status = entry.decode_status.replace("_", " ");
   const selection = entry.protocol === "core"
-    ? (entry.upstream_selected ? `<span class="state-pill">read by Core DAO</span>` : "")
+    ? `<span class="state-pill">${entry.upstream_selected ? "read" : "not read"} by Core DAO</span>`
     : `<span class="state-pill">selection undetermined</span>`;
   const head = `<div class="protocol-commitment-head"><strong>${esc(PROTOCOL_LABELS[entry.protocol] || entry.protocol)}</strong> <span class="protocol-commitment-vout">vout ${esc(entry.vout)}</span> <span class="state-pill ${valid ? "kind-canonical" : "kind-stale"}">${esc(status)}</span> ${selection}</div>`;
   const rows = [];
