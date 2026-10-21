@@ -167,15 +167,17 @@ fn recognize(script: &[u8]) -> Option<(CommitmentProtocol, usize)> {
 }
 
 fn decode_core(script: &[u8], version_at: usize) -> Result<CommitmentPayload, MalformedReason> {
-    if script[version_at + 1..].starts_with(CORE_HEADER) {
-        return Err(MalformedReason::NestedHeader);
-    }
-    if !script.starts_with(CORE_HEADER) {
-        return Err(MalformedReason::WrongPushLength);
-    }
+    // The exact layout wins, so a validator that happens to begin with the header stays valid.
+    let exact = script.starts_with(CORE_HEADER);
     let binding_hash = match script.len() {
-        CORE_SCRIPT_LEN => None,
-        CORE_WITH_BINDING_HASH_LEN => Some(script[CORE_SCRIPT_LEN..].try_into().expect("32 bytes")),
+        CORE_SCRIPT_LEN if exact => None,
+        CORE_WITH_BINDING_HASH_LEN if exact => {
+            Some(script[CORE_SCRIPT_LEN..].try_into().expect("32 bytes"))
+        }
+        _ if script[version_at + 1..].starts_with(CORE_HEADER) => {
+            return Err(MalformedReason::NestedHeader);
+        }
+        _ if !exact => return Err(MalformedReason::WrongPushLength),
         len if len < CORE_SCRIPT_LEN => return Err(MalformedReason::Truncated),
         _ => return Err(MalformedReason::TrailingBytes),
     };
@@ -298,6 +300,8 @@ mod tests {
     fn classifies_layout_edges() {
         let payload = format!("{VALIDATOR}{ANTPOOL_REWARD}");
         let core_script = format!("6a2d434f524501{payload}");
+        // A valid validator that begins with the CORE header bytes.
+        let header_validator = format!("6a2d434f524501{}", "00".repeat(13));
         let cases = [
             (
                 format!("{core_script}{}", "11".repeat(32)),
@@ -310,6 +314,14 @@ mod tests {
             ),
             (core_script[..60].to_owned(), Malformed(Truncated)),
             (format!("{core_script}abcdef"), Malformed(TrailingBytes)),
+            (
+                format!("6a2d434f524501{header_validator}{ANTPOOL_REWARD}"),
+                Valid(CommitmentPayload::Core {
+                    validator: hex::decode(&header_validator).unwrap().try_into().unwrap(),
+                    reward_address: hex::decode(ANTPOOL_REWARD).unwrap().try_into().unwrap(),
+                    binding_hash: None,
+                }),
+            ),
             (EXSAT_ANT.to_owned(), exsat("ant")),
             (
                 "6a0a45585341540100201312".to_owned(),
