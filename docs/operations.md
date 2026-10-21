@@ -13,7 +13,7 @@ just test
 ```
 
 Copy `.env.example` to `.env` and adjust endpoints before running live pollers or Bitcoin Core classification.
-A synced **Bitcoin mainnet** Core node is required for every capture, import, and reconciliation command, including database-only maintenance modes (`just rebuild-source-health`): each drains committed Core-suffix reconciliation before refreshing the sparse `bitcoin_core_header` cache through the current synced tip.
+A synced **Bitcoin mainnet** Core node is required for every capture, import, and reconciliation command, including database-only maintenance modes (`just rebuild-source-health`, `just rebuild-protocol-commitments`): each drains committed Core-suffix reconciliation before refreshing the sparse `bitcoin_core_header` cache through the current synced tip.
 `serve` reads that persisted cache from Postgres and makes no Core RPC calls.
 
 ## Serving
@@ -189,6 +189,12 @@ It is required on a fresh database and after bulk backfills: `/api/v1/sources` f
 Run it during a quiescent window (pollers stopped) so it sees a stable base.
 Counters are maintained incrementally afterward, so re-running it is only needed to repair drift or once after an upgrade that changes a counter's definition (0.10.0, which takes near counts from `child_block_observation`, is one, and its migration 0034 clears `source_health_ready`, so `/api/v1/sources` fails closed until the rebuild runs).
 `import-all` rebuilds source health once after all durable historical parent and dependent work has drained, so no separate rebuild is required after that command.
+
+`just rebuild-protocol-commitments` (optionally with `--batch-size N`, default 100 headers per page) fills the derived CORE and exSat `protocol_commitment` tables from stored coinbase outputs.
+Run it once after migration `0035` and again after any release that raises the protocol-commitment decoder version.
+It refreshes every header with a `block` row, a near observation with stored outputs or derived rows, one page per exclusive canonical-view hold so live capture and Core writes wait at most one page, and rewrites each script those pages reach with the compiled decoder.
+It records `protocol_commitments_decoder_version` only after the walk finishes; an interrupted run leaves the version unchanged, and a rerun is idempotent.
+Producers keep the tables current afterward.
 
 `reconcile-read-model --start-height` and `--end-height` are child-height bounds.
 Either bound excludes exact events whose authenticated child height is unavailable.

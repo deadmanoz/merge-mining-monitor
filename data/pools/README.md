@@ -14,6 +14,8 @@ The BTC pool registry resolves the *Bitcoin parent* pool, which every merge-mine
   Only genuine remaps live here (`ocean -> ocean-xyz`, `braiins -> braiins-pool`); new pools default to their upstream filename stem.
 - `child-identities/*.json` - per-chain child identity registries (`rsk_miner_registry.json`, `namecoin_payout_address_registry.json`, `syscoin_payout_address_registry.json`, `fractal_reward_address_registry.json`, `qbit_payout_address_registry.json`, `hathor_reward_registry.json`, `elastos_reward_address_registry.json`, `elastos_minerinfo_registry.json`), validated by `crates/mmm-capture/src/identity_registry.rs`.
   See `docs/attribution.md`.
+- `protocol-accounts/*.json` - protocol-account association registries (`core_reward_address_registry.json`, `exsat_account_registry.json`) mapping CORE reward addresses and exSat accounts declared in Bitcoin coinbases to pools, each entry with its basis and dated evidence.
+  Validated and seeded by `crates/mmm-producers/src/protocol_account_registry.rs`; see `docs/attribution.md#protocol-account-associations`.
 
 ## Regenerating
 

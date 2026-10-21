@@ -34,6 +34,8 @@ mod mutation;
 mod orphan_classification;
 #[path = "db_integration/poller.rs"]
 mod poller;
+#[path = "db_integration/protocol_commitments.rs"]
+mod protocol_commitments;
 #[path = "db_integration/reclassify_pools.rs"]
 mod reclassify_pools;
 #[path = "db_integration/reconcile_core.rs"]

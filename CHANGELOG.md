@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Derive Core DAO (`CORE`) and exSat (`EXSAT`) coinbase declarations per Bitcoin header into new `protocol_commitment` tables (migration 0035), refreshed with every parent rebuild, Core canonical write and near capture from the highest-priority stored coinbase outputs, and recording headers whose stored outputs do not deserialize. Run `just rebuild-protocol-commitments` once after upgrading to fill them and record the decoder version.
+- Add protocol-account association registries mapping declared CORE reward addresses and exSat accounts to pools, each entry with a dated basis (`first_party_registration` or `empirical_association`), seeded and reconciled when the Bitcoin Core follower starts. A declaration names a protocol account, not the block's builder or the account the protocol credited, and no Bitcoin, child or event attribution reads these mappings.
 - Stop live producers (`poll-*` and `sync-bitcoin-core --follow`) on SIGINT or SIGTERM without finishing the current tick, after any committed write finishes its dependent cascade (for up to 60 s), so a tick slowed by remote latency or RPC retries no longer runs past the service stop timeout and gets the unit killed and marked failed.
 
 ## [0.10.0] - 2026-10-20

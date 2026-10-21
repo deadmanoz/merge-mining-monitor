@@ -9,7 +9,7 @@ Producers append or update base evidence; the read model computes the Bitcoin tr
 |---|---|
 | `source` | Registered evidence sources such as `auxpow:namecoin`, `auxpow:rsk`, or `live-chaintip:bitcoin:core`. |
 | `pool` | Stable pool identities loaded from `data/pools/current.json`. |
-| `pool_identity` | Native child-chain identities that map to a pool, such as RSK miner addresses or child reward addresses. |
+| `pool_identity` | Native child-chain identities that map to a pool, such as RSK miner addresses or child reward addresses, and protocol accounts declared in Bitcoin coinbases (CORE reward addresses, exSat accounts). |
 | `merge_mining_event` | Bitcoin-relevant source evidence (`canonical`, `stale`, `error_block` or `unknown` parents) keyed by exact or partial authenticated child identity and its Bitcoin parent header; `observation_id` (required, unique) links the event to its child block observation, which holds the child fields, identities and child pool. |
 | `child_block_observation` | One row per child block on every chain, written by live capture, migration 0033's fill and per-chain backfills (see `docs/capture.md`), with the block's own child evidence and its `observation_kind`: `evidence` (an event holds the parent's Bitcoin classification), `near` (the parent misses Bitcoin's target; its header and coinbase are kept on the observation), `not_merge_mined` (no AuxPoW), `non_bitcoin_parent` (the parent failed the lineage gate; no parent field is stored), or `unverified_parent` (the child block is authenticated but its AuxPoW proof is malformed or incomplete; no parent field is stored). Child identities, the child-side pool, and RSK chain role, uncle placement and reported difficulty live here. |
 | `child_miner_identity` | Raw child identifiers seen on any child block (RSK miner, child payout and reward addresses, Elastos minerinfo), keyed like `pool_identity`; a matching `pool_identity` row maps one to a pool. |
@@ -24,6 +24,9 @@ Producers append or update base evidence; the read model computes the Bitcoin tr
 | `block` | Derived Bitcoin parent block state: canonical, stale, consensus-invalid error block, or unknown. |
 | `attestation_proof` | Derived proof rows supporting a block. |
 | `source_health` | Per-source rollup counters for UI/API health reporting. |
+| `protocol_commitment` | Derived: each Core DAO (`CORE`) or exSat (`EXSAT`) declaration in a Bitcoin header's coinbase, with its vout, script, Core DAO selection (`upstream_selected`, NULL for exSat), header time and `evidence_source`. Near parents have no `block` row, so there is no foreign key to `block`. |
+| `protocol_commitment_script` | Derived dimension: each distinct CORE or exSat `OP_RETURN` script (unique by its SHA-256, since coinbase outputs are unbounded), with its strict-layout `decode_status` (`valid`, `malformed` with a `malformed_reason`, or `unsupported_version`) and decoded validator, reward address, binding hash or account, plus the declared account as `pool_identity` keys it (`account_namespace`, `account_identifier`). Rows are never deleted. |
+| `protocol_commitment_undecodable` | Derived: headers whose chosen stored coinbase outputs do not deserialize, so a failed decode is never read as a coinbase without declarations. |
 
 ## Parent Classification
 
@@ -109,7 +112,10 @@ When a child chain replaces the block at `child_height`, the replaced block's ob
 
 ## Read-Model Rules
 
-- Derived rows (`block`, `attestation_proof`, `source_health`) are written only through `mmm-read-model` mutation entry points.
+- Derived rows (`block`, `attestation_proof`, `source_health`, and the `protocol_commitment` tables) are written only through `mmm-read-model` mutation entry points.
+- Protocol commitments are refreshed at the end of every parent rebuild (including the historical queue's bulk canonical pass), Core canonical write and near capture with parent outputs, from the highest-priority complete coinbase outputs stored for the header: Core's `block` coinbase (`bitcoin_core`), else the lowest-id active event's parent coinbase (`auxpow_event`), else the lowest-id near observation's (`near_observation`).
+  Historical rows with only `btc_parent_coinbase_outputs_text` are not decoded.
+  `reconcile-read-model --rebuild-protocol-commitments` refreshes every header with a `block` row, a near observation with outputs or derived rows, a page per exclusive canonical-view hold, rewrites each script those pages reach with the compiled decoder, and then records `read_model_invariant.protocol_commitments_decoder_version`; the tables are authoritative only while that equals the compiled `DECODER_VERSION`.
 - Historical base snapshots enqueue parents in `historical_reconcile_queue` transactionally.
   Primary parent rebuilds commit one at a time, store their changed-hash seeds transactionally, and delete queue work only after the dependent cascade succeeds.
 - Live captures, Core canonical writes and the Core sync's missing-dependent repair cascade dependents in memory, committing item by item with no durable seed; a live producer lets a running cascade finish for up to 60 s before it honours shutdown, but a crash, a SIGKILL or a longer cascade still loses the rest.
@@ -121,6 +127,6 @@ When a child chain replaces the block at `child_height`, the replaced block's ob
 
 ## Migrations
 
-Public migration history starts with `0001_canonical_schema.sql` (squashed baseline schema) and `0002_seed_sources.sql` (registry-generated source seed for fresh databases), followed by append-only numbered forward migrations (`0003` through `0034`).
+Public migration history starts with `0001_canonical_schema.sql` (squashed baseline schema) and `0002_seed_sources.sql` (registry-generated source seed for fresh databases), followed by append-only numbered forward migrations (`0003` through `0035`).
 After a migration has reached a persistent database, never edit it; add a new forward migration instead (regenerating `0002` only alongside an idempotent forward migration when adding a source).
 Run all real database migrations through `just db-migrate-dev` or `just db-migrate-deploy` (`scripts/migrate-safe.sh`); see `migrations/README.md` for baseline-reset and scheduled-recheck conventions.

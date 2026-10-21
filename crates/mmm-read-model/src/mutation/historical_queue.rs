@@ -10,12 +10,15 @@ use mmm_bitcoin_core::{ConfiguredParentClassifier, ParentClassification};
 use mmm_capture::capture::ParentKind;
 use mmm_capture::nbits_table::NbitsTable;
 
-use super::{PrimaryDiff, cascade_changed_with_nbits_table, lock_core_classification_view_shared};
+use super::{
+    PrimaryDiff, cascade_changed_with_nbits_table, lock_core_canonical_view_shared,
+    lock_core_classification_view_shared,
+};
 use crate::{
     DEFAULT_CASCADE_BUDGET, PreclassifiedParent, RECONCILE_LOCK_SET_RETRY_LIMIT,
     find_anchor_event_for_block, is_reconcile_lock_set_changed, load_block_cascade_state,
     load_event, lock_block_hash, lock_event_for_source_health, preclassify_event_parent,
-    rebuild_parent_read_model, reconcile_one_event_in_txn,
+    rebuild_parent_read_model, reconcile_one_event_in_txn, refresh_protocol_commitments,
 };
 
 const CANONICAL_BULK_RECONCILE_BATCH_SIZE: i64 = 10_000;
@@ -250,6 +253,9 @@ async fn reconcile_proven_canonical_batch(client: &mut Client, batch_size: i64) 
         .transaction()
         .await
         .context("begin canonical historical bulk reconcile")?;
+    // Core canonical writers take the exclusive side, so the eligibility read and the commitment
+    // refresh below see one Core view and cannot overwrite a Core coinbase committed meanwhile.
+    lock_core_canonical_view_shared(&txn).await?;
     let row = txn
         .query_one(
             r#"
@@ -409,7 +415,8 @@ pending_cascade AS (
 SELECT (SELECT count(*) FROM completed)
      + (SELECT count(*) FROM pending_cascade) AS reconciled,
        (SELECT count(*) FROM updated_blocks) AS blocks_updated,
-       (SELECT count(*) FROM updated_proofs) AS proofs_updated
+       (SELECT count(*) FROM updated_proofs) AS proofs_updated,
+       ARRAY(SELECT btc_parent_header_hash FROM eligible ORDER BY 1) AS eligible
 "#,
             &[&batch_size],
         )
@@ -418,6 +425,10 @@ SELECT (SELECT count(*) FROM completed)
     let reconciled: i64 = row.get(0);
     let blocks_updated: i64 = row.get(1);
     let proofs_updated: i64 = row.get(2);
+    let eligible: Vec<Vec<u8>> = row.get(3);
+    if !eligible.is_empty() {
+        refresh_protocol_commitments(&txn, &eligible).await?;
+    }
     txn.commit()
         .await
         .context("commit canonical historical bulk reconcile")?;

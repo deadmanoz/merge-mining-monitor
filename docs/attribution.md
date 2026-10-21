@@ -50,6 +50,53 @@ Child payout registry entries may specify `confidence: "high"` or `"medium"`; om
 This metadata is applied at bootstrap to matching, database-backed identities without additional queries or a confidence column; unknown payout addresses remain medium-confidence observations without a pool identity.
 Matching child tag and payout rows remain separate evidence for the same pool, while conflicting known child pools project to Unknown.
 
+## Protocol Account Associations
+
+Some Bitcoin coinbases also carry `OP_RETURN` declarations for protocols that are not merge-mined child chains: Core DAO delegated proof of work (`CORE`: a validator and a reward address) and exSat (`EXSAT`: a synchronizer account).
+The read model decodes them into `protocol_commitment` rows (see `docs/data-model.md`), keeping malformed and unsupported-version declarations with their raw script.
+
+A declaration names a protocol account.
+It does not establish who built the block template, who controls the account, or which account the protocol credited.
+Core DAO validators serve many unrelated pools and are not mapped.
+exSat can credit an earlier output whose payout address is registered to a synchronizer, so which declaration exSat credits cannot be decided from the coinbase, and `upstream_selected` is NULL for exSat; for CORE it marks the output Core DAO's relayer reads.
+Realised rewards, claims and processing freshness are outside this layer.
+
+| Registry | Namespace | Meaning |
+|---|---|---|
+| `data/pools/protocol-accounts/core_reward_address_registry.json` | `core_reward_address` | Declared CORE reward address (`0x` plus 40 lowercase hex). |
+| `data/pools/protocol-accounts/exsat_account_registry.json` | `exsat_account` | Declared exSat synchronizer account. |
+
+Every entry records its basis and dated evidence:
+
+- `first_party_registration`: the protocol's own listing of the account for the pool, with its source and date. Every exSat entry comes from exSat's mainnet synchronizer configuration; `xsatsync.sat`, the exSat Foundation's own synchronizer, is not mapped.
+- `empirical_association`: at least 20 Core-attested canonical blocks carry the identifier, and at least 90% of those whose miner resolves resolve to the mapped pool (payout-attributed blocks count for their pool), with block counts and first and last heights as of the registry's `generated_on` date. Seeding refuses an entry that falls below this rule, and conflicted identifiers stay unmapped.
+
+Mappings are not time-bounded: an identifier seen changing hands is unmapped until time-bounded mappings exist.
+The Bitcoin Core follower (`sync-bitcoin-core --follow`) seeds both namespaces at startup and makes them equal their registries, so removing an entry unmaps it at the next start.
+No Bitcoin parent, child or event attribution reads these namespaces; a declared account's pool is resolved at read time.
+
+A query of this shape counts canonical blocks per declared CORE reward address against the pool that mined them, which is what the empirical rule weighs:
+
+```sql
+SELECT s.account_identifier AS reward_address,
+       declared.slug AS declared_account_pool,
+       miner.slug AS bitcoin_miner_pool,
+       count(*) AS blocks,
+       min(b.btc_height) AS first_height,
+       max(b.btc_height) AS last_height
+  FROM protocol_commitment c
+  JOIN protocol_commitment_script s ON s.id = c.script_id
+  JOIN block b ON b.btc_header_hash = c.btc_header_hash
+  LEFT JOIN pool miner ON miner.id = b.bitcoin_miner_pool_id
+  LEFT JOIN pool_identity i
+         ON (i.namespace, i.identifier) = (s.account_namespace, s.account_identifier)
+  LEFT JOIN pool declared ON declared.id = i.pool_id
+ WHERE s.protocol = 'core' AND s.decode_status = 'valid' AND c.upstream_selected
+   AND b.kind = 'canonical' AND b.core_attested
+ GROUP BY 1, 2, 3
+ ORDER BY blocks DESC;
+```
+
 ## Reclassification
 
 `just reclassify-pools` replays attribution from stored evidence and the embedded registries (for example `just reclassify-pools --only main --source auxpow:qbit` to enrich stored child outputs in bounded pages without node RPC calls).

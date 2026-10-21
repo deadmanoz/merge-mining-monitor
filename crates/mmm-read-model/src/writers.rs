@@ -85,7 +85,8 @@ pub(crate) async fn upsert_core_canonical_header_with_coinbase<C: GenericClient>
     upsert_synthesized_canonical(client, &classified).await
 }
 
-/// Upsert a synthesized or Core-canonical block via `BlockWriteMode::SynthesizedCore`.
+/// Upsert a synthesized or Core-canonical block via `BlockWriteMode::SynthesizedCore` and refresh
+/// its protocol commitments.
 pub(crate) async fn upsert_synthesized_canonical<C: GenericClient>(
     client: &C,
     header: &ClassifiedHeader,
@@ -119,7 +120,9 @@ pub(crate) async fn upsert_synthesized_canonical<C: GenericClient>(
         last_attested_at: None,
         btc_orphan_class: None,
     };
-    upsert_block_row(client, &block, BlockWriteMode::SynthesizedCore).await
+    upsert_block_row(client, &block, BlockWriteMode::SynthesizedCore).await?;
+    refresh_protocol_commitments(client, std::slice::from_ref(&header.hash)).await?;
+    Ok(())
 }
 
 /// Monotonic coinbase merge: `complete` wins; `failed` only overwrites non-`complete`.

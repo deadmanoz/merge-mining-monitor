@@ -15,14 +15,16 @@ Use `just` targets, not raw commands, when a target exists:
 - `just poll-CHAIN` / `just backfill-CHAIN START END` - chain capture for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, `elastos`, `qbit`, and `terracoin`.
 - `just import-known-stales` / `just reclassify-known-stales` - known-stale membership import and retroactive demotion.
 - `just import-all` / `just import-dataset CHAIN` / `just gen-research-publication-pins` - pinned historical publication import and Research manifest + error-catalogue pin refresh.
-- `just reclassify-unknown-parents`, `just reclassify-pools`, `just reconcile-read-model` - repair and enrichment commands.
+- `just reclassify-unknown-parents`, `just reclassify-pools`, `just reconcile-read-model`, `just rebuild-protocol-commitments` - repair and enrichment commands.
 
 ## Architecture Rules
 
 - **Crate ownership:** `mmm-pg` opens connections, `mmm-capture` owns offline parsing/resolution, `mmm-rpc` owns HTTP transport, `mmm-bitcoin-core` is the only Core RPC linker, `mmm-store` writes producer base tables, `mmm-read-model` writes derived tables, `mmm-producers` owns engines, and `mmm-api` serves read-only HTTP views without importing producer internals.
 - **Base vs derived tables (`docs/data-model.md`):** Producers write only `merge_mining_event`, `child_block_observation` (with its `child_miner_identity` dimension), 1:1 chain sidecars, attribution rows, and operational state (`poll_cursor`, `poll_pending_reconcile`, `capture_error`, and `child_chain_head`, pruned to each source's rescan window) through `mmm-store`; historical ingest attaches `historical_event_provenance` and operators import `known_stale_block`.
   `merge_mining_event` holds only Bitcoin-relevant evidence linked to its observation; nears and blocks without a Bitcoin parent are observations only.
-  `block`, `attestation_proof`, and `source_health` are derived exclusively through `mmm-read-model`.
+  `block`, `attestation_proof`, `source_health`, and the `protocol_commitment` tables are derived exclusively through `mmm-read-model`.
+- **Protocol account associations (`docs/attribution.md`):** A CORE or exSat coinbase declaration names a protocol account, never the block's builder, owner or credited account.
+  The `data/pools/protocol-accounts/` registries (dated basis per entry, reconciled at Core follow startup) are resolved only at read time and never feed Bitcoin, child or event attribution.
 - **Error catalogue (`data/consensus/error_blocks.csv`):** A PoW-valid match (including reviewed body-invalid parents) is an `error_block` with `error_block_reason`, never stale or orphan evidence.
   Refresh both the historical manifest and error catalogue together via `just gen-research-publication-pins`.
 - **Bitcoin lineage gate (`docs/capture.md`):** Every stored parent must be a Bitcoin header decided solely by `mmm_capture::lineage::bitcoin_lineage` via `mmm_read_model::capture_in_txn` (with strict/weak orphan verdicts as its projection).

@@ -177,6 +177,14 @@ where
     order
 }
 
+/// A registry evidence date (`YYYY-MM-DD`), checked against the calendar.
+pub fn parse_registry_date(value: &str) -> Result<time::Date, String> {
+    let format =
+        time::format_description::parse("[year]-[month]-[day]").expect("static date format parses");
+    time::Date::parse(value, &format)
+        .map_err(|err| format!("invalid calendar date {value:?}: {err}"))
+}
+
 pub fn identity_key(identifier: &str) -> String {
     identifier.to_owned()
 }

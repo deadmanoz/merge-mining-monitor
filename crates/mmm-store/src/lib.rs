@@ -75,6 +75,6 @@ pub use pending_reconcile::{
 };
 pub use poll_cursor::{get_source_id, load_poll_cursor, upsert_poll_cursor_with_target};
 pub use pool::{
-    PoolIdentitySeed, load_pool_identities_by_namespace, upsert_identity_registry,
-    upsert_pool_snapshot, upsert_registry_only_pools,
+    PoolIdentitySeed, load_pool_identities_by_namespace, reconcile_identity_registry,
+    upsert_identity_registry, upsert_pool_snapshot, upsert_registry_only_pools,
 };
