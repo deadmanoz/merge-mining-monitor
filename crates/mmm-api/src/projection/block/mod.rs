@@ -21,8 +21,11 @@ use crate::query::kind_as_str;
 mod detail;
 mod loaders;
 mod near;
+mod protocol_commitments;
 
 use near::ObservationDetail;
+pub use protocol_commitments::ProtocolCommitments;
+use protocol_commitments::load_protocol_commitments;
 
 use detail::{
     coinbase_tag_from_commitment, coinbase_tag_from_core_block, contributing_event_ids,
@@ -45,6 +48,8 @@ pub struct BlockPayload {
     pub competition: Option<TreeCompetition>,
     pub stale_branch: Option<BlockStaleBranch>,
     pub commitment: Option<Commitment>,
+    /// CORE and exSat coinbase declarations; `null` until derived for the running decoder.
+    pub protocol_commitments: Option<ProtocolCommitments>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -315,6 +320,7 @@ async fn block_from_read_model(
         .collect::<Vec<_>>();
     let pool_attributions = load_pool_attributions_by_event(client, &event_ids).await?;
     let event_details = render_event_details(event_details, &pool_attributions)?;
+    let protocol_commitments = load_protocol_commitments(client, &row.hash).await?;
     let (display_miner_pool, display_miner_basis) = resolve_display_miner(
         &row.bitcoin_miner_pool,
         event_details.iter().map(|event| &event.child_miner_pool),
@@ -340,6 +346,7 @@ async fn block_from_read_model(
         competition,
         stale_branch,
         commitment,
+        protocol_commitments,
     })
 }
 
@@ -398,5 +405,8 @@ async fn block_from_direct_events(
         competition: None,
         stale_branch: None,
         commitment,
+        // The `block` row and its derived commitments are written together, so a parent
+        // without one has none yet.
+        protocol_commitments: None,
     }))
 }

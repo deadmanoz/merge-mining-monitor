@@ -17,6 +17,7 @@ use super::detail::{
     ParentCoinbase, coinbase_tag_from_commitment, derive_commitment, display_hash_opt,
     header_projection,
 };
+use super::protocol_commitments::load_protocol_commitments;
 use super::{ApiBlock, BlockPayload, PoolIdentityRef};
 use crate::normalize::ParentKind;
 use crate::query::kind_as_str;
@@ -161,6 +162,7 @@ pub(super) async fn block_from_near_observations(
     let source_summary = source_summary_from_sources(rows.iter().map(|row| &row.source), false);
     let identities = load_child_identities(client, &rows).await?;
     let observations = render_observations(rows, &identities)?;
+    let protocol_commitments = load_protocol_commitments(client, hash_bytes).await?;
     Ok(Some(BlockPayload {
         block: ApiBlock {
             hash: hash.to_owned(),
@@ -182,6 +184,7 @@ pub(super) async fn block_from_near_observations(
         competition: None,
         stale_branch: None,
         commitment,
+        protocol_commitments,
     }))
 }
 

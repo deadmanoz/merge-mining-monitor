@@ -47,6 +47,11 @@
       "scenario": "Reviewed body-invalid parent classified as error_block, with no stale competition or branch"
     },
     {
+      "file": "block-protocol-commitments.json",
+      "endpoint_family": "/api/v1/block/:hash",
+      "scenario": "Core-attested canonical block whose coinbase declares a CORE reward address and an exSat account, with decoded protocol_commitments and each declared account's pool"
+    },
+    {
       "file": "navigator-stale.json",
       "endpoint_family": "/api/v1/navigator/stale",
       "scenario": "Height-keyed stale navigator page with newest-first index, cursors, and tree-window metadata"

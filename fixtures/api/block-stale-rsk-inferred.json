@@ -177,5 +177,6 @@
     "parent_stale_hash": null,
     "child_stale_hashes": []
   },
-  "commitment": null
+  "commitment": null,
+  "protocol_commitments": null
 }

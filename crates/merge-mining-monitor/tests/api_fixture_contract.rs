@@ -199,6 +199,7 @@ fn assert_block_fixture_contract(file: &str, fixture: &Value) {
         !block.contains_key("body_invalid"),
         "{file} must omit the retired annotation field; invalid parents use error_block"
     );
+    assert_protocol_commitments_fixture_contract(file, fixture);
     let events = fixture["event_details"]
         .as_array()
         .unwrap_or_else(|| panic!("{file} must carry an event_details array"));
@@ -222,6 +223,44 @@ fn assert_block_fixture_contract(file: &str, fixture: &Value) {
         for observation in observations {
             assert_event_detail_fixture_contract(file, observation);
         }
+    }
+}
+
+// `null` until derived for the running decoder; entries are listed only for decoded outputs.
+fn assert_protocol_commitments_fixture_contract(file: &str, fixture: &Value) {
+    let section = fixture
+        .get("protocol_commitments")
+        .unwrap_or_else(|| panic!("{file} must carry nullable protocol_commitments"));
+    if section.is_null() {
+        return;
+    }
+    let outputs = string_field(section, "outputs");
+    assert!(
+        ["decoded", "undecodable", "unavailable"].contains(&outputs),
+        "{file}: unknown protocol_commitments.outputs {outputs:?}"
+    );
+    let entries = section["entries"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{file} protocol_commitments.entries must be an array"));
+    assert!(
+        outputs == "decoded" || entries.is_empty(),
+        "{file}: only decoded outputs list protocol commitment entries"
+    );
+    for entry in entries {
+        let protocol = string_field(entry, "protocol");
+        assert!(
+            ["core", "exsat"].contains(&protocol),
+            "{file}: unknown commitment protocol {protocol:?}"
+        );
+        assert_eq!(
+            entry["upstream_selected"].is_null(),
+            protocol == "exsat",
+            "{file}: upstream_selected is null exactly for exSat entries"
+        );
+        assert!(
+            entry["declared_account_pool"].is_object(),
+            "{file}: each entry carries a declared_account_pool object"
+        );
     }
 }
 

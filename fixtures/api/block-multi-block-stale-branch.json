@@ -280,5 +280,6 @@
     "parent_coinbase_txid": "3030303030303030303030303030303030303030303030303030303030303030",
     "parent_coinbase_script_hex": "03e7f505",
     "marker": null
-  }
+  },
+  "protocol_commitments": null
 }

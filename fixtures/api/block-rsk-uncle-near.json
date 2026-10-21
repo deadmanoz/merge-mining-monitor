@@ -102,5 +102,6 @@
     "parent_coinbase_txid": null,
     "parent_coinbase_script_hex": null,
     "marker": null
-  }
+  },
+  "protocol_commitments": null
 }
