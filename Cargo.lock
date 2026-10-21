@@ -1150,6 +1150,7 @@ dependencies = [
  "mmm-pg",
  "mmm-store",
  "serde_json",
+ "tokio",
  "tokio-postgres",
  "tracing",
 ]
