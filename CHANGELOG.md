@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-21
+
 - Serve `protocol_commitments` on `/api/v1/tree` nodes, and show their count in a grey badge on each tree block and the declarations below the merge-mined chains in the selected block's card, with CORE and exSat in their own colours. Each declaration in the drawer now collapses like the Auxiliary blocks entries.
 - Serve `protocol_commitments` on `/api/v1/block/{hash}` and show a Protocol commitments section at the end of the drawer, after the merge-mining and stale-block sections: each CORE or exSat declaration with its status, whether Core DAO reads it and the pool its declared account is associated with, under a line naming the coinbase they were decoded from, or why there are none (not derived yet, outputs not stored or undecodable, nothing declared). A declared account is labelled a protocol account association, never the block's miner.
 - Derive Core DAO (`CORE`) and exSat (`EXSAT`) coinbase declarations per Bitcoin header into new `protocol_commitment` tables (migration 0035), refreshed with every parent rebuild, Core canonical write and near capture from the highest-priority stored coinbase outputs, and recording headers whose stored outputs do not deserialize. Run `just rebuild-protocol-commitments` once after upgrading to fill them and record the decoder version.
