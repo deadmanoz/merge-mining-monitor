@@ -91,6 +91,13 @@
   border-radius: 3px;
 }
 
+.tree-legend-badge-swatch {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
 .tree-legend-edge-swatch {
   flex: 0 0 auto;
   width: 22px;

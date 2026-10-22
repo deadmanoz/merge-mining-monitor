@@ -1,5 +1,5 @@
 import { applyTreeHighlight } from "./controls.js";
-import { $, BLOCK_H, BLOCK_W, chainColor, chainDisplayName, EDGE_KINDS, EDGE_LEGEND, esc, KINDS, ORPHAN_LEGEND, state } from "./frontend-state.js";
+import { $, BLOCK_H, BLOCK_W, chainColor, chainDisplayName, EDGE_KINDS, EDGE_LEGEND, esc, KINDS, ORPHAN_LEGEND, protocolLabel, protocolStatusLabel, state } from "./frontend-state.js";
 import { DEFAULT_TREE_LAYOUT, layoutTreeNodes } from "./tree-layout.js";
 
 function nodeLabel(node) {
@@ -35,8 +35,12 @@ function renderTreeLegend(legend) {
   const edgeRows = edgeItems
     .map((item) => `<span class="tree-legend-item">${edgeSwatch(item.swatch)}${esc(item.label)}</span>`)
     .join("");
+  const badgeRows = [["chains", "merge-mined chains"], ["protocols", "protocol commitments"]]
+    .map(([klass, label]) => `<span class="tree-legend-item">${badgeSwatch(klass)}${esc(label)}</span>`)
+    .join("");
   body.innerHTML =
     `<div class="tree-legend-group-title">Blocks</div>${nodeItems}` +
+    `<div class="tree-legend-group-title">Badges</div>${badgeRows}` +
     `<div class="tree-legend-group-title">Edges</div>${edgeRows}`;
 }
 
@@ -68,6 +72,10 @@ function edgeLegendItems(kinds) {
     }
   }
   return items;
+}
+
+function badgeSwatch(klass) {
+  return `<svg class="tree-legend-badge-swatch" viewBox="-9 -9 18 18" aria-hidden="true"><g class="tree-badge tree-badge-${klass}"><rect class="tree-badge-bg" x="-9" y="-9" width="18" height="18" rx="4" /><text class="tree-badge-text" text-anchor="middle" dominant-baseline="central">n</text></g></svg>`;
 }
 
 function edgeSwatch(kind) {
@@ -208,10 +216,19 @@ function formatInt(value) {
 }
 
 function treeNodeTitle(node, chains) {
-  const base = `${node.kind} ${node.height ?? "unheighted"} ${node.hash}`;
-  if (!chains.length) return base;
-  const label = chains.map((item) => `${chainDisplayName(item.chain)}${item.count ? ` x${item.count}` : ""}`).join(", ");
-  return `${base} | ${label}`;
+  const parts = [`${node.kind} ${node.height ?? "unheighted"} ${node.hash}`];
+  if (chains.length) parts.push(chains.map((item) => `${chainDisplayName(item.chain)}${item.count ? ` x${item.count}` : ""}`).join(", "));
+  const protocols = node.protocol_commitments || [];
+  if (protocols.length) parts.push(`protocol commitments: ${protocols.map((entry) => protocolLabel(entry.protocol)).join(", ")}`);
+  return parts.join(" | ");
+}
+
+// A declaration's associated pool, else its declared account, else why it names none.
+function protocolCardMeta(entry) {
+  if (entry.decode_status !== "valid") return protocolStatusLabel(entry.decode_status);
+  if (entry.declared_account_pool?.known) return entry.declared_account_pool.name;
+  const account = entry.declared_account || "";
+  return entry.protocol === "core" ? `${account.slice(0, 6)}…${account.slice(-4)}` : account;
 }
 
 function drawTreeBlock(group, node) {
@@ -250,6 +267,10 @@ function drawTreeBlock(group, node) {
   if (chainCount) {
     drawCornerBadge(group, BLOCK_W / 2 - 9, -BLOCK_H / 2 - 9, chainCount, "tree-badge-chains");
   }
+  const protocolCount = node.protocol_commitments?.length;
+  if (protocolCount) {
+    drawCornerBadge(group, -BLOCK_W / 2 + 9, -BLOCK_H / 2 - 9, protocolCount, "tree-badge-protocols");
+  }
 }
 
 function drawCornerBadge(group, cx, cy, value, klass) {
@@ -278,59 +299,111 @@ function drawSelectionOverlay(overlayLayer, selectedHash, byHash) {
   const node = byHash.get(selectedHash);
   if (!node) return;
   const chains = childChainList(node);
-  if (!chains.length) return;
+  const protocols = node.protocol_commitments || [];
+  if (!chains.length && !protocols.length) return;
 
-  const title = `merge-mined chains (${distinctChainCount(chains)})`;
-  const rows = chains.map((item) => {
-    const range = item.min == null
-      ? ""
-      : (item.min === item.max ? formatInt(item.min) : `${formatInt(item.min)} to ${formatInt(item.max)}`);
-    const meta = item.count > 1 ? `${range ? `${range}  ` : ""}×${item.count}` : range;
-    return { name: chainDisplayName(item.chain), meta, color: chainColor(item.chain) };
-  });
+  const sections = [];
+  if (chains.length) {
+    sections.push({
+      title: `merge-mined chains (${distinctChainCount(chains)})`,
+      rows: chains.map((item) => {
+        const range = item.min == null
+          ? ""
+          : (item.min === item.max ? formatInt(item.min) : `${formatInt(item.min)} to ${formatInt(item.max)}`);
+        const meta = item.count > 1 ? `${range ? `${range}  ` : ""}×${item.count}` : range;
+        return { name: chainDisplayName(item.chain), meta, color: chainColor(item.chain) };
+      }),
+    });
+  }
+  if (protocols.length) {
+    sections.push({
+      title: `protocol commitments (${protocols.length})`,
+      rows: protocols.map((entry) => ({
+        name: protocolLabel(entry.protocol),
+        meta: protocolCardMeta(entry),
+        protocol: entry.protocol,
+      })),
+      note: "associated pool, not the block's miner",
+    });
+  }
 
   const rowH = 16;
   const padX = 11;
   const gap = 22;
   const swatchPad = 14;
-  let contentW = title.length * 6.3;
-  rows.forEach((row) => {
-    contentW = Math.max(contentW, swatchPad + row.name.length * 7 + gap + row.meta.length * 6.3);
+  let contentW = 0;
+  sections.forEach((section) => {
+    contentW = Math.max(contentW, section.title.length * 6.3, (section.note || "").length * 6);
+    section.rows.forEach((row) => {
+      contentW = Math.max(contentW, swatchPad + row.name.length * 7 + gap + row.meta.length * 6.3);
+    });
   });
   const cardW = Math.min(360, Math.max(150, Math.ceil(contentW) + 2 * padX));
-  const cardH = 24 + rows.length * rowH;
+  const sectionGap = 12;
+  const noteH = 16;
 
   const card = overlayLayer.append("g")
     .attr("class", "tree-chain-card")
     .attr("transform", `translate(${node.x - cardW / 2},${node.y + BLOCK_H / 2 + 36})`);
-  card.append("rect")
+  const background = card.append("rect")
     .attr("class", "tree-chain-card-bg")
     .attr("x", 0)
     .attr("y", 0)
     .attr("width", cardW)
-    .attr("height", cardH)
     .attr("rx", 6);
-  card.append("text")
-    .attr("class", "tree-chain-card-title")
-    .attr("x", padX)
-    .attr("y", 15)
-    .text(title);
-  rows.forEach((row, index) => {
-    const g = card.append("g").attr("transform", `translate(${padX},${24 + index * rowH + 12})`);
-    g.append("circle")
-      .attr("class", "tree-chain-card-swatch")
-      .attr("cx", 4)
-      .attr("cy", -3)
-      .attr("r", 4)
-      .attr("fill", row.color);
-    g.append("text").attr("class", "tree-chain-card-name").attr("x", swatchPad).attr("y", 0).text(row.name);
-    g.append("text")
-      .attr("class", "tree-chain-card-meta")
-      .attr("x", cardW - 2 * padX)
-      .attr("y", 0)
-      .attr("text-anchor", "end")
-      .text(row.meta);
+  let top = 0;
+  sections.forEach((section, sectionIndex) => {
+    if (sectionIndex) {
+      card.append("line")
+        .attr("class", "tree-chain-card-divider")
+        .attr("x1", padX)
+        .attr("x2", cardW - padX)
+        .attr("y1", top + sectionGap / 2)
+        .attr("y2", top + sectionGap / 2);
+      top += sectionGap;
+    }
+    card.append("text")
+      .attr("class", "tree-chain-card-title")
+      .attr("x", padX)
+      .attr("y", top + 15)
+      .text(section.title);
+    section.rows.forEach((row, index) => {
+      const g = card.append("g").attr("transform", `translate(${padX},${top + 24 + index * rowH + 12})`);
+      if (row.protocol) {
+        g.append("rect")
+          .attr("class", `tree-chain-card-swatch tree-protocol-swatch-${row.protocol}`)
+          .attr("x", 0)
+          .attr("y", -7)
+          .attr("width", 8)
+          .attr("height", 8)
+          .attr("rx", 2);
+      } else {
+        g.append("circle")
+          .attr("class", "tree-chain-card-swatch")
+          .attr("cx", 4)
+          .attr("cy", -3)
+          .attr("r", 4)
+          .attr("fill", row.color);
+      }
+      g.append("text").attr("class", "tree-chain-card-name").attr("x", swatchPad).attr("y", 0).text(row.name);
+      g.append("text")
+        .attr("class", "tree-chain-card-meta")
+        .attr("x", cardW - 2 * padX)
+        .attr("y", 0)
+        .attr("text-anchor", "end")
+        .text(row.meta);
+    });
+    top += 24 + section.rows.length * rowH;
+    if (section.note) {
+      card.append("text")
+        .attr("class", "tree-chain-card-note")
+        .attr("x", padX)
+        .attr("y", top + 10)
+        .text(section.note);
+      top += noteH;
+    }
   });
+  background.attr("height", top);
 }
 
 function edgePath(source, target) {

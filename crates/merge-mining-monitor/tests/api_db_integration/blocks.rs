@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use bitcoin::block::{Header, Version};
 use bitcoin::hashes::Hash as _;
 use bitcoin::{BlockHash, CompactTarget, TxMerkleNode};
-use mmm_api::projection::{self, ProjectionError, ProtocolCommitments};
+use mmm_api::projection::{self, ProjectionError, ProtocolCommitments, TreeProtocolCommitment};
 use mmm_bitcoin_core::BitcoinCoreBlockCoinbase;
 use mmm_bitcoin_core::ConfiguredParentClassifier;
 use mmm_capture::capture::{RSK_PROOF_FORMAT_OPAQUE, RskEvidencePayload};
@@ -30,7 +30,7 @@ use crate::support::{
     coinbase_outputs_fixture, default_pool_snapshot, header_meeting_bits, secpool_blocks,
 };
 
-use crate::helpers::format_projection_error;
+use crate::helpers::{format_projection_error, project_tree};
 
 async fn project_block(client: &Client, hash: &[u8]) -> Result<projection::BlockPayload> {
     projection::block(client, &display_hash(hash))
@@ -588,8 +588,60 @@ async fn protocol_commitments(client: &Client, hash: &[u8]) -> Result<Option<Pro
     Ok(project_block(client, hash).await?.protocol_commitments)
 }
 
+async fn tree_protocol_commitments(
+    client: &Client,
+    height: i32,
+) -> Result<Option<Vec<TreeProtocolCommitment>>> {
+    let payload = project_tree(client, Some(&format!("at_height={height}"))).await?;
+    let [node] = payload.nodes.as_slice() else {
+        anyhow::bail!("expected one node at height {height}");
+    };
+    Ok(node.protocol_commitments.clone())
+}
+
+/// The tree node lists the block page's declarations: protocol, vout, declared account and pool.
+async fn assert_tree_matches_block(
+    client: &Client,
+    height: i32,
+    section: &ProtocolCommitments,
+) -> Result<()> {
+    let tree = tree_protocol_commitments(client, height)
+        .await?
+        .context("derived for the running decoder")?;
+    let tree: Vec<_> = tree
+        .iter()
+        .map(|entry| {
+            let account = entry.declared_account.as_deref();
+            (
+                entry.protocol.as_str(),
+                entry.vout,
+                account,
+                entry.declared_account_pool.slug.as_deref(),
+            )
+        })
+        .collect();
+    let block: Vec<_> = section
+        .entries
+        .iter()
+        .map(|entry| {
+            let account = entry
+                .core_reward_address
+                .as_deref()
+                .or(entry.exsat_account.as_deref());
+            (
+                entry.protocol.as_str(),
+                entry.vout,
+                account,
+                entry.declared_account_pool.slug.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(tree, block);
+    Ok(())
+}
+
 #[tokio::test]
-async fn block_serves_protocol_commitments_once_derived_for_the_decoder() -> Result<()> {
+async fn block_and_tree_serve_protocol_commitments_once_derived_for_the_decoder() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let (_, mut pool_ids) = default_pool_snapshot(&client).await?;
         seed_protocol_account_identities(&client, &mut pool_ids).await?;
@@ -603,6 +655,11 @@ async fn block_serves_protocol_commitments_once_derived_for_the_decoder() -> Res
                 .await?
                 .is_none(),
             "null until a rebuild records the running decoder's version"
+        );
+        assert!(
+            tree_protocol_commitments(&client, secpool.height)
+                .await?
+                .is_none()
         );
         let nested = synthetic_core_header(1_722_000_000, 853_776);
         Scenario::new()
@@ -663,6 +720,7 @@ async fn block_serves_protocol_commitments_once_derived_for_the_decoder() -> Res
                 ),
             ]
         );
+        assert_tree_matches_block(&client, secpool.height, &section).await?;
         let section = protocol_commitments(&client, &nested.block_hash().to_byte_array())
             .await?
             .context("derived for the running decoder")?;
@@ -676,6 +734,7 @@ async fn block_serves_protocol_commitments_once_derived_for_the_decoder() -> Res
             ),
             ("malformed", Some("nested_header"), false, "bitcoin_core")
         );
+        assert_tree_matches_block(&client, 853_776, &section).await?;
 
         Ok::<_, anyhow::Error>(())
     })

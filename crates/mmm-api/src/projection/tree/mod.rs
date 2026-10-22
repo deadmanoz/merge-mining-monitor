@@ -4,6 +4,7 @@ mod anchor;
 mod build;
 mod compact;
 mod orphan_component;
+mod protocol_commitments;
 mod reduction;
 mod window;
 
@@ -16,6 +17,8 @@ use super::ProjectionError;
 use crate::normalize::ParentKind;
 use crate::query::{date_from_epoch, epoch_start_of_day, kind_selected};
 use build::build_branches;
+pub use protocol_commitments::TreeProtocolCommitment;
+use protocol_commitments::attach_protocol_commitments;
 use reduction::ReductionNode;
 use window::ResolvedTreeWindow;
 
@@ -100,6 +103,8 @@ pub struct TreeNode {
     pub branch: Option<TreeNodeBranch>,
     pub proof_state: ProofState,
     pub competition: Option<TreeCompetition>,
+    /// `null` until the protocol commitment rebuild has run, else the header's declarations.
+    pub protocol_commitments: Option<Vec<TreeProtocolCommitment>>,
     /// Derived layout height for an anchor-mode orphan node (absent elsewhere).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub placement_height: Option<i32>,
@@ -180,14 +185,16 @@ fn orphan_tree_legend() -> TreeLegend {
 
 /// Dispatch `/api/v1/tree` by precedence: `unheighted_anchor`, `context=compact`, then windowed.
 pub async fn tree(client: &Client, query: &TreeQuery) -> Result<TreePayload, ProjectionError> {
-    if let Some(anchor) = query.unheighted_anchor.as_deref() {
-        return anchor_tree(client, query, anchor).await;
-    }
-    if query.context.is_compact() {
-        return compact::compact_tree(client, query).await;
-    }
-    let window = resolve_tree_window(client, query).await?;
-    tree_projection(client, query, window).await
+    let mut payload = if let Some(anchor) = query.unheighted_anchor.as_deref() {
+        anchor_tree(client, query, anchor).await?
+    } else if query.context.is_compact() {
+        compact::compact_tree(client, query).await?
+    } else {
+        let window = resolve_tree_window(client, query).await?;
+        tree_projection(client, query, window).await?
+    };
+    attach_protocol_commitments(client, &mut payload.nodes).await?;
+    Ok(payload)
 }
 
 struct NodeProtection {

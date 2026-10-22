@@ -4,12 +4,12 @@
     {
       "file": "tree.json",
       "endpoint_family": "/api/v1/tree",
-      "scenario": "Explicit tree window with canonical context, stale forks, child evidence, and edge variants (near parents are not tree nodes)"
+      "scenario": "Explicit tree window with canonical context, stale forks, child evidence, protocol commitments, and edge variants (near parents are not tree nodes)"
     },
     {
       "file": "tree-unheighted-anchor.json",
       "endpoint_family": "/api/v1/tree",
-      "scenario": "Unheighted anchor window placing a strict BIP34 orphan off its verified canonical parent"
+      "scenario": "Unheighted anchor window placing a strict BIP34 orphan off its verified canonical parent, before protocol commitments are derived"
     },
     {
       "file": "block-one-block-stale.json",

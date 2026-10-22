@@ -136,7 +136,7 @@ Pending and excluded remain backend refinements outside the left rail and defaul
 
 Each block shows its Bitcoin height and best-available miner (`display_miner_pool`): the strict `bitcoin_miner_pool` when known, or the chain-agnostic `child_inferred` miner when the Bitcoin coinbase miner is Unknown (for example an RSK-only stale block).
 The drawer keeps `Bitcoin miner` strict and adds an `Inferred miner` row when `display_miner_basis` is `child_inferred`.
-A top-right badge shows the count of distinct AuxPoW child chains in `child_chain_evidence` (unaffected by Source/Kind highlights); selecting a block expands a non-reflowing overlay with per-chain height/event summaries.
+A top-right badge shows the count of distinct AuxPoW child chains in `child_chain_evidence` (unaffected by Source/Kind highlights), and a grey top-left badge the count of CORE and exSat declarations in `protocol_commitments`; selecting a block expands a non-reflowing overlay with per-chain height/event summaries and, below them, each declaration with its associated pool (else its declared account).
 
 Canonical, stale, error-block, and Source selections are client-side highlights that fade non-matching blocks and edges without changing source counts or moving the camera; strict/weak orphan rows are server-side navigator filters.
 Explicit focus gestures center on `width/2, height/2`: clicking a block recenters only when near a viewport edge, height lookup centers on that canonical block, date/time lookup centers on the window's mid-height, and Live tip / initial load center on the chain tip.

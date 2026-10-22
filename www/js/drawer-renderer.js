@@ -1,6 +1,6 @@
 import { blockExplorer } from "./explorer-links.js";
 import { fmtDelta } from "./delta-scales.js";
-import { $, chainDisplayName, CLASSIFICATION_META, esc, formatEpoch, formatScalar, formatSourceList, formatSourceRef, state } from "./frontend-state.js";
+import { $, chainDisplayName, CLASSIFICATION_META, esc, formatEpoch, formatScalar, formatSourceList, formatSourceRef, protocolLabel, protocolStatusLabel, state } from "./frontend-state.js";
 
 
 // Contextual help topics for AuxPoW fields in the block-detail drawer.
@@ -103,7 +103,6 @@ const AUXPOW_HELP = {
   },
 };
 
-const PROTOCOL_LABELS = { core: "CORE", exsat: "exSat" };
 // Every declaration of a header is decoded from the same outputs, so the summary names them once.
 const PROTOCOL_EVIDENCE = {
   bitcoin_core: "the Bitcoin Core coinbase",
@@ -385,11 +384,11 @@ function renderProtocolCommitments(section) {
 
 function renderProtocolCommitment(entry) {
   const valid = entry.decode_status === "valid";
-  const status = entry.decode_status.replace("_", " ");
+  const status = protocolStatusLabel(entry.decode_status);
   const selection = entry.protocol === "core"
     ? `<span class="state-pill">${entry.upstream_selected ? "read" : "not read"} by Core DAO</span>`
     : `<span class="state-pill">selection undetermined</span>`;
-  const head = `<div class="protocol-commitment-head"><strong>${esc(PROTOCOL_LABELS[entry.protocol] || entry.protocol)}</strong> <span class="protocol-commitment-vout">vout ${esc(entry.vout)}</span> <span class="state-pill ${valid ? "kind-canonical" : "kind-stale"}">${esc(status)}</span> ${selection}</div>`;
+  const head = `<span class="protocol-commitment-head"><strong>${esc(protocolLabel(entry.protocol))}</strong> <span class="protocol-commitment-vout">vout ${esc(entry.vout)}</span> <span class="state-pill ${valid ? "kind-canonical" : "kind-stale"}">${esc(status)}</span> ${selection}</span>`;
   const rows = [];
   if (!valid) {
     const problem = entry.decode_status === "malformed"
@@ -405,7 +404,7 @@ function renderProtocolCommitment(entry) {
   if (entry.core_binding_hash) rows.push(["Binding hash", copyValue(entry.core_binding_hash)]);
   if (entry.exsat_account) rows.push(["Account", copyValue(entry.exsat_account)]);
   const raw = `<details class="collapse"${valid ? "" : " open"}><summary>Raw script</summary>${kvRows([["Script", copyValue(entry.script_hex)]])}</details>`;
-  return `<div class="event-block protocol-commitment">${head}${kvRows(rows)}${raw}</div>`;
+  return `<details class="event-block protocol-commitment"><summary>${head}</summary>${kvRows(rows)}${raw}</details>`;
 }
 
 function detailSection(title, body) {

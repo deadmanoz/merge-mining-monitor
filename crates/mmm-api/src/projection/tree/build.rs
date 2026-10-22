@@ -264,6 +264,7 @@ pub(super) fn materialize_tree(
             branch: None,
             proof_state: projection.proof_state,
             competition: projection.competition,
+            protocol_commitments: None,
             placement_height: None,
             placement_approx: false,
         });

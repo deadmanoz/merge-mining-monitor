@@ -24,6 +24,11 @@ pub(crate) use competition::{
     COMPETITION_DELTA_SQL, COMPETITION_FROM_SQL, CompetitionCore, competition_core_select,
 };
 
+mod protocol_commitment;
+pub(crate) use protocol_commitment::{
+    PROTOCOL_COMMITMENT_JOIN_SQL, PROTOCOL_COMMITMENTS_READY_SQL,
+};
+
 /// Split an orphan-class filter into `(db_values, include_pending)` for parameterized
 /// `b.btc_orphan_class = ANY($values::text[]) OR ($include_pending::boolean AND b.btc_orphan_class IS NULL)` predicates.
 pub(super) fn classification_filter_params(

@@ -48,6 +48,7 @@
         "has_auxpow_evidence": false
       },
       "competition": null,
+      "protocol_commitments": null,
       "child_chain_evidence": []
     },
     {
@@ -74,6 +75,7 @@
         "has_auxpow_evidence": false
       },
       "competition": null,
+      "protocol_commitments": null,
       "child_chain_evidence": []
     },
     {
@@ -100,6 +102,7 @@
         "has_auxpow_evidence": false
       },
       "competition": null,
+      "protocol_commitments": null,
       "child_chain_evidence": []
     },
     {
@@ -126,6 +129,7 @@
         "has_auxpow_evidence": false
       },
       "competition": null,
+      "protocol_commitments": null,
       "child_chain_evidence": []
     },
     {
@@ -152,6 +156,7 @@
         "has_auxpow_evidence": true
       },
       "competition": null,
+      "protocol_commitments": null,
       "child_chain_evidence": [
         {
           "source": "auxpow:namecoin",

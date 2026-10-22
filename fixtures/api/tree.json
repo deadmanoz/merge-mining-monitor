@@ -73,6 +73,20 @@
         "has_auxpow_evidence": false
       },
       "competition": null,
+      "protocol_commitments": [
+        {
+          "protocol": "core",
+          "vout": 2,
+          "decode_status": "valid",
+          "declared_account": "0x5a3c9e1f7b2d4a6c8e0f1a3b5c7d9e2f4a6b8c0d",
+          "declared_account_pool": {
+            "id": null,
+            "slug": null,
+            "name": "Unknown",
+            "known": false
+          }
+        }
+      ],
       "child_chain_evidence": []
     },
     {
@@ -113,6 +127,32 @@
         "has_auxpow_evidence": true
       },
       "competition": null,
+      "protocol_commitments": [
+        {
+          "protocol": "core",
+          "vout": 2,
+          "decode_status": "valid",
+          "declared_account": "0x2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e",
+          "declared_account_pool": {
+            "id": 8,
+            "slug": "f2pool",
+            "name": "F2Pool",
+            "known": true
+          }
+        },
+        {
+          "protocol": "exsat",
+          "vout": 3,
+          "decode_status": "valid",
+          "declared_account": "f2pool.sat",
+          "declared_account_pool": {
+            "id": 8,
+            "slug": "f2pool",
+            "name": "F2Pool",
+            "known": true
+          }
+        }
+      ],
       "child_chain_evidence": [
         {
           "source": "auxpow:namecoin",
@@ -187,6 +227,20 @@
         "header_time_delta_s": 25,
         "propagation_delta_s": null
       },
+      "protocol_commitments": [
+        {
+          "protocol": "core",
+          "vout": 2,
+          "decode_status": "malformed",
+          "declared_account": null,
+          "declared_account_pool": {
+            "id": null,
+            "slug": null,
+            "name": "Unknown",
+            "known": false
+          }
+        }
+      ],
       "child_chain_evidence": [
         {
           "source": "auxpow:namecoin",
@@ -233,6 +287,7 @@
         "has_auxpow_evidence": false
       },
       "competition": null,
+      "protocol_commitments": [],
       "child_chain_evidence": []
     },
     {
@@ -293,6 +348,7 @@
         "header_time_delta_s": 18,
         "propagation_delta_s": 4
       },
+      "protocol_commitments": [],
       "child_chain_evidence": [
         {
           "source": "auxpow:namecoin",
@@ -346,6 +402,7 @@
         "has_auxpow_evidence": false
       },
       "competition": null,
+      "protocol_commitments": [],
       "child_chain_evidence": []
     },
     {
@@ -405,6 +462,7 @@
         "header_time_delta_s": 19,
         "propagation_delta_s": 5
       },
+      "protocol_commitments": [],
       "child_chain_evidence": [
         {
           "source": "auxpow:namecoin",
@@ -451,6 +509,7 @@
         "has_auxpow_evidence": false
       },
       "competition": null,
+      "protocol_commitments": [],
       "child_chain_evidence": []
     },
     {
@@ -489,6 +548,7 @@
         "has_auxpow_evidence": true
       },
       "competition": null,
+      "protocol_commitments": [],
       "child_chain_evidence": [
         {
           "source": "auxpow:namecoin",
