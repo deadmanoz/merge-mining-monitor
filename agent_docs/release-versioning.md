@@ -4,7 +4,8 @@ Root `Cargo.toml` `[workspace.package].version` defines the release SemVer.
 Workspace crates inherit it, the wiring crate exposes it as `VERSION`, and `mmm-api` exposes it through `/api/v1/version`.
 
 `RELEASE_NOTES.md` is embedded at compile time and rendered in the About dialog.
-Keep it concise and user/operator-facing.
+Keep it concise and user-facing: what site visitors can see, or what data changed.
+Operator steps, commands, migrations, table or API field names, commit pins and internal-only changes belong in `CHANGELOG.md` and `docs/operations.md`; a release with no visible change says so in one line.
 `CHANGELOG.md` is for engineering history and does not drive the UI.
 
 Release tags use `v<SemVer>`, for example `v0.1.0`.

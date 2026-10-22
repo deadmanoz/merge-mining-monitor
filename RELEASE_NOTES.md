@@ -1,17 +1,19 @@
 # Release Notes
 
+## [0.11.0] - 2026-10-21
+
+- Show the Core DAO and exSat declarations in each Bitcoin coinbase on the block page: the declared validator, reward address or account, whether Core DAO reads it, and the pool associated with the declared account, which is not necessarily the block's miner.
+- Count each block's declarations in a second badge on the header tree, and list them below the merge-mined chains when a block is selected.
+
 ## [0.10.0] - 2026-10-20
 
-- Record each observed child block once as a child-block observation, including nears (parents that miss Bitcoin's target), and keep merge-mining events for evidence only, cutting the database to about a third of its size.
-- Serve a near parent's block page from its child-block observations, with its Bitcoin miner resolved from the parent coinbase, and count only evidence events in each source's event total.
-- Capture Elastos and Hathor nears through the Bitcoin lineage gate, and detect empty-template RSK nears from their merge-mining proof.
+- Leave near parents (merge-mined headers that missed Bitcoin's target) out of each source's event count.
 - Reclassify the Namecoin-witnessed AntPool blocks 494,933 and 544,568 as error blocks: their coinbases claim more than the block reward.
 
 ## [0.9.4] - 2026-10-18
 
-- Identify Qbit payouts to F2Pool, SECPOOL and Luxor while keeping tag and payout evidence separate.
-- Correct the historical child identities for error block 957,780.
-- Version frontend assets automatically with each release.
+- Identify Qbit payouts to F2Pool, SecPool and Luxor, shown separately from the miner tags in Qbit coinbases.
+- Correct the child-chain identities recorded for error block 957,780.
 
 ## [0.9.3] - 2026-10-18
 
@@ -20,14 +22,13 @@
 ## [0.9.2] - 2026-10-07
 
 - Use the expanded Huntercoin and Xaya evidence recovered from Daniel Kraft's native blockchain dumps, including authenticated native Xaya block heights.
-- Refresh historical Research claims while preserving independent live observations and separately imported operator evidence.
 - Update the error catalogue to 53 Bitcoin parents and 121 child-chain observations, and explain errors inherited from an invalid predecessor.
 - Keep the About dialog's release-note rows readable when the list scrolls.
 
 ## [0.9.1] - 2026-09-29
 
-- Refuse merge-mined parents from other SHA-256 chains (mostly Bitcoin Cash) by checking each parent against Bitcoin's difficulty history before storing it, and remove over 52,000 non-Bitcoin `unknown` blocks stored by earlier captures.
-- Remove Bitcoin blocks and AuxPoW proofs once no evidence attests them, and apply the same Bitcoin difficulty-history check to orphan classification.
+- Refuse merge-mined parents from other SHA-256 chains (mostly Bitcoin Cash) by checking each against Bitcoin's difficulty history, and remove over 52,000 non-Bitcoin unknown blocks stored by earlier captures.
+- Remove blocks once no evidence attests them, and apply the same difficulty-history check when classifying orphans.
 
 ## [0.9.0] - 2026-09-29
 
@@ -36,25 +37,22 @@
 
 ## [0.8.2] - 2026-09-22
 
-- Surface ten reviewed body-invalid Bitcoin parents as error blocks with their rejection reasons instead of stales, expanding the unified catalogue to 49 invalid parents and 107 child-chain observations.
-- Preserve observation identities when parents move into the error catalogue, and unify body-invalid reporting under `kind=error_block` and `error_block_reason`.
+- Surface ten reviewed body-invalid Bitcoin parents as error blocks with their rejection reasons instead of stales, expanding the catalogue to 49 invalid parents and 107 child-chain observations.
 
 ## [0.8.1] - 2026-09-21
 
-- Rescan trailing child-chain heights with a single block-hash lookup when the height's recorded block and final verdict are unchanged.
-- Run scheduled unknown-parent rechecks in a resumable background pass instead of blocking producer startup or per-tick cache refreshes.
-- Log per-tick and batch-job progress with RPC request counts and latency summaries across every client.
+- Keep live capture responsive: recent child-chain heights rescan faster, and unknown-parent rechecks run in the background instead of stalling capture.
 
 ## [0.8.0] - 2026-09-16
 
-- Track Qbit as a live source and surface unresolved child-height decode errors on `/api/v1/sources`.
-- Preserve Bitcoin-side evidence when a child-chain reorg replaces a block, surfacing displacement details on block events instead of revoking them.
-- Capture complete Bitcoin parent-header evidence during bounded RSK backfills below the live acquisition floor, evaluating each uncle independently.
+- Track Qbit as a live source.
+- Keep Bitcoin-side evidence when a child-chain reorganisation replaces a block, and show the displacement on the block's events instead of removing them.
+- Recover complete Bitcoin parent headers when backfilling older RSK blocks, checking each uncle on its own.
 
 ## [0.7.13] - 2026-09-09
 
-- Import the expanded Research publication, including SpaceXpanse ROD's authenticated evidence and external-target validation for Xaya.
-- Mark i0coin's current chain status as Unknown because snapshot timestamps establish an evidence boundary rather than live network availability.
+- Add SpaceXpanse ROD's authenticated evidence, and check Xaya blocks against their external targets.
+- Mark i0coin's current chain status as Unknown: its snapshot dates bound the evidence, not the network's availability.
 
 ## [0.7.12] - 2026-09-03
 
@@ -62,61 +60,59 @@
 
 ## [0.7.11] - 2026-09-02
 
-- Bulk-reconcile historical parents whose canonical status and event evidence already agree with Bitcoin Core.
+- Speed up historical imports; no visible changes.
 
 ## [0.7.10] - 2026-09-02
 
-- Preserve existing observation times during historical publication refreshes and skip parent reconciliation when only provenance or presentation text changed.
+- Keep blocks' original observation times when historical data is refreshed.
 
 ## [0.7.9] - 2026-09-02
 
-- Refresh canonical parent coinbase-output text during historical imports while keeping binary outputs and full coinbase transactions immutable.
+- Refresh historical parents' coinbase output text when the recovered data's format changes; no other visible changes.
 
 ## [0.7.8] - 2026-09-02
 
-- Reuse compatible, proven parent classifications during historical imports to avoid redundant Bitcoin Core RPCs.
+- Speed up historical imports by reusing proven classifications; no visible changes.
 
 ## [0.7.7] - 2026-09-01
 
-- Import Research's canonical publication: 1,037,005 ordinary events, 21 stale-descendant summaries, and 86 authenticated error observations covering 39 consensus-invalid Bitcoin parents.
-- Verify all 29 publication artifacts before database mutation and refresh the historical manifest and error catalogue from the same Research commit.
+- Load the recovered historical data: 1,037,005 ordinary events, 21 stale-descendant summaries, and 86 authenticated error observations covering 39 consensus-invalid Bitcoin parents.
 
 ## [0.7.6] - 2026-08-29
 
-- Accept pinned error observations using the legacy `median_time_past_violation` reason when Bitcoin Core reports the equivalent `time_below_mtp` verdict.
+- Import error observations recorded under an older name for the median-time-past rule.
 
 ## [0.7.5] - 2026-08-29
 
-- Detect already-loaded historical publications by comparing normalized database state against stored provenance and events instead of cached receipt hashes.
+- Speed up historical imports by skipping data already loaded; no visible changes.
 
 ## [0.7.4] - 2026-08-28
 
-- Pin the historical publication and error-block catalogue to Research `c26e86c` (78 observations across 35 parents in the 34-column monitor union) and skip unchanged artifacts during full imports.
+- Speed up full historical imports by skipping unchanged data; no visible changes.
 
 ## [0.7.3] - 2026-08-28
 
 - Show the active Go-to item position (`n of N`) while stepping through stales, stale branches, error blocks, orphans, and orphan branches.
 - Reload the active view from the Updated stamp while keeping automatic 60s refresh.
-- Expand the pinned error-block catalogue and historical publication to 35 parents, 78 error observations, and 580,320 historical events.
+- Expand the error-block catalogue to 35 parents and 78 error observations, and the historical data to 580,320 events.
 
 ## [0.7.2] - 2026-08-27
 
-- Clear recovered Bitcoin Core link errors after revalidating the cached block and its predecessor link.
+- Clear Bitcoin Core link errors once the link recovers.
 
 ## [0.7.1] - 2026-08-27
 
-- Recover shallow Bitcoin Core forks after long outages by repairing the divergent suffix at the persisted cursor before resuming paged catch-up.
+- Recover from shallow Bitcoin forks after long Bitcoin Core outages.
 
 ## [0.7.0] - 2026-08-25
 
-- Evaluate difficulty and timestamp rules from a sparse canonical-header cache populated by Bitcoin Core instead of a compiled epoch table.
-- Repair bounded near-tip Bitcoin reorgs atomically, retaining displaced blocks as stale evidence and completing dependent reconciliation across restarts.
+- Check difficulty and timestamp rules against Bitcoin Core's own headers instead of a built-in table.
+- Handle Bitcoin reorganisations near the tip, keeping displaced blocks as stale evidence.
 - Import 73 recovered child-chain witnesses for 33 catalogued consensus-invalid Bitcoin error blocks and surface them in the error-block navigator.
 
 ## [0.6.0] - 2026-08-15
 
 - Present each finding with evidence figures tailored to its claim, including paired 14-month weekly RSK and Fractal series for Foundry USA's entry and exit.
-- Rescan the active RSK attribution corpus on every pool-resolution run.
 
 ## [0.5.0] - 2026-08-09
 
@@ -124,7 +120,7 @@
 
 ## [0.4.2] - 2026-07-30
 
-- Complete the RSK pool-reclassification pass in minutes instead of days.
+- Speed up RSK pool attribution; no visible changes.
 
 ## [0.4.1] - 2026-07-29
 
@@ -138,8 +134,8 @@
 ## [0.3.0] - 2026-07-28
 
 - Add the Header Time Delta view comparing header timestamps between stale blocks and their canonical competitors across histogram, coverage, and table tabs.
-- Exclude catalogued `bitcoin-data/stale-blocks` members from strict and weak BTC-orphan classification (`excluded`), and align evidence state vocabulary to `unknown`.
-- Support historical dataset imports for the six live chains (including RSK sidecar evidence) and add Open Graph social cards.
+- Stop classifying blocks listed in the bitcoin-data/stale-blocks catalogue as orphans, and mark them excluded instead.
+- Add link previews when the site is shared.
 
 ## [0.2.1] - 2026-07-13
 
@@ -148,8 +144,8 @@
 ## [0.2.0] - 2026-07-11
 
 - Add complete Lyncoin (11 canonical parents) and SixEleven (7 canonical parents) recoveries, VCash's 68 canonical explorer mappings, and Doichain's completed zero-row survey.
-- Make source IDs permanent and remove Mazacoin after verifying its source contains no AuxPoW implementation.
+- Remove Mazacoin after confirming its source contains no AuxPoW implementation.
 
 ## [0.1.0] - 2026-07-02
 
-- Initial source release of `merge-mining-monitor`, including the Rust workspace, Postgres schema, capture and reconciliation pipeline, read API, and static frontend.
+- First public release of the monitor, with live capture, the read API and the web interface.
