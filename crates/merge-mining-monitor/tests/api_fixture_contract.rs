@@ -32,7 +32,54 @@ fn api_fixture_examples_are_listed_and_parse() {
         if file.starts_with("navigator-") {
             assert_navigator_fixture_contract(&file, &fixture);
         }
+        if file.starts_with("tree") {
+            assert_tree_protocol_commitments_fixture_contract(&file, &fixture);
+        }
     }
+}
+
+// Every node is `null` before the rebuild or a list after it; a declared account only when valid.
+fn assert_tree_protocol_commitments_fixture_contract(file: &str, fixture: &Value) {
+    let nodes = fixture["nodes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{file} nodes must be an array"));
+    let sections: Vec<&Value> = nodes
+        .iter()
+        .map(|node| {
+            node.get("protocol_commitments")
+                .unwrap_or_else(|| panic!("{file} nodes must carry nullable protocol_commitments"))
+        })
+        .collect();
+    assert!(
+        sections
+            .iter()
+            .all(|section| section.is_null() == sections[0].is_null()),
+        "{file}: protocol_commitments is null on every node or on none"
+    );
+    for entry in sections
+        .iter()
+        .filter_map(|section| section.as_array())
+        .flatten()
+    {
+        assert_commitment_entry_contract(file, entry);
+        assert_eq!(
+            entry["declared_account"].is_null(),
+            string_field(entry, "decode_status") != "valid",
+            "{file}: declared_account is set exactly for valid declarations"
+        );
+    }
+}
+
+fn assert_commitment_entry_contract(file: &str, entry: &Value) {
+    let protocol = string_field(entry, "protocol");
+    assert!(
+        ["core", "exsat"].contains(&protocol),
+        "{file}: unknown commitment protocol {protocol:?}"
+    );
+    assert!(
+        entry["declared_account_pool"].is_object(),
+        "{file}: each entry carries a declared_account_pool object"
+    );
 }
 
 fn assert_navigator_fixture_contract(file: &str, fixture: &Value) {
@@ -247,19 +294,11 @@ fn assert_protocol_commitments_fixture_contract(file: &str, fixture: &Value) {
         "{file}: only decoded outputs list protocol commitment entries"
     );
     for entry in entries {
-        let protocol = string_field(entry, "protocol");
-        assert!(
-            ["core", "exsat"].contains(&protocol),
-            "{file}: unknown commitment protocol {protocol:?}"
-        );
+        assert_commitment_entry_contract(file, entry);
         assert_eq!(
             entry["upstream_selected"].is_null(),
-            protocol == "exsat",
+            string_field(entry, "protocol") == "exsat",
             "{file}: upstream_selected is null exactly for exSat entries"
-        );
-        assert!(
-            entry["declared_account_pool"].is_object(),
-            "{file}: each entry carries a declared_account_pool object"
         );
     }
 }

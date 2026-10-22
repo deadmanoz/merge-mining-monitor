@@ -213,16 +213,12 @@
   text-decoration: underline;
 }
 
-.protocol-commitment {
-  display: grid;
-  gap: 6px;
-}
-
 .protocol-commitment-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  font-weight: 400;
 }
 
 .protocol-commitment-summary,

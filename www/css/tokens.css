@@ -24,6 +24,8 @@
   --proof: #1f6feb;
   --source-error: #8f1d63;
   --source-catching-up: #6f6a00;
+  --protocol-core: #c93d70;
+  --protocol-exsat: #7c9a14;
   --shadow: 0 1px 2px rgba(24, 33, 28, 0.08);
   --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
   --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -55,6 +57,8 @@
   --proof: #84a9ff;
   --source-error: #ff7ac8;
   --source-catching-up: #d3c742;
+  --protocol-core: #f07aa4;
+  --protocol-exsat: #b5d33c;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.32);
 }
 

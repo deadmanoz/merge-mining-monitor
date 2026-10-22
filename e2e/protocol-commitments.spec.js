@@ -1,6 +1,7 @@
 const { expect, test } = require("@playwright/test");
 const { blockPayload, makeNode, stubApi, treeEnvelope } = require("./support/api-stubs");
 const fixture = require("../fixtures/api/block-protocol-commitments.json");
+const treeFixture = require("../fixtures/api/tree.json");
 
 const HASH = "ce".repeat(32);
 
@@ -14,7 +15,7 @@ async function openDrawer(page, protocolCommitments) {
   return page.locator("#drawer .detail-section").filter({ hasText: "Protocol commitments" });
 }
 
-test("decoded declarations show each protocol account association after the merge-mining sections", async ({ page }) => {
+test("decoded declarations collapse and show each protocol account association after the merge-mining sections", async ({ page }) => {
   const section = await openDrawer(page, fixture.protocol_commitments);
   await expect(page.locator("#drawer .detail-section").last()).toContainText("Protocol commitments");
   await expect(section).toContainText("2 declarations, decoded from the Bitcoin Core coinbase");
@@ -30,6 +31,9 @@ test("decoded declarations show each protocol account association after the merg
   await expect(exsat).toContainText("antpoole.sat");
   await expect(exsat).toContainText("AntPool");
   await expect(core.locator("details.collapse")).not.toHaveAttribute("open", "");
+  await expect(core).not.toHaveAttribute("open", "");
+  await core.locator(":scope > summary").click();
+  await expect(core.getByText("Reward address")).toBeVisible();
 
   await section.getByRole("button", { name: "About Protocol commitments" }).click();
   await expect(page.locator("#auxpow-dialog-title")).toHaveText("Protocol commitments");
@@ -80,3 +84,29 @@ for (const [name, protocolCommitments, text] of states) {
     await expect(section.locator(".empty")).toContainText(text);
   });
 }
+
+test("a tree block counts its declarations and its card lists them below the chains", async ({ page }) => {
+  // F2Pool's CORE and exSat declarations.
+  const declarations = treeFixture.nodes.find((node) => node.protocol_commitments?.length === 2).protocol_commitments;
+  const nodes = [
+    makeNode(HASH, 700000, null, "canonical", {
+      id: 1,
+      prev_id: null,
+      child_chain_evidence: [{ source: "auxpow:namecoin", child_chain: "namecoin", event_count: 1, child_height_min: 600000, child_height_max: 600000 }],
+      protocol_commitments: declarations,
+    }),
+    makeNode("cf".repeat(32), 700001, HASH, "canonical", { id: 2, prev_id: 1, protocol_commitments: [] }),
+  ];
+  await stubApi(page, [], { treePayload: (params) => treeEnvelope(params, { nodes }) });
+  await page.goto(`/?selected=${HASH}`);
+
+  const badges = page.locator("g.tree-node .tree-badge-protocols");
+  await expect(badges).toHaveCount(1);
+  await expect(badges).toHaveText("2");
+  const card = page.locator(".tree-chain-card");
+  await expect(card.locator(".tree-chain-card-title")).toHaveText(["merge-mined chains (1)", "protocol commitments (2)"]);
+  await expect(card).toContainText("F2Pool");
+  await expect(card).toContainText("associated pool, not the block's miner");
+  await expect(card.locator(".tree-protocol-swatch-core")).toHaveCount(1);
+  await expect(card.locator(".tree-protocol-swatch-exsat")).toHaveCount(1);
+});

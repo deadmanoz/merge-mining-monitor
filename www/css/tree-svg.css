@@ -61,6 +61,8 @@
 }
 
 .tree-badge-chains .tree-badge-bg { fill: var(--proof); }
+.tree-badge-protocols .tree-badge-bg { fill: var(--context); }
+.tree-badge-protocols .tree-badge-text { fill: var(--surface); }
 
 .tree-badge-text {
   fill: #ffffff;
@@ -104,6 +106,22 @@
   stroke: var(--surface);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.tree-protocol-swatch-core { fill: var(--protocol-core); }
+.tree-protocol-swatch-exsat { fill: var(--protocol-exsat); }
+
+.tree-chain-card-divider {
+  stroke: var(--line);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.tree-chain-card-note {
+  fill: var(--faint);
+  font-size: 10px;
+  font-family: var(--sans);
   pointer-events: none;
 }
 

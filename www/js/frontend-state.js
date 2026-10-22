@@ -103,6 +103,8 @@ const CLASSIFICATION_META = {
 const BLOCK_W = 110;
 const BLOCK_H = 72;
 
+const PROTOCOL_LABELS = { core: "CORE", exsat: "exSat" };
+
 // Fallback palette for chains without an explicit entry in CHAIN_COLORS.
 const CHAIN_FALLBACK_COLORS = [
   "#4e79a7", "#59a14f", "#e0843c", "#d35fb7", "#76b7b2",
@@ -148,6 +150,14 @@ function chainColor(chain) {
     hash = (hash * 31 + key.charCodeAt(index)) >>> 0;
   }
   return CHAIN_FALLBACK_COLORS[hash % CHAIN_FALLBACK_COLORS.length] || "#888888";
+}
+
+function protocolLabel(protocol) {
+  return PROTOCOL_LABELS[protocol] || protocol;
+}
+
+function protocolStatusLabel(status) {
+  return status.replace("_", " ");
 }
 
 function sourceChain(value) {
@@ -524,6 +534,8 @@ export {
   BLOCK_H,
   SOURCE_GROUPS,
   chainColor,
+  protocolLabel,
+  protocolStatusLabel,
   sourceChain,
   chainDisplayName,
   sourceDisplayName,

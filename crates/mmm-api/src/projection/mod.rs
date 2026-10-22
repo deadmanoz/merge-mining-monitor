@@ -23,7 +23,7 @@ pub use {
     competitions::CompetitionsPayload,
     navigator::{NavigatorItem, NavigatorPayload, NavigatorView, OrphanClassCounts},
     sources::{SourceEndpointRecord, SourcesPayload},
-    tree::{TreeEdge, TreePayload},
+    tree::{TreeEdge, TreePayload, TreeProtocolCommitment},
 };
 
 /// Projection failure split: `Api` carries a client-facing `ApiError` (mapped

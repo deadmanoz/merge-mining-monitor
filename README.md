@@ -33,7 +33,7 @@ Qbit child miners resolve from native coinbase tags and curated payout addresses
 These child identities remain separate from the Bitcoin parent pool; the shared wallet remains unmapped.
 See [attribution](docs/attribution.md) for the evidence.
 
-The main view is a windowed Bitcoin header tree: the canonical spine, each block labelled with its pool and a badge for the number of chains that merge-mined it.
+The main view is a windowed Bitcoin header tree: the canonical spine, each block labelled with its pool, a badge for the number of chains that merge-mined it, and a second for the CORE and exSat declarations in its coinbase.
 From it you can:
 
 - **Browse the whole chain** from the genesis block to the current tip, or jump straight to any height or UTC timestamp.

@@ -416,6 +416,7 @@ pub(super) fn push_member_nodes(
             }),
             proof_state: projection.proof_state,
             competition: None,
+            protocol_commitments: None,
             placement_height,
             placement_approx: placement.approx,
         });

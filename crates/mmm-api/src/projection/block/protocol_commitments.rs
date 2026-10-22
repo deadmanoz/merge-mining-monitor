@@ -8,7 +8,9 @@ use tokio_postgres::Client;
 
 use mmm_capture::protocol_commitment::DECODER_VERSION;
 
-use super::super::shared::{PoolObject, pool_from_columns};
+use super::super::shared::{
+    PROTOCOL_COMMITMENT_JOIN_SQL, PROTOCOL_COMMITMENTS_READY_SQL, PoolObject, pool_from_columns,
+};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProtocolCommitments {
@@ -45,8 +47,9 @@ pub(super) async fn load_protocol_commitments(
 ) -> Result<Option<ProtocolCommitments>> {
     let rows = client
         .query(
-            "WITH header AS ( \
-                 SELECT inv.protocol_commitments_decoder_version IS NOT DISTINCT FROM $2 AS ready, \
+            &format!(
+                "WITH header AS ( \
+                 SELECT {PROTOCOL_COMMITMENTS_READY_SQL} AS ready, \
                         EXISTS (SELECT 1 FROM protocol_commitment_undecodable \
                                  WHERE btc_header_hash = $1) AS undecodable, \
                         EXISTS (SELECT 1 FROM block \
@@ -59,7 +62,7 @@ pub(super) async fn load_protocol_commitments(
                                     WHERE observation_kind = 'near' \
                                       AND btc_parent_header_hash = $1 \
                                       AND btc_parent_coinbase_outputs IS NOT NULL) AS stored \
-                   FROM read_model_invariant inv WHERE inv.id = TRUE \
+                   FROM read_model_invariant WHERE id = TRUE \
              ) \
              SELECT h.ready, h.undecodable, h.stored, \
                     c.vout, s.protocol, s.decode_status, s.malformed_reason, s.version, s.script, \
@@ -68,11 +71,9 @@ pub(super) async fn load_protocol_commitments(
                     p.id, p.slug, p.canonical_name \
                FROM header h \
                LEFT JOIN protocol_commitment c ON c.btc_header_hash = $1 \
-               LEFT JOIN protocol_commitment_script s ON s.id = c.script_id \
-               LEFT JOIN pool_identity i \
-                      ON (i.namespace, i.identifier) = (s.account_namespace, s.account_identifier) \
-               LEFT JOIN pool p ON p.id = i.pool_id \
-              ORDER BY c.vout",
+               {PROTOCOL_COMMITMENT_JOIN_SQL} \
+              ORDER BY c.vout"
+            ),
             &[&hash, &DECODER_VERSION],
         )
         .await
