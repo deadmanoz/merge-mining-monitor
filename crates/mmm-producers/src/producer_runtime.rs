@@ -15,7 +15,7 @@ use mmm_capture::capture::MergeMiningEventPayload;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::{
     CaptureOutcome, ReconcileReadModelConfig, capture_in_txn, is_reconcile_budget_exhausted,
-    run_reconcile_read_model,
+    run_reconcile_read_model, skip_protocol_commitments_rebuild,
 };
 use mmm_store::{self, CaptureWrite, get_source_id, upsert_pool_snapshot};
 
@@ -155,12 +155,35 @@ impl ProducerRuntime {
 /// sparse Core-header cache.
 pub async fn connect_core_required_from_env() -> Result<(Client, ConfiguredParentClassifier)> {
     let mut pg_client = connect_from_env().await?;
-    let parent_classifier = ConfiguredParentClassifier::from_env_required()?;
-    refresh_bitcoin_core_header_cache(&mut pg_client, &parent_classifier).await?;
+    let parent_classifier = bootstrap_core(&mut pg_client).await?;
     Ok((pg_client, parent_classifier))
 }
 
-async fn connect_from_env() -> Result<Client> {
+/// Require a fresh Bitcoin Core node and synchronize the sparse Core-header cache.
+pub async fn bootstrap_core(pg_client: &mut Client) -> Result<ConfiguredParentClassifier> {
+    let parent_classifier = ConfiguredParentClassifier::from_env_required()?;
+    refresh_bitcoin_core_header_cache(pg_client, &parent_classifier).await?;
+    Ok(parent_classifier)
+}
+
+/// `reconcile-read-model`: `bootstrap` contacts Bitcoin Core first, except for an `--if-needed`
+/// protocol commitment rebuild that the recorded decoder version already makes unnecessary.
+pub async fn run_reconcile_read_model_command(
+    pg_client: &mut Client,
+    config: ReconcileReadModelConfig,
+    bootstrap: impl AsyncFnOnce(&mut Client) -> Result<ConfiguredParentClassifier>,
+) -> Result<usize> {
+    // Return on a skip instead of letting the library check again: the version could change
+    // in between.
+    if skip_protocol_commitments_rebuild(pg_client, &config).await? {
+        return Ok(0);
+    }
+    let parent_classifier = bootstrap(pg_client).await?;
+    run_reconcile_read_model(pg_client, &parent_classifier, config).await
+}
+
+/// Connect Postgres from the `PG*` environment without contacting Bitcoin Core.
+pub async fn connect_from_env() -> Result<Client> {
     let config = mmm_pg::PgConfig::from_env()?;
     mmm_pg::connect(&config).await
 }

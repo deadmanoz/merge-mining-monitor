@@ -39,6 +39,7 @@ pub use mutation::{
     reconcile_proven_canonical_batch_for_test,
 };
 pub use pending_cascade::pending_cascades_settled;
+pub use protocol_commitments::skip_protocol_commitments_rebuild;
 pub use source_health_sql::invalidate_source_health_in_transaction;
 #[cfg(any(test, feature = "db-integration"))]
 pub use source_health_sql::{compute_source_health_from_base, rebuild_source_health};
@@ -239,6 +240,9 @@ pub struct ReconcileReadModelConfig {
     pub rebuild_source_health: bool,
     /// Rebuild the protocol commitment tables and record the decoder version.
     pub rebuild_protocol_commitments: bool,
+    /// With `rebuild_protocol_commitments`, skip the rebuild when the recorded decoder version
+    /// is already current.
+    pub if_needed: bool,
 }
 
 impl Default for ReconcileReadModelConfig {
@@ -252,6 +256,7 @@ impl Default for ReconcileReadModelConfig {
             max_iterations: DEFAULT_MAX_ITERATIONS,
             rebuild_source_health: false,
             rebuild_protocol_commitments: false,
+            if_needed: false,
         }
     }
 }
@@ -301,6 +306,10 @@ impl ReconcileReadModelConfig {
                     config.rebuild_protocol_commitments = true;
                     true
                 }
+                "--if-needed" => {
+                    config.if_needed = true;
+                    true
+                }
                 _ => false,
             })
         })?;
@@ -309,6 +318,13 @@ impl ReconcileReadModelConfig {
         }
         if config.max_iterations == 0 {
             bail!("--max-iterations must be positive");
+        }
+        if config.if_needed && !config.rebuild_protocol_commitments {
+            bail!("--if-needed requires --rebuild-protocol-commitments");
+        }
+        // The source-health rebuild takes precedence, so an early skip must not drop it.
+        if config.if_needed && config.rebuild_source_health {
+            bail!("--if-needed cannot be combined with --rebuild-source-health");
         }
         Ok(config)
     }
@@ -483,7 +499,9 @@ pub async fn run_reconcile_read_model(
         return Ok(0);
     }
     if config.rebuild_protocol_commitments {
-        protocol_commitments::rebuild_protocol_commitments(client, config.batch_size).await?;
+        if !skip_protocol_commitments_rebuild(client, &config).await? {
+            protocol_commitments::rebuild_protocol_commitments(client, config.batch_size).await?;
+        }
         return Ok(0);
     }
 
@@ -728,6 +746,7 @@ mod config_args_tests {
         assert_eq!(config.source_code, None);
         assert!(!config.rebuild_source_health);
         assert!(!config.rebuild_protocol_commitments);
+        assert!(!config.if_needed);
     }
 
     #[test]
@@ -756,6 +775,10 @@ mod config_args_tests {
         assert_eq!(config.max_iterations, 3);
         assert!(config.rebuild_source_health);
         assert!(config.rebuild_protocol_commitments);
+        let config =
+            ReconcileReadModelConfig::from_args(["--rebuild-protocol-commitments", "--if-needed"])
+                .expect("conditional rebuild");
+        assert!(config.rebuild_protocol_commitments && config.if_needed);
     }
 
     #[test]
@@ -780,6 +803,21 @@ mod config_args_tests {
         let iters = ReconcileReadModelConfig::from_args(["--max-iterations", "0"])
             .expect_err("zero iterations");
         assert_eq!(iters.to_string(), "--max-iterations must be positive");
+        let alone = ReconcileReadModelConfig::from_args(["--if-needed"]).expect_err("no rebuild");
+        assert_eq!(
+            alone.to_string(),
+            "--if-needed requires --rebuild-protocol-commitments"
+        );
+        let with_health = ReconcileReadModelConfig::from_args([
+            "--rebuild-protocol-commitments",
+            "--rebuild-source-health",
+            "--if-needed",
+        ])
+        .expect_err("source health precedence");
+        assert_eq!(
+            with_health.to_string(),
+            "--if-needed cannot be combined with --rebuild-source-health"
+        );
     }
 
     #[test]

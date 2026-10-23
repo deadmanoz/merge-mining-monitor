@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Add `--if-needed` to `just rebuild-protocol-commitments`: it exits without contacting Bitcoin Core when the tables already match the running decoder, so deployments can run it after every upgrade.
+
 ## [0.11.0] - 2026-10-21
 
 - Serve `protocol_commitments` on `/api/v1/tree` nodes, and show their count in a grey badge on each tree block and the declarations below the merge-mined chains in the selected block's card, with CORE and exSat in their own colours. Each declaration in the drawer now collapses like the Auxiliary blocks entries.

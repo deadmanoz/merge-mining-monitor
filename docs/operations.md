@@ -14,6 +14,7 @@ just test
 
 Copy `.env.example` to `.env` and adjust endpoints before running live pollers or Bitcoin Core classification.
 A synced **Bitcoin mainnet** Core node is required for every capture, import, and reconciliation command, including database-only maintenance modes (`just rebuild-source-health`, `just rebuild-protocol-commitments`): each drains committed Core-suffix reconciliation before refreshing the sparse `bitcoin_core_header` cache through the current synced tip.
+The one exception is `just rebuild-protocol-commitments --if-needed` when the tables already match the decoder: it reads one Postgres row and exits.
 `serve` reads that persisted cache from Postgres and makes no Core RPC calls.
 
 ## Serving
@@ -192,6 +193,7 @@ Counters are maintained incrementally afterward, so re-running it is only needed
 
 `just rebuild-protocol-commitments` (optionally with `--batch-size N`, default 100 headers per page) fills the derived CORE and exSat `protocol_commitment` tables from stored coinbase outputs.
 Run it once after upgrading to 0.11.0 (migration `0035`) and again after any release that raises the protocol-commitment decoder version.
+With `--if-needed` it does nothing while the recorded version matches the running decoder, so deployments can run it after every upgrade.
 It re-derives every stored script with the compiled decoder, then refreshes every header with a `block` row, a near observation with stored outputs or derived rows, one page per exclusive canonical-view hold so live capture and Core writes wait at most one page.
 It records `protocol_commitments_decoder_version` only after the walk finishes; an interrupted run leaves the version unchanged, and a rerun is idempotent.
 Producers keep the tables current afterward.

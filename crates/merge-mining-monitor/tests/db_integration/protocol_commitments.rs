@@ -6,8 +6,8 @@ use mmm_capture::capture::ClassificationProof;
 use mmm_capture::identity_registry::IdentityRegistryEntry;
 use mmm_capture::protocol_commitment::{DECODER_VERSION, EXSAT_ACCOUNT_NAMESPACE};
 use mmm_capture::source_registry::NAMECOIN_SOURCE_CODE;
-use mmm_producers::seed_protocol_account_identities;
-use mmm_read_model::{CaptureOutcome, ReconcileReadModelConfig, run_reconcile_read_model};
+use mmm_producers::{run_reconcile_read_model_command, seed_protocol_account_identities};
+use mmm_read_model::{CaptureOutcome, ReconcileReadModelConfig};
 use mmm_store::{CaptureWrite, reconcile_identity_registry};
 use tokio_postgres::Client;
 
@@ -117,16 +117,34 @@ async fn decoder_version(client: &Client) -> Result<Option<i32>> {
         .get(0))
 }
 
-async fn rebuild(client: &mut Client) -> Result<()> {
-    run_reconcile_read_model(
+async fn truncate_derived_rows(client: &Client) -> Result<()> {
+    client
+        .batch_execute(
+            "TRUNCATE protocol_commitment, protocol_commitment_undecodable, \
+                      protocol_commitment_script",
+        )
+        .await?;
+    Ok(())
+}
+
+/// Runs `reconcile-read-model args` through the command path with a stand-in for the Core
+/// bootstrap; returns whether the bootstrap ran.
+async fn reconcile_command(client: &mut Client, args: &[&str]) -> Result<bool> {
+    let mut bootstrapped = false;
+    run_reconcile_read_model_command(
         client,
-        &ConfiguredParentClassifier::Disabled,
-        ReconcileReadModelConfig {
-            rebuild_protocol_commitments: true,
-            ..ReconcileReadModelConfig::default()
+        ReconcileReadModelConfig::from_args(args.iter().copied())?,
+        async |_: &mut Client| {
+            bootstrapped = true;
+            Ok(ConfiguredParentClassifier::Disabled)
         },
     )
     .await?;
+    Ok(bootstrapped)
+}
+
+async fn rebuild(client: &mut Client) -> Result<()> {
+    assert!(reconcile_command(client, &["--rebuild-protocol-commitments"]).await?);
     Ok(())
 }
 
@@ -239,18 +257,40 @@ async fn protocol_commitments_follow_evidence_and_the_rebuild_reproduces_them() 
             assert_eq!(pool, Some(secpool), "block {}", block.height);
         }
 
-        // The rebuild derives exactly what the inline writes left.
+        // The rebuild derives exactly what the inline writes left. `--if-needed` rebuilds while
+        // no version or an older one is recorded, and skips Core and the rebuild once current.
         let inline = derived_rows(&client).await?;
         assert_eq!(decoder_version(&client).await?, None);
-        client
-            .batch_execute(
-                "TRUNCATE protocol_commitment, protocol_commitment_undecodable, \
-                          protocol_commitment_script",
+        for (recorded, rebuilds) in [
+            (None, true),
+            (Some(DECODER_VERSION), false),
+            (Some(DECODER_VERSION - 1), true),
+        ] {
+            client
+                .execute(
+                    "UPDATE read_model_invariant SET protocol_commitments_decoder_version = $1",
+                    &[&recorded],
+                )
+                .await?;
+            truncate_derived_rows(&client).await?;
+            let bootstrapped = reconcile_command(
+                &mut client,
+                &["--rebuild-protocol-commitments", "--if-needed"],
             )
             .await?;
+            assert_eq!(bootstrapped, rebuilds, "recorded {recorded:?}");
+            let expected = if rebuilds { inline.clone() } else { Vec::new() };
+            assert_eq!(
+                derived_rows(&client).await?,
+                expected,
+                "recorded {recorded:?}"
+            );
+        }
+        assert_eq!(decoder_version(&client).await?, Some(DECODER_VERSION));
+        // Without `--if-needed` the rebuild runs even when the version is current.
+        truncate_derived_rows(&client).await?;
         rebuild(&mut client).await?;
         assert_eq!(derived_rows(&client).await?, inline);
-        assert_eq!(decoder_version(&client).await?, Some(DECODER_VERSION));
 
         revoke_event(&mut client, applied.event_id("early")?, "test").await?;
         assert!(

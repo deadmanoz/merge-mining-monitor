@@ -48,7 +48,10 @@ pub use known_stale_import::{
 pub use poller::{
     ChainPoller, ChainPollerState, HeightProgress, Poller, PollerConfig, RescanOutcome,
 };
-pub use producer_runtime::connect_core_required_from_env;
+pub use producer_runtime::{
+    bootstrap_core, connect_core_required_from_env, connect_from_env,
+    run_reconcile_read_model_command,
+};
 #[cfg(feature = "db-integration")]
 pub use protocol_account_registry::seed_protocol_account_identities;
 pub use reclassify_pools::{ReclassifyPoolsConfig, ReclassifyPoolsStats, run_reclassify_pools};
