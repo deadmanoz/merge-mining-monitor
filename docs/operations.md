@@ -11,7 +11,7 @@ They encode the repository's expected environment and safety wrappers.
 | Sync the Bitcoin backbone | A synced Bitcoin mainnet Core RPC endpoint, including block bodies for coinbase enrichment. |
 | Poll or backfill a child chain | Bitcoin Core plus that chain's RPC/REST endpoint. Enable only the sources you can reach. |
 | Import historical evidence | Bitcoin Core, known-stale membership, and the pinned Research publication with its Git LFS files. Child-chain nodes are not needed for the published records. |
-| Reconcile or rebuild derived state | Normally Bitcoin Core, even for work using stored data: commands drain pending Core-suffix work and refresh the header cache. An already-current `rebuild-protocol-commitments --if-needed` exits after a Postgres check. Pool reclassification uses stored identity evidence. |
+| Reconcile or rebuild derived state | Normally Bitcoin Core, even for work using stored data: commands drain pending Core-suffix work and refresh the header cache. An already-current `rebuild-protocol-commitments --if-needed` exits after a Postgres check. Pool reclassification uses stored identity evidence after the shared Core bootstrap. |
 
 Hathor defaults to a public REST API with a second public endpoint as fallback; this is API polling, not HTML scraping.
 Outages, throttling or unavailable block records can leave capture incomplete despite retries.
@@ -49,6 +49,8 @@ Its example credentials and published database port are for a controlled develop
    just import-known-stales --csv path/to/stale-blocks.csv \
      --source-label "bitcoin-data/stale-blocks@<commit>"
    ```
+
+   On a fresh database, this command first builds the shared Core header cache, which can take a while against a remote node before membership import starts.
 
 4. Choose either or both evidence paths. For recovered data, follow [Running Imports](historical-ingest.md#running-imports), which checks the pinned Research files before `just import-all`. For live capture, configure a source's start height and run its `just poll-CHAIN` command. Starting at the tip does not backfill the chain; use bounded `just backfill-CHAIN START END` ranges for earlier records.
 5. Fill the canonical window you want to browse, including the newest window for the default view. Replace `START` and `END` with a bounded range ending at the current Core tip:

@@ -52,7 +52,8 @@ The findings view has two canvas states (`replaceState`-only):
 - **Article**: cited prose, structured evidence panels (leading with claim metrics followed by a validated series chart or event timeline rendered from the generated corpus rather than a bitmap, plus an assistive prose equivalent), typed evidence anchors (`btc-height` jumps to the tree, `source` opens the source modal, `child-height` and `pool` are informational chips), and a Sources list. Unknown `finding=` slugs degrade to the feed; `finding=` with a non-findings `view=` is dropped at hydration.
   Category and Status filters are findings-local; the shared Source filter narrows the feed by affected sources.
 
-The topbar includes an About control that opens a modal with a four-step visual explainer of chain placement, child proofs, proof of work versus consensus validity, and classification from Core context plus reviewed error evidence and a release-notes tab rendered from embedded `RELEASE_NOTES.md`.
+The topbar includes an About control that opens a modal with a four-step visual explainer of chain placement, child proofs, proof of work versus consensus validity, and classification from Core context plus reviewed error evidence.
+The modal also has a release-notes tab rendered from embedded `RELEASE_NOTES.md`.
 
 In the `tree` view, leaving Height and UTC Date/Time empty omits bounds so the backend resolves the default tip-focused canonical window.
 Entering Height sends `at_height` and entering UTC Date/Time sends `at_time` (`YYYY-MM-DDTHH:MM:SSZ`), both automatically requesting `context=compact`.
