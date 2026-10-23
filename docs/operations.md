@@ -13,9 +13,23 @@ just test
 ```
 
 Copy `.env.example` to `.env` and adjust endpoints before running live pollers or Bitcoin Core classification.
-A synced **Bitcoin mainnet** Core node is required for every capture, import, and reconciliation command, including database-only maintenance modes (`just rebuild-source-health`, `just rebuild-protocol-commitments`): each drains committed Core-suffix reconciliation before refreshing the sparse `bitcoin_core_header` cache through the current synced tip.
+A synced **Bitcoin mainnet** Core node is required for every capture, import, and reconciliation command, including database-only maintenance modes (`just rebuild-source-health`, `just rebuild-protocol-commitments`): each checks Core readiness, drains committed Core-suffix reconciliation, then refreshes the sparse `bitcoin_core_header` cache through the current synced tip.
 The one exception is `just rebuild-protocol-commitments --if-needed` when the tables already match the decoder: it reads one Postgres row and exits.
 `serve` reads that persisted cache from Postgres and makes no Core RPC calls.
+
+## Automatic Core recovery
+
+Live pollers and `sync-bitcoin-core --follow` install shutdown handling and record their runtime identity before probing Core. Temporary transport failures, timeouts, warm-up, IBD, header lag and stale tips leave the process running in Waiting. One live Core transport attempt is made per probe. The retry ceiling starts at five seconds, doubles to 300 seconds, and each delay is drawn between half and all of that ceiling. Sources shows the chosen next retry only while capture needs another attempt. Within a run, backoff resets only after a completed healthy capture cycle, including an idle cycle at target; a new process starts fresh escalation. Finite imports, backfills and one-shot sync retain their bounded transport retries.
+
+A successful probe resumes durable cursor and queue work. Local cache contention, cache bootstrap and bounded reconciliation report Catching up and wait the ordinary producer interval. They do not consume the follower's five-stall budget. Wrong-network, authentication, invalid-response and proven integrity errors stop the process; systemd's restart policy remains the fallback. General PostgreSQL reconnection is outside this recovery path.
+
+Finite commands re-drain reconciliation work that arrives during cache preparation before retrying publication. They fail after three unsuccessful publication attempts and can be rerun; they do not wait indefinitely for concurrent writers. A live child poller reports healthy completion after successful capture or replay, or when idle exactly at its observed tip. A tip below the available rescan window remains Catching up while the monotonic cursor is preserved. Core miscellaneous RPC errors, including a block body not downloaded yet, remain capture errors retried at the ordinary interval rather than fatal invalid responses.
+
+The shared live supervisor owns readiness, chain initialization, capture, waiting and shutdown under one cancellation boundary. Adapters construct and tick their producer; they do not manage separate startup or shutdown state. Cache publication allows a brief reader transaction to finish within a 500 ms lock budget, then yields for a fresh snapshot if contention persists.
+
+Check `/api/v1/sources` as well as systemd status: a running unit in Waiting is degraded. Runtime heartbeat expiry is 90 seconds, independent of cursor age; a long tick renews its heartbeat every 30 seconds. Error continues to take priority when unresolved evidence or backbone errors exist. `source_health_ready` remains an aggregate-integrity gate and is not a Core-availability flag.
+
+For migration 0036, stop all Core-backed writers before running the backup-protected migration, then start the new binaries. Older writers do not increment `publication_revision` and must not overlap new cache publishers. Rolling back the binary is compatible with the additive schema, but stop new writers first and keep producer ownership exclusive. Keep the automatic backup until rollback verification is complete.
 
 ## Serving
 
@@ -193,7 +207,6 @@ Counters are maintained incrementally afterward, so re-running it is only needed
 
 `just rebuild-protocol-commitments` (optionally with `--batch-size N`, default 100 headers per page) fills the derived CORE and exSat `protocol_commitment` tables from stored coinbase outputs.
 Run it once after upgrading to 0.11.0 (migration `0035`) and again after any release that raises the protocol-commitment decoder version.
-With `--if-needed` it does nothing while the recorded version matches the running decoder, so deployments can run it after every upgrade.
 It re-derives every stored script with the compiled decoder, then refreshes every header with a `block` row, a near observation with stored outputs or derived rows, one page per exclusive canonical-view hold so live capture and Core writes wait at most one page.
 It records `protocol_commitments_decoder_version` only after the walk finishes; an interrupted run leaves the version unchanged, and a rerun is idempotent.
 Producers keep the tables current afterward.

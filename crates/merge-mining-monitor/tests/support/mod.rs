@@ -390,3 +390,6 @@ pub async fn write_capture_committed(
     txn.commit().await?;
     Ok(write)
 }
+
+#[cfg(feature = "db-integration")]
+pub mod live_rpc;

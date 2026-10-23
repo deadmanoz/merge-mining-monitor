@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, ensure};
 use tokio::time::sleep;
 use tokio_postgres::Client;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::chains::spec::ChainSpec;
 use mmm_bitcoin_core::ConfiguredParentClassifier;
@@ -25,7 +25,7 @@ use mmm_read_model::{
 use mmm_rpc::{RpcMetrics, RpcMetricsSnapshot};
 use mmm_store::{load_poll_cursor, prune_child_chain_heads_below, upsert_poll_cursor_with_target};
 
-use crate::live_loop::{LiveProducer, TickOutcome, run_live_loop};
+use crate::live_loop::{LiveProducer, TickOutcome};
 
 /// Most `child_chain_head` rows one tick prunes. Each pruned row holds an advisory lock until
 /// the statement ends, so concurrent pollers stay well inside Postgres's shared lock table.
@@ -153,7 +153,8 @@ pub trait ChainPoller {
     async fn refresh_core_cache(&mut self) -> Result<()> {
         Ok(())
     }
-    /// Drain durable per-source pending work (best-effort, each tick).
+    /// Drain durable per-source pending work before advancing capture. An
+    /// unfinished drain defers the tick and cannot report healthy completion.
     async fn drain_pending(&mut self) -> Result<()> {
         Ok(())
     }
@@ -174,12 +175,12 @@ pub trait ChainPoller {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-struct TickSummary {
-    tip: Option<i32>,
-    processed: usize,
-    rescanned: usize,
-    new: i32,
-    held: bool,
+pub struct TickSummary {
+    pub tip: Option<i32>,
+    pub processed: usize,
+    pub rescanned: usize,
+    pub new: i32,
+    pub held: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -251,12 +252,8 @@ impl<C: ChainPoller> Poller<C> {
         })
     }
 
-    pub async fn run_forever(self) -> Result<()> {
-        run_live_loop(self).await
-    }
-
     /// Execute one poll tick and log a `poll tick` summary with per-client RPC deltas.
-    pub async fn poll_tick(&mut self) -> Result<usize> {
+    pub async fn poll_tick(&mut self) -> Result<TickSummary> {
         let tick_start = Instant::now();
         let metrics = self.chain.rpc_metrics();
         let before = metrics.iter().map(RpcMetrics::snapshot).collect::<Vec<_>>();
@@ -276,12 +273,12 @@ impl<C: ChainPoller> Poller<C> {
             rpc = rpc_deltas(&metrics, &before),
             "poll tick"
         );
-        result.map(|()| summary.processed)
+        result.map(|()| summary)
     }
 
     async fn poll_tick_steps(&mut self, summary: &mut TickSummary) -> Result<()> {
         self.chain.refresh_core_cache().await?;
-        self.drain_pending_best_effort().await;
+        self.drain_pending_before_capture().await?;
         let tip = self.fetch_tip_and_persist_target().await?;
         summary.tip = Some(tip);
         let result = match self.tick_window(tip) {
@@ -321,54 +318,19 @@ impl<C: ChainPoller> Poller<C> {
         }
     }
 
-    fn log_starting(&self) {
-        info!(
-            chain = self.chain.name(),
-            cursor = self.cursor,
-            batch_size = self.config.batch_size,
-            reorg_depth = self.config.reorg_depth,
-            poll_interval_seconds = self.config.poll_interval.as_secs(),
-            "starting AuxPoW poller"
-        );
-    }
-
-    fn log_poll_tick_result(&self, result: &Result<TickOutcome>) {
-        match result {
-            Ok(outcome) => {
-                debug!(
-                    chain = self.chain.name(),
-                    progressed = outcome.progressed,
-                    cursor = self.cursor,
-                    "poll tick complete"
-                );
-            }
-            Err(err) => {
-                error!(
-                    chain = self.chain.name(),
-                    error = %err,
-                    cursor = self.cursor,
-                    "poll tick failed"
-                );
-            }
-        }
-    }
-
-    fn log_shutdown(&self) {
-        info!(
-            chain = self.chain.name(),
-            cursor = self.cursor,
-            "shutdown signal received; stopping AuxPoW poller"
-        );
-    }
-
-    async fn drain_pending_best_effort(&mut self) {
+    async fn drain_pending_before_capture(&mut self) -> Result<()> {
         if let Err(err) = self.chain.drain_pending().await {
+            if crate::live_loop::must_propagate(&err) {
+                return Err(err);
+            }
             warn!(
                 chain = self.chain.name(),
                 error = %err,
-                "draining pending work failed; continuing tick"
+                "draining pending work failed; retrying next tick"
             );
+            return Err(crate::bitcoin_epoch_cache::LocalRecoveryPending("capture_pending").into());
         }
+        Ok(())
     }
 
     async fn fetch_tip_and_persist_target(&self) -> Result<i32> {
@@ -477,32 +439,45 @@ fn rpc_deltas(metrics: &[RpcMetrics], before: &[RpcMetricsSnapshot]) -> String {
 }
 
 impl<C: ChainPoller> LiveProducer for Poller<C> {
+    fn normal_interval(&self) -> Duration {
+        self.config.poll_interval
+    }
     fn name(&self) -> &'static str {
         self.chain.name()
     }
 
     async fn tick(&mut self) -> Result<TickOutcome> {
-        let processed = self.poll_tick().await?;
+        let summary = self.poll_tick().await?;
+        if summary.held {
+            return Err(crate::bitcoin_epoch_cache::LocalRecoveryPending("capture_pending").into());
+        }
         Ok(TickOutcome {
-            progressed: processed > 0,
-            idle_at_target: false,
+            progressed: summary.processed > 0,
+            idle_at_target: summary.tip == Some(self.cursor),
         })
     }
 
-    fn wait_after_tick(&mut self, _result: Result<TickOutcome>) -> Result<Duration> {
+    fn wait_after_tick(&mut self, result: Result<TickOutcome>) -> Result<Duration> {
+        if let Err(err) = result
+            && (crate::live_loop::must_propagate(&err)
+                || crate::bitcoin_core_backbone::is_backbone_integrity_error(&err))
+        {
+            return Err(err);
+        }
+        // Child transport/capture retries retain their ordinary interval; only
+        // the typed Core dependency path uses the supervisor's outage backoff.
         Ok(self.config.poll_interval)
     }
 
     fn log_starting(&self) {
-        Poller::log_starting(self);
-    }
-
-    fn log_tick_result(&self, result: &Result<TickOutcome>) {
-        self.log_poll_tick_result(result);
-    }
-
-    fn log_shutdown(&self) {
-        Poller::log_shutdown(self);
+        info!(
+            chain = self.chain.name(),
+            cursor = self.cursor,
+            batch_size = self.config.batch_size,
+            reorg_depth = self.config.reorg_depth,
+            poll_interval_seconds = self.config.poll_interval.as_secs(),
+            "starting AuxPoW poller"
+        );
     }
 }
 
@@ -658,11 +633,15 @@ where
                 progress.processed += 1;
             }
             Ok(HeightProgress::Advance) => progress.processed += 1,
-            Err(err) => warn!(
-                height,
-                error = %err,
-                "rescan of already-processed height failed; continuing (best-effort)"
-            ),
+            Err(err) if crate::live_loop::must_propagate(&err) => return Err(err),
+            Err(err) => {
+                progress.held = true;
+                warn!(
+                    height,
+                    error = %err,
+                    "rescan of already-processed height failed; continuing (best-effort)"
+                );
+            }
         }
     }
 

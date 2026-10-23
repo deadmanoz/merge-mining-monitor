@@ -68,6 +68,8 @@ Hathor live capture requires the reconstructed parent transaction to be a coinba
 
 ## Polling, Rescans, And Child Displacement
 
+Live startup waits for fresh, synced mainnet Core before any child tip query or cursor seed. A typed Core failure stops the active batch, retaining committed evidence and durable progress for retry. The shared supervisor owns backoff and runtime health; replay and pending-work paths propagate the same failures.
+
 Live pollers use `poll_cursor` (not `MAX(child_height)`) as progress state, seeded in order: (1) explicit `<PREFIX>_START_HEIGHT`, (2) persisted cursor, or (3) `tip - reorg_depth`.
 Each tick re-observes the `<PREFIX>_REORG_DEPTH` heights ending at and including the persisted cursor (ending at the tip only once caught up), then advances the cursor by up to `<PREFIX>_BATCH_SIZE`.
 Every height observation and write runs under a session-level per-height lock so concurrent pollers and backfills serialize cleanly and record the latest chain head in `child_chain_head`, which keeps only the rescan window (see `docs/data-model.md`, "Child Displacement").

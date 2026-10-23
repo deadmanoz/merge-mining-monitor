@@ -22,10 +22,11 @@ pub use bitcoin_core_header::{
     finish_bitcoin_core_header_cache_operation, finish_bitcoin_core_header_cache_shared_operation,
     highest_final_bitcoin_core_epoch, is_bitcoin_core_header_cache_integrity_error,
     load_bitcoin_core_header_cache_horizon, load_bitcoin_core_nbits_table,
-    load_bitcoin_core_nbits_table_if_present, load_core_cache_generation, load_scheduled_recheck,
-    lock_bitcoin_core_header_cache, lock_bitcoin_core_header_cache_shared,
-    lock_bitcoin_core_header_cache_shared_in_transaction, persist_recheck_cursor,
-    record_bitcoin_core_header, replace_bitcoin_core_header_cache, schedule_core_recheck,
+    load_bitcoin_core_nbits_table_if_present, load_core_cache_generation,
+    load_core_cache_publication_revision, load_scheduled_recheck, lock_bitcoin_core_header_cache,
+    lock_bitcoin_core_header_cache_shared, lock_bitcoin_core_header_cache_shared_in_transaction,
+    persist_recheck_cursor, record_bitcoin_core_header, replace_bitcoin_core_header_cache,
+    schedule_core_recheck,
 };
 pub use capture_error::{
     CAPTURE_ERROR_HEIGHT_CAPTURE_FAILED, CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF, clear_capture_error,
@@ -77,4 +78,10 @@ pub use poll_cursor::{get_source_id, load_poll_cursor, upsert_poll_cursor_with_t
 pub use pool::{
     PoolIdentitySeed, load_pool_identities_by_namespace, reconcile_identity_registry,
     upsert_identity_registry, upsert_pool_snapshot, upsert_registry_only_pools,
+};
+
+mod producer_runtime;
+pub use producer_runtime::{
+    ProducerRun, RuntimeTransition, attempt_producer_run, heartbeat_producer_run,
+    start_producer_run, transition_producer_run,
 };

@@ -2,7 +2,7 @@
 import { CHAIN_PROFILES, SOURCE_LIFECYCLE } from "./source-registry.generated.js";
 import { esc, formatScalar, relativeTime, sourceChain } from "./frontend-state.js";
 import { kvRows } from "./drawer-renderer.js";
-import { sourceSyncLabel } from "./source-status.js";
+import { sourceSyncLabel, sourceRuntimeRows } from "./source-status.js";
 
 const TABS = [
   { id: "history", label: "General" },
@@ -121,6 +121,7 @@ function operationalBlock(source, help) {
   const rows = [
     ...(help ? [["Evidence", formatScalar(help.data)], ["Pool attribution", formatScalar(help.pool)]] : []),
     ...operationalRows(source, source.sync || {}),
+    ...sourceRuntimeRows(source.sync || {}).map(([label, value]) => [label, formatScalar(value)]),
   ];
   return rows.length ? subhead("Operational status") + kvRows(rows) : "";
 }

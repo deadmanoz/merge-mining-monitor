@@ -17,6 +17,7 @@ Producers append or update base evidence; the read model computes the Bitcoin tr
 | `historical_reconcile_queue` | Durable parent rebuild state and dependent-cascade seeds for resumable historical imports. |
 | chain sidecars | One-to-one evidence details for chains with extra structured data: the RSK merge-mining proof (`merge_mining_hash`, `merkle_proof`, `coinbase_tail`, `proof_format`; the block's hash, height, uncle placement and miner are on its observation) and the Hathor RFC 0006 proof and funds graph. |
 | `event_pool_attribution` | Attribution rows connecting an event to a pool with source/provenance details. |
+| `producer_runtime_state` | Live operational status keyed by source, fenced by run identity. Heartbeat and retry timestamps never replace progress or evidence timestamps. |
 | `poll_cursor` | Live poll progress. Backfills never move the cursor. |
 | `capture_error` | Producer-owned operational state: one row per `(source_id, height)` a producer could not capture, with the failure kind (`malformed_auxpow_proof` or `height_capture_failed`), a diagnostic detail, and first/last seen times. Written before returning from a failing height and cleared only when that same height is reprocessed successfully; `/api/v1/sources` reads the earliest unresolved height per source. |
 | `child_chain_head` | Producer-owned operational state: one row per `(source_id, child_height)` recording the block hash, parent, outcome, and evidence marker a producer last observed at that height, used by trailing rescans. Each poll tick prunes rows below the rescan floor (`cursor + 1 - reorg_depth`) in bounded batches; `child_block_observation` keeps the per-block history. |
@@ -127,6 +128,14 @@ When a child chain replaces the block at `child_height`, the replaced block's ob
 
 ## Migrations
 
-Public migration history starts with `0001_canonical_schema.sql` (squashed baseline schema) and `0002_seed_sources.sql` (registry-generated source seed for fresh databases), followed by append-only numbered forward migrations (`0003` through `0035`).
+Public migration history starts with `0001_canonical_schema.sql` (squashed baseline schema) and `0002_seed_sources.sql` (registry-generated source seed for fresh databases), followed by append-only numbered forward migrations (`0003` through `0036`).
 After a migration has reached a persistent database, never edit it; add a new forward migration instead (regenerating `0002` only alongside an idempotent forward migration when adding a source).
 Run all real database migrations through `just db-migrate-dev` or `just db-migrate-deploy` (`scripts/migrate-safe.sh`); see `migrations/README.md` for baseline-reset and scheduled-recheck conventions.
+
+## Live runtime and cache publication
+
+Live producers open a separate status connection through `mmm-pg`. `mmm-store` writes runtime transitions and the 30-second heartbeat in short autocommit statements with a one-second lock timeout and three-second statement timeout. No runtime update joins a capture transaction. Failure to publish status disables heartbeat renewal until a complete status transition succeeds; the API expires liveness after 90 seconds. A new run replaces the run identity, fencing every prior owner's status writes.
+
+Core cache refresh checks readiness before recovery or locking. It stages RPC observations outside the exclusive cache lock, then takes a transaction advisory lock with a 500 ms wait bound and checks queue emptiness and `publication_revision` under the cache-state row lock. Every successful replacement increments this revision atomically. `core_cache_generation` keeps its narrower classification-invalidation meaning. A failed local precondition consumes one of three snapshot attempts, then yields at the producer's ordinary interval. Live cold starts fetch at most 25 final epoch boundaries per batch, publishing only the covered prefix; they remain Recovering until the complete cache and a healthy capture cycle are ready.
+
+Live Core reconciliation batches count both primary and expansion work, with at most 25 work items per batch. They use the existing shared-cache then canonical-barrier order without an outer exclusive cache lock around RPC classification. Cancellation drops transaction locks; a cancelled session-lock operation loses its worker connection on producer exit.

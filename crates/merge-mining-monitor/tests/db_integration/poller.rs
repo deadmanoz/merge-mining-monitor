@@ -38,7 +38,10 @@ impl ChainPoller for FakeChain {
         if let Some(max) = self.fail_above
             && height > max
         {
-            anyhow::bail!("fake process_height failure at {height}");
+            return Err(
+                anyhow::Error::new(mmm_bitcoin_core::CoreUnavailable::Transport)
+                    .context(format!("injected Core outage at {height}")),
+            );
         }
         if let Some(processed) = &self.processed {
             processed.lock().unwrap().push(height);
@@ -193,9 +196,27 @@ async fn poller_persists_partial_progress_on_tick_error() -> Result<()> {
         let mut poller = Poller::new(chain, monotonic_poll_config(0)).await?;
 
         let result = poller.poll_tick().await;
-        assert!(result.is_err(), "tick should propagate the height error");
+        assert_eq!(
+            result
+                .unwrap_err()
+                .downcast_ref::<mmm_bitcoin_core::CoreUnavailable>(),
+            Some(&mmm_bitcoin_core::CoreUnavailable::Transport)
+        );
 
         assert_eq!(load_poll_cursor(&client, source_id).await?, Some(1_005));
+        drop(poller);
+        let processed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut recovered = fake_chain(&schema, 1_010, None).await?;
+        recovered.processed = Some(processed.clone());
+        Poller::new(recovered, monotonic_poll_config(0))
+            .await?
+            .poll_tick()
+            .await?;
+        assert_eq!(
+            *processed.lock().unwrap(),
+            (1_006..=1_010).collect::<Vec<_>>()
+        );
+        assert_eq!(load_poll_cursor(&client, source_id).await?, Some(1_010));
         Ok::<_, anyhow::Error>(())
     })
 }
@@ -218,7 +239,7 @@ async fn poller_empty_tick_persists_target_without_refreshing_cursor_time() -> R
 
         let chain = fake_chain(&schema, 1_000, None).await?;
         let mut poller = Poller::new(chain, monotonic_poll_config(0)).await?;
-        assert_eq!(poller.poll_tick().await?, 0);
+        assert_eq!(poller.poll_tick().await?.processed, 0);
 
         assert_eq!(
             load_poll_cursor_row(&client, source_id).await?,

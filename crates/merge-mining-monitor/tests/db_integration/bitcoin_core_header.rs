@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bitcoin::block::{Header, Version};
 use bitcoin::hashes::Hash as _;
 use bitcoin::{BlockHash, CompactTarget, TxMerkleNode};
@@ -27,7 +27,7 @@ use mmm_store::{
     load_bitcoin_core_nbits_table_if_present, load_scheduled_recheck,
     lock_bitcoin_core_header_cache, lock_bitcoin_core_header_cache_shared,
     lock_bitcoin_core_header_cache_shared_in_transaction, record_bitcoin_core_header,
-    replace_bitcoin_core_header_cache, schedule_core_recheck, upsert_merge_mining_event,
+    schedule_core_recheck, upsert_merge_mining_event,
 };
 
 use tokio_postgres::Client;
@@ -282,7 +282,7 @@ async fn core_cache_generation(client: &Client) -> Result<i64> {
 
 #[tokio::test]
 async fn fresh_database_refresh_without_sync_state_reads_core_headers() -> Result<()> {
-    crate::run_mut_db_test!(client, {
+    crate::run_db_test!(client, schema, {
         let sync_state_count: i64 = client
             .query_one("SELECT count(*)::bigint FROM bitcoin_core_sync_state", &[])
             .await?
@@ -306,7 +306,33 @@ async fn fresh_database_refresh_without_sync_state_reads_core_headers() -> Resul
             .with_canonical_header(core_header(2030, 2, 3, 0x1c00_ffff)),
         );
 
-        let table = refresh_bitcoin_core_header_cache(&mut client, &classifier).await?;
+        let mut publisher = connect_to_schema(&schema).await?;
+        let pid: i32 = publisher
+            .query_one("SELECT pg_backend_pid()", &[])
+            .await?
+            .get(0);
+        lock_bitcoin_core_header_cache_shared(&client).await?;
+        let (table, queued) = tokio::join!(
+            refresh_bitcoin_core_header_cache(&mut publisher, &classifier),
+            async {
+                let queued = async {
+                    // Queue work after preparation has reached publication, so
+                    // the finite retry must drain it before its next snapshot.
+                    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                        while !client.query_one("SELECT cardinality(pg_blocking_pids($1)) > 0", &[&pid]).await?.get::<_, bool>(0) {
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        }
+                        Ok::<_, anyhow::Error>(())
+                    }).await??;
+                    let source = get_source_id(&client, BITCOIN_SOURCE_CODE).await?;
+                    client.execute("INSERT INTO bitcoin_core_reconcile_queue (source_id,btc_parent_header_hash,primary_pending) VALUES ($1,$2,false)", &[&source, &vec![0xee_u8;32]]).await?;
+                    Ok(())
+                }.await;
+                finish_bitcoin_core_header_cache_shared_operation(&client, queued).await
+            }
+        );
+        queued?;
+        let table = table?;
         assert_eq!(table.horizon_height(), 2030);
         assert_eq!(table.expected_nbits(2017), NbitsLookup::Found(0x1c00_ffff));
 
@@ -325,7 +351,7 @@ async fn fresh_database_refresh_without_sync_state_reads_core_headers() -> Resul
 }
 
 #[tokio::test]
-async fn refresh_drains_pending_core_reconcile_before_reading_core_snapshot() -> Result<()> {
+async fn unavailable_core_preserves_pending_reconciliation_before_snapshot_work() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let bitcoin = get_source_id(&client, BITCOIN_SOURCE_CODE).await?;
         let queued_hash = vec![0x52_u8; 32];
@@ -357,7 +383,7 @@ async fn refresh_drains_pending_core_reconcile_before_reading_core_snapshot() ->
         );
         let error = refresh_bitcoin_core_header_cache(&mut client, &classifier)
             .await
-            .expect_err("the injected Core snapshot error must surface after queue drain");
+            .expect_err("readiness must fail before queue drain");
         assert!(
             error
                 .to_string()
@@ -372,7 +398,7 @@ async fn refresh_drains_pending_core_reconcile_before_reading_core_snapshot() ->
             )
             .await?
             .get(0);
-        assert_eq!(queue_count, 0);
+        assert_eq!(queue_count, 1);
         let pending_error = client
             .query_one(
                 "SELECT last_error_code, last_error, last_error_details \
@@ -380,11 +406,17 @@ async fn refresh_drains_pending_core_reconcile_before_reading_core_snapshot() ->
                 &[&bitcoin],
             )
             .await?;
-        assert_eq!(pending_error.get::<_, Option<String>>(0), None);
-        assert_eq!(pending_error.get::<_, Option<String>>(1), None);
+        assert_eq!(
+            pending_error.get::<_, Option<String>>(0).as_deref(),
+            Some("backbone_reorg_reconcile_pending")
+        );
+        assert_eq!(
+            pending_error.get::<_, Option<String>>(1).as_deref(),
+            Some("pending cascade")
+        );
         assert_eq!(
             pending_error.get::<_, serde_json::Value>(2),
-            serde_json::json!({})
+            serde_json::json!({"queued": 1})
         );
         Ok(())
     })
@@ -448,7 +480,7 @@ fn reorged_core_view(seeded: &SeededParent) -> FakeParentClassifier {
 }
 
 #[tokio::test]
-async fn refresh_releases_the_lock_between_recovery_batches_and_replaces_on_an_empty_queue()
+async fn refresh_allows_shared_writers_during_recovery_and_publishes_on_an_empty_queue()
 -> Result<()> {
     crate::run_db_test!(client, schema, {
         let seeded = seed_unknown_parent(&client).await?;
@@ -488,16 +520,11 @@ async fn refresh_releases_the_lock_between_recovery_batches_and_replaces_on_an_e
                 .map_err(anyhow::Error::from);
             finish_bitcoin_core_header_cache_shared_operation(&suffix_client, result).await
         });
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(200), &mut suffix)
-                .await
-                .is_err(),
-            "the suffix replacement must wait while the refresh holds the lock"
-        );
+        let concurrent_write =
+            tokio::time::timeout(std::time::Duration::from_secs(2), &mut suffix).await;
         gate.proceed();
-        tokio::time::timeout(std::time::Duration::from_secs(10), &mut suffix)
-            .await
-            .expect("the refresh must release the lock between recovery batches")??;
+        concurrent_write
+            .expect("network classification must not hold the exclusive cache lock")??;
         let table = tokio::time::timeout(std::time::Duration::from_secs(10), refresh)
             .await
             .expect("the refresh must finish once the queue drains")??;
@@ -1281,4 +1308,26 @@ async fn refresh_finalizes_a_shallow_boundary_after_a_missed_verification_window
         assert!(row.get::<_, bool>(1));
         Ok(())
     })
+}
+
+async fn replace_bitcoin_core_header_cache(
+    client: &mut tokio_postgres::Client,
+    final_height: i32,
+    epochs: &[mmm_store::BitcoinCoreHeader],
+    shallow: Option<&mmm_store::BitcoinCoreHeader>,
+    horizon: &mmm_store::BitcoinCoreHeader,
+    reorged: bool,
+) -> Result<mmm_store::BitcoinCoreHeaderCacheUpdate> {
+    let revision = mmm_store::load_core_cache_publication_revision(client).await?;
+    mmm_store::replace_bitcoin_core_header_cache(
+        client,
+        final_height,
+        epochs,
+        shallow,
+        horizon,
+        reorged,
+        revision,
+    )
+    .await?
+    .context("uncontended fixture publication")
 }

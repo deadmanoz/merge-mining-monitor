@@ -23,7 +23,8 @@ async fn main() -> Result<()> {
     let command = args.next();
     match command.as_deref() {
         Some(producer) if mmm_producers::is_producer_command(producer) => {
-            mmm_producers::run_producer_command(producer, args).await?;
+            // Bound the layout depth of the nested live producer future.
+            Box::pin(mmm_producers::run_producer_command(producer, args)).await?;
         }
         Some("backfill-hathor-cache") => {
             mmm_producers::run_hathor_cache_command(args).await?;
@@ -158,12 +159,11 @@ async fn cmd_reclassify_pools(args: std::env::Args) -> Result<()> {
 
 async fn cmd_sync_bitcoin_core(args: std::env::Args) -> Result<()> {
     let config = mmm_producers::BitcoinCoreSyncConfig::from_args(args)?;
-    let rpc = bitcoin_core_rpc_for_command("sync-bitcoin-core")?;
-    let (mut pg_client, classifier) = mmm_producers::connect_core_required_from_env().await?;
     if config.follow {
-        mmm_producers::run_sync_bitcoin_core_follow(&mut pg_client, &rpc, &classifier, config)
-            .await?;
+        mmm_producers::run_sync_bitcoin_core_follow(config).await?;
     } else {
+        let rpc = bitcoin_core_rpc_for_command("sync-bitcoin-core")?;
+        let (mut pg_client, _classifier) = mmm_producers::connect_core_required_from_env().await?;
         let stats = mmm_producers::run_sync_bitcoin_core(&mut pg_client, &rpc, config).await?;
         info!(
             attempted = stats.attempted,

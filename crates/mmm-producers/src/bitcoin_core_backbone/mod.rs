@@ -446,6 +446,7 @@ where
 
     let coinbase = match source.block_coinbase(core_hash).await {
         Ok(coinbase) => coinbase,
+        Err(err) if crate::live_loop::must_propagate(&err) => return Err(err),
         Err(err) => {
             let err_msg = err.to_string();
             // Defer dependent cascade until after sync-state bookkeeping commits.

@@ -590,6 +590,9 @@ fn assert_sources_fixture_contract(fixture: &Value) {
             );
         }
     }
+    for source in sources {
+        assert!(source["sync"].get("runtime").is_some());
+    }
     let terracoin = sources
         .iter()
         .find(|source| source["code"] == "auxpow:terracoin")

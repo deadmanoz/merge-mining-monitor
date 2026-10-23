@@ -17,6 +17,7 @@ use crate::producer_runtime::{ProducerRuntime, run_post_backfill_repair};
 pub(crate) async fn poll(
     spec: &'static crate::chains::spec::ChainSpec,
     rt: ProducerRuntime,
+    live: &mut crate::live_loop::LiveSession,
 ) -> Result<()> {
     let rpc_config = crate::chains::config::hathor_rpc_config()?;
     let rpc = HathorRpcClient::new(rpc_config)?;
@@ -34,7 +35,7 @@ pub(crate) async fn poll(
         poller_config,
     )
     .await?;
-    poller.run_forever().await
+    crate::live_loop::run_ticks(poller, live).await
 }
 
 pub(crate) async fn backfill(rt: ProducerRuntime, config: BackfillConfig) -> Result<()> {

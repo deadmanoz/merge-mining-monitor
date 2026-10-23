@@ -8,6 +8,11 @@ This changelog starts with the initial release.
 
 - Add `--if-needed` to `just rebuild-protocol-commitments`: it exits without contacting Bitcoin Core when the tables already match the running decoder, so deployments can run it after every upgrade.
 
+### Fixed
+
+- Keep live child pollers and the Core follower running through Bitcoin Core outages with bounded, jittered backoff and automatic recovery under one shared live supervisor. Stage cache RPCs outside the exclusive publication lock, allow brief reader contention within a 500 ms lock budget, and reject obsolete snapshots using a persisted revision.
+- Report dependency waiting, recovery and producer liveness separately from evidence errors and cursor timestamps. Preserve capture errors while showing safe runtime diagnostics in Sources, keep a child tip below the available rescan window in recovery, and omit retry deadlines after healthy completion. Retain ordinary capture retries when Core has not downloaded a requested block body.
+
 ## [0.11.0] - 2026-10-21
 
 - Serve `protocol_commitments` on `/api/v1/tree` nodes, and show their count in a grey badge on each tree block and the declarations below the merge-mined chains in the selected block's card, with CORE and exSat in their own colours. Each declaration in the drawer now collapses like the Auxiliary blocks entries.

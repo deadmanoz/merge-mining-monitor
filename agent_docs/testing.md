@@ -42,6 +42,10 @@ Keep tests that assert table layout close to direct SQL seed helpers; use scenar
 The DB-backed test binaries run one test at a time: PostgreSQL advisory locks are database-wide, so separate schemas do not isolate the Core-cache barrier or its timing assertions.
 Concurrent tasks inside each test still exercise the production locking behavior.
 
+`core_recovery_cli` also creates disposable databases and runs the actual child/Core producer binaries against loopback RPC fixtures. Database setup uses `just db-migrate-dev`, including its automatic backup, and teardown drops only the database the test created. These tests need local `just`, PostgreSQL client tools and permission to create databases. They exercise more than five failed cycles, automatic recovery, a tick longer than the heartbeat expiry, delayed status writes, startup/backoff/publication-lock shutdown, fatal authentication and held Hathor work. They deliberately use the production retry and heartbeat intervals.
+
+Run `MMM_TEST_RPC_DELAY_MS=340 RUST_TEST_NOCAPTURE=1 just test-integration` to retain transport-count and latency receipts. The Core outage and cold-cache scenarios use that injected delay; the blackhole and long-tick scenarios use their own explicit delays. No production RPC endpoint is used by these scenarios.
+
 ## Round-Trip Budgets
 
 See [`round-trip-budget.md`](round-trip-budget.md) for the ~340 ms production round-trip rules, `RpcMetrics` (`metrics().snapshot()`) transport-boundary counters, `core_fixture.rs` vs `FakeParentClassifier` test pinning, and `MMM_TEST_RPC_DELAY_MS=340` timing receipts.

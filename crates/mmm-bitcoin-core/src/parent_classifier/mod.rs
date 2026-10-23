@@ -221,6 +221,11 @@ impl std::fmt::Debug for ConfiguredParentClassifier {
 }
 
 impl ConfiguredParentClassifier {
+    /// Whether this classifier delegates transient retries to the live supervisor.
+    pub fn is_live(&self) -> bool {
+        matches!(self, Self::BitcoinCore(classifier) if classifier.live)
+    }
+
     pub fn from_env() -> Result<Self> {
         match env::var("BITCOIN_RPC_URL") {
             Ok(url) if !url.trim().is_empty() => Ok(Self::BitcoinCore(
@@ -238,6 +243,35 @@ impl ConfiguredParentClassifier {
             }
             classifier => Ok(classifier),
         }
+    }
+
+    pub fn from_env_required_live() -> Result<Self> {
+        let url =
+            env::var("BITCOIN_RPC_URL").context("BITCOIN_RPC_URL is required for live capture")?;
+        anyhow::ensure!(
+            !url.trim().is_empty(),
+            "BITCOIN_RPC_URL is required for live capture"
+        );
+        Ok(Self::BitcoinCore(
+            BitcoinCoreParentClassifier::from_live_env_url(&url)?,
+        ))
+    }
+
+    pub async fn ready_tip(&self) -> Result<SyncedTip> {
+        if let Self::BitcoinCore(classifier) = self {
+            return classifier.ready_tip().await;
+        }
+        let tip = self
+            .synced_tip()
+            .await?
+            .ok_or(crate::CoreUnavailable::InitialBlockDownload)?;
+        if !tip.is_mainnet {
+            return Err(crate::CoreFault::WrongNetwork.into());
+        }
+        if !tip.fresh {
+            return Err(crate::CoreUnavailable::StaleTip.into());
+        }
+        Ok(tip)
     }
 
     pub fn is_enabled(&self) -> bool {

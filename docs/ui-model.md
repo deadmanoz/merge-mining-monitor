@@ -184,3 +184,7 @@ For example, an empty orphan view should say there are no orphans in the selecte
 
 Error states should show the API error code and message.
 Range errors should prompt the user to narrow the range or choose coarser granularity.
+
+## Source runtime diagnostics
+
+Sources distinguishes Waiting for Bitcoin Core from Catching up through local recovery. The rail and aggregate badge include Waiting. The source popover and Capture tab show a safe reason, dependency, last successful cycle, next retry and heartbeat beside cursor and evidence timestamps. Unknown reason codes use a neutral label rather than raw error text. Unresolved capture or backbone errors remain visible above runtime status; an expired heartbeat becomes Stale. Sources without runtime rows retain legacy progress-based status during rollout.

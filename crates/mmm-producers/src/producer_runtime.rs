@@ -142,6 +142,13 @@ pub(crate) struct ProducerRuntime {
 }
 
 impl ProducerRuntime {
+    pub(crate) async fn from_env_live() -> Result<Self> {
+        Ok(Self {
+            pg_client: connect_from_env().await?,
+            parent_classifier: ConfiguredParentClassifier::from_env_required_live()?,
+        })
+    }
+
     pub(crate) async fn from_env() -> Result<Self> {
         let (pg_client, parent_classifier) = connect_core_required_from_env().await?;
         Ok(Self {

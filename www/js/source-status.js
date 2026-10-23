@@ -1,20 +1,21 @@
 import { $, compareSourcesForDisplay, esc, relativeTime, sourceDisplayName } from "./frontend-state.js";
 
 const OPERATIONAL_SOURCE_SYNC_MODES = new Set(["live", "bitcoin-core-backbone"]);
-const SOURCE_SYNC_ORDER = ["error", "stale", "catching_up", "not_started", "unknown", "live"];
+const SOURCE_SYNC_ORDER = ["error", "stale", "waiting", "catching_up", "not_started", "unknown", "live"];
 const SOURCE_SYNC_META = {
-  live: { label: "live", displayLabel: "Live", title: "Progress advanced within the past hour" },
+  waiting: { label: "waiting", displayLabel: "Waiting", title: "Producer is running and waiting for an upstream dependency" },
+  live: { label: "live", displayLabel: "Live", title: "Producer completed a healthy cycle, or legacy progress advanced within the past hour" },
   catching_up: {
     label: "catching up",
     displayLabel: "Catching up",
-    title: "Progress is recent but has not reached the target height",
+    title: "Producer is starting, recovering, or catching up to the target height",
   },
   stale: {
     label: "stale",
     displayLabel: "Stale",
-    title: "Progress has not updated within the past hour",
+    title: "Producer heartbeat expired or stopped, or legacy progress is over an hour old",
   },
-  error: { label: "error", displayLabel: "Error", title: "The last source progress update recorded an error" },
+  error: { label: "error", displayLabel: "Error", title: "Source has an unresolved capture error or a fatal producer failure" },
   not_started: { label: "not started", displayLabel: "Not started", title: "No source progress recorded yet" },
   historical: { label: "historical", displayLabel: "Historical", title: "Historical archive source" },
   partial: { label: "partial", displayLabel: "Partial", title: "Recovered evidence from an incomplete child-chain record" },
@@ -55,6 +56,7 @@ function normalizeSourceSync(source) {
     latest_evidence_at: latestEvidenceAt,
     error_code: errorCode,
     error_height: errorHeight,
+    runtime: sync.runtime || null,
   };
 }
 
@@ -129,12 +131,40 @@ function sourceErrorLabel(sync) {
     : `error ${sync.error_code} at ${sync.error_height.toLocaleString("en-US")}`;
 }
 
+const RUNTIME_REASONS = {
+  core_unreachable: "Core is unreachable", core_timeout: "Core request timed out",
+  core_warmup: "Core is warming up", core_initial_block_download: "Core is downloading blocks",
+  core_header_lag: "Core is behind its headers", core_stale_tip: "Core tip is stale",
+  core_cache_publication_pending: "Waiting to publish a consistent cache snapshot",
+  core_cache_bootstrap_pending: "Building the Core header cache",
+  core_reconciliation_pending: "Reconciling changed Core evidence",
+  core_cursor_recovery_pending: "Repairing the Core cursor",
+  capture_pending: "Capture needs a retry", startup_pending: "Starting capture",
+  producer_no_progress: "Capture has not advanced", producer_failed: "Producer stopped after a failure",
+  core_authentication: "Core authentication failed", core_wrong_network: "Core network is incorrect",
+  core_invalid_response: "Core returned an invalid response",
+};
+
+function sourceRuntimeRows(sync) {
+  const runtime = sync.runtime;
+  if (!runtime) return [];
+  const stamp = (value) => Number.isFinite(value) ? new Date(value * 1000).toISOString() : "None yet";
+  return [
+    ["Dependency", runtime.dependency === "bitcoin-core" ? "Bitcoin Core" : "None"],
+    ["Runtime", RUNTIME_REASONS[runtime.reason_code] || (runtime.state === "healthy" ? "Healthy cycle completed" : "Recovery pending")],
+    ["Last successful cycle", stamp(runtime.last_success_at)],
+    ["Next retry", stamp(runtime.next_retry_at)],
+    ["Heartbeat", stamp(runtime.heartbeat_at)],
+  ];
+}
+
 function sourceStatusDetail(sync) {
   const parts = [
     `height: ${sourceHeightLabel(sync)}`,
     `cursor updated: ${sourceCursorUpdatedLabel(sync)}`,
     `latest evidence: ${sourceEvidenceLabel(sync)}`,
   ];
+  parts.push(...sourceRuntimeRows(sync).map(([label, value]) => `${label}: ${value}`));
   const error = sourceErrorLabel(sync);
   if (error) parts.push(error);
   return parts.join(" · ");
@@ -171,6 +201,7 @@ function aggregateSyncState(counts, unavailable) {
   if (unavailable) return "unknown";
   if (counts.error > 0) return "error";
   if (counts.stale > 0) return "stale";
+  if (counts.waiting > 0) return "waiting";
   if (counts.catching_up > 0) return "catching_up";
   if (counts.not_started > 0) return "not_started";
   if (counts.unknown > 0) return "unknown";
@@ -187,9 +218,10 @@ function renderSourceStatusRows(sources) {
     const cursorUpdated = sourceCursorUpdatedLabel(sync);
     const evidence = sourceEvidenceLabel(sync);
     const error = sourceErrorLabel(sync);
+    const runtime = sourceRuntimeRows(sync).map(([label, value]) => `${label}: ${value}`).join(" · ");
     return `<tr>
       <td><span class="source-status-name" title="${esc(source.code)}">${esc(sourceDisplayName(source))}</span></td>
-      <td><span class="source-status-pill source-sync-state-${esc(cls)}" title="${esc(sourceSyncTitle(source))}">${esc(sourceSyncLabel(source))}</span></td>
+      <td><span class="source-status-pill source-sync-state-${esc(cls)}" title="${esc(sourceSyncTitle(source))}">${esc(sourceSyncLabel(source))}</span>${runtime ? `<div class="source-status-runtime">${esc(runtime)}</div>` : ""}</td>
       <td class="source-status-height" title="${esc(sourceHeightTitle(sync))}">${esc(height)}</td>
       <td class="source-status-progress" title="${esc(sourceCursorUpdatedTitle(sync))}"><span>${esc(cursorUpdated)}</span>${error ? `<span class="source-status-error">${esc(error)}</span>` : ""}</td>
       <td class="source-status-progress" title="${esc(sourceEvidenceTitle(sync))}">${esc(evidence)}</td>
@@ -253,6 +285,7 @@ function wireSourceStatusPopover() {
 }
 
 export {
+  sourceRuntimeRows,
   sourceSyncLabel,
   renderSourceRailStatus,
   renderSourceStatus,
