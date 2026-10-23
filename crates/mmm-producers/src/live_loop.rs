@@ -383,7 +383,6 @@ fn spawn_heartbeat(
                     .await
                     .is_err()
             {
-                renewable.store(false, Ordering::Relaxed);
                 warn!("live producer heartbeat unavailable");
             }
         }

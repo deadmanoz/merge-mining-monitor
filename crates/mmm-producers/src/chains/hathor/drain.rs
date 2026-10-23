@@ -19,8 +19,8 @@ pub(crate) async fn drain_pending(
     rpc: &impl HathorRpc,
     context: &HathorCaptureContext,
 ) -> Result<()> {
-    let pending = list_pending_reconcile(client, context.source_id()).await?;
     let live = context.parent_classifier().is_live();
+    let pending = list_pending_reconcile(client, context.source_id(), live.then_some(26)).await?;
     let limit = if live { 25 } else { pending.len() };
     let mut unresolved = pending.len() > limit;
     for row in pending.into_iter().take(limit) {

@@ -23,6 +23,8 @@ Live pollers and `sync-bitcoin-core --follow` install shutdown handling and reco
 
 A successful probe resumes durable cursor and queue work. Local cache contention, cache bootstrap and bounded reconciliation report Catching up and wait the ordinary producer interval. They do not consume the follower's five-stall budget. Wrong-network, authentication, invalid-response and proven integrity errors stop the process; systemd's restart policy remains the fallback. General PostgreSQL reconnection is outside this recovery path.
 
+Heartbeat-only write failures retry at the next heartbeat interval, with the same run-ownership check. Live Hathor recovery reads at most 26 held heights per tick and attempts 25; the extra row records that more work remains.
+
 Finite commands re-drain reconciliation work that arrives during cache preparation before retrying publication. They fail after three unsuccessful publication attempts and can be rerun; they do not wait indefinitely for concurrent writers. A live child poller reports healthy completion after successful capture or replay, or when idle exactly at its observed tip. A tip below the available rescan window remains Catching up while the monotonic cursor is preserved. Core miscellaneous RPC errors, including a block body not downloaded yet, remain capture errors retried at the ordinary interval rather than fatal invalid responses.
 
 The shared live supervisor owns readiness, chain initialization, capture, waiting and shutdown under one cancellation boundary. Adapters construct and tick their producer; they do not manage separate startup or shutdown state. Cache publication allows a brief reader transaction to finish within a 500 ms lock budget, then yields for a fresh snapshot if contention persists.

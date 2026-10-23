@@ -35,18 +35,19 @@ pub async fn upsert_pending_reconcile<C: GenericClient>(
 
 /// List a source's held heights ordered by height ascending. The ordering is
 /// the contract: the poller drains oldest-height-first so a stuck low height
-/// ages out before newer ones.
+/// ages out before newer ones. `None` leaves finite callers unbounded.
 pub async fn list_pending_reconcile(
     client: &Client,
     source_id: i64,
+    limit: Option<i64>,
 ) -> Result<Vec<PendingReconcileRow>> {
     let rows = client
         .query(
             "SELECT id, height, reason, attempts \
                FROM poll_pending_reconcile \
               WHERE source_id = $1 \
-              ORDER BY height",
-            &[&source_id],
+              ORDER BY height LIMIT $2",
+            &[&source_id, &limit],
         )
         .await
         .context("list poll_pending_reconcile")?;

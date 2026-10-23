@@ -239,6 +239,17 @@ async fn long_tick_heartbeat(
         Duration::from_secs(90),
     )
     .await?;
+    // Sequence increments survive rollback, so only the first heartbeat fails.
+    client
+        .batch_execute(
+            "CREATE SEQUENCE heartbeat_attempts;
+        CREATE FUNCTION fail_first_heartbeat() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        IF nextval('heartbeat_attempts')=1 THEN RAISE EXCEPTION 'fixture heartbeat failure'; END IF;
+        RETURN NEW; END $$;
+        CREATE TRIGGER fail_first_heartbeat BEFORE UPDATE ON producer_runtime_state FOR EACH ROW
+        WHEN (NEW.heartbeat_at <> OLD.heartbeat_at) EXECUTE FUNCTION fail_first_heartbeat();",
+        )
+        .await?;
     let before = client.query_one("SELECT heartbeat_at, last_success_at FROM producer_runtime_state r JOIN source s ON s.id=r.source_id WHERE s.code='auxpow:namecoin'", &[]).await?;
     // A real cache snapshot takes over 90s while each RPC remains within its own deadline.
     tokio::time::sleep(Duration::from_secs(95)).await;
@@ -247,6 +258,18 @@ async fn long_tick_heartbeat(
         "child exited during long cache preparation"
     );
     let after = client.query_one("SELECT heartbeat_at, last_success_at FROM producer_runtime_state r JOIN source s ON s.id=r.source_id WHERE s.code='auxpow:namecoin'", &[]).await?;
+    let attempts = client
+        .query_one("SELECT last_value, is_called FROM heartbeat_attempts", &[])
+        .await?;
+    ensure!(
+        attempts.get::<_, bool>(1),
+        "fixture did not fail a heartbeat"
+    );
+    println!(
+        "heartbeat attempts after one injected failure: {}",
+        attempts.get::<_, i64>(0)
+    );
+    client.batch_execute("DROP TRIGGER fail_first_heartbeat ON producer_runtime_state; DROP FUNCTION fail_first_heartbeat(); DROP SEQUENCE heartbeat_attempts").await?;
     ensure!(
         after.get::<_, i64>(0) >= before.get::<_, i64>(0) + 60,
         "heartbeat did not renew independently of work"
@@ -379,7 +402,14 @@ async fn hathor_held_work_stays_recovering(
 ) -> Result<()> {
     let source = mmm_store::get_source_id(client, "auxpow:hathor").await?;
     mmm_store::upsert_poll_cursor_with_target(client, source, 1_000, Some(1_000)).await?;
-    client.execute("INSERT INTO poll_pending_reconcile (source_id,height,reason) SELECT $1,h,'hathor_hold' FROM generate_series(1,26) h", &[&source]).await?;
+    client.execute("INSERT INTO poll_pending_reconcile (source_id,height,reason) SELECT $1,h,'hathor_hold' FROM generate_series(1,1000) h", &[&source]).await?;
+    let page = mmm_store::list_pending_reconcile(client, source, Some(26)).await?;
+    assert_eq!(
+        page.len(),
+        26,
+        "live recovery must fetch only its batch and sentinel"
+    );
+    assert_eq!((page[0].height, page[25].height), (1, 26));
     let mut producer = start(config, rpc, &["poll-hathor"])?;
     until(async || Ok(client.query_one("SELECT count(*) FROM producer_runtime_state WHERE source_id=$1 AND state='recovering' AND reason_code='capture_pending'", &[&source]).await?.get::<_,i64>(0)==1), Duration::from_secs(10)).await?;
     stop(&mut producer).await?;
@@ -390,7 +420,7 @@ async fn hathor_held_work_stays_recovering(
             &[&source],
         )
         .await?;
-    assert_eq!((row.get::<_, i64>(0), row.get::<_, i64>(1)), (26, 25));
+    assert_eq!((row.get::<_, i64>(0), row.get::<_, i64>(1)), (1000, 25));
     assert_eq!(
         mmm_store::load_poll_cursor(client, source).await?,
         Some(1_000)
