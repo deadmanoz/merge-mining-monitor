@@ -151,7 +151,9 @@ function sourceRuntimeRows(sync) {
   const stamp = (value) => Number.isFinite(value) ? new Date(value * 1000).toISOString() : "None yet";
   return [
     ["Dependency", runtime.dependency === "bitcoin-core" ? "Bitcoin Core" : "None"],
-    ["Runtime", RUNTIME_REASONS[runtime.reason_code] || (runtime.state === "healthy" ? "Healthy cycle completed" : "Recovery pending")],
+    ["Runtime", RUNTIME_REASONS[runtime.reason_code] || {
+      healthy: "Healthy cycle completed", stopped: "Producer stopped",
+    }[runtime.state] || "Recovery pending"],
     ["Last successful cycle", stamp(runtime.last_success_at)],
     ...(Number.isFinite(runtime.next_retry_at) ? [["Next retry", stamp(runtime.next_retry_at)]] : []),
     ["Heartbeat", stamp(runtime.heartbeat_at)],

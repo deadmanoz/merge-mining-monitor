@@ -31,7 +31,7 @@ Finite commands re-drain reconciliation work that arrives during cache preparati
 
 The shared live supervisor owns readiness, chain initialization, capture, waiting and shutdown under one cancellation boundary. Adapters construct and tick their producer; they do not manage separate startup or shutdown state. Cache publication allows a brief reader transaction to finish within a 500 ms lock budget, then yields for a fresh snapshot if contention persists.
 
-Check `/api/v1/sources` as well as systemd status: a running unit in Waiting is degraded. Runtime heartbeat expiry is 90 seconds, independent of cursor age; a long tick renews its heartbeat every 30 seconds. Error continues to take priority when unresolved evidence or backbone errors exist. `source_health_ready` remains an aggregate-integrity gate and is not a Core-availability flag.
+Check `/api/v1/sources` as well as systemd status: a running unit in Waiting is degraded. Runtime heartbeat expiry is 90 seconds, independent of cursor age; a long tick renews its heartbeat every 30 seconds. After a clean stop, Sources and Capture show `Runtime: Producer stopped` with no scheduled retry. Error continues to take priority when unresolved evidence or backbone errors exist. `source_health_ready` remains an aggregate-integrity gate and is not a Core-availability flag.
 
 For migration 0036, stop all Core-backed writers before running the backup-protected migration, then start the new binaries. Older writers do not increment `publication_revision` and must not overlap new cache publishers. Rolling back the binary is compatible with the additive schema, but stop new writers first and keep producer ownership exclusive. Keep the automatic backup until rollback verification is complete.
 

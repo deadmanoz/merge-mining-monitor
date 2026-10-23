@@ -831,7 +831,7 @@ test("Terracoin live progress stays separate from sparse evidence and capture er
 });
 
 
-test("Core waiting and recovery remain visible beside capture errors", async ({ page }) => {
+test("Runtime health stays accurate through waiting, errors, recovery and shutdown", async ({ page }) => {
   await stubCommonApi(page);
   const fixture = sourceFixture();
   const source = fixture.sources.find(s => s.code === "auxpow:namecoin");
@@ -874,4 +874,13 @@ test("Core waiting and recovery remain visible beside capture errors", async ({ 
   await page.locator('.source-info-button[data-source-info="auxpow:namecoin"]').click();
   await page.getByRole("tab", { name: "Capture" }).click();
   await expect(page.locator("#sd-panel-capture")).not.toContainText("Next retry");
+
+  source.sync.state = "stale";
+  Object.assign(source.sync.runtime, { phase: "stopped", state: "stopped" });
+  await page.reload();
+  await page.locator("#source-status-button").click();
+  await expect(row).toContainText("Runtime: Producer stopped");
+  await page.locator('.source-info-button[data-source-info="auxpow:namecoin"]').click();
+  await page.getByRole("tab", { name: "Capture" }).click();
+  await expect(page.locator("#sd-panel-capture")).toContainText("Producer stopped");
 });
