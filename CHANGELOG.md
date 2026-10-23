@@ -10,7 +10,7 @@ This changelog starts with the initial release.
 
 ### Fixed
 
-- Retry heartbeat writes after transient failures during long capture ticks, and bound live Hathor held-height reads in SQL.
+- Keep heartbeats retrying after transient heartbeat or attempt-metadata write failures during long capture ticks, and bound live Hathor held-height reads in SQL.
 
 - Keep failed Core follower cycles in recovery even when they retain progress or are already at target, and hide the retry row when no retry is scheduled.
 

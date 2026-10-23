@@ -219,6 +219,27 @@ async fn long_tick_heartbeat(
     rpc: &RpcFixture,
     child: &mut Producer,
 ) -> Result<()> {
+    // Fail attempt metadata before the long tick, then restore that write path.
+    client
+        .batch_execute(
+            "CREATE SEQUENCE attempt_failures;
+        CREATE FUNCTION fail_attempt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        PERFORM nextval('attempt_failures'); RAISE EXCEPTION 'fixture attempt failure'; END $$;
+        CREATE TRIGGER fail_attempt BEFORE UPDATE ON producer_runtime_state FOR EACH ROW
+        WHEN (NEW.last_attempt_at IS DISTINCT FROM OLD.last_attempt_at)
+        EXECUTE FUNCTION fail_attempt();",
+        )
+        .await?;
+    until(
+        async || {
+            Ok(client
+                .query_one("SELECT is_called FROM attempt_failures", &[])
+                .await?
+                .get(0))
+        },
+        Duration::from_secs(10),
+    )
+    .await?;
     rpc.state.tip.store(100_000, Ordering::Relaxed);
     rpc.state.delay_ms.store(5_000, Ordering::Relaxed);
     // Let any previous tick finish before measuring the long snapshot.
@@ -239,6 +260,14 @@ async fn long_tick_heartbeat(
         Duration::from_secs(90),
     )
     .await?;
+    println!(
+        "attempt metadata failures before long tick: {}",
+        client
+            .query_one("SELECT last_value FROM attempt_failures", &[])
+            .await?
+            .get::<_, i64>(0)
+    );
+    client.batch_execute("DROP TRIGGER fail_attempt ON producer_runtime_state; DROP FUNCTION fail_attempt(); DROP SEQUENCE attempt_failures").await?;
     // Sequence increments survive rollback, so only the first heartbeat fails.
     client
         .batch_execute(
@@ -261,6 +290,11 @@ async fn long_tick_heartbeat(
     let attempts = client
         .query_one("SELECT last_value, is_called FROM heartbeat_attempts", &[])
         .await?;
+    client.batch_execute("DROP TRIGGER fail_first_heartbeat ON producer_runtime_state; DROP FUNCTION fail_first_heartbeat(); DROP SEQUENCE heartbeat_attempts").await?;
+    ensure!(
+        after.get::<_, i64>(0) >= before.get::<_, i64>(0) + 60,
+        "heartbeat did not renew independently of work"
+    );
     ensure!(
         attempts.get::<_, bool>(1),
         "fixture did not fail a heartbeat"
@@ -268,11 +302,6 @@ async fn long_tick_heartbeat(
     println!(
         "heartbeat attempts after one injected failure: {}",
         attempts.get::<_, i64>(0)
-    );
-    client.batch_execute("DROP TRIGGER fail_first_heartbeat ON producer_runtime_state; DROP FUNCTION fail_first_heartbeat(); DROP SEQUENCE heartbeat_attempts").await?;
-    ensure!(
-        after.get::<_, i64>(0) >= before.get::<_, i64>(0) + 60,
-        "heartbeat did not renew independently of work"
     );
     ensure!(
         after.get::<_, Option<i64>>(1) == before.get::<_, Option<i64>>(1),

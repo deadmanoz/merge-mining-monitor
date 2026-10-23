@@ -328,7 +328,6 @@ impl LiveSession {
             .await
             .is_err()
         {
-            self.renewable.store(false, Ordering::Relaxed);
             warn!("live producer attempt status unavailable");
         }
     }
