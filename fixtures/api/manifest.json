@@ -79,7 +79,7 @@
     {
       "file": "sources.json",
       "endpoint_family": "/api/v1/sources",
-      "scenario": "Source registry across live, historical, partial, surveyed, catalogued, catching-up, and capture-error states"
+      "scenario": "Source registry across live, historical, partial, surveyed, catalogued, catching-up, and capture-error states; live Core dependency waiting with fenced runtime health, retained capture errors, and nullable legacy runtime"
     },
     {
       "file": "competitions.json",

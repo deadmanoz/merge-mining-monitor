@@ -7,8 +7,8 @@ use anyhow::{Context, Error, Result, ensure};
 use mmm_capture::nbits_table::{BitcoinEpochHeader, NbitsTable};
 use tokio_postgres::{Client, GenericClient, Row, Transaction};
 
-// Stable, monitor-specific advisory-lock key. The refresh reads a Core snapshot
-// before replacing the shallow suffix, so one session must own both operations.
+// Stable, monitor-specific advisory-lock key. Publication excludes classifiers
+// and suffix replacement; remote snapshot preparation holds no exclusive lock.
 const BITCOIN_CORE_HEADER_CACHE_LOCK: i64 = 0x4d4d4d43_4f524543;
 
 /// Persisted Core-header evidence is internally inconsistent and cannot be
@@ -66,6 +66,7 @@ pub struct BitcoinCoreHeaderCacheUpdate {
 #[derive(Debug, Clone)]
 struct BitcoinCoreHeaderCacheState {
     horizon_time: i64,
+    publication_revision: i64,
     pending_generation: i64,
     pending_orphans: bool,
     pending_sources: Option<Vec<String>>,
@@ -458,7 +459,8 @@ pub async fn replace_bitcoin_core_header_cache(
     shallow_epoch: Option<&BitcoinCoreHeader>,
     horizon: &BitcoinCoreHeader,
     prior_horizon_reorged: bool,
-) -> Result<BitcoinCoreHeaderCacheUpdate> {
+    expected_revision: i64,
+) -> Result<Option<BitcoinCoreHeaderCacheUpdate>> {
     ensure_bitcoin_core_header_cache_integrity(
         final_epochs
             .iter()
@@ -475,11 +477,10 @@ pub async fn replace_bitcoin_core_header_cache(
         .transaction()
         .await
         .context("start Core-header-cache replacement")?;
-    transaction
-        .batch_execute("LOCK TABLE bitcoin_core_header IN SHARE ROW EXCLUSIVE MODE")
-        .await
-        .context("lock Core-header-cache replacement")?;
-    let previous_state = lock_bitcoin_core_header_cache_state(&transaction).await?;
+    let Some(previous_state) = lock_cache_publication(&transaction, expected_revision).await?
+    else {
+        return Ok(None);
+    };
     let highest_final: Option<i32> = transaction
         .query_one(
             "SELECT max(height) FROM bitcoin_core_header WHERE is_final",
@@ -551,7 +552,43 @@ pub async fn replace_bitcoin_core_header_cache(
         .commit()
         .await
         .context("commit Core-header-cache replacement")?;
-    Ok(update)
+    Ok(Some(update))
+}
+
+async fn lock_cache_publication(
+    transaction: &Transaction<'_>,
+    expected_revision: i64,
+) -> Result<Option<BitcoinCoreHeaderCacheState>> {
+    transaction
+        .batch_execute("SET LOCAL lock_timeout = '500ms'")
+        .await?;
+    // Let brief readers finish, while keeping stale prepared snapshots and
+    // shutdown from waiting indefinitely behind a classifier's RPC.
+    transaction
+        .query_one(
+            "SELECT pg_advisory_xact_lock($1)",
+            &[&BITCOIN_CORE_HEADER_CACHE_LOCK],
+        )
+        .await?;
+    let queued: bool = transaction
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM bitcoin_core_reconcile_queue)",
+            &[],
+        )
+        .await?
+        .get(0);
+    if queued {
+        return Ok(None);
+    }
+    transaction
+        .batch_execute("LOCK TABLE bitcoin_core_header IN SHARE ROW EXCLUSIVE MODE")
+        .await
+        .context("lock Core-header-cache replacement")?;
+    let previous_state = lock_bitcoin_core_header_cache_state(transaction).await?;
+    if previous_state.publication_revision != expected_revision {
+        return Ok(None);
+    }
+    Ok(Some(previous_state))
 }
 
 fn cache_epoch_coverage_overlaps_prior_horizon(
@@ -611,6 +648,17 @@ pub async fn load_bitcoin_core_header_cache_horizon<C: GenericClient>(
         .context("load prior Core-header-cache horizon")?
         .map(|row| bitcoin_core_header_from_row(&row))
         .transpose()
+}
+
+/// Revision of every completed cache publication, including non-invalidating ones.
+pub async fn load_core_cache_publication_revision<C: GenericClient>(client: &C) -> Result<i64> {
+    Ok(client
+        .query_one(
+            "SELECT publication_revision FROM bitcoin_core_header_cache_state WHERE singleton",
+            &[],
+        )
+        .await?
+        .get(0))
 }
 
 /// The Core header cache's generation, which a refresh that can change
@@ -686,7 +734,7 @@ async fn lock_bitcoin_core_header_cache_state(
     let row = transaction
         .query_one(
             "SELECT horizon_time, recheck_pending_generation, recheck_pending_orphans, \
-                    recheck_pending_sources, recheck_acknowledged_generation \
+                    recheck_pending_sources, recheck_acknowledged_generation, publication_revision \
              FROM bitcoin_core_header_cache_state WHERE singleton FOR UPDATE",
             &[],
         )
@@ -698,6 +746,7 @@ async fn lock_bitcoin_core_header_cache_state(
         pending_orphans: row.get(2),
         pending_sources: row.get(3),
         acknowledged_generation: row.get(4),
+        publication_revision: row.get(5),
     })
 }
 
@@ -758,6 +807,7 @@ async fn update_bitcoin_core_header_cache_state(
                  recheck_pass_sources = CASE WHEN $5 THEN NULL ELSE recheck_pass_sources END, \
                  recheck_cursor_height = CASE WHEN $5 THEN NULL ELSE recheck_cursor_height END, \
                  recheck_cursor_id = CASE WHEN $5 THEN NULL ELSE recheck_cursor_id END, \
+                 publication_revision = publication_revision + 1, \
                  core_cache_generation = core_cache_generation + CASE WHEN $6 THEN 1 ELSE 0 END \
              WHERE singleton",
             &[

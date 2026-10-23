@@ -677,11 +677,16 @@ fn height_progress_for(outcome: HeightOutcome) -> HeightProgress {
     }
 }
 
-pub(crate) async fn poll(spec: &'static ChainSpec, rt: ProducerRuntime) -> Result<()> {
+pub(crate) async fn poll(
+    spec: &'static ChainSpec,
+    rt: ProducerRuntime,
+    live: &mut crate::live_loop::LiveSession,
+) -> Result<()> {
     let rpc_config = crate::chains::config::bitcoind_rpc_config(spec)?;
     let rpc = BitcoindRpcClient::new(family_of(spec).label, rpc_config)?;
-    ensure_mainnet_endpoint(&rpc, family_of(spec)).await?;
     let poller_config = crate::chains::config::poller_config(spec)?;
+    ensure_mainnet_endpoint(&rpc, family_of(spec)).await?;
+
     let context =
         AuxpowCaptureContext::new_with_classifier(&rt.pg_client, spec, rt.parent_classifier)
             .await?;
@@ -690,7 +695,7 @@ pub(crate) async fn poll(spec: &'static ChainSpec, rt: ProducerRuntime) -> Resul
         poller_config,
     )
     .await?;
-    poller.run_forever().await
+    crate::live_loop::run_ticks(poller, live).await
 }
 
 #[cfg(test)]

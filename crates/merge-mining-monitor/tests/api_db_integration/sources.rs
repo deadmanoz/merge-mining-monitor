@@ -607,3 +607,78 @@ async fn capture_errors_reduce_to_the_earliest_gap_and_outrank_live_status() -> 
         Ok::<_, anyhow::Error>(())
     })
 }
+
+#[tokio::test]
+async fn runtime_health_distinguishes_waiting_idle_recovery_and_dead_owners() -> Result<()> {
+    crate::run_mut_db_test!(client, {
+        rebuild_source_health(&mut client).await?;
+        let id = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let now = mmm_capture::capture::now_epoch_seconds()?;
+        let run = mmm_store::start_producer_run(&client, id).await?;
+        let mut transition = mmm_store::RuntimeTransition {
+            phase: "startup",
+            state: "waiting",
+            dependency: Some("bitcoin-core"),
+            reason_code: Some("core_timeout"),
+            failures: 6,
+            next_retry_at: Some(now + 5),
+        };
+        mmm_store::transition_producer_run(&client, run, &transition).await?;
+        let payload = projection::sources(&client, now as u64)
+            .await
+            .map_err(format_projection_error)?;
+        let source = source_row(&payload, NAMECOIN_SOURCE_CODE);
+        assert_eq!(source.sync.state, "waiting");
+        assert_eq!(source.sync.progress_height, None);
+        assert_eq!(
+            source.sync.runtime.as_ref().unwrap().consecutive_failures,
+            6
+        );
+        upsert_poll_cursor_with_target(&client, id, 10, Some(10)).await?;
+        client
+            .execute(
+                "UPDATE poll_cursor SET updated_at = to_timestamp($2::bigint) WHERE source_id = $1",
+                &[&id, &(now - 7200)],
+            )
+            .await?;
+        transition.phase = "running";
+        transition.state = "healthy";
+        transition.reason_code = None;
+        transition.dependency = None;
+        transition.failures = 0;
+        transition.next_retry_at = None;
+        mmm_store::transition_producer_run(&client, run, &transition).await?;
+        for (state, age, expected) in [
+            ("healthy", 0, "live"),
+            ("recovering", 0, "catching_up"),
+            ("waiting", 0, "waiting"),
+            ("waiting", 91, "stale"),
+        ] {
+            client.execute("UPDATE producer_runtime_state SET state = $2, heartbeat_at = $3 WHERE source_id = $1", &[&id, &state, &(now-age)]).await?;
+            let payload = projection::sources(&client, now as u64)
+                .await
+                .map_err(format_projection_error)?;
+            let source = source_row(&payload, NAMECOIN_SOURCE_CODE);
+            assert_eq!(source.sync.state, expected);
+            assert_eq!(source.sync.progress_updated_at, Some(now - 7200));
+        }
+        record_capture_error(
+            &client,
+            id,
+            9,
+            None,
+            CAPTURE_ERROR_MALFORMED_AUXPOW_PROOF,
+            None,
+            now,
+        )
+        .await?;
+        let payload = projection::sources(&client, now as u64)
+            .await
+            .map_err(format_projection_error)?;
+        let source = source_row(&payload, NAMECOIN_SOURCE_CODE);
+        assert_eq!(source.sync.state, "error");
+        assert_eq!(source.sync.error_height, Some(9));
+        assert_eq!(source.sync.runtime.as_ref().unwrap().state, "waiting");
+        Ok(())
+    })
+}

@@ -10,6 +10,8 @@ mod bitcoin_core_header;
 mod body_invalid_catalogue;
 #[path = "db_integration/child_displacement.rs"]
 mod child_displacement;
+#[path = "db_integration/core_recovery.rs"]
+mod core_recovery;
 #[path = "db_integration/elastos.rs"]
 mod elastos;
 #[path = "db_integration/event_identity.rs"]
@@ -48,3 +50,6 @@ mod rsk;
 mod rsk_miner_identities;
 #[path = "db_integration/source_health.rs"]
 mod source_health;
+
+#[path = "db_integration/core_recovery_cli.rs"]
+mod core_recovery_cli;

@@ -6,7 +6,7 @@ It turns heterogeneous source evidence into normalized base observations, then d
 ## System Flow
 
 <p align="center">
-  <img src="img/system-data-flow.png" width="920" alt="Three-band Merge Mining Monitor data flow from capture sources through base evidence, read-model reconciliation, and read-only serving" />
+  <img src="img/system-data-flow.png" width="920" alt="Evidence, runtime health and Core cache ownership in Merge Mining Monitor" />
 </p>
 
 The [editable diagram](img/system-data-flow.drawio) shows the same ownership model as the text below: producers capture base evidence, the read-model reconciler is the only writer of derived tables, and the API serves those derived projections without writing capture state.
@@ -19,6 +19,7 @@ The [editable diagram](img/system-data-flow.drawio) shows the same ownership mod
           + chain sidecars, attribution and historical provenance
    near shares and blocks without a Bitcoin parent -> observations only
    producer state -> cursors, capture_error, child_chain_head, reconcile queues
+   live supervisor -> producer_runtime_state (separate status connection)
    operator membership import -> known_stale_block
 
 2. RECONCILE: mmm-read-model is the sole derived-table writer
@@ -28,15 +29,15 @@ The [editable diagram](img/system-data-flow.drawio) shows the same ownership mod
    durable historical and Core queues drain in bounded transactions
 
 3. SERVE: mmm-api reads Postgres, with no node RPC calls
-   derived tables + observation details + capture status + persisted Core cache
+   derived tables + observation details + capture/runtime status + Core cache
        -> read-only API -> static www/ frontend
 ```
 
 1. **CAPTURE (`mmm-capture`, `mmm-producers`, `mmm-store`)**: Offline parsers authenticate child-chain proofs and the Bitcoin lineage gate refuses non-Bitcoin SHA-256 parents before storage (`docs/capture.md`).
-   Producers and importers write only base evidence (`child_block_observation`, `child_miner_identity`, linked `merge_mining_event`, sidecars, `event_pool_attribution`, `historical_event_provenance`, `known_stale_block`) plus producer operational state (`poll_cursor`, `capture_error`, `child_chain_head`) and durable reconcile queues (`docs/historical-ingest.md`).
+   Producers and importers write only base evidence (`child_block_observation`, `child_miner_identity`, linked `merge_mining_event`, sidecars, `event_pool_attribution`, `historical_event_provenance`, `known_stale_block`) plus producer operational state (`poll_cursor`, `capture_error`, `child_chain_head`, `producer_runtime_state`) and durable reconcile queues (`docs/historical-ingest.md`).
 2. **RECONCILE (`mmm-bitcoin-core`, `mmm-read-model`)**: `mmm-read-model` is the sole writer of derived tables (`block`, `attestation_proof`, `source_health`, and the `protocol_commitment` tables decoded from stored Bitcoin coinbase outputs).
    It combines base evidence, `known_stale_block` exclusion gates, the pinned error catalogue, and Bitcoin Core classification / suffix replacement, draining `historical_reconcile_queue` and `bitcoin_core_reconcile_queue` in bounded transactions (`docs/data-model.md`).
-3. **SERVE (`mmm-api`)**: The read-only HTTP server projects the derived tables, `capture_error` status, and the persisted Core-header cache to `/api/v1/*` and serves the static `www/` frontend without calling Bitcoin Core RPC.
+3. **SERVE (`mmm-api`)**: The read-only HTTP server projects the derived tables, `capture_error` and live runtime status, and the persisted Core-header cache to `/api/v1/*` and serves the static `www/` frontend without calling Bitcoin Core RPC.
 
 ## Crates
 
@@ -46,9 +47,9 @@ The [editable diagram](img/system-data-flow.drawio) shows the same ownership mod
 | `mmm-capture` | Offline parsing, normalization, pool resolution, source registry, and the Bitcoin lineage rule with its nBits and orphan helpers. No network or database I/O in normal builds. |
 | `mmm-rpc` | Shared HTTP transport policy for child-chain clients. |
 | `mmm-bitcoin-core` | The only crate that links `corepc-client`; wraps Bitcoin Core RPC and parent classification. |
-| `mmm-store` | SQL for producer base tables: child observations and identities, events, sidecars, attribution, cursors, capture errors, and seed helpers. It also exposes the read-only Core-header-cache loader shared by reconciliation and the API. |
+| `mmm-store` | SQL for producer base tables: child observations and identities, events, sidecars, attribution, cursors, capture errors, runtime status, and seed helpers. It also exposes the read-only Core-header-cache loader shared by reconciliation and the API. |
 | `mmm-read-model` | Sole writer of derived tables: `block`, `attestation_proof`, `source_health`, and the `protocol_commitment` tables. Owns the shared capture seam (`capture_in_txn`) and its Bitcoin lineage gate. |
-| `mmm-producers` | Runtime engines: chain pollers/backfills, historical importer, Bitcoin Core backbone sync, and pool reclassification. |
+| `mmm-producers` | Runtime engines: chain pollers/backfills, historical importer, Bitcoin Core backbone sync, and pool reclassification. The shared live supervisor owns readiness, recovery and shutdown. |
 | `mmm-api` | Read-only API views plus static frontend serving. |
 | `merge-mining-monitor` | CLI wiring, generator binaries, and cross-crate integration tests. |
 

@@ -23,13 +23,25 @@
       },
       "sync": {
         "mode": "live",
-        "state": "live",
+        "state": "waiting",
         "progress_height": 250000,
         "progress_updated_at": 1779790000,
         "target_height": null,
         "latest_evidence_at": 1779790000,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": {
+          "phase": "running",
+          "state": "waiting",
+          "dependency": "bitcoin-core",
+          "reason_code": "core_unreachable",
+          "failure_since": 1799999970,
+          "consecutive_failures": 2,
+          "last_attempt_at": 1799999990,
+          "last_success_at": 1799999900,
+          "next_retry_at": 1800000005,
+          "heartbeat_at": 1800000000
+        }
       }
     },
     {
@@ -59,7 +71,8 @@
         "target_height": null,
         "latest_evidence_at": 1779790100,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -89,7 +102,8 @@
         "target_height": 953700,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -119,7 +133,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -149,7 +164,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -179,7 +195,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -209,7 +226,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -239,7 +257,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -269,7 +288,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -299,7 +319,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -329,7 +350,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -359,7 +381,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -389,7 +412,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -419,7 +443,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -449,7 +474,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -479,7 +505,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -509,7 +536,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -539,7 +567,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -569,7 +598,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -599,7 +629,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -629,7 +660,8 @@
         "target_height": 3288250,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -659,7 +691,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -689,7 +722,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -719,7 +753,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -749,7 +784,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -779,7 +815,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -809,7 +846,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -839,7 +877,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -869,7 +908,8 @@
         "target_height": null,
         "latest_evidence_at": null,
         "error_code": null,
-        "error_height": null
+        "error_height": null,
+        "runtime": null
       }
     },
     {
@@ -899,7 +939,19 @@
         "target_height": 78100,
         "latest_evidence_at": 1779790200,
         "error_code": "auxpow_capture_error",
-        "error_height": 78058
+        "error_height": 78058,
+        "runtime": {
+          "phase": "running",
+          "state": "waiting",
+          "dependency": "bitcoin-core",
+          "reason_code": "core_unreachable",
+          "failure_since": 1799999970,
+          "consecutive_failures": 2,
+          "last_attempt_at": 1799999990,
+          "last_success_at": 1799999900,
+          "next_retry_at": 1800000005,
+          "heartbeat_at": 1800000000
+        }
       }
     }
   ]

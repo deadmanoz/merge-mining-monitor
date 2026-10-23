@@ -171,6 +171,7 @@ Live evidence is additive, recovered historical and partial sources reconcile as
 
 Browsing a populated database needs Postgres and the read API, with no live node calls from `serve`.
 Collecting or importing evidence needs a synced Bitcoin mainnet Core node. Live child-chain capture also needs RPC/REST access to each enabled chain.
+Live pollers and the Core follower [wait and recover automatically](docs/operations.md#automatic-core-recovery) during temporary Core outages; Sources shows dependency waiting and runtime health separately from capture errors and progress.
 Hathor uses a public REST API by default, with a fallback endpoint; its availability and rate limits can interrupt capture.
 Historical imports need the pinned Research publication, its Git LFS files and known-stale membership, without requiring those child chains' nodes.
 

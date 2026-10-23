@@ -48,6 +48,7 @@ pub struct BitcoinCoreParentClassifier {
     source: Arc<dyn CoreHeaderSource>,
     max_concurrency: usize,
     metrics: mmm_rpc::RpcMetrics,
+    pub(super) live: bool,
 }
 
 pub(crate) struct CoreRpcHeaderSource {
@@ -69,13 +70,25 @@ pub(crate) trait CoreHeaderSource: Send + Sync {
 impl BitcoinCoreParentClassifier {
     pub fn from_env_url(url: &str) -> Result<Self> {
         let client = BitcoinCoreRpcClient::from_env_url(url)?;
+        Ok(Self::from_rpc(client))
+    }
+
+    pub fn from_live_env_url(url: &str) -> Result<Self> {
+        Ok(Self::from_rpc(
+            BitcoinCoreRpcClient::from_env_url(url)?.with_live_policy(),
+        ))
+    }
+
+    fn from_rpc(client: BitcoinCoreRpcClient) -> Self {
+        let live = client.is_live();
         let max_concurrency = client.max_concurrency();
         let metrics = client.metrics();
-        Ok(Self {
+        Self {
             source: Arc::new(CoreRpcHeaderSource { client }),
             max_concurrency,
             metrics,
-        })
+            live,
+        }
     }
 
     #[cfg(test)]
@@ -84,6 +97,7 @@ impl BitcoinCoreParentClassifier {
             source,
             max_concurrency: 1,
             metrics: mmm_rpc::RpcMetrics::new("core"),
+            live: false,
         }
     }
 
@@ -148,14 +162,22 @@ impl BitcoinCoreParentClassifier {
     where
         F: Future<Output = Result<ParentPreflight>>,
     {
+        let fail_on_rpc_error = fail_on_rpc_error || self.live;
         let candidate_hash = header.block_hash();
         let verbose = match self.source.get_header_verbose(candidate_hash).await {
             Ok(v) => v,
             Err(err) if bitcoin_rpc::is_not_found(&err) => {
+                if self.live {
+                    self.ready_tip().await?;
+                }
                 let preflight = preflight.await?;
-                return self
+                let verdict = self
                     .classify_core_unknown(header, preflight, fail_on_rpc_error)
-                    .await;
+                    .await?;
+                if self.live && verdict.core_absence_attested {
+                    self.ready_tip().await?;
+                }
+                return Ok(verdict);
             }
             Err(err) => {
                 if fail_on_rpc_error {
@@ -170,6 +192,9 @@ impl BitcoinCoreParentClassifier {
 
         let height: i32 = match core_height_to_i32(verbose.height) {
             Ok(height) => height,
+            Err(err) if self.live => {
+                return Err(anyhow::Error::new(err).context(crate::CoreFault::InvalidResponse));
+            }
             Err(_) => {
                 warn!(
                     height = verbose.height,
@@ -179,7 +204,7 @@ impl BitcoinCoreParentClassifier {
             }
         };
 
-        let (coinbase, coinbase_unavailable) = match self.fetch_coinbase(candidate_hash).await {
+        let (coinbase, coinbase_unavailable) = match self.fetch_coinbase(candidate_hash).await? {
             CoinbaseFetch::Found(coinbase) => (Some(coinbase), false),
             CoinbaseFetch::Missing => (None, false),
             CoinbaseFetch::Unavailable => (None, true),
@@ -211,9 +236,30 @@ impl BitcoinCoreParentClassifier {
         self.max_concurrency
     }
 
-    /// The synced Core tip with its freshness, or `None` when Core is not at a
-    /// synced tip (IBD or `blocks != headers`). `fresh` separates a tip Core has
-    /// actually advanced to recently from a stalled node's lagging tip.
+    /// Require a fresh synced mainnet tip, preserving the precise readiness failure.
+    pub async fn ready_tip(&self) -> Result<SyncedTip> {
+        use crate::{CoreFault, CoreUnavailable};
+        let status = self.source.get_chain_status().await?;
+        if !status.is_mainnet {
+            return Err(CoreFault::WrongNetwork.into());
+        }
+        if status.initial_block_download {
+            return Err(CoreUnavailable::InitialBlockDownload.into());
+        }
+        if status.blocks != status.headers {
+            return Err(CoreUnavailable::HeaderLag.into());
+        }
+        if !tip_is_fresh(status.median_time, now_unix_secs()) {
+            return Err(CoreUnavailable::StaleTip.into());
+        }
+        Ok(SyncedTip {
+            is_mainnet: true,
+            height: status.blocks,
+            fresh: true,
+        })
+    }
+
+    /// The synced tip and freshness, or `None` during IBD or header lag.
     pub async fn synced_tip(&self) -> Result<Option<SyncedTip>> {
         let status = self.source.get_chain_status().await?;
         if !status.is_synced_tip() {
@@ -291,6 +337,9 @@ impl BitcoinCoreParentClassifier {
         };
         let prev_height: i32 = match core_height_to_i32(prev_verbose.height) {
             Ok(height) => height,
+            Err(err) if self.live => {
+                return Err(anyhow::Error::new(err).context(crate::CoreFault::InvalidResponse));
+            }
             Err(_) => return Ok(core_absence_unknown(header)),
         };
         let predecessor = match self
@@ -494,12 +543,26 @@ impl BitcoinCoreParentClassifier {
 
     /// The coinbase of a Core-indexed block, which enriches attribution. A
     /// body Core will never hold (not found, pruned) is permanently missing;
-    /// any other failure, a transport hiccup or a body still downloading, is
-    /// one the verdict is marked incomplete for, so the capture is retried
-    /// and the coinbase fetched again.
-    async fn fetch_coinbase(&self, hash: BlockHash) -> CoinbaseFetch {
-        coinbase_fetch(self.source.get_block_coinbase(hash).await, hash)
+    /// other failures propagate in live mode so capture can retry without
+    /// reporting healthy completion. Finite mode marks the verdict incomplete.
+    async fn fetch_coinbase(&self, hash: BlockHash) -> Result<CoinbaseFetch> {
+        live_coinbase_fetch(self.source.get_block_coinbase(hash).await, hash, self.live)
     }
+}
+
+fn live_coinbase_fetch(
+    result: Result<BitcoinCoreBlockCoinbase>,
+    hash: BlockHash,
+    live: bool,
+) -> Result<CoinbaseFetch> {
+    if live
+        && let Err(err) = &result
+        && !bitcoin_rpc::is_not_found(err)
+        && !bitcoin_rpc::is_block_body_pruned(err)
+    {
+        return result.map(CoinbaseFetch::Found);
+    }
+    Ok(coinbase_fetch(result, hash))
 }
 
 impl CoreRpcHeaderSource {
@@ -519,12 +582,15 @@ impl CoreRpcHeaderSource {
     /// the retry rather than missing for good behind a final head.
     async fn get_header_impl(&self, hash: BlockHash, height: i32) -> Result<ClassifiedHeader> {
         let header = self.client.get_block_header(hash).await?;
-        let (coinbase, coinbase_unavailable) =
-            match coinbase_fetch(self.client.get_block_coinbase(hash).await, hash) {
-                CoinbaseFetch::Found(coinbase) => (Some(coinbase), false),
-                CoinbaseFetch::Missing => (None, false),
-                CoinbaseFetch::Unavailable => (None, true),
-            };
+        let (coinbase, coinbase_unavailable) = match live_coinbase_fetch(
+            self.client.get_block_coinbase(hash).await,
+            hash,
+            self.client.is_live(),
+        )? {
+            CoinbaseFetch::Found(coinbase) => (Some(coinbase), false),
+            CoinbaseFetch::Missing => (None, false),
+            CoinbaseFetch::Unavailable => (None, true),
+        };
         Ok(ClassifiedHeader {
             hash: hash.to_byte_array().to_vec(),
             prev_hash: header.prev_blockhash.to_byte_array().to_vec(),

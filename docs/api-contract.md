@@ -411,13 +411,19 @@ Response fields:
 | `sync` Field | Contract |
 |---|---|
 | `sync.mode` | `live`, `bitcoin-core-backbone`, `historical`, `partial`, `surveyed`, `catalogued`, or `unknown`. |
-| `sync.state` | `live`, `catching_up`, `stale`, `error`, `not_started`, `historical`, `partial`, `surveyed`, `catalogued`, or `unknown`. |
+| `sync.state` | `live`, `waiting`, `catching_up`, `stale`, `error`, `not_started`, `historical`, `partial`, `surveyed`, `catalogued`, or `unknown`. |
 | `sync.progress_height` | Generalized progress height for live AuxPoW producers or the Bitcoin Core contiguous backbone, else `null`. Present iff `progress_updated_at` is present. |
-| `sync.progress_updated_at` | Unix seconds when the progress row was last seeded or advanced, else `null`. `poll_cursor.updated_at` is the cursor seed/advance time, not a producer heartbeat; a caught-up source with no recent cursor advance can age into `stale` without the poller being down. |
+| `sync.progress_updated_at` | Unix seconds when the progress row was last seeded or advanced, else `null`. `poll_cursor.updated_at` is the cursor seed/advance time, not a producer heartbeat; sources without a runtime row retain the legacy one-hour cursor-age rule. |
 | `sync.target_height` | Observed AuxPoW chain tip for live AuxPoW sources or current Bitcoin Core backbone target tip height, else `null`. |
 | `sync.latest_evidence_at` | Newest AuxPoW evidence timestamp observed for a live AuxPoW source (independent of cursor progress and may lag or lead `progress_updated_at`), else `null`. |
 | `sync.error_code` | Current capture error, else `null`. For `live-chaintip:bitcoin:core`, the latest backbone error code from `bitcoin_core_sync_state`. For live AuxPoW sources, `auxpow_capture_error` when at least one unresolved `capture_error` height exists. |
 | `sync.error_height` | Height associated with `sync.error_code`, else `null` (Bitcoin height for the backbone; lowest unresolved child height from `capture_error` for live AuxPoW sources, bounding trustworthy coverage). |
+
+`sync.runtime` is nullable. A live producer supplies `phase` (`startup`, `running`, `stopped`), `state` (`recovering`, `healthy`, `waiting`, `failed`, `stopped`), `dependency` (`bitcoin-core` or null), a stable `reason_code`, `failure_since`, `consecutive_failures`, `last_attempt_at`, `last_success_at`, `next_retry_at`, and `heartbeat_at`. Timestamps are Unix seconds; all except the heartbeat may be null. Run IDs, credentials, endpoints and transport error text are not public fields.
+
+Unresolved capture/backbone errors retain priority over runtime state. Otherwise, a heartbeat older than 90 seconds or a stopped producer reports `stale`; a current dependency wait reports `waiting`; startup or bounded local recovery reports `catching_up`; a completed healthy cycle reports `live` only at the known target. A quiet source with a current heartbeat and successful cycle remains Live without changing its progress timestamp. A probe alone cannot clear Waiting. Runtime details remain available beside Error or Stale.
+
+The following rules are the rollout fallback for sources with no runtime row:
 
 | `sync.mode` | `sync.state` Derivation Rules |
 |---|---|

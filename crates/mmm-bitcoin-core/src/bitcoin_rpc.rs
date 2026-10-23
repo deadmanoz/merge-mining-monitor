@@ -50,6 +50,7 @@ pub struct BitcoinCoreRpcClient {
     max_concurrency: usize,
     timeout: Duration,
     metrics: RpcMetrics,
+    live: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,7 +107,18 @@ impl BitcoinCoreRpcClient {
             max_concurrency,
             timeout: Duration::from_secs(timeout_secs),
             metrics: RpcMetrics::new("core"),
+            live: false,
         })
+    }
+
+    /// Live supervisors own retries across the complete cycle, including startup.
+    pub fn with_live_policy(mut self) -> Self {
+        self.live = true;
+        self
+    }
+
+    pub(crate) fn is_live(&self) -> bool {
+        self.live
     }
 
     pub(crate) fn max_concurrency(&self) -> usize {
@@ -182,8 +194,12 @@ impl BitcoinCoreRpcClient {
         T: Send + 'static,
         F: Fn() -> Result<T> + Send + Sync + 'static,
     {
-        self.rpc_call_with_policy(f, RPC_MAX_ATTEMPTS, RPC_RETRY_BASE_DELAY)
-            .await
+        self.rpc_call_with_policy(
+            f,
+            if self.live { 1 } else { RPC_MAX_ATTEMPTS },
+            RPC_RETRY_BASE_DELAY,
+        )
+        .await
     }
 
     async fn rpc_call_with_policy<T, F>(
@@ -239,18 +255,53 @@ impl BitcoinCoreRpcClient {
                 }
                 Err(err) if is_transient_rpc_error(&err) => {
                     self.metrics.record_failure();
-                    return Err(err).with_context(|| {
-                        format!("Bitcoin Core RPC failed after {attempt} attempts")
-                    });
+                    return Err(if self.live { tag_rpc_failure(err) } else { err }).with_context(
+                        || format!("Bitcoin Core RPC failed after {attempt} attempts"),
+                    );
                 }
                 Err(err) => {
                     self.metrics.record_failure();
-                    return Err(err);
+                    return Err(if self.live { tag_rpc_failure(err) } else { err });
                 }
             }
         }
         unreachable!("positive RPC attempt count must return from the loop")
     }
+}
+
+fn tag_rpc_failure(err: anyhow::Error) -> anyhow::Error {
+    use crate::{CoreFault, CoreUnavailable};
+    if is_not_found(&err) || is_block_height_out_of_range(&err) || is_block_body_pruned(&err) {
+        return err;
+    }
+    if err.downcast_ref::<RpcCallTimeout>().is_some() {
+        return err.context(CoreUnavailable::Timeout);
+    }
+    if let Some(CoreError::JsonRpc(jsonrpc::error::Error::Rpc(rpc))) =
+        err.downcast_ref::<CoreError>()
+    {
+        match rpc.code {
+            -28 => return err.context(CoreUnavailable::Warmup),
+            // Core's miscellaneous error includes bodies not downloaded yet.
+            // Keep it as a capture retry, not a fatal malformed response.
+            -1 => return err,
+            _ => {}
+        }
+    }
+    if is_transient_rpc_error(&err) {
+        return err.context(CoreUnavailable::Transport);
+    }
+    let authentication = match err.downcast_ref::<CoreError>() {
+        Some(CoreError::JsonRpc(jsonrpc::error::Error::Transport(transport))) => transport
+            .downcast_ref::<jsonrpc::minreq_http::Error>()
+            .is_some_and(|error| matches!(error, jsonrpc::minreq_http::Error::Http(http) if matches!(http.status_code, 401 | 403))),
+        _ => false,
+    };
+    err.context(if authentication {
+        CoreFault::Authentication
+    } else {
+        CoreFault::InvalidResponse
+    })
 }
 
 fn rpc_retry_delay(attempt: usize, base: Duration) -> Duration {
@@ -390,6 +441,16 @@ pub(crate) fn is_block_height_out_of_range(err: &anyhow::Error) -> bool {
         .is_some_and(|code| code == -8)
 }
 
+/// Ordinary capture retries, including a missing body or a moving tip.
+pub fn is_retryable_capture_error(err: &anyhow::Error) -> bool {
+    !is_block_body_pruned(err)
+        && matches!(
+            err.downcast_ref::<CoreError>()
+                .and_then(core_rpc_error_code),
+            Some(-1 | -8)
+        )
+}
+
 fn core_rpc_error_code(err: &CoreError) -> Option<i32> {
     match err {
         CoreError::JsonRpc(jsonrpc::error::Error::Rpc(rpc)) => Some(rpc.code),
@@ -431,6 +492,7 @@ mod tests {
             max_concurrency: 1,
             timeout: Duration::from_secs(1),
             metrics: RpcMetrics::new("core"),
+            live: false,
         }
     }
 
@@ -459,6 +521,49 @@ mod tests {
                 data: None,
             },
         )))
+    }
+
+    #[tokio::test]
+    async fn live_transport_attempts_once_and_preserves_failure_categories() {
+        let client = test_client().with_live_policy();
+        let err = client
+            .rpc_call::<(), _>(|| Err(transient_transport_error()))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.downcast_ref::<crate::CoreUnavailable>(),
+            Some(&crate::CoreUnavailable::Transport)
+        );
+        assert_eq!(client.metrics().snapshot().http_attempts, 1);
+        let err = client
+            .rpc_call::<(), _>(|| Err(warmup_rpc_error()))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.downcast_ref::<crate::CoreUnavailable>(),
+            Some(&crate::CoreUnavailable::Warmup)
+        );
+        let err = client
+            .rpc_call::<(), _>(|| Err(test_not_found_error()))
+            .await
+            .unwrap_err();
+        assert!(is_not_found(&err));
+        assert!(err.downcast_ref::<crate::CoreUnavailable>().is_none());
+        let err = client
+            .rpc_call::<(), _>(|| {
+                Err(
+                    CoreError::JsonRpc(jsonrpc::error::Error::Rpc(jsonrpc::error::RpcError {
+                        code: -1,
+                        message: "Block not available yet".to_owned(),
+                        data: None,
+                    }))
+                    .into(),
+                )
+            })
+            .await
+            .unwrap_err();
+        assert!(err.downcast_ref::<crate::CoreFault>().is_none());
+        assert_eq!(client.metrics().snapshot().retries, 0);
     }
 
     #[test]

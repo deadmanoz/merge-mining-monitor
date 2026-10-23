@@ -9,12 +9,12 @@ Child height, hash, header, time, and `nBits` are independent optional evidence;
 ## Capture And Classification Flow
 
 <p align="center">
-  <img src="img/capture-classification-flow.png" width="820" alt="Per-child-block capture flow from poller cursor selection through AuxPoW verification, pool attribution, the Bitcoin lineage gate, the parent's own proof-of-work check, Core classification, observation-only near shares, and linked event writes with read-model reconciliation" />
+  <img src="img/capture-classification-flow.png" width="820" alt="Capture flow through Core readiness and live dependency waiting, cursor selection, AuxPoW verification, the Bitcoin lineage gate, parent classification, observation-only near shares, and linked event writes with read-model reconciliation" />
 </p>
 
 The [Graphviz source](img/capture-classification-flow.dot) is kept with the rendered diagram.
 
-For a live child block, the poller advances from cursor selection to source fetching, AuxPoW parsing and pool attribution.
+After Core readiness checks, a live child poller advances from cursor selection to source fetching, AuxPoW parsing and pool attribution.
 The capture then passes the [Bitcoin lineage gate](#bitcoin-lineage-gate): a parent that is not a Bitcoin header is never stored.
 Parent classification starts with the parent's own target and Bitcoin Core placement.
 Target failures become `near`, which only the child block's observation records (a near has no event); Core-known parents become `canonical` or `stale`.
@@ -69,6 +69,8 @@ RSK replays may refine the block's chain role and optional proof fields, but an 
 Hathor live capture requires the reconstructed parent transaction to be a coinbase before accepting its input script, retains the full transaction for strict BIP34 validation (older script-only rows stay weak until replay/import supplies the full transaction), and can promote a matching height-only historical observation to exact child-hash identity in place.
 
 ## Polling, Rescans, And Child Displacement
+
+Live startup waits for fresh, synced mainnet Core before any child tip query or cursor seed. A typed Core failure stops the active batch, retaining committed evidence and durable progress for retry. The shared supervisor owns backoff and runtime health; replay and pending-work paths propagate the same failures.
 
 Live pollers use `poll_cursor` (not `MAX(child_height)`) as progress state, seeded in order: (1) explicit `<PREFIX>_START_HEIGHT`, (2) persisted cursor, or (3) `tip - reorg_depth`.
 Each tick re-observes the `<PREFIX>_REORG_DEPTH` heights ending at and including the persisted cursor (ending at the tip only once caught up), then advances the cursor by up to `<PREFIX>_BATCH_SIZE`.

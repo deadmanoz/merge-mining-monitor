@@ -84,8 +84,11 @@ where
         resolve(command).ok_or_else(|| anyhow::anyhow!(unknown_command_message(command)))?;
     match kind {
         CommandKind::Poll => {
-            let rt = crate::producer_runtime::ProducerRuntime::from_env().await?;
-            run_poll_command(spec, rt).await
+            let interval = config::poller_config(spec)?.poll_interval;
+            crate::live_loop::run_live(spec.source_code, interval, async |rt, live| {
+                run_poll_command(spec, rt, live).await
+            })
+            .await
         }
         CommandKind::Backfill => {
             let config = backfill::BackfillConfig::from_args(spec, args)?;
@@ -100,16 +103,17 @@ where
 async fn run_poll_command(
     spec: &'static spec::ChainSpec,
     rt: crate::producer_runtime::ProducerRuntime,
+    live: &mut crate::live_loop::LiveSession,
 ) -> anyhow::Result<()> {
     match spec.id {
         spec::ChainId::Namecoin
         | spec::ChainId::Syscoin
         | spec::ChainId::Fractal
         | spec::ChainId::Qbit
-        | spec::ChainId::Terracoin => auxpow_family::poll(spec, rt).await,
-        spec::ChainId::Rsk => rsk::backfill::poll(spec, rt).await,
-        spec::ChainId::Hathor => hathor::backfill::poll(spec, rt).await,
-        spec::ChainId::Elastos => elastos::backfill::poll(spec, rt).await,
+        | spec::ChainId::Terracoin => auxpow_family::poll(spec, rt, live).await,
+        spec::ChainId::Rsk => rsk::backfill::poll(spec, rt, live).await,
+        spec::ChainId::Hathor => hathor::backfill::poll(spec, rt, live).await,
+        spec::ChainId::Elastos => elastos::backfill::poll(spec, rt, live).await,
     }
 }
 

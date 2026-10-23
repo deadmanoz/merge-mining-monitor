@@ -16,7 +16,7 @@ Contributor and coding-agent implementation references (testing, round-trip budg
 ## Operating The Monitor
 
 - [configuration.md](configuration.md) - environment variables and per-chain config contracts.
-- [operations.md](operations.md) - [setup](operations.md#local-setup), [dependencies](operations.md#dependencies), a [brief database-size example](operations.md#database-size), migrations and routine operator commands.
+- [operations.md](operations.md) - [setup](operations.md#local-setup), [dependencies](operations.md#dependencies), [Core recovery](operations.md#automatic-core-recovery), a [brief database-size example](operations.md#database-size), migrations and routine operator commands.
 - [historical-ingest.md](historical-ingest.md) - importing recovered historical AuxPoW evidence.
 
 ## Product And API

@@ -8,7 +8,7 @@ use serde_json::json;
 use tokio_postgres::Client;
 
 use crate::bitcoin_epoch_cache::refresh_bitcoin_core_header_cache;
-use crate::live_loop::{LiveProducer, TickOutcome, run_live_loop};
+use crate::live_loop::{LiveProducer, TickOutcome, run_ticks};
 use crate::protocol_account_registry::seed_protocol_account_identities;
 
 use super::{
@@ -18,9 +18,10 @@ use super::{
     repair_near_tip_backbone_to_target, run_sync_bitcoin_core, update_sync_error,
     verify_live_backbone_window,
 };
+use crate::bitcoin_epoch_cache::drain_core_queue;
+use crate::live_loop::{must_propagate, run_live};
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_capture::source_registry::BITCOIN_SOURCE_CODE;
-use mmm_read_model::drain_core_reconcile_queue;
 use mmm_store::{get_source_id, upsert_pool_snapshot};
 
 /// Consecutive no-forward-progress batches below tip before the live producer fail-stops.
@@ -112,6 +113,7 @@ where
 
     let target = match capture_live_window_target(source).await {
         Ok(target) => target,
+        Err(err) if must_propagate(&err) => return Err(err),
         Err(err) => {
             tracing::warn!(
                 error = format!("{err:#}"),
@@ -291,7 +293,7 @@ fn handle_near_tip_repair_result(
                 Ok(true)
             }
         }
-        Err(err) if is_backbone_integrity_error(&err) => Err(err),
+        Err(err) if is_backbone_integrity_error(&err) || must_propagate(&err) => Err(err),
         Err(err) => {
             tracing::warn!(
                 error = format!("{err:#}"),
@@ -419,18 +421,14 @@ fn bookkeeping_failure_outcome_from(
     TickOutcome {
         progressed,
         idle_at_target,
+        completed: false,
     }
 }
 
 fn handle_header_cache_refresh_result(result: Result<()>) -> Result<bool> {
     match result {
         Ok(()) => Ok(true),
-        Err(err)
-            if is_backbone_integrity_error(&err)
-                || mmm_store::is_bitcoin_core_header_cache_integrity_error(&err) =>
-        {
-            Err(err)
-        }
+        Err(err) if is_backbone_integrity_error(&err) || must_propagate(&err) => Err(err),
         Err(err) => {
             tracing::warn!(
                 error = format!("{err:#}"),
@@ -445,15 +443,24 @@ impl<S> LiveProducer for BitcoinCoreLiveProducer<'_, S>
 where
     S: BitcoinCoreBackboneSource,
 {
+    fn normal_interval(&self) -> Duration {
+        self.config.follow_interval
+    }
+
     fn name(&self) -> &'static str {
         "Bitcoin Core backbone"
     }
 
     async fn tick(&mut self) -> Result<TickOutcome> {
+        if self.header_cache_classifier.is_live() {
+            self.header_cache_classifier.ready_tip().await?;
+        }
         if let Err(err) =
-            drain_core_reconcile_queue(self.client, self.source_id, self.header_cache_classifier)
-                .await
+            drain_core_queue(self.client, self.source_id, self.header_cache_classifier).await
         {
+            if must_propagate(&err) {
+                return Err(err);
+            }
             tracing::warn!(
                 error = format!("{err:#}"),
                 "Bitcoin Core pending reorg cascade failed; retrying before further sync work"
@@ -484,37 +491,41 @@ where
                 // acceptance sequence counts as safe progress or idle-at-target.
                 progressed: false,
                 idle_at_target: false,
+                completed: false,
             });
         }
 
-        match run_sync_bitcoin_core(self.client, self.source, self.config.clone()).await {
-            Ok(_stats) => {}
-            Err(err) if is_backbone_integrity_error(&err) => {
+        let mut batch = run_sync_bitcoin_core(self.client, self.source, self.config.clone()).await;
+        if let Err(err) = &batch
+            && is_backbone_integrity_error(err)
+            && !must_propagate(err)
+        {
+            tracing::warn!(
+                error = format!("{err:#}"),
+                "Bitcoin Core ordinary live batch found a backbone conflict; forcing bounded repair"
+            );
+            if !self.repair_near_tip(NearTipRepairSchedule::Force).await? {
+                return Ok(TickOutcome {
+                    progressed: false,
+                    idle_at_target: false,
+                    completed: false,
+                });
+            }
+            batch = run_sync_bitcoin_core(self.client, self.source, self.config.clone()).await;
+        }
+        let completed = match batch {
+            Ok(stats) => stats.coinbase_failed == 0,
+            Err(err) if is_backbone_integrity_error(&err) || must_propagate(&err) => {
+                return Err(err);
+            }
+            Err(err) => {
                 tracing::warn!(
                     error = format!("{err:#}"),
-                    "Bitcoin Core ordinary live batch found a backbone conflict; forcing bounded repair"
+                    "Bitcoin Core backbone live batch failed; retrying after interval"
                 );
-                let repair_succeeded = self.repair_near_tip(NearTipRepairSchedule::Force).await?;
-                if !repair_succeeded {
-                    return Ok(TickOutcome {
-                        progressed: false,
-                        idle_at_target: false,
-                    });
-                }
-                match run_sync_bitcoin_core(self.client, self.source, self.config.clone()).await {
-                    Ok(_stats) => {}
-                    Err(err) if is_backbone_integrity_error(&err) => return Err(err),
-                    Err(err) => tracing::warn!(
-                        error = format!("{err:#}"),
-                        "Bitcoin Core post-repair batch failed; retrying after interval"
-                    ),
-                }
+                false
             }
-            Err(err) => tracing::warn!(
-                error = format!("{err:#}"),
-                "Bitcoin Core backbone live batch failed; retrying after interval"
-            ),
-        }
+        };
 
         let refreshed = handle_header_cache_refresh_result(
             refresh_bitcoin_core_header_cache(self.client, self.header_cache_classifier)
@@ -544,6 +555,7 @@ where
             progressed: progress_after.contiguous_complete_height
                 > progress_before.contiguous_complete_height,
             idle_at_target: progress_after.caught_up(),
+            completed,
         })
     }
 
@@ -566,10 +578,6 @@ where
             "starting Bitcoin Core backbone live producer"
         );
     }
-
-    fn log_shutdown(&self) {
-        tracing::info!("shutdown signal received; stopping Bitcoin Core backbone live producer");
-    }
 }
 
 /// Continuous catch-up-then-follow-tip producer.
@@ -578,21 +586,29 @@ where
 /// consecutive below-tip stalls; backbone integrity errors outside the bounded
 /// repair window fail-stop immediately. The protocol-account registries are seeded once at
 /// start; each batch upserts only the pool snapshot.
-pub async fn run_sync_bitcoin_core_follow<S>(
-    client: &mut Client,
-    source: &S,
-    header_cache_classifier: &ConfiguredParentClassifier,
-    config: BitcoinCoreSyncConfig,
-) -> Result<()>
-where
-    S: BitcoinCoreBackboneSource,
-{
-    let resolver = PoolResolver::from_default_snapshot().context("load embedded pool snapshot")?;
-    let mut pool_ids_by_slug = upsert_pool_snapshot(client, resolver.snapshot()).await?;
-    seed_protocol_account_identities(client, &mut pool_ids_by_slug).await?;
-    run_live_loop(
-        BitcoinCoreLiveProducer::start(client, source, header_cache_classifier, config, None)
-            .await?,
+pub async fn run_sync_bitcoin_core_follow(config: BitcoinCoreSyncConfig) -> Result<()> {
+    run_live(
+        BITCOIN_SOURCE_CODE,
+        config.follow_interval,
+        async |mut rt, live| {
+            let url = std::env::var("BITCOIN_RPC_URL").context("BITCOIN_RPC_URL is required")?;
+            let source =
+                mmm_bitcoin_core::BitcoinCoreRpcClient::from_env_url(&url)?.with_live_policy();
+            let resolver =
+                PoolResolver::from_default_snapshot().context("load embedded pool snapshot")?;
+            let mut pool_ids_by_slug =
+                upsert_pool_snapshot(&rt.pg_client, resolver.snapshot()).await?;
+            seed_protocol_account_identities(&rt.pg_client, &mut pool_ids_by_slug).await?;
+            let producer = BitcoinCoreLiveProducer::start(
+                &mut rt.pg_client,
+                &source,
+                &rt.parent_classifier,
+                config,
+                None,
+            )
+            .await?;
+            run_ticks(producer, live).await
+        },
     )
     .await
 }
@@ -711,6 +727,7 @@ mod tests {
             TickOutcome {
                 progressed: true,
                 idle_at_target: false,
+                completed: true,
             },
             &mut stall,
             interval,
@@ -723,6 +740,7 @@ mod tests {
             TickOutcome {
                 progressed: false,
                 idle_at_target: true,
+                completed: true,
             },
             &mut stall,
             interval,
@@ -735,6 +753,7 @@ mod tests {
             TickOutcome {
                 progressed: false,
                 idle_at_target: false,
+                completed: true,
             },
             &mut stall,
             interval,
@@ -748,6 +767,7 @@ mod tests {
             TickOutcome {
                 progressed: false,
                 idle_at_target: false,
+                completed: true,
             },
             &mut stall,
             interval,
@@ -765,7 +785,8 @@ mod tests {
             bookkeeping_failure_outcome_from(None, None),
             TickOutcome {
                 progressed: false,
-                idle_at_target: false
+                idle_at_target: false,
+                completed: false
             },
             "unknown progress counts below target"
         );
@@ -782,7 +803,8 @@ mod tests {
             ),
             TickOutcome {
                 progressed: false,
-                idle_at_target: false
+                idle_at_target: false,
+                completed: false
             },
             "known below-target progress contributes to stall"
         );
@@ -799,7 +821,8 @@ mod tests {
             ),
             TickOutcome {
                 progressed: true,
-                idle_at_target: true
+                idle_at_target: true,
+                completed: false
             },
             "a failed cache refresh retains progress made by its backbone batch"
         );
@@ -813,7 +836,8 @@ mod tests {
             ),
             TickOutcome {
                 progressed: false,
-                idle_at_target: false
+                idle_at_target: false,
+                completed: false
             },
             "missing target is not treated as idle"
         );

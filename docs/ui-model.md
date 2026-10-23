@@ -119,8 +119,8 @@ Source sections are collapsible and non-live sections default closed; a collapse
 The topbar source-status bead and popover summarize only operational live sources (`live` and `bitcoin-core-backbone` sync modes); non-live lifecycle classes do not carry aliveness status there.
 
 The topbar source-status popover separates capture progress from evidence freshness.
-Status pills show the sync state only (`Live`, `Catching up`, `Stale`, `Error`, `Not started`, `Unknown`); the source mode remains in the tooltip. **Height** is the source's current indexed height; live AuxPoW rows show `progress / target` when an observed target height exists, while Bitcoin Core backbone rows keep the target height in the tooltip. **Cursor Updated** is the time the cursor/backbone row last advanced or was seeded. **Latest Evidence** is the newest AuxPoW evidence timestamp seen for that source; Bitcoin Core backbone rows mark this as `N/A` because they observe chain-tip progress rather than AuxPoW evidence.
-A stale cursor means progress has not advanced recently; it is not the same claim as stale evidence.
+Status pills show the sync state only (`Live`, `Waiting`, `Catching up`, `Stale`, `Error`, `Not started`, `Unknown`); the source mode remains in the tooltip. **Height** is the source's current indexed height; live AuxPoW rows show `progress / target` when an observed target height exists, while Bitcoin Core backbone rows keep the target height in the tooltip. **Cursor Updated** is the time the cursor/backbone row last advanced or was seeded. **Latest Evidence** is the newest AuxPoW evidence timestamp seen for that source; Bitcoin Core backbone rows mark this as `N/A` because they observe chain-tip progress rather than AuxPoW evidence.
+An old cursor timestamp means progress has not advanced recently; runtime heartbeats and successful cycles establish liveness separately. Sources without runtime rows use the legacy cursor-age rule. The source's Stale status is distinct from a stale Bitcoin block.
 When a source reports an error, the error code and associated height are shown directly in the Cursor Updated cell so operators do not need to hover the status pill to see the failure reason.
 
 ### Planned filter dimensions
@@ -186,3 +186,7 @@ For example, an empty orphan view should say there are no orphans in the selecte
 
 Error states should show the API error code and message.
 Range errors should prompt the user to narrow the range or choose coarser granularity.
+
+## Source runtime diagnostics
+
+Sources distinguishes Waiting for Bitcoin Core from Catching up through local recovery. The rail and aggregate badge include Waiting. The source popover and Capture tab show a safe reason, dependency, last successful cycle, next retry and heartbeat beside cursor and evidence timestamps. Unknown reason codes use a neutral label rather than raw error text. Unresolved capture or backbone errors remain visible above runtime status; an expired heartbeat becomes Stale. Sources without runtime rows retain legacy progress-based status during rollout.

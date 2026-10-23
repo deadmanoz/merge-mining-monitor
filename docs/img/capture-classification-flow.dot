@@ -11,6 +11,8 @@ digraph capture_classification_flow {
 
   start   [shape=ellipse, width=3.4, fillcolor="#1f3d1f", color="#7ee07e",
            label=<<b>Poller tick / backfill run</b><br/><b>(per source chain)</b>>];
+  readiness [fillcolor="#3d3a1a", color="#facc15", label="Require ready Core before capture\nStage cache RPCs before exclusive publication\nFinite commands retain bounded transport retries"];
+  waiting [fillcolor="#3d2a1a", color="#fb923c", label="Live dependency wait\nStop batch; retain durable progress\nJittered backoff; independent heartbeat"];
   cursor  [fillcolor="#1f2a3d", color="#5aa9e6",
            label="Read poll_cursor\nseed: START_HEIGHT -> persisted cursor -> tip - reorg_depth\n(backfills never move the live cursor)"];
   fetch   [fillcolor="#1f2a3d", color="#5aa9e6",
@@ -51,7 +53,9 @@ digraph capture_classification_flow {
   note    [shape=plaintext, style="", width=4.8, fontcolor="#b8b8c8", fontsize=10,
            label="orphan is not a parent kind: block.btc_orphan_class\n(strict / weak / excluded) is set only after a Core\nabsence-attested verdict, from the lineage rule:\na coinbase height consistent with the header's time\nis strict, bits matching the time's epoch are weak.\nA catalogued known stale is excluded, never\nlabelled strict/weak."];
 
-  start -> cursor -> fetch -> parse -> pools -> lineage;
+  start -> readiness -> cursor -> fetch -> parse -> pools -> lineage;
+  readiness -> waiting [xlabel="live Core unavailable", color="#fb923c", fontcolor="#fb923c"];
+  core -> waiting [xlabel="live Core failure", color="#fb923c", fontcolor="#fb923c"];
   foreign -> lineage [color="#e65a6a", dir=back];
   lineage -> pending [color="#9aa0c8"];
   lineage -> target  [xlabel="Bitcoin", fontcolor="#7ee07e", color="#7ee07e"];
