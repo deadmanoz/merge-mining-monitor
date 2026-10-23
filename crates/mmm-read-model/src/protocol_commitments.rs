@@ -18,6 +18,7 @@ use mmm_capture::protocol_commitment::{
     decode_protocol_commitments, decode_serialized_protocol_commitments,
 };
 
+use crate::ReconcileReadModelConfig;
 use crate::mutation::run_exclusive_core_canonical_view_transaction;
 
 /// Each requested header's highest-priority complete outputs and header time.
@@ -315,6 +316,34 @@ async fn refresh<C: GenericClient>(
         .await
         .context("sync protocol commitment rows")?;
     Ok(())
+}
+
+/// Whether `config` asks for an `--if-needed` rebuild while the last completed rebuild already
+/// recorded the compiled decoder version; logs the skip.
+pub async fn skip_protocol_commitments_rebuild(
+    client: &Client,
+    config: &ReconcileReadModelConfig,
+) -> Result<bool> {
+    if !(config.rebuild_protocol_commitments && config.if_needed) {
+        return Ok(false);
+    }
+    let recorded: Option<i32> = client
+        .query_one(
+            "SELECT protocol_commitments_decoder_version FROM read_model_invariant \
+              WHERE id = TRUE",
+            &[],
+        )
+        .await
+        .context("read the protocol commitment decoder version")?
+        .get(0);
+    let skip = recorded == Some(DECODER_VERSION);
+    if skip {
+        info!(
+            decoder_version = DECODER_VERSION,
+            "protocol commitments already match the decoder version; skipping rebuild"
+        );
+    }
+    Ok(skip)
 }
 
 /// Re-derive every stored script, then refresh every header with evidence or derived rows, a

@@ -181,10 +181,15 @@ async fn cmd_sync_bitcoin_core(args: std::env::Args) -> Result<()> {
 async fn cmd_reconcile_read_model(args: std::env::Args) -> Result<()> {
     let config = mmm_read_model::ReconcileReadModelConfig::from_args(args)?;
     // Core is mandatory even for source-health-only maintenance so bootstrap
-    // refreshes the persisted epoch-header cache first.
-    let (mut pg_client, classifier) = mmm_producers::connect_core_required_from_env().await?;
-    let count =
-        mmm_read_model::run_reconcile_read_model(&mut pg_client, &classifier, config).await?;
+    // refreshes the persisted epoch-header cache first; only a current
+    // `--if-needed` protocol commitment rebuild skips it.
+    let mut pg_client = mmm_producers::connect_from_env().await?;
+    let count = mmm_producers::run_reconcile_read_model_command(
+        &mut pg_client,
+        config,
+        mmm_producers::bootstrap_core,
+    )
+    .await?;
     info!(count, "reconciled read-model work items");
 
     Ok(())
