@@ -21,7 +21,8 @@ use tokio::task::JoinHandle;
 #[derive(Default)]
 pub struct RpcState {
     /// 0 ready, 1 warmup, 2 IBD, 3 header lag, 4 stale, 5 auth, 6 malformed,
-    /// 7 blackhole, 8 wrong network, 9 impossible verbose height.
+    /// 7 blackhole, 8 wrong network, 9 impossible verbose height,
+    /// 10 body not downloaded, 11 height race.
     pub mode: AtomicU8,
     pub delay_ms: AtomicU64,
     pub tip: AtomicI32,
@@ -109,6 +110,10 @@ async fn core(State(state): State<Arc<RpcState>>, Json(request): Json<Value>) ->
     }
     if mode == 1 {
         return Json(json!({"result":null,"error":{"code":-28,"message":"fixture warmup"},"id":request["id"]})).into_response();
+    }
+    if (mode == 10 && method == "getblock") || (mode == 11 && method == "getblockhash") {
+        return Json(json!({"result":null,"error":{"code":if mode==10 { -1 } else { -8 },
+            "message":if mode==10 { "Block not available (not fully downloaded)" } else { "Block height out of range" }},"id":request["id"]})).into_response();
     }
     let hash = request["params"][0].as_str().unwrap_or_default();
     let genesis_hash = bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin)

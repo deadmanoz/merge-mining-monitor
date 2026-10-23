@@ -25,6 +25,8 @@ A successful probe resumes durable cursor and queue work. Local cache contention
 
 Heartbeat-only write failures retry at the next heartbeat interval, with the same run-ownership check. Live Hathor recovery reads at most 26 held heights per tick and attempts 25; the extra row records that more work remains.
 
+During live startup, a block body still downloading or a tip-height race keeps capture in recovery at the ordinary producer interval. Queued reconciliation remains pending until it succeeds. These capture retries do not escalate Core-outage backoff or change finite-command behaviour.
+
 Finite commands re-drain reconciliation work that arrives during cache preparation before retrying publication. They fail after three unsuccessful publication attempts and can be rerun; they do not wait indefinitely for concurrent writers. A live child poller reports healthy completion after successful capture or replay, or when idle exactly at its observed tip. A tip below the available rescan window remains Catching up while the monotonic cursor is preserved. Core miscellaneous RPC errors, including a block body not downloaded yet, remain capture errors retried at the ordinary interval rather than fatal invalid responses.
 
 The shared live supervisor owns readiness, chain initialization, capture, waiting and shutdown under one cancellation boundary. Adapters construct and tick their producer; they do not manage separate startup or shutdown state. Cache publication allows a brief reader transaction to finish within a 500 ms lock budget, then yields for a fresh snapshot if contention persists.

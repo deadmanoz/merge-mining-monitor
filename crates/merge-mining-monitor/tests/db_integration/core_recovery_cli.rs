@@ -126,6 +126,7 @@ async fn cli_core_failed_cycle_keeps_outage_state_until_capture_succeeds() -> Re
     with_database(async |config| {
         let client = mmm_pg::connect(config).await?;
         let rpc = RpcFixture::start().await?;
+        startup_capture_retries(config, &client, &rpc).await?;
         let mut core = start(config, &rpc, &["sync-bitcoin-core", "--follow"])?;
         until(async || Ok(client.query_one("SELECT count(*) FROM producer_runtime_state WHERE state='healthy'", &[]).await?.get::<_,i64>(0) == 1), Duration::from_secs(15)).await?;
 
@@ -149,6 +150,89 @@ async fn cli_core_failed_cycle_keeps_outage_state_until_capture_succeeds() -> Re
         stop(&mut core).await?;
         Ok(())
     }).await
+}
+
+async fn startup_capture_retries(
+    config: &mmm_pg::PgConfig,
+    client: &Client,
+    rpc: &RpcFixture,
+) -> Result<()> {
+    use bitcoin::hashes::Hash as _;
+    let header = bitcoin::blockdata::constants::genesis_block(bitcoin::Network::Bitcoin).header;
+    let hash = header.block_hash().to_byte_array().to_vec();
+    let source = mmm_store::get_source_id(client, "auxpow:namecoin").await?;
+    let event = crate::support::seed::insert_event(
+        client,
+        crate::support::seed::EventSeed {
+            source_id: source,
+            child_height: 1,
+            child_hash: vec![1; 32],
+            parent_hash: hash.clone(),
+            prev_hash: header.prev_blockhash.to_byte_array().to_vec(),
+            parent_time: i64::from(header.time),
+            kind: "unknown",
+            pow_validates_btc_target: true,
+            btc_height: None,
+            pool_id: None,
+        },
+    )
+    .await?;
+    client
+        .execute(
+            "UPDATE merge_mining_event SET btc_parent_header_bytes=$2 WHERE id=$1",
+            &[&event, &bitcoin::consensus::serialize(&header)],
+        )
+        .await?;
+    let core_source = mmm_store::get_source_id(client, "live-chaintip:bitcoin:core").await?;
+    for mode in [10, 11] {
+        client.execute("INSERT INTO bitcoin_core_reconcile_queue (source_id,btc_parent_header_hash,primary_pending) VALUES ($1,$2,true)", &[&core_source,&hash]).await?;
+        rpc.state.mode.store(mode, Ordering::Relaxed);
+        let mut core = start(config, rpc, &["sync-bitcoin-core", "--follow"])?;
+        until(async || Ok(core.0.try_wait()?.is_some() || client.query_one("SELECT count(*) FROM producer_runtime_state WHERE phase='startup' AND state='recovering' AND reason_code='capture_pending'", &[]).await?.get::<_,i64>(0)==1), Duration::from_secs(15)).await?;
+        ensure!(
+            core.0.try_wait()?.is_none(),
+            "startup exited on retryable Core mode {mode}"
+        );
+        if mode == 10 {
+            assert_eq!(
+                client
+                    .query_one("SELECT count(*) FROM bitcoin_core_reconcile_queue", &[])
+                    .await?
+                    .get::<_, i64>(0),
+                1
+            );
+        }
+        assert_eq!(
+            client
+                .query_one(
+                    "SELECT consecutive_failures FROM producer_runtime_state",
+                    &[]
+                )
+                .await?
+                .get::<_, i64>(0),
+            0
+        );
+        rpc.state.mode.store(0, Ordering::Relaxed);
+        until(
+            async || {
+                Ok(client
+                    .query_one("SELECT state='healthy' FROM producer_runtime_state", &[])
+                    .await?
+                    .get(0))
+            },
+            Duration::from_secs(15),
+        )
+        .await?;
+        assert_eq!(
+            client
+                .query_one("SELECT count(*) FROM bitcoin_core_reconcile_queue", &[])
+                .await?
+                .get::<_, i64>(0),
+            0
+        );
+        stop(&mut core).await?;
+    }
+    Ok(())
 }
 
 async fn exercise(config: &mmm_pg::PgConfig) -> Result<()> {

@@ -317,6 +317,12 @@ impl LiveSession {
                 }
                 Err(err) => match recovery_state(&err) {
                     Some(state) => self.wait(state, "startup", interval).await,
+                    None if !must_propagate(&err)
+                        && mmm_bitcoin_core::is_retryable_capture_error(&err) =>
+                    {
+                        self.wait(CycleState::Pending("capture_pending"), "startup", interval)
+                            .await;
+                    }
                     None => return Err(err),
                 },
             }

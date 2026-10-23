@@ -441,6 +441,16 @@ pub(crate) fn is_block_height_out_of_range(err: &anyhow::Error) -> bool {
         .is_some_and(|code| code == -8)
 }
 
+/// Ordinary capture retries, including a missing body or a moving tip.
+pub fn is_retryable_capture_error(err: &anyhow::Error) -> bool {
+    !is_block_body_pruned(err)
+        && matches!(
+            err.downcast_ref::<CoreError>()
+                .and_then(core_rpc_error_code),
+            Some(-1 | -8)
+        )
+}
+
 fn core_rpc_error_code(err: &CoreError) -> Option<i32> {
     match err {
         CoreError::JsonRpc(jsonrpc::error::Error::Rpc(rpc)) => Some(rpc.code),

@@ -10,6 +10,8 @@ This changelog starts with the initial release.
 
 ### Fixed
 
+- Retry ordinary Core body-download and tip-height errors during live startup while preserving queued work and fatal errors.
+
 - Keep heartbeats retrying after transient heartbeat or attempt-metadata write failures during long capture ticks, and bound live Hathor held-height reads in SQL.
 
 - Keep failed Core follower cycles in recovery even when they retain progress or are already at target, and hide the retry row when no retry is scheduled.
