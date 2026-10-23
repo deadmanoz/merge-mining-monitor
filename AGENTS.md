@@ -1,6 +1,6 @@
 # Merge Mining Monitor
 
-Postgres-backed Rust service for collecting Bitcoin stale-block attribution evidence from merge-mined AuxPoW child chains, live Bitcoin Core observations, and recovered historical datasets.
+Postgres-backed Rust service for collecting Bitcoin mining evidence from merge-mined AuxPoW child chains, live Bitcoin Core observations, and recovered historical datasets. Covers stale/orphan and consensus-invalid headers, pool attribution and coinbase protocol declarations.
 
 Human-facing project documentation lives in `docs/`; start with `docs/README.md`.
 Task-specific agent references live in `agent_docs/`; start with `agent_docs/README.md`.

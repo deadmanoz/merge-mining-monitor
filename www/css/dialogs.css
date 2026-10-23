@@ -167,6 +167,12 @@
   stroke: var(--stale);
 }
 
+.screen-figure .blk.k-error {
+  fill: var(--error_block);
+  fill-opacity: 0.16;
+  stroke: var(--error_block);
+}
+
 .screen-figure .blk.k-unknown {
   fill: var(--unknown);
   fill-opacity: 0.16;
@@ -183,14 +189,6 @@
   fill: var(--orphan-weak);
   fill-opacity: 0.16;
   stroke: var(--orphan-weak);
-}
-
-.screen-figure .blk.k-dropped {
-  fill: var(--surface-alt);
-  fill-opacity: 0.5;
-  stroke: var(--line);
-  stroke-width: 1.4;
-  stroke-dasharray: 5 4;
 }
 
 .screen-figure .edge {
@@ -210,14 +208,6 @@
   stroke: var(--stale);
 }
 
-.screen-figure .edge.e-orphan-strict {
-  stroke: var(--orphan-strict);
-}
-
-.screen-figure .edge.e-orphan-weak {
-  stroke: var(--orphan-weak);
-}
-
 .screen-figure .edge.e-dashed {
   stroke-dasharray: 5 4;
 }
@@ -234,18 +224,10 @@
   fill: var(--canonical);
 }
 
-.screen-figure .head.h-stale {
-  fill: var(--stale);
-}
-
 .screen-figure .mm-t {
   fill: var(--text);
   font-size: 12px;
   font-weight: 700;
-}
-
-.screen-figure .mm-t.mm-faded {
-  fill: var(--muted);
 }
 
 .screen-figure .mm-s {

@@ -1,6 +1,6 @@
 # Capture Sources
 
-Every source follows the same high-level contract: fetch child-chain evidence, verify enough of it locally to make it safe to store, normalize it into `merge_mining_event`, and let the read model derive Bitcoin tree state.
+Every source follows the same high-level contract: fetch child-chain evidence, verify enough of it locally to make it safe to store, store authenticated child evidence in `child_block_observation`, attach a `merge_mining_event` only for Bitcoin-relevant evidence, and let the read model derive Bitcoin tree state.
 Every child block a producer can identify also gets a `child_block_observation` row, so the table shows each chain's full block cadence: event-backed blocks in the event's transaction, blocks without AuxPoW as `not_merge_mined`, blocks with a non-Bitcoin parent as `non_bitcoin_parent`, and blocks whose own identity checks out but whose AuxPoW proof is malformed or incomplete (including RSK blocks without a complete parent header) as `unverified_parent` (see `docs/data-model.md`).
 Only blocks that fail their own checks get no row: a hash, height or header the producer cannot authenticate, a Hathor hash that misses its declared weight, an Elastos parent below the child target, and Hathor voided blocks (not on Hathor's best chain).
 Older history is filled by backfill rather than left out. Migration 0033 writes an observation for every existing event and for each bitcoind-family block without AuxPoW or with a refused parent that still had a `child_chain_head` row (height and hash only, since the head keeps no block time). `just backfill-CHAIN START END` runs the full per-height capture path, so it records the rest (Elastos and Hathor nears and blocks without AuxPoW, and blocks from before live capture began) and fills missing child fields on existing rows in place. Chains whose nodes are gone arrive through Research block inventory imports.
@@ -9,8 +9,10 @@ Child height, hash, header, time, and `nBits` are independent optional evidence;
 ## Capture And Classification Flow
 
 <p align="center">
-  <img src="img/capture-classification-flow.png" width="820" alt="Per-child-block capture flow from poller cursor selection through AuxPoW verification, pool attribution, the Bitcoin lineage gate, the parent's own proof-of-work check, Core classification, and the event write with its read-model reconcile" />
+  <img src="img/capture-classification-flow.png" width="820" alt="Per-child-block capture flow from poller cursor selection through AuxPoW verification, pool attribution, the Bitcoin lineage gate, the parent's own proof-of-work check, Core classification, observation-only near shares, and linked event writes with read-model reconciliation" />
 </p>
+
+The [Graphviz source](img/capture-classification-flow.dot) is kept with the rendered diagram.
 
 For a live child block, the poller advances from cursor selection to source fetching, AuxPoW parsing and pool attribution.
 The capture then passes the [Bitcoin lineage gate](#bitcoin-lineage-gate): a parent that is not a Bitcoin header is never stored.

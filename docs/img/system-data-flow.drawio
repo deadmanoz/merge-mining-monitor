@@ -1,0 +1,71 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="Portable" type="device" version="24.7.17">
+  <diagram name="System Data Flow" id="mmm-system">
+    <mxGraphModel dx="1100" dy="1100" grid="1" gridSize="10" page="1" pageWidth="1100" pageHeight="1100" background="#1a1a2e">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="2" value="Merge Mining Monitor&#10;Capture evidence, derive views, serve read-only" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1e2a3d;strokeColor=#38bdf8;strokeWidth=2;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;fontStyle=1;spacing=12;">
+          <mxGeometry as="geometry" x="40" y="20" width="1020" height="70" />
+        </mxCell>
+        <mxCell id="3" value="Child-chain RPC / REST&#10;and pinned Research publication" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#2a2a2a;strokeColor=#9ca3af;strokeWidth=2;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;fontStyle=0;spacing=12;">
+          <mxGeometry as="geometry" x="40" y="140" width="480" height="70" />
+        </mxCell>
+        <mxCell id="4" value="Bitcoin Core&#10;canonical context + classifier" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#2a2a2a;strokeColor=#9ca3af;strokeWidth=2;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;fontStyle=0;spacing=12;">
+          <mxGeometry as="geometry" x="620" y="140" width="440" height="70" />
+        </mxCell>
+        <mxCell id="5" value="1. CAPTURE&#10;mmm-producers + mmm-capture authenticate&#10;mmm-store writes base evidence" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1e2a3d;strokeColor=#38bdf8;strokeWidth=2;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;fontStyle=1;spacing=12;">
+          <mxGeometry as="geometry" x="40" y="260" width="480" height="100" />
+        </mxCell>
+        <mxCell id="6" value="child_block_observation + child_miner_identity&#10;Linked merge_mining_event for Bitcoin evidence&#10;Sidecars, attribution and historical provenance&#10;Near shares remain observations only" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1a3d2a;strokeColor=#34d399;strokeWidth=2;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;fontStyle=0;spacing=12;">
+          <mxGeometry as="geometry" x="40" y="410" width="480" height="130" />
+        </mxCell>
+        <mxCell id="7" value="Operational state&#10;Cursors, chain heads, capture_error&#10;Durable reconciliation queues" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1a3d2a;strokeColor=#34d399;strokeWidth=2;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;fontStyle=0;spacing=12;">
+          <mxGeometry as="geometry" x="620" y="410" width="440" height="130" />
+        </mxCell>
+        <mxCell id="8" value="Reviewed error catalogue&#10;+ known-stale membership" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#2a2a2a;strokeColor=#9ca3af;strokeWidth=2;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;fontStyle=0;spacing=12;">
+          <mxGeometry as="geometry" x="620" y="580" width="440" height="70" />
+        </mxCell>
+        <mxCell id="9" value="2. RECONCILE&#10;mmm-read-model&#10;sole writer of derived tables" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#3d2a1a;strokeColor=#fb923c;strokeWidth=2;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;fontStyle=1;spacing=12;">
+          <mxGeometry as="geometry" x="40" y="610" width="480" height="90" />
+        </mxCell>
+        <mxCell id="10" value="block + attestation_proof + source_health&#10;protocol_commitment tables from stored coinbases" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1a3d2a;strokeColor=#34d399;strokeWidth=2;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;fontStyle=0;spacing=12;">
+          <mxGeometry as="geometry" x="40" y="750" width="480" height="80" />
+        </mxCell>
+        <mxCell id="11" value="3. SERVE&#10;mmm-api reads persisted Postgres state&#10;No Bitcoin Core or child-node RPC" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1a3a5c;strokeColor=#60a5fa;strokeWidth=2;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;fontStyle=1;spacing=12;">
+          <mxGeometry as="geometry" x="40" y="890" width="480" height="90" />
+        </mxCell>
+        <mxCell id="12" value="www/ frontend&#10;Header tree, timestamp deltas,&#10;Findings and block details" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#2d1a3d;strokeColor=#c084fc;strokeWidth=2;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;fontStyle=0;spacing=12;">
+          <mxGeometry as="geometry" x="620" y="890" width="440" height="90" />
+        </mxCell>
+        <mxCell id="13" value="" parent="1" edge="1" source="3" target="5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;endArrow=block;strokeColor=#CCCCCC;strokeWidth=2;">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="14" value="" parent="1" edge="1" source="5" target="6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;endArrow=block;strokeColor=#CCCCCC;strokeWidth=2;">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="15" value="" parent="1" edge="1" source="5" target="7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;endArrow=block;strokeColor=#CCCCCC;strokeWidth=2;exitX=1;exitY=0.5;entryX=0.5;entryY=0;">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="16" value="" parent="1" edge="1" source="6" target="9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;endArrow=block;strokeColor=#CCCCCC;strokeWidth=2;">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="17" value="" parent="1" edge="1" source="4" target="9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;endArrow=block;strokeColor=#CCCCCC;strokeWidth=2;exitX=0;exitY=0.5;entryX=1;entryY=0.25;">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="18" value="" parent="1" edge="1" source="8" target="9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;endArrow=block;strokeColor=#CCCCCC;strokeWidth=2;exitX=0;exitY=0.5;entryX=1;entryY=0.75;">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="19" value="" parent="1" edge="1" source="9" target="10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;endArrow=block;strokeColor=#CCCCCC;strokeWidth=2;">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="20" value="" parent="1" edge="1" source="10" target="11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;endArrow=block;strokeColor=#CCCCCC;strokeWidth=2;">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="21" value="" parent="1" edge="1" source="11" target="12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;endArrow=block;strokeColor=#CCCCCC;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

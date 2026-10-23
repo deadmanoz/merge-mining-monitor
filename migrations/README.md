@@ -2,6 +2,13 @@
 
 SQL migrations (`NNNN_short_description.sql`) applied in lexical order by `scripts/migrate-safe.sh`.
 
+## Pre-1.0 Schema Policy
+
+The schema is under active development and is likely to change before 1.0.0.
+Migrations may be consolidated for that release; a continuous in-place upgrade path is not guaranteed.
+Back up persistent data before upgrading and follow the release-specific instructions, including any migration-ledger handling.
+Until a consolidation is released, the append-only rules below remain in force. This policy does not instruct operators to reset existing databases.
+
 ## Rules
 
 - Run only via `just db-migrate-dev` or `just db-migrate-deploy` (backup + auto-restore on failure).
