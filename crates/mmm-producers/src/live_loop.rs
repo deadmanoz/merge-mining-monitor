@@ -30,6 +30,8 @@ const CASCADE_SETTLE_TIMEOUT: Duration = Duration::from_secs(60);
 pub(crate) struct TickOutcome {
     pub(crate) progressed: bool,
     pub(crate) idle_at_target: bool,
+    /// Progress can survive a later failure; only a completed cycle clears recovery.
+    pub(crate) completed: bool,
 }
 
 /// The supervisor handles typed dependency waits and local recovery yields;
@@ -108,7 +110,9 @@ pub(crate) async fn run_ticks<P: LiveProducer>(
                 ),
             },
             Ok(outcome) => {
-                let state = if outcome.progressed || outcome.idle_at_target {
+                let state = if !outcome.completed {
+                    CycleState::Pending("capture_pending")
+                } else if outcome.progressed || outcome.idle_at_target {
                     CycleState::Healthy
                 } else {
                     CycleState::Pending("producer_no_progress")

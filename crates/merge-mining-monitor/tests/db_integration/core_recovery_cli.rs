@@ -89,8 +89,8 @@ async fn with_database(test: impl AsyncFnOnce(&mmm_pg::PgConfig) -> Result<()>) 
         .batch_execute(&format!("CREATE DATABASE {}", config.database))
         .await?;
     let result = AssertUnwindSafe(async {
-        let output = Command::new("just")
-            .arg("db-migrate-dev")
+        let output = Command::new("./scripts/migrate-safe.sh")
+            .arg("dev")
             .current_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
             .env("PGHOST", &config.host)
             .env("PGPORT", config.port.to_string())
@@ -119,6 +119,36 @@ async fn with_database(test: impl AsyncFnOnce(&mmm_pg::PgConfig) -> Result<()>) 
 #[tokio::test]
 async fn cli_producers_survive_six_outages_recover_and_renew_during_long_work() -> Result<()> {
     with_database(exercise).await
+}
+
+#[tokio::test]
+async fn cli_core_failed_cycle_keeps_outage_state_until_capture_succeeds() -> Result<()> {
+    with_database(async |config| {
+        let client = mmm_pg::connect(config).await?;
+        let rpc = RpcFixture::start().await?;
+        let mut core = start(config, &rpc, &["sync-bitcoin-core", "--follow"])?;
+        until(async || Ok(client.query_one("SELECT count(*) FROM producer_runtime_state WHERE state='healthy'", &[]).await?.get::<_,i64>(0) == 1), Duration::from_secs(15)).await?;
+
+        rpc.state.mode.store(1, Ordering::Relaxed);
+        until(async || Ok(client.query_one("SELECT state='waiting' FROM producer_runtime_state", &[]).await?.get(0)), Duration::from_secs(10)).await?;
+        let before = client.query_one("SELECT last_success_at, consecutive_failures FROM producer_runtime_state", &[]).await?;
+        // Fail publication after an otherwise caught-up follower tick. The real
+        // process must retain the outage count and last completed cycle.
+        client.batch_execute("CREATE FUNCTION fail_cache_publication() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture publication failure'; END $$;
+            CREATE TRIGGER fail_cache_publication BEFORE UPDATE ON bitcoin_core_header_cache_state FOR EACH ROW
+            WHEN (NEW.publication_revision <> OLD.publication_revision)
+            EXECUTE FUNCTION fail_cache_publication();").await?;
+        rpc.state.mode.store(0, Ordering::Relaxed);
+        until(async || Ok(client.query_one("SELECT state='recovering' FROM producer_runtime_state", &[]).await?.get(0)), Duration::from_secs(15)).await?;
+        let after = client.query_one("SELECT last_success_at, consecutive_failures FROM producer_runtime_state", &[]).await?;
+        assert_eq!(after.get::<_,Option<i64>>(0), before.get::<_,Option<i64>>(0));
+        assert_eq!(after.get::<_,i64>(1), before.get::<_,i64>(1));
+
+        client.batch_execute("DROP TRIGGER fail_cache_publication ON bitcoin_core_header_cache_state; DROP FUNCTION fail_cache_publication()").await?;
+        until(async || Ok(client.query_one("SELECT state='healthy' AND consecutive_failures=0 AND last_success_at > $1 FROM producer_runtime_state", &[&before.get::<_,Option<i64>>(0)]).await?.get(0)), Duration::from_secs(15)).await?;
+        stop(&mut core).await?;
+        Ok(())
+    }).await
 }
 
 async fn exercise(config: &mmm_pg::PgConfig) -> Result<()> {

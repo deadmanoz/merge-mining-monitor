@@ -454,6 +454,7 @@ impl<C: ChainPoller> LiveProducer for Poller<C> {
         Ok(TickOutcome {
             progressed: summary.processed > 0,
             idle_at_target: summary.tip == Some(self.cursor),
+            completed: true,
         })
     }
 

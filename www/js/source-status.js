@@ -153,7 +153,7 @@ function sourceRuntimeRows(sync) {
     ["Dependency", runtime.dependency === "bitcoin-core" ? "Bitcoin Core" : "None"],
     ["Runtime", RUNTIME_REASONS[runtime.reason_code] || (runtime.state === "healthy" ? "Healthy cycle completed" : "Recovery pending")],
     ["Last successful cycle", stamp(runtime.last_success_at)],
-    ["Next retry", stamp(runtime.next_retry_at)],
+    ...(Number.isFinite(runtime.next_retry_at) ? [["Next retry", stamp(runtime.next_retry_at)]] : []),
     ["Heartbeat", stamp(runtime.heartbeat_at)],
   ];
 }

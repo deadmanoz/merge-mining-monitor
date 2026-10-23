@@ -421,6 +421,7 @@ fn bookkeeping_failure_outcome_from(
     TickOutcome {
         progressed,
         idle_at_target,
+        completed: false,
     }
 }
 
@@ -490,40 +491,41 @@ where
                 // acceptance sequence counts as safe progress or idle-at-target.
                 progressed: false,
                 idle_at_target: false,
+                completed: false,
             });
         }
 
-        match run_sync_bitcoin_core(self.client, self.source, self.config.clone()).await {
-            Ok(_stats) => {}
-            Err(err) if must_propagate(&err) => return Err(err),
-            Err(err) if is_backbone_integrity_error(&err) => {
+        let mut batch = run_sync_bitcoin_core(self.client, self.source, self.config.clone()).await;
+        if let Err(err) = &batch
+            && is_backbone_integrity_error(err)
+            && !must_propagate(err)
+        {
+            tracing::warn!(
+                error = format!("{err:#}"),
+                "Bitcoin Core ordinary live batch found a backbone conflict; forcing bounded repair"
+            );
+            if !self.repair_near_tip(NearTipRepairSchedule::Force).await? {
+                return Ok(TickOutcome {
+                    progressed: false,
+                    idle_at_target: false,
+                    completed: false,
+                });
+            }
+            batch = run_sync_bitcoin_core(self.client, self.source, self.config.clone()).await;
+        }
+        let completed = match batch {
+            Ok(stats) => stats.coinbase_failed == 0,
+            Err(err) if is_backbone_integrity_error(&err) || must_propagate(&err) => {
+                return Err(err);
+            }
+            Err(err) => {
                 tracing::warn!(
                     error = format!("{err:#}"),
-                    "Bitcoin Core ordinary live batch found a backbone conflict; forcing bounded repair"
+                    "Bitcoin Core backbone live batch failed; retrying after interval"
                 );
-                let repair_succeeded = self.repair_near_tip(NearTipRepairSchedule::Force).await?;
-                if !repair_succeeded {
-                    return Ok(TickOutcome {
-                        progressed: false,
-                        idle_at_target: false,
-                    });
-                }
-                match run_sync_bitcoin_core(self.client, self.source, self.config.clone()).await {
-                    Ok(_stats) => {}
-                    Err(err) if is_backbone_integrity_error(&err) || must_propagate(&err) => {
-                        return Err(err);
-                    }
-                    Err(err) => tracing::warn!(
-                        error = format!("{err:#}"),
-                        "Bitcoin Core post-repair batch failed; retrying after interval"
-                    ),
-                }
+                false
             }
-            Err(err) => tracing::warn!(
-                error = format!("{err:#}"),
-                "Bitcoin Core backbone live batch failed; retrying after interval"
-            ),
-        }
+        };
 
         let refreshed = handle_header_cache_refresh_result(
             refresh_bitcoin_core_header_cache(self.client, self.header_cache_classifier)
@@ -553,6 +555,7 @@ where
             progressed: progress_after.contiguous_complete_height
                 > progress_before.contiguous_complete_height,
             idle_at_target: progress_after.caught_up(),
+            completed,
         })
     }
 
@@ -724,6 +727,7 @@ mod tests {
             TickOutcome {
                 progressed: true,
                 idle_at_target: false,
+                completed: true,
             },
             &mut stall,
             interval,
@@ -736,6 +740,7 @@ mod tests {
             TickOutcome {
                 progressed: false,
                 idle_at_target: true,
+                completed: true,
             },
             &mut stall,
             interval,
@@ -748,6 +753,7 @@ mod tests {
             TickOutcome {
                 progressed: false,
                 idle_at_target: false,
+                completed: true,
             },
             &mut stall,
             interval,
@@ -761,6 +767,7 @@ mod tests {
             TickOutcome {
                 progressed: false,
                 idle_at_target: false,
+                completed: true,
             },
             &mut stall,
             interval,
@@ -778,7 +785,8 @@ mod tests {
             bookkeeping_failure_outcome_from(None, None),
             TickOutcome {
                 progressed: false,
-                idle_at_target: false
+                idle_at_target: false,
+                completed: false
             },
             "unknown progress counts below target"
         );
@@ -795,7 +803,8 @@ mod tests {
             ),
             TickOutcome {
                 progressed: false,
-                idle_at_target: false
+                idle_at_target: false,
+                completed: false
             },
             "known below-target progress contributes to stall"
         );
@@ -812,7 +821,8 @@ mod tests {
             ),
             TickOutcome {
                 progressed: true,
-                idle_at_target: true
+                idle_at_target: true,
+                completed: false
             },
             "a failed cache refresh retains progress made by its backbone batch"
         );
@@ -826,7 +836,8 @@ mod tests {
             ),
             TickOutcome {
                 progressed: false,
-                idle_at_target: false
+                idle_at_target: false,
+                completed: false
             },
             "missing target is not treated as idle"
         );

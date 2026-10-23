@@ -861,4 +861,17 @@ test("Core waiting and recovery remain visible beside capture errors", async ({ 
   await expect(row).toContainText("auxpow_capture_error");
   await expect(row).toContainText("Recovery pending");
   expect(await page.evaluate(() => window.runtimeInjected)).toBeUndefined();
+
+  source.sync.state = "live";
+  source.sync.error_code = null;
+  source.sync.error_height = null;
+  Object.assign(source.sync.runtime, { state: "healthy", reason_code: null, dependency: null,
+    next_retry_at: null, consecutive_failures: 0, last_success_at: now });
+  await page.reload();
+  await page.locator("#source-status-button").click();
+  await expect(row).toContainText("Healthy cycle completed");
+  await expect(row).not.toContainText("Next retry");
+  await page.locator('.source-info-button[data-source-info="auxpow:namecoin"]').click();
+  await page.getByRole("tab", { name: "Capture" }).click();
+  await expect(page.locator("#sd-panel-capture")).not.toContainText("Next retry");
 });

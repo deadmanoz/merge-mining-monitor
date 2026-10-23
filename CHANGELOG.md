@@ -10,6 +10,8 @@ This changelog starts with the initial release.
 
 ### Fixed
 
+- Keep failed Core follower cycles in recovery even when they retain progress or are already at target, and hide the retry row when no retry is scheduled.
+
 - Keep live child pollers and the Core follower running through Bitcoin Core outages with bounded, jittered backoff and automatic recovery under one shared live supervisor. Stage cache RPCs outside the exclusive publication lock, allow brief reader contention within a 500 ms lock budget, and reject obsolete snapshots using a persisted revision.
 - Report dependency waiting, recovery and producer liveness separately from evidence errors and cursor timestamps. Preserve capture errors while showing safe runtime diagnostics in Sources, keep a child tip below the available rescan window in recovery, and omit retry deadlines after healthy completion. Retain ordinary capture retries when Core has not downloaded a requested block body.
 
