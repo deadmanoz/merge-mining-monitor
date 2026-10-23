@@ -1,6 +1,6 @@
 # Architecture
 
-`merge-mining-monitor` is a Rust/Postgres service that collects evidence about Bitcoin stale blocks from merge-mined AuxPoW child chains, live Bitcoin Core observations, and recovered historical datasets.
+`merge-mining-monitor` is a Rust/Postgres service that collects Bitcoin mining evidence from merge-mined AuxPoW child chains, live Bitcoin Core observations, and recovered historical datasets. It covers stale/orphan and consensus-invalid headers, pool attribution and coinbase protocol declarations.
 It turns heterogeneous source evidence into normalized base observations, then derives a read model for the API and frontend.
 
 ## System Flow
@@ -9,46 +9,32 @@ It turns heterogeneous source evidence into normalized base observations, then d
   <img src="img/system-data-flow.png" width="920" alt="Evidence, runtime health and Core cache ownership in Merge Mining Monitor" />
 </p>
 
-[Editable diagram](img/system-data-flow.drawio). The diagram shows the same ownership model as the text below: producers capture base evidence, the read-model reconciler is the only writer of derived tables, and the API serves those derived projections without writing capture state.
+The [editable diagram](img/system-data-flow.drawio) shows the same ownership model as the text below: producers capture base evidence, the read-model reconciler is the only writer of derived tables, and the API serves those derived projections without writing capture state.
 
 ```text
-1. CAPTURE          offline parsers authenticate; producers write base tables
-──────────────────────────────────────────────────────────────────────
-   child-chain source ──> parser / verifier ─┬─> merge_mining_event
-                                             │   chain sidecar tables
-                                             │   event_pool_attribution
-                                             └─> capture_error
-                                                 (malformed proofs on hold-policy chains;
-                                                  Terracoin height capture failures)
+1. CAPTURE: mmm-capture authenticates; mmm-store writes base evidence
+   child RPC / REST or pinned Research publication
+       -> child_block_observation + child_miner_identity
+       -> linked merge_mining_event for Bitcoin-relevant evidence
+          + chain sidecars, attribution and historical provenance
+   near shares and blocks without a Bitcoin parent -> observations only
+   producer state -> cursors, capture_error, child_chain_head, reconcile queues
+   live supervisor -> producer_runtime_state (separate status connection)
+   operator membership import -> known_stale_block
 
-   historical publication ──> preflight / database-state comparison
-                                  matching ──> no-op before Core lock
-                                  mismatch ──> merge_mining_event
-                                                historical_event_provenance
-                                                historical_reconcile_queue
+2. RECONCILE: mmm-read-model is the sole derived-table writer
+   base evidence + known-stale membership + pinned error catalogue
+       + Bitcoin Core context / backbone sync
+       -> block, attestation_proof, source_health, protocol_commitment tables
+   durable historical and Core queues drain in bounded transactions
 
-   live supervisor ──> producer_runtime_state (fenced run, heartbeat, retry)
-
-   operator import (import-known-stales) ──────> known_stale_block
-
-2. RECONCILE        read-model rebuilds derived tables from base evidence
-──────────────────────────────────────────────────────────────────────
-   base tables ───────────────────────────────┐
-   known_stale_block ─────────────────────────┼──> read-model ──> block
-   Bitcoin Core (backbone + classifier) ──────┤    reconciler     attestation_proof
-   bitcoin_core_reconcile_queue ──────────────┘    (known-stale   source_health
-                                                     exclusion     protocol_commitment
-                                                     gate)
-
-3. SERVE            the API projects derived tables to the frontend
-──────────────────────────────────────────────────────────────────────
-   derived tables ──────┬─> axum API (`serve`) ──> static frontend in www/
-   capture_error ───────┤   (source capture-error state)
-   producer_runtime_state ─┘ (readiness + liveness; separate status connection)
+3. SERVE: mmm-api reads Postgres, with no node RPC calls
+   derived tables + observation details + capture/runtime status + Core cache
+       -> read-only API -> static www/ frontend
 ```
 
 1. **CAPTURE (`mmm-capture`, `mmm-producers`, `mmm-store`)**: Offline parsers authenticate child-chain proofs and the Bitcoin lineage gate refuses non-Bitcoin SHA-256 parents before storage (`docs/capture.md`).
-   Producers and importers write only base evidence (`merge_mining_event`, sidecars, `event_pool_attribution`, `historical_event_provenance`, `known_stale_block`) plus producer operational state (`poll_cursor`, `capture_error`, `child_chain_head`, `producer_runtime_state`) and durable reconcile queues (`docs/historical-ingest.md`).
+   Producers and importers write only base evidence (`child_block_observation`, `child_miner_identity`, linked `merge_mining_event`, sidecars, `event_pool_attribution`, `historical_event_provenance`, `known_stale_block`) plus producer operational state (`poll_cursor`, `capture_error`, `child_chain_head`, `producer_runtime_state`) and durable reconcile queues (`docs/historical-ingest.md`).
 2. **RECONCILE (`mmm-bitcoin-core`, `mmm-read-model`)**: `mmm-read-model` is the sole writer of derived tables (`block`, `attestation_proof`, `source_health`, and the `protocol_commitment` tables decoded from stored Bitcoin coinbase outputs).
    It combines base evidence, `known_stale_block` exclusion gates, the pinned error catalogue, and Bitcoin Core classification / suffix replacement, draining `historical_reconcile_queue` and `bitcoin_core_reconcile_queue` in bounded transactions (`docs/data-model.md`).
 3. **SERVE (`mmm-api`)**: The read-only HTTP server projects the derived tables, `capture_error` and live runtime status, and the persisted Core-header cache to `/api/v1/*` and serves the static `www/` frontend without calling Bitcoin Core RPC.
@@ -61,9 +47,9 @@ It turns heterogeneous source evidence into normalized base observations, then d
 | `mmm-capture` | Offline parsing, normalization, pool resolution, source registry, and the Bitcoin lineage rule with its nBits and orphan helpers. No network or database I/O in normal builds. |
 | `mmm-rpc` | Shared HTTP transport policy for child-chain clients. |
 | `mmm-bitcoin-core` | The only crate that links `corepc-client`; wraps Bitcoin Core RPC and parent classification. |
-| `mmm-store` | SQL for producer base tables: events, sidecars, cursors, capture errors, and seed helpers. It also exposes the read-only Core-header-cache loader shared by reconciliation and the API. |
+| `mmm-store` | SQL for producer base tables: child observations and identities, events, sidecars, attribution, cursors, capture errors, runtime status, and seed helpers. It also exposes the read-only Core-header-cache loader shared by reconciliation and the API. |
 | `mmm-read-model` | Sole writer of derived tables: `block`, `attestation_proof`, `source_health`, and the `protocol_commitment` tables. Owns the shared capture seam (`capture_in_txn`) and its Bitcoin lineage gate. |
-| `mmm-producers` | Runtime engines: chain pollers/backfills, historical importer, Bitcoin Core backbone sync, and pool reclassification. |
+| `mmm-producers` | Runtime engines: chain pollers/backfills, historical importer, Bitcoin Core backbone sync, and pool reclassification. The shared live supervisor owns readiness, recovery and shutdown. |
 | `mmm-api` | Read-only API views plus static frontend serving. |
 | `merge-mining-monitor` | CLI wiring, generator binaries, and cross-crate integration tests. |
 
@@ -73,7 +59,7 @@ It turns heterogeneous source evidence into normalized base observations, then d
 crates/            # Rust workspace members (see the crate table above)
 data/              # committed release-domain data
                    #   (pools/, consensus/, sources/, findings/, historical/)
-migrations/        # squashed schema baseline (0001_) plus generated source seed (0002_)
+migrations/        # schema baseline (0001_), generated source seed (0002_), and forward migrations
 fixtures/          # shared JSON API fixtures and per-chain parser samples
 www/               # static frontend served by the read API (index.html, css/, js/, vendor/, assets/)
 docs/              # this documentation set

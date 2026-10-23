@@ -3,19 +3,70 @@
 Use `just` targets for routine work.
 They encode the repository's expected environment and safety wrappers.
 
+## Dependencies
+
+| Activity | Required inputs |
+|---|---|
+| Browse an existing database (`serve`) | Postgres with populated, ready read-model tables. No Bitcoin Core or child-node RPC calls. |
+| Sync the Bitcoin backbone | A synced Bitcoin mainnet Core RPC endpoint, including block bodies for coinbase enrichment. |
+| Poll or backfill a child chain | Bitcoin Core plus that chain's RPC/REST endpoint. Enable only the sources you can reach. |
+| Import historical evidence | Bitcoin Core, known-stale membership, and the pinned Research publication with its Git LFS files. Child-chain nodes are not needed for the published records. |
+| Reconcile or rebuild derived state | Normally Bitcoin Core, even for work using stored data: commands check Core readiness, drain pending Core-suffix work and refresh the header cache. An already-current `rebuild-protocol-commitments --if-needed` exits after a Postgres check. Pool reclassification uses stored identity evidence after the shared Core bootstrap. |
+
+Hathor defaults to a public REST API with a second public endpoint as fallback; this is API polling, not HTML scraping.
+Outages, throttling or unavailable block records can leave capture incomplete despite retries.
+See [endpoint configuration](configuration.md#endpoint-availability) for defaults and backfill safeguards.
+These are software defaults, not a claim about which endpoints any deployment uses.
+
+Core coinbase retrieval fetches full block bodies. Historical enrichment therefore needs those bodies to be available, not just the headers.
+A failed coinbase fetch is recorded by backbone sync; it does not prove that the block had no declarations or payouts.
+Pruned-node completeness depends on the requested history and retained bodies; this is not a blanket `txindex` requirement.
+
+## Database Size
+
+On 23 October 2026, the production monitor database (0.11.0, live and recovered historical evidence) occupied approximately **17 GiB**, measured with `pg_database_size(current_database())`.
+This is an example of observed occupancy, not a minimum requirement; node storage and backups are additional.
+
 ## Local Setup
 
-```bash
-just db-up
-just db-migrate-dev
-just build
-just test
-```
+Install Rust (the version required by `Cargo.toml`), `just`, Docker with Compose v2, and PostgreSQL client tools (`psql` and `pg_dump`, compatible with PostgreSQL 16).
+Node.js/npm is needed for frontend checks; Git LFS is needed for historical publication files.
+Compose starts Postgres only, not the monitor or any blockchain nodes.
+Its example credentials and published database port are for a controlled development environment, not a public deployment.
 
-Copy `.env.example` to `.env` and adjust endpoints before running live pollers or Bitcoin Core classification.
-A synced **Bitcoin mainnet** Core node is required for every capture, import, and reconciliation command, including database-only maintenance modes (`just rebuild-source-health`, `just rebuild-protocol-commitments`): each checks Core readiness, drains committed Core-suffix reconciliation, then refreshes the sparse `bitcoin_core_header` cache through the current synced tip.
-The one exception is `just rebuild-protocol-commitments --if-needed` when the tables already match the decoder: it reads one Postgres row and exits.
-`serve` reads that persisted cache from Postgres and makes no Core RPC calls.
+1. Copy `.env.example` to `.env` and configure Postgres, a synced Bitcoin mainnet Core RPC endpoint, and only the child endpoints you intend to use. Keep credentials out of Git.
+2. Create and migrate the database with the backup-first wrapper, then build:
+
+   ```bash
+   just db-up
+   just db-migrate-dev
+   just build
+   ```
+
+3. Load [known-stale membership](historical-ingest.md#known-stale-membership) before capture or publication import:
+
+   ```bash
+   just import-known-stales --csv path/to/stale-blocks.csv \
+     --source-label "bitcoin-data/stale-blocks@<commit>"
+   ```
+
+   On a fresh database, this command first builds the shared Core header cache, which can take a while against a remote node before membership import starts.
+
+4. Choose either or both evidence paths. For recovered data, follow [Running Imports](historical-ingest.md#running-imports), which checks the pinned Research files before `just import-all`. For live capture, configure a source's start height and run its `just poll-CHAIN` command. Starting at the tip does not backfill the chain; use bounded `just backfill-CHAIN START END` ranges for earlier records.
+5. Fill the canonical window you want to browse, including the newest window for the default view. Replace `START` and `END` with a bounded range ending at the current Core tip:
+
+   ```bash
+   just sync-bitcoin-core --from-height START --to-height END
+   just rebuild-source-health
+   just rebuild-protocol-commitments --if-needed
+   ```
+
+   Stop pollers while rebuilding source health; `import-all` already rebuilds it after its queue drains. Run `just sync-bitcoin-core --follow` as a long-lived process to keep canonical context current. Additional historical tree windows need their own backbone coverage.
+6. Start `just serve` in another terminal. Check `/api/v1/sources` and `/api/v1/tree` at the configured bind address before considering the UI ready. Sources must return counters, not `internal_error`; the tree must return the intended window, not `no_canonical_tip`, `backbone_unsynced` or `backbone_conflict`. `/health` alone does not establish data readiness.
+
+   For active capture, also check each enabled producer's runtime status: Waiting indicates a Core dependency problem, while Catching up can include startup or local recovery. Existing data can remain browsable while capture is degraded.
+
+See [source-health and classification repair](#source-health-and-classification-repair) for interrupted or incomplete loads.
 
 ## Automatic Core recovery
 
@@ -49,6 +100,10 @@ Run `sync-bitcoin-core` before browsing windows you expect to be complete.
 
 ## Migrations
 
+Before 1.0.0 the schema can change, and migrations may be consolidated for that release.
+A continuous in-place upgrade path is not guaranteed; follow the [migration policy](../migrations/README.md#pre-10-schema-policy) and release-specific upgrade instructions.
+The current migrations remain append-only and backup-first.
+
 Real database migrations go through the backup-first wrapper:
 
 ```bash
@@ -81,7 +136,11 @@ just reconcile-read-model --all --source auxpow:hathor
 just rebuild-source-health
 ```
 
-Before applying `0007` to an existing database (duplicate-identity audit query):
+### Legacy upgrade: databases before 0007
+
+The following audit is only for an existing database that has **not** applied `0007`.
+It references columns removed by later migrations and must not be run against the current schema.
+Fresh installations use the setup above and need no manual legacy audit.
 
 ```sql
 SELECT s.code,
@@ -242,9 +301,10 @@ See `docs/historical-ingest.md` for the full fresh-database ordering.
 
 ## Historical Publication
 
-Materialize the pinned research Git LFS objects, then import the complete publication and refresh pool attributions:
+After setup and known-stale membership import, materialize the pinned Research Git LFS objects, then import the publication and refresh pool attributions:
 
 ```bash
+set -a; source .env; set +a # exports the Research path for git, unlike just's dotenv loading
 git -C "$MERGE_MINING_RESEARCH_DIR" lfs pull \
   --include="results/monitor-evidence/*_monitor_evidence.csv"
 just import-all

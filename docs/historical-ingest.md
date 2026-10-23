@@ -91,17 +91,22 @@ Both `known_stale_block` membership and published direct-stale / stale-descendan
 
 ## Running Imports
 
-Prepare the database and LFS payloads, then import the complete publication and refresh pool attributions:
+Complete [local setup](operations.md#local-setup) through database migration first, with a synced Bitcoin mainnet Core endpoint configured.
+Use a Research checkout at the manifest's `source_repo_commit`; do not regenerate the pin merely to match an arbitrary checkout.
+Load known-stale membership and the pinned LFS payloads before importing:
 
 ```bash
-just db-up
-just db-migrate-dev
 set -a; source .env; set +a
+just import-known-stales --csv path/to/stale-blocks.csv \
+  --source-label "bitcoin-data/stale-blocks@<commit>"
 git -C "$MERGE_MINING_RESEARCH_DIR" lfs pull \
   --include="results/monitor-evidence/*_monitor_evidence.csv"
 just import-all
 just reclassify-pools
 ```
+
+After import, return to [local setup](operations.md#local-setup) to fill the required canonical windows and check API readiness.
+`import-all` rebuilds source health; it does not fill every canonical height in the tree.
 
 During preflight, `import-all` compares normalized publication-owned fields against stored non-operator provenance and base events across research pins:
 - Unchanged artifacts report `skipped_matching_state` and skip classification, writes, and reconciliation.

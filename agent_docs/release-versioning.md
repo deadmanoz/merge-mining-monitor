@@ -10,6 +10,16 @@ Operator steps, commands, migrations, table or API field names, commit pins and 
 
 Release tags use `v<SemVer>`, for example `v0.1.0`.
 
+## Documentation Review
+
+Before a release, check README and About against visible features, including protocol declarations and error-block evidence.
+Review runtime dependencies, setup/readiness steps, the dated size example, statistics, screenshots and diagrams. Keep the size note short; remeasure when updating its date or deployment context.
+Use the [pre-1.0 schema policy](../migrations/README.md#pre-10-schema-policy) until a migration consolidation and its upgrade procedure are actually released.
+
+Stage unreleased changes in `CHANGELOG.md`, then prepare visitor-facing wording for `RELEASE_NOTES.md` at release time.
+The newest served release-note section must match the workspace version; do not add an `Unreleased` section to the served notes or attribute new changes to an earlier release.
+Regenerate `fixtures/api/version.json` whenever served notes change, using the release flow below.
+
 ## Release Flow
 
 1. Move release-note entries into `## [X.Y.Z] - YYYY-MM-DD`.

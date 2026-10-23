@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Merge Mining Monitor</title>
     <meta property="og:title" content="Merge Mining Monitor" />
-    <meta property="og:description" content="Bitcoin merge-mining attribution: stale-block evidence from AuxPoW child chains" />
+    <meta property="og:description" content="Bitcoin mining evidence: pool attribution, merge-mined chains, stale and invalid blocks, and protocol commitments" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://mmm.deadmanoz.xyz/" />
     <meta property="og:site_name" content="Merge Mining Monitor" />
@@ -15,7 +15,7 @@
     <meta property="og:image:alt" content="Merge Mining Monitor radar logo with title and tagline" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Merge Mining Monitor" />
-    <meta name="twitter:description" content="Bitcoin merge-mining attribution: stale-block evidence from AuxPoW child chains" />
+    <meta name="twitter:description" content="Bitcoin mining evidence: pool attribution, merge-mined chains, stale and invalid blocks, and protocol commitments" />
     <meta name="twitter:image" content="https://mmm.deadmanoz.xyz/assets/og/og-image.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/assets/logo/radar-logo-dark-16.png" />
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/logo/radar-logo-dark-32.png" />
@@ -164,7 +164,7 @@
         <header class="about-dialog-header">
           <div>
             <h2 id="about-title">About This Monitor</h2>
-            <p>Why merge-mined chains can reveal Bitcoin stale and orphan evidence</p>
+            <p>Bitcoin mining evidence, including work outside the active chain</p>
           </div>
           <button id="about-close" class="icon-button" type="button" aria-label="Close about dialog" title="Close">
             <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
@@ -177,17 +177,17 @@
           </div>
           <div id="about-overview" class="about-panel about-explainer" role="tabpanel" aria-labelledby="about-tab-overview">
           <p class="about-lede">
-            Bitcoin keeps no active-chain record of discarded stale blocks, and
-            live monitoring is recent. Merge-mined child chains preserve
-            independent evidence of those blocks reaching back to before anyone
-            was watching.
+            Explore Bitcoin mining through child-chain proofs, Bitcoin Core
+            observations and recovered records: pool attribution, stale and
+            orphan evidence, and consensus-invalid error blocks. Coinbase
+            protocol declarations and cited Findings add context to that record.
           </p>
 
-          <div class="explainer" role="group" aria-roledescription="carousel" aria-label="How merge mining reveals Bitcoin stale and orphan evidence">
+          <div class="explainer" role="group" aria-roledescription="carousel" aria-label="How merge mining preserves Bitcoin mining evidence">
             <ol class="explainer-screens">
-              <li class="explainer-screen" data-screen="0" role="group" aria-roledescription="slide" aria-label="Step 1 of 4: forks happen, stales vanish">
+              <li class="explainer-screen" data-screen="0" role="group" aria-roledescription="slide" aria-label="Step 1 of 4: blocks outside the active chain">
                 <div class="screen-figure">
-                  <svg viewBox="0 0 460 150" role="img" aria-label="Bitcoin fork discarding a stale block">
+                  <svg viewBox="0 0 460 150" role="img" aria-label="A canonical branch and a stale block outside the active chain">
                     <rect class="blk k-base" x="20" y="58" width="58" height="32" rx="5" />
                     <text class="mm-t" x="49" y="78" text-anchor="middle">N&#8722;1</text>
                     <path class="edge e-canonical" d="M78 74 C 116 64, 132 50, 168 50" />
@@ -203,14 +203,15 @@
                     <text class="mm-t" x="197" y="110" text-anchor="middle">N</text>
                     <path class="edge e-stale e-dashed" d="M226 106 H 286" />
                     <path class="edge e-stale" d="M296 99 l 14 14 M310 99 l -14 14" />
-                    <text class="mm-cap c-stale" x="197" y="140" text-anchor="middle">stale &#183; discarded</text>
+                    <text class="mm-cap c-stale" x="197" y="140" text-anchor="middle">stale &#183; off chain</text>
                   </svg>
                 </div>
-                <h3 class="screen-title">1. Forks happen, stales vanish</h3>
+                <h3 class="screen-title">1. Blocks outside the active chain</h3>
                 <p class="screen-copy">
-                  When two miners find a valid block at the same height,
-                  consensus keeps one on the canonical chain and discards the
-                  losing stale block.
+                  Competing valid blocks can form branches. The active chain
+                  keeps one branch; others become stale, including blocks
+                  displaced by a reorganisation. The active chain alone does
+                  not preserve the whole mining record.
                 </p>
               </li>
 
@@ -242,99 +243,79 @@
                 </div>
                 <h3 class="screen-title">2. Merge mining stamps a copy</h3>
                 <p class="screen-copy">
-                  Merge-mined chains reuse Bitcoin's proof of work. Each child
+                  Merge-mined chains reuse Bitcoin's proof of work. A merge-mined child
                   block carries a
                   <a href="https://deadmanoz.xyz/posts/2026/merge-mining" target="_blank" rel="noopener noreferrer">merge-mining proof</a>
                   embedding the exact Bitcoin header the miner was hashing.
                 </p>
               </li>
 
-              <li class="explainer-screen" data-screen="2" role="group" aria-roledescription="slide" aria-label="Step 3 of 4: child chains never forget" hidden>
+              <li class="explainer-screen" data-screen="2" role="group" aria-roledescription="slide" aria-label="Step 3 of 4: proof of work is not full validity" hidden>
                 <div class="screen-figure">
-                  <svg viewBox="0 0 460 180" role="img" aria-label="Child chain preserving a stale header">
-                    <text class="mm-lane" x="18" y="31">Bitcoin</text>
-                    <rect class="blk k-base" x="92" y="12" width="56" height="30" rx="5" />
-                    <text class="mm-t" x="120" y="31" text-anchor="middle">N&#8722;1</text>
-                    <path class="edge e-canonical" d="M148 27 H 184" />
-                    <polygon class="head h-canonical" points="186,27 178,23 178,31" />
-                    <rect class="blk k-canonical" x="186" y="12" width="56" height="30" rx="5" />
-                    <text class="mm-t" x="214" y="31" text-anchor="middle">N</text>
-                    <path class="edge e-canonical" d="M242 27 H 278" />
-                    <polygon class="head h-canonical" points="280,27 272,23 272,31" />
-                    <rect class="blk k-base" x="280" y="12" width="56" height="30" rx="5" />
-                    <text class="mm-t" x="308" y="31" text-anchor="middle">N+1</text>
-                    <rect class="blk k-dropped" x="186" y="58" width="56" height="30" rx="5" />
-                    <text class="mm-t mm-faded" x="214" y="77" text-anchor="middle">N</text>
-                    <path class="edge e-stale" d="M190 61 L238 85" />
-                    <text class="mm-cap c-stale" y="104">
-                      <tspan x="205" text-anchor="end">dropped</tspan>
-                      <tspan x="214" text-anchor="middle">-</tspan>
-                      <tspan x="223" text-anchor="start">no record</tspan>
-                    </text>
-                    <text class="mm-lane" x="18" y="148">Child</text>
-                    <path class="edge e-stale e-dashed" d="M214 130 C 214 108, 214 102, 214 92" />
-                    <polygon class="head h-stale" points="214,88 209,98 219,98" />
-                    <text class="mm-cap" x="300" y="112" text-anchor="start">permanent</text>
-                    <text class="mm-cap" x="300" y="124" text-anchor="start">copy</text>
-                    <rect class="blk k-base" x="150" y="120" width="150" height="44" rx="5" />
-                    <rect class="blk k-stale" x="160" y="130" width="130" height="24" rx="4" />
-                    <text class="mm-t" x="225" y="146" text-anchor="middle">stale N header</text>
+                  <svg viewBox="0 0 460 180" role="img" aria-label="A Bitcoin template can meet the proof-of-work target but fail a consensus rule, while a child chain retains its proof">
+                    <rect class="blk k-base" x="14" y="22" width="128" height="44" rx="5" />
+                    <text class="mm-t" x="78" y="41" text-anchor="middle">Bitcoin template</text>
+                    <text class="mm-s" x="78" y="56" text-anchor="middle">full proof of work</text>
+                    <path class="edge e-base" d="M142 44 H 270" />
+                    <polygon class="head h-base" points="272,44 264,40 264,48" />
+                    <text class="mm-cap" x="207" y="30" text-anchor="middle">rule failure</text>
+                    <rect class="blk k-error" x="274" y="22" width="172" height="44" rx="5" />
+                    <text class="mm-t" x="360" y="41" text-anchor="middle">Bitcoin: invalid</text>
+                    <text class="mm-s" x="360" y="56" text-anchor="middle">e.g. excess coinbase reward</text>
+                    <path class="edge e-base e-dashed" d="M78 66 V 137 H 270" />
+                    <polygon class="head h-base" points="272,137 264,133 264,141" />
+                    <text class="mm-cap" x="170" y="121" text-anchor="middle">child's own rules</text>
+                    <rect class="blk k-base" x="274" y="115" width="172" height="44" rx="5" />
+                    <text class="mm-t" x="360" y="134" text-anchor="middle">Child: proof retained</text>
+                    <text class="mm-s" x="360" y="149" text-anchor="middle">independent evidence</text>
                   </svg>
                 </div>
-                <h3 class="screen-title">3. Child chains never forget</h3>
+                <h3 class="screen-title">3. Proof of work is not full validity</h3>
                 <p class="screen-copy">
-                  When Bitcoin drops a losing block, any child block that
-                  committed to it keeps that embedded header permanently in its
-                  own chain history.
+                  A child chain applies its own rules, so it can preserve proof
+                  of a Bitcoin template that meets the target but violates a
+                  Bitcoin consensus rule. These are error blocks, distinct from
+                  stale blocks. A header or proof alone does not validate every
+                  transaction in the Bitcoin block.
                 </p>
               </li>
 
-              <li class="explainer-screen" data-screen="3" role="group" aria-roledescription="slide" aria-label="Step 4 of 4: recover and classify" hidden>
+              <li class="explainer-screen" data-screen="3" role="group" aria-roledescription="slide" aria-label="Step 4 of 4: classify from the available evidence" hidden>
                 <div class="screen-figure">
-                  <svg viewBox="0 0 460 180" role="img" aria-label="Extracted headers classified against Bitcoin Core">
-                    <rect class="blk k-base" x="14" y="18" width="54" height="22" rx="4" />
-                    <text class="mm-s" x="41" y="33" text-anchor="middle">NMC</text>
-                    <rect class="blk k-base" x="14" y="48" width="54" height="22" rx="4" />
-                    <text class="mm-s" x="41" y="63" text-anchor="middle">RSK</text>
-                    <rect class="blk k-base" x="14" y="78" width="54" height="22" rx="4" />
-                    <text class="mm-s" x="41" y="93" text-anchor="middle">SYS</text>
-                    <rect class="blk k-base" x="14" y="108" width="54" height="22" rx="4" />
-                    <text class="mm-s" x="41" y="123" text-anchor="middle">FB</text>
-                    <rect class="blk k-base" x="14" y="138" width="54" height="22" rx="4" />
-                    <text class="mm-s" x="41" y="153" text-anchor="middle">HTR</text>
-                    <path class="edge e-base" d="M68 29 C 96 50, 104 70, 122 80" />
-                    <path class="edge e-base" d="M68 59 C 96 66, 104 74, 122 82" />
-                    <path class="edge e-base" d="M68 89 H 122" />
-                    <path class="edge e-base" d="M68 119 C 96 110, 104 92, 122 86" />
-                    <path class="edge e-base" d="M68 149 C 96 110, 104 96, 122 88" />
-                    <rect class="blk k-base" x="124" y="62" width="92" height="44" rx="5" />
-                    <text class="mm-s" x="170" y="80" text-anchor="middle">extract</text>
-                    <text class="mm-s" x="170" y="94" text-anchor="middle">headers</text>
-                    <path class="edge e-base" d="M216 84 H 244" />
-                    <polygon class="head h-base" points="246,84 238,80 238,88" />
-                    <rect class="blk k-base" x="246" y="62" width="96" height="44" rx="5" />
-                    <text class="mm-s" x="294" y="80" text-anchor="middle">check vs</text>
-                    <text class="mm-s" x="294" y="94" text-anchor="middle">Bitcoin Core</text>
-                    <path class="edge e-canonical" d="M342 76 C 356 60, 360 38, 372 26" />
-                    <path class="edge e-stale" d="M342 82 C 356 74, 360 66, 372 60" />
-                    <path class="edge e-orphan-strict" d="M342 90 C 356 100, 360 112, 372 122" />
-                    <path class="edge e-orphan-weak" d="M342 96 C 356 120, 360 142, 372 156" />
-                    <rect class="blk k-canonical" x="372" y="14" width="78" height="24" rx="4" />
-                    <text class="mm-s" x="411" y="29" text-anchor="middle">canonical</text>
-                    <rect class="blk k-stale" x="372" y="50" width="78" height="24" rx="4" />
-                    <text class="mm-s" x="411" y="65" text-anchor="middle">stale</text>
-                    <rect class="blk k-orphan-strict" x="372" y="110" width="78" height="24" rx="4" />
-                    <text class="mm-s" x="411" y="125" text-anchor="middle">strict orphan</text>
-                    <rect class="blk k-orphan-weak" x="372" y="146" width="78" height="24" rx="4" />
-                    <text class="mm-s" x="411" y="161" text-anchor="middle">weak orphan</text>
+                  <svg viewBox="0 0 460 200" role="img" aria-label="Child proofs, Bitcoin Core context and the reviewed catalogue inform canonical, stale, error-block, strict-orphan or weak-orphan classifications; incomplete evidence can remain unknown">
+                    <rect class="blk k-base" x="12" y="20" width="126" height="32" rx="4" />
+                    <text class="mm-t" x="75" y="40" text-anchor="middle">Child proofs</text>
+                    <rect class="blk k-base" x="12" y="84" width="126" height="32" rx="4" />
+                    <text class="mm-t" x="75" y="104" text-anchor="middle">Core context</text>
+                    <rect class="blk k-base" x="12" y="148" width="126" height="32" rx="4" />
+                    <text class="mm-s" x="75" y="168" text-anchor="middle">Reviewed catalogue</text>
+                    <path class="edge e-base" d="M138 36 H 154 V 100 H 172 M138 100 H 172 M138 164 H 154 V 100" />
+                    <rect class="blk k-base" x="172" y="74" width="112" height="52" rx="5" />
+                    <text class="mm-t" x="228" y="96" text-anchor="middle">Combine</text>
+                    <text class="mm-t" x="228" y="112" text-anchor="middle">evidence</text>
+                    <path class="edge e-base" d="M284 100 H 304 M304 20 V 180 M304 20 H 324 M304 52 H 324 M304 84 H 324 M304 116 H 324 M304 148 H 324 M304 180 H 324" />
+                    <rect class="blk k-canonical" x="324" y="8" width="124" height="24" rx="4" />
+                    <text class="mm-t" x="386" y="24" text-anchor="middle">Canonical</text>
+                    <rect class="blk k-stale" x="324" y="40" width="124" height="24" rx="4" />
+                    <text class="mm-t" x="386" y="56" text-anchor="middle">Stale</text>
+                    <rect class="blk k-error" x="324" y="72" width="124" height="24" rx="4" />
+                    <text class="mm-t" x="386" y="88" text-anchor="middle">Error block</text>
+                    <rect class="blk k-orphan-strict" x="324" y="104" width="124" height="24" rx="4" />
+                    <text class="mm-t" x="386" y="120" text-anchor="middle">Strict orphan</text>
+                    <rect class="blk k-orphan-weak" x="324" y="136" width="124" height="24" rx="4" />
+                    <text class="mm-t" x="386" y="152" text-anchor="middle">Weak orphan</text>
+                    <rect class="blk k-unknown" x="324" y="168" width="124" height="24" rx="4" />
+                    <text class="mm-t" x="386" y="184" text-anchor="middle">Unknown</text>
                   </svg>
                 </div>
-                <h3 class="screen-title">4. Recover and classify</h3>
+                <h3 class="screen-title">4. Classify from the available evidence</h3>
                 <p class="screen-copy">
-                  Scraping child chains and checking their embedded headers
-                  against Bitcoin Core classifies each parent as canonical,
-                  stale, strict orphan (matching BIP34 height and nBits), or
-                  weak orphan (matching timestamp nBits).
+                  Core context establishes chain placement; live checks and a
+                  reviewed catalogue identify known consensus failures. Strict
+                  orphan evidence uses an authenticated coinbase height; weak
+                  evidence relies on timestamp and difficulty-epoch agreement.
+                  Both require Core absence and lineage checks. Incomplete
+                  evidence can remain unknown.
                 </p>
               </li>
             </ol>
@@ -365,6 +346,13 @@
               (2018) and
               <a href="https://eprint.iacr.org/2017/791.pdf" target="_blank" rel="noopener noreferrer">Merged Mining: Curse or Cure?</a>
               (2017).
+            </p>
+            <p>
+              For invalid-block evidence, see
+              <a href="https://github.com/bitcoin-data/invalid-blocks" target="_blank" rel="noopener noreferrer">bitcoin-data/invalid-blocks</a>
+              and <a href="https://deadmanoz.xyz/posts/2026/invalid-blocks" target="_blank" rel="noopener noreferrer">Invalid Bitcoin blocks: full PoW, consensus invalid</a>.
+              This monitor uses a pinned Research mirror of reviewed errors,
+              not the whole upstream catalogue or its unproven reported cases.
             </p>
             <div class="about-credit-by">
               <div class="about-credit-line about-credit-source">

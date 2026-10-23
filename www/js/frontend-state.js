@@ -12,25 +12,26 @@ const KIND_HELP = {
     criteria: "Bitcoin Core places this block on the active best chain.",
     interpretation: "Canonical blocks form the main chain spine, with merge-mined child-chain evidence attached to each block.",
     notes: [
-      "Competing blocks that lost the chain race appear as connected stale or orphan blocks.",
+      "Evidence outside the active chain is classified separately as stale, orphan, error-block or unresolved evidence.",
     ],
   },
   stale: {
     name: "Stale",
-    meta: "Bitcoin-valid, off the active chain",
-    criteria: "The block has valid Bitcoin proof of work and is known off the active chain.",
-    interpretation: "A stale block comes from a valid Bitcoin branch that lost the chain race, preserved by Bitcoin Core or merge-mined child chains.[^1]",
+    meta: "Bitcoin branch, off the active chain",
+    criteria: "Core observations or Core-backed predecessor and header checks place this header on a branch off Bitcoin's active chain.",
+    interpretation: "A stale block belongs to a branch off the active chain, including blocks displaced by a reorganisation.[^1]",
     references: [
       { id: 1, label: "Lightspark glossary: Stale block", url: "https://www.lightspark.com/glossary/stale-block" },
     ],
     notes: [
       "Stale branch navigation steps through single-block and multi-block losing branches.",
+      "Header or proof evidence does not establish validation of an unavailable block body.",
     ],
   },
   error_block: {
     name: "Error block",
     meta: "Bitcoin proof of work, consensus-invalid",
-    criteria: "The header meets Bitcoin's proof-of-work target but matches the reviewed consensus-invalid error-block catalogue.",
+    criteria: "The header meets Bitcoin's proof-of-work target but has an established consensus failure from live median-time-past checks or the reviewed error catalogue.",
     interpretation: "Error blocks are kept separate so consensus-invalid work is never misread as a stale or orphan Bitcoin block.",
     notes: [
       "Block detail names the violated rule; error blocks are excluded from stale branches, orphan counts, and competitions.",

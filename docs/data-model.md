@@ -41,7 +41,7 @@ A capture classifies its parent as one of the following; `merge_mining_event.btc
 - `near` - a Bitcoin share: the parent is a Bitcoin header that fails its own target. Capture records a near only as a `near` observation with its parent header, coinbase and pools; `merge_mining_event` never holds one.
 - `unknown` - a Bitcoin header that meets its own target, but no Bitcoin-chain membership proof is available.
 - `canonical` - Bitcoin Core proves the parent is on the active chain.
-- `stale` - Bitcoin Core proves the parent is a valid off-chain Bitcoin block.
+- `stale` - Core observations or Core-backed predecessor and header checks place the parent on a branch off the active chain. This includes displaced formerly canonical blocks; inferred placement does not establish validation of an unavailable block body.
 - `error_block` - parent hash meets Bitcoin's target but violates a Bitcoin consensus rule.
   The live classifier currently derives `time_below_mtp` from the exact eleven-header predecessor window returned by Core; the pinned research catalogue remains the fallback for other reproducibly validated rules.
   It is neither stale nor an orphan; `block.error_block_reason` records its primary rejection token and `btc_height_source` records whether its height came from the catalogue or a canonical/stale predecessor.

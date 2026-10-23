@@ -3,6 +3,17 @@
 The monitor is configured with environment variables.
 `just` loads `.env` automatically via `set dotenv-load`; the binary itself does not.
 
+## Endpoint Availability
+
+Provide RPC access for the child chains you enable; the monitor does not start or manage their nodes.
+Hathor uses REST: `HATHOR_RPC_URL` defaults to `https://node1.mainnet.hathor.network/v1a`, and `HATHOR_RPC_FALLBACK_URL` defaults to `https://node2.mainnet.hathor.network/v1a` (empty disables fallback).
+Public endpoint outages or rate limits can interrupt capture. The client honours `Retry-After` with bounded retries; keep the backfill delay and range caps when using shared public services.
+Elastos also has an endpoint default; inspect `.env.example` and set the endpoint appropriate to your deployment.
+
+Bitcoin Core must be synced to mainnet for classification and cache refresh.
+Complete coinbase enrichment needs the full bodies for the Bitcoin heights being requested; headers alone cannot supply payout or protocol-declaration evidence.
+`serve` uses persisted Postgres data without contacting the nodes. See [the dependency matrix](operations.md#dependencies) for command-specific requirements and exceptions.
+
 ## Per-Chain Variables
 
 Prefixes: `NAMECOIN`, `RSK`, `SYSCOIN`, `FRACTAL`, `HATHOR`, `ELASTOS`, `QBIT`, `TERRACOIN`.

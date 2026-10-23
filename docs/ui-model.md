@@ -2,15 +2,15 @@
 
 ## Product Intent
 
-The monitor collects and presents evidence about Bitcoin stale blocks: valid blocks the network mined but did not keep.
+The monitor presents Bitcoin mining evidence: canonical context, stale and orphan headers, consensus-invalid error blocks, available pool attribution and coinbase protocol declarations.
 Merge-mined (AuxPoW) child chains embed Bitcoin parent headers in their own blocks, preserving independent records of Bitcoin work that the Bitcoin chain itself discarded.
-The workspace opens directly on the data for researchers, mining analysts, and operators who want to see which Bitcoin blocks lost a fork race, who mined them, and which child chains preserved the proof.
+The workspace opens directly on the data for researchers, mining analysts, and operators who want to examine mining activity, distinguish lost fork races from invalid work, and follow the evidence behind each classification.
 
 - **Multi-source contract**: Different child chains preserve distinct evidence shapes — classic Namecoin-family AuxPoW (`namecoin`, `syscoin`, `terracoin`), Ethereum-style JSON-RPC payloads with uncle context and beneficiary addresses (`rsk`), hybrid 1-in-3 cycle merge mining with full-block child reward pairing (`fractal`), RFC 0006 REST merged mining (`hathor`), 84-byte reconstructed child headers (`elastos`), and display-order chain-merkle proofs without `hashBlock` (`qbit`).
   Lifecycle classes (`live`, `historical`, `partial`, `surveyed`, `catalogued`) describe the evidence held by the monitor rather than whether a native chain is still running, keeping recovery boundaries explicit without overstating coverage.
 - **Interpretation from Bitcoin classification**: Child-chain producers record locally verified commitments, while the Bitcoin lineage gate refuses non-Bitcoin SHA-256 parents (such as Bitcoin Cash blocks or shares) before storage.
   A Bitcoin parent is `near` when it fails its own target and `unknown` when it meets it without Bitcoin-chain proof.
-  The `live-chaintip:bitcoin:core` classifier turns captured headers into canonical and stale verdicts, same-height competition, branch context, and the `strict_btc_orphan` / `weak_btc_orphan` refinement for valid blocks Bitcoin Core has never seen.
+  The `live-chaintip:bitcoin:core` classifier turns captured headers into canonical and stale verdicts, same-height competition, branch context, and the `strict_btc_orphan` / `weak_btc_orphan` refinement for Bitcoin work whose absence Core attests.
   Consensus-invalid full-PoW headers (`error_block`) are derived from Bitcoin Core or the pinned research catalogue and kept separate from stale and orphan evidence so invalid work is never mistaken for a lost fork race.
 - **API contracts over CSV export**: The UI consumes the typed JSON contract in `docs/api-contract.md` and does not infer product meaning from raw CSV rows.
   CSV export, RSS/SSE feeds, and runtime node management are out of scope.
@@ -52,7 +52,8 @@ The findings view has two canvas states (`replaceState`-only):
 - **Article**: cited prose, structured evidence panels (leading with claim metrics followed by a validated series chart or event timeline rendered from the generated corpus rather than a bitmap, plus an assistive prose equivalent), typed evidence anchors (`btc-height` jumps to the tree, `source` opens the source modal, `child-height` and `pool` are informational chips), and a Sources list. Unknown `finding=` slugs degrade to the feed; `finding=` with a non-findings `view=` is dropped at hydration.
   Category and Status filters are findings-local; the shared Source filter narrows the feed by affected sources.
 
-The topbar includes an About control that opens a modal with a step-through visual explainer of AuxPoW stale/orphan evidence and a release-notes tab rendered from embedded `RELEASE_NOTES.md`.
+The topbar includes an About control that opens a modal with a four-step visual explainer of chain placement, child proofs, proof of work versus consensus validity, and classification from Core context plus reviewed error evidence.
+The modal also has a release-notes tab rendered from embedded `RELEASE_NOTES.md`.
 
 In the `tree` view, leaving Height and UTC Date/Time empty omits bounds so the backend resolves the default tip-focused canonical window.
 Entering Height sends `at_height` and entering UTC Date/Time sends `at_time` (`YYYY-MM-DDTHH:MM:SSZ`), both automatically requesting `context=compact`.
@@ -80,11 +81,12 @@ Classification:
 
 - `canonical`
 - `stale`
+- `error block`
 - `strict orphan`
 - `weak orphan`
 
 The Classification rail combines the visible parent-kind highlights with the visible BTC-orphan signal.
-Each row has a compact helper affordance explaining the criterion and interpretation: canonical means active-chain Bitcoin context, stale means Bitcoin-valid but off the active chain, strict orphan means Core-absent Bitcoin-valid work with BIP34 height and epoch nBits agreement, and weak orphan means Core-absent Bitcoin-valid work with timestamp-epoch nBits agreement.
+Each row has a compact helper affordance explaining the criterion and interpretation: canonical means active-chain Bitcoin context, stale means Bitcoin evidence placed on a branch off the active chain, error block means full-PoW evidence with an established consensus failure, strict orphan means Core-absent Bitcoin work with BIP34 height and epoch nBits agreement, and weak orphan means Core-absent Bitcoin work with timestamp-epoch nBits agreement.
 
 Source (live section):
 
@@ -117,8 +119,8 @@ Source sections are collapsible and non-live sections default closed; a collapse
 The topbar source-status bead and popover summarize only operational live sources (`live` and `bitcoin-core-backbone` sync modes); non-live lifecycle classes do not carry aliveness status there.
 
 The topbar source-status popover separates capture progress from evidence freshness.
-Status pills show the sync state only (`Live`, `Catching up`, `Stale`, `Error`, `Not started`, `Unknown`); the source mode remains in the tooltip. **Height** is the source's current indexed height; live AuxPoW rows show `progress / target` when an observed target height exists, while Bitcoin Core backbone rows keep the target height in the tooltip. **Cursor Updated** is the time the cursor/backbone row last advanced or was seeded. **Latest Evidence** is the newest AuxPoW evidence timestamp seen for that source; Bitcoin Core backbone rows mark this as `N/A` because they observe chain-tip progress rather than AuxPoW evidence.
-A stale cursor means progress has not advanced recently; it is not the same claim as stale evidence.
+Status pills show the sync state only (`Live`, `Waiting`, `Catching up`, `Stale`, `Error`, `Not started`, `Unknown`); the source mode remains in the tooltip. **Height** is the source's current indexed height; live AuxPoW rows show `progress / target` when an observed target height exists, while Bitcoin Core backbone rows keep the target height in the tooltip. **Cursor Updated** is the time the cursor/backbone row last advanced or was seeded. **Latest Evidence** is the newest AuxPoW evidence timestamp seen for that source; Bitcoin Core backbone rows mark this as `N/A` because they observe chain-tip progress rather than AuxPoW evidence.
+An old cursor timestamp means progress has not advanced recently; runtime heartbeats and successful cycles establish liveness separately. Sources without runtime rows use the legacy cursor-age rule. The source's Stale status is distinct from a stale Bitcoin block.
 When a source reports an error, the error code and associated height are shown directly in the Cursor Updated cell so operators do not need to hover the status pill to see the failure reason.
 
 ### Planned filter dimensions
