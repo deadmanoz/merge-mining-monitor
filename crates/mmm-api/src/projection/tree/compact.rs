@@ -314,7 +314,7 @@ fn empty_compact_time_lookup() -> TreePayload {
     }
 }
 
-/// Sparse seed loader: canonical blocks at `from/target/to`, all in-window stale or error blocks,
+/// Sparse seed loader: canonical blocks at `from/target/to`, all in-window stale or invalid blocks,
 /// and any in-window canonical block with active merge-mining events.
 async fn load_compact_seed_blocks(
     client: &Client,
@@ -327,7 +327,7 @@ async fn load_compact_seed_blocks(
         "{BLOCK_ROW_SELECT} \
          WHERE (b.kind = 'canonical' AND b.btc_height = ANY($1::int[])) \
             OR (b.kind = 'stale' AND b.btc_height BETWEEN $2 AND $3) \
-            OR (b.kind = 'error_block' AND b.btc_height BETWEEN $2 AND $3) \
+            OR (b.kind = 'invalid_block' AND b.btc_height BETWEEN $2 AND $3) \
             OR ( \
                 b.kind = 'canonical' \
                 AND b.btc_height BETWEEN $2 AND $3 \

@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::str::FromStr;
 
 use bitcoin::hashes::{Hash as _, sha256};
 use mmm_capture::source_registry::SourceLifecycle;
@@ -12,7 +13,15 @@ use super::{
 
 const TEST_EVENT_ROWS: u64 = 3;
 const TEST_AGGREGATE_ROWS: u64 = 2;
-pub(super) const TEST_ERROR_OBSERVATION_ROWS: u64 = 2;
+pub(super) const TEST_INVALID_OBSERVATION_ROWS: u64 = 2;
+
+pub(super) fn fixture_invalid_parents() -> BTreeSet<[u8; 32]> {
+    BTreeSet::from([bitcoin::BlockHash::from_str(
+        "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
+    )
+    .expect("genesis hash")
+    .to_byte_array()])
+}
 
 pub(super) fn temp_path(label: &str) -> std::path::PathBuf {
     let suffix = std::time::SystemTime::now()
@@ -77,30 +86,30 @@ pub(super) fn valid_manifest() -> PublicationManifest {
         publication_manifest_sha256: "0".repeat(64),
         total_event_rows: TEST_EVENT_ROWS,
         aggregate_rows: TEST_AGGREGATE_ROWS,
-        error_observation_rows: 0,
+        invalid_observation_rows: 0,
         required_columns: NORMALIZED_COLUMNS
             .iter()
             .map(|column| (*column).to_owned())
             .collect(),
         artifacts,
     };
-    add_error_observation_artifact(&mut manifest);
+    add_invalid_observation_artifact(&mut manifest);
     manifest
 }
 
-fn add_error_observation_artifact(manifest: &mut PublicationManifest) {
-    manifest.error_observation_rows = TEST_ERROR_OBSERVATION_ROWS;
+fn add_invalid_observation_artifact(manifest: &mut PublicationManifest) {
+    manifest.invalid_observation_rows = TEST_INVALID_OBSERVATION_ROWS;
     manifest.artifacts.push(PublicationArtifact {
         chain: "error-block-observations".to_owned(),
         csv_path: "results/monitor-evidence/error-block-observations_monitor_evidence.csv"
             .to_owned(),
-        role: ArtifactRole::ErrorObservation,
-        row_count: TEST_ERROR_OBSERVATION_ROWS,
+        role: ArtifactRole::InvalidObservation,
+        row_count: TEST_INVALID_OBSERVATION_ROWS,
         parent_only_rows: 0,
         size_bytes: 1,
         sha256: "0".repeat(64),
         counts: PublicationCounts {
-            error_block: TEST_ERROR_OBSERVATION_ROWS,
+            invalid_block: TEST_INVALID_OBSERVATION_ROWS,
             ..PublicationCounts::default()
         },
         source_chain_counts: BTreeMap::from([
@@ -185,8 +194,8 @@ pub(super) fn assert_parent_only_fixture(prepared: &PreparedPublication) {
             .all(|(config, artifact)| config.chain == artifact.chain)
     );
     assert_eq!(
-        prepared.error_observations.row_count,
-        TEST_ERROR_OBSERVATION_ROWS
+        prepared.invalid_observations.row_count,
+        TEST_INVALID_OBSERVATION_ROWS
     );
     assert!(
         prepared

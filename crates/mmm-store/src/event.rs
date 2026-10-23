@@ -523,7 +523,7 @@ async fn upsert_historical_event_provenance<C: GenericClient>(
     if provenance.source_row_number <= 0 {
         bail!("historical source_row_number must be positive");
     }
-    ensure_error_observation_coordinate_identity(client, event_id, provenance).await?;
+    ensure_invalid_observation_coordinate_identity(client, event_id, provenance).await?;
     let row = client
         .query_opt(
             "INSERT INTO historical_event_provenance ( \
@@ -575,9 +575,9 @@ async fn upsert_historical_event_provenance<C: GenericClient>(
     Ok(())
 }
 
-/// Ensure an error-observation coordinate `(chain, source_path, source_row_number)` continues
+/// Ensure an invalid-observation coordinate `(chain, source_path, source_row_number)` continues
 /// to identify the same `event_id` across pinned publication refs.
-async fn ensure_error_observation_coordinate_identity<C: GenericClient>(
+async fn ensure_invalid_observation_coordinate_identity<C: GenericClient>(
     client: &C,
     event_id: i64,
     provenance: &HistoricalEventProvenance,
@@ -600,10 +600,10 @@ async fn ensure_error_observation_coordinate_identity<C: GenericClient>(
             ],
         )
         .await
-        .context("load existing error-observation provenance coordinate")?;
+        .context("load existing invalid-observation provenance coordinate")?;
     if rows.iter().any(|row| row.get::<_, i64>(0) != event_id) {
         bail!(
-            "error-observation coordinate contradicts stored child identity for {}:{} row {}",
+            "invalid-observation coordinate contradicts stored child identity for {}:{} row {}",
             provenance.chain,
             provenance.source_path,
             provenance.source_row_number

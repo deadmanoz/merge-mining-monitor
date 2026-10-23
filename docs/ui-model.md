@@ -2,7 +2,7 @@
 
 ## Product Intent
 
-The monitor presents Bitcoin mining evidence: canonical context, stale and orphan headers, consensus-invalid error blocks, available pool attribution and coinbase protocol declarations.
+The monitor presents Bitcoin mining evidence: canonical context, stale and orphan headers, consensus-invalid blocks, available pool attribution and coinbase protocol declarations.
 Merge-mined (AuxPoW) child chains embed Bitcoin parent headers in their own blocks, preserving independent records of Bitcoin work that the Bitcoin chain itself discarded.
 The workspace opens directly on the data for researchers, mining analysts, and operators who want to examine mining activity, distinguish lost fork races from invalid work, and follow the evidence behind each classification.
 
@@ -11,7 +11,7 @@ The workspace opens directly on the data for researchers, mining analysts, and o
 - **Interpretation from Bitcoin classification**: Child-chain producers record locally verified commitments, while the Bitcoin lineage gate refuses non-Bitcoin SHA-256 parents (such as Bitcoin Cash blocks or shares) before storage.
   A Bitcoin parent is `near` when it fails its own target and `unknown` when it meets it without Bitcoin-chain proof.
   The `live-chaintip:bitcoin:core` classifier turns captured headers into canonical and stale verdicts, same-height competition, branch context, and the `strict_btc_orphan` / `weak_btc_orphan` refinement for Bitcoin work whose absence Core attests.
-  Consensus-invalid full-PoW headers (`error_block`) are derived from Bitcoin Core or the pinned research catalogue and kept separate from stale and orphan evidence so invalid work is never mistaken for a lost fork race.
+  Consensus-invalid full-PoW headers (`invalid_block`) are derived from Bitcoin Core or the pinned research catalogue and kept separate from stale and orphan evidence so invalid work is never mistaken for a lost fork race.
 - **API contracts over CSV export**: The UI consumes the typed JSON contract in `docs/api-contract.md` and does not infer product meaning from raw CSV rows.
   CSV export, RSS/SSE feeds, and runtime node management are out of scope.
 
@@ -52,7 +52,7 @@ The findings view has two canvas states (`replaceState`-only):
 - **Article**: cited prose, structured evidence panels (leading with claim metrics followed by a validated series chart or event timeline rendered from the generated corpus rather than a bitmap, plus an assistive prose equivalent), typed evidence anchors (`btc-height` jumps to the tree, `source` opens the source modal, `child-height` and `pool` are informational chips), and a Sources list. Unknown `finding=` slugs degrade to the feed; `finding=` with a non-findings `view=` is dropped at hydration.
   Category and Status filters are findings-local; the shared Source filter narrows the feed by affected sources.
 
-The topbar includes an About control that opens a modal with a four-step visual explainer of chain placement, child proofs, proof of work versus consensus validity, and classification from Core context plus reviewed error evidence.
+The topbar includes an About control that opens a modal with a four-step visual explainer of chain placement, child proofs, proof of work versus consensus validity, and classification from Core context plus reviewed invalid-block evidence.
 The modal also has a release-notes tab rendered from embedded `RELEASE_NOTES.md`.
 
 In the `tree` view, leaving Height and UTC Date/Time empty omits bounds so the backend resolves the default tip-focused canonical window.
@@ -63,15 +63,15 @@ Unsynced height windows surface the backend HTTP 409 `backbone_unsynced` / `back
 ### Tree navigator
 
 A single "Go to" navigator in the tree heading combines a target selector with shared `«` `‹` `›` `»` steppers (`‹` `›` step by 1; `«` `»` step by a coarse stride) and a position readout.
-The target locks when picked from the menu and otherwise follows node selection by precedence: branch > stale > error block > orphan branch > orphan.
-The select displays the active target (`Live tip`, `Stale`, `Branch`, `Error blocks`, `Orphan branch`, `Orphans`, `Height`, or `Date/Time`), while its menu lists the six `Latest ...` actions (re-picking the active action jumps back to the newest item).
+The target locks when picked from the menu and otherwise follows node selection by precedence: branch > stale > invalid block > orphan branch > orphan.
+The select displays the active target (`Live tip`, `Stale`, `Branch`, `Invalid blocks`, `Orphan branch`, `Orphans`, `Height`, or `Date/Time`), while its menu lists the six `Latest ...` actions (re-picking the active action jumps back to the newest item).
 
 | Menu Action | API Target / Mode | Readout Format | Selection & Stepping Behavior |
 |---|---|---|---|
 | `Live tip` | `/api/v1/tree` (default tip window) | Tip height | Clears explicit height/time/anchor state, deselects the open block, collapses the drawer, and centers on the chain tip. |
 | `Latest stale` | `/api/v1/navigator/stale` (`tree_window`) | `#<height> · n of N` | Jumps to the row's `view` window, selects the stale block, and centers the camera (or surfaces `view_error`). Clicking any stale node hydrates its keyset anchor. |
 | `Latest stale branch` | `/api/v1/navigator/stale-branch` (`tree_window`, `depth >= 2`) | `#<min>-<max> · depth <d> · n of N` | Opens the drawer, selects the branch root, and centers on it (or surfaces `view_error`). Clicking any branch member hydrates the owning branch via `anchor_hash`. |
-| `Latest error block` | `/api/v1/navigator/error-block` (`tree_window`) | `#<height> · n of N` | Steps newest-first by height then stored hash bytes (no `classification` filter). Clicking or restoring `?selected=` on an error block hydrates via `anchor_hash`. |
+| `Latest invalid block` | `/api/v1/navigator/invalid-block` (`tree_window`) | `#<height> · n of N` | Steps newest-first by height then stored hash bytes (no `classification` filter). Clicking or restoring `?selected=` on an invalid block hydrates via `anchor_hash`. |
 | `Latest orphan` | `/api/v1/navigator/orphan` (`unheighted_anchor`) | `<YYYY-MM-DD> · n of N` + per-class counts | Filtered by active strict/weak orphan toggles; switches tree to `unheighted_anchor` mode (`±16` canonical context or flat time strip fallback). Coarse stride is 100. Toggling orphan classes re-drives the navigator (falling back to `Live tip` if empty). |
 | `Latest orphan branch` | `/api/v1/navigator/orphan-branch` (`unheighted_anchor`, `depth >= 2`) | `<YYYY-MM-DD> · depth <d> · n of N` | Anchors the tree on the component's `root_hash` via `unheighted_anchor` and renders all linked members. Reloads when orphan-class controls change. |
 
@@ -81,12 +81,12 @@ Classification:
 
 - `canonical`
 - `stale`
-- `error block`
+- `invalid block`
 - `strict orphan`
 - `weak orphan`
 
 The Classification rail combines the visible parent-kind highlights with the visible BTC-orphan signal.
-Each row has a compact helper affordance explaining the criterion and interpretation: canonical means active-chain Bitcoin context, stale means Bitcoin evidence placed on a branch off the active chain, error block means full-PoW evidence with an established consensus failure, strict orphan means Core-absent Bitcoin work with BIP34 height and epoch nBits agreement, and weak orphan means Core-absent Bitcoin work with timestamp-epoch nBits agreement.
+Each row has a compact helper affordance explaining the criterion and interpretation: canonical means active-chain Bitcoin context, stale means Bitcoin evidence placed on a branch off the active chain, invalid block means full-PoW evidence with an established consensus failure, strict orphan means Core-absent Bitcoin work with BIP34 height and epoch nBits agreement, and weak orphan means Core-absent Bitcoin work with timestamp-epoch nBits agreement.
 
 Source (live section):
 
@@ -133,14 +133,14 @@ These dimensions are modelled by the API contract but not yet exposed as rail co
 
 ## Visual Semantics
 
-Canonical, stale, error-block, and the visible strict/weak orphan signal are visually distinct by fill color alone on uniform rounded blocks (no shape/size encoding or per-kind text label on the block).
+Canonical, stale, invalid-block, and the visible strict/weak orphan signal are visually distinct by fill color alone on uniform rounded blocks (no shape/size encoding or per-kind text label on the block).
 Pending and excluded remain backend refinements outside the left rail and default legend; a near parent is not a tree node, and its page lists the child blocks that name it.
 
 Each block shows its Bitcoin height and best-available miner (`display_miner_pool`): the strict `bitcoin_miner_pool` when known, or the chain-agnostic `child_inferred` miner when the Bitcoin coinbase miner is Unknown (for example an RSK-only stale block).
 The drawer keeps `Bitcoin miner` strict and adds an `Inferred miner` row when `display_miner_basis` is `child_inferred`.
 A top-right badge shows the count of distinct AuxPoW child chains in `child_chain_evidence` (unaffected by Source/Kind highlights), and a grey top-left badge the count of CORE and exSat declarations in `protocol_commitments`; selecting a block expands a non-reflowing overlay with per-chain height/event summaries and, below them, each declaration with its associated pool (else its declared account).
 
-Canonical, stale, error-block, and Source selections are client-side highlights that fade non-matching blocks and edges without changing source counts or moving the camera; strict/weak orphan rows are server-side navigator filters.
+Canonical, stale, invalid-block, and Source selections are client-side highlights that fade non-matching blocks and edges without changing source counts or moving the camera; strict/weak orphan rows are server-side navigator filters.
 Explicit focus gestures center on `width/2, height/2`: clicking a block recenters only when near a viewport edge, height lookup centers on that canonical block, date/time lookup centers on the window's mid-height, and Live tip / initial load center on the chain tip.
 A silent 60s timer refreshes sources always and the tree when active; clicking `Updated HH:MM:SS` force-reloads while preserving pan/zoom.
 
@@ -153,14 +153,14 @@ Missing pool attribution renders as an explicit unknown state, never omitted.
 
 The drawer is consolidated around the AuxPoW record (no standalone "AuxPoW Proofs" section, and no field labelled "Confirmed"):
 
-- **Parent block (Bitcoin)**: header identity, `kind`, `Orphan class` (`block.btc_orphan_class` for unknowns) or `Consensus rejection` (`block.error_block_reason` for error blocks), `coinbase_tag` when present, strict `Bitcoin miner` plus optional `Inferred miner`, Bitcoin block time, and collapsible raw header.
+- **Parent block (Bitcoin)**: header identity, `kind`, `Orphan class` (`block.btc_orphan_class` for unknowns) or `Consensus rejection` (`block.invalid_block_reason` for invalid blocks), `coinbase_tag` when present, strict `Bitcoin miner` plus optional `Inferred miner`, Bitcoin block time, and collapsible raw header.
 - **Merge-mining commitment**: decoded marker (`aux_merkle_root`, `merkle_size`, `merkle_nonce`) and parent coinbase txid for `namecoin-aux` / `qbit-aux`, or a format-only `rsk-opaque` / `hathor-rfc0006` entry.
 - **Sources & capture**: source summary, distinct source count, and AuxPoW chain count.
 - **Auxiliary blocks**: hydrated `event_details[]` with authenticated child height/hash/header/time/`nBits` (or explicit unavailable state), `slot_index` / `chain_id`, parent/aux PoW target checks, RSK sidecar fields (`proof_format = "rskj_rpc_opaque"`, miner address, pool identity, canonical-vs-uncle state, and opaque proof byte presence), and a collapsed AuxPoW proof breakdown (`aux_proof` branches, or byte-count-plus-copy fallback when `aux_merkle_proof_hex` does not decode).
 - **Competition & branch context**: competition and stale-branch panels.
-  For an `error_block`, the competition panel is replaced by an explicit note that the block never raced and has no canonical competitor.
+  For an `invalid_block`, the competition panel is replaced by an explicit note that the block never raced and has no canonical competitor.
 
-Mapped `error_block_reason` tokens render in plain language with an `(i)` dialog explaining the violated rule; unmapped tokens render as raw text without a help button.
+Mapped `invalid_block_reason` tokens render in plain language with an `(i)` dialog explaining the violated rule; unmapped tokens render as raw text without a help button.
 Drawer block hashes link to chain explorers (mempool.space for Bitcoin, Namebrow.se for Namecoin, Rootstock Explorer for RSK, Syscoin Blockbook for Syscoin) alongside the local copy button.
 
 ## Stale Branch Language

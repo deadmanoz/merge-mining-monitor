@@ -431,9 +431,9 @@ function renderUpdated() {
   el.setAttribute("title", action);
 }
 
-function errorBlockAnchorFromBlock(payload, hash) {
+function invalidBlockAnchorFromBlock(payload, hash) {
   const block = payload?.block;
-  if (!block || block.kind !== "error_block") return null;
+  if (!block || block.kind !== "invalid_block") return null;
   const height = Number(block.height);
   if (!Number.isInteger(height)) return null;
   if ((block.hash || hash) !== hash) return null;
@@ -472,7 +472,7 @@ async function loadBlock(hash) {
   const payload = await fetchJson("block", `${API_BASE}/block/${encodeURIComponent(hash)}`);
   if (payload) state.selectedBlock = payload;
   const staleAnchor = staleAnchorFromBlock(payload, hash);
-  const errorBlockAnchor = errorBlockAnchorFromBlock(payload, hash);
+  const invalidBlockAnchor = invalidBlockAnchorFromBlock(payload, hash);
   const anchor = orphanAnchorFromBlock(payload, hash, state.query.classification);
   reconcileNavFromSelected();
   refreshNavControls();
@@ -481,7 +481,7 @@ async function loadBlock(hash) {
   const branchTarget = selectedNodeBranchTarget(hash);
   if (branchTarget) hydrateNavigatorAnchor(branchTarget, hash);
   else if (staleAnchor) hydrateNavigatorAnchor("stale", hash);
-  else if (errorBlockAnchor) hydrateNavigatorAnchor("errorBlock", hash);
+  else if (invalidBlockAnchor) hydrateNavigatorAnchor("invalidBlock", hash);
   if (anchor && branchTarget !== "orphanBranch") hydrateNavigatorAnchor("orphan", hash);
 }
 

@@ -167,10 +167,10 @@
   stroke: var(--stale);
 }
 
-.screen-figure .blk.k-error {
-  fill: var(--error_block);
+.screen-figure .blk.k-invalid {
+  fill: var(--invalid_block);
   fill-opacity: 0.16;
-  stroke: var(--error_block);
+  stroke: var(--invalid_block);
 }
 
 .screen-figure .blk.k-unknown {

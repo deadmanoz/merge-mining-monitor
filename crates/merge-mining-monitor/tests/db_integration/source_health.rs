@@ -20,7 +20,7 @@ use crate::support::{
     namecoin_event_payload, parse_auxpow_fixture,
 };
 /// The comparable per-source counters: (events, last_event_seen, near, unknown,
-/// canonical, stale, error_block, strict_orphan, weak_orphan). Excludes the `updated_at` audit
+/// canonical, stale, invalid_block, strict_orphan, weak_orphan). Excludes the `updated_at` audit
 /// column.
 pub(crate) type SourceHealthCounts = (i64, Option<i64>, i64, i64, i64, i64, i64, i64, i64);
 
@@ -104,7 +104,7 @@ pub(crate) async fn read_source_health_semantic(
     let rows = client
         .query(
             "SELECT source_id, events, last_event_seen, near_parents, unknown_parents, \
-                    canonical_parents, stale_parents, error_block_parents, \
+                    canonical_parents, stale_parents, invalid_block_parents, \
                     strict_orphan_parents, weak_orphan_parents \
              FROM source_health ORDER BY source_id",
             &[],
@@ -149,7 +149,7 @@ pub(crate) async fn assert_source_health_matches_recompute(
                     r.unknown_parents,
                     r.canonical_parents,
                     r.stale_parents,
-                    r.error_block_parents,
+                    r.invalid_block_parents,
                     r.strict_orphan_parents,
                     r.weak_orphan_parents,
                 ),

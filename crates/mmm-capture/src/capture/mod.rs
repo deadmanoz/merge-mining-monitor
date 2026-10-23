@@ -37,8 +37,8 @@ pub const RSK_RPC_MINER_SOURCE: &str = "rsk_rpc_miner";
 pub enum ParentKind {
     Canonical,
     Stale,
-    /// Full Bitcoin PoW, but proven consensus-invalid by the pinned error-block catalogue.
-    ErrorBlock,
+    /// Full Bitcoin PoW, but proven consensus-invalid by the pinned invalid-block catalogue.
+    InvalidBlock,
     /// Fails the BTC parent target (child-only work); forced by `classify_parent` regardless of proof.
     Near,
     /// Satisfies the BTC target without a canonical/stale height proof yet; never demotes a proven row.
@@ -50,7 +50,7 @@ impl ParentKind {
         match self {
             Self::Canonical => "canonical",
             Self::Stale => "stale",
-            Self::ErrorBlock => "error_block",
+            Self::InvalidBlock => "invalid_block",
             Self::Near => "near",
             Self::Unknown => "unknown",
         }
@@ -314,7 +314,7 @@ pub fn build_event_payload(
 }
 
 /// Build a `merge_mining_event` payload from normalized evidence.
-/// `btc_parent_height` comes strictly from [`ClassificationProof`] or the error-block catalogue.
+/// `btc_parent_height` comes strictly from [`ClassificationProof`] or the invalid-block catalogue.
 pub fn build_event_payload_from_evidence(
     evidence: NormalizedEventEvidence,
     pool_attributions: ResolvedPoolAttributions,
@@ -323,7 +323,7 @@ pub fn build_event_payload_from_evidence(
 ) -> Result<MergeMiningEventPayload> {
     let parent_hash = evidence.btc_parent_header.block_hash();
     let pow_validates_btc_target = validates_target(parent_hash, evidence.btc_parent_header.bits);
-    let (proven_kind, btc_parent_height) = error_block_proof(
+    let (proven_kind, btc_parent_height) = invalid_block_proof(
         &parent_hash.to_byte_array(),
         pow_validates_btc_target,
         proof,
@@ -376,7 +376,7 @@ pub fn apply_classification_proof(
     payload: &mut MergeMiningEventPayload,
     proof: ClassificationProof,
 ) -> Result<()> {
-    let (proven_kind, btc_parent_height) = error_block_proof(
+    let (proven_kind, btc_parent_height) = invalid_block_proof(
         &payload.btc_parent_header_hash,
         payload.pow_validates_btc_target,
         proof,
@@ -502,28 +502,29 @@ fn classify_parent(
 
     match proven_kind {
         Some(ParentKind::Near) => bail!("near parent proof conflicts with BTC target validation"),
-        Some(ParentKind::Canonical | ParentKind::Stale | ParentKind::ErrorBlock)
+        Some(ParentKind::Canonical | ParentKind::Stale | ParentKind::InvalidBlock)
             if proven_height.is_none() =>
         {
-            bail!("canonical/stale/error-block parent proof requires btc_parent_height")
+            bail!("canonical/stale/invalid-block parent proof requires btc_parent_height")
         }
         Some(kind) => Ok(kind),
         None => Ok(ParentKind::Unknown),
     }
 }
 
-/// Override any optional Core proof when a PoW-valid parent matches the pinned error-block catalogue.
-fn error_block_proof(
+/// Override any optional Core proof when a PoW-valid parent matches the pinned invalid-block catalogue.
+fn invalid_block_proof(
     parent_hash: &[u8],
     pow_validates_btc_target: bool,
     proof: ClassificationProof,
 ) -> (Option<ParentKind>, Option<i32>) {
-    if pow_validates_btc_target && let Some(error_block) = crate::error_blocks::lookup(parent_hash)
+    if pow_validates_btc_target
+        && let Some(invalid_block) = crate::invalid_blocks::lookup(parent_hash)
     {
-        return (Some(ParentKind::ErrorBlock), Some(error_block.height));
+        return (Some(ParentKind::InvalidBlock), Some(invalid_block.height));
     }
     let height = match proof.parent_kind {
-        Some(ParentKind::Canonical | ParentKind::Stale | ParentKind::ErrorBlock) => {
+        Some(ParentKind::Canonical | ParentKind::Stale | ParentKind::InvalidBlock) => {
             proof.parent_height
         }
         Some(ParentKind::Near | ParentKind::Unknown) | None => None,

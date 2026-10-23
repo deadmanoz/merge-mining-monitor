@@ -10,10 +10,10 @@ Producers append or update base evidence; the read model computes the Bitcoin tr
 | `source` | Registered evidence sources such as `auxpow:namecoin`, `auxpow:rsk`, or `live-chaintip:bitcoin:core`. |
 | `pool` | Stable pool identities loaded from `data/pools/current.json`. |
 | `pool_identity` | Native child-chain identities that map to a pool, such as RSK miner addresses or child reward addresses, and protocol accounts declared in Bitcoin coinbases (CORE reward addresses, exSat accounts). |
-| `merge_mining_event` | Bitcoin-relevant source evidence (`canonical`, `stale`, `error_block` or `unknown` parents) keyed by exact or partial authenticated child identity and its Bitcoin parent header; `observation_id` (required, unique) links the event to its child block observation, which holds the child fields, identities and child pool. |
+| `merge_mining_event` | Bitcoin-relevant source evidence (`canonical`, `stale`, `invalid_block` or `unknown` parents) keyed by exact or partial authenticated child identity and its Bitcoin parent header; `observation_id` (required, unique) links the event to its child block observation, which holds the child fields, identities and child pool. |
 | `child_block_observation` | One row per child block on every chain, written by live capture, migration 0033's fill and per-chain backfills (see `docs/capture.md`), with the block's own child evidence and its `observation_kind`: `evidence` (an event holds the parent's Bitcoin classification), `near` (the parent misses Bitcoin's target; its header and coinbase are kept on the observation), `not_merge_mined` (no AuxPoW), `non_bitcoin_parent` (the parent failed the lineage gate; no parent field is stored), or `unverified_parent` (the child block is authenticated but its AuxPoW proof is malformed or incomplete; no parent field is stored). Child identities, the child-side pool, and RSK chain role, uncle placement and reported difficulty live here. |
 | `child_miner_identity` | Raw child identifiers seen on any child block (RSK miner, child payout and reward addresses, Elastos minerinfo), keyed like `pool_identity`; a matching `pool_identity` row maps one to a pool. |
-| `historical_event_provenance` | Publication-side chain, source row, classification, validation, and relevance provenance attached to imported events; multiple source rows can map to one event. The `error-block-observations` scope keeps catalogue-backed error witnesses separate from replaceable normal snapshots, while requiring the same archive coordinate to identify the same event across pinned publications. |
+| `historical_event_provenance` | Publication-side chain, source row, classification, validation, and relevance provenance attached to imported events; multiple source rows can map to one event. The `error-block-observations` scope keeps catalogue-backed invalid-block witnesses separate from replaceable normal snapshots, while requiring the same archive coordinate to identify the same event across pinned publications. |
 | `historical_reconcile_queue` | Durable parent rebuild state and dependent-cascade seeds for resumable historical imports. |
 | chain sidecars | One-to-one evidence details for chains with extra structured data: the RSK merge-mining proof (`merge_mining_hash`, `merkle_proof`, `coinbase_tail`, `proof_format`; the block's hash, height, uncle placement and miner are on its observation) and the Hathor RFC 0006 proof and funds graph. |
 | `event_pool_attribution` | Attribution rows connecting an event to a pool with source/provenance details. |
@@ -22,7 +22,7 @@ Producers append or update base evidence; the read model computes the Bitcoin tr
 | `capture_error` | Producer-owned operational state: one row per `(source_id, height)` a producer could not capture, with the failure kind (`malformed_auxpow_proof` or `height_capture_failed`), a diagnostic detail, and first/last seen times. Written before returning from a failing height and cleared only when that same height is reprocessed successfully; `/api/v1/sources` reads the earliest unresolved height per source. |
 | `child_chain_head` | Producer-owned operational state: one row per `(source_id, child_height)` recording the block hash, parent, outcome, and evidence marker a producer last observed at that height, used by trailing rescans. Each poll tick prunes rows below the rescan floor (`cursor + 1 - reorg_depth`) in bounded batches; `child_block_observation` keeps the per-block history. |
 | `known_stale_block` | Operator-imported known-stale membership loaded by `import-known-stales` from the upstream `bitcoin-data/stale-blocks` dataset. Consulted as an orphan-classification exclusion gate: a catalogued stale is `excluded`, never labelled strict/weak. |
-| `block` | Derived Bitcoin parent block state: canonical, stale, consensus-invalid error block, or unknown. |
+| `block` | Derived Bitcoin parent block state: canonical, stale, consensus-invalid block, or unknown. |
 | `attestation_proof` | Derived proof rows supporting a block. |
 | `source_health` | Per-source rollup counters for UI/API health reporting. |
 | `protocol_commitment` | Derived: each Core DAO (`CORE`) or exSat (`EXSAT`) declaration in a Bitcoin header's coinbase, with its vout, script, Core DAO selection (`upstream_selected`, NULL for exSat), header time and `evidence_source`. Near parents have no `block` row, so there is no foreign key to `block`. |
@@ -42,9 +42,9 @@ A capture classifies its parent as one of the following; `merge_mining_event.btc
 - `unknown` - a Bitcoin header that meets its own target, but no Bitcoin-chain membership proof is available.
 - `canonical` - Bitcoin Core proves the parent is on the active chain.
 - `stale` - Core observations or Core-backed predecessor and header checks place the parent on a branch off the active chain. This includes displaced formerly canonical blocks; inferred placement does not establish validation of an unavailable block body.
-- `error_block` - parent hash meets Bitcoin's target but violates a Bitcoin consensus rule.
+- `invalid_block` - parent hash meets Bitcoin's target but violates a Bitcoin consensus rule.
   The live classifier currently derives `time_below_mtp` from the exact eleven-header predecessor window returned by Core; the pinned research catalogue remains the fallback for other reproducibly validated rules.
-  It is neither stale nor an orphan; `block.error_block_reason` records its primary rejection token and `btc_height_source` records whether its height came from the catalogue or a canonical/stale predecessor.
+  It is neither stale nor an orphan; `block.invalid_block_reason` records its primary rejection token and `btc_height_source` records whether its height came from the catalogue or a canonical/stale predecessor.
 
 Orphan status is not a `btc_parent_kind`.
 It is the derived `block.btc_orphan_class` (`strict_btc_orphan`, `weak_btc_orphan`, or `excluded`; NULL while pending), set only after a Core-absence-attested verdict and the Core-cache-backed strict/weak orphan classifier, which reads the lineage rule: a coinbase height consistent with the header's time and its epoch's bits is strict evidence, bits matching the time's epoch are weak evidence, and a header newer than the cache waits for it.
@@ -53,13 +53,13 @@ A header on a placed Bitcoin prev whose bits are not that height's gets no absen
 Before the strict/weak resolution runs, the classifier consults the operator-imported `known_stale_block` membership (loaded by `import-known-stales` from the upstream `bitcoin-data/stale-blocks` dataset): a catalogued stale is `excluded` outright, never labelled strict/weak, and `import-known-stales` atomically demotes rows classified before the membership was imported.
 Published direct-stale and stale-descendant provenance is also an exclusion from strict/weak orphan classification while a branch remains derived `unknown`.
 
-Reviewed body-rule failures use the same `error_block` classification as header-context failures.
+Reviewed body-rule failures use the same `invalid_block` classification as header-context failures.
 Research authenticates complete body evidence and pins the independently established verdicts; Monitor consumes that catalogue.
 Migration `0029` drops the obsolete `body_invalid_stale` annotation table.
 Its importer, API joins, `body_invalid` and `body_invalid_rule` fields, and compatibility types are removed.
 Child witnesses and their publication provenance remain in the normal evidence tables.
 
-Historical error witnesses retain `classification=error_block` in `historical_event_provenance`, while `block.error_block_reason` is derived by the shared Core-plus-catalogue classifier.
+Historical invalid-block witnesses retain `classification=error_block` in `historical_event_provenance`, while `block.invalid_block_reason` is derived by the shared Core-plus-catalogue classifier.
 They replace a prior `stale` or `unknown` classification for the same parent, rather than acting as a separate display-only override.
 Their pinned research publication reference and original source coordinates make an exact replay idempotent; evidence that changes at an existing coordinate conflicts.
 Ordinary authoritative-snapshot cleanup intentionally excludes this scope.

@@ -203,11 +203,11 @@ fn decode_header(encoded: &str) -> Header {
     deserialize(&bytes).unwrap()
 }
 
-const ERROR_957780_HEADER_HEX: &str = "00000020818872136c490609d2eeb2faeaf4f0f05f07838e9bb301000000000000000000fcff7aa8f453695c8295551e7aad10faf56fc5f5e7eda4f47933db2d80adb252e7bd416a9d360217f479b1bf";
+const INVALID_957780_HEADER_HEX: &str = "00000020818872136c490609d2eeb2faeaf4f0f05f07838e9bb301000000000000000000fcff7aa8f453695c8295551e7aad10faf56fc5f5e7eda4f47933db2d80adb252e7bd416a9d360217f479b1bf";
 const CANONICAL_957780_HEADER_HEX: &str = "00000036818872136c490609d2eeb2faeaf4f0f05f07838e9bb3010000000000000000003e0c99c7ef3bf428660a360741624aec511964438d646e1f5c00df09e82f5a531c33546a9d360217572ee25d";
 
-fn error_957780_ancestors() -> Vec<Header> {
-    include_str!("error_957780_ancestor_headers.hex")
+fn invalid_957780_ancestors() -> Vec<Header> {
+    include_str!("invalid_957780_ancestor_headers.hex")
         .lines()
         .map(decode_header)
         .collect()
@@ -659,7 +659,7 @@ async fn bitcoin_core_classifier_infers_stale_after_not_found() {
 }
 
 #[tokio::test]
-async fn bitcoin_core_classifier_marks_time_below_mtp_as_live_error_block() {
+async fn bitcoin_core_classifier_marks_time_below_mtp_as_live_invalid_block() {
     let mut header = test_header(50, 0x207f_ffff);
     header.time = 105;
     let competitor = classified_header(test_header(51, 0x207f_ffff), 720_010);
@@ -671,7 +671,7 @@ async fn bitcoin_core_classifier_marks_time_below_mtp_as_live_error_block() {
     );
     let result = classify_after_known_canonical(source, &header, 720_009).await;
 
-    assert_eq!(result.kind, ParentKind::ErrorBlock);
+    assert_eq!(result.kind, ParentKind::InvalidBlock);
     assert_eq!(result.height, Some(720_010));
     assert_eq!(result.height_source, Some(HeightSource::PrevCanonical));
     assert_eq!(result.difficulty_epoch_ok, Some(true));
@@ -681,9 +681,9 @@ async fn bitcoin_core_classifier_marks_time_below_mtp_as_live_error_block() {
 
 #[tokio::test]
 async fn real_957780_fixture_is_rejected_by_live_mtp_validation() {
-    let candidate = decode_header(ERROR_957780_HEADER_HEX);
+    let candidate = decode_header(INVALID_957780_HEADER_HEX);
     let competitor = classified_header(decode_header(CANONICAL_957780_HEADER_HEX), 957_780);
-    let ancestors = error_957780_ancestors();
+    let ancestors = invalid_957780_ancestors();
     assert_eq!(ancestors.len(), MTP_WINDOW);
     assert_eq!(candidate.prev_blockhash, ancestors[0].block_hash());
     for pair in ancestors.windows(2) {
@@ -697,7 +697,7 @@ async fn real_957780_fixture_is_rejected_by_live_mtp_validation() {
 
     let classification = classify_after_known_canonical(source, &candidate, 957_779).await;
 
-    assert_eq!(classification.kind, ParentKind::ErrorBlock);
+    assert_eq!(classification.kind, ParentKind::InvalidBlock);
     assert_eq!(classification.height, Some(957_780));
     assert_eq!(
         classification.height_source,
@@ -876,12 +876,12 @@ async fn core_absence_attested_only_when_the_competitor_lookup_completes() {
 }
 
 #[tokio::test]
-async fn error_block_child_is_an_orphan_candidate_only_with_its_heights_bits() {
-    let error_prev = ParentPreflight {
+async fn invalid_block_child_is_an_orphan_candidate_only_with_its_heights_bits() {
+    let invalid_prev = ParentPreflight {
         known_prev: Some(KnownBlockContext {
-            kind: BlockKind::ErrorBlock,
+            kind: BlockKind::InvalidBlock,
             btc_height: Some(717_696),
-            btc_height_source: Some(HeightSource::ErrorBlockCatalog),
+            btc_height_source: Some(HeightSource::InvalidBlockCatalog),
             canonical_competitor_hash: None,
             core_attested: false,
         }),
@@ -892,7 +892,7 @@ async fn error_block_child_is_an_orphan_candidate_only_with_its_heights_bits() {
             717_697,
             competitor.clone(),
         ))
-        .classify_parent(&header, error_prev.clone())
+        .classify_parent(&header, invalid_prev.clone())
         .await
         .unwrap()
     };

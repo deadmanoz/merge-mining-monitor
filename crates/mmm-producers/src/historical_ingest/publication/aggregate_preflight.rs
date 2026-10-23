@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use anyhow::{Context, Result, ensure};
 
 use super::{
-    ArtifactPreflight, ErrorObservationPreflight, PublicationArtifact, inspect_csv,
-    inspect_error_observation_csv, inspect_rows, load_publication_manifest, verify_checkout_pin,
+    ArtifactPreflight, InvalidObservationPreflight, PublicationArtifact, inspect_csv,
+    inspect_invalid_observation_csv, inspect_rows, load_publication_manifest, verify_checkout_pin,
     verify_research_manifest,
 };
 use crate::historical_ingest::config::{
@@ -19,7 +19,7 @@ use crate::historical_ingest::config::{
 pub(in crate::historical_ingest) struct PreparedPublication {
     pub(in crate::historical_ingest) configs: Vec<HistoricalImportConfig>,
     pub(in crate::historical_ingest) event_artifacts: Vec<ArtifactPreflight>,
-    pub(in crate::historical_ingest) error_observations: ErrorObservationPreflight,
+    pub(in crate::historical_ingest) invalid_observations: InvalidObservationPreflight,
 }
 
 /// Cross the external publication seam once: load the monitor-owned manifest,
@@ -28,21 +28,21 @@ pub(in crate::historical_ingest) struct PreparedPublication {
 pub(in crate::historical_ingest) fn preflight_publication(
     config: &HistoricalImportAllConfig,
 ) -> Result<PreparedPublication> {
-    let expected_error_parents = mmm_capture::error_blocks::hashes().collect();
-    preflight_publication_against(config, &expected_error_parents)
+    let expected_invalid_parents = mmm_capture::invalid_blocks::hashes().collect();
+    preflight_publication_against(config, &expected_invalid_parents)
 }
 
 #[cfg(test)]
 pub(super) fn preflight_publication_for_test(
     config: &HistoricalImportAllConfig,
-    expected_error_parents: &BTreeSet<[u8; 32]>,
+    expected_invalid_parents: &BTreeSet<[u8; 32]>,
 ) -> Result<PreparedPublication> {
-    preflight_publication_against(config, expected_error_parents)
+    preflight_publication_against(config, expected_invalid_parents)
 }
 
 fn preflight_publication_against(
     config: &HistoricalImportAllConfig,
-    expected_error_parents: &BTreeSet<[u8; 32]>,
+    expected_invalid_parents: &BTreeSet<[u8; 32]>,
 ) -> Result<PreparedPublication> {
     let manifest = load_publication_manifest(&config.manifest_path)?;
     if config.require_pinned_checkout {
@@ -52,21 +52,21 @@ fn preflight_publication_against(
     for artifact in manifest.aggregate_artifacts() {
         inspect_aggregate_csv(&config.artifact_root.join(&artifact.csv_path), artifact)?;
     }
-    let error_artifact = manifest
-        .error_observation_artifact()
-        .context("validated publication requires error observations")?;
-    let error_observations = inspect_error_observation_csv(
-        &config.artifact_root.join(&error_artifact.csv_path),
-        Some(error_artifact),
+    let invalid_artifact = manifest
+        .invalid_observation_artifact()
+        .context("validated publication requires invalid observations")?;
+    let invalid_observations = inspect_invalid_observation_csv(
+        &config.artifact_root.join(&invalid_artifact.csv_path),
+        Some(invalid_artifact),
     )?;
-    let observed_error_parents = error_observations
+    let observed_invalid_parents = invalid_observations
         .state_rows
         .iter()
         .map(|row| row.btc_parent_header_hash)
         .collect::<BTreeSet<_>>();
     ensure!(
-        observed_error_parents == *expected_error_parents,
-        "error-observation artifact does not cover the pinned error-block catalogue"
+        observed_invalid_parents == *expected_invalid_parents,
+        "invalid-observation artifact does not cover the pinned invalid-block catalogue"
     );
 
     let mut expected_events = manifest.event_artifacts().collect::<Vec<_>>();
@@ -83,7 +83,7 @@ fn preflight_publication_against(
     Ok(PreparedPublication {
         configs,
         event_artifacts,
-        error_observations,
+        invalid_observations,
     })
 }
 

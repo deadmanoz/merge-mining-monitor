@@ -45,7 +45,7 @@ struct KindDeltas {
     unknown: i64,
     canonical: i64,
     stale: i64,
-    error_block: i64,
+    invalid_block: i64,
 }
 
 /// Aggregate change to one source across one or more parent mutations, combined
@@ -131,7 +131,7 @@ impl KindDeltas {
             "unknown" => self.unknown += delta,
             "canonical" => self.canonical += delta,
             "stale" => self.stale += delta,
-            "error_block" => self.error_block += delta,
+            "invalid_block" => self.invalid_block += delta,
             other => anyhow::bail!("unexpected current_kind {other:?} in source_health diff"),
         }
         Ok(())
@@ -213,7 +213,7 @@ async fn apply_one_source_delta<C: GenericClient>(
         .execute(
             "INSERT INTO source_health ( \
                  source_id, events, near_parents, unknown_parents, \
-                 canonical_parents, stale_parents, error_block_parents, \
+                 canonical_parents, stale_parents, invalid_block_parents, \
                  strict_orphan_parents, weak_orphan_parents, updated_at \
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
              ON CONFLICT (source_id) DO UPDATE SET \
@@ -222,7 +222,7 @@ async fn apply_one_source_delta<C: GenericClient>(
                  unknown_parents = source_health.unknown_parents + EXCLUDED.unknown_parents, \
                  canonical_parents = source_health.canonical_parents + EXCLUDED.canonical_parents, \
                  stale_parents = source_health.stale_parents + EXCLUDED.stale_parents, \
-                 error_block_parents = source_health.error_block_parents + EXCLUDED.error_block_parents, \
+                 invalid_block_parents = source_health.invalid_block_parents + EXCLUDED.invalid_block_parents, \
                  strict_orphan_parents = source_health.strict_orphan_parents + EXCLUDED.strict_orphan_parents, \
                  weak_orphan_parents = source_health.weak_orphan_parents + EXCLUDED.weak_orphan_parents, \
                  updated_at = EXCLUDED.updated_at",
@@ -233,7 +233,7 @@ async fn apply_one_source_delta<C: GenericClient>(
                 &delta.kinds.unknown,
                 &delta.kinds.canonical,
                 &delta.kinds.stale,
-                &delta.kinds.error_block,
+                &delta.kinds.invalid_block,
                 &delta.strict_orphans,
                 &delta.weak_orphans,
                 &now,
@@ -381,7 +381,7 @@ pub struct ComputedSourceHealthRow {
     pub unknown_parents: i64,
     pub canonical_parents: i64,
     pub stale_parents: i64,
-    pub error_block_parents: i64,
+    pub invalid_block_parents: i64,
     pub strict_orphan_parents: i64,
     pub weak_orphan_parents: i64,
 }
@@ -422,7 +422,7 @@ pub async fn compute_source_health_from_base<C: GenericClient>(
                         (count(DISTINCT e.btc_parent_header_hash) FILTER (WHERE pc.current_kind = 'unknown'))::bigint AS unknown_count, \
                         (count(DISTINCT e.btc_parent_header_hash) FILTER (WHERE pc.current_kind = 'canonical'))::bigint AS canonical_count, \
                         (count(DISTINCT e.btc_parent_header_hash) FILTER (WHERE pc.current_kind = 'stale'))::bigint AS stale_count, \
-                        (count(DISTINCT e.btc_parent_header_hash) FILTER (WHERE pc.current_kind = 'error_block'))::bigint AS error_block_count, \
+                        (count(DISTINCT e.btc_parent_header_hash) FILTER (WHERE pc.current_kind = 'invalid_block'))::bigint AS invalid_block_count, \
                         (count(DISTINCT e.btc_parent_header_hash) FILTER (WHERE pc.current_kind = 'unknown' AND pc.orphan_class = 'strict_btc_orphan'))::bigint AS strict_orphan_count, \
                         (count(DISTINCT e.btc_parent_header_hash) FILTER (WHERE pc.current_kind = 'unknown' AND pc.orphan_class = 'weak_btc_orphan'))::bigint AS weak_orphan_count \
                  FROM merge_mining_event e \
@@ -434,7 +434,7 @@ pub async fn compute_source_health_from_base<C: GenericClient>(
                     COALESCE(nc.near_count, 0), \
                     COALESCE(pc.unknown_count, 0), \
                     COALESCE(pc.canonical_count, 0), COALESCE(pc.stale_count, 0), \
-                    COALESCE(pc.error_block_count, 0), COALESCE(pc.strict_orphan_count, 0), \
+                    COALESCE(pc.invalid_block_count, 0), COALESCE(pc.strict_orphan_count, 0), \
                     COALESCE(pc.weak_orphan_count, 0) \
              FROM parent_counts pc \
              FULL OUTER JOIN near_counts nc ON nc.source_id = pc.source_id \
@@ -454,7 +454,7 @@ pub async fn compute_source_health_from_base<C: GenericClient>(
             unknown_parents: row.get(4),
             canonical_parents: row.get(5),
             stale_parents: row.get(6),
-            error_block_parents: row.get(7),
+            invalid_block_parents: row.get(7),
             strict_orphan_parents: row.get(8),
             weak_orphan_parents: row.get(9),
         })
@@ -555,7 +555,7 @@ pub(crate) async fn rebuild_source_health_in_transaction<C: GenericClient>(
                 "INSERT INTO source_health ( \
                  source_id, events, last_event_seen, near_parents, \
                  unknown_parents, canonical_parents, stale_parents, \
-                 error_block_parents, strict_orphan_parents, weak_orphan_parents, updated_at \
+                 invalid_block_parents, strict_orphan_parents, weak_orphan_parents, updated_at \
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                 &[
                     &row.source_id,
@@ -565,7 +565,7 @@ pub(crate) async fn rebuild_source_health_in_transaction<C: GenericClient>(
                     &row.unknown_parents,
                     &row.canonical_parents,
                     &row.stale_parents,
-                    &row.error_block_parents,
+                    &row.invalid_block_parents,
                     &row.strict_orphan_parents,
                     &row.weak_orphan_parents,
                     &now,

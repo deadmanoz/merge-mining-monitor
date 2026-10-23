@@ -122,7 +122,7 @@ function auxpowHelpFor(topic) {
   return AUXPOW_HELP[topic] || { name: "AuxPoW", meta: "", body: [] };
 }
 
-// Consensus rules for catalogued error blocks, keyed by `rejection_reason`.
+// Consensus rules for catalogued invalid blocks, keyed by `rejection_reason`.
 const CONSENSUS_RULE_HELP = {
   consensus_invalid_parent: {
     name: "Invalid predecessor",
@@ -308,7 +308,7 @@ function renderBlockDetailPayload(payload) {
         : renderEvents(payload.event_details || [], block.header?.time),
     ),
     payload.competition ? detailSection("Competition", renderCompetition(payload.competition)) : "",
-    !payload.competition && block.kind === "error_block"
+    !payload.competition && block.kind === "invalid_block"
       ? detailSection("Competition", `<div class="empty">This block never raced. It carries full Bitcoin proof of work but breaks a consensus rule, so it was never a valid contender for its height and has no canonical competitor.</div>`)
       : "",
     payload.stale_branch ? detailSection("Stale Branch", renderStaleBranch(payload.stale_branch, block.hash)) : "",
@@ -327,8 +327,8 @@ function renderParentBlock(block) {
     const meta = CLASSIFICATION_META[block.btc_orphan_class || "pending"];
     rows.push(["Orphan class", esc(meta ? meta.name : (block.btc_orphan_class || "Pending"))]);
   }
-  if (block.kind === "error_block") {
-    rows.push(["Consensus rejection", consensusRejectionValue(block.error_block_reason)]);
+  if (block.kind === "invalid_block") {
+    rows.push(["Consensus rejection", consensusRejectionValue(block.invalid_block_reason)]);
   }
   if (block.coinbase_tag) {
     rows.push(["Coinbase tag", esc(block.coinbase_tag)]);

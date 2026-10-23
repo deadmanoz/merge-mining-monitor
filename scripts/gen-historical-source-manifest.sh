@@ -133,15 +133,15 @@ git -C "${repo_dir}" show "${source_commit}:${publication_manifest_path}" \
 jq -e '.artifacts and .counts' "${research_manifest}" >/dev/null \
     || die "research publication manifest is missing artifacts or counts"
 
-error_observation_source_chain_counts="$(jq -cer '
+invalid_observation_source_chain_counts="$(jq -cer '
     .observation_chain_counts["error-block-observations"]
     | if type == "object" and length > 0 then
         .
       else
-        error("missing error-observation source-chain inventory")
+        error("missing invalid-observation source-chain inventory")
       end
 ' "${research_manifest}")" \
-    || die "research publication manifest has no error-observation source-chain inventory"
+    || die "research publication manifest has no invalid-observation source-chain inventory"
 
 artifacts_ndjson="${scratch}/artifacts.ndjson"
 : >"${artifacts_ndjson}"
@@ -168,11 +168,11 @@ while IFS= read -r chain; do
     if [ "${chain}" = "stale-descendants" ]; then
         role="aggregate"
     elif [ "${chain}" = "error-block-observations" ]; then
-        role="error_observation"
+        role="invalid_observation"
     fi
     source_chain_counts='{}'
-    if [ "${role}" = "error_observation" ]; then
-        source_chain_counts="${error_observation_source_chain_counts}"
+    if [ "${role}" = "invalid_observation" ]; then
+        source_chain_counts="${invalid_observation_source_chain_counts}"
     fi
     parent_only_rows=0
     if [ "${role}" = "event" ]; then
@@ -229,10 +229,10 @@ while IFS= read -r chain; do
             weak_btc_orphan: $count.weak_btc_orphan
           }
         }
-        | if $role == "error_observation" then
+        | if $role == "invalid_observation" then
             . + {
               source_chain_counts: $source_chain_counts,
-              counts: (.counts + { error_block: $count.error_block })
+              counts: (.counts + { invalid_block: $count.error_block })
             }
           else
             .
@@ -247,9 +247,9 @@ jq -S \
     --arg publication_manifest_sha256 "$(sha256_file "${research_manifest}")" \
     --slurpfile artifacts "${artifacts_ndjson}" '
     ($artifacts) as $items
-    | ([ $items[] | select(.role == "error_observation") ]) as $error_artifacts
-    | if ($error_artifacts | length) > 1 then
-        error("multiple error-observation artifacts")
+    | ([ $items[] | select(.role == "invalid_observation") ]) as $invalid_artifacts
+    | if ($invalid_artifacts | length) > 1 then
+        error("multiple invalid-observation artifacts")
       else
         .
       end
@@ -298,8 +298,8 @@ jq -S \
         ],
         artifacts: $items
       }
-    | if ($error_artifacts | length) == 1 then
-        . + { error_observation_rows: $error_artifacts[0].row_count }
+    | if ($invalid_artifacts | length) == 1 then
+        . + { invalid_observation_rows: $invalid_artifacts[0].row_count }
       else
         .
       end

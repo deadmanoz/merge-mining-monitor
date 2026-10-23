@@ -28,7 +28,7 @@ const COINBASE_OUTPUTS_TEXT: u16 = 1 << 9;
 const COINBASE_TX: u16 = 1 << 10;
 const RSK_MERKLE_PROOF: u16 = 1 << 11;
 const RSK_COINBASE_TAIL: u16 = 1 << 12;
-const ERROR_BLOCK_REASON: u16 = 1 << 13;
+const INVALID_BLOCK_REASON: u16 = 1 << 13;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct PublicationRowKey {
@@ -101,7 +101,7 @@ pub(crate) struct ComparablePublicationState {
     pub(super) btc_parent_coinbase_outputs_text_sha256: Option<[u8; 32]>,
     pub(super) btc_parent_coinbase_tx_sha256: Option<[u8; 32]>,
     pub(super) rsk: Option<ComparableRskState>,
-    pub(super) error_block_reason: Option<String>,
+    pub(super) invalid_block_reason: Option<String>,
 }
 
 impl ComparablePublicationState {
@@ -127,10 +127,10 @@ impl ComparablePublicationState {
         push_bytes(&mut engine, &self.btc_parent_header_hash);
         push_bytes(&mut engine, &self.btc_parent_prev_header_hash);
         push_i64(&mut engine, self.btc_parent_header_time);
-        if mask.includes(ERROR_BLOCK_REASON) {
+        if mask.includes(INVALID_BLOCK_REASON) {
             push_option_bytes(
                 &mut engine,
-                self.error_block_reason.as_deref().map(str::as_bytes),
+                self.invalid_block_reason.as_deref().map(str::as_bytes),
             );
         }
 
@@ -290,7 +290,7 @@ impl ComparablePublicationState {
                 "btc_parent_coinbase_tx_sha256",
             )?,
             rsk,
-            error_block_reason: row.error_block_reason,
+            invalid_block_reason: row.invalid_block_reason,
         })
     }
 }
@@ -299,12 +299,12 @@ pub(crate) fn publication_state_from_record(
     spec: &HistoricalChainSpec,
     layout: &CsvLayout,
     record: &csv::StringRecord,
-    error_observation: bool,
+    invalid_observation: bool,
 ) -> Result<ExpectedPublicationState, SkipReason> {
     if record.get(layout.chain).map(str::trim) != Some(spec.chain) {
         return Err(SkipReason::Malformed);
     }
-    let state = comparable_state_from_record(spec, layout, record, error_observation)?;
+    let state = comparable_state_from_record(spec, layout, record, invalid_observation)?;
     let mask = publication_field_mask(&state);
     let fingerprint = state.fingerprint(mask);
     Ok(ExpectedPublicationState {
@@ -333,11 +333,11 @@ fn comparable_state_from_record(
     spec: &HistoricalChainSpec,
     layout: &CsvLayout,
     record: &csv::StringRecord,
-    error_observation: bool,
+    invalid_observation: bool,
 ) -> Result<ComparablePublicationState, SkipReason> {
     let child = parse_child_fields(spec, layout, record)?;
-    let source_classification = if error_observation {
-        super::SourceClassification::ErrorBlock
+    let source_classification = if invalid_observation {
+        super::SourceClassification::InvalidBlock
     } else {
         super::parse_source_classification(record.get(layout.classification))?
     };
@@ -349,17 +349,18 @@ fn comparable_state_from_record(
         record,
         &header,
         &display_hash,
-        rejection_reason.as_deref() != Some(mmm_capture::error_blocks::NBITS_RETARGET_NOT_APPLIED),
+        rejection_reason.as_deref()
+            != Some(mmm_capture::invalid_blocks::NBITS_RETARGET_NOT_APPLIED),
     )?;
     let parent_coinbase = parse_parent_coinbase_fields(layout, record)?;
     let artifact_scope = non_empty(record.get(layout.artifact_scope))?.to_owned();
-    if error_observation != (artifact_scope == "error-block-observations") {
+    if invalid_observation != (artifact_scope == "error-block-observations") {
         return Err(SkipReason::TaxonomyMismatch);
     }
-    validate_error_observation_fields(
+    validate_invalid_observation_fields(
         layout,
         record,
-        error_observation,
+        invalid_observation,
         rejection_reason.as_deref(),
     )?;
     let child_hash = option_array32(child.block_hash.as_deref())?;
@@ -396,7 +397,7 @@ fn comparable_state_from_record(
             .map(|value| digest(value.as_bytes())),
         btc_parent_coinbase_tx_sha256: digest_optional(parent_coinbase.tx_bytes.as_deref()),
         rsk,
-        error_block_reason: if error_observation {
+        invalid_block_reason: if invalid_observation {
             rejection_reason
         } else {
             None
@@ -436,13 +437,13 @@ fn comparable_rsk_state(
         .transpose()
 }
 
-fn validate_error_observation_fields(
+fn validate_invalid_observation_fields(
     layout: &CsvLayout,
     record: &csv::StringRecord,
-    error_observation: bool,
+    invalid_observation: bool,
     rejection_reason: Option<&str>,
 ) -> Result<(), SkipReason> {
-    if !error_observation {
+    if !invalid_observation {
         return Ok(());
     }
     if record.get(layout.classification).map(str::trim) != Some("error_block")
@@ -509,8 +510,8 @@ fn publication_field_mask(state: &ComparablePublicationState) -> PublicationFiel
     }
     set_if(
         &mut mask,
-        ERROR_BLOCK_REASON,
-        state.error_block_reason.is_some(),
+        INVALID_BLOCK_REASON,
+        state.invalid_block_reason.is_some(),
     );
     PublicationFieldMask(mask)
 }
@@ -631,7 +632,7 @@ mod tests {
             btc_parent_coinbase_outputs_text_sha256: None,
             btc_parent_coinbase_tx_sha256: None,
             rsk: None,
-            error_block_reason: None,
+            invalid_block_reason: None,
         }
     }
 
@@ -683,14 +684,14 @@ mod tests {
     }
 
     #[test]
-    fn error_reason_is_comparison_state() {
+    fn invalid_reason_is_comparison_state() {
         let mut expected = comparable();
-        expected.error_block_reason = Some("time_below_mtp".to_owned());
+        expected.invalid_block_reason = Some("time_below_mtp".to_owned());
         let mut changed = expected.clone();
-        changed.error_block_reason = Some("different".to_owned());
+        changed.invalid_block_reason = Some("different".to_owned());
         assert_ne!(
-            expected.fingerprint(PublicationFieldMask(ERROR_BLOCK_REASON)),
-            changed.fingerprint(PublicationFieldMask(ERROR_BLOCK_REASON))
+            expected.fingerprint(PublicationFieldMask(INVALID_BLOCK_REASON)),
+            changed.fingerprint(PublicationFieldMask(INVALID_BLOCK_REASON))
         );
     }
 }

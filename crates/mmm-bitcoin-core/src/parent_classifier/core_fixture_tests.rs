@@ -20,7 +20,7 @@ async fn strict_import_classification_rpc_budget() {
         .unwrap_or(0);
     // The aggregate preflight caches by parent hash. Exercise ten distinct
     // uncached parents, including the MTP-invalid result, with and without the
-    // locally persisted predecessor that import_error_observation_decision uses.
+    // locally persisted predecessor that import_invalid_observation_decision uses.
     for known_prev in [true, false] {
         let (chain, headers) = FixtureChain::mainline(11, BASE_TIME);
         let fixture = core_fixture::spawn_with_delay(chain, 200, Duration::from_millis(delay_ms));
@@ -53,7 +53,7 @@ async fn strict_import_classification_rpc_budget() {
             assert_eq!(
                 result.kind,
                 if index == 0 {
-                    ParentKind::ErrorBlock
+                    ParentKind::InvalidBlock
                 } else {
                     ParentKind::Stale
                 }

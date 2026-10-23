@@ -8,7 +8,7 @@ use mmm_bitcoin_core::{
     ConfiguredParentClassifier, FakeParentClassifier, HeightSource, ParentClassification,
     TIME_BELOW_MTP,
 };
-use mmm_producers::run_error_observation_import_for_test;
+use mmm_producers::run_invalid_observation_import_for_test;
 
 use super::{
     NORMALIZED_HEADER, NormalizedCsvRow, active_source_event_count, finish_import_with_cleanup,
@@ -30,14 +30,14 @@ async fn import_requires_catalogue_match_before_writing() -> Result<()> {
             let skipped_classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
                 ParentClassification::unknown(&unsupported),
             ));
-            let error = run_error_observation_import_for_test(
+            let error = run_invalid_observation_import_for_test(
                 &mut client,
                 &skipped_classifier,
                 &unsupported_path,
                 &expected_parent_hashes,
             )
             .await
-            .expect_err("a non-catalogued error observation must fail before writes");
+            .expect_err("a non-catalogued invalid observation must fail before writes");
             assert!(
                 error
                     .to_string()
@@ -49,15 +49,15 @@ async fn import_requires_catalogue_match_before_writing() -> Result<()> {
             );
 
             let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
-                ParentClassification::error_block(
+                ParentClassification::invalid_block(
                     &accepted,
                     946_213,
-                    HeightSource::ErrorBlockCatalog,
+                    HeightSource::InvalidBlockCatalog,
                     None,
                     TIME_BELOW_MTP,
                 ),
             ));
-            let summary = run_error_observation_import_for_test(
+            let summary = run_invalid_observation_import_for_test(
                 &mut client,
                 &classifier,
                 &accepted_path,
@@ -67,13 +67,13 @@ async fn import_requires_catalogue_match_before_writing() -> Result<()> {
             assert_eq!(summary.expected_rows, 1);
             assert_eq!(summary.rows_seen, 1);
             assert_eq!(summary.ingested, 1);
-            assert_eq!(summary.error_blocks, 1);
-            assert_eq!(summary.error_parents, 1);
+            assert_eq!(summary.invalid_blocks, 1);
+            assert_eq!(summary.invalid_parents, 1);
 
             let row = client
                 .query_one(
                     "SELECT p.classification, p.artifact_scope, b.kind, b.btc_height, \
-                            b.error_block_reason \
+                            b.invalid_block_reason \
                      FROM historical_event_provenance p \
                      JOIN merge_mining_event e ON e.id = p.event_id \
                      JOIN block b ON b.btc_header_hash = e.btc_parent_header_hash",
@@ -82,7 +82,7 @@ async fn import_requires_catalogue_match_before_writing() -> Result<()> {
                 .await?;
             assert_eq!(row.get::<_, String>(0), "error_block");
             assert_eq!(row.get::<_, String>(1), "error-block-observations");
-            assert_eq!(row.get::<_, String>(2), "error_block");
+            assert_eq!(row.get::<_, String>(2), "invalid_block");
             assert_eq!(row.get::<_, i32>(3), 946_213);
             assert_eq!(
                 row.get::<_, Option<String>>(4).as_deref(),
@@ -103,7 +103,7 @@ async fn import_replaces_legacy_mtp_reason_with_canonical_token() -> Result<()> 
         let path = write_csv(&header, "namecoin", 255_293, 380_992, TIME_BELOW_MTP)?;
         let result = async {
             let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
-                ParentClassification::error_block(
+                ParentClassification::invalid_block(
                     &header,
                     380_992,
                     HeightSource::PrevCanonical,
@@ -112,7 +112,7 @@ async fn import_replaces_legacy_mtp_reason_with_canonical_token() -> Result<()> 
                 ),
             ));
 
-            let summary = run_error_observation_import_for_test(
+            let summary = run_invalid_observation_import_for_test(
                 &mut client,
                 &classifier,
                 &path,
@@ -122,16 +122,21 @@ async fn import_replaces_legacy_mtp_reason_with_canonical_token() -> Result<()> 
             assert_eq!(summary.ingested, 1);
             client
                 .execute(
-                    "UPDATE block SET error_block_reason = $2 WHERE btc_header_hash = $1",
+                    "UPDATE block SET invalid_block_reason = $2 WHERE btc_header_hash = $1",
                     &[&parent_hash.as_slice(), &LEGACY_MTP_REJECTION_REASON],
                 )
                 .await?;
-            run_error_observation_import_for_test(&mut client, &classifier, &path, &[parent_hash])
-                .await?;
+            run_invalid_observation_import_for_test(
+                &mut client,
+                &classifier,
+                &path,
+                &[parent_hash],
+            )
+            .await?;
 
             let row = client
                 .query_one(
-                    "SELECT btc_height_source, error_block_reason \
+                    "SELECT btc_height_source, invalid_block_reason \
                      FROM block \
                      WHERE btc_header_hash = $1",
                     &[&parent_hash.as_slice()],
@@ -150,7 +155,7 @@ async fn import_replaces_legacy_mtp_reason_with_canonical_token() -> Result<()> 
 }
 
 #[tokio::test]
-async fn error_observation_coordinate_cannot_change_across_publications() -> Result<()> {
+async fn invalid_observation_coordinate_cannot_change_across_publications() -> Result<()> {
     crate::run_mut_db_test!(client, {
         let accepted = catalogued_header()?;
         let expected_parent_hashes = [accepted.block_hash().to_byte_array()];
@@ -158,15 +163,15 @@ async fn error_observation_coordinate_cannot_change_across_publications() -> Res
         let changed_path = write_csv(&accepted, "devcoin", 47, 946_213, TIME_BELOW_MTP)?;
         let result = async {
             let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
-                ParentClassification::error_block(
+                ParentClassification::invalid_block(
                     &accepted,
                     946_213,
-                    HeightSource::ErrorBlockCatalog,
+                    HeightSource::InvalidBlockCatalog,
                     None,
                     TIME_BELOW_MTP,
                 ),
             ));
-            run_error_observation_import_for_test(
+            run_invalid_observation_import_for_test(
                 &mut client,
                 &classifier,
                 &original_path,
@@ -182,16 +187,16 @@ async fn error_observation_coordinate_cannot_change_across_publications() -> Res
                 )
                 .await?;
 
-            let error = run_error_observation_import_for_test(
+            let error = run_invalid_observation_import_for_test(
                 &mut client,
                 &classifier,
                 &changed_path,
                 &expected_parent_hashes,
             )
             .await
-            .expect_err("a changed error-observation coordinate must fail");
+            .expect_err("a changed invalid-observation coordinate must fail");
             assert!(
-                format!("{error:#}").contains("error-observation coordinate"),
+                format!("{error:#}").contains("invalid-observation coordinate"),
                 "unexpected error: {error:#}"
             );
             assert_eq!(
@@ -228,15 +233,15 @@ async fn retarget_observation_requires_core_epoch_nbits() -> Result<()> {
         )?;
         let result = async {
             let classifier = ConfiguredParentClassifier::Fake(FakeParentClassifier::new(
-                ParentClassification::error_block(
+                ParentClassification::invalid_block(
                     &header,
                     717_696,
-                    HeightSource::ErrorBlockCatalog,
+                    HeightSource::InvalidBlockCatalog,
                     None,
                     "nbits_retarget_not_applied",
                 ),
             ));
-            let error = run_error_observation_import_for_test(
+            let error = run_invalid_observation_import_for_test(
                 &mut client,
                 &classifier,
                 &mismatched_path,
@@ -253,7 +258,7 @@ async fn retarget_observation_requires_core_epoch_nbits() -> Result<()> {
                 0
             );
 
-            let summary = run_error_observation_import_for_test(
+            let summary = run_invalid_observation_import_for_test(
                 &mut client,
                 &classifier,
                 &accepted_path,
@@ -272,21 +277,21 @@ fn catalogued_header() -> Result<Header> {
     deserialize(&hex::decode(
         "00a0032bb223f1aad55892df75d0ff4712f0543959c5065ab89d000000000000000000005eba715327fc82c765fa651bd6226c4b4a6a846cd60197bcd76d47ada0611cfce335df696913021725806e70",
     )?)
-    .context("decode catalogued time_below_mtp error-block header")
+    .context("decode catalogued time_below_mtp invalid-block header")
 }
 
 fn legacy_mtp_header() -> Result<Header> {
     deserialize(&hex::decode(
         "0300000092d98cb6018e9baa8dfe136fa81266dfa588c0ee23b26e030000000000000000af324cb995102e1d1c5e7d59459d5f651090881815f2a63f0eba667ce3db7538cf003156140f12182744ec68",
     )?)
-    .context("decode catalogued median_time_past_violation error-block header")
+    .context("decode catalogued median_time_past_violation invalid-block header")
 }
 
 fn retarget_header() -> Result<Header> {
     deserialize(&hex::decode(
         "0000ff3f9acaa5d26d392ace656c2428c991b0a3d3d773845a1300000000000000000000cd79ee4e64b40a2bbf130ca47d2d3cb0315d26cb96425bcb7dd82f375e8c6e739743d961ab980b17262f8aa5",
     )?)
-    .context("decode catalogued nbits-retarget error-block header")
+    .context("decode catalogued nbits-retarget invalid-block header")
 }
 
 fn write_csv(
@@ -342,6 +347,6 @@ fn write_csv_with_expected_nbits(
     );
     let line = format!("{},,,,,,,\n", line.trim_end());
     std::fs::write(&path, format!("{header}{line}"))
-        .with_context(|| format!("write error-observation fixture {}", path.display()))?;
+        .with_context(|| format!("write invalid-observation fixture {}", path.display()))?;
     Ok(path)
 }

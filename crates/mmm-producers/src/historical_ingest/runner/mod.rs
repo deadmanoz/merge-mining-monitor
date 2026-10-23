@@ -30,16 +30,16 @@ use super::config::{HistoricalImportConfig, historical_chain_spec};
 use super::csv_source::{ImportCandidate, RelevanceSelection, SkipReason, candidate_from_record};
 use super::preclassify::{ImportDecision, import_decision, preflight_and_classify_candidates};
 #[cfg(feature = "db-integration")]
-use super::publication::inspect_error_observation_csv;
+use super::publication::inspect_invalid_observation_csv;
 use super::publication::{
-    ArtifactPreflight, ErrorObservationPreflight, PreparedPublication, preflight_artifact,
+    ArtifactPreflight, InvalidObservationPreflight, PreparedPublication, preflight_artifact,
     preflight_publication,
 };
 
-mod error_observations;
+mod invalid_observations;
 #[cfg(feature = "db-integration")]
-use error_observations::import_error_observations;
-use error_observations::preflight_error_observations;
+use invalid_observations::import_invalid_observations;
+use invalid_observations::preflight_invalid_observations;
 mod publication_state;
 use publication_state::{ImportPlan, plan_publication_import};
 mod write_plan;
@@ -65,8 +65,8 @@ pub struct HistoricalImportSummary {
     pub stale: u64,
     pub strict_orphans: u64,
     pub weak_orphans: u64,
-    pub error_blocks: u64,
-    pub error_parents: u64,
+    pub invalid_blocks: u64,
+    pub invalid_parents: u64,
     /// Unknown rows whose persisted `btc_orphan_class` is `excluded`
     /// (known-stale membership gate or wrong-difficulty-epoch check).
     pub excluded: u64,
@@ -80,7 +80,7 @@ pub struct HistoricalImportSummary {
 #[derive(Debug, Default, Clone)]
 pub struct HistoricalImportAllSummary {
     pub chains: Vec<(String, HistoricalImportSummary)>,
-    pub error_observations: Option<HistoricalImportSummary>,
+    pub invalid_observations: Option<HistoricalImportSummary>,
     pub stale_branches_reconciled: u64,
     pub skipped_matching_state: u64,
 }
@@ -114,8 +114,8 @@ impl HistoricalImportSummary {
         match persisted {
             Some((BlockKind::Canonical, _)) => self.canonical += count,
             Some((BlockKind::Stale, _)) => self.stale += count,
-            Some((BlockKind::ErrorBlock, _)) => {
-                self.error_blocks += count;
+            Some((BlockKind::InvalidBlock, _)) => {
+                self.invalid_blocks += count;
             }
             Some((BlockKind::Unknown, class)) => match class.as_deref() {
                 Some("strict_btc_orphan") => self.strict_orphans += count,
@@ -142,7 +142,7 @@ impl HistoricalImportSummary {
 
     pub fn print(&self) {
         println!(
-            "historical import: expected_rows={} published_canonical={} published_stale={} published_stale_descendant={} published_strict_btc_orphan={} published_weak_btc_orphan={} rows_seen={} candidates={} ingested={} inserted={} updated={} promoted={} satisfied_by_existing_exact={} removed={} canonical={} stale={} error_block={} error_parents={} strict_btc_orphan={} weak_btc_orphan={} excluded={} pending={} known_direct_branch_attestations={} known_descendant_branch_attestations={} skipped={}",
+            "historical import: expected_rows={} published_canonical={} published_stale={} published_stale_descendant={} published_strict_btc_orphan={} published_weak_btc_orphan={} rows_seen={} candidates={} ingested={} inserted={} updated={} promoted={} satisfied_by_existing_exact={} removed={} canonical={} stale={} invalid_block={} invalid_parents={} strict_btc_orphan={} weak_btc_orphan={} excluded={} pending={} known_direct_branch_attestations={} known_descendant_branch_attestations={} skipped={}",
             self.expected_rows,
             self.published_canonical,
             self.published_stale,
@@ -159,8 +159,8 @@ impl HistoricalImportSummary {
             self.removed,
             self.canonical,
             self.stale,
-            self.error_blocks,
-            self.error_parents,
+            self.invalid_blocks,
+            self.invalid_parents,
             self.strict_orphans,
             self.weak_orphans,
             self.excluded,
@@ -182,19 +182,19 @@ impl HistoricalImportAllSummary {
             print!("chain={chain} ");
             summary.print();
         }
-        if let Some(summary) = &self.error_observations {
+        if let Some(summary) = &self.invalid_observations {
             print!("chain=error-block-observations ");
             summary.print();
         }
         println!(
-            "historical import-all: chains={} error_observations={} error_parents={} expected_rows={} ingested={} inserted={} updated={} promoted={} satisfied_by_existing_exact={} removed={} stale_branches_reconciled={} skipped_matching_state={}",
+            "historical import-all: chains={} invalid_observations={} invalid_parents={} expected_rows={} ingested={} inserted={} updated={} promoted={} satisfied_by_existing_exact={} removed={} stale_branches_reconciled={} skipped_matching_state={}",
             self.chains.len(),
-            self.error_observations
+            self.invalid_observations
                 .as_ref()
                 .map_or(0, |value| value.ingested),
-            self.error_observations
+            self.invalid_observations
                 .as_ref()
-                .map_or(0, |value| value.error_parents),
+                .map_or(0, |value| value.invalid_parents),
             self.chains
                 .iter()
                 .map(|(_, value)| value.expected_rows)
@@ -474,14 +474,14 @@ pub async fn run_historical_import_all(
     let PreparedPublication {
         configs,
         event_artifacts,
-        error_observations,
+        invalid_observations,
     } = preflight_publication(config)?;
     run_preflighted_historical_import_configs(
         client,
         classifier,
         configs,
         event_artifacts,
-        Some(error_observations),
+        Some(invalid_observations),
     )
     .await
 }
@@ -491,7 +491,7 @@ async fn run_historical_import_configs(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
     mut configs: Vec<HistoricalImportConfig>,
-    error_observations: Option<ErrorObservationPreflight>,
+    invalid_observations: Option<InvalidObservationPreflight>,
 ) -> Result<HistoricalImportAllSummary> {
     configs.sort_by(|left, right| left.chain.cmp(&right.chain));
     let mut preflighted_artifacts = Vec::with_capacity(configs.len());
@@ -506,7 +506,7 @@ async fn run_historical_import_configs(
         classifier,
         configs,
         preflighted_artifacts,
-        error_observations,
+        invalid_observations,
     )
     .await
 }
@@ -516,7 +516,7 @@ async fn run_preflighted_historical_import_configs(
     classifier: &ConfiguredParentClassifier,
     configs: Vec<HistoricalImportConfig>,
     preflighted_artifacts: Vec<ArtifactPreflight>,
-    error_observations: Option<ErrorObservationPreflight>,
+    invalid_observations: Option<InvalidObservationPreflight>,
 ) -> Result<HistoricalImportAllSummary> {
     ensure!(
         configs.len() == preflighted_artifacts.len()
@@ -535,7 +535,7 @@ async fn run_preflighted_historical_import_configs(
                 client,
                 &configs,
                 &preflighted_artifacts,
-                error_observations.as_ref(),
+                invalid_observations.as_ref(),
             )
             .await?,
         )
@@ -544,7 +544,7 @@ async fn run_preflighted_historical_import_configs(
     };
     if let Some(plan) = &plan
         && plan.work_chain.iter().all(|work| !work)
-        && !plan.work_error_observations
+        && !plan.work_invalid_observations
         && !plan.needs_finalization
     {
         return Ok(HistoricalImportAllSummary {
@@ -559,7 +559,7 @@ async fn run_preflighted_historical_import_configs(
         classifier,
         configs,
         preflighted_artifacts,
-        error_observations,
+        invalid_observations,
         plan,
     )
     .await;
@@ -571,14 +571,14 @@ async fn run_historical_import_configs_locked(
     classifier: &ConfiguredParentClassifier,
     configs: Vec<HistoricalImportConfig>,
     mut preflighted_artifacts: Vec<ArtifactPreflight>,
-    mut error_observations: Option<ErrorObservationPreflight>,
+    mut invalid_observations: Option<InvalidObservationPreflight>,
     plan: Option<ImportPlan>,
 ) -> Result<HistoricalImportAllSummary> {
     let mut classifications = HashMap::new();
     let work_chain = |index: usize| plan.as_ref().is_none_or(|plan| plan.work_chain[index]);
-    let work_error_observations = plan
+    let work_invalid_observations = plan
         .as_ref()
-        .is_none_or(|plan| plan.work_error_observations);
+        .is_none_or(|plan| plan.work_invalid_observations);
     let import_configs = configs
         .iter()
         .enumerate()
@@ -591,7 +591,7 @@ async fn run_historical_import_configs_locked(
         .map(|(_, config)| config)
         .collect::<Vec<_>>();
     let needs_finalization = plan.as_ref().is_some_and(|plan| plan.needs_finalization);
-    if import_configs.is_empty() && !work_error_observations && !needs_finalization {
+    if import_configs.is_empty() && !work_invalid_observations && !needs_finalization {
         return Ok(HistoricalImportAllSummary {
             skipped_matching_state: plan.as_ref().map_or(0, |plan| plan.skipped_matching_state),
             ..HistoricalImportAllSummary::default()
@@ -615,7 +615,7 @@ async fn run_historical_import_configs_locked(
         };
     ensure_import_environment(client, classifier, &environment_configs).await?;
     let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
-    let expected_error_parents = error_observations::pinned_error_parent_hashes();
+    let expected_invalid_parents = invalid_observations::pinned_invalid_parent_hashes();
     for (index, (chain_config, artifact)) in
         configs.iter().zip(&mut preflighted_artifacts).enumerate()
     {
@@ -635,14 +635,14 @@ async fn run_historical_import_configs_locked(
         )
         .await?;
     }
-    if work_error_observations && let Some(artifact) = &mut error_observations {
-        preflight_error_observations(
+    if work_invalid_observations && let Some(artifact) = &mut invalid_observations {
+        preflight_invalid_observations(
             client,
             classifier,
             artifact,
             &mut classifications,
             &nbits_table,
-            &expected_error_parents,
+            &expected_invalid_parents,
         )
         .await?;
     }
@@ -653,13 +653,13 @@ async fn run_historical_import_configs_locked(
         PlannedWrite {
             configs: &configs,
             preflighted_artifacts,
-            error_observations,
+            invalid_observations,
             plan,
-            work_error_observations,
+            work_invalid_observations,
         },
         &mut classifications,
         &nbits_table,
-        &expected_error_parents,
+        &expected_invalid_parents,
     )
     .await
 }
@@ -676,7 +676,7 @@ pub async fn run_historical_import_configs_for_test(
 
 #[cfg(feature = "db-integration")]
 #[doc(hidden)]
-pub async fn run_error_observation_import_for_test(
+pub async fn run_invalid_observation_import_for_test(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
     path: &std::path::Path,
@@ -685,28 +685,28 @@ pub async fn run_error_observation_import_for_test(
     if !classifier.is_enabled() {
         bail!("BITCOIN_RPC_URL is required for historical import");
     }
-    let mut artifact = inspect_error_observation_csv(path, None)?;
+    let mut artifact = inspect_invalid_observation_csv(path, None)?;
     mmm_store::lock_bitcoin_core_header_cache(client).await?;
     let result = async {
         let nbits_table = mmm_store::load_bitcoin_core_nbits_table(client).await?;
-        let expected_error_parents = expected_parent_hashes.iter().copied().collect();
+        let expected_invalid_parents = expected_parent_hashes.iter().copied().collect();
         let mut classifications = HashMap::new();
-        preflight_error_observations(
+        preflight_invalid_observations(
             client,
             classifier,
             &mut artifact,
             &mut classifications,
             &nbits_table,
-            &expected_error_parents,
+            &expected_invalid_parents,
         )
         .await?;
-        let summary = import_error_observations(
+        let summary = import_invalid_observations(
             client,
             classifier,
             artifact,
             &mut classifications,
             &nbits_table,
-            &expected_error_parents,
+            &expected_invalid_parents,
         )
         .await?;
         rebuild_historical_source_health(client).await?;

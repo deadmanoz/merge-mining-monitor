@@ -221,9 +221,9 @@ pub async fn insert_block(
     Ok(())
 }
 
-/// Seed a catalogued error block (`btc_height_source = 'error-block-catalog'`
-/// with a required `error_block_reason`).
-pub async fn insert_error_block(
+/// Seed a catalogued invalid block (`btc_height_source = 'invalid-block-catalog'`
+/// with a required `invalid_block_reason`).
+pub async fn insert_invalid_block(
     client: &Client,
     hash: &[u8],
     prev_hash: &[u8],
@@ -231,7 +231,7 @@ pub async fn insert_error_block(
     header_time: i64,
     rejection_reason: &str,
 ) -> Result<()> {
-    insert_error_block_with_sources(
+    insert_invalid_block_with_sources(
         client,
         hash,
         prev_hash,
@@ -244,7 +244,7 @@ pub async fn insert_error_block(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn insert_error_block_with_sources(
+pub async fn insert_invalid_block_with_sources(
     client: &Client,
     hash: &[u8],
     prev_hash: &[u8],
@@ -257,14 +257,14 @@ pub async fn insert_error_block_with_sources(
         .execute(
             "INSERT INTO block ( \
                 btc_header_hash, btc_prev_header_hash, btc_height, btc_height_source, \
-                kind, error_block_reason, btc_header_bytes, btc_header_time, \
+                kind, invalid_block_reason, btc_header_bytes, btc_header_time, \
                 bitcoin_miner_pool_id, btc_coinbase_script, btc_coinbase_status, \
                 canonical_competitor_hash, total_attestations, distinct_sources, \
                 auxpow_chain_count, live_observed, core_attested, pow_validated, \
                 created_at, updated_at \
              ) VALUES ( \
-                $1, $2, $3, 'error-block-catalog', \
-                'error_block', $4, $5, $6, \
+                $1, $2, $3, 'invalid-block-catalog', \
+                'invalid_block', $4, $5, $6, \
                 NULL, NULL, 'not_attempted', \
                 NULL, $7, $7, $7, FALSE, FALSE, TRUE, $6, $6 \
              )",

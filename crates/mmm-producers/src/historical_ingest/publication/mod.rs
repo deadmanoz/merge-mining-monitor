@@ -18,12 +18,14 @@ use super::csv_source::{
     publication_row_key_from_record, publication_state_from_record,
 };
 mod aggregate_preflight;
-mod error_observations;
+mod invalid_observations;
 mod validation;
 #[cfg(test)]
 use aggregate_preflight::preflight_publication_for_test;
 pub(super) use aggregate_preflight::{PreparedPublication, preflight_publication};
-pub(super) use error_observations::{ErrorObservationPreflight, inspect_error_observation_csv};
+pub(super) use invalid_observations::{
+    InvalidObservationPreflight, inspect_invalid_observation_csv,
+};
 use validation::{validate_artifact_set, validate_parent_only_rows};
 
 pub(super) const NORMALIZED_COLUMNS: &[&str] = &[
@@ -76,7 +78,7 @@ pub(super) struct PublicationManifest {
     publication_manifest_sha256: String,
     total_event_rows: u64,
     aggregate_rows: u64,
-    error_observation_rows: u64,
+    invalid_observation_rows: u64,
     required_columns: Vec<String>,
     artifacts: Vec<PublicationArtifact>,
 }
@@ -102,7 +104,7 @@ pub(super) struct PublicationArtifact {
 pub(super) enum ArtifactRole {
     Event,
     Aggregate,
-    ErrorObservation,
+    InvalidObservation,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -114,7 +116,7 @@ pub(super) struct PublicationCounts {
     pub(super) strict_btc_orphan: u64,
     pub(super) weak_btc_orphan: u64,
     #[serde(default)]
-    pub(super) error_block: u64,
+    pub(super) invalid_block: u64,
 }
 
 impl PublicationCounts {
@@ -146,10 +148,10 @@ impl PublicationManifest {
             .filter(|artifact| artifact.role == ArtifactRole::Aggregate)
     }
 
-    pub(super) fn error_observation_artifact(&self) -> Option<&PublicationArtifact> {
+    pub(super) fn invalid_observation_artifact(&self) -> Option<&PublicationArtifact> {
         self.artifacts
             .iter()
-            .find(|artifact| artifact.role == ArtifactRole::ErrorObservation)
+            .find(|artifact| artifact.role == ArtifactRole::InvalidObservation)
     }
 }
 
@@ -608,22 +610,13 @@ mod test_support;
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
     use super::test_support::{
-        TEST_ERROR_OBSERVATION_ROWS, assert_parent_only_fixture, temp_path, valid_manifest,
-        write_empty_event_artifacts, write_identity_free_canonical_event,
+        TEST_INVALID_OBSERVATION_ROWS, assert_parent_only_fixture, fixture_invalid_parents,
+        temp_path, valid_manifest, write_empty_event_artifacts,
+        write_identity_free_canonical_event,
     };
     use super::*;
     use crate::historical_ingest::config::{HistoricalImportAllConfig, historical_chain_spec};
-
-    fn fixture_error_parents() -> BTreeSet<[u8; 32]> {
-        BTreeSet::from([bitcoin::BlockHash::from_str(
-            "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
-        )
-        .expect("genesis hash")
-        .to_byte_array()])
-    }
 
     #[test]
     fn normalized_schema_is_one_uniform_common_header() {
@@ -657,8 +650,8 @@ mod tests {
                 "stale-descendants aggregate artifact is required",
             ),
             (
-                "missing_error_observation",
-                "error-observation aggregate artifact is required",
+                "missing_invalid_observation",
+                "invalid-observation aggregate artifact is required",
             ),
             (
                 "aggregate_total",
@@ -669,8 +662,8 @@ mod tests {
                 "total_event_rows does not equal event artifact rows",
             ),
             (
-                "error_observation_total",
-                "error_observation_rows does not equal the error-observation artifact",
+                "invalid_observation_total",
+                "invalid_observation_rows does not equal the invalid-observation artifact",
             ),
         ] {
             let mut manifest = valid_manifest();
@@ -715,15 +708,15 @@ mod tests {
                         .artifacts
                         .retain(|artifact| artifact.role != ArtifactRole::Aggregate);
                 }
-                "missing_error_observation" => {
+                "missing_invalid_observation" => {
                     manifest
                         .artifacts
-                        .retain(|artifact| artifact.role != ArtifactRole::ErrorObservation);
-                    manifest.error_observation_rows = 0;
+                        .retain(|artifact| artifact.role != ArtifactRole::InvalidObservation);
+                    manifest.invalid_observation_rows = 0;
                 }
                 "aggregate_total" => manifest.aggregate_rows += 1,
                 "event_total" => manifest.total_event_rows += 1,
-                "error_observation_total" => manifest.error_observation_rows += 1,
+                "invalid_observation_total" => manifest.invalid_observation_rows += 1,
                 _ => unreachable!("table defines every case"),
             }
             let error = validate_manifest(&manifest).expect_err(case);
@@ -735,16 +728,16 @@ mod tests {
     }
 
     #[test]
-    fn error_observation_manifest_requires_consistent_source_counts() {
+    fn invalid_observation_manifest_requires_consistent_source_counts() {
         let mut manifest = valid_manifest();
-        validate_manifest(&manifest).expect("complete error-observation artifact is accepted");
+        validate_manifest(&manifest).expect("complete invalid-observation artifact is accepted");
 
-        let error = manifest
+        let invalid = manifest
             .artifacts
             .iter_mut()
-            .find(|artifact| artifact.role == ArtifactRole::ErrorObservation)
-            .expect("error-observation artifact");
-        *error
+            .find(|artifact| artifact.role == ArtifactRole::InvalidObservation)
+            .expect("invalid-observation artifact");
+        *invalid
             .source_chain_counts
             .get_mut("devcoin")
             .expect("fixture devcoin source count") += 1;
@@ -755,13 +748,13 @@ mod tests {
                 .contains("source-chain counts")
         );
 
-        let error = manifest
+        let invalid = manifest
             .artifacts
             .iter_mut()
-            .find(|artifact| artifact.role == ArtifactRole::ErrorObservation)
-            .expect("error-observation artifact");
-        error.source_chain_counts =
-            BTreeMap::from([("doichain".to_owned(), TEST_ERROR_OBSERVATION_ROWS)]);
+            .find(|artifact| artifact.role == ArtifactRole::InvalidObservation)
+            .expect("invalid-observation artifact");
+        invalid.source_chain_counts =
+            BTreeMap::from([("doichain".to_owned(), TEST_INVALID_OBSERVATION_ROWS)]);
         assert!(
             validate_manifest(&manifest)
                 .unwrap_err()
@@ -852,11 +845,11 @@ mod tests {
         aggregate_artifact.size_bytes = aggregate.len() as u64;
         aggregate_artifact.sha256 = sha256::Hash::hash(aggregate.as_bytes()).to_string();
 
-        let error_path = publication_dir.join("error-block-observations_monitor_evidence.csv");
-        let mut error_columns = NORMALIZED_COLUMNS.to_vec();
-        error_columns.extend_from_slice(RSK_SIDECAR_COLUMNS);
+        let invalid_path = publication_dir.join("error-block-observations_monitor_evidence.csv");
+        let mut invalid_columns = NORMALIZED_COLUMNS.to_vec();
+        invalid_columns.extend_from_slice(RSK_SIDECAR_COLUMNS);
         let column = |name: &str| {
-            error_columns
+            invalid_columns
                 .iter()
                 .position(|column| *column == name)
                 .unwrap_or_else(|| panic!("missing {name} column"))
@@ -864,20 +857,20 @@ mod tests {
         manifest
             .artifacts
             .iter_mut()
-            .find(|artifact| artifact.role == ArtifactRole::ErrorObservation)
-            .expect("error-observation artifact")
+            .find(|artifact| artifact.role == ArtifactRole::InvalidObservation)
+            .expect("invalid-observation artifact")
             .source_chain_counts =
-            BTreeMap::from([("devcoin".to_owned(), TEST_ERROR_OBSERVATION_ROWS)]);
-        let mut error_observations = format!("{}\n", error_columns.join(","));
+            BTreeMap::from([("devcoin".to_owned(), TEST_INVALID_OBSERVATION_ROWS)]);
+        let mut invalid_observations = format!("{}\n", invalid_columns.join(","));
         let genesis_header = "0100000000000000000000000000000000000000000000000000000000000000\
                               000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4\
                               b1e5e4a29ab5f49ffff001d1dac2b7c"
             .replace(char::is_whitespace, "");
-        for source_row_number in 1..=TEST_ERROR_OBSERVATION_ROWS {
-            let mut row = vec![String::new(); error_columns.len()];
+        for source_row_number in 1..=TEST_INVALID_OBSERVATION_ROWS {
+            let mut row = vec![String::new(); invalid_columns.len()];
             row[column("chain")] = "devcoin".to_owned();
             row[column("source_kind")] = "monitor-evidence".to_owned();
-            row[column("source_path")] = "fixture/errors.csv".to_owned();
+            row[column("source_path")] = "fixture/invalids.csv".to_owned();
             row[column("source_row_number")] = source_row_number.to_string();
             row[column("artifact_scope")] = "error-block-observations".to_owned();
             row[column("provenance")] = "fixture".to_owned();
@@ -890,18 +883,18 @@ mod tests {
             row[column("classification")] = "error_block".to_owned();
             row[column("validation_status")] = "VALID_ERROR_BLOCK".to_owned();
             row[column("expected_nbits")] = "1d00ffff".to_owned();
-            row[column("rejection_reason")] = "fixture_error".to_owned();
-            error_observations.push_str(&format!("{}\n", row.join(",")));
+            row[column("rejection_reason")] = "fixture_invalid".to_owned();
+            invalid_observations.push_str(&format!("{}\n", row.join(",")));
         }
-        std::fs::write(&error_path, &error_observations)
-            .expect("write error-observation aggregate fixture");
-        let error_artifact = manifest
+        std::fs::write(&invalid_path, &invalid_observations)
+            .expect("write invalid-observation aggregate fixture");
+        let invalid_artifact = manifest
             .artifacts
             .iter_mut()
-            .find(|artifact| artifact.role == ArtifactRole::ErrorObservation)
-            .expect("error-observation artifact");
-        error_artifact.size_bytes = error_observations.len() as u64;
-        error_artifact.sha256 = sha256::Hash::hash(error_observations.as_bytes()).to_string();
+            .find(|artifact| artifact.role == ArtifactRole::InvalidObservation)
+            .expect("invalid-observation artifact");
+        invalid_artifact.size_bytes = invalid_observations.len() as u64;
+        invalid_artifact.sha256 = sha256::Hash::hash(invalid_observations.as_bytes()).to_string();
 
         write_empty_event_artifacts(&root, &mut manifest);
         write_identity_free_canonical_event(&root, &mut manifest, "devcoin");
@@ -919,12 +912,12 @@ mod tests {
             batch_size: 10,
             allow_empty_known_stales: true,
         };
-        let expected_error_parents = fixture_error_parents();
-        let prepared = preflight_publication_for_test(&config, &expected_error_parents)
+        let expected_invalid_parents = fixture_invalid_parents();
+        let prepared = preflight_publication_for_test(&config, &expected_invalid_parents)
             .expect("publication preflight");
         assert_parent_only_fixture(&prepared);
         std::fs::remove_file(&aggregate_path).expect("remove aggregate fixture");
-        let error = preflight_publication_for_test(&config, &expected_error_parents)
+        let error = preflight_publication_for_test(&config, &expected_invalid_parents)
             .expect_err("missing aggregate must fail import-all preflight");
         assert!(error.to_string().contains("open"));
         std::fs::remove_dir_all(&root).expect("remove aggregate fixture root");
@@ -963,7 +956,7 @@ mod tests {
                 stale_descendant: 1,
                 strict_btc_orphan: 1,
                 weak_btc_orphan: 1,
-                error_block: 0,
+                invalid_block: 0,
             }
         );
 

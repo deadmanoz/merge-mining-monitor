@@ -1,6 +1,6 @@
 # Merge Mining Monitor
 
-A live monitor and historical record of Bitcoin mining evidence: merge-mined chains, pool attribution, stale and orphan headers, consensus-invalid error blocks, and protocol declarations in Bitcoin coinbases.
+A live monitor and historical record of Bitcoin mining evidence: merge-mined chains, pool attribution, stale and orphan headers, consensus-invalid blocks, and protocol declarations in Bitcoin coinbases.
 
 [Open the live monitor](https://mmm.deadmanoz.xyz/) to explore the data.
 
@@ -25,7 +25,7 @@ From live producers and recovered historical chains, it connects Bitcoin headers
 The recovery work behind the historical datasets lives in the companion [`merge-mining-research`](https://github.com/deadmanoz/merge-mining-research) repository.
 
 Child-chain records can preserve Bitcoin work absent from the active chain, including stale branches and templates that violate Bitcoin consensus rules.
-The monitor combines this evidence with Bitcoin Core observations and a reviewed error catalogue.
+The monitor combines this evidence with Bitcoin Core observations and a reviewed invalid-block catalogue.
 Historical coverage reaches back to 2011; the available evidence and classification limits are described below.
 
 ## Block and miner attribution
@@ -47,8 +47,8 @@ From it you can:
 
 - **Browse synced chain windows**, from genesis to the current tip where the database has coverage, or jump to a height or UTC timestamp.
 - **Inspect a block** in a detail drawer: the pool and miner, the decoded AuxPoW commitment, the observed child chains that merge-mined it, authenticated child height/hash/header/time/`nBits` evidence where available, and external explorer links.
-- **Filter by source** to see which headers a given chain touched, and by classification to isolate canonical, stale, consensus-invalid error-block, or orphan evidence.
-- **Step through the record** with a single navigator across the latest stale blocks, stale branches, consensus-invalid error blocks, orphans, and orphan branches.
+- **Filter by source** to see which headers a given chain touched, and by classification to isolate canonical, stale, consensus-invalid block, or orphan evidence.
+- **Step through the record** with a single navigator across the latest stale blocks, stale branches, consensus-invalid blocks, orphans, and orphan branches.
 
 ## Protocol commitments
 
@@ -80,7 +80,7 @@ This source inventory reflects the registry on 23 October 2026. Historical cover
 
 If you can help fill the gaps, get in touch on X ([@ozdeadman](https://x.com/ozdeadman)) or Nostr ([deadmanoz on Primal](https://primal.net/deadmanoz)): the full VCash chain, chain data for any of the five catalogued entries, or a better archive for an existing source would extend the record.
 
-## Stale, orphan and error-block evidence
+## Stale, orphan and invalid-block evidence
 
 Bitcoin keeps no durable, network-wide record of the blocks its active chain drops.
 A retained merge-mining proof carries the Bitcoin header its miner hashed, which may be stale or consensus-invalid on Bitcoin even though it satisfies the child chain's rules.
@@ -94,12 +94,12 @@ While a live observer such as [fork-observer](https://fork.observer) can only ca
 *Bitcoin block 959,137 was mined by Binance Pool but lost the race to Foundry USA's block at the same height.
 Four merge-mined chains recorded its header, preserving evidence of the stale block.*
 
-The monitor combines Bitcoin Core context, authenticated child proofs and the pinned Research error catalogue (see [classification and evidence](docs/data-model.md#parent-classification)).
+The monitor combines Bitcoin Core context, authenticated child proofs and the pinned Research invalid-block catalogue (see [classification and evidence](docs/data-model.md#parent-classification)).
 A **stale** header belongs to a branch off the active chain, including blocks displaced from a formerly canonical branch.
 An **orphan** has evidence of Bitcoin work but no known attachment: strict evidence uses an authenticated BIP34 height, while weak evidence relies on timestamp/difficulty-epoch agreement, with Core absence and other lineage checks required for both.
 Incomplete evidence can remain **unknown**.
 
-An **error block** meets the proof-of-work target but has an established Bitcoin consensus failure, such as an invalid timestamp or coinbase reward.
+An **invalid block** meets the proof-of-work target but has an established Bitcoin consensus failure, such as an invalid timestamp or coinbase reward.
 It is kept separate from stale and orphan evidence.
 Sufficient proof of work does not establish full-block validity, and retained headers or proofs do not mean every block body has been replayed through Bitcoin Core.
 

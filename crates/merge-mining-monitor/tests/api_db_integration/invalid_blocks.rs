@@ -8,17 +8,17 @@ use mmm_capture::source_registry::NAMECOIN_SOURCE_CODE;
 use mmm_store::get_source_id;
 
 use crate::support::seed::{
-    EventSeed, day_epoch, display_hash, hash_bytes, insert_block, insert_error_block,
-    insert_error_block_with_sources, insert_event,
+    EventSeed, day_epoch, display_hash, hash_bytes, insert_block, insert_event,
+    insert_invalid_block, insert_invalid_block_with_sources,
 };
 
 use crate::helpers::{format_api_error, format_projection_error, project_tree};
 
-async fn fetch_error_block_navigator(
+async fn fetch_invalid_block_navigator(
     client: &Client,
     raw_query: &str,
 ) -> Result<projection::NavigatorPayload> {
-    let query = query::parse_navigator_query(NavigatorTarget::ErrorBlock, Some(raw_query))
+    let query = query::parse_navigator_query(NavigatorTarget::InvalidBlock, Some(raw_query))
         .map_err(format_api_error)?;
     projection::navigator(client, &query)
         .await
@@ -53,7 +53,7 @@ async fn seed_catalogue(client: &Client) -> Result<SeededCatalogue> {
     .await?;
 
     let h300 = hash_bytes(0x0301);
-    insert_error_block(
+    insert_invalid_block(
         client,
         &h300,
         &hash_bytes(0x02ff),
@@ -67,7 +67,7 @@ async fn seed_catalogue(client: &Client) -> Result<SeededCatalogue> {
         .map(hash_bytes)
         .to_vec();
     for (index, hash) in group200.iter().enumerate() {
-        insert_error_block(
+        insert_invalid_block(
             client,
             hash,
             &hash_bytes(0x01f0 + index as u32),
@@ -80,7 +80,7 @@ async fn seed_catalogue(client: &Client) -> Result<SeededCatalogue> {
 
     let group100 = [0x1102, 0x1200].map(hash_bytes).to_vec();
     for (index, hash) in group100.iter().enumerate() {
-        insert_error_block(
+        insert_invalid_block(
             client,
             hash,
             &hash_bytes(0x00f0 + index as u32),
@@ -116,9 +116,9 @@ fn assert_stored_not_display_order(expected: &[Vec<u8>]) {
 }
 
 #[tokio::test]
-async fn error_block_navigator_is_empty_without_catalogued_blocks() -> Result<()> {
+async fn invalid_block_navigator_is_empty_without_catalogued_blocks() -> Result<()> {
     crate::run_db_test!(client, {
-        let empty = fetch_error_block_navigator(&client, "limit=10").await?;
+        let empty = fetch_invalid_block_navigator(&client, "limit=10").await?;
         assert_eq!(empty.total, 0);
         assert!(empty.items.is_empty());
         assert!(empty.next_cursor.is_none());
@@ -128,12 +128,12 @@ async fn error_block_navigator_is_empty_without_catalogued_blocks() -> Result<()
 }
 
 #[tokio::test]
-async fn error_block_navigator_orders_by_height_then_stored_hash() -> Result<()> {
+async fn invalid_block_navigator_orders_by_height_then_stored_hash() -> Result<()> {
     crate::run_db_test!(client, {
         let seeded = seed_catalogue(&client).await?;
         assert_stored_not_display_order(&seeded.expected);
 
-        let full = fetch_error_block_navigator(&client, "limit=100").await?;
+        let full = fetch_invalid_block_navigator(&client, "limit=100").await?;
         assert_eq!(full.total, seeded.expected.len() as u64);
         assert_eq!(full.items.len(), seeded.expected.len());
 
@@ -154,7 +154,7 @@ async fn error_block_navigator_orders_by_height_then_stored_hash() -> Result<()>
         }
         assert_eq!(full.items[0].position.max, 300);
         assert_eq!(full.items[0].position.min, 300);
-        assert_eq!(full.items[0].kind, "error-block");
+        assert_eq!(full.items[0].kind, "invalid-block");
         assert!(full.items[0].branch.is_none());
         assert!(full.items[0].orphan.is_none());
 
@@ -171,7 +171,7 @@ async fn error_block_navigator_orders_by_height_then_stored_hash() -> Result<()>
 }
 
 #[tokio::test]
-async fn error_block_navigator_pages_through_a_same_height_group_exactly_once() -> Result<()> {
+async fn invalid_block_navigator_pages_through_a_same_height_group_exactly_once() -> Result<()> {
     crate::run_db_test!(client, {
         let seeded = seed_catalogue(&client).await?;
         let expected = seeded
@@ -181,11 +181,11 @@ async fn error_block_navigator_pages_through_a_same_height_group_exactly_once() 
             .collect::<Vec<_>>();
 
         let mut walked: Vec<String> = Vec::new();
-        let mut page = fetch_error_block_navigator(&client, "limit=2").await?;
+        let mut page = fetch_invalid_block_navigator(&client, "limit=2").await?;
         assert!(page.prev_cursor.is_none(), "first page has nothing newer");
         assert_eq!(page.items[0].index, 1);
         assert_eq!(page.items[1].index, 2);
-        let older = fetch_error_block_navigator(
+        let older = fetch_invalid_block_navigator(
             &client,
             &format!(
                 "cursor={}&direction=older&limit=2",
@@ -195,7 +195,7 @@ async fn error_block_navigator_pages_through_a_same_height_group_exactly_once() 
         .await?;
         assert_eq!(older.items[0].index, 3);
         assert_eq!(older.items[1].index, 4);
-        let peeked = fetch_error_block_navigator(
+        let peeked = fetch_invalid_block_navigator(
             &client,
             &format!(
                 "cursor={}&direction=newer&limit=1",
@@ -211,7 +211,7 @@ async fn error_block_navigator_pages_through_a_same_height_group_exactly_once() 
             let Some(cursor) = page.next_cursor.clone() else {
                 break;
             };
-            page = fetch_error_block_navigator(
+            page = fetch_invalid_block_navigator(
                 &client,
                 &format!("cursor={cursor}&direction=older&limit=2"),
             )
@@ -236,7 +236,7 @@ async fn error_block_navigator_pages_through_a_same_height_group_exactly_once() 
             let Some(cursor) = page.prev_cursor.clone() else {
                 break;
             };
-            page = fetch_error_block_navigator(
+            page = fetch_invalid_block_navigator(
                 &client,
                 &format!("cursor={cursor}&direction=newer&limit=2"),
             )
@@ -280,13 +280,13 @@ async fn seed_canonical_backbone(client: &Client, to_height: i32, ts: i64) -> Re
 }
 
 #[tokio::test]
-async fn error_block_navigator_projects_a_complete_target_window() -> Result<()> {
+async fn invalid_block_navigator_projects_a_complete_target_window() -> Result<()> {
     crate::run_db_test!(client, {
         let ts = day_epoch(2026, Month::May, 10);
         seed_canonical_backbone(&client, 100, ts).await?;
 
         let target = hash_bytes(0x7777);
-        insert_error_block(
+        insert_invalid_block(
             &client,
             &target,
             &hash_bytes(0x7776),
@@ -295,9 +295,9 @@ async fn error_block_navigator_projects_a_complete_target_window() -> Result<()>
             "time_below_mtp",
         )
         .await?;
-        witness_error_block(&client, &target, &hash_bytes(0x7776), 50, ts + 1).await?;
+        witness_invalid_block(&client, &target, &hash_bytes(0x7776), 50, ts + 1).await?;
 
-        let payload = fetch_error_block_navigator(&client, "limit=1").await?;
+        let payload = fetch_invalid_block_navigator(&client, "limit=1").await?;
         assert_eq!(payload.items.len(), 1);
         let item = &payload.items[0];
         assert!(
@@ -335,8 +335,8 @@ async fn error_block_navigator_projects_a_complete_target_window() -> Result<()>
     })
 }
 
-/// Attach a witnessing event so `/tree` counts a source for the error block.
-async fn witness_error_block(
+/// Attach a witnessing event so `/tree` counts a source for the invalid block.
+async fn witness_invalid_block(
     client: &Client,
     hash: &[u8],
     prev_hash: &[u8],
@@ -353,7 +353,7 @@ async fn witness_error_block(
             parent_hash: hash.to_vec(),
             prev_hash: prev_hash.to_vec(),
             parent_time: ts,
-            kind: "error_block",
+            kind: "invalid_block",
             pow_validates_btc_target: true,
             btc_height: Some(height),
             pool_id: None,
@@ -363,22 +363,22 @@ async fn witness_error_block(
     Ok(())
 }
 
-/// Fill heights 34..=66 with 468 witnessed error blocks to exceed `TREE_NODE_LIMIT` (500).
-async fn crowd_window_with_error_blocks(client: &Client, ts: i64) -> Result<()> {
+/// Fill heights 34..=66 with 468 witnessed invalid blocks to exceed `TREE_NODE_LIMIT` (500).
+async fn crowd_window_with_invalid_blocks(client: &Client, ts: i64) -> Result<()> {
     let namecoin = get_source_id(client, NAMECOIN_SOURCE_CODE).await?;
     client
         .execute(
             "INSERT INTO block ( \
                 btc_header_hash, btc_prev_header_hash, btc_height, btc_height_source, \
-                kind, error_block_reason, btc_header_bytes, btc_header_time, \
+                kind, invalid_block_reason, btc_header_bytes, btc_header_time, \
                 btc_coinbase_status, total_attestations, distinct_sources, \
                 auxpow_chain_count, live_observed, core_attested, pow_validated, \
                 created_at, updated_at \
              ) \
              SELECT decode(lpad(to_hex(5000000 + g), 64, '0'), 'hex'), \
                     decode(lpad(to_hex(4999999 + g), 64, '0'), 'hex'), \
-                    34 + (g % 33), 'error-block-catalog', \
-                    'error_block', 'bip34_coinbase_height_mismatch', \
+                    34 + (g % 33), 'invalid-block-catalog', \
+                    'invalid_block', 'bip34_coinbase_height_mismatch', \
                     decode(lpad(to_hex(5000000 + g), 160, '0'), 'hex'), $1::bigint + g, \
                     'not_attempted', 1, 1, 1, FALSE, FALSE, TRUE, $1::bigint + g, $1::bigint + g \
              FROM generate_series(1, 468) AS g",
@@ -409,7 +409,7 @@ async fn crowd_window_with_error_blocks(client: &Client, ts: i64) -> Result<()> 
                     decode(lpad(to_hex(5000000 + g), 64, '0'), 'hex'), \
                     decode(lpad(to_hex(4999999 + g), 64, '0'), 'hex'), \
                     decode(lpad(to_hex(5000000 + g), 160, '0'), 'hex'), \
-                    $1::bigint + g, 34 + (g % 33), 'error_block', TRUE, \
+                    $1::bigint + g, 34 + (g % 33), 'invalid_block', TRUE, \
                     $1::bigint + g, $1::bigint + g, o.id \
              FROM o",
             &[&ts, &namecoin],
@@ -419,13 +419,13 @@ async fn crowd_window_with_error_blocks(client: &Client, ts: i64) -> Result<()> 
 }
 
 #[tokio::test]
-async fn error_blocks_count_against_the_tree_node_budget() -> Result<()> {
+async fn invalid_blocks_count_against_the_tree_node_budget() -> Result<()> {
     crate::run_db_test!(client, {
         let ts = day_epoch(2026, Month::May, 10);
         seed_canonical_backbone(&client, 100, ts).await?;
 
         let target = hash_bytes(0x7777);
-        insert_error_block(
+        insert_invalid_block(
             &client,
             &target,
             &hash_bytes(0x7776),
@@ -435,8 +435,8 @@ async fn error_blocks_count_against_the_tree_node_budget() -> Result<()> {
         )
         .await?;
 
-        witness_error_block(&client, &target, &hash_bytes(0x7776), 50, ts + 1).await?;
-        crowd_window_with_error_blocks(&client, ts).await?;
+        witness_invalid_block(&client, &target, &hash_bytes(0x7776), 50, ts + 1).await?;
+        crowd_window_with_invalid_blocks(&client, ts).await?;
 
         assert!(
             project_tree(&client, Some("from_height=34&to_height=66"))
@@ -445,7 +445,7 @@ async fn error_blocks_count_against_the_tree_node_budget() -> Result<()> {
             "fixture must put the full padded window beyond what /tree will render"
         );
 
-        let payload = fetch_error_block_navigator(
+        let payload = fetch_invalid_block_navigator(
             &client,
             &format!("anchor_hash={}&limit=1", display_hash(&target)),
         )
@@ -480,13 +480,13 @@ async fn error_blocks_count_against_the_tree_node_budget() -> Result<()> {
 }
 
 #[tokio::test]
-async fn sourceless_error_blocks_do_not_consume_the_tree_node_budget() -> Result<()> {
+async fn sourceless_invalid_blocks_do_not_consume_the_tree_node_budget() -> Result<()> {
     crate::run_db_test!(client, {
         let ts = day_epoch(2026, Month::May, 10);
         seed_canonical_backbone(&client, 100, ts).await?;
 
         let target = hash_bytes(0x7777);
-        insert_error_block(
+        insert_invalid_block(
             &client,
             &target,
             &hash_bytes(0x7776),
@@ -495,21 +495,21 @@ async fn sourceless_error_blocks_do_not_consume_the_tree_node_budget() -> Result
             "time_below_mtp",
         )
         .await?;
-        witness_error_block(&client, &target, &hash_bytes(0x7776), 50, ts + 1).await?;
+        witness_invalid_block(&client, &target, &hash_bytes(0x7776), 50, ts + 1).await?;
 
         client
             .execute(
                 "INSERT INTO block ( \
                     btc_header_hash, btc_prev_header_hash, btc_height, btc_height_source, \
-                    kind, error_block_reason, btc_header_bytes, btc_header_time, \
+                    kind, invalid_block_reason, btc_header_bytes, btc_header_time, \
                     btc_coinbase_status, total_attestations, distinct_sources, \
                     auxpow_chain_count, live_observed, core_attested, pow_validated, \
                     created_at, updated_at \
                  ) \
                  SELECT decode(lpad(to_hex(7000000 + g), 64, '0'), 'hex'), \
                         decode(lpad(to_hex(6999999 + g), 64, '0'), 'hex'), \
-                        34 + (g % 33), 'error-block-catalog', \
-                        'error_block', 'bip34_coinbase_height_mismatch', \
+                        34 + (g % 33), 'invalid-block-catalog', \
+                        'invalid_block', 'bip34_coinbase_height_mismatch', \
                         decode(lpad(to_hex(7000000 + g), 160, '0'), 'hex'), $1::bigint + g, \
                         'not_attempted', 0, 0, 0, FALSE, FALSE, TRUE, $1::bigint + g, $1::bigint + g \
                  FROM generate_series(1, 600) AS g",
@@ -517,7 +517,7 @@ async fn sourceless_error_blocks_do_not_consume_the_tree_node_budget() -> Result
             )
             .await?;
 
-        let payload = fetch_error_block_navigator(
+        let payload = fetch_invalid_block_navigator(
             &client,
             &format!("anchor_hash={}&limit=1", display_hash(&target)),
         )
@@ -536,13 +536,13 @@ async fn sourceless_error_blocks_do_not_consume_the_tree_node_budget() -> Result
 }
 
 #[tokio::test]
-async fn error_block_navigator_skips_rows_the_tree_would_filter_out() -> Result<()> {
+async fn invalid_block_navigator_skips_rows_the_tree_would_filter_out() -> Result<()> {
     crate::run_db_test!(client, {
         let ts = day_epoch(2026, Month::May, 10);
         seed_canonical_backbone(&client, 100, ts).await?;
 
         let witnessed = hash_bytes(0x4001);
-        insert_error_block(
+        insert_invalid_block(
             &client,
             &witnessed,
             &hash_bytes(0x4000),
@@ -551,9 +551,9 @@ async fn error_block_navigator_skips_rows_the_tree_would_filter_out() -> Result<
             "time_below_mtp",
         )
         .await?;
-        witness_error_block(&client, &witnessed, &hash_bytes(0x4000), 50, ts + 1).await?;
+        witness_invalid_block(&client, &witnessed, &hash_bytes(0x4000), 50, ts + 1).await?;
         let sourceless = hash_bytes(0x4002);
-        insert_error_block_with_sources(
+        insert_invalid_block_with_sources(
             &client,
             &sourceless,
             &hash_bytes(0x4000),
@@ -564,7 +564,7 @@ async fn error_block_navigator_skips_rows_the_tree_would_filter_out() -> Result<
         )
         .await?;
 
-        let payload = fetch_error_block_navigator(&client, "limit=10").await?;
+        let payload = fetch_invalid_block_navigator(&client, "limit=10").await?;
         assert_eq!(payload.total, 1, "only the witnessed block is navigable");
         assert_eq!(payload.items.len(), 1);
         assert_eq!(payload.items[0].primary_hash, display_hash(&witnessed));
@@ -595,7 +595,7 @@ async fn error_block_navigator_skips_rows_the_tree_would_filter_out() -> Result<
             "the withheld block must indeed be one the tree filters out"
         );
 
-        let anchored = fetch_error_block_navigator(
+        let anchored = fetch_invalid_block_navigator(
             &client,
             &format!("anchor_hash={}&limit=1", display_hash(&sourceless)),
         )
@@ -607,12 +607,13 @@ async fn error_block_navigator_skips_rows_the_tree_would_filter_out() -> Result<
 }
 
 #[tokio::test]
-async fn error_block_navigator_anchors_on_a_catalogued_hash() -> Result<()> {
+async fn invalid_block_navigator_anchors_on_a_catalogued_hash() -> Result<()> {
     crate::run_db_test!(client, {
         let seeded = seed_catalogue(&client).await?;
         let anchor = display_hash(&seeded.expected[3]);
         let payload =
-            fetch_error_block_navigator(&client, &format!("anchor_hash={anchor}&limit=10")).await?;
+            fetch_invalid_block_navigator(&client, &format!("anchor_hash={anchor}&limit=10"))
+                .await?;
         assert_eq!(payload.items.len(), 1);
         assert_eq!(payload.items[0].primary_hash, anchor);
         assert_eq!(payload.items[0].position.max, 200);

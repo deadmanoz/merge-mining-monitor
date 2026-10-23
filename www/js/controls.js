@@ -402,7 +402,7 @@ function resetTreeToTip() {
   state.selectedHash = null;
   state.selectedBlock = null;
   state.stale.anchor = null;
-  state.errorBlock.anchor = null;
+  state.invalidBlock.anchor = null;
   state.orphan.anchor = null;
   reconcileNavFromSelected();
   writeForm();

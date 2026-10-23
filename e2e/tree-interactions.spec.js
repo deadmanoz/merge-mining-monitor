@@ -292,35 +292,35 @@ test("clicking an orphan/unknown node opens it via the empty-anchor fallback", a
   await expect(page.locator('g.tree-node[data-selected="true"]')).toHaveCount(1);
 });
 
-test("a catalogued error block is a standalone tree node with its rejection reason", async ({ page }) => {
+test("a catalogued invalid block is a standalone tree node with its rejection reason", async ({ page }) => {
   const treeRequests = [];
-  const errorHash = "e".repeat(64);
-  const errorBlock = {
-    ...makeNode(errorHash, 946213, null, "error_block"),
-    error_block_reason: "time_below_mtp",
+  const invalidHash = "e".repeat(64);
+  const invalidBlock = {
+    ...makeNode(invalidHash, 946213, null, "invalid_block"),
+    invalid_block_reason: "time_below_mtp",
   };
   await stubApi(page, treeRequests, {
     treePayload: (query) => treeEnvelope(query, {
-      nodes: [errorBlock],
+      nodes: [invalidBlock],
       edges: [],
       legend: {
-        kinds: ["canonical", "stale", "error_block", "unknown"],
+        kinds: ["canonical", "stale", "invalid_block", "unknown"],
         edge_kinds: ["canonical", "stale_entry", "stale", "hidden"],
       },
     }),
     blockPayload: () => ({
       schema_version: "v1",
       generated_at: GENERATED_AT,
-      block: errorBlock,
+      block: invalidBlock,
     }),
   });
 
   await page.goto("/?tree_height=946213");
-  const errorNode = page.locator('g.tree-node[aria-label*="error_block 946213"]');
-  await expect(errorNode).toHaveCount(1);
+  const invalidNode = page.locator('g.tree-node[aria-label*="invalid_block 946213"]');
+  await expect(invalidNode).toHaveCount(1);
   await expect(page.locator("#tree-svg line.tree-edge")).toHaveCount(0);
 
-  await errorNode.click();
+  await invalidNode.click();
   await expect(page.locator("#drawer")).toContainText("Consensus rejection");
   await expect(page.locator("#drawer")).toContainText(
     "Block time at or below median-time-past",
@@ -338,29 +338,29 @@ test("a catalogued error block is a standalone tree node with its rejection reas
 });
 
 test("an unmapped consensus rule token falls back to the raw value with no help control", async ({ page }) => {
-  const errorHash = "e".repeat(64);
-  const errorBlock = {
-    ...makeNode(errorHash, 946213, null, "error_block"),
-    error_block_reason: "some_future_rule_token",
+  const invalidHash = "e".repeat(64);
+  const invalidBlock = {
+    ...makeNode(invalidHash, 946213, null, "invalid_block"),
+    invalid_block_reason: "some_future_rule_token",
   };
   await stubApi(page, [], {
     treePayload: (query) => treeEnvelope(query, {
-      nodes: [errorBlock],
+      nodes: [invalidBlock],
       edges: [],
       legend: {
-        kinds: ["canonical", "stale", "error_block", "unknown"],
+        kinds: ["canonical", "stale", "invalid_block", "unknown"],
         edge_kinds: ["canonical", "stale_entry", "stale", "hidden"],
       },
     }),
     blockPayload: () => ({
       schema_version: "v1",
       generated_at: GENERATED_AT,
-      block: errorBlock,
+      block: invalidBlock,
     }),
   });
 
   await page.goto("/?tree_height=946213");
-  await page.locator('g.tree-node[aria-label*="error_block 946213"]').click();
+  await page.locator('g.tree-node[aria-label*="invalid_block 946213"]').click();
   await expect(page.locator("#drawer")).toContainText("Consensus rejection");
   await expect(page.locator("#drawer")).toContainText("some_future_rule_token");
   await expect(page.locator("#drawer button[data-consensus-rule-info]")).toHaveCount(0);

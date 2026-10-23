@@ -8,7 +8,7 @@ usage() {
     cat <<'USAGE'
 Usage: scripts/gen-research-publication-pins.sh [--check] [--allow-missing-repo] [--repo-dir DIR] [--source-commit COMMIT]
 
-Generate or verify the historical manifest and compact error-block catalogue
+Generate or verify the historical manifest and compact invalid-block catalogue
 from one Research commit. Generation stages every output before publishing
 them; --check runs every check and fails if any one fails.
 
@@ -42,7 +42,7 @@ fi
 if [ "${check}" -eq 1 ]; then
     status=0
     ./scripts/gen-historical-source-manifest.sh "${args[@]}" || status=1
-    ./scripts/gen-error-blocks-catalogue.sh "${args[@]}" || status=1
+    ./scripts/gen-invalid-blocks-catalogue.sh "${args[@]}" || status=1
     exit "${status}"
 fi
 
@@ -54,14 +54,14 @@ cleanup() {
 trap cleanup EXIT
 
 manifest="${scratch}/historical-source-manifest.json"
-catalogue="${scratch}/error_blocks.csv"
+catalogue="${scratch}/invalid_blocks.csv"
 ./scripts/gen-historical-source-manifest.sh "${args[@]}" --out "${manifest}"
-./scripts/gen-error-blocks-catalogue.sh \
+./scripts/gen-invalid-blocks-catalogue.sh \
     "${args[@]}" \
     --historical-manifest "${manifest}" \
     --out "${catalogue}"
 
 mv -f "${manifest}" data/historical/historical-source-manifest.json
 mv -f "${manifest%.json}.sha256" data/historical/historical-source-manifest.sha256
-mv -f "${catalogue}" data/consensus/error_blocks.csv
+mv -f "${catalogue}" data/consensus/invalid_blocks.csv
 printf 'published all staged Research pins\n'

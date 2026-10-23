@@ -32,9 +32,9 @@
       "scenario": "RSK-only stale block with child_inferred display miner pool from RSK miner address"
     },
     {
-      "file": "block-error-block.json",
+      "file": "block-invalid-block.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "Catalogued consensus-invalid error block with rejection reason and no stale branch"
+      "scenario": "Catalogued consensus-invalid block with rejection reason and no stale branch"
     },
     {
       "file": "block-rsk-uncle-near.json",
@@ -42,9 +42,9 @@
       "scenario": "Near parent page with an RSK uncle observation, nullable child header and nBits"
     },
     {
-      "file": "block-body-invalid-error.json",
+      "file": "block-body-invalid.json",
       "endpoint_family": "/api/v1/block/:hash",
-      "scenario": "Reviewed body-invalid parent classified as error_block, with no stale competition or branch"
+      "scenario": "Reviewed body-invalid parent classified as invalid_block, with no stale competition or branch"
     },
     {
       "file": "block-protocol-commitments.json",
@@ -62,9 +62,9 @@
       "scenario": "Multi-block stale-branch navigator page with branch metadata, cursor, and tree-window view"
     },
     {
-      "file": "navigator-error-block.json",
-      "endpoint_family": "/api/v1/navigator/error-block",
-      "scenario": "Same-height error-block navigator group ordered by stored hash bytes"
+      "file": "navigator-invalid-block.json",
+      "endpoint_family": "/api/v1/navigator/invalid-block",
+      "scenario": "Same-height invalid-block navigator group ordered by stored hash bytes"
     },
     {
       "file": "navigator-orphan.json",

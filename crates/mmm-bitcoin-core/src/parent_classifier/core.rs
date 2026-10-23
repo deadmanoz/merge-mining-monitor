@@ -307,9 +307,9 @@ impl BitcoinCoreParentClassifier {
                         )
                         .await;
                 }
-                BlockKind::ErrorBlock => {
+                BlockKind::InvalidBlock => {
                     return self
-                        .classify_error_block_child(header, prev_height, fail_on_rpc_error)
+                        .classify_invalid_block_child(header, prev_height, fail_on_rpc_error)
                         .await;
                 }
                 BlockKind::Unknown => {}
@@ -409,7 +409,7 @@ impl BitcoinCoreParentClassifier {
                 prev_kind,
                 Some(competitor),
             )),
-            MtpCheck::Passes(false) => Ok(ParentClassification::error_block(
+            MtpCheck::Passes(false) => Ok(ParentClassification::invalid_block(
                 header,
                 height,
                 inferred_height_source(prev_kind),
@@ -424,11 +424,11 @@ impl BitcoinCoreParentClassifier {
         }
     }
 
-    /// A child of a catalogued error block sits on an invalid branch, so it is
+    /// A child of a catalogued invalid block sits on an invalid branch, so it is
     /// never a stale sibling. It remains an orphan candidate only with the
     /// bits of Bitcoin's block at its height; other bits make it another
     /// chain's header, which gets no absence verdict.
-    async fn classify_error_block_child(
+    async fn classify_invalid_block_child(
         &self,
         header: &Header,
         prev_height: i32,
@@ -744,8 +744,8 @@ fn inferred_height_source(prev_kind: BlockKind) -> HeightSource {
     match prev_kind {
         BlockKind::Canonical => HeightSource::PrevCanonical,
         BlockKind::Stale => HeightSource::PrevStale,
-        BlockKind::ErrorBlock => {
-            unreachable!("error-block predecessor is not eligible for stale inference")
+        BlockKind::InvalidBlock => {
+            unreachable!("invalid-block predecessor is not eligible for stale inference")
         }
         BlockKind::Unknown => unreachable!("unknown predecessor kind is not classified"),
     }

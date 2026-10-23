@@ -22,7 +22,7 @@ test("height shared link requests compact tree height automatically", async ({ p
   expect(query.has("to_height")).toBe(false);
 });
 
-test("tree controls show canonical, stale, error-block, and orphan signal filters", async ({ page }) => {
+test("tree controls show canonical, stale, invalid-block, and orphan signal filters", async ({ page }) => {
   const treeRequests = [];
   await stubApi(page, treeRequests);
 
@@ -37,7 +37,7 @@ test("tree controls show canonical, stale, error-block, and orphan signal filter
   await expect(filters.locator('input[name="classification"]')).toHaveCount(2);
   await expect(filters.getByText("Canonical", { exact: true })).toBeVisible();
   await expect(filters.getByText("Stale", { exact: true })).toBeVisible();
-  await expect(filters.getByText("Error block", { exact: true })).toBeVisible();
+  await expect(filters.getByText("Invalid block", { exact: true })).toBeVisible();
   await expect(filters.getByText("Strict orphan", { exact: true })).toBeVisible();
   await expect(filters.getByText("Weak orphan", { exact: true })).toBeVisible();
   await expect(filters.getByText("Unknown", { exact: true })).toHaveCount(0);
@@ -48,7 +48,7 @@ test("tree controls show canonical, stale, error-block, and orphan signal filter
   const legend = page.locator("#tree-legend-body");
   await expect(legend.getByText("canonical", { exact: true })).toBeVisible();
   await expect(legend.getByText("stale", { exact: true })).toBeVisible();
-  await expect(legend.getByText("error block", { exact: true })).toBeVisible();
+  await expect(legend.getByText("invalid block", { exact: true })).toBeVisible();
   await expect(legend.getByText("strict orphan", { exact: true })).toBeVisible();
   await expect(legend.getByText("weak orphan", { exact: true })).toBeVisible();
   await expect(legend.getByText("near", { exact: true })).toHaveCount(0);
@@ -367,22 +367,22 @@ test("stale node with child-inferred miner labels the pool instead of unknown", 
   await expect(page.locator(".tree-block-pool", { hasText: "unknown miner" })).toHaveCount(0);
 });
 
-test("Latest error block uses the unified navigator endpoint and steps", async ({ page }) => {
+test("Latest invalid block uses the unified navigator endpoint and steps", async ({ page }) => {
   const treeRequests = [];
   const navigatorRequests = [];
-  const errorHash = "e".repeat(64);
+  const invalidHash = "e".repeat(64);
   const olderHash = "f".repeat(64);
-  const errorHeight = 946213;
+  const invalidHeight = 946213;
   const olderHeight = 717696;
 
-  const errorRow = (hash, height) => ({
-    id: `error-block-${hash}`,
-    kind: "error-block",
+  const invalidRow = (hash, height) => ({
+    id: `invalid-block-${hash}`,
+    kind: "invalid-block",
     primary_hash: hash,
-    label: `Error block #${height}`,
+    label: `Invalid block #${height}`,
     position: { axis: "height", min: height, max: height },
     index: hash === olderHash ? 2 : 1,
-    cursor: `opaque-error-cursor-${height}`,
+    cursor: `opaque-invalid-cursor-${height}`,
     branch: null,
     orphan: null,
     view: {
@@ -396,11 +396,11 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
     view_error: null,
   });
 
-  const errorEnvelope = (rows, mode) => ({
+  const invalidEnvelope = (rows, mode) => ({
     schema_version: "v1",
     generated_at: 1779792000,
     query: {
-      target: "error-block",
+      target: "invalid-block",
       mode,
       cursor: null,
       direction: null,
@@ -408,23 +408,23 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
       classification: [],
       limit: 1,
     },
-    target: "error-block",
+    target: "invalid-block",
     items: rows,
     total: 33,
     facets: {},
-    next_cursor: "opaque-error-cursor-next",
+    next_cursor: "opaque-invalid-cursor-next",
     prev_cursor: null,
   });
 
-  const errorBlockPayload = (hash, height) => ({
+  const invalidBlockPayload = (hash, height) => ({
     schema_version: "v1",
     generated_at: 1779792000,
     block: {
       hash,
       height,
-      kind: "error_block",
+      kind: "invalid_block",
       btc_orphan_class: null,
-      error_block_reason: "time_below_mtp",
+      invalid_block_reason: "time_below_mtp",
       header: { time: 1779792000 },
       bitcoin_miner_pool: { id: null, slug: null, name: "Unknown", known: false },
       source_summary: {
@@ -446,12 +446,12 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
       const from = Number(query.get("from_height") || 0);
       const [hash, height] = from === olderHeight - 16
         ? [olderHash, olderHeight]
-        : [errorHash, errorHeight];
+        : [invalidHash, invalidHeight];
       return treeEnvelope(query, {
-        nodes: [makeNode(hash, height, null, "error_block", { id: 1, prev_id: null })],
+        nodes: [makeNode(hash, height, null, "invalid_block", { id: 1, prev_id: null })],
         edges: [],
         legend: {
-          kinds: ["canonical", "stale", "error_block", "unknown"],
+          kinds: ["canonical", "stale", "invalid_block", "unknown"],
           edge_kinds: ["canonical", "stale_entry", "stale", "hidden"],
         },
       });
@@ -459,20 +459,20 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
     navigatorRequests,
     navigator: (url) => {
       if (url.searchParams.get("direction") === "older") {
-        return errorEnvelope([errorRow(olderHash, olderHeight)], "page");
+        return invalidEnvelope([invalidRow(olderHash, olderHeight)], "page");
       }
       const anchor = url.searchParams.get("anchor_hash");
       if (anchor) {
         const row = anchor === olderHash
-          ? errorRow(olderHash, olderHeight)
-          : errorRow(errorHash, errorHeight);
-        return errorEnvelope([row], "anchor");
+          ? invalidRow(olderHash, olderHeight)
+          : invalidRow(invalidHash, invalidHeight);
+        return invalidEnvelope([row], "anchor");
       }
-      return errorEnvelope([errorRow(errorHash, errorHeight)], "latest");
+      return invalidEnvelope([invalidRow(invalidHash, invalidHeight)], "latest");
     },
     blockPayloads: {
-      [errorHash]: errorBlockPayload(errorHash, errorHeight),
-      [olderHash]: errorBlockPayload(olderHash, olderHeight),
+      [invalidHash]: invalidBlockPayload(invalidHash, invalidHeight),
+      [olderHash]: invalidBlockPayload(olderHash, olderHeight),
     },
   });
 
@@ -481,40 +481,40 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
   await expect.poll(() => treeRequests.length).toBeGreaterThan(0);
 
   await expect(
-    page.locator('#nav-goto option[value="errorBlock"]'),
-  ).toHaveText("Latest error block");
+    page.locator('#nav-goto option[value="invalidBlock"]'),
+  ).toHaveText("Latest invalid block");
 
-  await page.locator("#nav-goto").selectOption("errorBlock");
+  await page.locator("#nav-goto").selectOption("invalidBlock");
 
   await expect.poll(() => navigatorRequests.some((url) => (
-    url.pathname.endsWith("/api/v1/navigator/error-block")
+    url.pathname.endsWith("/api/v1/navigator/invalid-block")
       && url.searchParams.get("limit") === "1"
   ))).toBe(true);
   expect(
     navigatorRequests
-      .filter((url) => url.pathname.endsWith("/api/v1/navigator/error-block"))
+      .filter((url) => url.pathname.endsWith("/api/v1/navigator/invalid-block"))
       .every((url) => url.searchParams.get("classification") === null),
   ).toBe(true);
 
   await expect.poll(() => treeRequests.some((url) => (
-    url.searchParams.get("from_height") === String(errorHeight - 16)
-      && url.searchParams.get("to_height") === String(errorHeight + 16)
+    url.searchParams.get("from_height") === String(invalidHeight - 16)
+      && url.searchParams.get("to_height") === String(invalidHeight + 16)
   ))).toBe(true);
 
   await expect(
-    page.locator(`g.tree-node[aria-label*="error_block ${errorHeight}"]`),
+    page.locator(`g.tree-node[aria-label*="invalid_block ${invalidHeight}"]`),
   ).toHaveCount(1);
-  await expect(page).toHaveURL(new RegExp(`selected=${errorHash}`));
+  await expect(page).toHaveURL(new RegExp(`selected=${invalidHash}`));
   await expect.poll(() => navigatorRequests.some((url) => (
-    url.pathname.endsWith("/api/v1/navigator/error-block")
-      && url.searchParams.get("anchor_hash") === errorHash
+    url.pathname.endsWith("/api/v1/navigator/invalid-block")
+      && url.searchParams.get("anchor_hash") === invalidHash
   ))).toBe(true);
 
   await expect(page.locator("#nav-readout")).toContainText("#946,213 · 1 of 33");
 
   await page.locator("#nav-older").click();
   await expect.poll(() => navigatorRequests.some((url) => (
-    url.pathname.endsWith("/api/v1/navigator/error-block")
+    url.pathname.endsWith("/api/v1/navigator/invalid-block")
       && url.searchParams.get("direction") === "older"
   ))).toBe(true);
   await expect.poll(() => treeRequests.some((url) => (
@@ -523,28 +523,28 @@ test("Latest error block uses the unified navigator endpoint and steps", async (
   ))).toBe(true);
   await expect(page).toHaveURL(new RegExp(`selected=${olderHash}`));
   await expect(
-    page.locator(`g.tree-node[aria-label*="error_block ${olderHeight}"]`),
+    page.locator(`g.tree-node[aria-label*="invalid_block ${olderHeight}"]`),
   ).toHaveCount(1);
   await expect(page.locator("#nav-readout")).toContainText("#717,696 · 2 of 33");
   await expect(page.locator("#nav-readout")).not.toContainText("#946,213");
 });
 
-test("a shared link to an error block adopts that navigator target", async ({ page }) => {
+test("a shared link to an invalid block adopts that navigator target", async ({ page }) => {
   const treeRequests = [];
   const navigatorRequests = [];
-  const errorHash = "e".repeat(64);
+  const invalidHash = "e".repeat(64);
   const olderHash = "f".repeat(64);
-  const errorHeight = 946213;
+  const invalidHeight = 946213;
   const olderHeight = 717696;
 
-  const errorRow = (hash, height) => ({
-    id: `error-block-${hash}`,
-    kind: "error-block",
+  const invalidRow = (hash, height) => ({
+    id: `invalid-block-${hash}`,
+    kind: "invalid-block",
     primary_hash: hash,
-    label: `Error block #${height}`,
+    label: `Invalid block #${height}`,
     position: { axis: "height", min: height, max: height },
     index: hash === olderHash ? 2 : 1,
-    cursor: `opaque-error-cursor-${height}`,
+    cursor: `opaque-invalid-cursor-${height}`,
     branch: null,
     orphan: null,
     view: {
@@ -562,7 +562,7 @@ test("a shared link to an error block adopts that navigator target", async ({ pa
     schema_version: "v1",
     generated_at: 1779792000,
     query: {
-      target: "error-block",
+      target: "invalid-block",
       mode,
       cursor: null,
       direction: null,
@@ -570,11 +570,11 @@ test("a shared link to an error block adopts that navigator target", async ({ pa
       classification: [],
       limit: 1,
     },
-    target: "error-block",
+    target: "invalid-block",
     items: rows,
     total: 33,
     facets: {},
-    next_cursor: "opaque-error-cursor-next",
+    next_cursor: "opaque-invalid-cursor-next",
     prev_cursor: null,
   });
 
@@ -584,9 +584,9 @@ test("a shared link to an error block adopts that navigator target", async ({ pa
     block: {
       hash,
       height,
-      kind: "error_block",
+      kind: "invalid_block",
       btc_orphan_class: null,
-      error_block_reason: "time_below_mtp",
+      invalid_block_reason: "time_below_mtp",
       header: { time: 1779792000 },
       bitcoin_miner_pool: { id: null, slug: null, name: "Unknown", known: false },
       source_summary: {
@@ -608,12 +608,12 @@ test("a shared link to an error block adopts that navigator target", async ({ pa
       const from = Number(query.get("from_height") || 0);
       const [hash, height] = from === olderHeight - 16
         ? [olderHash, olderHeight]
-        : [errorHash, errorHeight];
+        : [invalidHash, invalidHeight];
       return treeEnvelope(query, {
-        nodes: [makeNode(hash, height, null, "error_block", { id: 1, prev_id: null })],
+        nodes: [makeNode(hash, height, null, "invalid_block", { id: 1, prev_id: null })],
         edges: [],
         legend: {
-          kinds: ["canonical", "stale", "error_block", "unknown"],
+          kinds: ["canonical", "stale", "invalid_block", "unknown"],
           edge_kinds: ["canonical", "stale_entry", "stale", "hidden"],
         },
       });
@@ -621,38 +621,38 @@ test("a shared link to an error block adopts that navigator target", async ({ pa
     navigatorRequests,
     navigator: (url) => {
       if (url.searchParams.get("direction") === "older") {
-        return envelope([errorRow(olderHash, olderHeight)], "page");
+        return envelope([invalidRow(olderHash, olderHeight)], "page");
       }
       const anchor = url.searchParams.get("anchor_hash");
       if (anchor) {
         return envelope(
-          [anchor === olderHash ? errorRow(olderHash, olderHeight) : errorRow(errorHash, errorHeight)],
+          [anchor === olderHash ? invalidRow(olderHash, olderHeight) : invalidRow(invalidHash, invalidHeight)],
           "anchor",
         );
       }
-      return envelope([errorRow(errorHash, errorHeight)], "latest");
+      return envelope([invalidRow(invalidHash, invalidHeight)], "latest");
     },
     blockPayloads: {
-      [errorHash]: blockPayload(errorHash, errorHeight),
+      [invalidHash]: blockPayload(invalidHash, invalidHeight),
       [olderHash]: blockPayload(olderHash, olderHeight),
     },
   });
 
-  await page.goto(`/?tree_height=${errorHeight}&selected=${errorHash}`);
+  await page.goto(`/?tree_height=${invalidHeight}&selected=${invalidHash}`);
   await expect(page.getByRole("heading", { name: "Bitcoin Header Tree" })).toBeVisible();
 
   await expect.poll(() => navigatorRequests.some((url) => (
-    url.pathname.endsWith("/api/v1/navigator/error-block")
-      && url.searchParams.get("anchor_hash") === errorHash
+    url.pathname.endsWith("/api/v1/navigator/invalid-block")
+      && url.searchParams.get("anchor_hash") === invalidHash
   ))).toBe(true);
 
-  await expect(page.locator("#nav-goto option[value='']")).toHaveText("Error blocks");
+  await expect(page.locator("#nav-goto option[value='']")).toHaveText("Invalid blocks");
   await expect(page.locator("#nav-readout")).toContainText("#946,213 · 1 of 33");
 
   await expect(page.locator("#nav-older")).toBeEnabled();
   await page.locator("#nav-older").click();
   await expect.poll(() => navigatorRequests.some((url) => (
-    url.pathname.endsWith("/api/v1/navigator/error-block")
+    url.pathname.endsWith("/api/v1/navigator/invalid-block")
       && url.searchParams.get("direction") === "older"
   ))).toBe(true);
   await expect(page.locator("#nav-readout")).toContainText("#717,696 · 2 of 33");

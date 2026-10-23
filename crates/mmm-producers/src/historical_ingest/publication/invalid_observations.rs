@@ -1,4 +1,4 @@
-//! Preflight for the aggregate error-witness artifact.
+//! Preflight for the aggregate invalid-witness artifact.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
@@ -16,30 +16,30 @@ use crate::historical_ingest::csv_source::{
     CsvLayout, ExpectedPublicationState, publication_state_from_record,
 };
 
-/// Verified error-observation aggregate retained for the write phase after all
+/// Verified invalid-observation aggregate retained for the write phase after all
 /// normal artifacts have preflighted. Its rows carry their real source chain,
 /// so layout selection happens per row rather than per file.
 #[derive(Debug)]
-pub(crate) struct ErrorObservationPreflight {
+pub(crate) struct InvalidObservationPreflight {
     pub(crate) row_count: u64,
     pub(crate) source_chain_counts: BTreeMap<String, u64>,
     pub(crate) state_rows: Vec<ExpectedPublicationState>,
     file: File,
 }
 
-impl ErrorObservationPreflight {
+impl InvalidObservationPreflight {
     pub(crate) fn open_reader(&mut self) -> Result<csv::Reader<&mut File>> {
         self.file
             .seek(SeekFrom::Start(0))
-            .context("rewind verified error-observation artifact")?;
+            .context("rewind verified invalid-observation artifact")?;
         Ok(csv::Reader::from_reader(&mut self.file))
     }
 }
 
-pub(crate) fn inspect_error_observation_csv(
+pub(crate) fn inspect_invalid_observation_csv(
     path: &Path,
     expected: Option<&PublicationArtifact>,
-) -> Result<ErrorObservationPreflight> {
+) -> Result<InvalidObservationPreflight> {
     let mut file = open_artifact_file(path, expected)?;
     file.seek(SeekFrom::Start(0))
         .with_context(|| format!("rewind {}", path.display()))?;
@@ -52,7 +52,7 @@ pub(crate) fn inspect_error_observation_csv(
             .iter()
             .map(str::trim)
             .eq(expected_header.iter().copied()),
-        "CSV header does not match the error-observation union schema"
+        "CSV header does not match the invalid-observation union schema"
     );
     let chain_index = required_column(reader.headers()?, "chain")?;
     let classification_index = required_column(reader.headers()?, "classification")?;
@@ -68,7 +68,7 @@ pub(crate) fn inspect_error_observation_csv(
             .get(chain_index)
             .map(str::trim)
             .filter(|chain| !chain.is_empty())
-            .context("error-observation row has no source chain")?;
+            .context("invalid-observation row has no source chain")?;
         ensure!(
             is_historical_import_chain(chain),
             "{} row {} has an unknown or surveyed source chain {chain:?}",
@@ -115,7 +115,7 @@ pub(crate) fn inspect_error_observation_csv(
         );
         ensure!(
             source_chain_counts == expected.source_chain_counts,
-            "error-observation source-chain count mismatch for {}",
+            "invalid-observation source-chain count mismatch for {}",
             path.display()
         );
     }
@@ -123,7 +123,7 @@ pub(crate) fn inspect_error_observation_csv(
     file.seek(SeekFrom::Start(0))
         .with_context(|| format!("rewind {}", path.display()))?;
     state_rows.sort_by(|left, right| left.key.cmp(&right.key));
-    Ok(ErrorObservationPreflight {
+    Ok(InvalidObservationPreflight {
         row_count,
         source_chain_counts,
         state_rows,

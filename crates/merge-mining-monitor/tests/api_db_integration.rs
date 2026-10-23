@@ -12,10 +12,10 @@ mod branches;
 mod chain_endpoints;
 #[path = "api_db_integration/competitions.rs"]
 mod competitions;
-#[path = "api_db_integration/error_blocks.rs"]
-mod error_blocks;
 #[path = "api_db_integration/helpers.rs"]
 mod helpers;
+#[path = "api_db_integration/invalid_blocks.rs"]
+mod invalid_blocks;
 #[path = "api_db_integration/orphans.rs"]
 mod orphans;
 #[path = "api_db_integration/sources.rs"]

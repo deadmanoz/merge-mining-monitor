@@ -179,7 +179,7 @@
           <p class="about-lede">
             Explore Bitcoin mining through child-chain proofs, Bitcoin Core
             observations and recovered records: pool attribution, stale and
-            orphan evidence, and consensus-invalid error blocks. Coinbase
+            orphan evidence, and consensus-invalid blocks. Coinbase
             protocol declarations and cited Findings add context to that record.
           </p>
 
@@ -259,7 +259,7 @@
                     <path class="edge e-base" d="M142 44 H 270" />
                     <polygon class="head h-base" points="272,44 264,40 264,48" />
                     <text class="mm-cap" x="207" y="30" text-anchor="middle">rule failure</text>
-                    <rect class="blk k-error" x="274" y="22" width="172" height="44" rx="5" />
+                    <rect class="blk k-invalid" x="274" y="22" width="172" height="44" rx="5" />
                     <text class="mm-t" x="360" y="41" text-anchor="middle">Bitcoin: invalid</text>
                     <text class="mm-s" x="360" y="56" text-anchor="middle">e.g. excess coinbase reward</text>
                     <path class="edge e-base e-dashed" d="M78 66 V 137 H 270" />
@@ -274,7 +274,7 @@
                 <p class="screen-copy">
                   A child chain applies its own rules, so it can preserve proof
                   of a Bitcoin template that meets the target but violates a
-                  Bitcoin consensus rule. These are error blocks, distinct from
+                  Bitcoin consensus rule. These are invalid blocks, distinct from
                   stale blocks. A header or proof alone does not validate every
                   transaction in the Bitcoin block.
                 </p>
@@ -282,7 +282,7 @@
 
               <li class="explainer-screen" data-screen="3" role="group" aria-roledescription="slide" aria-label="Step 4 of 4: classify from the available evidence" hidden>
                 <div class="screen-figure">
-                  <svg viewBox="0 0 460 200" role="img" aria-label="Child proofs, Bitcoin Core context and the reviewed catalogue inform canonical, stale, error-block, strict-orphan or weak-orphan classifications; incomplete evidence can remain unknown">
+                  <svg viewBox="0 0 460 200" role="img" aria-label="Child proofs, Bitcoin Core context and the reviewed catalogue inform canonical, stale, invalid-block, strict-orphan or weak-orphan classifications; incomplete evidence can remain unknown">
                     <rect class="blk k-base" x="12" y="20" width="126" height="32" rx="4" />
                     <text class="mm-t" x="75" y="40" text-anchor="middle">Child proofs</text>
                     <rect class="blk k-base" x="12" y="84" width="126" height="32" rx="4" />
@@ -298,8 +298,8 @@
                     <text class="mm-t" x="386" y="24" text-anchor="middle">Canonical</text>
                     <rect class="blk k-stale" x="324" y="40" width="124" height="24" rx="4" />
                     <text class="mm-t" x="386" y="56" text-anchor="middle">Stale</text>
-                    <rect class="blk k-error" x="324" y="72" width="124" height="24" rx="4" />
-                    <text class="mm-t" x="386" y="88" text-anchor="middle">Error block</text>
+                    <rect class="blk k-invalid" x="324" y="72" width="124" height="24" rx="4" />
+                    <text class="mm-t" x="386" y="88" text-anchor="middle">Invalid block</text>
                     <rect class="blk k-orphan-strict" x="324" y="104" width="124" height="24" rx="4" />
                     <text class="mm-t" x="386" y="120" text-anchor="middle">Strict orphan</text>
                     <rect class="blk k-orphan-weak" x="324" y="136" width="124" height="24" rx="4" />

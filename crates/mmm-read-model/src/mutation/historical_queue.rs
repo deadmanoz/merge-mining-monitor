@@ -24,7 +24,7 @@ use crate::{
 const CANONICAL_BULK_RECONCILE_BATCH_SIZE: i64 = 10_000;
 
 /// Save prior Research stale attestations into a temp table and delete non-operator,
-/// non-error-observation provenance for `chain`.
+/// non-invalid-observation provenance for `chain`.
 pub async fn clear_authoritative_historical_provenance_in_transaction(
     txn: &Transaction<'_>,
     chain: &str,
@@ -660,7 +660,7 @@ async fn cached_classification_matches_core_view<C: GenericClient>(
     parent_hash: &[u8],
     classification: &ParentClassification,
 ) -> Result<bool> {
-    if classification.kind == ParentKind::ErrorBlock {
+    if classification.kind == ParentKind::InvalidBlock {
         return Ok(true);
     }
     if let Some(height) = classification.height {
@@ -689,7 +689,7 @@ async fn cached_classification_matches_core_view<C: GenericClient>(
                 classification.canonical_competitor_hash.as_deref()
                     == Some(canonical_hash.as_slice())
             }
-            ParentKind::ErrorBlock => true,
+            ParentKind::InvalidBlock => true,
             ParentKind::Near | ParentKind::Unknown => false,
         });
     }

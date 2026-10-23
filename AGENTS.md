@@ -14,7 +14,7 @@ Use `just` targets, not raw commands, when a target exists:
 - `just serve` - read API plus static `www/` frontend.
 - `just poll-CHAIN` / `just backfill-CHAIN START END` - chain capture for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, `elastos`, `qbit`, and `terracoin`.
 - `just import-known-stales` / `just reclassify-known-stales` - known-stale membership import and retroactive demotion.
-- `just import-all` / `just import-dataset CHAIN` / `just gen-research-publication-pins` - pinned historical publication import and Research manifest + error-catalogue pin refresh.
+- `just import-all` / `just import-dataset CHAIN` / `just gen-research-publication-pins` - pinned historical publication import and Research manifest + invalid-block-catalogue pin refresh.
 - `just reclassify-unknown-parents`, `just reclassify-pools`, `just reconcile-read-model`, `just rebuild-protocol-commitments` - repair and enrichment commands.
 
 ## Architecture Rules
@@ -25,13 +25,13 @@ Use `just` targets, not raw commands, when a target exists:
   `block`, `attestation_proof`, `source_health`, and the `protocol_commitment` tables are derived exclusively through `mmm-read-model`.
 - **Protocol account associations (`docs/attribution.md`):** A CORE or exSat coinbase declaration names a protocol account, never the block's builder, owner or credited account.
   The `data/pools/protocol-accounts/` registries (dated basis per entry, reconciled at Core follow startup) are resolved only at read time and never feed Bitcoin, child or event attribution.
-- **Error catalogue (`data/consensus/error_blocks.csv`):** A PoW-valid match (including reviewed body-invalid parents) is an `error_block` with `error_block_reason`, never stale or orphan evidence.
-  Refresh both the historical manifest and error catalogue together via `just gen-research-publication-pins`.
+- **Invalid-block catalogue (`data/consensus/invalid_blocks.csv`):** A PoW-valid match (including reviewed body-invalid parents) is an `invalid_block` with `invalid_block_reason`, never stale or orphan evidence.
+  Refresh both the historical manifest and invalid-block catalogue together via `just gen-research-publication-pins`.
 - **Bitcoin lineage gate (`docs/capture.md`):** Every stored parent must be a Bitcoin header decided solely by `mmm_capture::lineage::bitcoin_lineage` via `mmm_read_model::capture_in_txn` (with strict/weak orphan verdicts as its projection).
   Never add per-producer lineage or `nBits` checks.
 - **Optional child evidence:** Treat child height, hash, header, time, and `nBits` as independent optional fields; never store scan counters, placeholder hashes, parent timestamps, or zeroes for unavailable child evidence.
   Xaya and ROD use `ChildTargetLocation::PowData` (zero pure-header `nBits` and an external target from the pinned Research publication), and Hathor strict BIP34 evidence requires a full parent coinbase transaction validated by `mmm_capture::btc_orphan`.
-- **Historical imports (`docs/historical-ingest.md`):** Manifest-backed imports replace Research provenance across lifecycles: Historical and Partial sources remove omitted events while Live sources retain their events, proofs, and attribution (preserving operator and error-observation provenance, and importing changed error witnesses before snapshot cleanup).
+- **Historical imports (`docs/historical-ingest.md`):** Manifest-backed imports replace Research provenance across lifecycles: Historical and Partial sources remove omitted events while Live sources retain their events, proofs, and attribution (preserving operator and invalid-observation provenance, and importing changed invalid-block witnesses before snapshot cleanup).
   `import-all` compares normalized publication state against stored rows before taking the Core cache lock, reuses compatible proven `block` classifications, and drains `historical_reconcile_queue` in bounded parent transactions.
 - **Bitcoin Core follow mode and lock order (`docs/data-model.md`):** Follow mode atomically replaces bounded divergent suffixes (near-tip or at a lagged cursor), retains displaced blocks as stale evidence, and drains `bitcoin_core_reconcile_queue` before cache refresh or later sync work.
   Core-backed classifiers and reconcilers take the shared header-cache lock before the shared canonical-view barrier; suffix replacement takes the shared cache lock before the exclusive canonical barrier; ordinary canonical writers take only the exclusive canonical barrier.

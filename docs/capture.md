@@ -19,7 +19,7 @@ The capture then passes the [Bitcoin lineage gate](#bitcoin-lineage-gate): a par
 Parent classification starts with the parent's own target and Bitcoin Core placement.
 Target failures become `near`, which only the child block's observation records (a near has no event); Core-known parents become `canonical` or `stale`.
 For a Core-absent target-valid parent with a known predecessor, the classifier verifies its expected `nBits` and reads the exact eleven linked predecessor headers to apply Bitcoin's median-time-past rule.
-A timestamp at or below that median becomes `error_block` with the `time_below_mtp` reason.
+A timestamp at or below that median becomes `invalid_block` with the `time_below_mtp` reason.
 The pinned consensus-invalid catalogue remains the fallback for rules not yet derived live, and cross-checks a live MTP verdict when both are available.
 Its legacy `median_time_past_violation` evidence token is semantically equivalent to `time_below_mtp`; matching live classifications retain the catalogue token.
 An incomplete MTP window stays `unknown`, never an orphan.
@@ -33,8 +33,8 @@ Bitcoin Cash blocks and shares, and other SHA-256 chains' blocks, verify just as
 Every live capture therefore passes one gate in the shared seam, `mmm_read_model::capture_in_txn`, before classification or any Bitcoin Core call.
 It decides from local evidence under the shared Core-cache lock the capture already holds, using the rule in `mmm_capture::lineage`:
 
-1. A header in the pinned error catalogue is Bitcoin's (block 717,696 kept the previous epoch's bits by design).
-2. A prev the Monitor has placed (a canonical, stale or error block, or the Core cache's tip): a share is Bitcoin's whatever its bits, since pool templates briefly keep the previous epoch's bits across a retarget; a block must carry the epoch bits for the prev's height plus one.
+1. A header in the pinned invalid-block catalogue is Bitcoin's (block 717,696 kept the previous epoch's bits by design).
+2. A prev the Monitor has placed (a canonical, stale or invalid block, or the Core cache's tip): a share is Bitcoin's whatever its bits, since pool templates briefly keep the previous epoch's bits across a retarget; a block must carry the epoch bits for the prev's height plus one.
 3. A strict BIP34 coinbase height consistent with the header's time must carry that height's epoch bits.
    A height outside the epoch the time selects falls to the next step, since another chain's heights run ahead of Bitcoin's.
 4. Otherwise the bits must match the epoch the header's time selects or a neighbour.

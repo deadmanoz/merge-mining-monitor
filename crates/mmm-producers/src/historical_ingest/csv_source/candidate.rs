@@ -1,4 +1,4 @@
-//! Candidate decoding shared by ordinary and error-observation artifacts.
+//! Candidate decoding shared by ordinary and invalid-observation artifacts.
 
 use anyhow::Result;
 use bitcoin::CompactTarget;
@@ -30,7 +30,7 @@ struct TaxonomyFields {
     source_classification: SourceClassification,
     relevance_selection: Option<RelevanceSelection>,
     provenance: HistoricalEventProvenance,
-    error_rejection_reason: Option<String>,
+    invalid_rejection_reason: Option<String>,
 }
 
 type TaxonomyParser = fn(
@@ -58,9 +58,9 @@ pub(crate) fn candidate_from_record(
     )
 }
 
-/// Decode a row from the error-observation aggregate without widening the
+/// Decode a row from the invalid-observation aggregate without widening the
 /// valid-evidence parser used by ordinary per-chain artifacts.
-pub(crate) fn error_observation_candidate_from_record(
+pub(crate) fn invalid_observation_candidate_from_record(
     spec: &HistoricalChainSpec,
     layout: &CsvLayout,
     record: &csv::StringRecord,
@@ -73,7 +73,7 @@ pub(crate) fn error_observation_candidate_from_record(
         record,
         publication_ref,
         Some(nbits_table),
-        parse_error_observation_taxonomy_fields,
+        parse_invalid_observation_taxonomy_fields,
     )
 }
 
@@ -97,8 +97,8 @@ fn candidate_from_record_with_taxonomy(
         record,
         &header,
         &display_hash,
-        taxonomy.error_rejection_reason.as_deref()
-            != Some(mmm_capture::error_blocks::NBITS_RETARGET_NOT_APPLIED),
+        taxonomy.invalid_rejection_reason.as_deref()
+            != Some(mmm_capture::invalid_blocks::NBITS_RETARGET_NOT_APPLIED),
     )?;
     let pow_validates_child_target = child
         .nbits
@@ -160,7 +160,7 @@ fn candidate_from_record_with_taxonomy(
         relevance_selection: taxonomy.relevance_selection,
         rsk_evidence,
         parent_output_addresses: coinbase.output_addresses,
-        error_rejection_reason: taxonomy.error_rejection_reason,
+        invalid_rejection_reason: taxonomy.invalid_rejection_reason,
     })
 }
 
@@ -260,11 +260,11 @@ fn parse_taxonomy_fields(
             btc_stale_relevance: relevance,
             relevance_reason,
         },
-        error_rejection_reason: None,
+        invalid_rejection_reason: None,
     })
 }
 
-fn parse_error_observation_taxonomy_fields(
+fn parse_invalid_observation_taxonomy_fields(
     spec: &HistoricalChainSpec,
     layout: &CsvLayout,
     record: &csv::StringRecord,
@@ -284,7 +284,7 @@ fn parse_error_observation_taxonomy_fields(
         .ok_or(SkipReason::EmptyField)?;
     let expected_nbits = parse_optional_compact_target(record.get(layout.expected_nbits))?
         .ok_or(SkipReason::EmptyField)?;
-    if rejection_reason == mmm_capture::error_blocks::NBITS_RETARGET_NOT_APPLIED
+    if rejection_reason == mmm_capture::invalid_blocks::NBITS_RETARGET_NOT_APPLIED
         && nbits_table
             .ok_or(SkipReason::Unclassified)?
             .expected_nbits(btc_height)
@@ -293,7 +293,7 @@ fn parse_error_observation_taxonomy_fields(
         return Err(SkipReason::EvidenceMismatch);
     }
     Ok(TaxonomyFields {
-        source_classification: SourceClassification::ErrorBlock,
+        source_classification: SourceClassification::InvalidBlock,
         relevance_selection: None,
         provenance: HistoricalEventProvenance {
             publication_ref: publication_ref.to_owned(),
@@ -309,7 +309,7 @@ fn parse_error_observation_taxonomy_fields(
             btc_stale_relevance: None,
             relevance_reason: None,
         },
-        error_rejection_reason: Some(rejection_reason),
+        invalid_rejection_reason: Some(rejection_reason),
     })
 }
 

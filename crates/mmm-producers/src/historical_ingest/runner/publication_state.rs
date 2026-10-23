@@ -11,12 +11,12 @@ use super::super::config::{HistoricalImportConfig, historical_chain_spec};
 use super::super::csv_source::{
     ComparablePublicationState, ExpectedPublicationState, PublicationRowKey,
 };
-use super::super::publication::{ArtifactPreflight, ErrorObservationPreflight};
+use super::super::publication::{ArtifactPreflight, InvalidObservationPreflight};
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct ImportPlan {
     pub(super) work_chain: Vec<bool>,
-    pub(super) work_error_observations: bool,
+    pub(super) work_invalid_observations: bool,
     pub(super) needs_finalization: bool,
     pub(super) finalization_requires_import_environment: bool,
     pub(super) skipped_matching_state: u64,
@@ -28,13 +28,13 @@ struct ExpectedRow<'a> {
     matched: bool,
 }
 
-struct ExpectedErrorRow<'a> {
+struct ExpectedInvalidRow<'a> {
     state: &'a ExpectedPublicationState,
     matched: bool,
 }
 
 type ExpectedRows<'a> = BTreeMap<PublicationRowKey, ExpectedRow<'a>>;
-type ExpectedErrorRows<'a> = BTreeMap<PublicationRowKey, ExpectedErrorRow<'a>>;
+type ExpectedInvalidRows<'a> = BTreeMap<PublicationRowKey, ExpectedInvalidRow<'a>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum BaseIdentity {
@@ -52,7 +52,7 @@ pub(super) async fn plan_publication_import(
     client: &Client,
     configs: &[HistoricalImportConfig],
     artifacts: &[ArtifactPreflight],
-    error_observations: Option<&ErrorObservationPreflight>,
+    invalid_observations: Option<&InvalidObservationPreflight>,
 ) -> Result<ImportPlan> {
     ensure!(
         configs.len() == artifacts.len(),
@@ -60,7 +60,7 @@ pub(super) async fn plan_publication_import(
     );
     let mut plan = ImportPlan {
         work_chain: vec![false; configs.len()],
-        work_error_observations: false,
+        work_invalid_observations: false,
         needs_finalization: false,
         finalization_requires_import_environment: false,
         skipped_matching_state: 0,
@@ -70,21 +70,22 @@ pub(super) async fn plan_publication_import(
         .enumerate()
         .map(|(index, config)| (config.chain.as_str(), index))
         .collect::<BTreeMap<_, _>>();
-    let (mut expected, mut expected_errors) = build_expected_rows(artifacts, error_observations)?;
+    let (mut expected, mut expected_invalids) =
+        build_expected_rows(artifacts, invalid_observations)?;
     match_normal_state(client, &chain_indices, &mut expected, &mut plan).await?;
-    let error_event_ids = match_error_state(client, &mut expected_errors).await?;
+    let invalid_event_ids = match_invalid_state(client, &mut expected_invalids).await?;
 
     for row in expected.values() {
         if !row.matched {
             plan.work_chain[row.artifact_index] = true;
         }
     }
-    plan.work_error_observations = expected_errors.values().any(|row| !row.matched);
+    plan.work_invalid_observations = expected_invalids.values().any(|row| !row.matched);
 
-    verify_authoritative_base_state(client, configs, artifacts, &error_event_ids, &mut plan)
+    verify_authoritative_base_state(client, configs, artifacts, &invalid_event_ids, &mut plan)
         .await?;
 
-    if plan.work_chain.iter().all(|work| !work) && !plan.work_error_observations {
+    if plan.work_chain.iter().all(|work| !work) && !plan.work_invalid_observations {
         let finalization = mmm_store::load_historical_finalization_state(client).await?;
         plan.needs_finalization = finalization.required();
         plan.finalization_requires_import_environment =
@@ -92,12 +93,12 @@ pub(super) async fn plan_publication_import(
     }
     plan.skipped_matching_state = u64::try_from(
         plan.work_chain.iter().filter(|work| !**work).count()
-            + usize::from(error_observations.is_some() && !plan.work_error_observations),
+            + usize::from(invalid_observations.is_some() && !plan.work_invalid_observations),
     )
     .context("matching historical artifact count exceeds u64")?;
     tracing::info!(
         work_chains = plan.work_chain.iter().filter(|work| **work).count(),
-        work_error_observations = plan.work_error_observations,
+        work_invalid_observations = plan.work_invalid_observations,
         needs_finalization = plan.needs_finalization,
         skipped_matching_state = plan.skipped_matching_state,
         "planned historical publication import from database state"
@@ -107,8 +108,8 @@ pub(super) async fn plan_publication_import(
 
 fn build_expected_rows<'a>(
     artifacts: &'a [ArtifactPreflight],
-    error_observations: Option<&'a ErrorObservationPreflight>,
-) -> Result<(ExpectedRows<'a>, ExpectedErrorRows<'a>)> {
+    invalid_observations: Option<&'a InvalidObservationPreflight>,
+) -> Result<(ExpectedRows<'a>, ExpectedInvalidRows<'a>)> {
     let mut expected = BTreeMap::new();
     for (artifact_index, artifact) in artifacts.iter().enumerate() {
         for state in &artifact.state_rows {
@@ -130,27 +131,27 @@ fn build_expected_rows<'a>(
             );
         }
     }
-    let mut expected_errors = BTreeMap::new();
-    if let Some(artifact) = error_observations {
+    let mut expected_invalids = BTreeMap::new();
+    if let Some(artifact) = invalid_observations {
         for state in &artifact.state_rows {
             ensure!(
-                expected_errors
+                expected_invalids
                     .insert(
                         state.key.clone(),
-                        ExpectedErrorRow {
+                        ExpectedInvalidRow {
                             state,
                             matched: false,
                         },
                     )
                     .is_none(),
-                "publication coordinate appears twice in error observations: {}:{}:{}",
+                "publication coordinate appears twice in invalid observations: {}:{}:{}",
                 state.key.chain,
                 state.key.source_path,
                 state.key.source_row_number
             );
         }
     }
-    Ok((expected, expected_errors))
+    Ok((expected, expected_invalids))
 }
 
 async fn match_normal_state(
@@ -189,17 +190,17 @@ async fn match_normal_state(
     Ok(())
 }
 
-async fn match_error_state(
+async fn match_invalid_state(
     client: &Client,
-    expected: &mut ExpectedErrorRows<'_>,
+    expected: &mut ExpectedInvalidRows<'_>,
 ) -> Result<BTreeSet<i64>> {
-    let rows = mmm_store::stream_historical_error_observation_state(client).await?;
+    let rows = mmm_store::stream_historical_invalid_observation_state(client).await?;
     pin_mut!(rows);
     let mut event_ids = BTreeSet::new();
     while let Some(row) = rows
         .try_next()
         .await
-        .context("read stored historical error-observation state")?
+        .context("read stored historical invalid-observation state")?
     {
         let row = mmm_store::HistoricalPublicationStateRow::from_row(&row);
         event_ids.insert(row.event_id);
@@ -222,7 +223,7 @@ async fn verify_authoritative_base_state(
     client: &Client,
     configs: &[HistoricalImportConfig],
     artifacts: &[ArtifactPreflight],
-    error_event_ids: &BTreeSet<i64>,
+    invalid_event_ids: &BTreeSet<i64>,
     plan: &mut ImportPlan,
 ) -> Result<()> {
     let mut source_ids = Vec::new();
@@ -275,7 +276,7 @@ async fn verify_authoritative_base_state(
         .context("read authoritative historical base state")?
     {
         let row = mmm_store::HistoricalBaseEventRow::from_row(&row);
-        if error_event_ids.contains(&row.event_id) {
+        if invalid_event_ids.contains(&row.event_id) {
             continue;
         }
         let Some(&index) = chain_indices.get(row.chain.as_str()) else {

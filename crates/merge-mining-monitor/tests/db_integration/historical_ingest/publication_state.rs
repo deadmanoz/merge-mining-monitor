@@ -153,14 +153,14 @@ async fn add_independent_live_evidence(
         &operator_config,
     )
     .await?;
-    // Exercise aggregate ownership protection, not scientific error admission.
+    // Exercise aggregate ownership protection, not scientific invalid-block admission.
     client
         .execute(
             "INSERT INTO historical_event_provenance (event_id, publication_ref, \
         chain, source_kind, source_path, source_row_number, artifact_scope, provenance, \
         classification, btc_height, validation_status, btc_stale_relevance, relevance_reason) \
         SELECT event_id, 'b302831000000000000000000000000000000000', chain, source_kind, \
-        '<retained-error-owner>', source_row_number, 'error-block-observations', provenance, \
+        '<retained-invalid-owner>', source_row_number, 'error-block-observations', provenance, \
         classification, btc_height, validation_status, btc_stale_relevance, relevance_reason \
         FROM historical_event_provenance WHERE publication_ref = 'operator-csv'",
             &[],

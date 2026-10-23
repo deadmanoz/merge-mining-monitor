@@ -266,19 +266,19 @@ fn navigator_defaults_to_latest_with_target_specific_classification() {
 }
 
 #[test]
-fn error_block_navigator_parses_on_the_height_axis_without_a_classification() {
-    let target = NavigatorTarget::parse("error-block").unwrap();
-    assert_eq!(target, NavigatorTarget::ErrorBlock);
-    assert_eq!(target.as_str(), "error-block");
+fn invalid_block_navigator_parses_on_the_height_axis_without_a_classification() {
+    let target = NavigatorTarget::parse("invalid-block").unwrap();
+    assert_eq!(target, NavigatorTarget::InvalidBlock);
+    assert_eq!(target.as_str(), "invalid-block");
     assert!(!target.accepts_classification());
 
     let query = parse_navigator_query(target, None).unwrap();
     assert!(matches!(query.mode, NavigatorMode::Latest));
     assert!(query.classification.is_empty());
-    assert_eq!(query.query["target"], json!("error-block"));
+    assert_eq!(query.query["target"], json!("invalid-block"));
     assert_eq!(query.query["classification"], json!([]));
 
-    // An error block is a catalogue membership, not a refinement of `unknown`,
+    // An invalid block is a catalogue membership, not a refinement of `unknown`,
     // so the orphan-only classification axis must be rejected rather than
     // silently ignored.
     let err = parse_navigator_query(target, Some("classification=strict_btc_orphan")).unwrap_err();
@@ -286,10 +286,10 @@ fn error_block_navigator_parses_on_the_height_axis_without_a_classification() {
 }
 
 #[test]
-fn error_block_navigator_cursors_are_target_and_axis_bound() {
+fn invalid_block_navigator_cursors_are_target_and_axis_bound() {
     let hash = "cd".repeat(32);
     let cursor = NavigatorCursor::new(
-        NavigatorTarget::ErrorBlock,
+        NavigatorTarget::InvalidBlock,
         NavigatorAxis::Height,
         229_388,
         229_388,
@@ -298,7 +298,7 @@ fn error_block_navigator_cursors_are_target_and_axis_bound() {
     .encode();
 
     let ok = parse_navigator_query(
-        NavigatorTarget::ErrorBlock,
+        NavigatorTarget::InvalidBlock,
         Some(&format!("cursor={cursor}&direction=older")),
     )
     .unwrap();
@@ -317,7 +317,7 @@ fn error_block_navigator_cursors_are_target_and_axis_bound() {
     // projection's `as i32` casts and return a wrong page, so it is rejected at
     // decode for every height-axis target.
     let overflow_cursor = NavigatorCursor::new(
-        NavigatorTarget::ErrorBlock,
+        NavigatorTarget::InvalidBlock,
         NavigatorAxis::Height,
         i64::from(i32::MAX) + 1,
         i64::from(i32::MAX) + 1,
@@ -325,7 +325,7 @@ fn error_block_navigator_cursors_are_target_and_axis_bound() {
     )
     .encode();
     let overflow = parse_navigator_query(
-        NavigatorTarget::ErrorBlock,
+        NavigatorTarget::InvalidBlock,
         Some(&format!("cursor={overflow_cursor}&direction=older")),
     )
     .unwrap_err();
@@ -350,7 +350,7 @@ fn error_block_navigator_cursors_are_target_and_axis_bound() {
     );
 
     let time_axis_cursor = NavigatorCursor::new(
-        NavigatorTarget::ErrorBlock,
+        NavigatorTarget::InvalidBlock,
         NavigatorAxis::Time,
         1_700_000_000,
         1_700_000_000,
@@ -358,7 +358,7 @@ fn error_block_navigator_cursors_are_target_and_axis_bound() {
     )
     .encode();
     let wrong_axis = parse_navigator_query(
-        NavigatorTarget::ErrorBlock,
+        NavigatorTarget::InvalidBlock,
         Some(&format!("cursor={time_axis_cursor}&direction=older")),
     )
     .unwrap_err();

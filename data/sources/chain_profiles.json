@@ -720,13 +720,13 @@
       "founded": "Launched in February 2014 as an on-chain game built on Namecoin-family code.[^1][^2]",
       "merge_mining": "Dual PoW from launch: SHA-256d merge-mines Bitcoin and Scrypt merge-mines Litecoin.[^1][^3]",
       "ended": "Superseded by Xaya; canonical Bitcoin evidence runs to 1 Feb 2020 and direct stales to 7 Oct 2017.[^2][^5]",
-      "narrative": "Huntercoin (HUC) launched in February 2014 as a dual-PoW on-chain game whose SHA-256d branch merge-mined Bitcoin while its Scrypt branch merge-mined Litecoin.[^1][^2][^3]\n\nDaniel Kraft's native dump contributes 10,627 canonical Bitcoin observations (`284,033`-`615,433`, Feb 2014–Feb 2020), 78 direct stale witnesses (`285,130`-`488,624`, Feb 2014–Oct 2017), and 3 separate error observations.[^5]"
+      "narrative": "Huntercoin (HUC) launched in February 2014 as a dual-PoW on-chain game whose SHA-256d branch merge-mined Bitcoin while its Scrypt branch merge-mined Litecoin.[^1][^2][^3]\n\nDaniel Kraft's native dump contributes 10,627 canonical Bitcoin observations (`284,033`-`615,433`, Feb 2014–Feb 2020), 78 direct stale witnesses (`285,130`-`488,624`, Feb 2014–Oct 2017), and 3 separate invalid-block observations.[^5]"
     },
     "technical": {
       "mechanism": "Namecoin-family `CAuxPow` on the SHA-256d branch (Scrypt/Litecoin branch excluded).[^3]",
       "uniqueness": "Dual-PoW branch filtering isolates SHA-256d AuxPoW before standard `CAuxPow` validation.",
       "capture": "Processed all 163 block files (3,938,028 unique child headers) from Daniel Kraft's native dump and classified SHA-256d parents with Bitcoin Core.[^5]",
-      "bitcoin_relevance": "Contributes 10,627 canonical observations (`284,033`-`615,433`), 78 direct stale witnesses (`285,130`-`488,624`), and 3 error observations.[^5]",
+      "bitcoin_relevance": "Contributes 10,627 canonical observations (`284,033`-`615,433`), 78 direct stale witnesses (`285,130`-`488,624`), and 3 invalid-block observations.[^5]",
       "notable": [
         "Extends the earlier recovery while preserving all 13 previously accepted stale witnesses.[^5]",
         "Scrypt/Litecoin blocks are excluded before Bitcoin validation."
@@ -739,7 +739,7 @@
         { "label": "Committed result", "value": "Complete normalized Bitcoin evidence publication[^5]" }
       ],
       "recovery": [
-        "Publishes 10,627 canonical and 78 direct stale witnesses (plus 3 separate error witnesses) from 3,938,028 stored child headers through height `3,937,953`.[^5]"
+        "Publishes 10,627 canonical and 78 direct stale witnesses (plus 3 separate invalid-block witnesses) from 3,938,028 stored child headers through height `3,937,953`.[^5]"
       ]
     },
     "provenance": {
@@ -770,7 +770,7 @@
       "mechanism": "Namecoin-family `CAuxPow` from I0C height `160,000` with strict chain ID `2`.[^2]",
       "uniqueness": "Its 90-second block target frequently samples the same Bitcoin parent across multiple distinct child blocks.",
       "capture": "Processed all 87 block files (4,700,682 distinct stored child headers) in the March 2026 snapshot and classified parents with Bitcoin Core.[^10]",
-      "bitcoin_relevance": "Contributes 27,661 canonical observations (`158,531`-`689,505`), 191 direct stales (`160,948`-`645,179`), and 6 separate error witnesses.[^10]",
+      "bitcoin_relevance": "Contributes 27,661 canonical observations (`158,531`-`689,505`), 191 direct stales (`160,948`-`645,179`), and 6 separate invalid-block witnesses.[^10]",
       "notable": [
         "Enforces strict chain ID `2` (`0x0002`).[^2]",
         "Preserves each distinct child witness even when multiple child blocks share a Bitcoin parent."
@@ -782,7 +782,7 @@
         { "label": "Block cadence", "value": "90 s target (~6.7 i0coin blocks per Bitcoin block)[^2]" }
       ],
       "recovery": [
-        "Contributes 27,661 canonical observations and 191 direct stale witnesses (plus 6 error witnesses) from 4,700,682 stored child headers through March 2026.[^10]"
+        "Contributes 27,661 canonical observations and 191 direct stale witnesses (plus 6 invalid-block witnesses) from 4,700,682 stored child headers through March 2026.[^10]"
       ]
     },
     "provenance": {
@@ -825,7 +825,7 @@
         { "label": "Legacy range", "value": "IXC heights `0`-`45,000` have no Bitcoin parent headers" }
       ],
       "recovery": [
-        "Publishes 46,808 canonical, 464 direct stale, and 3 stale-descendant witnesses (plus 20 separate error witnesses).[^6]"
+        "Publishes 46,808 canonical, 464 direct stale, and 3 stale-descendant witnesses (plus 20 separate invalid-block witnesses).[^6]"
       ]
     },
     "provenance": {
@@ -1341,13 +1341,13 @@
       "founded": "Mainnet launched on 2018-07-13.[^2]",
       "merge_mining": "SHA256D branch is merge-mined from launch via `PowData` + `CAuxPow`; Neoscrypt branch is solo-mined.[^3]",
       "ended": "Canonical Bitcoin evidence runs to 3 Nov 2025 and direct stales to 18 Aug 2025, extending past the height `7,300,000` CHI-to-WCHI migration snapshot.[^1][^5]",
-      "narrative": "Xaya (CHI) launched in July 2018 with a merge-mined SHA256D branch and a solo-mined Neoscrypt branch.[^2][^3]\n\nDaniel Kraft's native dump contributes 23,542 canonical Bitcoin observations (`531,784`-`921,980`, Jul 2018–Nov 2025), 42 direct stale witnesses (`547,182`-`910,525`, Oct 2018–Aug 2025), and 2 separate error observations.[^5]"
+      "narrative": "Xaya (CHI) launched in July 2018 with a merge-mined SHA256D branch and a solo-mined Neoscrypt branch.[^2][^3]\n\nDaniel Kraft's native dump contributes 23,542 canonical Bitcoin observations (`531,784`-`921,980`, Jul 2018–Nov 2025), 42 direct stale witnesses (`547,182`-`910,525`, Oct 2018–Aug 2025), and 2 separate invalid-block observations.[^5]"
     },
     "technical": {
       "mechanism": "Wraps proof data in `PowData` after the 80-byte header; merge-mined SHA256D blocks (`0x81`) carry a Namecoin-style `CAuxPow` payload.[^3]",
       "uniqueness": "Pure header `nBits` is zero while the effective target lives in `PowData`, using chain ID `1829` (`0x0725`).[^3]",
       "capture": "Processed all 46 block files in Daniel Kraft's native dump, authenticating child BIP34 heights and `PowData` targets before Bitcoin Core classification.[^5]",
-      "bitcoin_relevance": "Contributes 23,542 canonical observations (`531,784`-`921,980`), 42 direct stale witnesses (`547,182`-`910,525`), and 2 error observations.[^5]",
+      "bitcoin_relevance": "Contributes 23,542 canonical observations (`531,784`-`921,980`), 42 direct stale witnesses (`547,182`-`910,525`), and 2 invalid-block observations.[^5]",
       "notable": [
         "Only `0x81` merge-mined SHA256D blocks carry Bitcoin parents; Neoscrypt blocks are ignored.[^3]",
         "Uses authenticated native child BIP34 heights rather than file scan positions.[^5]"
@@ -1360,7 +1360,7 @@
         { "label": "Admission gates", "value": "Bitcoin proof of work, expected `nBits`, and Bitcoin Core placement" }
       ],
       "recovery": [
-        "Publishes 23,542 canonical and 42 direct stale witnesses (plus 2 error witnesses) from 7,312,222 stored child headers through linked height `7,312,209`.[^5]"
+        "Publishes 23,542 canonical and 42 direct stale witnesses (plus 2 invalid-block witnesses) from 7,312,222 stored child headers through linked height `7,312,209`.[^5]"
       ]
     },
     "provenance": {

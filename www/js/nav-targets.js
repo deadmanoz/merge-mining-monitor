@@ -109,12 +109,12 @@ const TARGETS = Object.freeze({
     stateKey: "branch",
     selectionPrecedence: 10,
   }),
-  errorBlock: Object.freeze({
-    id: "errorBlock",
-    route: "error-block",
-    label: "Error blocks",
-    optionLabel: "Latest error block",
-    stateKey: "errorBlock",
+  invalidBlock: Object.freeze({
+    id: "invalidBlock",
+    route: "invalid-block",
+    label: "Invalid blocks",
+    optionLabel: "Latest invalid block",
+    stateKey: "invalidBlock",
     selectionPrecedence: 25,
   }),
   orphan: Object.freeze({
@@ -139,7 +139,7 @@ const NAV_MENU_TARGETS = Object.freeze([
   Object.freeze({ id: "tip", label: "Live tip", optionLabel: "Live tip" }),
   TARGETS.stale,
   TARGETS.branch,
-  TARGETS.errorBlock,
+  TARGETS.invalidBlock,
   TARGETS.orphan,
   TARGETS.orphanBranch,
 ]);
@@ -195,7 +195,7 @@ export function applyNavigatorPayload(state, targetId, payload, item) {
   slot.total = payload?.total ?? (selected ? slot.total : 0);
   slot.hasOlder = !!payload?.next_cursor;
   slot.hasNewer = !!payload?.prev_cursor;
-  if (targetId === "stale" || targetId === "errorBlock") {
+  if (targetId === "stale" || targetId === "invalidBlock") {
     slot.anchor = selected ? {
       btc_height: selected.position?.max,
       hash: selected.primary_hash,
@@ -248,7 +248,7 @@ export function navigatorItemView(item) {
       centerHash: item.view.center_hash ?? item.view.anchor_hash ?? item.primary_hash,
     };
   }
-  if ((item.kind === "stale" || item.kind === "error-block") && item.position?.axis === "height") {
+  if ((item.kind === "stale" || item.kind === "invalid-block") && item.position?.axis === "height") {
     return {
       mode: "height",
       view: {
@@ -265,7 +265,7 @@ export function navigatorItemView(item) {
 export function navigatorStepperState(state, targetId) {
   const slot = targetState(state, targetId);
   if (!slot) return { olderEnabled: false, newerEnabled: false, readout: "" };
-  if (targetId === "stale" || targetId === "errorBlock") {
+  if (targetId === "stale" || targetId === "invalidBlock") {
     return heightAnchorStepperState({
       anchor: slot.anchor,
       item: slot.item,

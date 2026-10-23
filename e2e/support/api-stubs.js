@@ -62,7 +62,7 @@ const LIVE_SOURCE_BASE = {
     unknown: 0,
     canonical: 0,
     stale: 0,
-    error_block: 0,
+    invalid_block: 0,
     strict_orphan: 0,
     weak_orphan: 0,
   },
@@ -168,7 +168,7 @@ function treeEnvelope(query = new URLSearchParams(), options = {}) {
       at_time: query.get("at_time"),
       window_mode: isTime ? "time" : isHeight ? "height" : "explicit",
       context: query.get("context") || "exact",
-      kinds: ["canonical", "stale", "error_block", "unknown"],
+      kinds: ["canonical", "stale", "invalid_block", "unknown"],
       classification: ["strict_btc_orphan", "weak_btc_orphan"],
       sources: [],
       min_sources: 1,
@@ -190,7 +190,7 @@ function treeEnvelope(query = new URLSearchParams(), options = {}) {
     edges: options.edges || [],
     branches: options.branches || [],
     legend: options.legend || {
-      kinds: ["canonical", "stale", "error_block", "unknown"],
+      kinds: ["canonical", "stale", "invalid_block", "unknown"],
       edge_kinds: ["canonical", "stale_entry", "stale", "hidden"],
     },
   };

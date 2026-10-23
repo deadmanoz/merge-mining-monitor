@@ -129,12 +129,12 @@
 
 .kind-canonical { color: var(--canonical); }
 .kind-stale { color: var(--stale); }
-.kind-error_block { color: var(--error_block); }
+.kind-invalid_block { color: var(--invalid_block); }
 .kind-near { color: var(--near); }
 .kind-unknown { color: var(--unknown); }
 
 .fill-canonical { background: var(--canonical); }
 .fill-stale { background: var(--stale); }
-.fill-error_block { background: var(--error_block); }
+.fill-invalid_block { background: var(--invalid_block); }
 .fill-strict_btc_orphan { background: var(--orphan-strict); }
 .fill-weak_btc_orphan { background: var(--orphan-weak); }

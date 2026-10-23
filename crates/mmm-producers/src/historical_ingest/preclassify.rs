@@ -78,7 +78,7 @@ pub(super) async fn preflight_and_classify_candidates<C: GenericClient>(
                 );
             }
         };
-        if preflight_skips_catalogued_error_block(config, &candidate, offset + 2)? {
+        if preflight_skips_catalogued_invalid_block(config, &candidate, offset + 2)? {
             continue;
         }
         if classifier.is_enabled() {
@@ -220,7 +220,7 @@ pub(super) async fn import_decision<C: GenericClient>(
     candidate: &ImportCandidate,
     classifications: &mut HashMap<Vec<u8>, ParentClassification>,
 ) -> Result<ImportDecision> {
-    if let Some(reason) = catalogued_error_block_skip_reason(candidate) {
+    if let Some(reason) = catalogued_invalid_block_skip_reason(candidate) {
         return Ok(ImportDecision::Skip(reason));
     }
     if !classifier.is_enabled() {
@@ -262,15 +262,15 @@ pub(super) async fn import_decision<C: GenericClient>(
     ))
 }
 
-/// Decide one witness from the dedicated error-observation aggregate against
-/// the error-block catalogue and Core classifier.
-pub(super) async fn import_error_observation_decision<C: GenericClient>(
+/// Decide one witness from the dedicated invalid-observation aggregate against
+/// the invalid-block catalogue and Core classifier.
+pub(super) async fn import_invalid_observation_decision<C: GenericClient>(
     client: &C,
     classifier: &ConfiguredParentClassifier,
     candidate: &ImportCandidate,
     classifications: &mut HashMap<Vec<u8>, ParentClassification>,
 ) -> Result<ImportDecision> {
-    if candidate.source_classification != SourceClassification::ErrorBlock {
+    if candidate.source_classification != SourceClassification::InvalidBlock {
         return Ok(ImportDecision::Skip(SkipReason::TaxonomyMismatch));
     }
     if !classifier.is_enabled() {
@@ -282,11 +282,11 @@ pub(super) async fn import_error_observation_decision<C: GenericClient>(
         .block_hash()
         .to_byte_array()
         .to_vec();
-    let Some(catalogue) = mmm_capture::error_blocks::lookup(&parent_hash) else {
+    let Some(catalogue) = mmm_capture::invalid_blocks::lookup(&parent_hash) else {
         return Ok(ImportDecision::Skip(SkipReason::UnsupportedClassification));
     };
     if candidate.historical_provenance.btc_height != Some(catalogue.height)
-        || candidate.error_rejection_reason.as_deref() != Some(catalogue.rejection_reason)
+        || candidate.invalid_rejection_reason.as_deref() != Some(catalogue.rejection_reason)
     {
         return Ok(ImportDecision::Skip(SkipReason::EvidenceMismatch));
     }
@@ -305,7 +305,7 @@ pub(super) async fn import_error_observation_decision<C: GenericClient>(
             .await
             .with_context(|| {
                 format!(
-                    "preclassify historical error parent {}",
+                    "preclassify historical invalid parent {}",
                     candidate.btc_parent_display_hash
                 )
             })?;
@@ -316,7 +316,7 @@ pub(super) async fn import_error_observation_decision<C: GenericClient>(
         classifications.insert(parent_hash, classification.clone());
         classification
     };
-    if classification.kind != ParentKind::ErrorBlock
+    if classification.kind != ParentKind::InvalidBlock
         || classification.height != Some(catalogue.height)
         || classification.rejection_reason.as_deref() != Some(catalogue.rejection_reason)
     {
@@ -327,21 +327,21 @@ pub(super) async fn import_error_observation_decision<C: GenericClient>(
     )))
 }
 
-fn catalogued_error_block_skip_reason(candidate: &ImportCandidate) -> Option<SkipReason> {
+fn catalogued_invalid_block_skip_reason(candidate: &ImportCandidate) -> Option<SkipReason> {
     let parent_hash = candidate
         .evidence
         .btc_parent_header
         .block_hash()
         .to_byte_array();
-    mmm_capture::error_blocks::lookup(&parent_hash).map(|_| SkipReason::UnsupportedClassification)
+    mmm_capture::invalid_blocks::lookup(&parent_hash).map(|_| SkipReason::UnsupportedClassification)
 }
 
-fn preflight_skips_catalogued_error_block(
+fn preflight_skips_catalogued_invalid_block(
     config: &HistoricalImportConfig,
     candidate: &ImportCandidate,
     row_number: usize,
 ) -> Result<bool> {
-    let Some(reason) = catalogued_error_block_skip_reason(candidate) else {
+    let Some(reason) = catalogued_invalid_block_skip_reason(candidate) else {
         return Ok(false);
     };
     if config.manifest_path.is_some() {
@@ -388,7 +388,7 @@ fn classified_import_decision(
         ParentKind::Canonical | ParentKind::Stale => {
             ImportDecision::Skip(SkipReason::ClassificationMismatch)
         }
-        ParentKind::ErrorBlock => ImportDecision::Skip(SkipReason::UnsupportedClassification),
+        ParentKind::InvalidBlock => ImportDecision::Skip(SkipReason::UnsupportedClassification),
         ParentKind::Near => ImportDecision::Skip(SkipReason::Unclassified),
         ParentKind::Unknown => {
             if matches!(

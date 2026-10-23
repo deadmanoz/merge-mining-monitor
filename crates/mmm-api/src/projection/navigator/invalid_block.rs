@@ -19,26 +19,26 @@ use super::{
 };
 
 #[derive(Debug, Clone)]
-struct ErrorBlockRow {
+struct InvalidBlockRow {
     height: i32,
     hash: String,
 }
 
-/// Ordered by `(height, hash)` because multiple error blocks can share a
+/// Ordered by `(height, hash)` because multiple invalid blocks can share a
 /// height, and filtered to `distinct_sources >= 1` to match `/tree`'s default
 /// `min_sources` candidate filter.
-const ERROR_BLOCK_ELIGIBLE: &str = "SELECT btc_height AS axis, btc_header_hash AS hash \
+const INVALID_BLOCK_ELIGIBLE: &str = "SELECT btc_height AS axis, btc_header_hash AS hash \
      FROM block \
-     WHERE kind = 'error_block' AND distinct_sources >= 1";
+     WHERE kind = 'invalid_block' AND distinct_sources >= 1";
 
-pub async fn error_blocks(
+pub async fn invalid_blocks(
     client: &Client,
     query: &NavigatorQuery,
 ) -> Result<NavigatorPayload, ProjectionError> {
-    debug_assert_eq!(query.target, NavigatorTarget::ErrorBlock);
+    debug_assert_eq!(query.target, NavigatorTarget::InvalidBlock);
     debug_assert!(query.classification.is_empty());
     let max_complete_height = load_max_complete_canonical_height(client).await?;
-    let mut page = fetch_height_keyset(client, ERROR_BLOCK_ELIGIBLE, query).await?;
+    let mut page = fetch_height_keyset(client, INVALID_BLOCK_ELIGIBLE, query).await?;
     if is_newer_page(query) {
         page.rows.reverse();
     }
@@ -46,7 +46,7 @@ pub async fn error_blocks(
         .rows
         .iter()
         .map(|row| {
-            Ok(ErrorBlockRow {
+            Ok(InvalidBlockRow {
                 height: row.height,
                 hash: display_hash(&row.hash)?,
             })
@@ -66,7 +66,7 @@ pub async fn error_blocks(
     let mut items = rows
         .iter()
         .zip(spans.iter().copied())
-        .map(|(row, span)| error_block_item(row, span, max_complete_height, readiness.as_ref()))
+        .map(|(row, span)| invalid_block_item(row, span, max_complete_height, readiness.as_ref()))
         .collect::<Vec<_>>();
     apply_first_index(
         &mut items,
@@ -74,17 +74,17 @@ pub async fn error_blocks(
     );
 
     let (next_cursor, prev_cursor) = page_cursors(
-        NavigatorTarget::ErrorBlock,
+        NavigatorTarget::InvalidBlock,
         query,
         &items,
         page.has_more_scan,
-        |cursor| exists_error_block_across_edge(client, cursor, PageEdge::Older),
-        |cursor| exists_error_block_across_edge(client, cursor, PageEdge::Newer),
+        |cursor| exists_invalid_block_across_edge(client, cursor, PageEdge::Older),
+        |cursor| exists_invalid_block_across_edge(client, cursor, PageEdge::Newer),
     )
     .await?;
 
     Ok(NavigatorPayload::new(
-        NavigatorTarget::ErrorBlock,
+        NavigatorTarget::InvalidBlock,
         items,
         page.total,
         NavigatorFacets::default(),
@@ -93,8 +93,8 @@ pub async fn error_blocks(
     ))
 }
 
-fn error_block_item(
-    row: &ErrorBlockRow,
+fn invalid_block_item(
+    row: &InvalidBlockRow,
     span: NavigationSpan,
     max_complete_height: Option<i32>,
     readiness: Option<&NavigationReadiness>,
@@ -107,17 +107,17 @@ fn error_block_item(
         readiness,
     );
     NavigatorItem {
-        id: format!("error-block-{}", row.hash),
-        kind: NavigatorTarget::ErrorBlock.as_str(),
+        id: format!("invalid-block-{}", row.hash),
+        kind: NavigatorTarget::InvalidBlock.as_str(),
         primary_hash: row.hash.clone(),
-        label: format!("Error block #{}", row.height),
+        label: format!("Invalid block #{}", row.height),
         position: NavigatorPosition {
             axis: NavigatorAxis::Height,
             min: i64::from(row.height),
             max: i64::from(row.height),
         },
         cursor: NavigatorCursor::new(
-            NavigatorTarget::ErrorBlock,
+            NavigatorTarget::InvalidBlock,
             NavigatorAxis::Height,
             i64::from(row.height),
             i64::from(row.height),
@@ -132,7 +132,7 @@ fn error_block_item(
     }
 }
 
-async fn exists_error_block_across_edge(
+async fn exists_invalid_block_across_edge(
     client: &Client,
     cursor: NavigatorCursor,
     edge: PageEdge,
@@ -143,7 +143,7 @@ async fn exists_error_block_across_edge(
         PageEdge::Older => {
             "SELECT EXISTS ( \
                  SELECT 1 FROM block \
-                 WHERE kind = 'error_block' \
+                 WHERE kind = 'invalid_block' \
                    AND distinct_sources >= 1 \
                    AND (btc_height < $1 \
                         OR (btc_height = $1 AND btc_header_hash > $2)) \
@@ -152,7 +152,7 @@ async fn exists_error_block_across_edge(
         PageEdge::Newer => {
             "SELECT EXISTS ( \
                  SELECT 1 FROM block \
-                 WHERE kind = 'error_block' \
+                 WHERE kind = 'invalid_block' \
                    AND distinct_sources >= 1 \
                    AND (btc_height > $1 \
                         OR (btc_height = $1 AND btc_header_hash < $2)) \
@@ -162,6 +162,6 @@ async fn exists_error_block_across_edge(
     let row = client
         .query_one(sql, &[&height, &hash])
         .await
-        .context("probe error-block navigator edge")?;
+        .context("probe invalid-block navigator edge")?;
     Ok(row.get(0))
 }

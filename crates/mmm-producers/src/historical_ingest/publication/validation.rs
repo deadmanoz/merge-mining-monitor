@@ -12,7 +12,7 @@ use crate::historical_ingest::config::is_historical_import_chain;
 struct ArtifactInventory {
     event_chains: BTreeSet<String>,
     aggregate_chains: BTreeSet<String>,
-    error_observation_rows: Option<u64>,
+    invalid_observation_rows: Option<u64>,
     event_rows: u64,
     aggregate_rows: u64,
 }
@@ -32,7 +32,7 @@ pub(super) fn validate_artifact_set(
             ArtifactRole::Event => {
                 ensure!(
                     artifact.counts.ordinary_total() == artifact.row_count
-                        && artifact.counts.error_block == 0,
+                        && artifact.counts.invalid_block == 0,
                     "event artifact {} row_count does not equal normal classification counts",
                     artifact.chain
                 );
@@ -61,7 +61,7 @@ pub(super) fn validate_artifact_set(
                 );
                 ensure!(
                     artifact.counts.ordinary_total() == artifact.row_count
-                        && artifact.counts.error_block == 0,
+                        && artifact.counts.invalid_block == 0,
                     "aggregate artifact {} row_count does not equal normal classification counts",
                     artifact.chain
                 );
@@ -77,41 +77,41 @@ pub(super) fn validate_artifact_set(
                 );
                 inventory.aggregate_rows += artifact.row_count;
             }
-            ArtifactRole::ErrorObservation => {
+            ArtifactRole::InvalidObservation => {
                 ensure!(
                     artifact.parent_only_rows == 0,
-                    "error-observation artifact cannot declare parent-only rows"
+                    "invalid-observation artifact cannot declare parent-only rows"
                 );
                 ensure!(
                     artifact.chain == "error-block-observations",
-                    "unknown error-observation artifact {:?}",
+                    "unknown invalid-observation artifact {:?}",
                     artifact.chain
                 );
                 ensure!(
                     artifact.counts.ordinary_total() == 0
-                        && artifact.counts.error_block == artifact.row_count,
-                    "error-observation artifact row_count does not equal error_block count"
+                        && artifact.counts.invalid_block == artifact.row_count,
+                    "invalid-observation artifact row_count does not equal invalid_block count"
                 );
                 ensure!(
                     !artifact.source_chain_counts.is_empty(),
-                    "error-observation artifact requires source-chain counts"
+                    "invalid-observation artifact requires source-chain counts"
                 );
                 for chain in artifact.source_chain_counts.keys() {
                     ensure!(
                         is_historical_import_chain(chain),
-                        "error-observation artifact includes unknown or surveyed chain {chain:?}"
+                        "invalid-observation artifact includes unknown or surveyed chain {chain:?}"
                     );
                 }
                 ensure!(
                     artifact.source_chain_counts.values().sum::<u64>() == artifact.row_count,
-                    "error-observation source-chain counts do not equal row_count"
+                    "invalid-observation source-chain counts do not equal row_count"
                 );
                 ensure!(
                     inventory
-                        .error_observation_rows
+                        .invalid_observation_rows
                         .replace(artifact.row_count)
                         .is_none(),
-                    "duplicate error-observation artifact"
+                    "duplicate invalid-observation artifact"
                 );
             }
         }
@@ -158,12 +158,12 @@ fn validate_inventory(
         inventory.aggregate_rows == manifest.aggregate_rows,
         "aggregate_rows does not equal aggregate artifact rows"
     );
-    let error_observation_rows = inventory
-        .error_observation_rows
-        .context("error-observation aggregate artifact is required")?;
+    let invalid_observation_rows = inventory
+        .invalid_observation_rows
+        .context("invalid-observation aggregate artifact is required")?;
     ensure!(
-        manifest.error_observation_rows == error_observation_rows,
-        "error_observation_rows does not equal the error-observation artifact"
+        manifest.invalid_observation_rows == invalid_observation_rows,
+        "invalid_observation_rows does not equal the invalid-observation artifact"
     );
     Ok(())
 }
@@ -196,7 +196,7 @@ mod tests {
             ),
             (ArtifactRole::Aggregate, "cannot declare parent-only rows"),
             (
-                ArtifactRole::ErrorObservation,
+                ArtifactRole::InvalidObservation,
                 "cannot declare parent-only rows",
             ),
         ] {
