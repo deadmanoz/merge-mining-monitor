@@ -50,6 +50,9 @@ pub(super) async fn retain_failed_height<T>(
         Ok(value) => return Ok(value),
         Err(error) => error,
     };
+    if crate::live_loop::must_propagate(&error) {
+        return Err(error);
+    }
     if context.family().failure_policy != CaptureFailurePolicy::HoldAnyHeightFailure {
         return Err(error);
     }

@@ -1,0 +1,108 @@
+<mxfile host="Portable" type="device">
+  <diagram name="Evidence and runtime" id="monitor-flow">
+    <mxGraphModel background="#1a1a2e" grid="1" gridSize="10" page="1" pageWidth="1400" pageHeight="1180">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="Merge Mining Monitor | Evidence, runtime and Core cache" style="text;html=0;fillColor=none;strokeColor=none;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=27;fontStyle=1;align=left;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1300" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="evidence-label" value="EVIDENCE AND PROJECTIONS" style="text;html=0;fillColor=none;strokeColor=none;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=20;fontStyle=1;align=left;" vertex="1" parent="1">
+          <mxGeometry x="40" y="90" width="420" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="runtime-label" value="LIVE READINESS AND LIVENESS" style="text;html=0;fillColor=none;strokeColor=none;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=20;fontStyle=1;align=left;" vertex="1" parent="1">
+          <mxGeometry x="510" y="90" width="400" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="cache-label" value="CORE CACHE PUBLICATION" style="text;html=0;fillColor=none;strokeColor=none;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=20;fontStyle=1;align=left;" vertex="1" parent="1">
+          <mxGeometry x="960" y="90" width="400" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="sources" value="Child chains • historical publications&#10;Operator evidence imports" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#2a2a2a;strokeColor=#9ca3af;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=17;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="40" y="150" width="420" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="producers" value="Capture and import engines&#10;mmm-capture + mmm-producers&#10;Base writes through mmm-store" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1e2a3d;strokeColor=#38bdf8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=17;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="40" y="300" width="420" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="base" value="Base evidence and durable queues&#10;child_block_observation • merge_mining_event&#10;sidecars • attribution • provenance&#10;known_stale_block • reconciliation queues" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1a3d2a;strokeColor=#34d399;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="40" y="460" width="420" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="reconcile" value="mmm-read-model&#10;Reconcile evidence and Core backbone&#10;Sole writer of derived tables" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1e2a3d;strokeColor=#38bdf8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=17;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="40" y="700" width="420" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="derived" value="Derived tables&#10;block • attestation_proof • source_health&#10;protocol_commitment tables" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1a3d2a;strokeColor=#34d399;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="40" y="860" width="420" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="live" value="Eight child pollers + Core follower&#10;Shared live supervisor&#10;Interruptible startup, ticks and backoff" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1e2a3d;strokeColor=#38bdf8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=17;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="510" y="150" width="400" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="runtime" value="producer_runtime_state&#10;Separate status connection&#10;Fenced run • readiness • retry deadline&#10;30-second heartbeat / 90-second expiry&#10;Never advances progress or evidence" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1a3d2a;strokeColor=#34d399;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="510" y="460" width="400" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="cursor" value="Progress and evidence diagnostics&#10;poll_cursor • bitcoin_core_sync_state&#10;capture_error&#10;Unresolved evidence errors retain priority" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1a3d2a;strokeColor=#34d399;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="510" y="860" width="400" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="core" value="Bitcoin Core&#10;Required fresh, synced mainnet view" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#2a2a2a;strokeColor=#9ca3af;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=17;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="960" y="150" width="400" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="prepare" value="Prepare a bounded snapshot&#10;One live attempt per RPC&#10;No exclusive cache lock during RPC" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1e2a3d;strokeColor=#38bdf8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=17;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="960" y="300" width="400" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="publish" value="Short publication transaction&#10;Exclusive cache lock (500 ms bound)&#10;Check revision + empty reconcile queue&#10;Increment publication_revision" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#3d3a1a;strokeColor=#facc15;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="960" y="460" width="400" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="cache" value="bitcoin_core_header cache&#10;Final epochs + moving horizon&#10;Separate verdict-invalidation generation" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#3d3a1a;strokeColor=#facc15;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="960" y="700" width="400" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="api" value="mmm-api | Read-only projections&#10;Sources combines evidence errors, progress and nullable runtime status" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1a3a5c;strokeColor=#60a5fa;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=18;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1050" width="870" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="ui" value="www/ frontend&#10;Live • Waiting • Catching up&#10;Stale • Error" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#2d1a3d;strokeColor=#c084fc;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=18;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="960" y="1050" width="400" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeWidth=2;strokeColor=#94a3b8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#1a1a2e;" edge="1" parent="1" source="sources" target="producers">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeWidth=2;strokeColor=#94a3b8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#1a1a2e;" edge="1" parent="1" source="producers" target="base">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeWidth=2;strokeColor=#94a3b8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#1a1a2e;" edge="1" parent="1" source="base" target="reconcile">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeWidth=2;strokeColor=#94a3b8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#1a1a2e;" edge="1" parent="1" source="reconcile" target="derived">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeWidth=2;strokeColor=#94a3b8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#1a1a2e;" edge="1" parent="1" source="derived" target="api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeWidth=2;strokeColor=#94a3b8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#1a1a2e;" edge="1" parent="1" source="live" target="runtime">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeWidth=2;strokeColor=#94a3b8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#1a1a2e;" edge="1" parent="1" source="cursor" target="api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeWidth=2;strokeColor=#94a3b8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#1a1a2e;" edge="1" parent="1" source="core" target="prepare">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeWidth=2;strokeColor=#94a3b8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#1a1a2e;" edge="1" parent="1" source="prepare" target="publish">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeWidth=2;strokeColor=#94a3b8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#1a1a2e;" edge="1" parent="1" source="publish" target="cache">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c4" value="classification evidence" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeWidth=2;strokeColor=#94a3b8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#1a1a2e;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" edge="1" parent="1" source="cache" target="reconcile">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeWidth=2;strokeColor=#94a3b8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#1a1a2e;" edge="1" parent="1" source="api" target="ui">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r2" value="runtime" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeWidth=2;strokeColor=#94a3b8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#1a1a2e;exitX=0.5;exitY=1;entryX=0.65;entryY=0;" edge="1" parent="1" source="runtime" target="api">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="930" y="640" />
+              <mxPoint x="930" y="1010" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

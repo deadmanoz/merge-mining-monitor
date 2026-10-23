@@ -643,10 +643,10 @@ pub async fn drain_core_reconcile_queue_with_budget_for_test(
     drain_core_reconcile_queue_with_budget(client, source_id, classifier, cascade_budget).await
 }
 
-/// Primaries reconciled per exclusive cache-lock hold (~25 * 340 ms production RTT).
+/// Work items processed per live recovery batch, including expansion rows.
 pub const CORE_RECOVERY_BATCH: usize = 25;
 
-/// Drain up to `max_primaries` primaries (plus encountered expansions) for `source_id`
+/// Drain up to `max_primaries` work items for `source_id`
 /// and return `true` when the queue is empty.
 pub async fn drain_core_reconcile_queue_batch(
     client: &mut Client,
@@ -691,11 +691,16 @@ async fn drain_core_reconcile_queue_up_to(
     progress: Option<&ProgressReporter>,
 ) -> Result<bool> {
     let mut parents_reconciled = 0_usize;
+    let mut work_items = 0_usize;
     loop {
         let Some(work) = load_next_core_reconcile_work(client, source_id).await? else {
             clear_pending_error_if_queue_empty(client, source_id).await?;
             return Ok(true);
         };
+        if progress.is_none() && work_items >= max_primaries {
+            return Ok(false);
+        }
+        work_items += 1;
         if work.primary_pending {
             if parents_reconciled >= max_primaries {
                 return Ok(false);

@@ -91,6 +91,7 @@ fn classify_source_sync(
         return SourceSyncStatus {
             error_code: Some(AUXPOW_CAPTURE_ERROR_CODE.to_owned()),
             error_height: Some(height),
+            runtime: None,
             ..SourceSyncStatus::empty(mode, "error")
         };
     };
@@ -118,6 +119,7 @@ fn classify_source_sync(
         target_height: cursor.target_height,
         error_code: capture_error_height.map(|_| AUXPOW_CAPTURE_ERROR_CODE.to_owned()),
         error_height: capture_error_height,
+        runtime: None,
     }
 }
 
@@ -154,6 +156,7 @@ fn classify_bitcoin_core_backbone_sync(
         latest_evidence_at: None,
         error_code: backbone.last_error_code,
         error_height: backbone.last_error_height,
+        runtime: None,
     }
 }
 
@@ -168,6 +171,7 @@ impl SourceSyncStatus {
             latest_evidence_at: None,
             error_code: None,
             error_height: None,
+            runtime: None,
         }
     }
 
@@ -217,6 +221,7 @@ mod tests {
             latest_evidence_at: None,
             error_code: None,
             error_height: None,
+            runtime: None,
         }
     }
 
@@ -364,6 +369,7 @@ mod tests {
                 latest_evidence_at: None,
                 error_code: None,
                 error_height: None,
+                runtime: None,
             }
         );
         assert_eq!(
@@ -384,6 +390,7 @@ mod tests {
                 latest_evidence_at: None,
                 error_code: None,
                 error_height: None,
+                runtime: None,
             }
         );
         assert_eq!(
@@ -404,6 +411,7 @@ mod tests {
                 latest_evidence_at: None,
                 error_code: None,
                 error_height: None,
+                runtime: None,
             }
         );
     }
@@ -463,6 +471,7 @@ mod tests {
                 latest_evidence_at: None,
                 error_code: Some("coinbase_fetch_failed".to_owned()),
                 error_height: Some(953_700),
+                runtime: None,
             }
         );
         let targetless = classify_source_sync(

@@ -69,3 +69,7 @@ SET recheck_pending_generation = recheck_pending_generation + 1,
 ## Reset Path
 
 For fresh, CI, and disposable local resets (`CONFIRM_DB_RESET=1 just db-reset`), see [`docs/operations.md#cleanup-and-local-reset`](../docs/operations.md#cleanup-and-local-reset).
+
+### 0036 live runtime rollout
+
+`0036_live_producer_runtime.sql` adds operational runtime status and a cache-publication revision without changing evidence or progress rows. Stop all old Core-backed writers before the backup-protected migration and resume with the new binary. Old publishers do not advance the new revision, so mixed-version writers are unsupported. A binary rollback may retain the additive schema after stopping the new producers; restore a backup only through the documented recovery workflow when a schema rollback is required.

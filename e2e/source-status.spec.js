@@ -829,3 +829,58 @@ test("Terracoin live progress stays separate from sparse evidence and capture er
   await page.reload();
   await expect(sourceOptionByName(page, "Terracoin").locator(".source-sync-state-live")).toBeVisible();
 });
+
+
+test("Runtime health stays accurate through waiting, errors, recovery and shutdown", async ({ page }) => {
+  await stubCommonApi(page);
+  const fixture = sourceFixture();
+  const source = fixture.sources.find(s => s.code === "auxpow:namecoin");
+  const now = Math.floor(Date.now() / 1000);
+  source.sync.state = "waiting";
+  source.sync.runtime = { phase: "running", state: "waiting", dependency: "bitcoin-core",
+    reason_code: "core_warmup", consecutive_failures: 6, last_success_at: now - 7200,
+    next_retry_at: now + 120, heartbeat_at: now };
+  await page.route("**/api/v1/sources", route => route.fulfill({ json: fixture }));
+  await page.goto("/");
+  await expect(sourceOptionByName(page, "Namecoin").locator(".source-sync-state-waiting")).toBeVisible();
+  await expect(page.locator("#source-status-label")).toContainText("waiting");
+  await page.locator("#source-status-button").click();
+  const row = page.getByRole("dialog", { name: "Source capture status" }).getByRole("row", { name: /Namecoin/ });
+  await expect(row).toContainText("Core is warming up");
+  await expect(row).toContainText("Next retry:");
+  await page.locator('.source-info-button[data-source-info="auxpow:namecoin"]').click();
+  await page.getByRole("tab", { name: "Capture" }).click();
+  await expect(page.locator("#sd-panel-capture")).toContainText("Last successful cycle");
+  await expect(page.locator("#sd-panel-capture")).toContainText("Bitcoin Core");
+  source.sync.state = "error";
+  source.sync.error_code = "auxpow_capture_error";
+  source.sync.error_height = 10;
+  source.sync.runtime.reason_code = '<img src=x onerror="window.runtimeInjected=true">';
+  await page.reload();
+  await page.locator("#source-status-button").click();
+  await expect(row).toContainText("auxpow_capture_error");
+  await expect(row).toContainText("Recovery pending");
+  expect(await page.evaluate(() => window.runtimeInjected)).toBeUndefined();
+
+  source.sync.state = "live";
+  source.sync.error_code = null;
+  source.sync.error_height = null;
+  Object.assign(source.sync.runtime, { state: "healthy", reason_code: null, dependency: null,
+    next_retry_at: null, consecutive_failures: 0, last_success_at: now });
+  await page.reload();
+  await page.locator("#source-status-button").click();
+  await expect(row).toContainText("Healthy cycle completed");
+  await expect(row).not.toContainText("Next retry");
+  await page.locator('.source-info-button[data-source-info="auxpow:namecoin"]').click();
+  await page.getByRole("tab", { name: "Capture" }).click();
+  await expect(page.locator("#sd-panel-capture")).not.toContainText("Next retry");
+
+  source.sync.state = "stale";
+  Object.assign(source.sync.runtime, { phase: "stopped", state: "stopped" });
+  await page.reload();
+  await page.locator("#source-status-button").click();
+  await expect(row).toContainText("Runtime: Producer stopped");
+  await page.locator('.source-info-button[data-source-info="auxpow:namecoin"]').click();
+  await page.getByRole("tab", { name: "Capture" }).click();
+  await expect(page.locator("#sd-panel-capture")).toContainText("Producer stopped");
+});

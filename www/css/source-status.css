@@ -56,6 +56,8 @@
 }
 
 .source-status-button[data-state="catching-up"] .source-status-bead,
+.source-status-button[data-state="waiting"] .source-status-bead,
+.source-sync-state-waiting,
 .source-sync-state-catching-up {
   background: var(--source-catching-up);
 }
@@ -247,3 +249,5 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.source-status-runtime { max-width: 26rem; font-size: 0.8em; margin-top: 0.3rem; }

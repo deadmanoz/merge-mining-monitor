@@ -11,7 +11,9 @@ use sync_status::{
     SourceBackboneProgress, SourceCursorProgress, source_status, sync_for_source_code,
 };
 
+mod runtime;
 mod sync_status;
+pub use runtime::SourceRuntime;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SourcesPayload {
@@ -42,6 +44,7 @@ pub struct SourceSyncStatus {
     pub latest_evidence_at: Option<i64>,
     pub error_code: Option<String>,
     pub error_height: Option<i32>,
+    pub runtime: Option<SourceRuntime>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -67,6 +70,7 @@ struct SourceEndpointBaseRow {
     cursor: Option<SourceCursorProgress>,
     backbone: Option<SourceBackboneProgress>,
     capture_error_height: Option<i32>,
+    runtime: Option<SourceRuntime>,
 }
 
 #[derive(Debug, Clone)]
@@ -116,6 +120,7 @@ pub async fn sources(
                     row.capture_error_height,
                     reference_now,
                 );
+                runtime::apply_runtime(&mut sync, row.runtime, reference_now);
                 if row.kind == "auxpow" && sync.mode == "live" {
                     sync.latest_evidence_at = last_seen_at;
                 }
@@ -147,8 +152,9 @@ async fn load_source_endpoint_rows(client: &Client) -> Result<Vec<SourceEndpoint
                     pc.target_height, \
                     bcs.source_id, bcs.target_tip_height, bcs.contiguous_complete_height, \
                     bcs.last_error_code, bcs.last_error_height, bcs.updated_at, \
-                    ce.height \
+                    ce.height, to_jsonb(prs) \
              FROM source \
+             LEFT JOIN producer_runtime_state prs ON prs.source_id = source.id \
              LEFT JOIN poll_cursor pc ON pc.source_id = source.id \
              LEFT JOIN bitcoin_core_sync_state bcs \
                 ON bcs.source_id = source.id AND bcs.sync_mode = 'contiguous' \
@@ -204,6 +210,10 @@ async fn load_source_endpoint_rows(client: &Client) -> Result<Vec<SourceEndpoint
                 cursor,
                 backbone,
                 capture_error_height: row.get(15),
+                runtime: row
+                    .get::<_, Option<serde_json::Value>>(16)
+                    .map(serde_json::from_value)
+                    .transpose()?,
             })
         })
         .collect()

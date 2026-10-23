@@ -85,6 +85,33 @@ const TEST_DEFAULTS: PollerDefaults = PollerDefaults {
 };
 
 #[test]
+fn child_failures_keep_the_normal_retry_policy_but_core_faults_stop_capture() -> Result<()> {
+    let config = PollerConfig::from_lookup("NAMECOIN", TEST_DEFAULTS, |_| None)?;
+    let mut poller = Poller {
+        chain: FlakyTipChain::new(0, 0),
+        cursor: 0,
+        config,
+    };
+    assert_eq!(
+        poller.wait_after_tick(Err(anyhow::anyhow!("child transport failed")))?,
+        config.poll_interval
+    );
+    assert!(
+        poller
+            .wait_after_tick(Err(mmm_bitcoin_core::CoreFault::Authentication.into()))
+            .is_err()
+    );
+    assert!(
+        poller
+            .wait_after_tick(Err(mmm_store::bitcoin_core_header_cache_integrity_error(
+                "fixture conflict"
+            )))
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
 fn from_lookup_unset_start_height_means_no_override() -> Result<()> {
     let map: HashMap<String, String> = HashMap::new();
     let config = PollerConfig::from_lookup("RSK", TEST_DEFAULTS, |key| map.get(key).cloned())?;
@@ -246,11 +273,13 @@ async fn tick_policy_preserves_partial_progress_on_new_height_error() -> Result<
 }
 
 #[tokio::test]
-async fn tick_policy_replay_failure_does_not_starve_tip() -> Result<()> {
+async fn replay_failure_preserves_tip_progress_but_not_healthy_completion() -> Result<()> {
     let mut cursor = 5;
     let mut seen = Vec::new();
-    let processed = run_tick_policy(
+    let mut progress = TickProgress::default();
+    run_tick_policy_counting(
         &mut cursor,
+        &mut progress,
         TickWindow {
             rescan_start: 3,
             end: 7,
@@ -266,7 +295,41 @@ async fn tick_policy_replay_failure_does_not_starve_tip() -> Result<()> {
     .await?;
     assert_eq!(seen, vec![3, 4, 5, 6, 7]);
     assert_eq!(cursor, 7);
-    assert_eq!(processed, 4);
+    assert_eq!(progress.processed, 4);
+    assert!(
+        progress.held,
+        "a failed replay must not reset outage backoff or report a healthy cycle"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn replay_stops_at_a_core_outage_without_attempting_new_heights() -> Result<()> {
+    let mut cursor = 5;
+    let mut seen = Vec::new();
+    let result = run_tick_policy(
+        &mut cursor,
+        TickWindow {
+            rescan_start: 3,
+            end: 7,
+        },
+        async |height, _kind| {
+            seen.push(height);
+            if height == 4 {
+                return Err(mmm_bitcoin_core::CoreUnavailable::Warmup.into());
+            }
+            Ok(HeightProgress::Advance)
+        },
+    )
+    .await;
+    assert_eq!(
+        result
+            .unwrap_err()
+            .downcast_ref::<mmm_bitcoin_core::CoreUnavailable>(),
+        Some(&mmm_bitcoin_core::CoreUnavailable::Warmup)
+    );
+    assert_eq!(seen, [3, 4]);
+    assert_eq!(cursor, 5);
     Ok(())
 }
 

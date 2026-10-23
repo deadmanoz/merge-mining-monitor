@@ -17,7 +17,7 @@ use tokio_postgres::Client;
 use mmm_capture::source_registry::BITCOIN_SOURCE_CODE;
 use mmm_read_model::{
     CoreCanonicalReplacement, CoreSuffixReplacementInput, ExpectedCoreCanonicalRow,
-    drain_core_reconcile_queue, replace_core_canonical_suffix_validated,
+    replace_core_canonical_suffix_validated,
 };
 #[cfg(any(test, feature = "db-integration"))]
 use mmm_store::get_source_id;
@@ -156,6 +156,12 @@ where
                 );
             }
             CursorRepairOutcome::Replaced(stats) => {
+                if context.classifier.is_live() {
+                    return Err(crate::bitcoin_epoch_cache::LocalRecoveryPending(
+                        "core_cursor_recovery_pending",
+                    )
+                    .into());
+                }
                 accumulated_stats = add_stats(accumulated_stats, stats);
                 continue;
             }
@@ -329,7 +335,7 @@ where
     // The suffix switch persists its changed-parent seeds before committing.
     // Drain immediately for the normal path; follow startup and every later
     // tick also replay this queue after a crash or transient cascade failure.
-    drain_core_reconcile_queue(client, context.source_id, context.classifier)
+    crate::bitcoin_epoch_cache::drain_core_queue(client, context.source_id, context.classifier)
         .await
         .context("reconcile dependents after Bitcoin Core canonical suffix replacement")?;
 
