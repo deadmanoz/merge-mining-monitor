@@ -242,6 +242,7 @@ const DEFAULTS = {
   kinds: VISIBLE_KIND_CONTROLS.slice(),
   classification: CLASSIFICATION_DEFAULT.slice(),
   sources: [],
+  mixed: false,
 };
 
 const state = {
@@ -350,6 +351,30 @@ function formatScalar(value) {
   return esc(value);
 }
 
+function copyButton(value) {
+  const text = esc(value);
+  return `<button type="button" class="copy-button" data-copy="${text}" aria-label="Copy value" title="Copy value">
+    <svg class="copy-button-icon copy-button-icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect>
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
+    </svg>
+    <svg class="copy-button-icon copy-button-icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M20 6 9 17l-5-5"></path>
+    </svg>
+  </button>`;
+}
+
+function copyValue(value) {
+  if (value === null || value === undefined) return formatScalar(value);
+  return `<code>${esc(value)}</code> ${copyButton(value)}`;
+}
+
+function poolName(pool) {
+  if (!pool) return formatScalar(null);
+  const cls = pool.known ? "true-value" : "false-value";
+  return `<span class="${cls}">${esc(pool.name || "Unknown")}</span>`;
+}
+
 function selectedKinds() {
   const checked = $all('input[name="kind"]:checked').map((input) => input.value);
   return checked.length ? checked : VISIBLE_KIND_CONTROLS.slice();
@@ -391,6 +416,7 @@ function readForm({ source = "form" } = {}) {
   if (!form) return;
   const data = new FormData(form);
   const sourceInputs = $all('input[name="source"]', form);
+  const mixedInput = form.elements.namedItem("mixed");
   const readLookup = source !== "filter-change" && source !== "generated-window";
   let hasLookupIntent = false;
   state.query = {
@@ -398,6 +424,7 @@ function readForm({ source = "form" } = {}) {
     kinds: selectedKinds(),
     classification: selectedClassifications(),
     sources: sourceInputs.length ? selectedSources(form) : state.query.sources,
+    mixed: mixedInput ? mixedInput.checked : state.query.mixed,
   };
   if (readLookup) {
     const rawTreeHeight = String(data.get("treeHeight") || "").trim();
@@ -478,6 +505,7 @@ function hydrateFormFromUrl() {
       .filter((value) => CLASSIFICATION_DEFAULT.includes(value));
     if (classification.length) state.query.classification = classification;
   }
+  if (params.has("mixed")) state.query.mixed = params.get("mixed") === "1";
   if (params.has("sources")) {
     state.query.sources = params
       .get("sources")
@@ -516,10 +544,15 @@ function writeForm() {
   $all('input[name="classification"]', form).forEach((input) => {
     input.checked = state.query.classification.includes(input.value);
   });
+  const mixed = form.elements.namedItem("mixed");
+  if (mixed) mixed.checked = state.query.mixed;
 }
 
 
 export {
+  copyButton,
+  copyValue,
+  poolName,
   API_BASE,
   DEFAULTS,
   DELTA_HELP,

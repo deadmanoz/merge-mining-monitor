@@ -29,6 +29,17 @@
   stroke-width: 3;
 }
 
+/* Mixed relationship signals: an outline ring just outside the block. */
+.tree-mixed-ring {
+  fill: none;
+  stroke: var(--signal-mixed);
+  stroke-width: 2.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.tree-mixed-swatch { fill: var(--signal-mixed); }
+
 /* Height and miner name both sit inside the kind-colored block; a dark halo
    keeps the white text legible on every kind fill across light and dark themes. */
 .tree-block-height {

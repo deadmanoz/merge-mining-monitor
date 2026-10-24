@@ -88,6 +88,13 @@ Classification:
 The Classification rail combines the visible parent-kind highlights with the visible BTC-orphan signal.
 Each row has a compact helper affordance explaining the criterion and interpretation: canonical means active-chain Bitcoin context, stale means Bitcoin evidence placed on a branch off the active chain, invalid block means full-PoW evidence with an established consensus failure, strict orphan means Core-absent Bitcoin work with BIP34 height and epoch nBits agreement, and weak orphan means Core-absent Bitcoin work with timestamp-epoch nBits agreement.
 
+Relationships:
+
+- `Mixed signals`
+
+The Relationships rail highlights blocks whose tree node `relationship.mixed` is true: their coinbase tags, payout addresses, child identities and declared accounts name two or more pools.
+It is a client-side highlight like the parent kinds, kept in the URL as `mixed=1`.
+
 Source (live section):
 
 - Bitcoin
@@ -139,8 +146,9 @@ Pending and excluded remain backend refinements outside the left rail and defaul
 Each block shows its Bitcoin height and best-available miner (`display_miner_pool`): the strict `bitcoin_miner_pool` when known, or the chain-agnostic `child_inferred` miner when the Bitcoin coinbase miner is Unknown (for example an RSK-only stale block).
 The drawer keeps `Bitcoin miner` strict and adds an `Inferred miner` row when `display_miner_basis` is `child_inferred`.
 A top-right badge shows the count of distinct AuxPoW child chains in `child_chain_evidence` (unaffected by Source/Kind highlights), and a grey top-left badge the count of CORE and exSat declarations in `protocol_commitments`; selecting a block expands a non-reflowing overlay with per-chain height/event summaries and, below them, each declaration with its associated pool (else its declared account).
+A block whose `relationship.mixed` is true gets an amber (`--signal-mixed`) outline ring just outside its fill, and its overlay lists the pools its signals name, the reference pool first.
 
-Canonical, stale, invalid-block, and Source selections are client-side highlights that fade non-matching blocks and edges without changing source counts or moving the camera; strict/weak orphan rows are server-side navigator filters.
+Canonical, stale, invalid-block, Mixed signals, and Source selections are client-side highlights that fade non-matching blocks and edges without changing source counts or moving the camera; strict/weak orphan rows are server-side navigator filters.
 Explicit focus gestures center on `width/2, height/2`: clicking a block recenters only when near a viewport edge, height lookup centers on that canonical block, date/time lookup centers on the window's mid-height, and Live tip / initial load center on the chain tip.
 A silent 60s timer refreshes sources always and the tree when active; clicking `Updated HH:MM:SS` force-reloads while preserving pan/zoom.
 
@@ -154,11 +162,17 @@ Missing pool attribution renders as an explicit unknown state, never omitted.
 The drawer is consolidated around the AuxPoW record (no standalone "AuxPoW Proofs" section, and no field labelled "Confirmed"):
 
 - **Parent block (Bitcoin)**: header identity, `kind`, `Orphan class` (`block.btc_orphan_class` for unknowns) or `Consensus rejection` (`block.invalid_block_reason` for invalid blocks), `coinbase_tag` when present, strict `Bitcoin miner` plus optional `Inferred miner`, Bitcoin block time, and collapsible raw header.
+  A mixed block shows a "Mixed signals · N pools" chip beside `Bitcoin miner`, linking to the next section.
+- **Relationship signals**: every pool the parent names (`relationship_signals`), one row per Bitcoin coinbase tag, payout address, child reward address or coinbase tag, and declared CORE or exSat account, with its value and pool.
+  Rows naming a pool other than the reference are accented as "differs"; the help text says a signal is an association, not proof of who mined the block.
 - **Merge-mining commitment**: decoded marker (`aux_merkle_root`, `merkle_size`, `merkle_nonce`) and parent coinbase txid for `namecoin-aux` / `qbit-aux`, or a format-only `rsk-opaque` / `hathor-rfc0006` entry.
 - **Sources & capture**: source summary, distinct source count, and AuxPoW chain count.
 - **Auxiliary blocks**: hydrated `event_details[]` with authenticated child height/hash/header/time/`nBits` (or explicit unavailable state), `slot_index` / `chain_id`, parent/aux PoW target checks, RSK sidecar fields (`proof_format = "rskj_rpc_opaque"`, miner address, pool identity, canonical-vs-uncle state, and opaque proof byte presence), and a collapsed AuxPoW proof breakdown (`aux_proof` branches, or byte-count-plus-copy fallback when `aux_merkle_proof_hex` does not decode).
 - **Competition & branch context**: competition and stale-branch panels.
   For an `invalid_block`, the competition panel is replaced by an explicit note that the block never raced and has no canonical competitor.
+- **Protocol commitments**: last, each CORE and exSat declaration with its decode status, declared account and associated pool, or the reason none are listed.
+
+Child block rows label their resolved child pool `Child block pool`: it can come from a child reward or payout address or from a child coinbase tag, and it is not the Bitcoin block's miner.
 
 Mapped `invalid_block_reason` tokens render in plain language with an `(i)` dialog explaining the violated rule; unmapped tokens render as raw text without a help button.
 Drawer block hashes link to chain explorers (mempool.space for Bitcoin, Namebrow.se for Namecoin, Rootstock Explorer for RSK, Syscoin Blockbook for Syscoin) alongside the local copy button.

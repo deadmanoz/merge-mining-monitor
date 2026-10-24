@@ -29,7 +29,8 @@ function renderTreeLegend(legend) {
   if (!body) return;
   const nodeKinds = legend?.kinds || KINDS;
   const edgeItems = edgeLegendItems(legend?.edge_kinds || EDGE_KINDS);
-  const nodeItems = blockLegendRows(nodeKinds)
+  // The mixed-signals ring outlines a block of any kind, so it closes the Blocks group.
+  const nodeItems = [...blockLegendRows(nodeKinds), { label: "mixed signals", swatchClass: "ring-signal-mixed" }]
     .map((row) => `<span class="tree-legend-item"><span class="tree-legend-node-swatch ${esc(row.swatchClass)}"></span>${esc(row.label)}</span>`)
     .join("");
   const edgeRows = edgeItems
@@ -160,7 +161,7 @@ function renderTree(payload, svgElement, options = {}) {
 
   elState.byHash = new Map(nodes.map((node) => [node.hash, node]));
   drawSelectionOverlay(overlayLayer, options.selectedHash, elState.byHash);
-  applyTreeHighlight(svgElement, options.highlightSources, options.highlightKinds, options.highlightClassifications, options.selectedHash);
+  applyTreeHighlight(svgElement);
 
   // clickDistance(4) lets a small trackpad micro-drag still register as a node click.
   const zoom = d3.zoom().scaleExtent([0.35, 3]).clickDistance(4).on("zoom", (event) => {
@@ -220,6 +221,7 @@ function treeNodeTitle(node, chains) {
   if (chains.length) parts.push(chains.map((item) => `${chainDisplayName(item.chain)}${item.count ? ` x${item.count}` : ""}`).join(", "));
   const protocols = node.protocol_commitments || [];
   if (protocols.length) parts.push(`protocol commitments: ${protocols.map((entry) => protocolLabel(entry.protocol)).join(", ")}`);
+  if (node.relationship?.mixed) parts.push(`mixed signals: ${node.relationship.pools.map((pool) => pool.name).join(", ")}`);
   return parts.join(" | ");
 }
 
@@ -245,6 +247,17 @@ function drawTreeBlock(group, node) {
     .attr("height", BLOCK_H)
     .attr("rx", 8)
     .attr("fill", nodeFillVar(node));
+
+  // Outside the block, so the selection stroke and the corner badges stay visible over it.
+  if (node.relationship?.mixed) {
+    group.append("rect")
+      .attr("class", "tree-mixed-ring")
+      .attr("x", -BLOCK_W / 2 - 4)
+      .attr("y", -BLOCK_H / 2 - 4)
+      .attr("width", BLOCK_W + 8)
+      .attr("height", BLOCK_H + 8)
+      .attr("rx", 11);
+  }
 
   group.append("text")
     .attr("class", "tree-block-height")
@@ -300,7 +313,8 @@ function drawSelectionOverlay(overlayLayer, selectedHash, byHash) {
   if (!node) return;
   const chains = childChainList(node);
   const protocols = node.protocol_commitments || [];
-  if (!chains.length && !protocols.length) return;
+  const mixedPools = node.relationship?.mixed ? node.relationship.pools : [];
+  if (!chains.length && !protocols.length && !mixedPools.length) return;
 
   const sections = [];
   if (chains.length) {
@@ -321,9 +335,20 @@ function drawSelectionOverlay(overlayLayer, selectedHash, byHash) {
       rows: protocols.map((entry) => ({
         name: protocolLabel(entry.protocol),
         meta: protocolCardMeta(entry),
-        protocol: entry.protocol,
+        swatchClass: `tree-protocol-swatch-${entry.protocol}`,
       })),
       note: "associated pool, not the block's miner",
+    });
+  }
+  if (mixedPools.length) {
+    sections.push({
+      title: `mixed signals (${mixedPools.length} pools)`,
+      rows: mixedPools.map((pool, index) => ({
+        name: pool.name,
+        meta: index ? "differs" : "reference",
+        swatchClass: "tree-mixed-swatch",
+      })),
+      note: "named by its tags, payouts and accounts",
     });
   }
 
@@ -369,9 +394,9 @@ function drawSelectionOverlay(overlayLayer, selectedHash, byHash) {
       .text(section.title);
     section.rows.forEach((row, index) => {
       const g = card.append("g").attr("transform", `translate(${padX},${top + 24 + index * rowH + 12})`);
-      if (row.protocol) {
+      if (row.swatchClass) {
         g.append("rect")
-          .attr("class", `tree-chain-card-swatch tree-protocol-swatch-${row.protocol}`)
+          .attr("class", `tree-chain-card-swatch ${row.swatchClass}`)
           .attr("x", 0)
           .attr("y", -7)
           .attr("width", 8)

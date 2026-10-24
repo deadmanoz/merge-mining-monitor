@@ -19,7 +19,7 @@ registerView("tree", {
   },
   render() {
     if (state.treeRepaintPending) renderTreePanel();
-    else applyTreeHighlight($("#tree-svg"), state.query.sources, state.query.kinds, state.query.classification, state.selectedHash);
+    else applyTreeHighlight($("#tree-svg"));
   },
 });
 

@@ -1,5 +1,5 @@
 import { centerCameraOnHeight, centerCameraOnNode, centerCameraOnWindowMidHeight, goTo, loadBlock, loadNavigatorLatest, loadSources, loadTree, navSelectLabel, reconcileNavFromSelected, refreshActiveNavigatorTarget, refreshNavControls, stepNav } from "./api-client.js";
-import { applyStoredRailWidth, applyTreeHighlight, clearStoredTreeTransform, INFO_DIALOGS, openInfoDialog, RAILS, renderInfoDialogs, renderKindControls, setRailCollapsed, updateSourceGroupSelectedMarkers, wireRailResize } from "./controls.js";
+import { applyStoredRailWidth, applyTreeHighlight, clearStoredTreeTransform, INFO_DIALOGS, openInfoDialog, RAILS, renderInfoDialogs, renderKindControls, renderSignalControls, setRailCollapsed, updateSourceGroupSelectedMarkers, wireRailResize } from "./controls.js";
 import { activateModalTab, closeDialog, showDialog, wireModalTabs } from "./dialogs.js";
 import { renderDrawer } from "./drawer-renderer.js";
 import { $, $all, API_BASE, esc, hydrateFormFromUrl, readForm, refreshRelativeTimes, startRelativeTimeTicker, state, writeForm } from "./frontend-state.js";
@@ -406,10 +406,10 @@ function wireEvents() {
     if (event.target && (event.target.name === "treeHeight" || event.target.name === "treeTime")) return;
     readForm({ source: "filter-change" });
     syncUrl();
-    if (event.target && (event.target.name === "source" || event.target.name === "kind")) {
+    if (event.target && ["source", "kind", "mixed"].includes(event.target.name)) {
       if (event.target.name === "source") updateSourceGroupSelectedMarkers();
       if (state.query.view === "tree") {
-        applyTreeHighlight($("#tree-svg"), state.query.sources, state.query.kinds, state.query.classification, state.selectedHash);
+        applyTreeHighlight($("#tree-svg"));
       } else {
         activateView(state.query.view);
       }
@@ -449,6 +449,11 @@ function wireEvents() {
     prepareFocus();
     activateView("delta");
   });
+  document.addEventListener("click", (event) => {
+    const topic = event.target.closest("[data-scroll-topic]")?.dataset.scrollTopic;
+    if (!topic) return;
+    $(`#drawer .detail-section[data-topic="${topic}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+  });
   document.addEventListener("click", async (event) => {
     const copy = event.target.closest("[data-copy]");
     if (!copy) return;
@@ -472,6 +477,7 @@ async function initApp() {
   registerFindingsView(registerView);
   applyViewScopes(state.query.view);
   renderKindControls();
+  renderSignalControls();
   renderInfoDialogs();
   writeForm();
   wireEvents();

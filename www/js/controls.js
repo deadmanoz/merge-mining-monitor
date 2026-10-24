@@ -209,6 +209,26 @@ function renderKindControls() {
   container.innerHTML = renderKindControlRows();
 }
 
+function renderSignalControls() {
+  const container = $("#signal-controls");
+  if (!container) return;
+  container.innerHTML = renderCheckboxOption({
+    name: "mixed",
+    value: "1",
+    checked: state.query.mixed,
+    swatchClass: "ring-signal-mixed",
+    label: "Mixed signals",
+    meta: "Blocks whose tags, payouts and accounts name two or more pools",
+    infoButton: {
+      className: "icon-button kind-info-button",
+      data: { "auxpow-info": "relationship_signals" },
+      ariaLabel: "About relationship signals",
+      title: "About relationship signals",
+      icon: "help",
+    },
+  });
+}
+
 function renderInfoDialogShell(descriptor) {
   return `<dialog id="${esc(descriptor.id)}" class="${esc(descriptor.className)}" aria-labelledby="${esc(descriptor.titleId)}" aria-describedby="${esc(descriptor.bodyId)}">
   <div class="about-dialog-shell">
@@ -441,9 +461,6 @@ function renderTreePanel() {
     selectedHash: state.selectedHash,
     onSelect: selectTreeNode,
     onBackgroundClick: clearTreeSelection,
-    highlightSources: state.query.sources,
-    highlightKinds: state.query.kinds,
-    highlightClassifications: state.query.classification,
   });
   renderTreeLegend(state.tree?.legend);
   updateHeightPlaceholders(state.tree?.window);
@@ -491,7 +508,7 @@ function markTreeSelection() {
   if (elState && !overlay.empty()) {
     drawSelectionOverlay(overlay, state.selectedHash, elState.byHash);
   }
-  applyTreeHighlight(svgEl, state.query.sources, state.query.kinds, state.query.classification, state.selectedHash);
+  applyTreeHighlight(svgEl);
 }
 
 function nodeMatchesSources(node, sources) {
@@ -511,29 +528,32 @@ function nodeMatchesHeaderSignal(node, kinds, classifications) {
   return Array.isArray(kinds) && kinds.includes(node?.kind);
 }
 
-function nodeMatchesHighlight(node, sources, kinds, classifications) {
-  return nodeMatchesSources(node, sources) && nodeMatchesHeaderSignal(node, kinds, classifications);
+function nodeMatchesHighlight(node, { sources, kinds, classification, mixed }) {
+  return nodeMatchesSources(node, sources)
+    && nodeMatchesHeaderSignal(node, kinds, classification)
+    && (!mixed || Boolean(node?.relationship?.mixed));
 }
 
-function highlightActive(sources, kinds, classifications) {
+function highlightActive({ sources, kinds, classification, mixed }) {
   const sourceActive = Array.isArray(sources) && sources.length > 0;
   const kindActive = Array.isArray(kinds) && kinds.length > 0 && kinds.length < KINDS.length;
-  const classificationActive = Array.isArray(classifications) && classifications.length > 0;
-  return sourceActive || kindActive || classificationActive;
+  const classificationActive = Array.isArray(classification) && classification.length > 0;
+  return sourceActive || kindActive || classificationActive || mixed;
 }
 
-function applyTreeHighlight(svgEl, sources, kinds, classifications, selectedHash) {
+function applyTreeHighlight(svgEl) {
   if (!svgEl) return;
-  const active = highlightActive(sources, kinds, classifications);
+  const { query: highlight, selectedHash } = state;
+  const active = highlightActive(highlight);
   const byHash = svgEl.__mmmTree?.byHash;
   const root = d3.select(svgEl);
   root.selectAll("g.tree-node")
-    .classed("tree-node--dim", (node) => active && node.hash !== selectedHash && !nodeMatchesHighlight(node, sources, kinds, classifications));
+    .classed("tree-node--dim", (node) => active && node.hash !== selectedHash && !nodeMatchesHighlight(node, highlight));
   const edgeDimmed = (edge) => {
     if (!active || !byHash) return false;
     const from = byHash.get(edge.from_hash);
     const to = byHash.get(edge.to_hash);
-    return !(nodeMatchesHighlight(from, sources, kinds, classifications) || nodeMatchesHighlight(to, sources, kinds, classifications));
+    return !(nodeMatchesHighlight(from, highlight) || nodeMatchesHighlight(to, highlight));
   };
   root.selectAll("path.tree-edge").classed("tree-edge--dim", edgeDimmed);
   root.selectAll("g.tree-edge-label").classed("tree-edge--dim", edgeDimmed);
@@ -638,6 +658,7 @@ export {
   renderTreePanel,
   markTreeSelection,
   applyTreeHighlight,
+  renderSignalControls,
   clearStoredTreeTransform,
   clearSelection,
   RAILS,
