@@ -132,22 +132,22 @@ fn assert_navigator_fixture_contract(file: &str, fixture: &Value) {
 
     assert_navigator_index_contract(file, fixture, items);
 
-    if file == "navigator-error-block.json" {
+    if file == "navigator-invalid-block.json" {
         assert!(
             fixture["query"]["classification"]
                 .as_array()
                 .is_some_and(|classes| classes.is_empty()),
-            "{file}: the error-block target has no orphan-class axis"
+            "{file}: the invalid-block target has no orphan-class axis"
         );
         for item in items {
             assert_eq!(item["position"]["axis"], "height", "{file}: height axis");
             assert_eq!(
                 item["position"]["min"], item["position"]["max"],
-                "{file}: an error block is a single-height span"
+                "{file}: an invalid block is a single-height span"
             );
             assert!(
                 item["branch"].is_null() && item["orphan"].is_null(),
-                "{file}: an error block is never a branch member or an orphan"
+                "{file}: an invalid block is never a branch member or an orphan"
             );
         }
         // Same-height items tie-break by ascending stored (reversed display) hash bytes.
@@ -218,33 +218,33 @@ fn assert_block_fixture_contract(file: &str, fixture: &Value) {
         .as_object()
         .unwrap_or_else(|| panic!("{file} must carry a block object"));
     assert!(
-        block.contains_key("error_block_reason"),
-        "{file} block must include nullable error_block_reason"
+        block.contains_key("invalid_block_reason"),
+        "{file} block must include nullable invalid_block_reason"
     );
-    if block.get("kind").and_then(Value::as_str) == Some("error_block") {
+    if block.get("kind").and_then(Value::as_str) == Some("invalid_block") {
         assert!(
-            block["error_block_reason"]
+            block["invalid_block_reason"]
                 .as_str()
                 .is_some_and(|reason| !reason.is_empty()),
-            "{file} error block must carry a non-empty error_block_reason"
+            "{file} invalid block must carry a non-empty invalid_block_reason"
         );
         assert!(
             fixture["competition"].is_null(),
-            "{file} error block must not carry a stale competition"
+            "{file} invalid block must not carry a stale competition"
         );
         assert!(
             fixture["stale_branch"].is_null(),
-            "{file} error block must not carry a stale branch"
+            "{file} invalid block must not carry a stale branch"
         );
     } else {
         assert!(
-            block["error_block_reason"].is_null(),
-            "{file} non-error block must carry error_block_reason: null"
+            block["invalid_block_reason"].is_null(),
+            "{file} non-invalid block must carry invalid_block_reason: null"
         );
     }
     assert!(
         !block.contains_key("body_invalid"),
-        "{file} must omit the retired annotation field; invalid parents use error_block"
+        "{file} must omit the retired annotation field; invalid parents use invalid_block"
     );
     assert_protocol_commitments_fixture_contract(file, fixture);
     let events = fixture["event_details"]

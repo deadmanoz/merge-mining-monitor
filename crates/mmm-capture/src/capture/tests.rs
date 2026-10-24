@@ -75,7 +75,7 @@ fn classification_proof_updates_payload_height_from_proof_only() {
 }
 
 #[test]
-fn catalogued_error_block_overrides_external_proof() {
+fn catalogued_invalid_block_overrides_external_proof() {
     let mut payload = MergeMiningEventPayload {
         child_height: Some(1),
         child_block_hash: Some(vec![1; 32]),
@@ -126,7 +126,7 @@ fn catalogued_error_block_overrides_external_proof() {
     )
     .unwrap();
 
-    assert_eq!(payload.btc_parent_kind, ParentKind::ErrorBlock);
+    assert_eq!(payload.btc_parent_kind, ParentKind::InvalidBlock);
     assert_eq!(payload.btc_parent_height, Some(946_213));
     assert_eq!(payload.difficulty_epoch_ok, Some(true));
 }

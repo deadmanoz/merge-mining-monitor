@@ -316,11 +316,11 @@ mod tests {
 
     #[test]
     fn research_pins_name_the_same_publication() {
-        let catalogue = include_str!("../../../../data/consensus/error_blocks.csv");
+        let catalogue = include_str!("../../../../data/consensus/invalid_blocks.csv");
         let catalogue_commit = catalogue
             .lines()
             .find_map(|line| line.strip_prefix("# Source commit: "))
-            .expect("error-block catalogue must name its Research commit");
+            .expect("invalid-block catalogue must name its Research commit");
         assert_eq!(catalogue_commit, PINNED_RESEARCH_COMMIT.as_str());
     }
 

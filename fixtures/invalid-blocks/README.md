@@ -5,4 +5,4 @@ These fixtures retain the 19 published observations of the ten reviewed body-inv
 `body-invalid-observations.csv` is an exact row subset of that commit's `results/monitor-evidence/error-block-observations_monitor_evidence.csv`.
 `body-invalid-parents.json` selects the distinct parent headers, heights, hashes and rejection reasons for import and classification assertions.
 
-Used by DB integration tests to verify error-observation import, promotion of all ten parents to `error_block`, exclusion from stale competition, and idempotent snapshot cleanup with scripted Core verdicts.
+Used by DB integration tests to verify invalid-observation import, promotion of all ten parents to `invalid_block`, exclusion from stale competition, and idempotent snapshot cleanup with scripted Core verdicts.

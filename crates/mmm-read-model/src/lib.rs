@@ -152,7 +152,7 @@ struct BlockInput {
     btc_coinbase_script: Option<Vec<u8>>,
     btc_coinbase_outputs: Option<Vec<u8>>,
     btc_coinbase_status: CoreCoinbaseStatus,
-    error_block_reason: Option<String>,
+    invalid_block_reason: Option<String>,
     canonical_competitor_hash: Option<Vec<u8>>,
     total_attestations: i32,
     distinct_sources: i32,
@@ -213,7 +213,7 @@ struct BlockCascadeState {
     kind: BlockKind,
     btc_height: Option<i32>,
     btc_height_source: Option<HeightSource>,
-    error_block_reason: Option<String>,
+    invalid_block_reason: Option<String>,
     canonical_competitor_hash: Option<Vec<u8>>,
     core_attested: bool,
     difficulty_epoch_ok: Option<bool>,
@@ -443,7 +443,7 @@ pub(crate) async fn classify_payload_parent<C: GenericClient>(
     let header: Header = deserialize(&payload.btc_parent_header_bytes)
         .context("deserialize payload parent header for classification")?;
     if !classifier.is_enabled()
-        && mmm_capture::error_blocks::lookup(&payload.btc_parent_header_hash).is_none()
+        && mmm_capture::invalid_blocks::lookup(&payload.btc_parent_header_hash).is_none()
     {
         return Ok(None);
     }

@@ -2,11 +2,11 @@
 
 Historical ingest consumes the normalized monitor publication from `merge-mining-research` and sends every observation through the same store and read-model rules as live capture.
 Its pinned commit is the generated `source_repo_commit` in `data/historical/historical-source-manifest.json`.
-The compact catalogue header in `data/consensus/error_blocks.csv` must name that same commit; `just gen-error-blocks-catalogue` refuses a `--source-commit` that disagrees.
+The compact catalogue header in `data/consensus/invalid_blocks.csv` must name that same commit; `just gen-invalid-blocks-catalogue` refuses a `--source-commit` that disagrees.
 
 ## Pinning And Manifest Verification
 
-Refresh the Research manifest and error catalogue from one committed Research publication:
+Refresh the Research manifest and invalid-block catalogue from one committed Research publication:
 
 ```bash
 just gen-research-publication-pins \
@@ -20,8 +20,8 @@ Materialize Research's event-file LFS payloads before running this command:
 git lfs pull --include="results/monitor-evidence/*_monitor_evidence.csv"
 ```
 
-The manifest generator verifies each artifact's pinned byte size and SHA-256, measures parent-only rows, and takes the error-observation chain inventory from Research's `observation_chain_counts` field.
-The combined command stages the manifest and error catalogue together and publishes them only after both generators succeed (it does not accept `--out`).
+The manifest generator verifies each artifact's pinned byte size and SHA-256, measures parent-only rows, and takes the invalid-observation chain inventory from Research's `observation_chain_counts` field.
+The combined command stages the manifest and invalid-block catalogue together and publishes them only after both generators succeed (it does not accept `--out`).
 Run it again with `--check` before importing or releasing.
 Routine repository gates use `--check --allow-missing-repo`, which reuses the committed parent-only counts while checking Git publication metadata; the explicit release check omits that flag and rescans the materialized payloads.
 A refreshed pin documents import readiness only, not a completed database import or deploy.
@@ -30,13 +30,13 @@ The pinned manifest (`data/historical/historical-source-manifest.json`) covers:
 - Per-chain event artifacts at `results/monitor-evidence/<chain>_monitor_evidence.csv` (Doichain participates with a valid zero-row file; parent-only canonical rows that lack both a child hash and child height are pinned and verified in preflight, then omitted from state comparison and import because `merge_mining_event` requires at least one child identity field).
 - The `stale-descendants` aggregate view (its contributing chain observations also exist in the per-chain files).
 - `error-block-observations_monitor_evidence.csv`: documented child witnesses for proof-of-work-valid but Bitcoin-consensus-invalid parent headers (`classification=error_block`, `VALID_ERROR_BLOCK`, catalogue Bitcoin height and rejection reason, blank stale-relevance fields, and the 34-column union including the 7 RSK sidecar columns).
-  Its `error-block-observations` scope is reserved to that single aggregate entry, whose row count and source-chain inventory must match the committed manifest and cover every pinned error parent.
+  Its `error-block-observations` scope is reserved to that single aggregate entry, whose row count and source-chain inventory must match the committed manifest and cover every pinned invalid-block parent.
 
 Before any database mutation, `import-all` verifies:
 - the complete manifest, source-registry inventory, and research checkout commit (unless `--artifact-root` supplies content-addressed files explicitly);
 - every file's size, checksum, normalized header, row count, and classification counts, keeping the verified file handles open and rewinding them for preclassification and mutation so path replacement cannot substitute unverified bytes;
-- every row's schema, hashes, compact targets, parent header, proof of work, validation token (`VALID` for direct stales, `VALID_STALE_DESCENDANT` for stale descendants, `VALID_ERROR_BLOCK` for error observations), and available child-header corroboration;
-- `expected_nbits`: for normal rows, a populated value must equal `nBits` in `btc_header_hex`; for error observations, it records the network target expected at the catalogued height (which differs from `btc_bits` on `nbits_retarget_not_applied` and is checked against the Core-derived target for that height).
+- every row's schema, hashes, compact targets, parent header, proof of work, validation token (`VALID` for direct stales, `VALID_STALE_DESCENDANT` for stale descendants, `VALID_ERROR_BLOCK` for invalid-block observations), and available child-header corroboration;
+- `expected_nbits`: for normal rows, a populated value must equal `nBits` in `btc_header_hex`; for invalid-block observations, it records the network target expected at the catalogued height (which differs from `btc_bits` on `nbits_retarget_not_applied` and is checked against the Core-derived target for that height).
 
 ## Child Identity And Normalization
 
@@ -54,7 +54,7 @@ The normalized child-evidence columns (`child_height`, `child_block_hash`, `chil
   Later exact evidence promotes one unambiguous partial row in place; a partial row already represented by one exact event attaches its provenance to that exact event.
 - `full_coinbase_hex`, when present, is decoded and corroborated against the published scriptSig before storing raw bytes, txid, script, and value-complete outputs.
   `coinbase_outputs` text is preserved verbatim for capture-time attribution and later `reclassify-pools` replay.
-- Every stored parent is a Bitcoin header (`docs/capture.md`, "Bitcoin Lineage Gate"): `unknown` rows are stored only with a `strict_btc_orphan` or `weak_btc_orphan` verdict (for Hathor unknowns, strict BIP34 requires a matching full coinbase transaction), canonical/stale rows are Core-attested, and error observations are both Core- and catalogue-verified.
+- Every stored parent is a Bitcoin header (`docs/capture.md`, "Bitcoin Lineage Gate"): `unknown` rows are stored only with a `strict_btc_orphan` or `weak_btc_orphan` verdict (for Hathor unknowns, strict BIP34 requires a matching full coinbase transaction), canonical/stale rows are Core-attested, and invalid-block observations are both Core- and catalogue-verified.
   A pinned publication import aborts on any row it would skip, including an excluded or pending parent.
 
 ## Source Lifecycles And Provenance Rules
@@ -71,7 +71,7 @@ The shared source registry governs snapshot reconciliation:
   `import-all` rejects unexpected publication-owned events rather than treating a lifecycle change as an automatic evidence cleanup.
 
 Across `Live`, `Historical`, and `Partial` chains, each chain import runs in one transaction: it snapshots prior stale attestations, retires superseded normal Research provenance, applies base-event writes/removals, enqueues changed attestation gates and affected parents in `historical_reconcile_queue`, and marks `source_health` unready under the exclusive source-health lock.
-Changed `error-block-observations` witnesses are imported before ordinary chain cleanup so events moving out of stale inventories gain protected error provenance first (and promote any prior `stale` or `unknown` parent row to `error_block`); cleanup refuses to delete a catalogued error witness lacking that provenance, so run `import-all` before retrying a blocked single-chain `import-dataset`.
+Changed `error-block-observations` witnesses are imported before ordinary chain cleanup so events moving out of stale inventories gain protected invalid-observation provenance first (and promote any prior `stale` or `unknown` parent row to `invalid_block`); cleanup refuses to delete a catalogued invalid-block witness lacking that provenance, so run `import-all` before retrying a blocked single-chain `import-dataset`.
 
 After each chain commit, proven Core-canonical parents whose active events all agree with the Core-backed `block` row rebuild in bounded set-based batches; all other parents drain from `historical_reconcile_queue` in bounded per-parent transactions that persist changed-hash cascade seeds until dependent cascades succeed.
 Once all chains and the final targeted stale-branch pass finish, `import-all` rebuilds `source_health` once.

@@ -38,7 +38,7 @@ pub(super) async fn refuse_parent<C: GenericClient>(
     source_id: i64,
     payload: &MergeMiningEventPayload,
 ) -> Result<Option<CaptureOutcome>> {
-    if mmm_capture::error_blocks::lookup(&payload.btc_parent_header_hash).is_some() {
+    if mmm_capture::invalid_blocks::lookup(&payload.btc_parent_header_hash).is_some() {
         return Ok(None);
     }
     let header: Header = deserialize(&payload.btc_parent_header_bytes)
@@ -74,7 +74,7 @@ async fn placed_prev_height<C: GenericClient>(client: &C, prev_hash: &[u8]) -> R
         .query_opt(
             "SELECT btc_height FROM block \
               WHERE btc_header_hash = $1 AND btc_height IS NOT NULL \
-                AND kind IN ('canonical', 'stale', 'error_block')",
+                AND kind IN ('canonical', 'stale', 'invalid_block')",
             &[&prev_hash],
         )
         .await

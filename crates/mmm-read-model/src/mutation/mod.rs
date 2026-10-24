@@ -293,10 +293,10 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
              FROM merge_mining_event e \
              WHERE e.source_id = $1 \
                AND NOT EXISTS ( \
-                    SELECT 1 FROM historical_event_provenance error_provenance \
-                    WHERE error_provenance.event_id = e.id \
-                      AND (error_provenance.artifact_scope = 'error-block-observations' \
-                           OR error_provenance.publication_ref = 'operator-csv') \
+                    SELECT 1 FROM historical_event_provenance invalid_provenance \
+                    WHERE invalid_provenance.event_id = e.id \
+                      AND (invalid_provenance.artifact_scope = 'error-block-observations' \
+                           OR invalid_provenance.publication_ref = 'operator-csv') \
                ) \
                AND NOT EXISTS ( \
                     SELECT 1 FROM historical_event_provenance p \
@@ -318,11 +318,11 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
     parent_hashes.dedup();
     if let Some(hash) = parent_hashes
         .iter()
-        .find(|hash| mmm_capture::error_blocks::lookup(hash).is_some())
+        .find(|hash| mmm_capture::invalid_blocks::lookup(hash).is_some())
     {
         bail!(
-            "authoritative snapshot would delete catalogued error witness for {}; \
-             run import-all to establish error-observation provenance first",
+            "authoritative snapshot would delete catalogued invalid witness for {}; \
+             run import-all to establish invalid-observation provenance first",
             BlockHash::from_slice(hash)?
         );
     }
@@ -332,10 +332,10 @@ pub async fn reconcile_authoritative_historical_source_in_transaction(
                  DELETE FROM merge_mining_event e \
                  WHERE e.source_id = $1 \
                    AND NOT EXISTS ( \
-                        SELECT 1 FROM historical_event_provenance error_provenance \
-                        WHERE error_provenance.event_id = e.id \
-                          AND (error_provenance.artifact_scope = 'error-block-observations' \
-                               OR error_provenance.publication_ref = 'operator-csv') \
+                        SELECT 1 FROM historical_event_provenance invalid_provenance \
+                        WHERE invalid_provenance.event_id = e.id \
+                          AND (invalid_provenance.artifact_scope = 'error-block-observations' \
+                               OR invalid_provenance.publication_ref = 'operator-csv') \
                    ) \
                    AND NOT EXISTS ( \
                         SELECT 1 FROM historical_event_provenance p \

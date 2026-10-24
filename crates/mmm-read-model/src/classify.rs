@@ -59,21 +59,21 @@ impl From<KnownBlockContextCompat> for mmm_bitcoin_core::KnownBlockContext {
     }
 }
 
-/// Combine a live Core verdict with the pinned error-block catalogue, failing closed
+/// Combine a live Core verdict with the pinned invalid-block catalogue, failing closed
 /// if a live canonical/stale verdict contradicts an MTP catalogue entry.
 pub fn resolve_parent_classification(
     header: &Header,
     live: Option<ParentClassification>,
 ) -> Result<ParentClassification> {
-    let catalogue = mmm_capture::error_blocks::lookup(&header.block_hash().to_byte_array());
+    let catalogue = mmm_capture::invalid_blocks::lookup(&header.block_hash().to_byte_array());
     let Some(catalogue) = catalogue else {
         return Ok(live.unwrap_or_else(|| ParentClassification::unknown(header)));
     };
 
-    let catalogue_classification = ParentClassification::error_block(
+    let catalogue_classification = ParentClassification::invalid_block(
         header,
         catalogue.height,
-        HeightSource::ErrorBlockCatalog,
+        HeightSource::InvalidBlockCatalog,
         None,
         catalogue.rejection_reason,
     );
@@ -81,12 +81,12 @@ pub fn resolve_parent_classification(
         return Ok(catalogue_classification);
     };
 
-    if live.kind == ParentKind::ErrorBlock {
+    if live.kind == ParentKind::InvalidBlock {
         if live.height != Some(catalogue.height)
             || live.rejection_reason.as_deref() != Some(catalogue.rejection_reason)
         {
             bail!(
-                "live error-block verdict for {} disagrees with pinned catalogue",
+                "live invalid-block verdict for {} disagrees with pinned catalogue",
                 header.block_hash()
             );
         }
@@ -97,7 +97,7 @@ pub fn resolve_parent_classification(
         && matches!(live.kind, ParentKind::Canonical | ParentKind::Stale)
     {
         bail!(
-            "live Core verdict for {} contradicts its pinned MTP error-block entry",
+            "live Core verdict for {} contradicts its pinned MTP invalid-block entry",
             header.block_hash()
         );
     }
@@ -114,16 +114,18 @@ pub(crate) async fn apply_event_classification<C: GenericClient>(
 ) -> Result<()> {
     let kind = classification.kind.as_db_str();
     let height = match classification.kind {
-        ParentKind::Canonical | ParentKind::Stale | ParentKind::ErrorBlock => classification.height,
+        ParentKind::Canonical | ParentKind::Stale | ParentKind::InvalidBlock => {
+            classification.height
+        }
         ParentKind::Near | ParentKind::Unknown => None,
     };
     if matches!(
         classification.kind,
-        ParentKind::Canonical | ParentKind::Stale | ParentKind::ErrorBlock
+        ParentKind::Canonical | ParentKind::Stale | ParentKind::InvalidBlock
     ) && height.is_none()
     {
         bail!(
-            "canonical/stale/error-block classification for event {} has no height",
+            "canonical/stale/invalid-block classification for event {} has no height",
             event.id
         );
     }
@@ -138,7 +140,7 @@ pub(crate) async fn apply_event_classification<C: GenericClient>(
                  difficulty_epoch_ok = COALESCE($4, difficulty_epoch_ok) \
              WHERE btc_parent_header_hash = $1 \
                AND revoked_at IS NULL \
-               AND ($2 <> 'unknown' OR btc_parent_kind IN ('unknown', 'error_block'))",
+               AND ($2 <> 'unknown' OR btc_parent_kind IN ('unknown', 'invalid_block'))",
             &[
                 &event.btc_parent_header_hash,
                 &kind,
@@ -179,7 +181,7 @@ pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
             .unwrap_or_else(|| ParentClassification::unknown(&header)),
     };
 
-    let (kind, height, height_source, competitor_hash, error_block_reason) = match classification
+    let (kind, height, height_source, competitor_hash, invalid_block_reason) = match classification
         .kind
     {
         ParentKind::Canonical => (
@@ -198,15 +200,17 @@ pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
             classification.canonical_competitor_hash.clone(),
             None,
         ),
-        ParentKind::ErrorBlock => {
+        ParentKind::InvalidBlock => {
             if classification.height.is_none()
                 || classification.height_source.is_none()
                 || classification.rejection_reason.is_none()
             {
-                bail!("error-block classification is missing height, source, or rejection reason");
+                bail!(
+                    "invalid-block classification is missing height, source, or rejection reason"
+                );
             }
             (
-                BlockKind::ErrorBlock,
+                BlockKind::InvalidBlock,
                 classification.height,
                 classification.height_source,
                 None,
@@ -238,7 +242,7 @@ pub(crate) async fn rebuild_parent_read_model<C: GenericClient>(
         btc_coinbase_script: coinbase.script,
         btc_coinbase_outputs: coinbase.outputs,
         btc_coinbase_status: coinbase.status,
-        error_block_reason,
+        invalid_block_reason,
         canonical_competitor_hash: competitor_hash.clone(),
         total_attestations: rollup.total_attestations,
         distinct_sources: rollup.distinct_sources + core_source_count,
@@ -294,7 +298,7 @@ async fn resolve_effective_bitcoin_miner_pool_id<C: GenericClient>(
     .await
 }
 
-/// Preserve proven canonical/stale/catalogued-error state across a transient `unknown` classification.
+/// Preserve proven canonical/stale/catalogued-invalid state across a transient `unknown` classification.
 pub(crate) async fn effective_classification<C: GenericClient>(
     client: &C,
     event: &MergeMiningEvent,
@@ -346,7 +350,7 @@ pub(crate) fn classification_from_event(
 }
 
 /// Reconstruct a proven `ParentClassification` from the persisted `block` row (canonical,
-/// stale with an intact canonical competitor, or still-catalogued error block).
+/// stale with an intact canonical competitor, or still-catalogued invalid block).
 pub(crate) async fn persisted_classification_from_block<C: GenericClient>(
     client: &C,
     event: &MergeMiningEvent,
@@ -380,20 +384,20 @@ async fn persisted_classification_from_hash<C: GenericClient>(
     };
     if !matches!(
         persisted.kind,
-        BlockKind::Canonical | BlockKind::Stale | BlockKind::ErrorBlock
+        BlockKind::Canonical | BlockKind::Stale | BlockKind::InvalidBlock
     ) {
         return Ok(None);
     }
-    if persisted.kind == BlockKind::ErrorBlock
-        && persisted.btc_height_source == Some(HeightSource::ErrorBlockCatalog)
-        && mmm_capture::error_blocks::lookup(parent_hash).is_none()
+    if persisted.kind == BlockKind::InvalidBlock
+        && persisted.btc_height_source == Some(HeightSource::InvalidBlockCatalog)
+        && mmm_capture::invalid_blocks::lookup(parent_hash).is_none()
     {
         return Ok(None);
     }
     let kind = match persisted.kind {
         BlockKind::Canonical => ParentKind::Canonical,
         BlockKind::Stale => ParentKind::Stale,
-        BlockKind::ErrorBlock => ParentKind::ErrorBlock,
+        BlockKind::InvalidBlock => ParentKind::InvalidBlock,
         BlockKind::Unknown => unreachable!("unknown state filtered above"),
     };
     let canonical_competitor_hash = match kind {
@@ -408,7 +412,7 @@ async fn persisted_classification_from_hash<C: GenericClient>(
             Some(competitor_hash)
         }
         ParentKind::Canonical => None,
-        ParentKind::ErrorBlock => None,
+        ParentKind::InvalidBlock => None,
         ParentKind::Near | ParentKind::Unknown => unreachable!("filtered above"),
     };
 
@@ -422,7 +426,7 @@ async fn persisted_classification_from_hash<C: GenericClient>(
         canonical_competitor_hash,
         coinbase: None,
         difficulty_epoch_ok: persisted.difficulty_epoch_ok,
-        rejection_reason: persisted.error_block_reason,
+        rejection_reason: persisted.invalid_block_reason,
         live_observed: persisted.core_attested,
         core_attested: persisted.core_attested,
         core_absence_attested: false,
@@ -458,7 +462,7 @@ mod tests {
     #[test]
     fn matching_live_mtp_verdict_keeps_live_height_provenance() {
         let header = catalogued_mtp_header();
-        let live = ParentClassification::error_block(
+        let live = ParentClassification::invalid_block(
             &header,
             946_213,
             HeightSource::PrevCanonical,
@@ -467,7 +471,7 @@ mod tests {
         );
 
         let resolved = resolve_parent_classification(&header, Some(live)).unwrap();
-        assert_eq!(resolved.kind, ParentKind::ErrorBlock);
+        assert_eq!(resolved.kind, ParentKind::InvalidBlock);
         assert_eq!(resolved.height_source, Some(HeightSource::PrevCanonical));
         assert_eq!(
             resolved.rejection_reason.as_deref(),
@@ -478,7 +482,7 @@ mod tests {
     #[test]
     fn live_mtp_verdict_at_380992_matches_canonical_catalogue_token() {
         let header = catalogued_mtp_380992_header();
-        let live = ParentClassification::error_block(
+        let live = ParentClassification::invalid_block(
             &header,
             380_992,
             HeightSource::PrevCanonical,
@@ -487,7 +491,7 @@ mod tests {
         );
 
         let resolved = resolve_parent_classification(&header, Some(live)).unwrap();
-        assert_eq!(resolved.kind, ParentKind::ErrorBlock);
+        assert_eq!(resolved.kind, ParentKind::InvalidBlock);
         assert_eq!(resolved.height_source, Some(HeightSource::PrevCanonical));
         assert_eq!(
             resolved.rejection_reason.as_deref(),

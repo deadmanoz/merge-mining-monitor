@@ -23,7 +23,7 @@ digraph capture_classification_flow {
            label="Resolve pool attributions\n(coinbase tags - child reward addresses - RSK miner)"];
 
   lineage [shape=diamond, width=5.2, height=1.6, fillcolor="#3d321f", color="#e6c229",
-           label="Is the parent a Bitcoin header?\nlineage gate (mmm-capture::lineage)\nerror catalogue - placed prev -\ncoinbase height - Core cache epochs"];
+           label="Is the parent a Bitcoin header?\nlineage gate (mmm-capture::lineage)\ninvalid-block catalogue - placed prev -\ncoinbase height - Core cache epochs"];
   foreign [fillcolor="#3d1f24", color="#e65a6a", width=3.6,
            label=<<b>another chain</b><br/>no Bitcoin parent stored;<br/>non_bitcoin_parent child observation;<br/>rejection logged and counted>];
   pending [fillcolor="#2b2b3d", color="#9aa0c8", width=3.6,
@@ -42,8 +42,8 @@ digraph capture_classification_flow {
            label="unknown\nno chain-membership proof yet\n(upgrade later: reclassify-\nunknown-parents)"];
   stale   [fillcolor="#3d2a1f", color="#e6964a", width=3.2,
            label=<<b>stale</b><br/><b>off-chain Bitcoin evidence</b>>];
-  error   [fillcolor="#3d1f2e", color="#d36fa8", width=3.2,
-           label="error_block\nconsensus-invalid (MTP rule\nor pinned catalogue)"];
+  invalid [fillcolor="#3d1f2e", color="#d36fa8", width=3.2,
+           label="invalid_block\nconsensus-invalid (MTP rule\nor pinned catalogue)"];
 
   write   [fillcolor="#1f3d2a", color="#5fd38d", width=5.6, penwidth=2.2,
            label=<<b>one transaction: child_block_observation + linked merge_mining_event,</b><br/><b>sidecars and attribution (mmm-store); derive block, proofs, source health</b><br/><b>and protocol commitments (mmm-read-model)</b>>];
@@ -64,16 +64,16 @@ digraph capture_classification_flow {
   core -> canonical  [xlabel="on active chain", fontcolor="#7ee07e", color="#7ee07e"];
   core -> unknown    [xlabel="no proof", fontcolor="#e6c229", color="#e6c229"];
   core -> stale      [xlabel="off active chain", fontcolor="#e6964a", color="#e6964a"];
-  core -> error      [xlabel="consensus-invalid", fontcolor="#d36fa8", color="#d36fa8"];
+  core -> invalid    [xlabel="consensus-invalid", fontcolor="#d36fa8", color="#d36fa8"];
 
   canonical -> write;
   unknown -> write;
   stale -> write;
-  error -> write;
+  invalid -> write;
   write -> api [color="#b388ff"];
   api -> note [style=invis];
 
   { rank=same; foreign; lineage; pending; }
   { rank=same; target; near; }
-  { rank=same; canonical; unknown; stale; error; }
+  { rank=same; canonical; unknown; stale; invalid; }
 }

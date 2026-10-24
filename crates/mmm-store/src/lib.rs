@@ -63,7 +63,7 @@ pub use event::{
 pub use historical_import::{
     HistoricalBaseEventRow, HistoricalFinalizationState, HistoricalPublicationStateRow,
     load_historical_finalization_state, stream_authoritative_historical_base_events,
-    stream_historical_error_observation_state, stream_historical_publication_state,
+    stream_historical_invalid_observation_state, stream_historical_publication_state,
 };
 pub use known_stale::{count_known_stale_blocks, is_known_stale_hash, upsert_known_stale_block};
 pub use observation::{

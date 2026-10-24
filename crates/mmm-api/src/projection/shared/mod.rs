@@ -349,7 +349,7 @@ pub(super) fn group_sources(rows: &[SourceOnlyRow]) -> HashMap<Vec<u8>, Vec<Sour
 pub(super) fn parent_kind_from_db(raw: &str) -> Result<ParentKind> {
     match raw {
         "canonical" => Ok(ParentKind::Canonical),
-        "error_block" => Ok(ParentKind::ErrorBlock),
+        "invalid_block" => Ok(ParentKind::InvalidBlock),
         "stale" => Ok(ParentKind::Stale),
         "unknown" => Ok(ParentKind::Unknown),
         _ => bail!("unknown parent kind {raw:?}"),

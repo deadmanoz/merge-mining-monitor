@@ -1,4 +1,4 @@
-//! Tree-navigation readiness for stale, stale-branch, and error-block navigator targets.
+//! Tree-navigation readiness for stale, stale-branch, and invalid-block navigator targets.
 
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -44,7 +44,7 @@ pub(super) struct NavigationReadiness {
     budget: NavigationWindowBudget,
 }
 
-/// Sorted heights of off-spine rows (stale blocks and sourced `error_block` rows) in the loaded
+/// Sorted heights of off-spine rows (stale blocks and sourced `invalid_block` rows) in the loaded
 /// windows, counted against `TREE_NODE_LIMIT` so navigation never proposes an over-budget window.
 #[derive(Debug, Clone)]
 pub(super) struct NavigationWindowBudget {
@@ -155,7 +155,7 @@ pub(super) async fn load_navigation_readiness(
     Ok(Some(NavigationReadiness { coverage, budget }))
 }
 
-/// Load sorted off-spine heights inside `windows` (stale rows plus `error_block` rows with
+/// Load sorted off-spine heights inside `windows` (stale rows plus `invalid_block` rows with
 /// `distinct_sources >= 1`, matching what the tree renders beside the canonical spine).
 async fn load_navigation_budget(
     client: &Client,
@@ -176,7 +176,7 @@ async fn load_navigation_budget(
                  WHERE btc_height BETWEEN w.from_height AND w.to_height \
                    AND ( \
                         kind = 'stale' \
-                        OR (kind = 'error_block' AND distinct_sources >= 1) \
+                        OR (kind = 'invalid_block' AND distinct_sources >= 1) \
                    ) \
              ) off_spine ON TRUE \
              ORDER BY off_spine.btc_height",

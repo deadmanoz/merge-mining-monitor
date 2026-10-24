@@ -23,7 +23,7 @@ The [editable diagram](img/system-data-flow.drawio) shows the same ownership mod
    operator membership import -> known_stale_block
 
 2. RECONCILE: mmm-read-model is the sole derived-table writer
-   base evidence + known-stale membership + pinned error catalogue
+   base evidence + known-stale membership + pinned invalid-block catalogue
        + Bitcoin Core context / backbone sync
        -> block, attestation_proof, source_health, protocol_commitment tables
    durable historical and Core queues drain in bounded transactions
@@ -36,7 +36,7 @@ The [editable diagram](img/system-data-flow.drawio) shows the same ownership mod
 1. **CAPTURE (`mmm-capture`, `mmm-producers`, `mmm-store`)**: Offline parsers authenticate child-chain proofs and the Bitcoin lineage gate refuses non-Bitcoin SHA-256 parents before storage (`docs/capture.md`).
    Producers and importers write only base evidence (`child_block_observation`, `child_miner_identity`, linked `merge_mining_event`, sidecars, `event_pool_attribution`, `historical_event_provenance`, `known_stale_block`) plus producer operational state (`poll_cursor`, `capture_error`, `child_chain_head`, `producer_runtime_state`) and durable reconcile queues (`docs/historical-ingest.md`).
 2. **RECONCILE (`mmm-bitcoin-core`, `mmm-read-model`)**: `mmm-read-model` is the sole writer of derived tables (`block`, `attestation_proof`, `source_health`, and the `protocol_commitment` tables decoded from stored Bitcoin coinbase outputs).
-   It combines base evidence, `known_stale_block` exclusion gates, the pinned error catalogue, and Bitcoin Core classification / suffix replacement, draining `historical_reconcile_queue` and `bitcoin_core_reconcile_queue` in bounded transactions (`docs/data-model.md`).
+   It combines base evidence, `known_stale_block` exclusion gates, the pinned invalid-block catalogue, and Bitcoin Core classification / suffix replacement, draining `historical_reconcile_queue` and `bitcoin_core_reconcile_queue` in bounded transactions (`docs/data-model.md`).
 3. **SERVE (`mmm-api`)**: The read-only HTTP server projects the derived tables, `capture_error` and live runtime status, and the persisted Core-header cache to `/api/v1/*` and serves the static `www/` frontend without calling Bitcoin Core RPC.
 
 ## Crates

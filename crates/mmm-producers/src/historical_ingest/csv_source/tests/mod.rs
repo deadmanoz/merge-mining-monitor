@@ -93,11 +93,11 @@ fn candidate_with_nbits_table(
     )
 }
 
-fn error_observation_candidate(chain: &str, row: &str) -> Result<ImportCandidate, SkipReason> {
-    error_observation_candidate_with_expected_nbits(chain, row, 0x1d00_ffff)
+fn invalid_observation_candidate(chain: &str, row: &str) -> Result<ImportCandidate, SkipReason> {
+    invalid_observation_candidate_with_expected_nbits(chain, row, 0x1d00_ffff)
 }
 
-fn error_observation_candidate_with_expected_nbits(
+fn invalid_observation_candidate_with_expected_nbits(
     chain: &str,
     row: &str,
     expected_nbits: u32,
@@ -117,7 +117,7 @@ fn error_observation_candidate_with_expected_nbits(
         bits: expected_nbits,
     }])
     .unwrap();
-    error_observation_candidate_from_record(
+    invalid_observation_candidate_from_record(
         spec,
         &layout,
         &record,
@@ -244,8 +244,8 @@ fn rsk_candidate_carries_sidecar_keyed_by_child_identity() {
 }
 
 #[test]
-fn error_observation_parser_is_separate_from_valid_evidence() {
-    let error_row = row(TestRow {
+fn invalid_observation_parser_is_separate_from_valid_evidence() {
+    let invalid_row = row(TestRow {
         chain: "devcoin",
         child_height: "42",
         classification: "error_block",
@@ -259,16 +259,16 @@ fn error_observation_parser_is_separate_from_valid_evidence() {
     );
 
     assert_eq!(
-        candidate("devcoin", &error_row).unwrap_err(),
+        candidate("devcoin", &invalid_row).unwrap_err(),
         SkipReason::UnsupportedClassification
     );
-    let parsed = error_observation_candidate("devcoin", &error_row).unwrap();
+    let parsed = invalid_observation_candidate("devcoin", &invalid_row).unwrap();
     assert_eq!(
         parsed.source_classification,
-        SourceClassification::ErrorBlock
+        SourceClassification::InvalidBlock
     );
     assert_eq!(
-        parsed.error_rejection_reason.as_deref(),
+        parsed.invalid_rejection_reason.as_deref(),
         Some("time_below_mtp")
     );
     assert_eq!(
@@ -279,7 +279,7 @@ fn error_observation_parser_is_separate_from_valid_evidence() {
 }
 
 #[test]
-fn ordinary_parser_rejects_the_reserved_error_observation_scope() {
+fn ordinary_parser_rejects_the_reserved_invalid_observation_scope() {
     let ordinary_row = row(TestRow {
         chain: "devcoin",
         child_height: "42",
@@ -296,8 +296,8 @@ fn ordinary_parser_rejects_the_reserved_error_observation_scope() {
 }
 
 #[test]
-fn error_observation_allows_catalogued_expected_nbits_mismatch() {
-    let error_row = row(TestRow {
+fn invalid_observation_allows_catalogued_expected_nbits_mismatch() {
+    let invalid_row = row(TestRow {
         chain: "devcoin",
         child_height: "42",
         classification: "error_block",
@@ -311,12 +311,13 @@ fn error_observation_allows_catalogued_expected_nbits_mismatch() {
     );
 
     assert!(
-        error_observation_candidate_with_expected_nbits("devcoin", &error_row, 0x1d00_fffe).is_ok()
+        invalid_observation_candidate_with_expected_nbits("devcoin", &invalid_row, 0x1d00_fffe)
+            .is_ok()
     );
 
-    let wrong_expected_nbits = error_row.replacen("1d00fffe", "1d00ffff", 1);
+    let wrong_expected_nbits = invalid_row.replacen("1d00fffe", "1d00ffff", 1);
     assert_eq!(
-        error_observation_candidate_with_expected_nbits(
+        invalid_observation_candidate_with_expected_nbits(
             "devcoin",
             &wrong_expected_nbits,
             0x1d00_fffe,
@@ -325,9 +326,9 @@ fn error_observation_allows_catalogued_expected_nbits_mismatch() {
         SkipReason::EvidenceMismatch
     );
 
-    let non_retarget = error_row.replacen("nbits_retarget_not_applied", "time_below_mtp", 1);
+    let non_retarget = invalid_row.replacen("nbits_retarget_not_applied", "time_below_mtp", 1);
     assert_eq!(
-        error_observation_candidate("devcoin", &non_retarget).unwrap_err(),
+        invalid_observation_candidate("devcoin", &non_retarget).unwrap_err(),
         SkipReason::EvidenceMismatch
     );
 }

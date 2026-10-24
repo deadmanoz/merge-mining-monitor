@@ -26,7 +26,7 @@ use crate::bitcoin_rpc::{
     BitcoinCoreHeaderStatus as CoreHeaderStatus, BitcoinCoreRpcClient,
 };
 use mmm_capture::capture::{ClassificationProof, ParentKind};
-pub use mmm_capture::error_blocks::TIME_BELOW_MTP;
+pub use mmm_capture::invalid_blocks::TIME_BELOW_MTP;
 
 /// Number of predecessor headers considered by Bitcoin's median-time-past
 /// rule.
@@ -37,7 +37,7 @@ pub enum HeightSource {
     BitcoinCore,
     PrevCanonical,
     PrevStale,
-    ErrorBlockCatalog,
+    InvalidBlockCatalog,
 }
 
 impl HeightSource {
@@ -46,7 +46,7 @@ impl HeightSource {
             Self::BitcoinCore => "bitcoin-core",
             Self::PrevCanonical => "prev-canonical",
             Self::PrevStale => "prev-stale",
-            Self::ErrorBlockCatalog => "error-block-catalog",
+            Self::InvalidBlockCatalog => "invalid-block-catalog",
         }
     }
 
@@ -55,7 +55,7 @@ impl HeightSource {
             "bitcoin-core" => Ok(Self::BitcoinCore),
             "prev-canonical" => Ok(Self::PrevCanonical),
             "prev-stale" => Ok(Self::PrevStale),
-            "error-block-catalog" => Ok(Self::ErrorBlockCatalog),
+            "invalid-block-catalog" => Ok(Self::InvalidBlockCatalog),
             other => bail!("unknown btc_height_source {other:?}"),
         }
     }
@@ -67,7 +67,7 @@ impl HeightSource {
 pub enum BlockKind {
     Canonical,
     Stale,
-    ErrorBlock,
+    InvalidBlock,
     Unknown,
 }
 
@@ -76,7 +76,7 @@ impl BlockKind {
         match self {
             Self::Canonical => "canonical",
             Self::Stale => "stale",
-            Self::ErrorBlock => "error_block",
+            Self::InvalidBlock => "invalid_block",
             Self::Unknown => "unknown",
         }
     }
@@ -85,7 +85,7 @@ impl BlockKind {
         match value {
             "canonical" => Ok(Self::Canonical),
             "stale" => Ok(Self::Stale),
-            "error_block" => Ok(Self::ErrorBlock),
+            "invalid_block" => Ok(Self::InvalidBlock),
             "unknown" => Ok(Self::Unknown),
             other => bail!("unknown block.kind {other:?}"),
         }
@@ -165,7 +165,7 @@ impl ParentClassification {
         }
     }
 
-    pub fn error_block(
+    pub fn invalid_block(
         header: &Header,
         height: i32,
         height_source: HeightSource,
@@ -173,7 +173,7 @@ impl ParentClassification {
         rejection_reason: impl Into<String>,
     ) -> Self {
         Self {
-            kind: ParentKind::ErrorBlock,
+            kind: ParentKind::InvalidBlock,
             height: Some(height),
             height_source: Some(height_source),
             prev_hash: header.prev_blockhash.to_byte_array().to_vec(),

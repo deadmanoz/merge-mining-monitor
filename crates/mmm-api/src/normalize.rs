@@ -64,7 +64,7 @@ pub enum ParentKind {
     Unknown,
     Canonical,
     Stale,
-    ErrorBlock,
+    InvalidBlock,
 }
 
 pub(crate) fn parse_kinds(raw: Option<&str>) -> Result<Vec<ParentKind>, ApiError> {
@@ -78,7 +78,7 @@ pub(crate) fn parse_kinds(raw: Option<&str>) -> Result<Vec<ParentKind>, ApiError
             "unknown" => ParentKind::Unknown,
             "canonical" => ParentKind::Canonical,
             "stale" => ParentKind::Stale,
-            "error_block" => ParentKind::ErrorBlock,
+            "invalid_block" => ParentKind::InvalidBlock,
             other => {
                 return Err(ApiError::invalid_query(
                     format!("unknown kind {other:?}"),
@@ -289,8 +289,12 @@ mod tests {
     #[test]
     fn parse_kinds_roundtrip_and_reject() {
         assert_eq!(
-            parse_kinds(Some("near,error_block,stale")).unwrap(),
-            vec![ParentKind::Near, ParentKind::ErrorBlock, ParentKind::Stale]
+            parse_kinds(Some("near,invalid_block,stale")).unwrap(),
+            vec![
+                ParentKind::Near,
+                ParentKind::InvalidBlock,
+                ParentKind::Stale
+            ]
         );
         assert_eq!(
             code(&parse_kinds(Some("bogus")).unwrap_err()),

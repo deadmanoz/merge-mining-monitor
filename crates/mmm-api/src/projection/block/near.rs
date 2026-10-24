@@ -169,7 +169,7 @@ pub(super) async fn block_from_near_observations(
             height: None,
             kind: kind_as_str(ParentKind::Near),
             btc_orphan_class: None,
-            error_block_reason: None,
+            invalid_block_reason: None,
             coinbase_tag,
             header,
             bitcoin_miner_pool,

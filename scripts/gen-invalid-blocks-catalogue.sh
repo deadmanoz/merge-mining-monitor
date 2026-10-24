@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
     cat <<'USAGE'
-Usage: scripts/gen-error-blocks-catalogue.sh [--check] [--allow-missing-repo] [--repo-dir DIR] [--source-commit COMMIT] [--historical-manifest PATH] [--out PATH]
+Usage: scripts/gen-invalid-blocks-catalogue.sh [--check] [--allow-missing-repo] [--repo-dir DIR] [--source-commit COMMIT] [--historical-manifest PATH] [--out PATH]
 
 Generate or verify the compact pinned mirror of merge-mining-research
 data/error-blocks/error_blocks.csv.
@@ -20,11 +20,11 @@ Options:
   --historical-manifest PATH
                   Manifest whose Research pin must match (default:
                   data/historical/historical-source-manifest.json).
-  --out PATH      Output path (default: data/consensus/error_blocks.csv)
+  --out PATH      Output path (default: data/consensus/invalid_blocks.csv)
 USAGE
 }
 
-PIN_CHECK_LABEL="error-blocks catalogue"
+PIN_CHECK_LABEL="invalid-blocks catalogue"
 # shellcheck source=scripts/lib/research-pins.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/research-pins.sh"
 
@@ -58,11 +58,11 @@ require_matching_publication_pin() {
     local selected="$1"
     local manifest_commit="$2"
     [ "${selected}" = "${manifest_commit}" ] || die \
-        "error-blocks catalogue source commit ${selected} does not match ${historical_manifest} source_repo_commit ${manifest_commit}; pin both artifacts to the same research SHA"
+        "invalid-blocks catalogue source commit ${selected} does not match ${historical_manifest} source_repo_commit ${manifest_commit}; pin both artifacts to the same research SHA"
 }
 
 repo_dir="${MERGE_MINING_RESEARCH_DIR:-}"
-output="data/consensus/error_blocks.csv"
+output="data/consensus/invalid_blocks.csv"
 historical_manifest="data/historical/historical-source-manifest.json"
 source_commit=""
 check=0
@@ -146,7 +146,7 @@ manifest_commit="$(git -C "${repo_dir}" rev-parse "${manifest_commit}^{commit}")
 require_matching_publication_pin "${source_commit}" "${manifest_commit}"
 
 catalogue_path="data/error-blocks/error_blocks.csv"
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/error-blocks-catalogue.XXXXXX")"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/invalid-blocks-catalogue.XXXXXX")"
 cleanup() {
     rm -rf "${scratch}"
 }
@@ -196,8 +196,8 @@ PY
 if [ "${check}" -eq 1 ]; then
     [ -f "${output}" ] || die "missing committed catalogue ${output}"
     cmp -s "${generated}" "${output}" \
-        || die "error-blocks catalogue drifted: ${output}"
-    printf 'error-blocks catalogue is up to date: %s\n' "${output}"
+        || die "invalid-blocks catalogue drifted: ${output}"
+    printf 'invalid-blocks catalogue is up to date: %s\n' "${output}"
 else
     mv -f "${generated}" "${output}"
     chmod 0644 "${output}"

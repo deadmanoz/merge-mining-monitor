@@ -25,7 +25,7 @@
         <mxCell id="base" value="Base evidence and durable queues&#10;child_block_observation • child_miner_identity&#10;linked merge_mining_event • sidecars&#10;attribution • provenance • known_stale_block&#10;reconciliation queues&#10;Near / non-Bitcoin: observations only" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1a3d2a;strokeColor=#34d399;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;spacing=14;" vertex="1" parent="1">
           <mxGeometry x="40" y="440" width="420" height="160" as="geometry" />
         </mxCell>
-        <mxCell id="reconcile" value="mmm-read-model&#10;Evidence + Core + pinned error catalogue&#10;Sole writer of derived tables" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1e2a3d;strokeColor=#38bdf8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=17;spacing=14;" vertex="1" parent="1">
+        <mxCell id="reconcile" value="mmm-read-model&#10;Evidence + Core + pinned invalid-block catalogue&#10;Sole writer of derived tables" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1e2a3d;strokeColor=#38bdf8;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=17;spacing=14;" vertex="1" parent="1">
           <mxGeometry x="40" y="700" width="420" height="100" as="geometry" />
         </mxCell>
         <mxCell id="derived" value="Derived tables&#10;block • attestation_proof • source_health&#10;protocol_commitment tables" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#1a3d2a;strokeColor=#34d399;fontColor=#E0E0E0;fontFamily=Helvetica;fontSize=16;spacing=14;" vertex="1" parent="1">

@@ -1,5 +1,5 @@
 //! Real reviewed parents exercise catalogue promotion, witness preservation and
-//! API semantics through the normal error-observation import path.
+//! API semantics through the normal invalid-observation import path.
 
 use std::path::PathBuf;
 
@@ -10,7 +10,7 @@ use bitcoin::hashes::Hash as _;
 use mmm_bitcoin_core::{
     ConfiguredParentClassifier, FakeParentClassifier, HeightSource, ParentClassification,
 };
-use mmm_producers::run_error_observation_import_for_test;
+use mmm_producers::run_invalid_observation_import_for_test;
 use serde::Deserialize;
 use tokio_postgres::Client;
 
@@ -26,13 +26,13 @@ struct ReviewedParent {
 
 fn reviewed_parents() -> Result<Vec<ReviewedParent>> {
     Ok(serde_json::from_str(include_str!(
-        "../../../../fixtures/error-blocks/body-invalid-parents.json"
+        "../../../../fixtures/invalid-blocks/body-invalid-parents.json"
     ))?)
 }
 
 fn fixture_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/error-blocks/body-invalid-observations.csv")
+        .join("../../fixtures/invalid-blocks/body-invalid-observations.csv")
 }
 
 fn classifier(parents: &[ReviewedParent]) -> Result<ConfiguredParentClassifier> {
@@ -42,16 +42,16 @@ fn classifier(parents: &[ReviewedParent]) -> Result<ConfiguredParentClassifier> 
         let header: Header = deserialize(&hex::decode(&parent.header_hex)?)?;
         header.validate_pow(header.target())?;
         assert_eq!(header.block_hash().to_string(), parent.hash);
-        let entry = mmm_capture::error_blocks::lookup(&header.block_hash().to_byte_array())
+        let entry = mmm_capture::invalid_blocks::lookup(&header.block_hash().to_byte_array())
             .expect("every reviewed body-invalid parent belongs in the pinned catalogue");
         assert_eq!(entry.height, parent.height);
         assert_eq!(entry.rejection_reason, parent.reason);
         fake = fake.with_verdicts_for(
             &header,
-            [Some(ParentClassification::error_block(
+            [Some(ParentClassification::invalid_block(
                 &header,
                 parent.height,
-                HeightSource::ErrorBlockCatalog,
+                HeightSource::InvalidBlockCatalog,
                 None,
                 &parent.reason,
             ))],
@@ -87,7 +87,7 @@ async fn restore_legacy_stale_state(client: &Client, parents: &[ReviewedParent])
         client
             .execute(
                 "UPDATE block SET kind='stale', btc_height_source='bitcoin-core', \
-             canonical_competitor_hash=$2, error_block_reason=NULL WHERE btc_header_hash=$1",
+             canonical_competitor_hash=$2, invalid_block_reason=NULL WHERE btc_header_hash=$1",
                 &[&hash, &competitor],
             )
             .await?;
@@ -106,7 +106,7 @@ async fn restore_legacy_stale_state(client: &Client, parents: &[ReviewedParent])
     Ok(())
 }
 
-// Match import-all ordering: error witnesses acquire protected provenance before
+// Match import-all ordering: invalid witnesses acquire protected provenance before
 // ordinary snapshots remove their old stale coordinates.
 async fn reconcile_old_snapshots(client: &mut Client) -> Result<()> {
     let sources = client
@@ -131,7 +131,7 @@ async fn reconcile_old_snapshots(client: &mut Client) -> Result<()> {
         .await?;
         assert_eq!(
             removed, 0,
-            "new error witnesses survive ordinary snapshot cleanup"
+            "new invalid witnesses survive ordinary snapshot cleanup"
         );
     }
     txn.commit().await?;
@@ -153,7 +153,8 @@ async fn reviewed_body_invalid_import_promotes_stales_without_losing_witnesses()
             .collect::<Result<_>>()?;
         let path = fixture_path();
         let first =
-            run_error_observation_import_for_test(&mut client, &classifier, &path, &hashes).await?;
+            run_invalid_observation_import_for_test(&mut client, &classifier, &path, &hashes)
+                .await?;
         assert_eq!(first.ingested, 19);
         let before = evidence_snapshot(&client).await?;
         assert_eq!(before.len(), 19);
@@ -166,16 +167,16 @@ async fn reviewed_body_invalid_import_promotes_stales_without_losing_witnesses()
             .await?
             .get(0);
         assert_eq!(provenance_count, 19, "failed cleanup rolls back provenance");
-        run_error_observation_import_for_test(&mut client, &classifier, &path, &hashes).await?;
+        run_invalid_observation_import_for_test(&mut client, &classifier, &path, &hashes).await?;
         reconcile_old_snapshots(&mut client).await?;
         assert_eq!(evidence_snapshot(&client).await?, before);
         for parent in &parents {
             let payload = mmm_api::projection::block(&client, &parent.hash)
                 .await
                 .map_err(|error| anyhow::anyhow!("{error:?}"))?;
-            assert_eq!(payload.block.kind, "error_block");
+            assert_eq!(payload.block.kind, "invalid_block");
             assert_eq!(
-                payload.block.error_block_reason.as_deref(),
+                payload.block.invalid_block_reason.as_deref(),
                 Some(parent.reason.as_str())
             );
             assert!(
@@ -203,7 +204,7 @@ async fn reviewed_body_invalid_import_promotes_stales_without_losing_witnesses()
             .await?
             .get(0);
         assert!(obsolete_table.is_none());
-        run_error_observation_import_for_test(&mut client, &classifier, &path, &hashes).await?;
+        run_invalid_observation_import_for_test(&mut client, &classifier, &path, &hashes).await?;
         assert_eq!(
             evidence_snapshot(&client).await?,
             before,

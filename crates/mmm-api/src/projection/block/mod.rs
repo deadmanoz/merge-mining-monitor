@@ -75,8 +75,8 @@ pub struct ApiBlock {
     pub kind: &'static str,
     /// `strict_btc_orphan` | `weak_btc_orphan` | `excluded` when `kind='unknown'` and Core-checked.
     pub btc_orphan_class: Option<String>,
-    /// Present only when `kind='error_block'`.
-    pub error_block_reason: Option<String>,
+    /// Present only when `kind='invalid_block'`.
+    pub invalid_block_reason: Option<String>,
     pub coinbase_tag: Option<String>,
     pub header: HeaderProjection,
     pub bitcoin_miner_pool: PoolObject,
@@ -332,7 +332,7 @@ async fn block_from_read_model(
             height: row.height,
             kind: kind_as_str(row.kind),
             btc_orphan_class: row.btc_orphan_class.clone(),
-            error_block_reason: row.error_block_reason.clone(),
+            invalid_block_reason: row.invalid_block_reason.clone(),
             coinbase_tag,
             header: header_projection(&row.header_bytes)?,
             bitcoin_miner_pool: row.bitcoin_miner_pool,
@@ -389,7 +389,7 @@ async fn block_from_direct_events(
             // A direct-projected block has no read-model `block` row, so it has
             // no Core-gated orphan class (pending by construction).
             btc_orphan_class: None,
-            error_block_reason: None,
+            invalid_block_reason: None,
             coinbase_tag,
             header,
             bitcoin_miner_pool,

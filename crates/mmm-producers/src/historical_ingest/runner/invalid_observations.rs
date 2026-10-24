@@ -1,4 +1,4 @@
-//! Import and preserve catalogue-backed historical error witnesses.
+//! Import and preserve catalogue-backed historical invalid witnesses.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -18,10 +18,10 @@ use super::super::config::{
     is_historical_import_chain,
 };
 use super::super::csv_source::{
-    CsvLayout, ImportCandidate, error_observation_candidate_from_record,
+    CsvLayout, ImportCandidate, invalid_observation_candidate_from_record,
 };
-use super::super::preclassify::{ImportDecision, import_error_observation_decision};
-use super::super::publication::ErrorObservationPreflight;
+use super::super::preclassify::{ImportDecision, import_invalid_observation_decision};
+use super::super::publication::InvalidObservationPreflight;
 use super::{
     HistoricalImportSummary, ImportContext, import_candidate, record_persisted_parent_counts,
 };
@@ -29,10 +29,10 @@ use super::{
 /// Parse and classify every aggregate row before any database mutation. The
 /// file is already byte-verified by publication preflight; this adds the
 /// source-chain decoder and mandatory Core-plus-catalogue gate.
-pub(super) async fn preflight_error_observations(
+pub(super) async fn preflight_invalid_observations(
     client: &Client,
     classifier: &ConfiguredParentClassifier,
-    artifact: &mut ErrorObservationPreflight,
+    artifact: &mut InvalidObservationPreflight,
     classifications: &mut HashMap<Vec<u8>, ParentClassification>,
     nbits_table: &NbitsTable,
     expected_parent_hashes: &BTreeSet<[u8; 32]>,
@@ -40,23 +40,23 @@ pub(super) async fn preflight_error_observations(
     let mut reader = artifact.open_reader()?;
     let headers = reader
         .headers()
-        .context("read error-observation CSV header")?
+        .context("read invalid-observation CSV header")?
         .clone();
     let mut rows = 0_u64;
     let mut source_chain_counts = BTreeMap::new();
     let mut parent_hashes = BTreeSet::new();
     for (offset, record) in reader.records().enumerate() {
         let record =
-            record.with_context(|| format!("parse error-observation row {}", offset + 2))?;
+            record.with_context(|| format!("parse invalid-observation row {}", offset + 2))?;
         let (spec, candidate) =
-            parse_error_observation_candidate(&headers, &record, offset + 2, nbits_table)?;
-        match import_error_observation_decision(client, classifier, &candidate, classifications)
+            parse_invalid_observation_candidate(&headers, &record, offset + 2, nbits_table)?;
+        match import_invalid_observation_decision(client, classifier, &candidate, classifications)
             .await?
         {
             ImportDecision::CapturePreclassified(_) => {}
             ImportDecision::Skip(reason) => {
                 bail!(
-                    "error-observation row {} would be skipped as {}",
+                    "invalid-observation row {} would be skipped as {}",
                     offset + 2,
                     reason.as_str()
                 );
@@ -76,24 +76,24 @@ pub(super) async fn preflight_error_observations(
     }
     ensure!(
         rows == artifact.row_count,
-        "error-observation artifact changed during preflight: expected {} rows, parsed {rows}",
+        "invalid-observation artifact changed during preflight: expected {} rows, parsed {rows}",
         artifact.row_count
     );
     ensure!(
         source_chain_counts == artifact.source_chain_counts,
-        "error-observation source-chain counts changed during preflight"
+        "invalid-observation source-chain counts changed during preflight"
     );
     ensure_catalogue_coverage(&parent_hashes, expected_parent_hashes)?;
     Ok(())
 }
 
 /// Write the preflighted aggregate before ordinary chain imports. It deliberately
-/// has no authoritative-delete phase: historical error-witness provenance is
+/// has no authoritative-delete phase: historical invalid-witness provenance is
 /// retained outside normal per-chain snapshot reconciliation.
-pub(super) async fn import_error_observations(
+pub(super) async fn import_invalid_observations(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
-    mut artifact: ErrorObservationPreflight,
+    mut artifact: InvalidObservationPreflight,
     classifications: &mut HashMap<Vec<u8>, ParentClassification>,
     nbits_table: &NbitsTable,
     expected_parent_hashes: &BTreeSet<[u8; 32]>,
@@ -103,7 +103,7 @@ pub(super) async fn import_error_observations(
     let txn = client
         .transaction()
         .await
-        .context("begin error-observation historical transaction")?;
+        .context("begin invalid-observation historical transaction")?;
     let pool_ids_by_slug = upsert_pool_snapshot(&txn, resolver.snapshot()).await?;
     let mut summary = HistoricalImportSummary {
         expected_rows: artifact.row_count,
@@ -115,26 +115,26 @@ pub(super) async fn import_error_observations(
     let mut reader = artifact.open_reader()?;
     let headers = reader
         .headers()
-        .context("read error-observation CSV header")?
+        .context("read invalid-observation CSV header")?
         .clone();
     for (offset, record) in reader.records().enumerate() {
         summary.rows_seen += 1;
         let record =
-            record.with_context(|| format!("parse error-observation row {}", offset + 2))?;
+            record.with_context(|| format!("parse invalid-observation row {}", offset + 2))?;
         let (spec, candidate) =
-            parse_error_observation_candidate(&headers, &record, offset + 2, nbits_table)?;
+            parse_invalid_observation_candidate(&headers, &record, offset + 2, nbits_table)?;
         *source_chain_counts
             .entry(spec.chain.to_owned())
             .or_insert(0) += 1;
         let decision =
-            import_error_observation_decision(&txn, classifier, &candidate, classifications)
+            import_invalid_observation_decision(&txn, classifier, &candidate, classifications)
                 .await?;
         let ImportDecision::CapturePreclassified(_) = decision else {
             let ImportDecision::Skip(reason) = decision else {
-                unreachable!("error-observation decision is exhaustive");
+                unreachable!("invalid-observation decision is exhaustive");
             };
             bail!(
-                "error-observation row {} would be skipped as {}",
+                "invalid-observation row {} would be skipped as {}",
                 offset + 2,
                 reason.as_str()
             );
@@ -167,19 +167,19 @@ pub(super) async fn import_error_observations(
     }
     ensure!(
         summary.rows_seen == artifact.row_count,
-        "error-observation artifact changed during import: expected {} rows, parsed {}",
+        "invalid-observation artifact changed during import: expected {} rows, parsed {}",
         artifact.row_count,
         summary.rows_seen
     );
     ensure!(
         source_chain_counts == artifact.source_chain_counts,
-        "error-observation source-chain counts changed during import"
+        "invalid-observation source-chain counts changed during import"
     );
     ensure_catalogue_coverage(&parent_hashes, expected_parent_hashes)?;
     invalidate_source_health_in_transaction(&txn).await?;
     txn.commit()
         .await
-        .context("commit error-observation historical transaction")?;
+        .context("commit invalid-observation historical transaction")?;
     drain_historical_reconcile_queue_with_nbits_table(
         client,
         classifier,
@@ -187,34 +187,32 @@ pub(super) async fn import_error_observations(
         Some(nbits_table),
     )
     .await?;
-    summary.error_parents =
-        u64::try_from(parent_counts.len()).context("error-observation parent count exceeds u64")?;
+    summary.invalid_parents = u64::try_from(parent_counts.len())
+        .context("invalid-observation parent count exceeds u64")?;
     record_persisted_parent_counts(client, &mut summary, parent_counts).await?;
     Ok(summary)
 }
 
-fn parse_error_observation_candidate(
+fn parse_invalid_observation_candidate(
     headers: &csv::StringRecord,
     record: &csv::StringRecord,
     row_number: usize,
     nbits_table: &NbitsTable,
 ) -> Result<(&'static HistoricalChainSpec, ImportCandidate)> {
-    let chain = record
-        .get(0)
-        .map(str::trim)
-        .ok_or_else(|| anyhow::anyhow!("error-observation row {row_number} has no source chain"))?;
-    let spec =
-        historical_chain_spec(chain).ok_or_else(|| {
-            anyhow::anyhow!(
-                "error-observation row {row_number} has unsupported source chain {chain:?}",
-            )
-        })?;
+    let chain = record.get(0).map(str::trim).ok_or_else(|| {
+        anyhow::anyhow!("invalid-observation row {row_number} has no source chain")
+    })?;
+    let spec = historical_chain_spec(chain).ok_or_else(|| {
+        anyhow::anyhow!(
+            "invalid-observation row {row_number} has unsupported source chain {chain:?}",
+        )
+    })?;
     ensure!(
         is_historical_import_chain(chain),
-        "error-observation row {row_number} has unknown or surveyed source chain {chain:?}"
+        "invalid-observation row {row_number} has unknown or surveyed source chain {chain:?}"
     );
     let layout = CsvLayout::new(headers, spec)?;
-    let candidate = error_observation_candidate_from_record(
+    let candidate = invalid_observation_candidate_from_record(
         spec,
         &layout,
         record,
@@ -223,15 +221,15 @@ fn parse_error_observation_candidate(
     )
     .map_err(|reason| {
         anyhow::anyhow!(
-            "error-observation row {row_number} failed {}",
+            "invalid-observation row {row_number} failed {}",
             reason.as_str()
         )
     })?;
     Ok((spec, candidate))
 }
 
-pub(super) fn pinned_error_parent_hashes() -> BTreeSet<[u8; 32]> {
-    mmm_capture::error_blocks::hashes().collect()
+pub(super) fn pinned_invalid_parent_hashes() -> BTreeSet<[u8; 32]> {
+    mmm_capture::invalid_blocks::hashes().collect()
 }
 
 fn ensure_catalogue_coverage(
@@ -240,7 +238,7 @@ fn ensure_catalogue_coverage(
 ) -> Result<()> {
     ensure!(
         parent_hashes == expected_parent_hashes,
-        "error-observation artifact does not cover the pinned error-block catalogue"
+        "invalid-observation artifact does not cover the pinned invalid-block catalogue"
     );
     Ok(())
 }
@@ -262,7 +260,7 @@ mod tests {
 
     #[test]
     fn catalogue_coverage_rejects_a_missing_parent() {
-        let expected_parent_hashes = pinned_error_parent_hashes();
+        let expected_parent_hashes = pinned_invalid_parent_hashes();
         let mut parent_hashes = expected_parent_hashes.clone();
         let removed = *parent_hashes.iter().next().expect("non-empty catalogue");
         assert!(parent_hashes.remove(&removed));

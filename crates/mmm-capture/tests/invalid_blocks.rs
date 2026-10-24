@@ -6,7 +6,7 @@ use mmm_capture::capture::{
 };
 
 #[test]
-fn catalogued_error_block_header_is_pow_valid_and_classified() {
+fn catalogued_invalid_block_header_is_pow_valid_and_classified() {
     let header: Header = deserialize(
         &hex::decode(
             "00a0032bb223f1aad55892df75d0ff4712f0543959c5065ab89d000000000000000000005eba715327fc82c765fa651bd6226c4b4a6a846cd60197bcd76d47ada0611cfce335df696913021725806e70",
@@ -46,6 +46,6 @@ fn catalogued_error_block_header_is_pow_valid_and_classified() {
     .unwrap();
 
     assert!(payload.pow_validates_btc_target);
-    assert_eq!(payload.btc_parent_kind, ParentKind::ErrorBlock);
+    assert_eq!(payload.btc_parent_kind, ParentKind::InvalidBlock);
     assert_eq!(payload.btc_parent_height, Some(946_213));
 }

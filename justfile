@@ -112,15 +112,15 @@ gen-pool-snapshot *args="":
 gen-source-artifacts *args="":
     cargo run --quiet --features artifact-generation --bin gen_source_artifacts -- {{args}}
 
-# Refresh the Research manifest and error catalogue from one commit.
+# Refresh the Research manifest and invalid-blocks catalogue from one commit.
 gen-research-publication-pins *args="":
     ./scripts/gen-research-publication-pins.sh {{args}}
 
 gen-historical-source-manifest *args="":
     ./scripts/gen-historical-source-manifest.sh {{args}}
 
-gen-error-blocks-catalogue *args="":
-    ./scripts/gen-error-blocks-catalogue.sh {{args}}
+gen-invalid-blocks-catalogue *args="":
+    ./scripts/gen-invalid-blocks-catalogue.sh {{args}}
 
 serve:
     cargo run -- serve

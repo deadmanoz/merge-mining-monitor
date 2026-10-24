@@ -6,7 +6,7 @@
     "height": 895755,
     "kind": "canonical",
     "btc_orphan_class": null,
-    "error_block_reason": null,
+    "invalid_block_reason": null,
     "coinbase_tag": "Mined by Secpool    / mmgx",
     "header": {
       "version": 621027328,

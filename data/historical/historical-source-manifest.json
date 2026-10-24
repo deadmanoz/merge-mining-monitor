@@ -165,7 +165,7 @@
       "chain": "error-block-observations",
       "counts": {
         "canonical": 0,
-        "error_block": 123,
+        "invalid_block": 123,
         "stale": 0,
         "stale_descendant": 0,
         "strict_btc_orphan": 0,
@@ -173,7 +173,7 @@
       },
       "csv_path": "results/monitor-evidence/error-block-observations_monitor_evidence.csv",
       "parent_only_rows": 0,
-      "role": "error_observation",
+      "role": "invalid_observation",
       "row_count": 123,
       "sha256": "628d006c8ac61edd7574838d6d665a2e608e608a81c7a1832338fc3a1497af92",
       "size_bytes": 166195,
@@ -515,7 +515,7 @@
       "size_bytes": 29686248
     }
   ],
-  "error_observation_rows": 123,
+  "invalid_observation_rows": 123,
   "manifest_generator": "scripts/gen-historical-source-manifest.sh",
   "publication_manifest_path": "results/monitor-evidence/monitor-evidence-manifest.json",
   "publication_manifest_sha256": "ed94f56b4c95808672b672de546136b98e9d20c0d2ddf892d39e7c2e6ebfbe47",

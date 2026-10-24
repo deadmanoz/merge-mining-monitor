@@ -474,7 +474,7 @@ async fn demote_displaced_parent<C: GenericClient>(
                      btc_height_source = 'bitcoin-core', canonical_competitor_hash = $3, \
                      live_observed = TRUE, core_attested = TRUE, pow_validated = TRUE, \
                      difficulty_epoch_ok = TRUE, btc_orphan_class = NULL, \
-                     error_block_reason = NULL, updated_at = extract(epoch from now())::bigint \
+                     invalid_block_reason = NULL, updated_at = extract(epoch from now())::bigint \
                  WHERE btc_header_hash = $1",
                 &[&old.hash, &old.height, &competitor_hash],
             )

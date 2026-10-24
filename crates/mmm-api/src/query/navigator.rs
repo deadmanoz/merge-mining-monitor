@@ -12,7 +12,7 @@ use crate::normalize::Classification;
 pub enum NavigatorTarget {
     Stale,
     StaleBranch,
-    ErrorBlock,
+    InvalidBlock,
     Orphan,
     OrphanBranch,
 }
@@ -22,7 +22,7 @@ impl NavigatorTarget {
         match raw {
             "stale" => Ok(Self::Stale),
             "stale-branch" => Ok(Self::StaleBranch),
-            "error-block" => Ok(Self::ErrorBlock),
+            "invalid-block" => Ok(Self::InvalidBlock),
             "orphan" => Ok(Self::Orphan),
             "orphan-branch" => Ok(Self::OrphanBranch),
             other => Err(ApiError::invalid_query(
@@ -36,7 +36,7 @@ impl NavigatorTarget {
         match self {
             Self::Stale => "stale",
             Self::StaleBranch => "stale-branch",
-            Self::ErrorBlock => "error-block",
+            Self::InvalidBlock => "invalid-block",
             Self::Orphan => "orphan",
             Self::OrphanBranch => "orphan-branch",
         }
@@ -48,7 +48,7 @@ impl NavigatorTarget {
 
     fn axis(self) -> NavigatorAxis {
         match self {
-            Self::Stale | Self::StaleBranch | Self::ErrorBlock => NavigatorAxis::Height,
+            Self::Stale | Self::StaleBranch | Self::InvalidBlock => NavigatorAxis::Height,
             Self::Orphan | Self::OrphanBranch => NavigatorAxis::Time,
         }
     }

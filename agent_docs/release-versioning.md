@@ -12,7 +12,7 @@ Release tags use `v<SemVer>`, for example `v0.1.0`.
 
 ## Documentation Review
 
-Before a release, check README and About against visible features, including protocol declarations and error-block evidence.
+Before a release, check README and About against visible features, including protocol declarations and invalid-block evidence.
 Review runtime dependencies, setup/readiness steps, the dated size example, statistics, screenshots and diagrams. Keep the size note short; remeasure when updating its date or deployment context.
 Use the [pre-1.0 schema policy](../migrations/README.md#pre-10-schema-policy) until a migration consolidation and its upgrade procedure are actually released.
 

@@ -16,10 +16,10 @@ cat >"${fixture}/data/historical/historical-source-manifest.json" <<'JSON'
 JSON
 printf 'old-checksum\n' >"${fixture}/data/historical/historical-source-manifest.sha256"
 printf '# Source commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nold catalogue\n' \
-    >"${fixture}/data/consensus/error_blocks.csv"
+    >"${fixture}/data/consensus/invalid_blocks.csv"
 cp "${fixture}/data/historical/historical-source-manifest.json" "${scratch}/manifest.before"
 cp "${fixture}/data/historical/historical-source-manifest.sha256" "${scratch}/checksum.before"
-cp "${fixture}/data/consensus/error_blocks.csv" "${scratch}/catalogue.before"
+cp "${fixture}/data/consensus/invalid_blocks.csv" "${scratch}/catalogue.before"
 
 cat >"${fixture}/scripts/gen-historical-source-manifest.sh" <<'SH'
 #!/usr/bin/env bash
@@ -39,7 +39,7 @@ printf '{"source_repo_commit":"%s","generated":true}\n' "${source_commit}" >"${o
 printf 'new-checksum\n' >"${output%.json}.sha256"
 SH
 
-cat >"${fixture}/scripts/gen-error-blocks-catalogue.sh" <<'SH'
+cat >"${fixture}/scripts/gen-invalid-blocks-catalogue.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 source_commit=""
@@ -77,10 +77,10 @@ if FAIL_CATALOGUE=1 "${fixture}/scripts/gen-research-publication-pins.sh" >/dev/
 fi
 cmp -s "${scratch}/manifest.before" "${fixture}/data/historical/historical-source-manifest.json"
 cmp -s "${scratch}/checksum.before" "${fixture}/data/historical/historical-source-manifest.sha256"
-cmp -s "${scratch}/catalogue.before" "${fixture}/data/consensus/error_blocks.csv"
+cmp -s "${scratch}/catalogue.before" "${fixture}/data/consensus/invalid_blocks.csv"
 
 "${fixture}/scripts/gen-research-publication-pins.sh" >/dev/null
 jq -e '.generated == true' "${fixture}/data/historical/historical-source-manifest.json" >/dev/null
 grep -qx 'new-checksum' "${fixture}/data/historical/historical-source-manifest.sha256"
-grep -qx 'new catalogue' <(tail -n 1 "${fixture}/data/consensus/error_blocks.csv")
+grep -qx 'new catalogue' <(tail -n 1 "${fixture}/data/consensus/invalid_blocks.csv")
 printf 'combined Research pin generator self-test passed\n'

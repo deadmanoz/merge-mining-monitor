@@ -21,7 +21,7 @@ pub fn epoch_start_of_day(date: Date) -> i64 {
 pub(crate) fn kind_as_str(kind: ParentKind) -> &'static str {
     match kind {
         ParentKind::Canonical => "canonical",
-        ParentKind::ErrorBlock => "error_block",
+        ParentKind::InvalidBlock => "invalid_block",
         ParentKind::Near => "near",
         ParentKind::Stale => "stale",
         ParentKind::Unknown => "unknown",
@@ -172,7 +172,7 @@ pub(crate) fn optional_bool(
 /// `/api/v1/block/{hash}`.
 const TREE_KINDS: [ParentKind; 4] = [
     ParentKind::Canonical,
-    ParentKind::ErrorBlock,
+    ParentKind::InvalidBlock,
     ParentKind::Stale,
     ParentKind::Unknown,
 ];

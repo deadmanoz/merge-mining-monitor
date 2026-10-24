@@ -1,8 +1,8 @@
-//! Embedded consensus-invalid, full-proof-of-work Bitcoin error-block registry.
+//! Embedded consensus-invalid, full-proof-of-work Bitcoin invalid-block registry.
 //!
 //! The source of truth lives in `merge-mining-research`'s
 //! `data/error-blocks/error_blocks.csv`. This compact pinned mirror lets live
-//! capture classify a witnessed catalogued error block without asking Bitcoin
+//! capture classify a witnessed catalogued invalid block without asking Bitcoin
 //! Core to treat an invalid block as stale or unknown. It intentionally carries
 //! only the identity, canonical-context height, and primary rejection token;
 //! the research dataset remains the complete evidence record.
@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 use bitcoin::BlockHash;
 use bitcoin::hashes::Hash as _;
 
-const ERROR_BLOCKS_CSV: &str = include_str!("../../../data/consensus/error_blocks.csv");
+const INVALID_BLOCKS_CSV: &str = include_str!("../../../data/consensus/invalid_blocks.csv");
 
 /// Canonical rejection token for a parent whose timestamp is not strictly
 /// greater than its predecessor median time past.
@@ -26,29 +26,29 @@ pub const NBITS_RETARGET_NOT_APPLIED: &str = "nbits_retarget_not_applied";
 
 /// A pinned, reviewed Bitcoin consensus failure, including body-rule evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ErrorBlock {
+pub struct InvalidBlock {
     /// Height in the canonical context used by the research validator.
     pub height: i32,
-    /// Primary `rejection_reason` token from the research error-block catalogue.
+    /// Primary `rejection_reason` token from the research invalid-block catalogue.
     pub rejection_reason: &'static str,
 }
 
-static ERROR_BLOCKS: LazyLock<HashMap<[u8; 32], ErrorBlock>> = LazyLock::new(parse_registry);
+static INVALID_BLOCKS: LazyLock<HashMap<[u8; 32], InvalidBlock>> = LazyLock::new(parse_registry);
 
-/// Return catalogued error-block metadata for a stored-order hash.
-pub fn lookup(hash: &[u8]) -> Option<ErrorBlock> {
+/// Return catalogued invalid-block metadata for a stored-order hash.
+pub fn lookup(hash: &[u8]) -> Option<InvalidBlock> {
     let hash: [u8; 32] = hash.try_into().ok()?;
-    ERROR_BLOCKS.get(&hash).copied()
+    INVALID_BLOCKS.get(&hash).copied()
 }
 
 /// Iterate every stored-order parent hash in the pinned catalogue.
 pub fn hashes() -> impl Iterator<Item = [u8; 32]> {
-    ERROR_BLOCKS.keys().copied()
+    INVALID_BLOCKS.keys().copied()
 }
 
-fn parse_registry() -> HashMap<[u8; 32], ErrorBlock> {
+fn parse_registry() -> HashMap<[u8; 32], InvalidBlock> {
     let mut entries = HashMap::new();
-    for (line_number, line) in ERROR_BLOCKS_CSV.lines().enumerate() {
+    for (line_number, line) in INVALID_BLOCKS_CSV.lines().enumerate() {
         if line.is_empty() || line.starts_with('#') || line == "height,hash,rejection_reason" {
             continue;
         }
@@ -57,36 +57,36 @@ fn parse_registry() -> HashMap<[u8; 32], ErrorBlock> {
             .next()
             .and_then(|value| value.parse::<i32>().ok())
             .filter(|height| *height >= 0)
-            .unwrap_or_else(|| panic!("invalid error-block height at line {}", line_number + 1));
+            .unwrap_or_else(|| panic!("invalid invalid-block height at line {}", line_number + 1));
         let hash = fields
             .next()
             .and_then(|value| BlockHash::from_str(value).ok())
             .map(|hash| hash.to_byte_array())
-            .unwrap_or_else(|| panic!("invalid error-block hash at line {}", line_number + 1));
+            .unwrap_or_else(|| panic!("invalid invalid-block hash at line {}", line_number + 1));
         let rejection_reason = fields
             .next()
             .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| panic!("invalid error-block reason at line {}", line_number + 1));
+            .unwrap_or_else(|| panic!("invalid invalid-block reason at line {}", line_number + 1));
         assert!(
             fields.next().is_none(),
-            "invalid error-block field count at line {}",
+            "invalid invalid-block field count at line {}",
             line_number + 1
         );
         assert!(
             entries
                 .insert(
                     hash,
-                    ErrorBlock {
+                    InvalidBlock {
                         height,
                         rejection_reason,
                     },
                 )
                 .is_none(),
-            "duplicate error-block hash at line {}",
+            "duplicate invalid-block hash at line {}",
             line_number + 1
         );
     }
-    assert!(!entries.is_empty(), "error-block registry is empty");
+    assert!(!entries.is_empty(), "invalid-block registry is empty");
     entries
 }
 
@@ -99,10 +99,10 @@ mod tests {
         let hash =
             BlockHash::from_str("00000000000000000000c3d95a4bdc068dfe0c6d1e7ad13045c6f570e58d9ed7")
                 .unwrap();
-        assert_eq!(hashes().count(), ERROR_BLOCKS.len());
+        assert_eq!(hashes().count(), INVALID_BLOCKS.len());
         assert_eq!(
             lookup(&hash.to_byte_array()),
-            Some(ErrorBlock {
+            Some(InvalidBlock {
                 height: 946_213,
                 rejection_reason: TIME_BELOW_MTP,
             })
@@ -112,7 +112,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             lookup(&hathor_649674.to_byte_array()),
-            Some(ErrorBlock {
+            Some(InvalidBlock {
                 height: 649_674,
                 rejection_reason: "bip34_coinbase_height_missing",
             })
@@ -122,7 +122,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             lookup(&f2pool_957780.to_byte_array()),
-            Some(ErrorBlock {
+            Some(InvalidBlock {
                 height: 957_780,
                 rejection_reason: TIME_BELOW_MTP,
             })
@@ -132,7 +132,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             lookup(&antpool_494933.to_byte_array()),
-            Some(ErrorBlock {
+            Some(InvalidBlock {
                 height: 494_933,
                 rejection_reason: "bad-cb-amount",
             })
@@ -142,7 +142,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             lookup(&antpool_544568.to_byte_array()),
-            Some(ErrorBlock {
+            Some(InvalidBlock {
                 height: 544_568,
                 rejection_reason: "bad-cb-amount",
             })

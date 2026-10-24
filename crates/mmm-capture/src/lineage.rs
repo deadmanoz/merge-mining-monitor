@@ -6,7 +6,7 @@
 //! lineage from local evidence only: where the header's prev sits in the
 //! Bitcoin chain, the coinbase BIP34 height where the child chain carries real
 //! Bitcoin coinbase data, and Bitcoin's difficulty history from the
-//! Core-derived [`NbitsTable`]. Callers check the pinned error-block catalogue
+//! Core-derived [`NbitsTable`]. Callers check the pinned invalid-block catalogue
 //! first: a catalogued block can carry wrong bits by design (block 717,696
 //! kept the previous epoch's bits).
 //!

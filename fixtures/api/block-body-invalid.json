@@ -4,9 +4,9 @@
   "block": {
     "hash": "bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd",
     "height": 700006,
-    "kind": "error_block",
+    "kind": "invalid_block",
     "btc_orphan_class": null,
-    "error_block_reason": "bad-blk-sigops",
+    "invalid_block_reason": "bad-blk-sigops",
     "coinbase_tag": null,
     "header": {
       "version": 536870912,

@@ -22,7 +22,7 @@ use super::rsk_sidecar::RskSidecarColumns;
 mod candidate;
 mod parent_coinbase;
 mod publication_state;
-pub(super) use candidate::{candidate_from_record, error_observation_candidate_from_record};
+pub(super) use candidate::{candidate_from_record, invalid_observation_candidate_from_record};
 pub(super) use publication_state::{
     ComparablePublicationState, ExpectedPublicationState, PublicationRowKey,
     publication_row_key_from_record, publication_state_from_record,
@@ -39,7 +39,7 @@ pub(super) enum SourceClassification {
     Stale,
     StaleDescendant,
     Unknown,
-    ErrorBlock,
+    InvalidBlock,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,7 +69,7 @@ pub(super) struct ImportCandidate {
     pub(super) relevance_selection: Option<RelevanceSelection>,
     pub(super) rsk_evidence: Option<RskEvidencePayload>,
     pub(super) parent_output_addresses: Vec<String>,
-    pub(super) error_rejection_reason: Option<String>,
+    pub(super) invalid_rejection_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

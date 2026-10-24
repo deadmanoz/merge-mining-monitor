@@ -54,7 +54,7 @@ pub struct SourceCounts {
     pub unknown: usize,
     pub canonical: usize,
     pub stale: usize,
-    pub error_block: usize,
+    pub invalid_block: usize,
     pub strict_orphan: usize,
     pub weak_orphan: usize,
 }
@@ -227,7 +227,7 @@ async fn load_source_count_aggregates(client: &Client) -> Result<Vec<SourceCount
             "SELECT inv.source_health_ready, inv.invalid_unknown_parents, \
                     sh.source_id, sh.events, sh.last_event_seen, sh.near_parents, \
                     sh.unknown_parents, sh.canonical_parents, sh.stale_parents, \
-                    sh.error_block_parents, sh.strict_orphan_parents, sh.weak_orphan_parents \
+                    sh.invalid_block_parents, sh.strict_orphan_parents, sh.weak_orphan_parents \
              FROM read_model_invariant inv \
              LEFT JOIN source_health sh ON TRUE \
              WHERE inv.id = TRUE \
@@ -264,7 +264,7 @@ async fn load_source_count_aggregates(client: &Client) -> Result<Vec<SourceCount
                         unknown: i64_to_usize(row.get(6), "source unknown count")?,
                         canonical: i64_to_usize(row.get(7), "source canonical count")?,
                         stale: i64_to_usize(row.get(8), "source stale count")?,
-                        error_block: i64_to_usize(row.get(9), "source error-block count")?,
+                        invalid_block: i64_to_usize(row.get(9), "source invalid-block count")?,
                         strict_orphan: i64_to_usize(row.get(10), "source strict orphan count")?,
                         weak_orphan: i64_to_usize(row.get(11), "source weak orphan count")?,
                     },

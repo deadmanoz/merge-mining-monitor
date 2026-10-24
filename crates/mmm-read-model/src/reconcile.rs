@@ -572,7 +572,7 @@ async fn preclassify_event_parent_with_policy<C: GenericClient>(
     if event.skips_parent_read_model() {
         return Ok(None);
     }
-    if mmm_capture::error_blocks::lookup(&event.btc_parent_header_hash).is_none()
+    if mmm_capture::invalid_blocks::lookup(&event.btc_parent_header_hash).is_none()
         && !classifier.is_enabled()
     {
         return Ok(None);

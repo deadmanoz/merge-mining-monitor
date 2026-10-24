@@ -44,7 +44,7 @@ pub struct HistoricalPublicationStateRow {
     pub rsk_merkle_proof_sha256: Option<Vec<u8>>,
     pub rsk_coinbase_tail_sha256: Option<Vec<u8>>,
     pub rsk_proof_format: Option<String>,
-    pub error_block_reason: Option<String>,
+    pub invalid_block_reason: Option<String>,
 }
 
 impl HistoricalPublicationStateRow {
@@ -87,17 +87,17 @@ impl HistoricalPublicationStateRow {
             rsk_merkle_proof_sha256: row.get(32),
             rsk_coinbase_tail_sha256: row.get(33),
             rsk_proof_format: row.get(34),
-            error_block_reason: row.get(35),
+            invalid_block_reason: row.get(35),
             event_id: row.get(36),
         }
     }
 }
 
 /// The publication-state SELECT both streams share, decoded positionally by
-/// [`HistoricalPublicationStateRow::from_row`]. They differ only in the error-block reason
+/// [`HistoricalPublicationStateRow::from_row`]. They differ only in the invalid-block reason
 /// column and its join, and in the artifact scope they select.
 fn historical_state_sql(
-    error_block_reason: &str,
+    invalid_block_reason: &str,
     block_join: &str,
     scope_predicate: &str,
 ) -> String {
@@ -119,7 +119,7 @@ fn historical_state_sql(
                 o.uncle_index, o.uncle_parent_height, decode(rm.identifier, 'hex'), \
                 r.merge_mining_hash, \
                 sha256(r.merkle_proof), sha256(r.coinbase_tail), r.proof_format, \
-                {error_block_reason}, e.id \
+                {invalid_block_reason}, e.id \
          FROM historical_event_provenance p \
          JOIN merge_mining_event e ON e.id = p.event_id \
          JOIN child_block_observation o ON o.id = e.observation_id \
@@ -147,13 +147,13 @@ pub async fn stream_historical_publication_state(client: &Client) -> Result<RowS
         .context("stream historical publication state")
 }
 
-/// Stream the small retained error-observation provenance set, including the
+/// Stream the small retained invalid-observation provenance set, including the
 /// catalogue reason currently materialized on its parent block.
-pub async fn stream_historical_error_observation_state(client: &Client) -> Result<RowStream> {
+pub async fn stream_historical_invalid_observation_state(client: &Client) -> Result<RowStream> {
     client
         .query_raw(
             historical_state_sql(
-                "b.error_block_reason",
+                "b.invalid_block_reason",
                 "LEFT JOIN block b ON b.btc_header_hash = e.btc_parent_header_hash",
                 "= 'error-block-observations'",
             )
@@ -161,7 +161,7 @@ pub async fn stream_historical_error_observation_state(client: &Client) -> Resul
             std::iter::empty::<&(dyn ToSql + Sync)>(),
         )
         .await
-        .context("stream historical error-observation state")
+        .context("stream historical invalid-observation state")
 }
 
 /// One base event used to detect authoritative extras without provenance.
@@ -188,7 +188,7 @@ impl HistoricalBaseEventRow {
 
 /// Stream publication-owned events from authoritative historical/partial sources.
 /// Independent operator imports are excluded here. The caller removes retained
-/// error-observation event IDs before comparing this authoritative base set.
+/// invalid-observation event IDs before comparing this authoritative base set.
 pub async fn stream_authoritative_historical_base_events(
     client: &Client,
     source_ids: &[i64],

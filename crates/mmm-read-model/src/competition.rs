@@ -60,7 +60,7 @@ async fn demote_zero_active_block<C: GenericClient>(client: &C, hash: &[u8]) -> 
                  difficulty_epoch_ok = CASE WHEN core_attested THEN difficulty_epoch_ok ELSE NULL END, \
                  first_attested_at = NULL, \
                  last_attested_at = NULL, \
-                 error_block_reason = CASE WHEN core_attested THEN error_block_reason ELSE NULL END, \
+                 invalid_block_reason = CASE WHEN core_attested THEN invalid_block_reason ELSE NULL END, \
                  btc_orphan_class = NULL, \
                  updated_at = extract(epoch from now())::bigint \
              WHERE btc_header_hash = $1",

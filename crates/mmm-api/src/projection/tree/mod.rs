@@ -172,7 +172,7 @@ fn tree_window_from_resolved(
 
 fn base_tree_legend() -> TreeLegend {
     TreeLegend {
-        kinds: vec!["canonical", "stale", "error_block", "unknown"],
+        kinds: vec!["canonical", "stale", "invalid_block", "unknown"],
         edge_kinds: vec!["canonical", "stale_entry", "stale", "hidden"],
     }
 }
@@ -236,7 +236,7 @@ fn select_tree_candidates(
                 projection.protected = true;
                 candidates.push(projection);
             }
-            (Some(_), ParentKind::ErrorBlock) if is_selected && enough_sources => {
+            (Some(_), ParentKind::InvalidBlock) if is_selected && enough_sources => {
                 projection.evidence = true;
                 projection.protected = true;
                 candidates.push(projection);

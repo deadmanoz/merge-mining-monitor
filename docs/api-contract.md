@@ -171,8 +171,8 @@ Response arrays use stable ordering:
 
 ## Core Entities
 
-See `docs/data-model.md` for base tables (`merge_mining_event`, chain sidecars, `event_pool_attribution`), parent classification kinds (`near`, `unknown`, `canonical`, `stale`, `error_block`), and the Bitcoin lineage gate (`docs/capture.md`, "Bitcoin Lineage Gate": non-Bitcoin SHA-256 headers are refused at capture and never stored).
-A `near` parent has no events: the API projects it from its child block observations (`observation_kind = 'near'`), and it is not a tree node. For `unknown` without a `block` row the API projects directly from active `merge_mining_event` rows; for `canonical`, `stale`, and `error_block`, it reads the reconciled `block` / `attestation_proof` model.
+See `docs/data-model.md` for base tables (`merge_mining_event`, chain sidecars, `event_pool_attribution`), parent classification kinds (`near`, `unknown`, `canonical`, `stale`, `invalid_block`), and the Bitcoin lineage gate (`docs/capture.md`, "Bitcoin Lineage Gate": non-Bitcoin SHA-256 headers are refused at capture and never stored).
+A `near` parent has no events: the API projects it from its child block observations (`observation_kind = 'near'`), and it is not a tree node. For `unknown` without a `block` row the API projects directly from active `merge_mining_event` rows; for `canonical`, `stale`, and `invalid_block`, it reads the reconciled `block` / `attestation_proof` model.
 
 API-computed miner and branch entities:
 
@@ -231,7 +231,7 @@ Purpose: project the windowed Bitcoin header tree from the synced Bitcoin Core b
 Query:
 
 ```text
-GET /api/v1/tree?at_height&at_time&context=compact&from_height&to_height&kinds=unknown,canonical,stale,error_block&classification=strict_btc_orphan,weak_btc_orphan&source=auxpow:namecoin,auxpow:rsk,auxpow:syscoin,auxpow:fractal,auxpow:hathor&include_unheighted=true&unheighted_from=2026-05-01&unheighted_to=2026-05-26&min_sources=1
+GET /api/v1/tree?at_height&at_time&context=compact&from_height&to_height&kinds=unknown,canonical,stale,invalid_block&classification=strict_btc_orphan,weak_btc_orphan&source=auxpow:namecoin,auxpow:rsk,auxpow:syscoin,auxpow:fractal,auxpow:hathor&include_unheighted=true&unheighted_from=2026-05-01&unheighted_to=2026-05-26&min_sources=1
 ```
 
 #### Lookup Modes (Mutually Exclusive)
@@ -269,7 +269,7 @@ GET /api/v1/tree?at_height&at_time&context=compact&from_height&to_height&kinds=u
 | `id` | Response-local integer layout ID. |
 | `hash`, `height`, `kind` | Parent header display hash, nullable Bitcoin height (`null` for direct-projected `unknown` and placed orphans), and structural parent kind. |
 | `prev_id`, `prev_hash` | Layout ID of visible predecessor and stored parent `prev_hash`. A `hidden` edge may make `node.prev_hash` differ from the visible `prev_id` node's hash. |
-| `btc_orphan_class` | Derived refinement of `kind='unknown'` (`strict_btc_orphan` / `weak_btc_orphan` / `excluded`), or `null` for canonical/stale/error-block nodes and pending unknowns. Per-node detail field, not a `kind`. |
+| `btc_orphan_class` | Derived refinement of `kind='unknown'` (`strict_btc_orphan` / `weak_btc_orphan` / `excluded`), or `null` for canonical/stale/invalid-block nodes and pending unknowns. Per-node detail field, not a `kind`. |
 | `pool` | Best-available display miner pool object (`display_miner_pool`). |
 | `source_summary` | Evidence source summary for the parent header. |
 | `child_chain_evidence[]` | Grouped by active AuxPoW `source` and `child_chain`, with event count and child-height min/max. |
@@ -283,7 +283,7 @@ GET /api/v1/tree?at_height&at_time&context=compact&from_height&to_height&kinds=u
 #### Tree Edge Kinds
 
 Clients must derive hidden context from `edges[]`.
-`edges[]` is the drawn-edge graph: a node may carry `prev_id`/`prev_hash` for a visible predecessor without a matching `edges[]` entry when that transition has no drawable edge kind (an error-block or unknown child, or a canonical child with a non-canonical predecessor).
+`edges[]` is the drawn-edge graph: a node may carry `prev_id`/`prev_hash` for a visible predecessor without a matching `edges[]` entry when that transition has no drawable edge kind (an invalid-block or unknown child, or a canonical child with a non-canonical predecessor).
 
 | `edge_kind` | Meaning | Extra fields |
 |---|---|---|
@@ -302,13 +302,13 @@ Responses return at most 500 nodes, yielding `range_too_large` (HTTP 422) when r
 Purpose: fetch details for a selected parent header.
 
 The hash path parameter may be uppercase or mixed-case when valid hex; the API normalizes valid hashes to lowercase before lookup and returns `invalid_hash` for invalid syntax.
-Direct `unknown` projections group active non-revoked `merge_mining_event` rows by `btc_parent_header_hash` (the canonical/stale/error-block read model takes precedence).
+Direct `unknown` projections group active non-revoked `merge_mining_event` rows by `btc_parent_header_hash` (the canonical/stale/invalid-block read model takes precedence).
 A `near` parent's page is built from its child block observations: `block.kind = "near"`, the header from the stored 80-byte parent header, `bitcoin_miner_pool` from the observations' parent pool, `display_miner_pool` Unknown, `event_details: []`, and `observations[]`.
 Core-only backbone rows represent Core provenance on `block` and `block.source_summary` without a separate observation payload.
 
 | Response Field | Contract |
 |---|---|
-| `block` | `hash`, nullable `height`, `kind`, nullable `btc_orphan_class` (`strict_btc_orphan` / `weak_btc_orphan` / `excluded` for classified `unknown`, else `null`), nullable `error_block_reason` (primary consensus-rejection token for `kind = 'error_block'`, else `null`), nullable `coinbase_tag`, `header`, `bitcoin_miner_pool`, `display_miner_pool`, `display_miner_basis`, and `source_summary`. Near pages and direct-projected unknown blocks carry `btc_orphan_class: null` and `error_block_reason: null`. |
+| `block` | `hash`, nullable `height`, `kind`, nullable `btc_orphan_class` (`strict_btc_orphan` / `weak_btc_orphan` / `excluded` for classified `unknown`, else `null`), nullable `invalid_block_reason` (primary consensus-rejection token for `kind = 'invalid_block'`, else `null`), nullable `coinbase_tag`, `header`, `bitcoin_miner_pool`, `display_miner_pool`, `display_miner_basis`, and `source_summary`. Near pages and direct-projected unknown blocks carry `btc_orphan_class: null` and `invalid_block_reason: null`. |
 | `block.coinbase_tag` | For Core-attested canonical blocks with stored `block.btc_coinbase_script`, derived from the Core block row (even when child events exist), preferring the BTC pool resolver's matched tag and falling back to the normalized printable run with surrounding `/` delimiters trimmed. When no Core tag exists, derived from `commitment.parent_coinbase_script_hex` (printable ASCII `0x20..=0x7e`, split on other bytes, trimmed runs of `>= 4` chars joined by a single space). `null` for RSK and Hathor commitments. |
 | `commitment` | Parent-level AuxPoW commitment, or `null` when no recognized AuxPoW-format event exists. Carries `format` (chosen by family priority: `namecoin-aux` > `qbit-aux` > `rsk-opaque` > `hathor-rfc0006`), `parent_coinbase_txid`, `parent_coinbase_script_hex`, and `marker`. `namecoin-aux` and `qbit-aux` persist the parent coinbase and populate txid/script; `rsk-opaque` and `hathor-rfc0006` are format-only with `null` coinbase fields and `marker: null`. |
 | `commitment.marker` | Non-null only for `namecoin-aux` or `qbit-aux` parents whose coinbase scriptSig yields a `0xfabe6d6d` marker (Qbit mainnet also accepts legacy no-marker placement, where `marker` is `null`). Carries `magic_present`, display-order `aux_merkle_root`, `merkle_size`, and `merkle_nonce`. For `namecoin-aux` the scriptSig commits wire order (reversed for display); for `qbit-aux` the scriptSig commits display order as-is. |
@@ -333,7 +333,7 @@ The five targets are:
 |---|---|---|---|
 | `stale` | `height` | proven stale blocks | `tree_window` |
 | `stale-branch` | `height` | current multi-block stale branches | `tree_window` |
-| `error-block` | `height` | consensus-invalid full-PoW blocks | `tree_window` |
+| `invalid-block` | `height` | consensus-invalid full-PoW blocks | `tree_window` |
 | `orphan` | `time` | BTC-orphan blocks | `unheighted_anchor` |
 | `orphan-branch` | `time` | multi-block BTC-orphan branches | `unheighted_anchor` |
 
@@ -354,8 +354,8 @@ Query parameters:
 - `classification`: accepted only by `orphan` and `orphan-branch`, defaulting to `strict_btc_orphan,weak_btc_orphan`.
   The valid classes are `strict_btc_orphan`, `weak_btc_orphan`, `excluded`, and `pending`.
 
-Supplying any other parameter, mixing `cursor` with `anchor_hash`, supplying only one of `cursor` / `direction`, or passing `classification` to a stale or error-block target is `invalid_query`.
-`error-block` rejects `classification` because catalogue membership is not a refinement of `unknown` and so has no orphan-class axis.
+Supplying any other parameter, mixing `cursor` with `anchor_hash`, supplying only one of `cursor` / `direction`, or passing `classification` to a stale or invalid-block target is `invalid_query`.
+`invalid-block` rejects `classification` because catalogue membership is not a refinement of `unknown` and so has no orphan-class axis.
 
 Response fields:
 
@@ -373,8 +373,8 @@ Each `items[]` entry has this format:
 - `kind`: one of the target strings.
 - `primary_hash`: display/RPC hash for the block or branch root.
 - `label`: display label for the UI.
-- `position`: `{ axis, min, max }`; the stale and error-block targets use Bitcoin height, orphan targets use `btc_header_time`.
-  For `error-block`, `min` and `max` are always equal, because each item is one block.
+- `position`: `{ axis, min, max }`; the stale and invalid-block targets use Bitcoin height, orphan targets use `btc_header_time`.
+  For `invalid-block`, `min` and `max` are always equal, because each item is one block.
 - `index`: 1-based newest-first rank in the active target (and classification filter).
   `1` is the newest item; `total` is the oldest. Items in one response share one snapshot with `total`, so `index <= total`.
 - `cursor`: opaque item cursor.
@@ -388,7 +388,7 @@ Ordering is stable and target-specific:
 
 - `stale`: `btc_height` descending, then stored stale hash bytes ascending.
 - `stale-branch`: `btc_height_max` descending, then `btc_height_min` descending, then stored root hash bytes ascending.
-- `error-block`: `btc_height` descending, then stored header hash bytes ascending.
+- `invalid-block`: `btc_height` descending, then stored header hash bytes ascending.
   The hash tie-break is required rather than cosmetic: the catalogue carries more than one block at some heights, so paging on height alone would skip or repeat members of a group (`branch` and `orphan` are always `null`).
 - `orphan`: `btc_header_time` descending, then stored header hash bytes descending.
 - `orphan-branch`: `btc_header_time_max` descending, then `btc_header_time_min` descending, then stored root hash bytes ascending.
@@ -431,7 +431,7 @@ The following rules are the rollout fallback for sources with no runtime row:
 | `bitcoin-core-backbone` | Derived from `bitcoin_core_sync_state`: no row -> `not_started`; `last_error_code` set -> `error`; row older than 1 hour -> `stale`; fresh row with no target or no contiguous progress -> `not_started`; fresh row below target -> `catching_up`; fresh row at/beyond target -> `live`. |
 | `historical`, `partial`, `surveyed`, `catalogued` | Reports the lifecycle token as both `sync.mode` and `sync.state` with `null` progress fields. |
 
-Per-source `counts` (`counts.events`, distinct-parent `near`/`unknown`/`canonical`/`stale`/`error_block`, and `strict_orphan`/`weak_orphan`) are served from precomputed `source_health` (O(sources)). `counts.events` counts active evidence events (parents that meet Bitcoin's target); `counts.near` counts distinct near parents from near observations, which event revocation does not change: revocation covers evidence events.
+Per-source `counts` (`counts.events`, distinct-parent `near`/`unknown`/`canonical`/`stale`/`invalid_block`, and `strict_orphan`/`weak_orphan`) are served from precomputed `source_health` (O(sources)). `counts.events` counts active evidence events (parents that meet Bitcoin's target); `counts.near` counts distinct near parents from near observations, which event revocation does not change: revocation covers evidence events.
 This endpoint **fails closed** (HTTP 500 `internal_error`) rather than returning zeros when `source_health_ready` is false (run `reconcile-read-model --rebuild-source-health` after initial schema creation or bulk backfills) or if any active `unknown` parent fails its Bitcoin target.
 
 ### `/api/v1/competitions`
@@ -467,12 +467,12 @@ It is reachable from `btc_height` through `/api/v1/tree`, and a second 64-charac
 
 ## Nullability By Parent Kind
 
-| Field | near | unknown | canonical | stale | error_block |
+| Field | near | unknown | canonical | stale | invalid_block |
 |---|---|---|---|---|---|
 | `block.hash` | required | required | required | required | required |
 | `block.height` | null (direct-projected) | null (direct-projected) | required | required | required |
 | `block.kind` | required | required | required | required | required |
-| `block.error_block_reason` | null | null | null | null | required |
+| `block.invalid_block_reason` | null | null | null | null | required |
 | `block.coinbase_tag` | null or printable tag | null or printable tag | null or printable tag | null or printable tag | null or printable tag |
 | `block.header` | required | required | required | required | required |
 | `block.bitcoin_miner_pool` | required | required | required | required | required |

@@ -226,7 +226,7 @@ pub(super) fn materialize_tree(
                     edge_kind,
                 });
             (prev_id, edge)
-        } else if projection.kind != ParentKind::ErrorBlock
+        } else if projection.kind != ParentKind::InvalidBlock
             && let Some((prev_hash, hidden_count)) =
                 hidden_predecessor(&projection, &id_by_hash, ancestry_by_hash)
         {

@@ -10,7 +10,7 @@ Test fixtures, migrations, frontend assets, and generated frontend modules stay 
 - `pools/slug-map.json` - curated upstream filename to stable pool slug map used by the pool snapshot generator.
 - `pools/child-identities/` - curated child-chain identity registries used for pool attribution.
   See `pools/README.md`.
-- `consensus/error_blocks.csv` - compact mirror of the pinned `merge-mining-research` error-block catalogue (`kind=error_block`); its commit pin must match `historical/historical-source-manifest.json` (`just gen-research-publication-pins`).
+- `consensus/invalid_blocks.csv` - compact mirror of the pinned `merge-mining-research` invalid-block catalogue (`kind=invalid_block`); its commit pin must match `historical/historical-source-manifest.json` (`just gen-research-publication-pins`).
 - `sources/chain_profiles.json` - hand-authored source profile data used by `just gen-source-artifacts`.
 - `findings/` - hand-authored evidence-backed findings, one JSON file per finding (filename matches the slug).
   Compiled into `www/js/findings.generated.js` by `just gen-source-artifacts`.

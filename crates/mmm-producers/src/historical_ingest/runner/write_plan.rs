@@ -8,8 +8,8 @@ use tokio_postgres::Client;
 use tracing::info;
 
 use super::super::config::HistoricalImportConfig;
-use super::super::publication::{ArtifactPreflight, ErrorObservationPreflight};
-use super::error_observations::import_error_observations;
+use super::super::publication::{ArtifactPreflight, InvalidObservationPreflight};
+use super::invalid_observations::import_invalid_observations;
 use super::publication_state::ImportPlan;
 use super::{
     HistoricalImportAllSummary, reconcile_published_stale_branches,
@@ -19,9 +19,9 @@ use super::{
 pub(super) struct PlannedWrite<'a> {
     pub configs: &'a [HistoricalImportConfig],
     pub preflighted_artifacts: Vec<ArtifactPreflight>,
-    pub error_observations: Option<ErrorObservationPreflight>,
+    pub invalid_observations: Option<InvalidObservationPreflight>,
     pub plan: Option<ImportPlan>,
-    pub work_error_observations: bool,
+    pub work_invalid_observations: bool,
 }
 
 pub(super) async fn write_planned_imports(
@@ -30,14 +30,14 @@ pub(super) async fn write_planned_imports(
     write: PlannedWrite<'_>,
     classifications: &mut HashMap<Vec<u8>, ParentClassification>,
     nbits_table: &NbitsTable,
-    expected_error_parents: &BTreeSet<[u8; 32]>,
+    expected_invalid_parents: &BTreeSet<[u8; 32]>,
 ) -> Result<HistoricalImportAllSummary> {
     let PlannedWrite {
         configs,
         preflighted_artifacts,
-        error_observations,
+        invalid_observations,
         plan,
-        work_error_observations,
+        work_invalid_observations,
     } = write;
     let work_chain = |index: usize| plan.as_ref().is_none_or(|plan| plan.work_chain[index]);
     let mut summary = HistoricalImportAllSummary::default();
@@ -46,15 +46,15 @@ pub(super) async fn write_planned_imports(
     }
     // Protect observations moving out of ordinary snapshots before their
     // authoritative cleanup can delete the existing events and enrichment.
-    if work_error_observations && let Some(artifact) = error_observations {
-        summary.error_observations = Some(
-            import_error_observations(
+    if work_invalid_observations && let Some(artifact) = invalid_observations {
+        summary.invalid_observations = Some(
+            import_invalid_observations(
                 client,
                 classifier,
                 artifact,
                 classifications,
                 nbits_table,
-                expected_error_parents,
+                expected_invalid_parents,
             )
             .await?,
         );
@@ -91,7 +91,7 @@ pub(super) async fn write_planned_imports(
             .push((chain_config.chain.clone(), chain_summary));
     }
     if work_total > 0
-        || work_error_observations
+        || work_invalid_observations
         || plan.as_ref().is_some_and(|plan| plan.needs_finalization)
     {
         summary.stale_branches_reconciled =

@@ -21,16 +21,16 @@ jq -e '
     and .aggregate_rows == ([.artifacts[] | select(.role == "aggregate") | .row_count] | add)
     and ([.artifacts[] | select(.role == "event")] | length) == 29
     and ([.artifacts[] | select(.role == "aggregate" and .chain == "stale-descendants")] | length) == 1
-    and ([.artifacts[] | select(.role == "error_observation" and .chain == "error-block-observations")] | length) == 1
-    and .error_observation_rows == ([.artifacts[] | select(.role == "error_observation") | .row_count] | add)
+    and ([.artifacts[] | select(.role == "invalid_observation" and .chain == "error-block-observations")] | length) == 1
+    and .invalid_observation_rows == ([.artifacts[] | select(.role == "invalid_observation") | .row_count] | add)
     and (.artifacts | length) == 31
     and ([.artifacts[].chain] | unique | length) == (.artifacts | length)
     and all(.artifacts[];
         (.sha256 | test("^[0-9a-f]{64}$"))
         and (.size_bytes >= 0)
         and (.parent_only_rows >= 0)
-        and (if .role == "error_observation" then
-            (.row_count == .counts.error_block)
+        and (if .role == "invalid_observation" then
+            (.row_count == .counts.invalid_block)
             and ([.source_chain_counts[]] | add) == .row_count
           else
             .row_count == (

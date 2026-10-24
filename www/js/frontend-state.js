@@ -3,8 +3,8 @@ import { inputDateTimeToUtc, utcDateTimeToInput } from "./tree-lookup.js";
 
 
 const API_BASE = "/api/v1";
-const KINDS = ["canonical", "stale", "error_block", "unknown"];
-const VISIBLE_KIND_CONTROLS = ["canonical", "stale", "error_block"];
+const KINDS = ["canonical", "stale", "invalid_block", "unknown"];
+const VISIBLE_KIND_CONTROLS = ["canonical", "stale", "invalid_block"];
 const KIND_HELP = {
   canonical: {
     name: "Canonical",
@@ -12,7 +12,7 @@ const KIND_HELP = {
     criteria: "Bitcoin Core places this block on the active best chain.",
     interpretation: "Canonical blocks form the main chain spine, with merge-mined child-chain evidence attached to each block.",
     notes: [
-      "Evidence outside the active chain is classified separately as stale, orphan, error-block or unresolved evidence.",
+      "Evidence outside the active chain is classified separately as stale, orphan, invalid-block or unresolved evidence.",
     ],
   },
   stale: {
@@ -28,13 +28,13 @@ const KIND_HELP = {
       "Header or proof evidence does not establish validation of an unavailable block body.",
     ],
   },
-  error_block: {
-    name: "Error block",
+  invalid_block: {
+    name: "Invalid block",
     meta: "Bitcoin proof of work, consensus-invalid",
-    criteria: "The header meets Bitcoin's proof-of-work target but has an established consensus failure from live median-time-past checks or the reviewed error catalogue.",
-    interpretation: "Error blocks are kept separate so consensus-invalid work is never misread as a stale or orphan Bitcoin block.",
+    criteria: "The header meets Bitcoin's proof-of-work target but has an established consensus failure from live median-time-past checks or the reviewed invalid-block catalogue.",
+    interpretation: "Invalid blocks are kept separate so consensus-invalid work is never misread as a stale or orphan Bitcoin block.",
     notes: [
-      "Block detail names the violated rule; error blocks are excluded from stale branches, orphan counts, and competitions.",
+      "Block detail names the violated rule; invalid blocks are excluded from stale branches, orphan counts, and competitions.",
     ],
   },
   strict_btc_orphan: {
@@ -270,7 +270,7 @@ const state = {
   // Must have a slot for every target in nav-targets.js.
   stale: { item: null, anchor: null, total: null, hasOlder: false, hasNewer: false, busy: false },
   branch: { item: null, total: null, hasOlder: false, hasNewer: false, busy: false },
-  errorBlock: { item: null, anchor: null, total: null, hasOlder: false, hasNewer: false, busy: false },
+  invalidBlock: { item: null, anchor: null, total: null, hasOlder: false, hasNewer: false, busy: false },
   orphan: { item: null, anchor: null, total: null, counts: null, hasOlder: false, hasNewer: false, busy: false },
   orphanBranch: { item: null, total: null, hasOlder: false, hasNewer: false, busy: false },
   treePointerActive: false,
