@@ -16,6 +16,10 @@ This changelog starts with the initial release.
 
 ### Fixed
 
+- Show the Sources popover's column help (now also on Height) and status-pill explanations as a tooltip on hover, focus and tap instead of a native title that never appeared on focus or touch, and drop the source filename from the About release-notes header.
+
+- Align the About Sources dialog with the source rail: explain how its six source classes map to the rail groups, capitalise every chain status, stop using "Active" (a chain status) for live producers, and use the dialog's wording in the rail subtitles. Status-pill tips now give just the state and its meaning, and source tooltips use the same class names as the source cards.
+
 - Align source-rail subtitles: Terracoin uses its 2016 AuxPoW start and 2-minute target, RSK, Hathor, and Fractal Bitcoin write `~30 s`, and i0coin's recovered span is 2011–2021.
 
 - Retry ordinary Core body-download and tip-height errors during live startup while preserving queued work and fatal errors.

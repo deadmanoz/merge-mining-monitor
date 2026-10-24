@@ -160,11 +160,21 @@
   font-weight: 800;
   line-height: 1;
   text-transform: none;
+  cursor: help;
 }
 
-.source-status-header-help:focus-visible {
+.source-status-header-help:focus-visible,
+.source-status-pill:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+/* Styled by .chart-tooltip and placed by showSourceStatusTip; fixed so the
+   popover cannot clip it. chart.css loads later, so the id selector wins. */
+#source-status-tip {
+  position: fixed;
+  z-index: 30;
+  inline-size: max-content;
 }
 
 .source-status-table th:nth-child(1),
@@ -230,6 +240,7 @@
   color: var(--surface);
   font-weight: 700;
   white-space: nowrap;
+  cursor: help;
 }
 
 .source-status-empty {

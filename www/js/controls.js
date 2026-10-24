@@ -388,12 +388,12 @@ function renderSourcesAboutDialog() {
     ["Recovered dataset", "A historical merge-mined chain whose Bitcoin evidence has been recovered and ingested."],
     ["Recovered subset", "Filterable Bitcoin evidence recovered without the complete child chain. Coverage is limited to the rows described by the source."],
     ["Recovered survey", "The child chain was recovered and checked, but no canonical or stale Bitcoin block winner was found. There are no rows to filter."],
-    ["Catalogued (not recovered)", "A chain known to have Bitcoin-merge-mined, but with no recovered chain data in this monitor. Listed for completeness and greyed in the rail, since there is nothing to filter on yet."],
+    ["Catalogued (not recovered)", "A chain known to have been merge-mined with Bitcoin, but with no recovered chain data in this monitor. Listed for completeness and greyed in the rail, since there is nothing to filter on yet."],
   ]);
   return [
-    `<p>Sources are grouped by how this monitor relates to each chain:</p>`,
+    `<p>Each source has one of these relationships to this monitor. The rail's Live sources group holds Bitcoin Core and the live AuxPoW producers; each other class has its own group.</p>`,
     classes,
-    `<p>A source's <strong>Chain status</strong> row describes the native chain's own state, separately from this monitor's lifecycle and evidence coverage. Active means the chain is currently producing blocks; zombie means it still produces blocks but at negligible, sub-Bitcoin difficulty; dormant means it is inactive or its state is uncertain; dead means it is verified stopped, abandoned, migrated or forked away, or unreachable; Unknown means the current native-chain status has not been established. A live monitor evidence path and a native Active status are separate facts: historical sources can provide recovered evidence without a poller, and an Active chain can lack current monitor evidence.</p>`,
+    `<p>A source's <strong>Chain status</strong> row describes the native chain's own state, separately from this monitor's lifecycle and evidence coverage. Active means the chain is currently producing blocks; Zombie means it still produces blocks but at negligible, sub-Bitcoin difficulty; Dormant means it is inactive or its state is uncertain; Dead means it is verified stopped, abandoned, migrated or forked away, or unreachable; Unknown means the current native-chain status has not been established. A live monitor evidence path and a native Active status are separate facts: historical sources can provide recovered evidence without a poller, and an Active chain can lack current monitor evidence.</p>`,
   ].join("");
 }
 

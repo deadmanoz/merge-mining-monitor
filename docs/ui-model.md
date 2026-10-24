@@ -115,7 +115,7 @@ Each source row has a compact help affordance that opens the chain/source detail
 Known chain modals use curated product copy with inception dates and source-specific caveats (such as RSK uncle evidence and Fractal Bitcoin's 1-in-3 cycle hybrid merge-mined coverage, where skipped non-merge-mined blocks are expected rather than missing evidence), authored in `data/sources/chain_profiles.json`.
 
 The rail separates source rows into **Live sources**, **Recovered datasets**, **Recovered subsets**, **Recovered surveys**, and **Catalogued (not recovered)** using the Source Lifecycle Registry metadata.
-Live sources include active producers plus Bitcoin Core classification context.
+Live sources include live producers plus Bitcoin Core classification context.
 Recovered datasets have complete in-scope coverage without a live producer: Lyncoin covers every Bitcoin-era height through 260,499 (the later Flex era has no Bitcoin parent), while SixEleven covers all 999,407 blocks through its available tip.
 Recovered subsets have filterable rows but incomplete child-chain coverage, as with VCash's 68 archived explorer mappings.
 Recovered surveys are completed recoveries with nothing to filter, as with Doichain's zero Bitcoin block winners.
@@ -126,7 +126,7 @@ Source sections are collapsible and non-live sections default closed; a collapse
 The topbar source-status bead and popover summarize only operational live sources (`live` and `bitcoin-core-backbone` sync modes); non-live lifecycle classes do not carry aliveness status there.
 
 The topbar source-status popover separates capture progress from evidence freshness.
-Status pills show the sync state only (`Live`, `Waiting`, `Catching up`, `Stale`, `Error`, `Not started`, `Unknown`); the source mode remains in the tooltip. **Height** is the source's current indexed height; live AuxPoW rows show `progress / target` when an observed target height exists, while Bitcoin Core backbone rows keep the target height in the tooltip. **Cursor Updated** is the time the cursor/backbone row last advanced or was seeded. **Latest Evidence** is the newest AuxPoW evidence timestamp seen for that source; Bitcoin Core backbone rows mark this as `N/A` because they observe chain-tip progress rather than AuxPoW evidence.
+Status pills show the sync state only (`Live`, `Waiting`, `Catching up`, `Stale`, `Error`, `Not started`, `Unknown`); hovering, focusing or tapping a pill explains that state, and the Height, Cursor Updated and Latest Evidence headers carry `?` help that opens the same way. **Height** is the source's current indexed height; live AuxPoW rows show `progress / target` when an observed target height exists, while Bitcoin Core backbone rows keep the target height in the tooltip. **Cursor Updated** is the time the cursor/backbone row last advanced or was seeded. **Latest Evidence** is the newest AuxPoW evidence timestamp seen for that source; Bitcoin Core backbone rows mark this as `N/A` because they observe chain-tip progress rather than AuxPoW evidence.
 An old cursor timestamp means progress has not advanced recently; runtime heartbeats and successful cycles establish liveness separately. Sources without runtime rows use the legacy cursor-age rule. The source's Stale status is distinct from a stale Bitcoin block.
 When a source reports an error, the error code and associated height are shown directly in the Cursor Updated cell so operators do not need to hover the status pill to see the failure reason.
 

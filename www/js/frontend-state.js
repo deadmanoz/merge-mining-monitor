@@ -115,7 +115,7 @@ const SOURCE_GROUPS = [
   {
     key: "live",
     title: "Live sources",
-    meta: "Active producers, plus Bitcoin Core context.",
+    meta: "Live producers, plus Bitcoin Core context.",
     defaultOpen: true,
   },
   {
@@ -127,19 +127,19 @@ const SOURCE_GROUPS = [
   {
     key: "partial",
     title: "Recovered subsets",
-    meta: "Ingestible evidence recovered without the complete child blockchain.",
+    meta: "Filterable Bitcoin evidence recovered without the complete child chain.",
     defaultOpen: false,
   },
   {
     key: "surveyed",
     title: "Recovered surveys",
-    meta: "Recovered chains reviewed with no admissible Bitcoin evidence.",
+    meta: "Recovered chains checked with no canonical or stale Bitcoin block winner found.",
     defaultOpen: false,
   },
   {
     key: "catalogued",
     title: "Catalogued (not recovered)",
-    meta: "Chains known to have BTC-merge-mined but with no recovered data.",
+    meta: "Chains known to have been merge-mined with Bitcoin, but with no recovered data.",
     defaultOpen: false,
   },
 ];

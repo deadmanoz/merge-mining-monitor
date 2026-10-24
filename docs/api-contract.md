@@ -119,7 +119,7 @@ Source codes use `<kind>:<chain>` or `<kind>:<chain>:<instance>`:
 
 | Lifecycle | Source Codes | Notes |
 |---|---|---|
-| `live` | `auxpow:namecoin`, `auxpow:rsk`, `auxpow:syscoin`, `auxpow:fractal`, `auxpow:hathor`, `auxpow:elastos`, `auxpow:qbit`, `auxpow:terracoin` | Active AuxPoW child-chain pollers and backfills. |
+| `live` | `auxpow:namecoin`, `auxpow:rsk`, `auxpow:syscoin`, `auxpow:fractal`, `auxpow:hathor`, `auxpow:elastos`, `auxpow:qbit`, `auxpow:terracoin` | Live AuxPoW child-chain pollers and backfills. |
 | `bitcoin-core-backbone` | `live-chaintip:bitcoin:core` | Bitcoin Core backbone and parent classifier source. |
 | `historical` | `auxpow:argentum`, `auxpow:bitcoin-vault`, `auxpow:bitmark`, `auxpow:coiledcoin`, `auxpow:crown`, `auxpow:devcoin`, `auxpow:emercoin`, `auxpow:geistgeld`, `auxpow:groupcoin`, `auxpow:huntercoin`, `auxpow:i0coin`, `auxpow:ixcoin`, `auxpow:lyncoin`, `auxpow:myriadcoin`, `auxpow:rod`, `auxpow:sixeleven`, `auxpow:unobtanium`, `auxpow:xaya`, `auxpow:elcash` | Complete in-scope recovered AuxPoW datasets; no live producer. |
 | `partial` | `auxpow:vcash` | Ingestible recovered evidence subset; complete child chain unavailable. |
