@@ -10,15 +10,15 @@ use tokio_postgres::{Client, Row};
 use super::super::ProjectionError;
 use super::super::materialize::source_summary_from_sources;
 use super::super::shared::{
-    DisplayMinerBasis, PoolObject, SourceRecord, display_child_block_hash, pool_from_columns,
-    unknown_pool,
+    DisplayMinerBasis, PoolObject, SignalDraft, SourceRecord, bitcoin_drafts,
+    child_coinbase_tag_draft, display_child_block_hash, pool_from_columns, unknown_pool,
 };
 use super::detail::{
     ParentCoinbase, coinbase_tag_from_commitment, derive_commitment, display_hash_opt,
     header_projection,
 };
 use super::protocol_commitments::load_protocol_commitments;
-use super::{ApiBlock, BlockPayload, PoolIdentityRef};
+use super::{ApiBlock, BlockPayload, PoolIdentityRef, relationship};
 use crate::normalize::ParentKind;
 use crate::query::kind_as_str;
 
@@ -102,6 +102,9 @@ impl ParentCoinbase for NearObservationRow {
     fn parent_coinbase_script(&self) -> Option<&[u8]> {
         self.btc_parent_coinbase_script.as_deref()
     }
+    fn parent_coinbase_outputs(&self) -> Option<&[u8]> {
+        self.btc_parent_coinbase_outputs.as_deref()
+    }
 }
 
 impl NearObservationRow {
@@ -159,10 +162,38 @@ pub(super) async fn block_from_near_observations(
         .find(|pool| pool.known)
         .cloned()
         .unwrap_or_else(unknown_pool);
+    let bitcoin = bitcoin_drafts(relationship::parent_coinbase(None, &rows));
+    let child_tags = rows
+        .iter()
+        .map(|row| child_coinbase_tag_draft(&row.source.code, row.child_coinbase_script.as_deref()))
+        .collect::<Vec<_>>();
     let source_summary = source_summary_from_sources(rows.iter().map(|row| &row.source), false);
     let identities = load_child_identities(client, &rows).await?;
     let observations = render_observations(rows, &identities)?;
+    let children = observations
+        .iter()
+        .zip(child_tags)
+        .flat_map(|(observation, tag)| {
+            tag.into_iter()
+                .chain(observation.child_identities.iter().map(|identity| {
+                    SignalDraft::child(
+                        &observation.source,
+                        &identity.namespace,
+                        &identity.identifier,
+                        &identity.pool,
+                    )
+                }))
+        })
+        .collect::<Vec<_>>();
     let protocol_commitments = load_protocol_commitments(client, hash_bytes).await?;
+    let relationship_signals = relationship::signals(
+        client,
+        &bitcoin_miner_pool,
+        bitcoin,
+        children,
+        protocol_commitments.as_ref(),
+    )
+    .await?;
     Ok(Some(BlockPayload {
         block: ApiBlock {
             hash: hash.to_owned(),
@@ -185,6 +216,7 @@ pub(super) async fn block_from_near_observations(
         stale_branch: None,
         commitment,
         protocol_commitments,
+        relationship_signals,
     }))
 }
 

@@ -103,5 +103,37 @@
     "parent_coinbase_script_hex": null,
     "marker": null
   },
-  "protocol_commitments": null
+  "protocol_commitments": null,
+  "relationship_signals": {
+    "mixed": false,
+    "reference_pool": {
+      "id": 9,
+      "slug": "rskpool",
+      "name": "RSKPool",
+      "known": true
+    },
+    "pools": [
+      {
+        "id": 9,
+        "slug": "rskpool",
+        "name": "RSKPool",
+        "known": true
+      }
+    ],
+    "entries": [
+      {
+        "kind": "child_reward_address",
+        "source": "auxpow:rsk",
+        "namespace": "rsk_miner_address",
+        "value": "2222222222222222222222222222222222222222",
+        "pool": {
+          "id": 9,
+          "slug": "rskpool",
+          "name": "RSKPool",
+          "known": true
+        },
+        "basis": "child_registry"
+      }
+    ]
+  }
 }

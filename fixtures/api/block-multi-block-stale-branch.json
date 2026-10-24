@@ -281,5 +281,63 @@
     "parent_coinbase_script_hex": "03e7f505",
     "marker": null
   },
-  "protocol_commitments": null
+  "protocol_commitments": null,
+  "relationship_signals": {
+    "mixed": false,
+    "reference_pool": {
+      "id": 8,
+      "slug": "f2pool",
+      "name": "F2Pool",
+      "known": true
+    },
+    "pools": [
+      {
+        "id": 8,
+        "slug": "f2pool",
+        "name": "F2Pool",
+        "known": true
+      }
+    ],
+    "entries": [
+      {
+        "kind": "bitcoin_coinbase_tag",
+        "source": null,
+        "namespace": "btc_coinbase_tag",
+        "value": "f2pool",
+        "pool": {
+          "id": 8,
+          "slug": "f2pool",
+          "name": "F2Pool",
+          "known": true
+        },
+        "basis": "pool_snapshot"
+      },
+      {
+        "kind": "child_coinbase_tag",
+        "source": "auxpow:namecoin",
+        "namespace": "btc_coinbase_tag",
+        "value": "f2pool",
+        "pool": {
+          "id": 8,
+          "slug": "f2pool",
+          "name": "F2Pool",
+          "known": true
+        },
+        "basis": "pool_snapshot"
+      },
+      {
+        "kind": "child_reward_address",
+        "source": "auxpow:rsk",
+        "namespace": "rsk_miner_address",
+        "value": "4444444444444444444444444444444444444444",
+        "pool": {
+          "id": 8,
+          "slug": "f2pool",
+          "name": "F2Pool",
+          "known": true
+        },
+        "basis": "child_registry"
+      }
+    ]
+  }
 }

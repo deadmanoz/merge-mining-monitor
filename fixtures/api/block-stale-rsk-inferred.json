@@ -178,5 +178,37 @@
     "child_stale_hashes": []
   },
   "commitment": null,
-  "protocol_commitments": null
+  "protocol_commitments": null,
+  "relationship_signals": {
+    "mixed": false,
+    "reference_pool": {
+      "id": 8,
+      "slug": "f2pool",
+      "name": "F2Pool",
+      "known": true
+    },
+    "pools": [
+      {
+        "id": 8,
+        "slug": "f2pool",
+        "name": "F2Pool",
+        "known": true
+      }
+    ],
+    "entries": [
+      {
+        "kind": "child_reward_address",
+        "source": "auxpow:rsk",
+        "namespace": "rsk_miner_address",
+        "value": "2222222222222222222222222222222222222222",
+        "pool": {
+          "id": 8,
+          "slug": "f2pool",
+          "name": "F2Pool",
+          "known": true
+        },
+        "basis": "child_registry"
+      }
+    ]
+  }
 }

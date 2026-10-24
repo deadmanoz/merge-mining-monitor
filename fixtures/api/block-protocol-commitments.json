@@ -88,5 +88,69 @@
         }
       }
     ]
+  },
+  "relationship_signals": {
+    "mixed": true,
+    "reference_pool": {
+      "id": 121,
+      "slug": "secpool",
+      "name": "SecPool",
+      "known": true
+    },
+    "pools": [
+      {
+        "id": 121,
+        "slug": "secpool",
+        "name": "SecPool",
+        "known": true
+      },
+      {
+        "id": 11,
+        "slug": "antpool",
+        "name": "AntPool",
+        "known": true
+      }
+    ],
+    "entries": [
+      {
+        "kind": "bitcoin_payout_address",
+        "source": null,
+        "namespace": "btc_payout_address",
+        "value": "3Awm3FNpmwrbvAFVThRUFqgpbVuqWisni9",
+        "pool": {
+          "id": 121,
+          "slug": "secpool",
+          "name": "SecPool",
+          "known": true
+        },
+        "basis": "pool_snapshot"
+      },
+      {
+        "kind": "protocol_account",
+        "source": null,
+        "namespace": "core_reward_address",
+        "value": "0x942c01262fa046fdb8ba0dfce3753405c74aed0e",
+        "pool": {
+          "id": 121,
+          "slug": "secpool",
+          "name": "SecPool",
+          "known": true
+        },
+        "basis": "protocol_account_registry"
+      },
+      {
+        "kind": "protocol_account",
+        "source": null,
+        "namespace": "exsat_account",
+        "value": "antpoole.sat",
+        "pool": {
+          "id": 11,
+          "slug": "antpool",
+          "name": "AntPool",
+          "known": true
+        },
+        "basis": "protocol_account_registry"
+      }
+    ]
   }
 }

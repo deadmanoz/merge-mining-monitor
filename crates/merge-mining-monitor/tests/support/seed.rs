@@ -319,7 +319,8 @@ pub struct StaleEventSeed {
     pub header_time: i64,
 }
 
-pub async fn insert_stale_with_event(client: &Client, seed: StaleEventSeed) -> Result<()> {
+/// Returns the event id.
+pub async fn insert_stale_with_event(client: &Client, seed: StaleEventSeed) -> Result<i64> {
     insert_block(
         client,
         &seed.hash,
@@ -353,7 +354,8 @@ pub async fn insert_stale_with_event(client: &Client, seed: StaleEventSeed) -> R
         &[event_id],
         seed.header_time,
     )
-    .await
+    .await?;
+    Ok(event_id)
 }
 
 pub async fn set_block_pool(client: &Client, hash: &[u8], pool_id: i64) -> Result<()> {

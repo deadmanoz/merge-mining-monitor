@@ -49,6 +49,7 @@
       },
       "competition": null,
       "protocol_commitments": null,
+      "relationship": { "mixed": false, "pools": [{ "id": 8, "slug": "f2pool", "name": "F2Pool", "known": true }] },
       "child_chain_evidence": []
     },
     {
@@ -76,6 +77,7 @@
       },
       "competition": null,
       "protocol_commitments": null,
+      "relationship": { "mixed": false, "pools": [{ "id": 8, "slug": "f2pool", "name": "F2Pool", "known": true }] },
       "child_chain_evidence": []
     },
     {
@@ -103,6 +105,7 @@
       },
       "competition": null,
       "protocol_commitments": null,
+      "relationship": { "mixed": false, "pools": [{ "id": 8, "slug": "f2pool", "name": "F2Pool", "known": true }] },
       "child_chain_evidence": []
     },
     {
@@ -130,6 +133,7 @@
       },
       "competition": null,
       "protocol_commitments": null,
+      "relationship": { "mixed": false, "pools": [{ "id": 8, "slug": "f2pool", "name": "F2Pool", "known": true }] },
       "child_chain_evidence": []
     },
     {
@@ -157,6 +161,7 @@
       },
       "competition": null,
       "protocol_commitments": null,
+      "relationship": { "mixed": false, "pools": [{ "id": 7, "slug": "antpool", "name": "AntPool", "known": true }] },
       "child_chain_evidence": [
         {
           "source": "auxpow:namecoin",

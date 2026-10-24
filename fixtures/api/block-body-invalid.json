@@ -145,5 +145,50 @@
     "parent_coinbase_script_hex": "03e6f505",
     "marker": null
   },
-  "protocol_commitments": null
+  "protocol_commitments": null,
+  "relationship_signals": {
+    "mixed": false,
+    "reference_pool": {
+      "id": 7,
+      "slug": "antpool",
+      "name": "AntPool",
+      "known": true
+    },
+    "pools": [
+      {
+        "id": 7,
+        "slug": "antpool",
+        "name": "AntPool",
+        "known": true
+      }
+    ],
+    "entries": [
+      {
+        "kind": "bitcoin_coinbase_tag",
+        "source": null,
+        "namespace": "btc_coinbase_tag",
+        "value": "antpool",
+        "pool": {
+          "id": 7,
+          "slug": "antpool",
+          "name": "AntPool",
+          "known": true
+        },
+        "basis": "pool_snapshot"
+      },
+      {
+        "kind": "child_coinbase_tag",
+        "source": "auxpow:namecoin",
+        "namespace": "btc_coinbase_tag",
+        "value": "antpool",
+        "pool": {
+          "id": 7,
+          "slug": "antpool",
+          "name": "AntPool",
+          "known": true
+        },
+        "basis": "pool_snapshot"
+      }
+    ]
+  }
 }

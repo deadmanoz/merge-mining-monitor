@@ -52,6 +52,11 @@
       "scenario": "Core-attested canonical block whose coinbase declares a CORE reward address and an exSat account, with decoded protocol_commitments and each declared account's pool"
     },
     {
+      "file": "block-relationship-signals.json",
+      "endpoint_family": "/api/v1/block/:hash",
+      "scenario": "Canonical Binance Pool block whose RSK reward address and declared exSat account are registered to AntPool, so relationship_signals is mixed"
+    },
+    {
       "file": "navigator-stale.json",
       "endpoint_family": "/api/v1/navigator/stale",
       "scenario": "Height-keyed stale navigator page with newest-first index, cursors, and tree-window metadata"

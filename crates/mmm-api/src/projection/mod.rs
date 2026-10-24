@@ -22,8 +22,9 @@ pub use {
     block::{BlockPayload, EventDetail, ProtocolCommitments},
     competitions::CompetitionsPayload,
     navigator::{NavigatorItem, NavigatorPayload, NavigatorView, OrphanClassCounts},
+    shared::RelationshipSignals,
     sources::{SourceEndpointRecord, SourcesPayload},
-    tree::{TreeEdge, TreePayload, TreeProtocolCommitment},
+    tree::{TreeEdge, TreePayload, TreeProtocolCommitment, TreeRelationship},
 };
 
 /// Projection failure split: `Api` carries a client-facing `ApiError` (mapped

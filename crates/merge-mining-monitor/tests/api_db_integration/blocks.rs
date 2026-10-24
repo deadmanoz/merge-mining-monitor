@@ -1,20 +1,29 @@
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result};
 use bitcoin::block::{Header, Version};
 use bitcoin::hashes::Hash as _;
 use bitcoin::{BlockHash, CompactTarget, TxMerkleNode};
-use mmm_api::projection::{self, ProjectionError, ProtocolCommitments, TreeProtocolCommitment};
+use mmm_api::projection::{
+    self, ProjectionError, ProtocolCommitments, RelationshipSignals, TreeProtocolCommitment,
+};
 use mmm_bitcoin_core::BitcoinCoreBlockCoinbase;
 use mmm_bitcoin_core::ConfiguredParentClassifier;
-use mmm_capture::capture::{RSK_PROOF_FORMAT_OPAQUE, RskEvidencePayload};
+use mmm_capture::capture::{
+    BTC_COINBASE_TAG_NAMESPACE, BTC_POOL_SNAPSHOT_LEGACY_CHILD_SCRIPT_SOURCE,
+    CHILD_PAYOUT_REGISTRY_SOURCE, EventPoolAttribution, PoolAttributionConfidence,
+    PoolAttributionSide, RSK_PROOF_FORMAT_OPAQUE, RskEvidencePayload,
+};
+use mmm_capture::child_payout::NAMECOIN_PAYOUT_ADDRESS_NAMESPACE;
 use mmm_capture::protocol_commitment::DECODER_VERSION;
-use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, RSK_SOURCE_CODE};
+use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, RSK_SOURCE_CODE, SYSCOIN_SOURCE_CODE};
 use mmm_producers::seed_protocol_account_identities;
 use mmm_read_model::{
     CoreCanonicalWrite, ReconcileReadModelConfig, run_reconcile_read_model, write_core_canonical,
 };
 use mmm_store::{
     ChildChainHeadOutcome, ChildChainHeadRecord, CurrentBlockParent, EvidenceMarker, get_source_id,
-    record_child_chain_block, record_rsk_observation,
+    record_child_chain_block, record_rsk_observation, upsert_event_pool_attributions,
 };
 use serde_json::json;
 use time::Month;
@@ -22,15 +31,15 @@ use tokio_postgres::Client;
 
 use crate::support::scenario::{ChildEvidence, Scenario, canonical_verdict, capture_child_event};
 use crate::support::seed::{
-    EventSeed, day_epoch, display_hash, hash_bytes, header_hash_bytes, insert_attestation_proof,
-    insert_block, insert_event, insert_near_observation, insert_pool, insert_pool_identity,
-    set_block_pool,
+    EventSeed, StaleEventSeed, day_epoch, display_hash, hash_bytes, header_hash_bytes,
+    insert_attestation_proof, insert_block, insert_event, insert_near_observation, insert_pool,
+    insert_pool_identity, insert_stale_with_event, set_block_pool,
 };
 use crate::support::{
     coinbase_outputs_fixture, default_pool_snapshot, header_meeting_bits, secpool_blocks,
 };
 
-use crate::helpers::{format_projection_error, project_tree};
+use crate::helpers::{format_projection_error, project_tree, seed_canonical_chain};
 
 async fn project_block(client: &Client, hash: &[u8]) -> Result<projection::BlockPayload> {
     projection::block(client, &display_hash(hash))
@@ -721,6 +730,7 @@ async fn block_and_tree_serve_protocol_commitments_once_derived_for_the_decoder(
             ]
         );
         assert_tree_matches_block(&client, secpool.height, &section).await?;
+        assert_secpool_relationship(&client, secpool.height, &secpool.hash).await?;
         let section = protocol_commitments(&client, &nested.block_hash().to_byte_array())
             .await?
             .context("derived for the running decoder")?;
@@ -827,6 +837,221 @@ async fn block_protocol_commitments_report_the_state_of_stored_outputs() -> Resu
                 .is_none(),
             "a parent without a block row has no derived rows yet"
         );
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+/// The block page's relationship signals for one parent, once its tree node's summary agrees.
+async fn relationship(client: &Client, height: i32, hash: &[u8]) -> Result<RelationshipSignals> {
+    let block = project_block(client, hash).await?.relationship_signals;
+    let tree = project_tree(client, Some(&format!("at_height={height}")))
+        .await?
+        .nodes
+        .into_iter()
+        .find(|node| node.hash == display_hash(hash))
+        .context("tree node for the parent")?
+        .relationship;
+    assert_eq!(
+        (
+            block
+                .pools
+                .iter()
+                .map(|pool| &pool.slug)
+                .collect::<Vec<_>>(),
+            block.mixed
+        ),
+        (
+            tree.pools.iter().map(|pool| &pool.slug).collect::<Vec<_>>(),
+            tree.mixed
+        ),
+        "block and tree agree"
+    );
+    Ok(block)
+}
+
+/// The SecPool block's exSat account names another pool than its payout and CORE account.
+async fn assert_secpool_relationship(client: &Client, height: i32, hash: &[u8]) -> Result<()> {
+    let signals = relationship(client, height, hash).await?;
+    assert_eq!(pool_slugs(&signals), ["secpool", "antpool"]);
+    assert!(signals.mixed);
+    let entries = signals
+        .entries
+        .iter()
+        .map(|entry| (entry.kind, entry.value.as_str(), entry.pool.slug.as_deref()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        entries,
+        [
+            (
+                "bitcoin_payout_address",
+                "3Awm3FNpmwrbvAFVThRUFqgpbVuqWisni9",
+                Some("secpool")
+            ),
+            (
+                "protocol_account",
+                "0x942c01262fa046fdb8ba0dfce3753405c74aed0e",
+                Some("secpool")
+            ),
+            ("protocol_account", "antpoole.sat", Some("antpool")),
+        ]
+    );
+    Ok(())
+}
+
+fn pool_slugs(signals: &RelationshipSignals) -> Vec<&str> {
+    signals
+        .pools
+        .iter()
+        .filter_map(|pool| pool.slug.as_deref())
+        .collect()
+}
+
+const F2POOL_PAYOUT: &str = "1KFHE7w8BhaENAswwryaoccDb6qcT6DbYY";
+
+/// One-block stale parents at heights 60 to 63, each with a Namecoin event and proof: the
+/// canonical hashes and each stale's event id, by height.
+async fn seed_relationship_stales(
+    client: &Client,
+    namecoin: i64,
+    ts: i64,
+) -> Result<(BTreeMap<i32, Vec<u8>>, BTreeMap<i32, i64>)> {
+    let canonical = seed_canonical_chain(client, 60..=63, 0x6000, 0x5fff, ts, None).await?;
+    let mut events = BTreeMap::new();
+    for height in 60..=63 {
+        let event = insert_stale_with_event(
+            client,
+            StaleEventSeed {
+                source_id: namecoin,
+                hash: relationship_stale(height),
+                prev_hash: canonical
+                    .get(&(height - 1))
+                    .cloned()
+                    .unwrap_or_else(|| hash_bytes(0x5fff)),
+                canonical_competitor_hash: canonical[&height].clone(),
+                height,
+                child_height: height,
+                header_time: ts + i64::from(height),
+            },
+        )
+        .await?;
+        events.insert(height, event);
+    }
+    Ok((canonical, events))
+}
+
+fn relationship_stale(height: i32) -> Vec<u8> {
+    hash_bytes(0x6100 + height as u32)
+}
+
+async fn set_parent_coinbase(
+    client: &Client,
+    event: i64,
+    script: &[u8],
+    outputs: Option<&[u8]>,
+    text: Option<&str>,
+) -> Result<()> {
+    client
+        .execute(
+            "UPDATE merge_mining_event SET btc_parent_coinbase_script = $2, \
+             btc_parent_coinbase_outputs = $3, btc_parent_coinbase_outputs_text = $4 \
+             WHERE id = $1",
+            &[&event, &script, &outputs, &text],
+        )
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn relationship_signals_read_child_attributions_and_the_most_complete_coinbase() -> Result<()>
+{
+    crate::run_db_test!(client, {
+        let (_, pool_ids) = default_pool_snapshot(&client).await?;
+        let namecoin = get_source_id(&client, NAMECOIN_SOURCE_CODE).await?;
+        let syscoin = get_source_id(&client, SYSCOIN_SOURCE_CODE).await?;
+        let ts = day_epoch(2026, Month::October, 1);
+        let (canonical, events) = seed_relationship_stales(&client, namecoin, ts).await?;
+        let stale = relationship_stale;
+
+        // A child tag and a child payout naming different pools leave `child_pool_id` NULL;
+        // both still count.
+        let child = |namespace, match_kind, value: &str, slug: &str, source| EventPoolAttribution {
+            side: PoolAttributionSide::ChildBlock,
+            namespace,
+            match_kind,
+            matched_value: value.to_owned(),
+            pool_id: Some(pool_ids[slug]),
+            pool_identity_id: None,
+            source,
+            confidence: PoolAttributionConfidence::High,
+            details: json!({}),
+        };
+        upsert_event_pool_attributions(
+            &client,
+            events[&60],
+            &[
+                child(
+                    BTC_COINBASE_TAG_NAMESPACE,
+                    "coinbase_tag",
+                    "/AntPool/",
+                    "antpool",
+                    BTC_POOL_SNAPSHOT_LEGACY_CHILD_SCRIPT_SOURCE,
+                ),
+                child(
+                    NAMECOIN_PAYOUT_ADDRESS_NAMESPACE,
+                    "payout_address",
+                    "N1",
+                    "f2pool",
+                    CHILD_PAYOUT_REGISTRY_SOURCE,
+                ),
+            ],
+            0,
+        )
+        .await?;
+        let signals = relationship(&client, 60, &stale(60)).await?;
+        let kinds = signals
+            .entries
+            .iter()
+            .map(|entry| entry.kind)
+            .collect::<Vec<_>>();
+        assert_eq!(kinds, ["child_coinbase_tag", "child_reward_address"]);
+        assert!(signals.mixed);
+
+        // A later copy with outputs beats an earlier script-only one.
+        set_parent_coinbase(&client, events[&61], b"/AntPool/", None, None).await?;
+        let later = insert_event(
+            &client,
+            EventSeed {
+                source_id: syscoin,
+                child_height: 1061,
+                child_hash: hash_bytes(0x6261),
+                parent_hash: stale(61),
+                prev_hash: canonical[&60].clone(),
+                parent_time: ts + 61,
+                kind: "stale",
+                pow_validates_btc_target: true,
+                btc_height: Some(61),
+                pool_id: None,
+            },
+        )
+        .await?;
+        insert_attestation_proof(&client, &stale(61), syscoin, &[later], ts + 61).await?;
+        let f2pool_outputs = coinbase_outputs_fixture(868_400)?;
+        set_parent_coinbase(&client, later, b"/F2Pool/", Some(&f2pool_outputs), None).await?;
+        let signals = relationship(&client, 61, &stale(61)).await?;
+        assert_eq!(pool_slugs(&signals), ["f2pool"]);
+        assert!(!signals.mixed);
+
+        // Without usable structured outputs, payouts come from the published text.
+        let text = format!("{F2POOL_PAYOUT}:625000000");
+        for (height, outputs) in [(62, None), (63, Some(&b"\xff"[..]))] {
+            set_parent_coinbase(&client, events[&height], b"/AntPool/", outputs, Some(&text))
+                .await?;
+            let signals = relationship(&client, height, &stale(height)).await?;
+            assert_eq!(pool_slugs(&signals), ["antpool", "f2pool"]);
+            assert_eq!(signals.entries[1].value, F2POOL_PAYOUT);
+            assert!(signals.mixed);
+        }
 
         Ok::<_, anyhow::Error>(())
     })

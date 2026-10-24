@@ -19,8 +19,8 @@ use crate::child_payout::{
 use crate::pool_resolver::{MatchKind, PoolMatch, PoolResolver};
 
 // Persisted `pool_attribution` namespace and `source` literals (frozen schema contract).
-pub(crate) const BTC_COINBASE_TAG_NAMESPACE: &str = "btc_coinbase_tag";
-pub(crate) const BTC_PAYOUT_ADDRESS_NAMESPACE: &str = "btc_payout_address";
+pub const BTC_COINBASE_TAG_NAMESPACE: &str = "btc_coinbase_tag";
+pub const BTC_PAYOUT_ADDRESS_NAMESPACE: &str = "btc_payout_address";
 pub const BTC_POOL_SNAPSHOT_SOURCE: &str = "btc_pool_snapshot";
 pub const BTC_POOL_SNAPSHOT_LEGACY_CHILD_SCRIPT_SOURCE: &str =
     "btc_pool_snapshot_legacy_child_script";

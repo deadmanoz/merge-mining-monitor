@@ -97,6 +97,28 @@ SELECT s.account_identifier AS reward_address,
  ORDER BY blocks DESC;
 ```
 
+## Relationship Signals
+
+A Bitcoin parent names pools in several independent places:
+- its coinbase tag and payout addresses;
+- each merge-mined child block's reward address or child coinbase tag;
+- the protocol accounts its coinbase declares.
+
+When those name different pools, the block was very likely built on another pool's jobs, for example a Binance Pool block whose RSK reward address is registered to AntPool. Attribution never compares them:
+- the block miner takes a matching tag and ignores payout addresses;
+- the display miner lets a known Bitcoin pool win;
+- conflicting child pools collapse to Unknown.
+
+The relationship-signals layer lists every one of these names with its pool. It is computed at read time from rows the API already reads (`/api/v1/block/:hash` `relationship_signals`, tree node `relationship`; see `docs/api-contract.md`).
+
+- **Kinds.**
+  - `bitcoin_coinbase_tag` and `bitcoin_payout_address` come from the pool snapshot, applied to one copy of the parent coinbase. That copy is the block row's complete Core coinbase; otherwise the event or observation with structured outputs, then with published output text, then with a script alone, lowest id first.
+  - `child_reward_address` and `child_coinbase_tag` come from each child block's attribution rows, or a near observation's identities and coinbase script. A child coinbase tag is a label the child declares: a Bitcoin-style pool tag in its coinbase script, or Elastos minerinfo.
+  - `protocol_account` comes from each valid CORE or exSat declaration.
+- **Mixed.** A parent is mixed when its reference pool and its signals name two or more distinct known pools. The reference pool is the block miner when known, else the first known signal. Several signals naming one pool count once, and Unknown pools never count.
+- **Unchanged attribution.** The block miner, the display miner and every attribution row stay as they are; the layer only reads them.
+- **Wording.** A signal is an association, never proof of who mined the block, built its template or controls an address or account.
+
 ## Reclassification
 
 `just reclassify-pools` replays attribution from stored evidence and the embedded registries (for example `just reclassify-pools --only main --source auxpow:qbit` to enrich stored child outputs in bounded pages without node RPC calls).
