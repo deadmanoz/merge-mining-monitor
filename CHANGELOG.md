@@ -12,6 +12,8 @@ This changelog starts with the initial release.
 
 - Serve `relationship_signals` on `/api/v1/block/{hash}` and a `relationship` summary on `/api/v1/tree` nodes. Together they list every pool a parent names: its Bitcoin coinbase tag and payout addresses, each child block's reward address or coinbase tag, and its declared CORE and exSat accounts. A parent is mixed when these name two or more pools, for example a Binance Pool block whose RSK reward address is registered to AntPool. The fields are computed at read time and change no attribution. The block page and tree now share one pool-snapshot resolver instead of building it per request.
 
+- Show relationship signals in the UI: a "Relationship signals" drawer section, second after the parent block, lists every pool the block names and marks the rows that differ from its miner; a mixed block gets a "Mixed signals" chip beside its miner, an amber ring on the header tree, and its pools on the selection card; and a "Mixed signals" control under Relationships highlights mixed blocks (`mixed=1` in the URL). Child block rows now label their resolved pool "Child block pool".
+
 ### Fixed
 
 - Align source-rail subtitles: Terracoin uses its 2016 AuxPoW start and 2-minute target, RSK, Hathor, and Fractal Bitcoin write `~30 s`, and i0coin's recovered span is 2011–2021.

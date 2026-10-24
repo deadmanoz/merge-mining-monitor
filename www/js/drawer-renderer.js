@@ -1,6 +1,7 @@
 import { blockExplorer } from "./explorer-links.js";
 import { fmtDelta } from "./delta-scales.js";
-import { $, chainDisplayName, CLASSIFICATION_META, esc, formatEpoch, formatScalar, formatSourceList, formatSourceRef, protocolLabel, protocolStatusLabel, state } from "./frontend-state.js";
+import { $, chainDisplayName, CLASSIFICATION_META, copyButton, copyValue, esc, formatEpoch, formatScalar, formatSourceList, formatSourceRef, poolName, protocolLabel, protocolStatusLabel, state } from "./frontend-state.js";
+import { mixedSignalsChip, RELATIONSHIP_SIGNALS_HELP, renderRelationshipSignals } from "./drawer-signals.js";
 
 
 // Contextual help topics for AuxPoW fields in the block-detail drawer.
@@ -101,6 +102,7 @@ const AUXPOW_HELP = {
       "Core DAO reads one CORE output per block, marked \"read by Core DAO\"; any other CORE output is marked \"not read by Core DAO\". exSat can credit a registered payout address that appears before its marker, so which declaration it credits cannot be read from the coinbase. A malformed declaration keeps its raw script and names no account.",
     ],
   },
+  relationship_signals: RELATIONSHIP_SIGNALS_HELP,
 };
 
 // Every declaration of a header is decoded from the same outputs, so the summary names them once.
@@ -259,7 +261,7 @@ function auxpowInfoButton(topic) {
 }
 
 function detailSectionHelp(title, topic, body) {
-  return `<section class="detail-section"><h3>${esc(title)} ${auxpowInfoButton(topic)}</h3>${body}</section>`;
+  return `<section class="detail-section" data-topic="${esc(topic)}"><h3>${esc(title)} ${auxpowInfoButton(topic)}</h3>${body}</section>`;
 }
 
 function consensusRuleInfoButton(token, help) {
@@ -298,7 +300,10 @@ function renderDrawer() {
 function renderBlockDetailPayload(payload) {
   const block = payload.block;
   return [
-    detailSection("Parent block (Bitcoin)", renderParentBlock(block)),
+    detailSection("Parent block (Bitcoin)", renderParentBlock(block, payload.relationship_signals)),
+    payload.relationship_signals
+      ? detailSectionHelp("Relationship signals", "relationship_signals", renderRelationshipSignals(payload.relationship_signals))
+      : "",
     payload.commitment ? detailSectionHelp("Merge-mining commitment", "commitment", renderCommitment(payload.commitment)) : "",
     detailSection("Sources & capture", renderSourcesAndCapture(block.source_summary)),
     detailSection(
@@ -317,7 +322,7 @@ function renderBlockDetailPayload(payload) {
   ].join("");
 }
 
-function renderParentBlock(block) {
+function renderParentBlock(block, relationshipSignals) {
   const rows = [
     ["Hash", explorerCopyValue(block.hash, "bitcoin", { hash: block.hash })],
     ["Height", formatScalar(block.height)],
@@ -333,7 +338,7 @@ function renderParentBlock(block) {
   if (block.coinbase_tag) {
     rows.push(["Coinbase tag", esc(block.coinbase_tag)]);
   }
-  rows.push(["Bitcoin miner", poolName(block.bitcoin_miner_pool)]);
+  rows.push(["Bitcoin miner", poolName(block.bitcoin_miner_pool) + mixedSignalsChip(relationshipSignals)]);
   if (block.display_miner_basis === "child_inferred") {
     rows.push(["Inferred miner", `${poolName(block.display_miner_pool)} ${auxpowInfoButton("inferred_miner")}`]);
   }
@@ -415,24 +420,6 @@ function kvRows(rows) {
   return `<dl class="kv">${rows.map(([key, value]) => `<dt>${esc(key)}</dt><dd>${value}</dd>`).join("")}</dl>`;
 }
 
-function copyButton(value) {
-  const text = esc(value);
-  return `<button type="button" class="copy-button" data-copy="${text}" aria-label="Copy value" title="Copy value">
-    <svg class="copy-button-icon copy-button-icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect>
-      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
-    </svg>
-    <svg class="copy-button-icon copy-button-icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M20 6 9 17l-5-5"></path>
-    </svg>
-  </button>`;
-}
-
-function copyValue(value) {
-  if (value === null || value === undefined) return formatScalar(value);
-  return `<code>${esc(value)}</code> ${copyButton(value)}`;
-}
-
 function copyOnly(value) {
   if (value === null || value === undefined) return formatScalar(value);
   return copyButton(value);
@@ -477,12 +464,6 @@ function kindBadge(kind) {
   return `<span class="state-pill kind-${esc(kind)}">${esc(kind)}</span>`;
 }
 
-function poolName(pool) {
-  if (!pool) return formatScalar(null);
-  const cls = pool.known ? "true-value" : "false-value";
-  return `<span class="${cls}">${esc(pool.name || "Unknown")}</span>`;
-}
-
 function renderSourcesAndCapture(summary = {}) {
   const rows = [
     ["Sources", formatSourceList(summary.sources || [])],
@@ -523,7 +504,7 @@ function renderEvents(events, parentHeaderTime) {
     ];
     if (event.slot_index != null) rows.push(["Slot index", `${formatScalar(event.slot_index)} ${auxpowInfoButton("slot_index")}`]);
     if (event.chain_id != null) rows.push(["Chain id", `${formatScalar(event.chain_id)} ${auxpowInfoButton("chain_id")}`]);
-    if (knownChildPool) rows.push(["Child miner", poolName(knownChildPool)]);
+    if (knownChildPool) rows.push(["Child block pool", poolName(knownChildPool)]);
     const rsk = event.rsk ? renderRsk(event.rsk) : "";
     const auxProof = event.aux_proof
       ? renderAuxProof(event.aux_proof)
@@ -549,7 +530,7 @@ function renderObservations(observations, parentHeaderTime) {
     for (const identity of observation.child_identities || []) {
       rows.push([identity.namespace, copyValue(identity.identifier)]);
     }
-    if (knownChildPool) rows.push(["Child miner", poolName(knownChildPool)]);
+    if (knownChildPool) rows.push(["Child block pool", poolName(knownChildPool)]);
     return `<details class="event-block"><summary>${summary}</summary>${kvRows(rows)}</details>`;
   }).join("");
 }

@@ -138,3 +138,5 @@
 .fill-invalid_block { background: var(--invalid_block); }
 .fill-strict_btc_orphan { background: var(--orphan-strict); }
 .fill-weak_btc_orphan { background: var(--orphan-weak); }
+/* An outline swatch, like the tree's ring around a mixed-signals block of any kind. */
+.ring-signal-mixed { box-shadow: inset 0 0 0 2px var(--signal-mixed); }

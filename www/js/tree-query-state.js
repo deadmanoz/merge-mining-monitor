@@ -94,6 +94,7 @@ function syncUrl() {
     params.set("classification", q.classification.join(","));
   }
   if (q.sources.length) params.set("sources", q.sources.join(","));
+  if (q.mixed) params.set("mixed", "1");
   if (state.selectedHash) params.set("selected", state.selectedHash);
   const url = `${window.location.pathname}?${params.toString()}`;
   window.history.replaceState(null, "", url);
