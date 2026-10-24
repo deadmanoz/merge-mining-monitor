@@ -1,7 +1,6 @@
 // Source modal body: General, Technical, and Capture tabs over CHAIN_PROFILES and /sources.
 import { CHAIN_PROFILES, SOURCE_LIFECYCLE } from "./source-registry.generated.js";
-import { esc, formatScalar, relativeTime, sourceChain } from "./frontend-state.js";
-import { kvRows } from "./drawer-renderer.js";
+import { esc, formatScalar, kvRows, relativeTime, sourceChain } from "./frontend-state.js";
 import { sourceSyncLabel, sourceRuntimeRows } from "./source-status.js";
 
 const TABS = [

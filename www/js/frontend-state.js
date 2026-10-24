@@ -369,6 +369,10 @@ function copyValue(value) {
   return `<code>${esc(value)}</code> ${copyButton(value)}`;
 }
 
+function kvRows(rows) {
+  return `<dl class="kv">${rows.map(([key, value]) => `<dt>${esc(key)}</dt><dd>${value}</dd>`).join("")}</dl>`;
+}
+
 function poolName(pool) {
   if (!pool) return formatScalar(null);
   const cls = pool.known ? "true-value" : "false-value";
@@ -552,6 +556,7 @@ function writeForm() {
 export {
   copyButton,
   copyValue,
+  kvRows,
   poolName,
   API_BASE,
   DEFAULTS,

@@ -2,8 +2,22 @@ const { expect, test } = require("@playwright/test");
 const { blockPayload, makeNode, stubApi, treeEnvelope } = require("./support/api-stubs");
 const fixture = require("../fixtures/api/block-relationship-signals.json");
 
-// The fixture's Binance Pool block, whose RSK reward address and exSat account name AntPool.
-const signals = fixture.relationship_signals;
+// The fixture's Binance Pool block, whose RSK reward address and exSat account name AntPool, plus
+// a first signal naming no known pool, whose group still comes last.
+const signals = {
+  ...fixture.relationship_signals,
+  entries: [
+    {
+      kind: "child_coinbase_tag",
+      source: "auxpow:elastos",
+      namespace: "elastos_minerinfo",
+      value: "solo",
+      pool: { id: null, slug: null, name: "Unknown", known: false },
+      basis: "child_registry",
+    },
+    ...fixture.relationship_signals.entries,
+  ],
+};
 const MIXED = "ce".repeat(32);
 const PLAIN = "cf".repeat(32);
 
@@ -19,22 +33,21 @@ async function openTree(page, url = "/") {
   await page.goto(url);
 }
 
-test("the drawer lists the signals second, accents the rows naming another pool and scrolls to them from the chip", async ({ page }) => {
+test("the drawer groups the signals by pool, collapsed, accents the group naming another pool and scrolls to them from the chip", async ({ page }) => {
   await openTree(page, `/?selected=${MIXED}`);
   const sections = page.locator("#drawer .detail-section");
   await expect(sections.nth(1).locator("h3")).toContainText("Relationship signals");
 
   const section = page.locator('#drawer .detail-section[data-topic="relationship_signals"]');
   await expect(section.locator(".signal-summary")).toHaveText("Mixed signals: they name 2 pools, Binance Pool and AntPool.");
-  const rows = section.locator("tbody tr");
-  await expect(rows).toHaveCount(3);
-  await expect(rows.nth(0)).toContainText("Bitcoin coinbase tag");
-  await expect(rows.nth(0)).not.toHaveClass(/signal-differs/);
-  await expect(rows.nth(1)).toContainText("RSK reward address");
-  await expect(rows.nth(1)).toHaveClass(/signal-differs/);
-  await expect(rows.nth(1).locator(".signal-mixed-pill")).toHaveText("differs");
-  await expect(rows.nth(2)).toContainText("exSat account");
-  await expect(rows.nth(2)).toContainText("antpoole.sat");
+  const groups = section.locator("details.event-block");
+  await expect(groups.locator("summary")).toHaveText(["Binance Pool 1 signal", "AntPool 2 signals differs", "No known pool 1 signal"]);
+  await expect(section.locator("details[open]")).toHaveCount(0);
+  await expect(section.locator(".signal-differs .signal-mixed-pill")).toHaveText(["differs"]);
+
+  await groups.nth(1).locator("summary").click();
+  await expect(groups.nth(1).getByText("RSK reward address")).toBeVisible();
+  await expect(groups.nth(1).locator("dd")).toContainText(["5555555555555555555555555555555555555555", "antpoole.sat"]);
 
   const chip = sections.nth(0).locator(".signal-mixed-pill");
   await expect(chip).toHaveText("Mixed signals · 2 pools");
