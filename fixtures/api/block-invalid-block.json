@@ -112,5 +112,16 @@
     "parent_coinbase_script_hex": null,
     "marker": null
   },
-  "protocol_commitments": null
+  "protocol_commitments": null,
+  "relationship_signals": {
+    "mixed": false,
+    "reference_pool": {
+      "id": null,
+      "slug": null,
+      "name": "Unknown",
+      "known": false
+    },
+    "pools": [],
+    "entries": []
+  }
 }

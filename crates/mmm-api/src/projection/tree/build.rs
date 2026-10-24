@@ -11,7 +11,7 @@ use super::super::shared::{
     COMPETITION_FROM_SQL, CompetitionCore, TreeCompetition, competition_core_select, display_hash,
     projection_invariant_error,
 };
-use super::{TreeBranch, TreeEdge, TreeNode, TreeNodeBranch};
+use super::{TreeBranch, TreeEdge, TreeNode, TreeNodeBranch, TreeRelationship};
 use crate::normalize::ParentKind;
 use crate::query::{TreeQuery, kind_as_str, kind_selected};
 
@@ -265,6 +265,7 @@ pub(super) fn materialize_tree(
             proof_state: projection.proof_state,
             competition: projection.competition,
             protocol_commitments: None,
+            relationship: TreeRelationship::default(),
             placement_height: None,
             placement_approx: false,
         });

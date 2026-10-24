@@ -10,9 +10,9 @@ use tokio_postgres::Client;
 use super::ProjectionError;
 use super::materialize::{source_summary_for_block, source_summary_from_sources};
 use super::shared::{
-    BlockRow, DisplayMinerBasis, PoolObject, SourceOnlyRow, SourceRecord, SourceSummary,
-    TreeCompetition, ensure_unknown_btc_target, load_sources, resolve_display_miner,
-    stored_hash_from_display, unknown_pool,
+    BlockRow, DisplayMinerBasis, PoolObject, RelationshipSignals, SourceOnlyRow, SourceRecord,
+    SourceSummary, TreeCompetition, bitcoin_drafts, ensure_unknown_btc_target, load_sources,
+    resolve_display_miner, stored_hash_from_display, unknown_pool,
 };
 use crate::error::ApiError;
 use crate::normalize::ParentKind;
@@ -22,6 +22,7 @@ mod detail;
 mod loaders;
 mod near;
 mod protocol_commitments;
+mod relationship;
 
 use near::ObservationDetail;
 pub use protocol_commitments::ProtocolCommitments;
@@ -50,6 +51,8 @@ pub struct BlockPayload {
     pub commitment: Option<Commitment>,
     /// CORE and exSat coinbase declarations; `null` until derived for the running decoder.
     pub protocol_commitments: Option<ProtocolCommitments>,
+    /// Every pool the parent names, and whether they name more than one.
+    pub relationship_signals: RelationshipSignals,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -314,6 +317,7 @@ async fn block_from_read_model(
     let commitment = derive_commitment(&event_details);
     let coinbase_tag = coinbase_tag_from_core_block(&row)
         .or_else(|| coinbase_tag_from_commitment(commitment.as_ref()));
+    let bitcoin = bitcoin_drafts(relationship::parent_coinbase(Some(&row), &event_details));
     let event_ids = event_details
         .iter()
         .map(|event| event.id)
@@ -321,6 +325,14 @@ async fn block_from_read_model(
     let pool_attributions = load_pool_attributions_by_event(client, &event_ids).await?;
     let event_details = render_event_details(event_details, &pool_attributions)?;
     let protocol_commitments = load_protocol_commitments(client, &row.hash).await?;
+    let relationship_signals = relationship::signals(
+        client,
+        &row.bitcoin_miner_pool,
+        bitcoin,
+        relationship::child_attribution_drafts(&event_details),
+        protocol_commitments.as_ref(),
+    )
+    .await?;
     let (display_miner_pool, display_miner_basis) = resolve_display_miner(
         &row.bitcoin_miner_pool,
         event_details.iter().map(|event| &event.child_miner_pool),
@@ -347,6 +359,7 @@ async fn block_from_read_model(
         stale_branch,
         commitment,
         protocol_commitments,
+        relationship_signals,
     })
 }
 
@@ -377,9 +390,18 @@ async fn block_from_direct_events(
     let header = header_projection(&first.parent_header_bytes)?;
     let commitment = derive_commitment(&events);
     let coinbase_tag = coinbase_tag_from_commitment(commitment.as_ref());
+    let bitcoin = bitcoin_drafts(relationship::parent_coinbase(None, &events));
     let event_ids = events.iter().map(|event| event.id).collect::<Vec<_>>();
     let pool_attributions = load_pool_attributions_by_event(client, &event_ids).await?;
     let rendered_events = render_event_details(events, &pool_attributions)?;
+    let relationship_signals = relationship::signals(
+        client,
+        &bitcoin_miner_pool,
+        bitcoin,
+        relationship::child_attribution_drafts(&rendered_events),
+        None,
+    )
+    .await?;
 
     Ok(Some(BlockPayload {
         block: ApiBlock {
@@ -408,5 +430,6 @@ async fn block_from_direct_events(
         // The `block` row and its derived commitments are written together, so a parent
         // without one has none yet.
         protocol_commitments: None,
+        relationship_signals,
     }))
 }

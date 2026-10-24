@@ -87,6 +87,17 @@
           }
         }
       ],
+      "relationship": {
+        "mixed": false,
+        "pools": [
+          {
+            "id": 8,
+            "slug": "f2pool",
+            "name": "F2Pool",
+            "known": true
+          }
+        ]
+      },
       "child_chain_evidence": []
     },
     {
@@ -153,6 +164,17 @@
           }
         }
       ],
+      "relationship": {
+        "mixed": false,
+        "pools": [
+          {
+            "id": 8,
+            "slug": "f2pool",
+            "name": "F2Pool",
+            "known": true
+          }
+        ]
+      },
       "child_chain_evidence": [
         {
           "source": "auxpow:namecoin",
@@ -241,6 +263,17 @@
           }
         }
       ],
+      "relationship": {
+        "mixed": false,
+        "pools": [
+          {
+            "id": 7,
+            "slug": "antpool",
+            "name": "AntPool",
+            "known": true
+          }
+        ]
+      },
       "child_chain_evidence": [
         {
           "source": "auxpow:namecoin",
@@ -288,6 +321,17 @@
       },
       "competition": null,
       "protocol_commitments": [],
+      "relationship": {
+        "mixed": false,
+        "pools": [
+          {
+            "id": 8,
+            "slug": "f2pool",
+            "name": "F2Pool",
+            "known": true
+          }
+        ]
+      },
       "child_chain_evidence": []
     },
     {
@@ -349,6 +393,17 @@
         "propagation_delta_s": 4
       },
       "protocol_commitments": [],
+      "relationship": {
+        "mixed": false,
+        "pools": [
+          {
+            "id": 8,
+            "slug": "f2pool",
+            "name": "F2Pool",
+            "known": true
+          }
+        ]
+      },
       "child_chain_evidence": [
         {
           "source": "auxpow:namecoin",
@@ -403,6 +458,17 @@
       },
       "competition": null,
       "protocol_commitments": [],
+      "relationship": {
+        "mixed": false,
+        "pools": [
+          {
+            "id": 8,
+            "slug": "f2pool",
+            "name": "F2Pool",
+            "known": true
+          }
+        ]
+      },
       "child_chain_evidence": []
     },
     {
@@ -463,6 +529,17 @@
         "propagation_delta_s": 5
       },
       "protocol_commitments": [],
+      "relationship": {
+        "mixed": false,
+        "pools": [
+          {
+            "id": 8,
+            "slug": "f2pool",
+            "name": "F2Pool",
+            "known": true
+          }
+        ]
+      },
       "child_chain_evidence": [
         {
           "source": "auxpow:namecoin",
@@ -510,6 +587,17 @@
       },
       "competition": null,
       "protocol_commitments": [],
+      "relationship": {
+        "mixed": false,
+        "pools": [
+          {
+            "id": 8,
+            "slug": "f2pool",
+            "name": "F2Pool",
+            "known": true
+          }
+        ]
+      },
       "child_chain_evidence": []
     },
     {
@@ -549,6 +637,17 @@
       },
       "competition": null,
       "protocol_commitments": [],
+      "relationship": {
+        "mixed": false,
+        "pools": [
+          {
+            "id": 7,
+            "slug": "antpool",
+            "name": "AntPool",
+            "known": true
+          }
+        ]
+      },
       "child_chain_evidence": [
         {
           "source": "auxpow:namecoin",

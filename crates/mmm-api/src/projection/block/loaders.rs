@@ -32,6 +32,9 @@ pub(super) struct BlockDetailRow {
     pub(super) core_attested: bool,
     pub(super) pow_validated: bool,
     pub(super) btc_coinbase_script: Option<Vec<u8>>,
+    pub(super) btc_coinbase_outputs: Option<Vec<u8>>,
+    /// `btc_coinbase_status = 'complete'`: the stored coinbase came from Bitcoin Core.
+    pub(super) btc_coinbase_complete: bool,
 }
 
 #[derive(Debug)]
@@ -53,6 +56,8 @@ pub(super) struct EventDetailRow {
     pub(super) btc_parent_coinbase_txid: Option<Vec<u8>>,
     pub(super) btc_parent_coinbase_script: Option<Vec<u8>>,
     pub(super) btc_parent_coinbase_outputs: Option<Vec<u8>>,
+    /// A historical publication's parent outputs as text, when no full coinbase was published.
+    pub(super) btc_parent_coinbase_outputs_text: Option<String>,
     pub(super) child_coinbase_txid: Option<Vec<u8>>,
     pub(super) child_coinbase_script: Option<Vec<u8>>,
     pub(super) aux_merkle_proof: Option<Vec<u8>>,
@@ -102,7 +107,8 @@ pub(super) async fn load_block_detail(
             "SELECT b.btc_header_hash, b.btc_prev_header_hash, b.btc_height, b.kind, \
                     b.btc_header_bytes, b.btc_header_time, b.live_observed, \
                     b.core_attested, b.pow_validated, p.id, p.slug, p.canonical_name, \
-                    b.btc_orphan_class, b.invalid_block_reason, b.btc_coinbase_script \
+                    b.btc_orphan_class, b.invalid_block_reason, b.btc_coinbase_script, \
+                    b.btc_coinbase_outputs, b.btc_coinbase_status = 'complete' \
              FROM block b \
              LEFT JOIN pool p ON p.id = b.bitcoin_miner_pool_id \
              WHERE b.btc_header_hash = $1",
@@ -125,6 +131,8 @@ pub(super) async fn load_block_detail(
             core_attested: row.get(7),
             pow_validated: row.get(8),
             btc_coinbase_script: row.get(14),
+            btc_coinbase_outputs: row.get(15),
+            btc_coinbase_complete: row.get(16),
             bitcoin_miner_pool: pool_from_columns(row.get(9), row.get(10), row.get(11)),
         })
     })
@@ -272,7 +280,8 @@ pub(super) fn event_detail_sql(predicate: &str) -> String {
                 r.merge_mining_hash, r.merkle_proof, r.coinbase_tail, \
                 r.proof_format, pi.id, pi.namespace, pi.identifier, \
                 o.child_header_bytes, o.child_nbits, \
-                o.child_displaced_at, o.child_displaced_by \
+                o.child_displaced_at, o.child_displaced_by, \
+                e.btc_parent_coinbase_outputs_text \
          FROM merge_mining_event e \
          JOIN source s ON s.id = e.source_id \
          JOIN child_block_observation o ON o.id = e.observation_id \
@@ -320,6 +329,7 @@ pub(super) fn map_event_detail_rows(rows: Vec<tokio_postgres::Row>) -> Result<Ve
                 btc_parent_coinbase_txid: row.get(14),
                 btc_parent_coinbase_script: row.get(15),
                 btc_parent_coinbase_outputs: row.get(16),
+                btc_parent_coinbase_outputs_text: row.get("btc_parent_coinbase_outputs_text"),
                 child_coinbase_txid: row.get(17),
                 child_coinbase_script: row.get(18),
                 aux_merkle_proof: row.get(19),

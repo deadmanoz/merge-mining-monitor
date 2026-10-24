@@ -6,6 +6,7 @@ mod compact;
 mod orphan_component;
 mod protocol_commitments;
 mod reduction;
+mod relationship;
 mod window;
 
 use anyhow::Result;
@@ -20,6 +21,8 @@ use build::build_branches;
 pub use protocol_commitments::TreeProtocolCommitment;
 use protocol_commitments::attach_protocol_commitments;
 use reduction::ReductionNode;
+pub use relationship::TreeRelationship;
+use relationship::attach_relationship;
 use window::ResolvedTreeWindow;
 
 use anchor::anchor_tree;
@@ -105,6 +108,8 @@ pub struct TreeNode {
     pub competition: Option<TreeCompetition>,
     /// `null` until the protocol commitment rebuild has run, else the header's declarations.
     pub protocol_commitments: Option<Vec<TreeProtocolCommitment>>,
+    /// Whether the block's relationship signals name more than one pool, with those pools.
+    pub relationship: TreeRelationship,
     /// Derived layout height for an anchor-mode orphan node (absent elsewhere).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub placement_height: Option<i32>,
@@ -194,6 +199,7 @@ pub async fn tree(client: &Client, query: &TreeQuery) -> Result<TreePayload, Pro
         tree_projection(client, query, window).await?
     };
     attach_protocol_commitments(client, &mut payload.nodes).await?;
+    attach_relationship(client, &mut payload.nodes).await?;
     Ok(payload)
 }
 

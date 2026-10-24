@@ -10,6 +10,8 @@ This changelog starts with the initial release.
 
 - Add `--if-needed` to `just rebuild-protocol-commitments`: it exits without contacting Bitcoin Core when the tables already match the running decoder, so deployments can run it after every upgrade.
 
+- Serve `relationship_signals` on `/api/v1/block/{hash}` and a `relationship` summary on `/api/v1/tree` nodes. Together they list every pool a parent names: its Bitcoin coinbase tag and payout addresses, each child block's reward address or coinbase tag, and its declared CORE and exSat accounts. A parent is mixed when these name two or more pools, for example a Binance Pool block whose RSK reward address is registered to AntPool. The fields are computed at read time and change no attribution. The block page and tree now share one pool-snapshot resolver instead of building it per request.
+
 ### Fixed
 
 - Align source-rail subtitles: Terracoin uses its 2016 AuxPoW start and 2-minute target, RSK, Hathor, and Fractal Bitcoin write `~30 s`, and i0coin's recovered span is 2011–2021.

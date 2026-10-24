@@ -7,7 +7,9 @@ use bitcoin::hashes::Hash as _;
 use serde_json::Value;
 
 use super::super::ProjectionError;
-use super::super::shared::{EventRow, display_child_block_hash, display_hash};
+use super::super::shared::{
+    EventRow, default_pool_resolver, display_child_block_hash, display_hash,
+};
 use super::loaders::BlockDetailRow;
 use super::loaders::{EventDetailRow, RskEvidenceRow};
 use super::{
@@ -22,7 +24,6 @@ use mmm_capture::auxpow::evidence::{
     AuxMarker, AuxMerkleBranchDetail, decode_aux_marker, decode_auxpow_proof,
     decode_qbit_auxpow_proof, extract_coinbase_tag,
 };
-use mmm_capture::pool_resolver::PoolResolver;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ChainFamily {
@@ -87,13 +88,19 @@ fn marker_projection_for(family: ChainFamily, marker: &AuxMarker) -> AuxMarkerPr
     }
 }
 
-/// A child block's view of its parent's coinbase, as commitment derivation reads it.
+/// A child block's view of its parent's coinbase, as commitment derivation and relationship
+/// signals read it.
 pub(super) trait ParentCoinbase {
     /// Lower first: the representative row when several qualify.
     fn order(&self) -> i64;
     fn chain(&self) -> Option<&str>;
     fn parent_coinbase_txid(&self) -> Option<&[u8]>;
     fn parent_coinbase_script(&self) -> Option<&[u8]>;
+    fn parent_coinbase_outputs(&self) -> Option<&[u8]>;
+    /// A historical publication's output text, where one was imported.
+    fn parent_coinbase_outputs_text(&self) -> Option<&str> {
+        None
+    }
 }
 
 impl ParentCoinbase for EventDetailRow {
@@ -108,6 +115,12 @@ impl ParentCoinbase for EventDetailRow {
     }
     fn parent_coinbase_script(&self) -> Option<&[u8]> {
         self.btc_parent_coinbase_script.as_deref()
+    }
+    fn parent_coinbase_outputs(&self) -> Option<&[u8]> {
+        self.btc_parent_coinbase_outputs.as_deref()
+    }
+    fn parent_coinbase_outputs_text(&self) -> Option<&str> {
+        self.btc_parent_coinbase_outputs_text.as_deref()
     }
 }
 
@@ -192,8 +205,7 @@ pub(super) fn coinbase_tag_from_core_block(row: &BlockDetailRow) -> Option<Strin
         return None;
     }
     let script = row.btc_coinbase_script.as_deref()?;
-    PoolResolver::from_default_snapshot()
-        .ok()
+    default_pool_resolver()
         .and_then(|resolver| {
             resolver
                 .resolve_coinbase_script(script)
@@ -503,6 +515,7 @@ mod tests {
             btc_parent_coinbase_txid: None,
             btc_parent_coinbase_script: None,
             btc_parent_coinbase_outputs: None,
+            btc_parent_coinbase_outputs_text: None,
             child_coinbase_txid: None,
             child_coinbase_script: None,
             aux_merkle_proof: None,

@@ -34,6 +34,12 @@ fn api_fixture_examples_are_listed_and_parse() {
         }
         if file.starts_with("tree") {
             assert_tree_protocol_commitments_fixture_contract(&file, &fixture);
+            for node in fixture["nodes"].as_array().into_iter().flatten() {
+                let relationship = node
+                    .get("relationship")
+                    .unwrap_or_else(|| panic!("{file} nodes must carry relationship"));
+                assert_relationship_pools_contract(&file, relationship);
+            }
         }
     }
 }
@@ -247,6 +253,7 @@ fn assert_block_fixture_contract(file: &str, fixture: &Value) {
         "{file} must omit the retired annotation field; invalid parents use invalid_block"
     );
     assert_protocol_commitments_fixture_contract(file, fixture);
+    assert_relationship_signals_fixture_contract(file, fixture);
     let events = fixture["event_details"]
         .as_array()
         .unwrap_or_else(|| panic!("{file} must carry an event_details array"));
@@ -301,6 +308,84 @@ fn assert_protocol_commitments_fixture_contract(file: &str, fixture: &Value) {
             "{file}: upstream_selected is null exactly for exSat entries"
         );
     }
+}
+
+// The reference pool first, every known entry pool summarized, and only child signals sourced.
+fn assert_relationship_signals_fixture_contract(file: &str, fixture: &Value) {
+    let section = fixture
+        .get("relationship_signals")
+        .unwrap_or_else(|| panic!("{file} must carry relationship_signals"));
+    let pools = assert_relationship_pools_contract(file, section);
+    match pools.first() {
+        Some(first) => assert_eq!(
+            &section["reference_pool"], first,
+            "{file}: reference pool first"
+        ),
+        None => assert_eq!(
+            section["reference_pool"]["known"], false,
+            "{file}: no known pool"
+        ),
+    }
+    let entries = section["entries"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{file} relationship_signals.entries must be an array"));
+    for entry in entries {
+        let kind = string_field(entry, "kind");
+        assert!(
+            [
+                "bitcoin_coinbase_tag",
+                "bitcoin_payout_address",
+                "child_reward_address",
+                "child_coinbase_tag",
+                "protocol_account",
+            ]
+            .contains(&kind),
+            "{file}: unknown relationship signal kind {kind:?}"
+        );
+        assert_eq!(
+            entry["source"].is_string(),
+            kind.starts_with("child_"),
+            "{file}: only child signals carry a source"
+        );
+        assert!(
+            [
+                "pool_snapshot",
+                "child_registry",
+                "protocol_account_registry"
+            ]
+            .contains(&string_field(entry, "basis")),
+            "{file}: unknown relationship signal basis"
+        );
+        assert!(
+            entry["pool"]["known"] == false || pools.contains(&entry["pool"]),
+            "{file}: every known entry pool is summarized"
+        );
+    }
+}
+
+// Distinct known pools, and mixed exactly when there are two or more.
+fn assert_relationship_pools_contract(file: &str, section: &Value) -> Vec<Value> {
+    let pools = section["pools"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{file} relationship pools must be an array"));
+    let ids = pools
+        .iter()
+        .map(|pool| {
+            assert_eq!(pool["known"], true, "{file}: relationship pools are known");
+            pool["id"].as_i64().expect("known pool id")
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        ids.len(),
+        pools.len(),
+        "{file}: relationship pools are distinct"
+    );
+    assert_eq!(
+        section["mixed"].as_bool(),
+        Some(pools.len() > 1),
+        "{file}: mixed exactly when two or more pools"
+    );
+    pools.clone()
 }
 
 fn assert_event_detail_fixture_contract(file: &str, event: &Value) {

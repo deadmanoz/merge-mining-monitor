@@ -13,7 +13,7 @@ use super::super::shared::{
     rows_to_blocks,
 };
 use super::window::{ResolvedTreeWindow, load_active_events_for_tree};
-use super::{BLOCK_ROW_SELECT, TreeEdge, TreeNode, TreeNodeBranch};
+use super::{BLOCK_ROW_SELECT, TreeEdge, TreeNode, TreeNodeBranch, TreeRelationship};
 use crate::normalize::{Classification, ParentKind};
 use crate::query::TreeQuery;
 
@@ -417,6 +417,7 @@ pub(super) fn push_member_nodes(
             proof_state: projection.proof_state,
             competition: None,
             protocol_commitments: None,
+            relationship: TreeRelationship::default(),
             placement_height,
             placement_approx: placement.approx,
         });
