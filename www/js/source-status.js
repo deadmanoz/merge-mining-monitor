@@ -24,15 +24,11 @@ const SOURCE_SYNC_META = {
   unknown: { label: "unknown", displayLabel: "Unknown", title: "Source progress is unknown" },
 };
 const SOURCE_SYNC_MODE_META = {
-  live: "live capture",
-  "bitcoin-core-backbone": "Bitcoin Core backbone",
-  historical: "historical archive",
-  partial: "recovered subset",
-  surveyed: "recovered survey",
-  catalogued: "catalogued",
-  unknown: "unknown mode",
+  live: "Live AuxPoW producer",
+  "bitcoin-core-backbone": "Bitcoin Core parent chain",
 };
 const SOURCE_STATUS_HELP = {
+  height: "Latest recorded capture progress height for this source.",
   cursorUpdated: "When the progress cursor was last seeded or advanced. This is not a process heartbeat.",
   latestEvidence: "Newest accepted AuxPoW evidence, or newest near share first recorded. This can be older than the live cursor when recent blocks carry neither: blocks without AuxPoW, or parents from other chains, which are never stored as evidence.",
 };
@@ -85,8 +81,8 @@ function sourceHeightLabel(sync) {
 function sourceHeightTitle(sync) {
   const base =
     sync.mode === "bitcoin-core-backbone"
-      ? "Current contiguous Bitcoin Core backbone height recorded by the sync daemon."
-      : "Latest recorded capture progress height for this source.";
+      ? "Current contiguous Bitcoin Core height recorded by the sync daemon."
+      : SOURCE_STATUS_HELP.height;
   if (sync.progress_height == null) return "No capture progress height has been recorded yet.";
   if (sync.target_height == null) return base;
   return `${base} Target height: ${sync.target_height.toLocaleString("en-US")}.`;
@@ -114,14 +110,14 @@ function sourceEvidenceLabel(sync) {
 
 function sourceEvidenceTitle(sync) {
   if (sync.mode === "bitcoin-core-backbone") {
-    return "Bitcoin Core is the backbone source, not an AuxPoW evidence source.";
+    return "Bitcoin Core is the parent chain, not an AuxPoW evidence source.";
   }
   return SOURCE_STATUS_HELP.latestEvidence;
 }
 
-function sourceStatusHeaderHelp(key) {
-  const title = SOURCE_STATUS_HELP[key] || "";
-  return `<span class="source-status-header-help" tabindex="0" role="img" aria-label="${esc(title)}" title="${esc(title)}">?</span>`;
+function sourceStatusHelpHeader(label, key) {
+  const text = esc(SOURCE_STATUS_HELP[key]);
+  return `<th><span class="source-status-heading-label">${label} <span class="source-status-header-help" tabindex="0" role="img" aria-label="${text}" data-tip="${text}" data-tip-key="help:${key}">?</span></span></th>`;
 }
 
 function sourceErrorLabel(sync) {
@@ -179,6 +175,12 @@ function sourceSyncTitle(source) {
   return `${sourceDisplayName(source)}: ${sourceSyncLabel(source)}. ${mode}. ${detail}. ${sourceStatusDetail(sync)}`;
 }
 
+// The popover row already shows the height, cursor, evidence and runtime detail.
+function sourceStatusPillTip(sync) {
+  const meta = SOURCE_SYNC_META[sync.state];
+  return `${meta.displayLabel}: ${meta.title}.`;
+}
+
 function renderSourceRailStatus(source) {
   if (!isOperationalSource(source)) return "";
   const sync = normalizeSourceSync(source);
@@ -223,7 +225,7 @@ function renderSourceStatusRows(sources) {
     const runtime = sourceRuntimeRows(sync).map(([label, value]) => `${label}: ${value}`).join(" · ");
     return `<tr>
       <td><span class="source-status-name" title="${esc(source.code)}">${esc(sourceDisplayName(source))}</span></td>
-      <td><span class="source-status-pill source-sync-state-${esc(cls)}" title="${esc(sourceSyncTitle(source))}">${esc(sourceSyncLabel(source))}</span>${runtime ? `<div class="source-status-runtime">${esc(runtime)}</div>` : ""}</td>
+      <td><span class="source-status-pill source-sync-state-${esc(cls)}" tabindex="0" data-tip="${esc(sourceStatusPillTip(sync))}" data-tip-key="pill:${esc(source.code)}">${esc(sourceSyncLabel(source))}</span>${runtime ? `<div class="source-status-runtime">${esc(runtime)}</div>` : ""}</td>
       <td class="source-status-height" title="${esc(sourceHeightTitle(sync))}">${esc(height)}</td>
       <td class="source-status-progress" title="${esc(sourceCursorUpdatedTitle(sync))}"><span>${esc(cursorUpdated)}</span>${error ? `<span class="source-status-error">${esc(error)}</span>` : ""}</td>
       <td class="source-status-progress" title="${esc(sourceEvidenceTitle(sync))}">${esc(evidence)}</td>
@@ -233,9 +235,9 @@ function renderSourceStatusRows(sources) {
     <thead><tr>
       <th>Source</th>
       <th>Status</th>
-      <th title="Latest recorded capture progress height for this source.">Height</th>
-      <th title="${esc(SOURCE_STATUS_HELP.cursorUpdated)}"><span class="source-status-heading-label">Cursor Updated ${sourceStatusHeaderHelp("cursorUpdated")}</span></th>
-      <th title="${esc(SOURCE_STATUS_HELP.latestEvidence)}"><span class="source-status-heading-label">Latest Evidence ${sourceStatusHeaderHelp("latestEvidence")}</span></th>
+      ${sourceStatusHelpHeader("Height", "height")}
+      ${sourceStatusHelpHeader("Cursor Updated", "cursorUpdated")}
+      ${sourceStatusHelpHeader("Latest Evidence", "latestEvidence")}
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
@@ -256,11 +258,15 @@ function renderSourceStatus(sources = [], { unavailable = false } = {}) {
   if (count) {
     count.textContent = unavailable ? "" : `${operationalSources.length.toLocaleString("en-US")} operational`;
   }
+  // A refresh rebuilds the table; return keyboard focus to the same pill or help icon.
+  const focusedKey = content.contains(document.activeElement) ? document.activeElement.dataset.tipKey : null;
+  hideSourceStatusTip();
   if (unavailable) {
     content.innerHTML = `<div class="source-status-empty" role="status">Source registry unavailable</div>`;
   } else {
     content.innerHTML = renderSourceStatusRows(operationalSources);
   }
+  if (focusedKey) content.querySelector(`[data-tip-key="${CSS.escape(focusedKey)}"]`)?.focus();
 }
 
 function setSourceStatusPopover(open) {
@@ -269,12 +275,82 @@ function setSourceStatusPopover(open) {
   if (!button || !popover) return;
   button.setAttribute("aria-expanded", open ? "true" : "false");
   popover.hidden = !open;
+  if (!open) hideSourceStatusTip();
+}
+
+const TIP_GAP = 6;
+let tipTarget = null;
+
+// Native `title` never shows on focus or touch. The tip is position: fixed so
+// the popover's scroll containers cannot clip it.
+function showSourceStatusTip(target) {
+  const tip = $("#source-status-tip");
+  if (!tip) return;
+  if (target !== tipTarget) hideSourceStatusTip();
+  tip.textContent = target.dataset.tip;
+  tip.hidden = false;
+  if (!target.hasAttribute("aria-label")) target.setAttribute("aria-describedby", tip.id);
+  tipTarget = target;
+  placeSourceStatusTip(tip, target);
+}
+
+// Below the target, or above it when the viewport has no room below, kept on screen.
+function placeSourceStatusTip(tip, target) {
+  const anchor = target.getBoundingClientRect();
+  const { width, height } = tip.getBoundingClientRect();
+  const below = anchor.bottom + TIP_GAP;
+  const top = below + height <= window.innerHeight ? below : anchor.top - TIP_GAP - height;
+  const left = Math.min(anchor.left, window.innerWidth - width - TIP_GAP);
+  tip.style.top = `${Math.max(TIP_GAP, top)}px`;
+  tip.style.left = `${Math.max(TIP_GAP, left)}px`;
+}
+
+function hideSourceStatusTip() {
+  const tip = $("#source-status-tip");
+  if (tip) tip.hidden = true;
+  tipTarget?.removeAttribute("aria-describedby");
+  tipTarget = null;
+}
+
+// Whether the target is still visible in the viewport and inside both the
+// popover and table scroll areas.
+function tipTargetInView(target, popover) {
+  const anchor = target.getBoundingClientRect();
+  const viewport = { top: 0, left: 0, bottom: window.innerHeight, right: window.innerWidth };
+  return [viewport, popover.getBoundingClientRect(), target.closest(".source-status-table-wrap").getBoundingClientRect()]
+    .every((view) => anchor.bottom > view.top && anchor.top < view.bottom && anchor.right > view.left && anchor.left < view.right);
+}
+
+function wireSourceStatusTips(popover) {
+  // Enter and leave do not bubble, so listen in the capture phase.
+  popover.addEventListener("pointerenter", (event) => {
+    if (event.target.matches("[data-tip]")) showSourceStatusTip(event.target);
+  }, true);
+  popover.addEventListener("pointerleave", (event) => {
+    if (event.target === tipTarget && document.activeElement !== tipTarget) hideSourceStatusTip();
+  }, true);
+  popover.addEventListener("focusin", (event) => {
+    if (event.target.matches("[data-tip]")) showSourceStatusTip(event.target);
+  });
+  popover.addEventListener("focusout", hideSourceStatusTip);
+  // The tip is fixed to the viewport, so follow its target through table,
+  // popover and page scrolls (focusing an off-screen target scrolls the table)
+  // and window resizes, and hide it once the target leaves view.
+  const follow = () => {
+    if (!tipTarget) return;
+    if (tipTargetInView(tipTarget, popover)) placeSourceStatusTip($("#source-status-tip"), tipTarget);
+    else hideSourceStatusTip();
+  };
+  document.addEventListener("scroll", follow, true);
+  window.addEventListener("resize", follow);
 }
 
 function wireSourceStatusPopover() {
   const button = $("#source-status-button");
   const shell = $(".source-status-shell");
+  const popover = $("#source-status-popover");
   if (!button || !shell) return;
+  if (popover) wireSourceStatusTips(popover);
   button.addEventListener("click", () => {
     setSourceStatusPopover(button.getAttribute("aria-expanded") !== "true");
   });

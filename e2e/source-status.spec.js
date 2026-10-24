@@ -374,14 +374,23 @@ test("renders source capture progress in the topbar, popover, and source rail", 
   await expect(popover).toContainText("Height");
   await expect(popover).toContainText("Cursor Updated");
   await expect(popover).toContainText("Latest Evidence");
-  await expect(popover.locator(".source-status-header-help").nth(0)).toHaveAttribute(
-    "title",
+  // Header help and status pills show their tip on hover and on keyboard focus.
+  const tip = page.locator("#source-status-tip");
+  const help = popover.locator(".source-status-header-help");
+  await expect(help).toHaveCount(3);
+  await expect(tip).toBeHidden();
+  await help.nth(1).hover();
+  await expect(tip).toHaveText(
     "When the progress cursor was last seeded or advanced. This is not a process heartbeat.",
   );
-  await expect(popover.locator(".source-status-header-help").nth(1)).toHaveAttribute(
-    "title",
-    "Newest accepted AuxPoW evidence, or newest near share first recorded. This can be older than the live cursor when recent blocks carry neither: blocks without AuxPoW, or parents from other chains, which are never stored as evidence.",
-  );
+  const evidenceText = "Newest accepted AuxPoW evidence, or newest near share first recorded. This can be older than the live cursor when recent blocks carry neither: blocks without AuxPoW, or parents from other chains, which are never stored as evidence.";
+  await help.nth(2).focus();
+  await expect(tip).toHaveText(evidenceText);
+  await expect(help.nth(2)).toHaveAttribute("aria-label", evidenceText);
+  // The last row's tip escapes the table's scroll clipping.
+  await popover.locator(".source-status-pill").last().hover();
+  await expect(tip).toHaveText("Catching up: Producer is starting, recovering, or catching up to the target height.");
+  await expect(tip).toBeInViewport({ ratio: 1 });
   await expect(popover).not.toContainText("Capture Cursor");
   await expect(popover).not.toContainText("live capture: live");
   await expect(popover).not.toContainText("auxpow:namecoin");
@@ -466,6 +475,7 @@ test("renders version metadata and release notes in the about dialog", async ({ 
   // Release notes live in their own tab as a per-release collapsible accordion.
   await dialog.getByRole("tab", { name: "Release notes" }).click();
   const notes = dialog.locator("#about-release-notes-body");
+  await expect(dialog.locator("#about-notes-meta")).toHaveText("2 releases");
   await expect(notes).toContainText(`v${RELEASE_VERSION}`);
   await expect(notes).toContainText("v0.1.0");
 
@@ -509,6 +519,45 @@ test("scrolls and preserves release section heights when many releases exist", a
 
   const firstRelBox = await notes.locator(".rel").first().boundingBox();
   expect(firstRelBox.height).toBeGreaterThan(60);
+});
+
+test("a source status tip follows a focused target and hides once it scrolls away", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await stubCommonApi(page);
+  await page.route("**/api/v1/sources", async (route) => {
+    await route.fulfill({ json: sourceFixture() });
+  });
+
+  await page.goto("/");
+  await page.locator("#source-status-button").click();
+  const popover = page.getByRole("dialog", { name: "Source capture status" });
+  const tip = page.locator("#source-status-tip");
+  // At phone width the last column starts off-screen; focusing its help scrolls it in.
+  await popover.locator(".source-status-header-help").last().focus();
+  await expect(tip).toBeVisible();
+  await expect(tip).toBeInViewport({ ratio: 1 });
+  await popover.locator(".source-status-table-wrap").evaluate((wrap) => { wrap.scrollLeft = 0; });
+  await expect(tip).toBeHidden();
+});
+
+test("a sources refresh keeps keyboard focus and the tip on the same status pill", async ({ page }) => {
+  await stubCommonApi(page);
+  await page.route("**/api/v1/sources", async (route) => {
+    await route.fulfill({ json: sourceFixture() });
+  });
+  await page.clock.install();
+
+  await page.goto("/");
+  await page.locator("#source-status-button").click();
+  const popover = page.getByRole("dialog", { name: "Source capture status" });
+  const pill = popover.getByRole("row", { name: /Namecoin/ }).locator(".source-status-pill");
+  await pill.focus();
+  // Mark the current pill so the test can tell when the refresh has replaced it.
+  await pill.evaluate((element) => { element.dataset.beforeRefresh = "true"; });
+  await page.clock.runFor(65_000);
+  await expect(popover.locator("[data-before-refresh]")).toHaveCount(0);
+  await expect(pill).toBeFocused();
+  await expect(page.locator("#source-status-tip")).toHaveText(/^Live: /);
 });
 
 test("surfaces source registry request failures", async ({ page }) => {

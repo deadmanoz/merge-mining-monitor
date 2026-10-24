@@ -171,7 +171,7 @@ function renderReleaseNotes(payload) {
     .join("");
 
   if (meta) {
-    meta.textContent = `${releaseCount} ${releaseCount === 1 ? "release" : "releases"} · ${source}`;
+    meta.textContent = `${releaseCount} ${releaseCount === 1 ? "release" : "releases"}`;
   }
   const hiddenReleases = Math.max(0, releaseCount - releases.length);
   if (foot) {
