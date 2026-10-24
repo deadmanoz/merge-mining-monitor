@@ -12,6 +12,8 @@ This changelog starts with the initial release.
 
 ### Fixed
 
+- Align source-rail subtitles: Terracoin uses its 2016 AuxPoW start and 2-minute target, RSK, Hathor, and Fractal Bitcoin write `~30 s`, and i0coin's recovered span is 2011–2021.
+
 - Retry ordinary Core body-download and tip-height errors during live startup while preserving queued work and fatal errors.
 
 - Keep heartbeats retrying after transient heartbeat or attempt-metadata write failures during long capture ticks, and bound live Hathor held-height reads in SQL.
