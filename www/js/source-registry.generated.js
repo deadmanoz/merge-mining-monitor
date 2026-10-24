@@ -602,7 +602,7 @@ export const CHAIN_PROFILES = {
     "chain_status": "active",
     "status_detail": "Still active; every third block merge-mines Bitcoin under Cadence Mining.",
     "tagline": "Bitcoin Core fork where every third block merge-mines Bitcoin via Namecoin-family AuxPoW.",
-    "byline": "2024 · ~30s blocks (1-in-3 merge-mined)",
+    "byline": "2024 · ~30 s blocks (1-in-3 merge-mined)",
     "help": {
       "data": "Cadence-mined Fractal headers with CAuxPoW, plus full child blocks for reward identity",
       "pool": "BTC parent coinbase tags when the pool resolver recognizes them; child reward addresses are observed separately"
@@ -753,7 +753,7 @@ export const CHAIN_PROFILES = {
     "chain_status": "active",
     "status_detail": "Still active; Bitcoin-side HTR merge-mining is publicly promoted by F2Pool.[^4]",
     "tagline": "SHA-256d split-header AuxPoW chain whose merge-mined blocks may point to Bitcoin or another SHA-256d parent.",
-    "byline": "2020 · ~30s blocks",
+    "byline": "2020 · ~30 s blocks",
     "help": {
       "data": "SHA-256d parent header reconstructed from the RFC 0006 split-header proof, then filtered for Bitcoin parents",
       "pool": "BTC parent coinbase tags when the pool resolver recognizes them; Hathor reward outputs are observed separately"
@@ -840,7 +840,7 @@ export const CHAIN_PROFILES = {
     "chain_status": "unknown",
     "status_detail": "Recovered historical dataset from a complete March 2026 block-file snapshot: 27,661 canonical Bitcoin observations (Dec 2011–Jul 2021) and 191 direct stales (Jan 2012–Aug 2020).[^10]",
     "tagline": "Early 90-second AuxPoW chain with dense recovered Bitcoin stale evidence.",
-    "byline": "2011-2026 snapshot",
+    "byline": "2011-2021",
     "history": {
       "founded": "Launched in August 2011 as an early SHA-256d Bitcoin-family chain.[^1]",
       "merge_mining": "Began merge-mining Bitcoin at I0C height `160,000` on 20 December 2011.[^2]",
@@ -1171,7 +1171,7 @@ export const CHAIN_PROFILES = {
     "chain_status": "active",
     "status_detail": "Still active",
     "tagline": "Bitcoin-merge-mined EVM sidechain whose AuxPoW discards the BTC coinbase via SHA-256 midstate compression.",
-    "byline": "2018 · ~30s blocks",
+    "byline": "2018 · ~30 s blocks",
     "help": {
       "data": "RSK canonical blocks, RSK uncles, merge-mining hash, miner address, and opaque proof bytes",
       "pool": "RSK miner-address registry, separate from BTC coinbase attribution"
@@ -1290,7 +1290,7 @@ export const CHAIN_PROFILES = {
     "chain_status": "zombie",
     "status_detail": "Live AuxPoW capture with retained historical evidence; source health tracks the child scan cursor independently of sparse Bitcoin-difficulty winners.",
     "tagline": "Dash-derived SHA-256d chain with live and recovered Bitcoin AuxPoW evidence.",
-    "byline": "2016-2026",
+    "byline": "2016 · ~2 min blocks",
     "history": {
       "founded": "Launched in 2012 as a Bitcoin-derived SHA-256d chain.[^2]",
       "merge_mining": "Namecoin-family AuxPoW starts at TRC height `833,000` with strict chain ID `0x0032` (`50`).[^1][^5]",
