@@ -1,6 +1,6 @@
 import { blockExplorer } from "./explorer-links.js";
 import { fmtDelta } from "./delta-scales.js";
-import { $, chainDisplayName, CLASSIFICATION_META, copyButton, copyValue, esc, formatEpoch, formatScalar, formatSourceList, formatSourceRef, poolName, protocolLabel, protocolStatusLabel, state } from "./frontend-state.js";
+import { $, chainDisplayName, CLASSIFICATION_META, copyButton, copyValue, esc, formatEpoch, formatScalar, formatSourceList, formatSourceRef, kvRows, poolName, protocolLabel, protocolStatusLabel, state } from "./frontend-state.js";
 import { mixedSignalsChip, RELATIONSHIP_SIGNALS_HELP, renderRelationshipSignals } from "./drawer-signals.js";
 
 
@@ -416,10 +416,6 @@ function detailSection(title, body) {
   return `<section class="detail-section"><h3>${esc(title)}</h3>${body}</section>`;
 }
 
-function kvRows(rows) {
-  return `<dl class="kv">${rows.map(([key, value]) => `<dt>${esc(key)}</dt><dd>${value}</dd>`).join("")}</dl>`;
-}
-
 function copyOnly(value) {
   if (value === null || value === undefined) return formatScalar(value);
   return copyButton(value);
@@ -673,6 +669,5 @@ export {
   auxpowHelpFor,
   consensusRuleHelpFor,
   renderDrawer,
-  kvRows,
   errorSummary,
 };

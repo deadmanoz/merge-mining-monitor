@@ -1,7 +1,7 @@
 import { loadTree, reconcileNavFromSelected, refreshNavControls, selectTreeNode } from "./api-client.js";
 import { showDialog } from "./dialogs.js";
-import { auxpowHelpFor, consensusRuleHelpFor, errorSummary, kvRows, renderDrawer } from "./drawer-renderer.js";
-import { $, $all, CLASSIFICATION_DEFAULT, compareSourcesForDisplay, DELTA_HELP, EDGE_KINDS, esc, kindHelpFor, KINDS, matchesSourceFilter, readForm, SOURCE_GROUPS, sourceChain, sourceDisplayName, sourceGroupKey, sourceMeta, state, VISIBLE_KIND_CONTROLS, writeForm } from "./frontend-state.js";
+import { auxpowHelpFor, consensusRuleHelpFor, errorSummary, renderDrawer } from "./drawer-renderer.js";
+import { $, $all, CLASSIFICATION_DEFAULT, compareSourcesForDisplay, DELTA_HELP, EDGE_KINDS, esc, kindHelpFor, KINDS, kvRows, matchesSourceFilter, readForm, SOURCE_GROUPS, sourceChain, sourceDisplayName, sourceGroupKey, sourceMeta, state, VISIBLE_KIND_CONTROLS, writeForm } from "./frontend-state.js";
 import { collectCitedReferenceIds, formatCitedText, renderSourceDialog, renderSourcesSection, sourceTagline } from "./source-dialog.js";
 import { renderSourceRailStatus } from "./source-status.js";
 import { clearTreeViewModes, syncUrl } from "./tree-query-state.js";

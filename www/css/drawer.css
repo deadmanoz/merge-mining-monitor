@@ -213,7 +213,8 @@
   text-decoration: underline;
 }
 
-.protocol-commitment-head {
+.protocol-commitment-head,
+.signal-group-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -222,35 +223,14 @@
 }
 
 .protocol-commitment-summary,
-.protocol-commitment-vout {
+.protocol-commitment-vout,
+.signal-group-count {
   color: var(--muted);
 }
 
-/* Relationship signals: the parent's pool names, with rows that differ from the reference accented. */
-.signal-table {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
-  font-size: 12px;
-}
-
-.signal-table th {
-  color: var(--muted);
-  font-weight: 600;
-  text-align: left;
-}
-
-.signal-table th,
-.signal-table td {
-  padding: 4px 6px 4px 0;
-  border-bottom: 1px solid var(--line);
-  vertical-align: top;
-  overflow-wrap: anywhere;
-}
-
-.signal-differs td:first-child {
+/* Relationship signals: one collapsed group per pool, with groups that differ from the reference accented. */
+.signal-differs > summary {
   box-shadow: inset 3px 0 0 var(--signal-mixed);
-  padding-left: 7px;
 }
 
 .signal-mixed-pill {

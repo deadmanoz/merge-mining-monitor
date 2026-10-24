@@ -163,8 +163,9 @@ The drawer is consolidated around the AuxPoW record (no standalone "AuxPoW Proof
 
 - **Parent block (Bitcoin)**: header identity, `kind`, `Orphan class` (`block.btc_orphan_class` for unknowns) or `Consensus rejection` (`block.invalid_block_reason` for invalid blocks), `coinbase_tag` when present, strict `Bitcoin miner` plus optional `Inferred miner`, Bitcoin block time, and collapsible raw header.
   A mixed block shows a "Mixed signals · N pools" chip beside `Bitcoin miner`, linking to the next section.
-- **Relationship signals**: every pool the parent names (`relationship_signals`), one row per Bitcoin coinbase tag, payout address, child reward address or coinbase tag, and declared CORE or exSat account, with its value and pool.
-  Rows naming a pool other than the reference are accented as "differs"; the help text says a signal is an association, not proof of who mined the block.
+- **Relationship signals**: every pool the parent names (`relationship_signals`), as a summary sentence and one collapsed entry per pool: the reference pool first, then each other known pool, then "No known pool".
+  Each entry shows its pool and signal count, and expands to one row per Bitcoin coinbase tag, payout address, child reward address or coinbase tag, and declared CORE or exSat account, with its value.
+  Entries for a pool other than the reference are accented as "differs"; the help text says a signal is an association, not proof of who mined the block.
 - **Merge-mining commitment**: decoded marker (`aux_merkle_root`, `merkle_size`, `merkle_nonce`) and parent coinbase txid for `namecoin-aux` / `qbit-aux`, or a format-only `rsk-opaque` / `hathor-rfc0006` entry.
 - **Sources & capture**: source summary, distinct source count, and AuxPoW chain count.
 - **Auxiliary blocks**: hydrated `event_details[]` with authenticated child height/hash/header/time/`nBits` (or explicit unavailable state), `slot_index` / `chain_id`, parent/aux PoW target checks, RSK sidecar fields (`proof_format = "rskj_rpc_opaque"`, miner address, pool identity, canonical-vs-uncle state, and opaque proof byte presence), and a collapsed AuxPoW proof breakdown (`aux_proof` branches, or byte-count-plus-copy fallback when `aux_merkle_proof_hex` does not decode).
