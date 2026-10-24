@@ -1,5 +1,13 @@
 # Release Notes
 
+## [0.12.0] - 2026-10-24
+
+- Show every pool a block names, from its coinbase tag and payout addresses, its merge-mined child blocks and its declared Core DAO and exSat accounts, and flag the blocks where they disagree: a Relationship signals section on the block page, an amber ring on the header tree, and a Mixed signals highlight.
+- Call full-difficulty Bitcoin blocks that break a consensus rule invalid blocks, the term used by bitcoin-data/invalid-blocks.
+- Show in Sources when a source is waiting for Bitcoin Core or recovering, separately from capture errors.
+- Refresh the About dialog's explanation and illustrations, word the source-class help the same way as the source list, and correct several chains' merge-mining start and block interval in that list.
+- Show the Sources help and status explanations as tooltips on hover, focus and tap.
+
 ## [0.11.0] - 2026-10-21
 
 - Show the Core DAO and exSat declarations in each Bitcoin coinbase on the block page: the declared validator, reward address or account, whether Core DAO reads it, and the pool associated with the declared account, which is not necessarily the block's miner.
