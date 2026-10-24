@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-24
+
 - Refresh README and About to explain the broader mining-evidence record, including error blocks, protocol commitments and Findings; update the illustrations and screenshots, link the live monitor and invalid-block research, and clarify setup, Core recovery, database size and pre-1.0 schema expectations.
 
 - Add `--if-needed` to `just rebuild-protocol-commitments`: it exits without contacting Bitcoin Core when the tables already match the running decoder, so deployments can run it after every upgrade.
