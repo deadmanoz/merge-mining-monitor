@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Run `just sweep-relationship-signals` and `just rebuild-relationship-signals` without contacting Bitcoin Core: they read only stored tables, and on production's slow Core link their Core bootstrap could never publish beside the live follower, so the sweep failed with `core_cache_publication_pending`.
+
 ## [0.13.0] - 2026-10-25
 
 - Step through mixed-signal blocks from the tree's Go to menu: `Latest mixed signals` walks every mixed block by height, then time, reading `#height` or, for an orphan, its date and the height it steps at, with `n of N`. Selecting a mixed block puts the stepper at its position unless a stale, invalid, orphan or branch target claims it, and changing the orphan classes reloads it.

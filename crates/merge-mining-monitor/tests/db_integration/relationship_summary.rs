@@ -175,7 +175,7 @@ async fn the_rebuild_records_its_fingerprint_and_the_sweep_repairs_drift() -> Re
 
         // Before the protocol commitments are current the summary omits declared accounts, as
         // the API does, and the rebuild leaves the fingerprint unrecorded.
-        assert!(reconcile_command(&mut client, &rebuild).await?);
+        assert!(!reconcile_command(&mut client, &rebuild).await?);
         assert_eq!(
             summary(&client, &transition.hash).await?,
             Some((false, vec![secpool], Some(height)))
@@ -183,26 +183,30 @@ async fn the_rebuild_records_its_fingerprint_and_the_sweep_repairs_drift() -> Re
         assert_eq!(fingerprint(&client).await?, None);
 
         mark_protocol_commitments_current(&client).await?;
-        assert!(reconcile_command(&mut client, &rebuild).await?);
+        reconcile_command(&mut client, &rebuild).await?;
         assert_eq!(
             summary(&client, &transition.hash).await?,
             Some((true, vec![secpool, antpool], Some(height)))
         );
         assert!(fingerprint(&client).await?.is_some());
-        assert!(
-            !reconcile_command(&mut client, &rebuild).await?,
-            "a current fingerprint skips Core and the rebuild"
-        );
 
-        // A row a write path failed to queue is repaired by the sweep, and counted. The first
-        // sweep clears what the rebuild left queued (the seeded identities among them).
-        run_relationship_sweep(&mut client, 100, 10).await?;
+        // A row a write path failed to queue survives the rebuild a current fingerprint skips,
+        // and the sweep repairs and counts it. The first sweep, run like the scheduled unit
+        // without Core, clears what the rebuild left queued (the seeded identities among them).
+        let sweep_command = ["--sweep-relationship-signals", "--batch-size", "100"];
+        assert!(!reconcile_command(&mut client, &sweep_command).await?);
         client
             .execute(
                 "UPDATE relationship_summary SET mixed = NOT mixed WHERE btc_header_hash = $1",
                 &[&transition.hash],
             )
             .await?;
+        reconcile_command(&mut client, &rebuild).await?;
+        assert_eq!(
+            summary(&client, &transition.hash).await?,
+            Some((false, vec![secpool, antpool], Some(height))),
+            "a current fingerprint skips the rebuild"
+        );
         let sweep = run_relationship_sweep(&mut client, 100, 10).await?;
         assert_eq!((sweep.drifted, sweep.pass_completed), (1, true));
         assert_eq!(

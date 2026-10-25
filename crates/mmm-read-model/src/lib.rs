@@ -276,6 +276,15 @@ impl Default for ReconcileReadModelConfig {
 }
 
 impl ReconcileReadModelConfig {
+    /// Whether this run needs the Bitcoin Core bootstrap. The relationship-summary rebuild and
+    /// sweep read only stored tables, so a run that asks for nothing else skips it: beside a
+    /// live follower on a slow Core link, the bootstrap's cache publication cannot win.
+    pub fn needs_bitcoin_core(&self) -> bool {
+        self.rebuild_source_health
+            || self.rebuild_protocol_commitments
+            || !(self.rebuild_relationship_signals || self.sweep_relationship_signals)
+    }
+
     pub fn from_args<I, S>(args: I) -> Result<Self>
     where
         I: IntoIterator<Item = S>,
@@ -877,6 +886,21 @@ mod config_args_tests {
             with_health.to_string(),
             "--if-needed cannot be combined with --rebuild-source-health"
         );
+    }
+
+    #[test]
+    fn work_beside_the_relationship_summary_still_needs_bitcoin_core() {
+        let needs = |args: &[&str]| {
+            ReconcileReadModelConfig::from_args(args.iter().copied())
+                .unwrap()
+                .needs_bitcoin_core()
+        };
+        assert!(needs(&[
+            "--rebuild-protocol-commitments",
+            "--rebuild-relationship-signals"
+        ]));
+        assert!(needs(&["--rebuild-source-health"]));
+        assert!(needs(&[]));
     }
 
     #[test]
