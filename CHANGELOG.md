@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-10-25
+
 - Run `just sweep-relationship-signals` and `just rebuild-relationship-signals` without contacting Bitcoin Core: they read only stored tables, and on production's slow Core link their Core bootstrap could never publish beside the live follower, so the sweep failed with `core_cache_publication_pending`.
 
 ## [0.13.0] - 2026-10-25
