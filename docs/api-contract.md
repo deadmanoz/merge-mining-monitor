@@ -276,7 +276,7 @@ GET /api/v1/tree?at_height&at_time&context=compact&from_height&to_height&kinds=u
 | `proof_state` | `{ has_auxpow_evidence, has_live_observation }`. |
 | `competition` | Paired canonical competitor details for `stale` nodes, else `null`. |
 | `protocol_commitments` | `null` on every node until `read_model_invariant.protocol_commitments_decoder_version` matches the running decoder; otherwise every node lists its header's declarations in `vout` order, empty when none were derived (`/api/v1/block/:hash` says why). Each entry carries `protocol`, `vout`, `decode_status`, `declared_account` (the block entry's `core_reward_address` or `exsat_account`, `null` unless `valid`) and `declared_account_pool`, as on the block page. |
-| `relationship` | `{ mixed, pools[] }`: the block page's `relationship_signals` summary for the header (`pools` holds the distinct known pools, the reference pool first; `mixed` is true when there are two or more). Never `null`, and independent of the Source filter: it reads every active event's child attribution rows, not the filtered view. |
+| `relationship` | `{ mixed, pools[] }`: the header's stored `relationship_summary`, the block page's `relationship_signals` rule over every active event whatever the Source filter (`pools` holds the distinct known pools, the reference pool first; `mixed` is true when there are two or more). Never `null`; a node without a `block` row is not mixed. It is the flag the `mixed-signal` navigator steps through, and follows a change within one Core follower tick. |
 | `branch` | `{ "branch_id": "<id>" }` for stale members (`stale-<btc_height_min>-<root_hash>`) and multi-block orphan component members (`orphan-<root_hash>`), else `null`. Orphan `TreeBranch` entries in `tree.branches[]` use placement heights for `btc_height_min`/`btc_height_max` and `canonical_competitor_hashes: []`. |
 | `placement_height` | Optional; present on placed orphan nodes in `unheighted_anchor` mode only (omitted elsewhere and on `/api/v1/block/:hash`). Derived layout height (`btc_height` stays `null`). |
 | `placement_approx` | Optional; present with `placement_height`. `true` when placement is approximate rather than a validated strict BIP34 height (UI prefixes `~`). See `agent_docs/tree-semantics.md`. |
@@ -329,7 +329,7 @@ GET /api/v1/navigator/{target}?limit&cursor&direction&anchor_hash&classification
 ```
 
 Purpose: one bounded navigation API for the header-tree controls.
-The five targets are:
+The six targets are:
 
 | Target | Axis | Item scope | View |
 |---|---|---|---|
@@ -338,6 +338,7 @@ The five targets are:
 | `invalid-block` | `height` | consensus-invalid full-PoW blocks | `tree_window` |
 | `orphan` | `time` | BTC-orphan blocks | `unheighted_anchor` |
 | `orphan-branch` | `time` | multi-block BTC-orphan branches | `unheighted_anchor` |
+| `mixed-signal` | `height` | blocks whose stored relationship summary is mixed: canonical blocks, stale and invalid blocks with a source, and BTC orphans | `tree_window`, or `unheighted_anchor` for an orphan |
 
 All targets use the same modes:
 
@@ -353,7 +354,7 @@ Query parameters:
   It is target-bound and axis-bound; a cursor from another target is `invalid_query`.
 - `direction`: required with `cursor`, and only valid with `cursor`.
 - `anchor_hash`: mutually exclusive with `cursor`.
-- `classification`: accepted only by `orphan` and `orphan-branch`, defaulting to `strict_btc_orphan,weak_btc_orphan`.
+- `classification`: accepted only by `orphan`, `orphan-branch` and `mixed-signal` (where it filters the orphan members), defaulting to `strict_btc_orphan,weak_btc_orphan`.
   The valid classes are `strict_btc_orphan`, `weak_btc_orphan`, `excluded`, and `pending`.
 
 Supplying any other parameter, mixing `cursor` with `anchor_hash`, supplying only one of `cursor` / `direction`, or passing `classification` to a stale or invalid-block target is `invalid_query`.
@@ -375,14 +376,14 @@ Each `items[]` entry has this format:
 - `kind`: one of the target strings.
 - `primary_hash`: display/RPC hash for the block or branch root.
 - `label`: display label for the UI.
-- `position`: `{ axis, min, max }`; the stale and invalid-block targets use Bitcoin height, orphan targets use `btc_header_time`.
+- `position`: `{ axis, min, max }`; the stale, invalid-block and `mixed-signal` targets use Bitcoin height (a `mixed-signal` orphan's step height, below), orphan targets use `btc_header_time`.
   For `invalid-block`, `min` and `max` are always equal, because each item is one block.
 - `index`: 1-based newest-first rank in the active target (and classification filter).
   `1` is the newest item; `total` is the oldest. Items in one response share one snapshot with `total`, so `index <= total`.
 - `cursor`: opaque item cursor.
   Clients must send it back as-is.
 - `branch`: `null` for single-block targets, or `{ branch_id, root_hash, tip_hashes, depth }` for branch targets.
-- `orphan`: `null` except for the `orphan` target, where it is `{ btc_orphan_class }` (`null` only when `pending` is in the active filter).
+- `orphan`: `null` except for the `orphan` target and `mixed-signal` orphan members, where it is `{ btc_orphan_class, btc_header_time }` (`btc_orphan_class` is `null` only when `pending` is in the active filter).
 - `view`: either `null`, `{ mode: "tree_window", target_height, tree_from, tree_to, select_hash, center_hash }`, or `{ mode: "unheighted_anchor", anchor_hash, select_hash, center_hash }`.
 - `view_error`: `null` unless the backend cannot advertise a safe tree-window view, in which case it is `{ code, target_height, message, action }`.
 
@@ -394,6 +395,9 @@ Ordering is stable and target-specific:
   The hash tie-break is required rather than cosmetic: the catalogue carries more than one block at some heights, so paging on height alone would skip or repeat members of a group (`branch` and `orphan` are always `null`).
 - `orphan`: `btc_header_time` descending, then stored header hash bytes descending.
 - `orphan-branch`: `btc_header_time_max` descending, then `btc_header_time_min` descending, then stored root hash bytes ascending.
+- `mixed-signal`: step height descending, then `btc_header_time` descending, then stored header hash bytes ascending.
+  A block's step height is its `btc_height`. An orphan's is the height of the canonical block with the latest `btc_header_time` at or before its own, or `0` when it predates every stored canonical block: a sort position only, since the tree still places the orphan as it always does.
+  Its cursors also carry the header time, so paging never skips or repeats a block sharing a step height.
 
 Single-block stale items round-trip to `/api/v1/block/:hash` and to tree node hashes.
 Stale branch items include only current components whose stale members have a derivable canonical competitor, with `depth >= 2`; one-block stale branches remain single `stale` items and block detail.
@@ -590,9 +594,9 @@ Expected 4xx cases:
   Direct explicit ranges can still return `range_too_large` when they request too many non-collapsible nodes.
   When `include_unheighted=true`, `unheighted_from` / `unheighted_to` may span at most 31 UTC calendar days and return at most 250 null-height unknown nodes after filters.
 - `/api/v1/navigator/{target}`: page size at most 2,000.
-  Stale targets paginate over height-axis cursors; orphan targets paginate over time-axis cursors.
+  Stale, invalid-block and `mixed-signal` targets paginate over height-axis cursors; orphan targets paginate over time-axis cursors.
   Every target is presented newest-first, exposes opaque bidirectional cursors (`direction=older|newer`), and supports `anchor_hash` locate mode.
-  `orphan` and `orphan-branch` are filtered by `classification` (default strict+weak).
+  `orphan`, `orphan-branch` and the orphan members of `mixed-signal` are filtered by `classification` (default strict+weak).
 
 Navigator cursors are target-bound and axis-bound.
 Clients must treat them as opaque strings and send them back unchanged.

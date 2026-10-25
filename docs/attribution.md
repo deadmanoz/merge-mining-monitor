@@ -109,7 +109,7 @@ When those name different pools, the block was very likely built on another pool
 - the display miner lets a known Bitcoin pool win;
 - conflicting child pools collapse to Unknown.
 
-The relationship-signals layer lists every one of these names with its pool. It is computed at read time from rows the API already reads (`/api/v1/block/:hash` `relationship_signals`, tree node `relationship`; see `docs/api-contract.md`).
+The relationship-signals layer lists every one of these names with its pool. The block page computes it at read time from rows the API already reads (`/api/v1/block/:hash` `relationship_signals`); tree nodes' `relationship` and the `mixed-signal` navigator read the same rule's stored per-block summary (`relationship_summary`, see `docs/data-model.md` and `docs/api-contract.md`).
 
 - **Kinds.**
   - `bitcoin_coinbase_tag` and `bitcoin_payout_address` come from the pool snapshot, applied to one copy of the parent coinbase. That copy is the block row's complete Core coinbase; otherwise the event or observation with structured outputs, then with published output text, then with a script alone, lowest id first.

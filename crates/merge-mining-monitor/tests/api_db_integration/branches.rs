@@ -1,6 +1,6 @@
 use anyhow::Result;
 use mmm_api::projection::{self};
-use mmm_api::query::{self, NavigatorTarget};
+use mmm_api::query::NavigatorTarget;
 use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, RSK_SOURCE_CODE};
 use mmm_store::get_source_id;
 use time::Month;
@@ -14,7 +14,7 @@ use crate::support::seed::{
 };
 use mmm_capture::test_support::header_meeting_bits_with_prev;
 
-use crate::helpers::{format_api_error, format_projection_error, seed_canonical_chain};
+use crate::helpers::{fetch_navigator, seed_canonical_chain};
 
 fn assert_branch_tree_window(
     item: &projection::NavigatorItem,
@@ -57,17 +57,6 @@ async fn assert_missing_anchor_keeps_total(
     assert!(missing.items.is_empty());
     assert_eq!(missing.total, total);
     Ok(())
-}
-
-async fn fetch_navigator(
-    client: &Client,
-    target: NavigatorTarget,
-    raw_query: Option<&str>,
-) -> Result<projection::NavigatorPayload> {
-    let query = query::parse_navigator_query(target, raw_query).map_err(format_api_error)?;
-    projection::navigator(client, &query)
-        .await
-        .map_err(format_projection_error)
 }
 
 async fn seed_single_block_stale_competition(

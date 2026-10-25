@@ -9,7 +9,7 @@ use bitcoin::hashes::Hash as _;
 use mmm_api::ApiError;
 use mmm_api::projection::TreePayload;
 use mmm_api::projection::{self, ProjectionError};
-use mmm_api::query::{self};
+use mmm_api::query::{self, NavigatorTarget};
 use mmm_bitcoin_core::BitcoinCoreBlockCoinbase;
 use mmm_producers::{BitcoinCoreBackboneSource, BitcoinCoreBackboneTip};
 use tokio_postgres::Client;
@@ -22,6 +22,17 @@ pub(crate) async fn project_tree(
 ) -> Result<TreePayload> {
     let query = query::parse_tree_query(query_string).map_err(format_api_error)?;
     projection::tree(client, &query)
+        .await
+        .map_err(format_projection_error)
+}
+
+pub(crate) async fn fetch_navigator(
+    client: &Client,
+    target: NavigatorTarget,
+    raw_query: Option<&str>,
+) -> Result<projection::NavigatorPayload> {
+    let query = query::parse_navigator_query(target, raw_query).map_err(format_api_error)?;
+    projection::navigator(client, &query)
         .await
         .map_err(format_projection_error)
 }

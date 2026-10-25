@@ -366,6 +366,33 @@ fn invalid_block_navigator_cursors_are_target_and_axis_bound() {
 }
 
 #[test]
+fn mixed_signal_navigator_filters_orphan_members_and_pages_on_a_tiebreak() {
+    let target = NavigatorTarget::parse("mixed-signal").unwrap();
+    let query = parse_navigator_query(target, None).unwrap();
+    assert_eq!(
+        query.classification,
+        vec![
+            Classification::StrictBtcOrphan,
+            Classification::WeakBtcOrphan
+        ]
+    );
+
+    let hash = "cd".repeat(32);
+    let timed = NavigatorCursor::new(target, NavigatorAxis::Height, 0, 0, hash.clone())
+        .with_tiebreak(1_700_000_000);
+    let page = parse_navigator_query(
+        target,
+        Some(&format!("cursor={}&direction=older", timed.encode())),
+    )
+    .unwrap();
+    assert!(matches!(page.mode, NavigatorMode::Page { cursor, .. } if cursor == timed));
+    // A target without a tiebreak keeps the cursor encoding it had before the field existed.
+    let stale = NavigatorCursor::new(NavigatorTarget::Stale, NavigatorAxis::Height, 9, 9, hash);
+    let json = String::from_utf8(hex::decode(stale.encode()).unwrap()).unwrap();
+    assert!(!json.contains("tiebreak"), "{json}");
+}
+
+#[test]
 fn navigator_accepts_anchor_and_cursor_modes() {
     let hash = "AB".repeat(32);
     let anchor = parse_navigator_query(

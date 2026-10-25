@@ -138,6 +138,10 @@ fn assert_navigator_fixture_contract(file: &str, fixture: &Value) {
 
     assert_navigator_index_contract(file, fixture, items);
 
+    if file == "navigator-mixed-signal.json" {
+        assert_mixed_signal_fixture_contract(file, items);
+    }
+
     if file == "navigator-invalid-block.json" {
         assert!(
             fixture["query"]["classification"]
@@ -177,6 +181,40 @@ fn assert_navigator_fixture_contract(file: &str, fixture: &Value) {
             "{file}: same-height items must ascend by stored hash bytes"
         );
     }
+}
+
+/// A mixed-signal item steps at one height; an orphan member carries its class and header time
+/// and opens its unheighted anchor, and one height's members go newest header time first.
+fn assert_mixed_signal_fixture_contract(file: &str, items: &[Value]) {
+    for item in items {
+        assert_eq!(item["position"]["axis"], "height", "{file}: height axis");
+        assert_eq!(
+            item["position"]["min"], item["position"]["max"],
+            "{file}: a mixed-signal block is a single step height"
+        );
+        let orphan = item["orphan"].is_object();
+        assert_eq!(
+            item["view"]["mode"],
+            if orphan {
+                "unheighted_anchor"
+            } else {
+                "tree_window"
+            },
+            "{file}: orphans open their anchor, blocks with a height a tree window"
+        );
+        if orphan {
+            assert!(
+                item["orphan"]["btc_header_time"].is_i64(),
+                "{file}: an orphan member carries its header time"
+            );
+        }
+    }
+    assert!(
+        items
+            .windows(2)
+            .any(|pair| pair[0]["position"]["max"] == pair[1]["position"]["max"]),
+        "{file}: must exercise a shared step height"
+    );
 }
 
 fn assert_navigator_index_contract(file: &str, fixture: &Value, items: &[Value]) {

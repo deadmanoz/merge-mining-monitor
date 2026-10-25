@@ -77,6 +77,11 @@
       "scenario": "Time-keyed BTC-orphan navigator page with orphan class facets and unheighted-anchor view"
     },
     {
+      "file": "navigator-mixed-signal.json",
+      "endpoint_family": "/api/v1/navigator/mixed-signal",
+      "scenario": "Step-height mixed-signal page where an orphan and a canonical block share a step height and order by header time, with tree-window and unheighted-anchor views"
+    },
+    {
       "file": "navigator-orphan-branch.json",
       "endpoint_family": "/api/v1/navigator/orphan-branch",
       "scenario": "Anchor-hash locate mode for a time-bounded orphan branch with unheighted-anchor view"
