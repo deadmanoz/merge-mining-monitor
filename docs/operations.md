@@ -278,6 +278,7 @@ Producers keep the tables current afterward.
 `just rebuild-relationship-signals` (optionally with `--batch-size N`) fills `relationship_summary`, the stored mixed-signals flags, after upserting the pool snapshot.
 Run it with `--if-needed` after every upgrade, after `just rebuild-protocol-commitments`: it skips when the recorded fingerprint matches the running derivation, protocol decoder and pool snapshot, and it records the fingerprint only once the protocol commitments are current, so a run before then repeats next time.
 The Core follower then keeps the table current by draining `relationship_refresh_queue` each tick.
+Neither `just rebuild-relationship-signals` nor `just sweep-relationship-signals` contacts Bitcoin Core: both read only stored tables, so they run beside the live follower.
 `just sweep-relationship-signals` (with `--batch-size` blocks per page and `--max-iterations` pages per run) first turns queued pool-identity changes into header refreshes, then re-derives summaries from a saved cursor and logs a warning with the count of rows it corrected that no write had queued; schedule it like `reclassify-unknown-parents --scheduled` so every row is checked once per pass, and treat a non-zero drift as a write path that failed to queue its header.
 
 `reconcile-read-model --start-height` and `--end-height` are child-height bounds.

@@ -175,7 +175,7 @@ pub async fn bootstrap_core(pg_client: &mut Client) -> Result<ConfiguredParentCl
 
 /// `reconcile-read-model`: `bootstrap` contacts Bitcoin Core first, except for `--if-needed`
 /// rebuilds that the recorded decoder version and relationship fingerprint already make
-/// unnecessary.
+/// unnecessary, and runs that do not [`ReconcileReadModelConfig::needs_bitcoin_core`].
 pub async fn run_reconcile_read_model_command(
     pg_client: &mut Client,
     config: ReconcileReadModelConfig,
@@ -186,7 +186,11 @@ pub async fn run_reconcile_read_model_command(
     if requested_rebuilds_current(pg_client, &config).await? {
         return Ok(0);
     }
-    let parent_classifier = bootstrap(pg_client).await?;
+    let parent_classifier = if config.needs_bitcoin_core() {
+        bootstrap(pg_client).await?
+    } else {
+        ConfiguredParentClassifier::Disabled
+    };
     if config.rebuild_relationship_signals {
         // The rebuild resolves snapshot slugs through `pool`, so a new snapshot's pools must
         // exist before it records the snapshot's fingerprint.
