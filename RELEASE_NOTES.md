@@ -1,5 +1,9 @@
 # Release Notes
 
+## [0.13.1] - 2026-10-25
+
+- Keep the stored Mixed signals results checked in production: the scheduled check that repairs them no longer waits on Bitcoin Core, which it never needed, so it can run beside the live site.
+
 ## [0.13.0] - 2026-10-25
 
 - Step through every block whose signals name more than one pool: Latest mixed signals in the tree's Go to menu walks them across all history, by height and then time, including orphans, with "n of N".
