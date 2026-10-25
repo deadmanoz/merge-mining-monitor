@@ -26,8 +26,7 @@ use mmm_store::upsert_identity_registry;
 
 /// `pool_identity.namespace` for Elastos reward addresses.
 pub const ELASTOS_REWARD_ADDRESS_NAMESPACE: &str = "elastos_reward_address";
-/// `pool_identity.namespace` for Elastos minerinfo tags.
-pub const ELASTOS_MINERINFO_NAMESPACE: &str = "elastos_minerinfo";
+pub use mmm_capture::pool_resolver::ELASTOS_MINERINFO_NAMESPACE;
 pub const ELASTOS_RPC_REWARD_ADDRESS_SOURCE: &str = "elastos_rpc_reward_address";
 pub const ELASTOS_RPC_MINERINFO_SOURCE: &str = "elastos_rpc_minerinfo";
 

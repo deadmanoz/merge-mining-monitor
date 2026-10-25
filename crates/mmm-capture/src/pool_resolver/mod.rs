@@ -10,8 +10,8 @@ pub use btc::{
 };
 pub use error::PoolResolverError;
 pub use identity::{
-    DEFAULT_RSK_MINER_REGISTRY_JSON, PoolIdentityMatch, PoolIdentityRegistry,
-    RSK_MINER_ADDRESS_NAMESPACE, RskMinerEntry, RskMinerRegistry,
+    DEFAULT_RSK_MINER_REGISTRY_JSON, ELASTOS_MINERINFO_NAMESPACE, PoolIdentityMatch,
+    PoolIdentityRegistry, RSK_MINER_ADDRESS_NAMESPACE, RskMinerEntry, RskMinerRegistry,
 };
 
 pub use identity::normalize_rsk_address;

@@ -1,5 +1,5 @@
-//! Derived read-model reconciliation (`block`, `attestation_proof`, `source_health`, and
-//! `protocol_commitment`).
+//! Derived read-model reconciliation (`block`, `attestation_proof`, `source_health`,
+//! `protocol_commitment`, and `relationship_summary`).
 //!
 //! Base-evidence mutations enter through root-level mutation helpers that enforce
 //! advisory lock ordering, preclassification, source-health brackets, and dependent cascades.
@@ -9,6 +9,7 @@ mod known_stale_reclassify;
 mod mutation;
 mod pending_cascade;
 mod protocol_commitments;
+mod relationship_summary;
 mod source_health_sql;
 mod unknown_reclassify;
 
@@ -39,7 +40,13 @@ pub use mutation::{
     reconcile_proven_canonical_batch_for_test,
 };
 pub use pending_cascade::pending_cascades_settled;
-pub use protocol_commitments::skip_protocol_commitments_rebuild;
+use protocol_commitments::skip_protocol_commitments_rebuild;
+#[cfg(feature = "db-integration")]
+pub use relationship_summary::refresh_relationship_summaries;
+pub use relationship_summary::{
+    RELATIONSHIP_DRAIN_BATCH, RELATIONSHIP_DRAIN_BATCHES, RelationshipSweep,
+    drain_relationship_refresh_queue, run_relationship_sweep,
+};
 pub use source_health_sql::invalidate_source_health_in_transaction;
 #[cfg(any(test, feature = "db-integration"))]
 pub use source_health_sql::{compute_source_health_from_base, rebuild_source_health};
@@ -240,8 +247,13 @@ pub struct ReconcileReadModelConfig {
     pub rebuild_source_health: bool,
     /// Rebuild the protocol commitment tables and record the decoder version.
     pub rebuild_protocol_commitments: bool,
-    /// With `rebuild_protocol_commitments`, skip the rebuild when the recorded decoder version
-    /// is already current.
+    /// Rebuild `relationship_summary` and record the rules fingerprint (after the protocol
+    /// commitments when both are asked for).
+    pub rebuild_relationship_signals: bool,
+    /// Run one scheduled `relationship_summary` sweep: `--max-iterations` pages of
+    /// `--batch-size` blocks from the persisted cursor.
+    pub sweep_relationship_signals: bool,
+    /// With either rebuild, skip it when the recorded version or fingerprint is already current.
     pub if_needed: bool,
 }
 
@@ -256,6 +268,8 @@ impl Default for ReconcileReadModelConfig {
             max_iterations: DEFAULT_MAX_ITERATIONS,
             rebuild_source_health: false,
             rebuild_protocol_commitments: false,
+            rebuild_relationship_signals: false,
+            sweep_relationship_signals: false,
             if_needed: false,
         }
     }
@@ -306,6 +320,14 @@ impl ReconcileReadModelConfig {
                     config.rebuild_protocol_commitments = true;
                     true
                 }
+                "--rebuild-relationship-signals" => {
+                    config.rebuild_relationship_signals = true;
+                    true
+                }
+                "--sweep-relationship-signals" => {
+                    config.sweep_relationship_signals = true;
+                    true
+                }
                 "--if-needed" => {
                     config.if_needed = true;
                     true
@@ -319,8 +341,20 @@ impl ReconcileReadModelConfig {
         if config.max_iterations == 0 {
             bail!("--max-iterations must be positive");
         }
-        if config.if_needed && !config.rebuild_protocol_commitments {
-            bail!("--if-needed requires --rebuild-protocol-commitments");
+        if config.if_needed
+            && !config.rebuild_protocol_commitments
+            && !config.rebuild_relationship_signals
+        {
+            bail!(
+                "--if-needed requires --rebuild-protocol-commitments or --rebuild-relationship-signals"
+            );
+        }
+        if config.sweep_relationship_signals
+            && (config.rebuild_source_health
+                || config.rebuild_protocol_commitments
+                || config.rebuild_relationship_signals)
+        {
+            bail!("--sweep-relationship-signals cannot be combined with a rebuild");
         }
         // The source-health rebuild takes precedence, so an early skip must not drop it.
         if config.if_needed && config.rebuild_source_health {
@@ -486,8 +520,22 @@ pub(crate) async fn lock_payload_parent_read_model_in_txn<C: GenericClient>(
     lock_block_hashes(client, &hashes).await
 }
 
+/// Whether `config` asks only for `--if-needed` rebuilds that are all already current, so the
+/// command can skip Core and the rebuilds.
+pub async fn requested_rebuilds_current(
+    client: &Client,
+    config: &ReconcileReadModelConfig,
+) -> Result<bool> {
+    Ok(config.if_needed
+        && (!config.rebuild_protocol_commitments
+            || skip_protocol_commitments_rebuild(client, config).await?)
+        && (!config.rebuild_relationship_signals
+            || relationship_summary::skip_relationship_summaries_rebuild(client, config).await?))
+}
+
 /// Run the read-model reconciliation driver (`--rebuild-source-health`,
-/// `--rebuild-protocol-commitments`, `--all`, or `--missing-only`).
+/// `--rebuild-protocol-commitments`, `--rebuild-relationship-signals`,
+/// `--sweep-relationship-signals`, `--all`, or `--missing-only`).
 pub async fn run_reconcile_read_model(
     client: &mut Client,
     classifier: &ConfiguredParentClassifier,
@@ -498,10 +546,21 @@ pub async fn run_reconcile_read_model(
         tracing::info!("rebuilt source_health from base tables");
         return Ok(0);
     }
-    if config.rebuild_protocol_commitments {
-        if !skip_protocol_commitments_rebuild(client, &config).await? {
+    if config.rebuild_protocol_commitments || config.rebuild_relationship_signals {
+        if config.rebuild_protocol_commitments
+            && !skip_protocol_commitments_rebuild(client, &config).await?
+        {
             protocol_commitments::rebuild_protocol_commitments(client, config.batch_size).await?;
         }
+        if config.rebuild_relationship_signals
+            && !relationship_summary::skip_relationship_summaries_rebuild(client, &config).await?
+        {
+            relationship_summary::rebuild_relationship_summaries(client, config.batch_size).await?;
+        }
+        return Ok(0);
+    }
+    if config.sweep_relationship_signals {
+        run_relationship_sweep(client, config.batch_size, config.max_iterations).await?;
         return Ok(0);
     }
 
@@ -806,7 +865,7 @@ mod config_args_tests {
         let alone = ReconcileReadModelConfig::from_args(["--if-needed"]).expect_err("no rebuild");
         assert_eq!(
             alone.to_string(),
-            "--if-needed requires --rebuild-protocol-commitments"
+            "--if-needed requires --rebuild-protocol-commitments or --rebuild-relationship-signals"
         );
         let with_health = ReconcileReadModelConfig::from_args([
             "--rebuild-protocol-commitments",

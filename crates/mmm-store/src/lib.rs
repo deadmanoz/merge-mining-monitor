@@ -1,5 +1,6 @@
 //! Producer-side base-table SQL (`merge_mining_event`, child block observations, 1:1 chain
-//! sidecars, attributions, cursors, capture errors, child-chain heads, and Core header cache).
+//! sidecars, attributions, cursors, capture errors, child-chain heads, Core header cache, and
+//! the relationship refresh queue).
 //! Never writes derived tables.
 
 mod bitcoin_core_header;
@@ -14,6 +15,7 @@ mod observation;
 mod pending_reconcile;
 mod poll_cursor;
 mod pool;
+mod relationship_queue;
 
 pub use bitcoin_core_header::{
     BitcoinCoreHeader, BitcoinCoreHeaderCacheIntegrityError, BitcoinCoreHeaderCacheUpdate,

@@ -74,6 +74,7 @@ SET recheck_pending_generation = recheck_pending_generation + 1,
 | `0035_add_protocol_commitments.sql` | Adds the derived `protocol_commitment`, `protocol_commitment_script` and `protocol_commitment_undecodable` tables, the decoder-version readiness column, and the `core_reward_address` and `exsat_account` identity namespaces; the tables start empty until `just rebuild-protocol-commitments`. |
 | `0036_live_producer_runtime.sql` | Adds `producer_runtime_state` and `publication_revision` for live runtime status and cache publication fencing. |
 | `0037_rename_error_block_to_invalid_block.sql` | Renames `error_block` parent/block classification, `error-block-catalog` height source, `block.error_block_reason`, and `source_health.error_block_parents` to `invalid_block` equivalents. |
+| `0038_add_relationship_summary.sql` | Adds the derived `relationship_summary` table, its `relationship_refresh_queue`, and the rules-fingerprint and sweep-cursor columns; the table starts empty until `just rebuild-relationship-signals`. |
 
 ## Reset Path
 

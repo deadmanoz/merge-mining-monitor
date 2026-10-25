@@ -6,6 +6,8 @@ This changelog starts with the initial release.
 
 ## [Unreleased]
 
+- Store each block's relationship-signal summary in a new `relationship_summary` table (migration `0038`), the groundwork for stepping through mixed-signal blocks across all history. Block and attribution writes queue their headers, which the Core follower refreshes each tick, and pool-identity writes queue the identity; `just sweep-relationship-signals` turns queued identities into header refreshes, re-checks every row from a saved cursor, and logs as drift the rows it corrected that no write had queued, so a write path that forgets to queue shows up. Run `just rebuild-relationship-signals --if-needed` after upgrading, after `just rebuild-protocol-commitments --if-needed`. The block page and the stored summary now share one relationship-signal rule.
+
 ## [0.12.0] - 2026-10-24
 
 - Refresh README and About to explain the broader mining-evidence record, including error blocks, protocol commitments and Findings; update the illustrations and screenshots, link the live monitor and invalid-block research, and clarify setup, Core recovery, database size and pre-1.0 schema expectations.

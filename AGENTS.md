@@ -15,14 +15,16 @@ Use `just` targets, not raw commands, when a target exists:
 - `just poll-CHAIN` / `just backfill-CHAIN START END` - chain capture for `namecoin`, `rsk`, `syscoin`, `fractal`, `hathor`, `elastos`, `qbit`, and `terracoin`.
 - `just import-known-stales` / `just reclassify-known-stales` - known-stale membership import and retroactive demotion.
 - `just import-all` / `just import-dataset CHAIN` / `just gen-research-publication-pins` - pinned historical publication import and Research manifest + invalid-block-catalogue pin refresh.
-- `just reclassify-unknown-parents`, `just reclassify-pools`, `just reconcile-read-model`, `just rebuild-protocol-commitments` - repair and enrichment commands.
+- `just reclassify-unknown-parents`, `just reclassify-pools`, `just reconcile-read-model`, `just rebuild-protocol-commitments`, `just rebuild-relationship-signals`, `just sweep-relationship-signals` - repair and enrichment commands.
 
 ## Architecture Rules
 
 - **Crate ownership:** `mmm-pg` opens connections, `mmm-capture` owns offline parsing/resolution, `mmm-rpc` owns HTTP transport, `mmm-bitcoin-core` is the only Core RPC linker, `mmm-store` writes producer base tables, `mmm-read-model` writes derived tables, `mmm-producers` owns engines, and `mmm-api` serves read-only HTTP views without importing producer internals.
-- **Base vs derived tables (`docs/data-model.md`):** Producers write only `merge_mining_event`, `child_block_observation` (with its `child_miner_identity` dimension), 1:1 chain sidecars, attribution rows, and operational state (`poll_cursor`, `poll_pending_reconcile`, `capture_error`, `producer_runtime_state`, and `child_chain_head`, pruned to each source's rescan window) through `mmm-store`; historical ingest attaches `historical_event_provenance` and operators import `known_stale_block`.
+- **Base vs derived tables (`docs/data-model.md`):** Producers write only `merge_mining_event`, `child_block_observation` (with its `child_miner_identity` dimension), 1:1 chain sidecars, attribution rows, and operational state (`poll_cursor`, `poll_pending_reconcile`, `capture_error`, `producer_runtime_state`, `relationship_refresh_queue`, and `child_chain_head`, pruned to each source's rescan window) through `mmm-store`; historical ingest attaches `historical_event_provenance` and operators import `known_stale_block`.
   `merge_mining_event` holds only Bitcoin-relevant evidence linked to its observation; nears and blocks without a Bitcoin parent are observations only.
-  `block`, `attestation_proof`, `source_health`, and the `protocol_commitment` tables are derived exclusively through `mmm-read-model`.
+  `block`, `attestation_proof`, `source_health`, the `protocol_commitment` tables and `relationship_summary` are derived exclusively through `mmm-read-model`.
+- **Relationship summaries (`docs/data-model.md`):** A new write that changes a header's coinbase, miner pool or height, a child attribution, or a pool identity must queue it through the existing hooks (`refresh_protocol_commitments`, `sync_event_observation_attribution`, the pool-identity writers), never by expanding headers in the writer's transaction.
+  The scheduled sweep reports any summary a write path left stale as drift; fix the write path, not the sweep.
 - **Protocol account associations (`docs/attribution.md`):** A CORE or exSat coinbase declaration names a protocol account, never the block's builder, owner or credited account.
   The `data/pools/protocol-accounts/` registries (dated basis per entry, reconciled at Core follow startup) are resolved only at read time and never feed Bitcoin, child or event attribution.
 - **Invalid-block catalogue (`data/consensus/invalid_blocks.csv`):** A PoW-valid match (including reviewed body-invalid parents) is an `invalid_block` with `invalid_block_reason`, never stale or orphan evidence.

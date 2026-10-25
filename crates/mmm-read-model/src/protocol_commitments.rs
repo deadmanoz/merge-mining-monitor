@@ -235,12 +235,14 @@ struct DerivedRows {
 }
 
 /// Make the derived rows of the distinct `hashes` equal a fresh decode of their stored
-/// evidence: an evidence select, a script insert when any declaration was decoded, and a sync.
+/// evidence (an evidence select, a script insert when any declaration was decoded, and a sync),
+/// and queue their relationship summaries, which read the same evidence.
 pub(crate) async fn refresh_protocol_commitments<C: GenericClient>(
     client: &C,
     hashes: &[Vec<u8>],
 ) -> Result<()> {
-    refresh(client, hashes, &INSERT_SCRIPTS_SQL).await
+    refresh(client, hashes, &INSERT_SCRIPTS_SQL).await?;
+    crate::relationship_summary::enqueue_relationship_headers(client, hashes).await
 }
 
 async fn refresh<C: GenericClient>(
@@ -320,7 +322,7 @@ async fn refresh<C: GenericClient>(
 
 /// Whether `config` asks for an `--if-needed` rebuild while the last completed rebuild already
 /// recorded the compiled decoder version; logs the skip.
-pub async fn skip_protocol_commitments_rebuild(
+pub(crate) async fn skip_protocol_commitments_rebuild(
     client: &Client,
     config: &ReconcileReadModelConfig,
 ) -> Result<bool> {

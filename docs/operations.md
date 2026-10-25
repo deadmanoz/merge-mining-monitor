@@ -59,6 +59,7 @@ Its example credentials and published database port are for a controlled develop
    just sync-bitcoin-core --from-height START --to-height END
    just rebuild-source-health
    just rebuild-protocol-commitments --if-needed
+   just rebuild-relationship-signals --if-needed
    ```
 
    Stop pollers while rebuilding source health; `import-all` already rebuilds it after its queue drains. Run `just sync-bitcoin-core --follow` as a long-lived process to keep canonical context current. Additional historical tree windows need their own backbone coverage.
@@ -273,6 +274,11 @@ Run it once after upgrading to 0.11.0 (migration `0035`) and again after any rel
 It re-derives every stored script with the compiled decoder, then refreshes every header with a `block` row, a near observation with stored outputs or derived rows, one page per exclusive canonical-view hold so live capture and Core writes wait at most one page.
 It records `protocol_commitments_decoder_version` only after the walk finishes; an interrupted run leaves the version unchanged, and a rerun is idempotent.
 Producers keep the tables current afterward.
+
+`just rebuild-relationship-signals` (optionally with `--batch-size N`) fills `relationship_summary`, the stored mixed-signals flags, after upserting the pool snapshot.
+Run it with `--if-needed` after every upgrade, after `just rebuild-protocol-commitments`: it skips when the recorded fingerprint matches the running derivation, protocol decoder and pool snapshot, and it records the fingerprint only once the protocol commitments are current, so a run before then repeats next time.
+The Core follower then keeps the table current by draining `relationship_refresh_queue` each tick.
+`just sweep-relationship-signals` (with `--batch-size` blocks per page and `--max-iterations` pages per run) first turns queued pool-identity changes into header refreshes, then re-derives summaries from a saved cursor and logs a warning with the count of rows it corrected that no write had queued; schedule it like `reclassify-unknown-parents --scheduled` so every row is checked once per pass, and treat a non-zero drift as a write path that failed to queue its header.
 
 `reconcile-read-model --start-height` and `--end-height` are child-height bounds.
 Either bound excludes exact events whose authenticated child height is unavailable.

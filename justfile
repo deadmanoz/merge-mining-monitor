@@ -190,6 +190,14 @@ rebuild-source-health:
 rebuild-protocol-commitments *args:
     cargo run -- reconcile-read-model --rebuild-protocol-commitments {{args}}
 
+# Rebuild every relationship summary (the stored mixed-signals flags) and record the rules fingerprint.
+rebuild-relationship-signals *args:
+    cargo run -- reconcile-read-model --rebuild-relationship-signals {{args}}
+
+# One scheduled relationship-summary sweep: re-derive pages from the saved cursor and report drift.
+sweep-relationship-signals *args:
+    cargo run -- reconcile-read-model --sweep-relationship-signals {{args}}
+
 revoke-merge-mining-event event_id reason:
     cargo run -- revoke-merge-mining-event {{event_id}} "{{reason}}"
 

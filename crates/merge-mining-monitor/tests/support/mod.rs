@@ -22,7 +22,8 @@ use {
         pool_resolver::PoolResolver,
         source_registry::NAMECOIN_SOURCE_CODE,
     },
-    mmm_read_model::capture_in_txn,
+    mmm_producers::run_reconcile_read_model_command,
+    mmm_read_model::{ReconcileReadModelConfig, capture_in_txn},
     mmm_store::{
         CaptureWrite, get_source_id, load_bitcoin_core_nbits_table, upsert_merge_mining_event,
         upsert_pool_snapshot, write_capture,
@@ -148,6 +149,36 @@ pub async fn default_pool_snapshot(client: &Client) -> Result<DefaultPoolSnapsho
     let resolver = PoolResolver::from_default_snapshot()?;
     let pool_ids_by_slug = upsert_pool_snapshot(client, resolver.snapshot()).await?;
     Ok((resolver, pool_ids_by_slug))
+}
+
+/// Record the running protocol-commitment decoder, as a completed rebuild does, so the API and
+/// relationship summaries read the derived declarations.
+#[cfg(feature = "db-integration")]
+pub async fn mark_protocol_commitments_current(client: &Client) -> Result<()> {
+    client
+        .execute(
+            "UPDATE read_model_invariant SET protocol_commitments_decoder_version = $1",
+            &[&mmm_capture::protocol_commitment::DECODER_VERSION],
+        )
+        .await?;
+    Ok(())
+}
+
+/// Runs `reconcile-read-model args` through the command path with a stand-in for the Core
+/// bootstrap; returns whether the bootstrap ran.
+#[cfg(feature = "db-integration")]
+pub async fn reconcile_command(client: &mut Client, args: &[&str]) -> Result<bool> {
+    let mut bootstrapped = false;
+    run_reconcile_read_model_command(
+        client,
+        ReconcileReadModelConfig::from_args(args.iter().copied())?,
+        async |_: &mut Client| {
+            bootstrapped = true;
+            Ok(ConfiguredParentClassifier::Disabled)
+        },
+    )
+    .await?;
+    Ok(bootstrapped)
 }
 
 #[cfg(feature = "db-integration")]
