@@ -1,5 +1,10 @@
 # Release Notes
 
+## [0.13.0] - 2026-10-25
+
+- Step through every block whose signals name more than one pool: Latest mixed signals in the tree's Go to menu walks them across all history, by height and then time, including orphans, with "n of N".
+- Read the tree's amber Mixed signals ring from the same stored result the stepper uses, so the two always agree and the tree no longer decodes coinbases on every request.
+
 ## [0.12.0] - 2026-10-24
 
 - Show every pool a block names, from its coinbase tag and payout addresses, its merge-mined child blocks and its declared Core DAO and exSat accounts, and flag the blocks where they disagree: a Relationship signals section on the block page, an amber ring on the header tree, and a Mixed signals highlight.
