@@ -16,71 +16,58 @@ function indexLabel(index, total) {
     : null;
 }
 
-function itemStepperState(
-  { item = null, total = null, hasOlder = false, hasNewer = false } = {},
-  labelForItem,
-) {
-  const currentLabel = item ? labelForItem(item) : null;
-  const readout = [currentLabel, indexLabel(item?.index, total)].filter(Boolean).join(" · ");
-  return { olderEnabled: !!item && !!hasOlder, newerEnabled: !!item && !!hasNewer, readout };
-}
-
 function formatOrphanDate(epochSeconds) {
   const epoch = Number(epochSeconds);
   return Number.isFinite(epoch) ? new Date(epoch * 1000).toISOString().slice(0, 10) : null;
 }
 
-function branchStepperState(
-  { item = null, total = null, hasOlder = false, hasNewer = false } = {},
-) {
-  return itemStepperState({ item, total, hasOlder, hasNewer }, (current) => {
-    const min = Number(current.position?.min);
-    const max = Number(current.position?.max);
-    const depth = Number(current.branch?.depth);
-    const heightLabel = Number.isFinite(min) && Number.isFinite(max)
-      ? min === max ? formatNavHeight(min) : `${formatNavHeight(min)}-${max.toLocaleString("en-US")}`
-      : null;
-    const depthLabel = Number.isFinite(depth) ? `depth ${depth}` : null;
-    return [heightLabel, depthLabel].filter(Boolean).join(" · ") || null;
-  });
+// A target whose readout follows its current item (branches and mixed signals).
+function itemStepperState({ item = null, total = null, hasOlder = false, hasNewer = false }, labelForItem) {
+  const currentLabel = item ? labelForItem(item) : null;
+  const readout = [currentLabel, indexLabel(item?.index, total)].filter(Boolean).join(" · ");
+  return { olderEnabled: !!item && !!hasOlder, newerEnabled: !!item && !!hasNewer, readout };
 }
 
-function orphanBranchStepperState(
-  { item = null, total = null, hasOlder = false, hasNewer = false } = {},
-) {
-  return itemStepperState({ item, total, hasOlder, hasNewer }, (current) => {
-    const date = formatOrphanDate(current.position?.max);
-    const depth = Number(current.branch?.depth);
-    const depthLabel = Number.isFinite(depth) ? `depth ${depth}` : null;
-    return [date, depthLabel].filter(Boolean).join(" · ") || null;
-  });
-}
-
-function orphanStepperState(
-  { anchor = null, item = null, total = null, hasOlder = false, hasNewer = false } = {},
+// A target whose readout follows the anchor its selection hydrated (stale, invalid, orphan).
+function anchorStepperState(
+  { anchor = null, item = null, total = null, hasOlder = false, hasNewer = false },
+  labelForAnchor,
 ) {
   if (!anchor) return { olderEnabled: false, newerEnabled: false, readout: "" };
   return {
     olderEnabled: !!hasOlder,
     newerEnabled: !!hasNewer,
-    readout: [formatOrphanDate(anchor.btc_header_time), indexLabel(item?.index, total)]
-      .filter(Boolean)
-      .join(" · "),
+    readout: [labelForAnchor(anchor), indexLabel(item?.index, total)].filter(Boolean).join(" · "),
   };
 }
 
-function heightAnchorStepperState(
-  { anchor = null, item = null, total = null, hasOlder = false, hasNewer = false } = {},
-) {
-  if (!anchor) return { olderEnabled: false, newerEnabled: false, readout: "" };
-  return {
-    olderEnabled: !!hasOlder,
-    newerEnabled: !!hasNewer,
-    readout: [formatNavHeight(anchor.btc_height), indexLabel(item?.index, total)]
-      .filter(Boolean)
-      .join(" · "),
-  };
+function branchLabel(current) {
+  const min = Number(current.position?.min);
+  const max = Number(current.position?.max);
+  const depth = Number(current.branch?.depth);
+  const heightLabel = Number.isFinite(min) && Number.isFinite(max)
+    ? min === max ? formatNavHeight(min) : `${formatNavHeight(min)}-${max.toLocaleString("en-US")}`
+    : null;
+  const depthLabel = Number.isFinite(depth) ? `depth ${depth}` : null;
+  return [heightLabel, depthLabel].filter(Boolean).join(" · ");
 }
+
+function orphanBranchLabel(current) {
+  const depth = Number(current.branch?.depth);
+  const depthLabel = Number.isFinite(depth) ? `depth ${depth}` : null;
+  return [formatOrphanDate(current.position?.max), depthLabel].filter(Boolean).join(" · ");
+}
+
+// A block with a height reads `#height`; an orphan reads its date and the height it steps at,
+// or the date alone when it predates every stored canonical block (step height 0).
+function mixedSignalLabel(current) {
+  const step = Number(current.position?.max);
+  if (!current.orphan) return formatNavHeight(step);
+  const near = step > 0 ? `near ${formatNavHeight(step)}` : null;
+  return [formatOrphanDate(current.orphan.btc_header_time), near].filter(Boolean).join(" · ");
+}
+
+const heightAnchorStepper = (slot) => anchorStepperState(slot, (anchor) => formatNavHeight(anchor.btc_height));
 
 export function orphanAnchorFromBlock(payload, hash, classification = null) {
   const block = payload?.block;
@@ -100,6 +87,7 @@ const TARGETS = Object.freeze({
     optionLabel: "Latest stale",
     stateKey: "stale",
     selectionPrecedence: 20,
+    stepper: heightAnchorStepper,
   }),
   branch: Object.freeze({
     id: "branch",
@@ -108,6 +96,7 @@ const TARGETS = Object.freeze({
     optionLabel: "Latest stale branch",
     stateKey: "branch",
     selectionPrecedence: 10,
+    stepper: (slot) => itemStepperState(slot, branchLabel),
   }),
   invalidBlock: Object.freeze({
     id: "invalidBlock",
@@ -116,6 +105,7 @@ const TARGETS = Object.freeze({
     optionLabel: "Latest invalid block",
     stateKey: "invalidBlock",
     selectionPrecedence: 25,
+    stepper: heightAnchorStepper,
   }),
   orphan: Object.freeze({
     id: "orphan",
@@ -124,6 +114,7 @@ const TARGETS = Object.freeze({
     optionLabel: "Latest orphan",
     stateKey: "orphan",
     selectionPrecedence: 40,
+    stepper: (slot) => anchorStepperState(slot, (anchor) => formatOrphanDate(anchor.btc_header_time)),
   }),
   orphanBranch: Object.freeze({
     id: "orphanBranch",
@@ -132,6 +123,16 @@ const TARGETS = Object.freeze({
     optionLabel: "Latest orphan branch",
     stateKey: "orphanBranch",
     selectionPrecedence: 30,
+    stepper: (slot) => itemStepperState(slot, orphanBranchLabel),
+  }),
+  mixedSignal: Object.freeze({
+    id: "mixedSignal",
+    route: "mixed-signal",
+    label: "Mixed signals",
+    optionLabel: "Latest mixed signals",
+    stateKey: "mixedSignal",
+    selectionPrecedence: 50,
+    stepper: (slot) => itemStepperState(slot, mixedSignalLabel),
   }),
 });
 
@@ -142,6 +143,7 @@ const NAV_MENU_TARGETS = Object.freeze([
   TARGETS.invalidBlock,
   TARGETS.orphan,
   TARGETS.orphanBranch,
+  TARGETS.mixedSignal,
 ]);
 
 export function navMenuTargets() {
@@ -262,41 +264,11 @@ export function navigatorItemView(item) {
   return null;
 }
 
+// Each target reads its own slot; the stepper functions ignore the slot fields they do not use.
 export function navigatorStepperState(state, targetId) {
   const slot = targetState(state, targetId);
   if (!slot) return { olderEnabled: false, newerEnabled: false, readout: "" };
-  if (targetId === "stale" || targetId === "invalidBlock") {
-    return heightAnchorStepperState({
-      anchor: slot.anchor,
-      item: slot.item,
-      total: slot.total,
-      hasOlder: slot.hasOlder,
-      hasNewer: slot.hasNewer,
-    });
-  }
-  if (targetId === "orphan") {
-    return orphanStepperState({
-      anchor: slot.anchor,
-      item: slot.item,
-      total: slot.total,
-      hasOlder: slot.hasOlder,
-      hasNewer: slot.hasNewer,
-    });
-  }
-  if (targetId === "branch") {
-    return branchStepperState({
-      item: slot.item,
-      total: slot.total,
-      hasOlder: slot.hasOlder,
-      hasNewer: slot.hasNewer,
-    });
-  }
-  return orphanBranchStepperState({
-    item: slot.item,
-    total: slot.total,
-    hasOlder: slot.hasOlder,
-    hasNewer: slot.hasNewer,
-  });
+  return navigatorTarget(targetId).stepper(slot);
 }
 
 export function navSelectLabelForState(state) {

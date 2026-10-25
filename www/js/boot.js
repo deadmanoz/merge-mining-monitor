@@ -293,11 +293,15 @@ function renderNavTargetOptions() {
 function handleClassificationFilterChange() {
   state.navEpoch += 1;
   resetNavigatorTargetState(state, "orphanBranch");
+  // Mixed signals' orphan members follow the classes: a manual lookup re-reads the selected
+  // block's position below, and otherwise the stepper restarts from the newest.
+  if (state.nav.target !== "mixedSignal") resetNavigatorTargetState(state, "mixedSignal");
   if (hasManualTreeLookup()) {
     refreshNavControls();
     loadTree();
-  } else if (state.nav.target === "orphanBranch") {
-    loadNavigatorLatest("orphanBranch");
+    if (state.nav.target === "mixedSignal") refreshActiveNavigatorTarget();
+  } else if (state.nav.target === "orphanBranch" || state.nav.target === "mixedSignal") {
+    loadNavigatorLatest(state.nav.target);
   } else if (hasUnheightedAnchorView() || state.nav.target === "orphan") {
     loadNavigatorLatest("orphan");
   } else {

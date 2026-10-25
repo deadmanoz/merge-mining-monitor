@@ -274,6 +274,7 @@ const state = {
   invalidBlock: { item: null, anchor: null, total: null, hasOlder: false, hasNewer: false, busy: false },
   orphan: { item: null, anchor: null, total: null, counts: null, hasOlder: false, hasNewer: false, busy: false },
   orphanBranch: { item: null, total: null, hasOlder: false, hasNewer: false, busy: false },
+  mixedSignal: { item: null, total: null, hasOlder: false, hasNewer: false, busy: false },
   treePointerActive: false,
   errors: {},
   seq: {},

@@ -58,7 +58,8 @@ async function loadCompetitions() {
 function refreshActiveNavigatorTarget() {
   const target = state.nav.target;
   const hash = isNavigatorTarget(target) ? targetState(state, target)?.item?.primary_hash : null;
-  return hash ? hydrateNavigatorAnchor(target, hash) : Promise.resolve();
+  // A hydrate for a block that is no longer selected is dropped, so skip asking.
+  return hash && hash === state.selectedHash ? hydrateNavigatorAnchor(target, hash) : Promise.resolve();
 }
 
 function navSelectLabel() {
@@ -205,7 +206,8 @@ function centerCameraOnWindowMidHeight() {
 
 function navigatorParams(target, params = {}) {
   const req = { ...params };
-  if (target === "orphan" || target === "orphanBranch") {
+  // Mixed signals filters its orphan members by the same classes.
+  if (target === "orphan" || target === "orphanBranch" || target === "mixedSignal") {
     req.classification = classificationParam();
   }
   return paramsFor(req);
@@ -483,6 +485,7 @@ async function loadBlock(hash) {
   else if (staleAnchor) hydrateNavigatorAnchor("stale", hash);
   else if (invalidBlockAnchor) hydrateNavigatorAnchor("invalidBlock", hash);
   if (anchor && branchTarget !== "orphanBranch") hydrateNavigatorAnchor("orphan", hash);
+  if (payload?.relationship_signals?.mixed) hydrateNavigatorAnchor("mixedSignal", hash);
 }
 
 export {
