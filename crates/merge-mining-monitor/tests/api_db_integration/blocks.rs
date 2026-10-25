@@ -838,9 +838,10 @@ async fn block_protocol_commitments_report_the_state_of_stored_outputs() -> Resu
     })
 }
 
-/// The block page's relationship signals for one parent, once its tree node's summary and its
-/// stored `relationship_summary` agree.
+/// The block page's relationship signals for one parent, once its refreshed
+/// `relationship_summary` and the tree node that reads it agree with the page.
 async fn relationship(client: &Client, height: i32, hash: &[u8]) -> Result<RelationshipSignals> {
+    refresh_relationship_summaries(client, &[hash.to_vec()]).await?;
     let block = project_block(client, hash).await?.relationship_signals;
     let tree = project_tree(client, Some(&format!("at_height={height}")))
         .await?
@@ -864,7 +865,6 @@ async fn relationship(client: &Client, height: i32, hash: &[u8]) -> Result<Relat
         ),
         "block and tree agree"
     );
-    refresh_relationship_summaries(client, &[hash.to_vec()]).await?;
     let stored = client
         .query_one(
             "SELECT mixed, pool_ids FROM relationship_summary WHERE btc_header_hash = $1",

@@ -32,9 +32,8 @@ pub(crate) use protocol_commitment::{
 mod relationship;
 pub use relationship::RelationshipSignals;
 pub(crate) use relationship::{
-    COINBASE_EVIDENCE_TIER_SQL, CoinbaseEvidence, SignalDraft, bitcoin_drafts,
-    child_coinbase_tag_draft, choose_coinbase_evidence, default_pool_resolver,
-    protocol_account_draft, relationship_signals,
+    CoinbaseEvidence, SignalDraft, bitcoin_drafts, child_coinbase_tag_draft,
+    choose_coinbase_evidence, default_pool_resolver, protocol_account_draft, relationship_signals,
 };
 
 /// Split an orphan-class filter into `(db_values, include_pending)` for parameterized

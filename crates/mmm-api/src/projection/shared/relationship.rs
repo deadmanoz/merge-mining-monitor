@@ -17,11 +17,6 @@ pub(crate) use mmm_capture::relationship::{
 pub type RelationshipSignals = relationship::RelationshipSignals<PoolObject>;
 pub(crate) type SignalDraft = relationship::SignalDraft<PoolObject>;
 
-/// SQL rank of an event's (`e`) parent coinbase copy; keep in step with [`CoinbaseEvidence`].
-pub(crate) const COINBASE_EVIDENCE_TIER_SQL: &str = "CASE \
-     WHEN e.btc_parent_coinbase_outputs IS NOT NULL THEN 0 \
-     WHEN e.btc_parent_coinbase_outputs_text IS NOT NULL THEN 1 ELSE 2 END";
-
 impl SignalPool for PoolObject {
     fn pool_id(&self) -> Option<i64> {
         self.id.filter(|_| self.known)

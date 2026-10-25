@@ -1,5 +1,5 @@
 //! Unified navigator projection for stale blocks, stale branches, catalogued
-//! invalid blocks, BTC orphans, and orphan branches.
+//! invalid blocks, BTC orphans, orphan branches, and mixed-signal blocks.
 
 use anyhow::Result;
 use serde::Serialize;
@@ -14,8 +14,10 @@ use super::ProjectionError;
 use super::shared::stored_hash_from_display;
 use super::stale_navigation::{NavigationError, TreeNavigation};
 
+mod height;
 mod invalid_block;
 mod keyset;
+mod mixed_signal;
 mod orphan;
 mod stale;
 
@@ -29,6 +31,7 @@ pub async fn navigator(
         NavigatorTarget::InvalidBlock => invalid_block::invalid_blocks(client, query).await,
         NavigatorTarget::Orphan => orphan::orphans(client, query).await,
         NavigatorTarget::OrphanBranch => orphan::orphan_branches(client, query).await,
+        NavigatorTarget::MixedSignal => mixed_signal::mixed_signals(client, query).await,
     }
 }
 
@@ -91,25 +94,6 @@ pub struct NavigatorItem {
     pub view_error: Option<NavigationError>,
 }
 
-impl NavigatorItem {
-    fn cursor(&self, target: NavigatorTarget) -> NavigatorCursor {
-        NavigatorCursor::new(
-            target,
-            self.position.axis,
-            self.position.min,
-            self.position.max,
-            self.cursor_hash(),
-        )
-    }
-
-    fn cursor_hash(&self) -> String {
-        self.branch
-            .as_ref()
-            .map(|branch| branch.root_hash.clone())
-            .unwrap_or_else(|| self.primary_hash.clone())
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct NavigatorPosition {
     pub axis: NavigatorAxis,
@@ -128,6 +112,7 @@ pub struct NavigatorBranch {
 #[derive(Debug, Clone, Serialize)]
 pub struct NavigatorOrphan {
     pub btc_orphan_class: Option<String>,
+    pub btc_header_time: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -182,7 +167,14 @@ trait BranchNavigatorSummary: Clone {
 struct BranchPage<S> {
     rows: Vec<S>,
     start_offset: usize,
-    has_more_scan: bool,
+    exists_older: bool,
+    exists_newer: bool,
+}
+
+impl<S> BranchPage<S> {
+    fn first_index(&self) -> Option<u64> {
+        (!self.rows.is_empty()).then_some(self.start_offset as u64 + 1)
+    }
 }
 
 fn page_branch_summaries<S>(
@@ -216,16 +208,17 @@ where
     if is_newer_page(query) {
         indexed.reverse();
     }
-    let has_more_scan = indexed.len() > query.limit;
     indexed.truncate(query.limit);
     if is_newer_page(query) {
         indexed.reverse();
     }
+    // A page is one contiguous run of the sorted summaries.
     let start_offset = indexed.first().map(|(index, _)| *index).unwrap_or(0);
     Ok(BranchPage {
+        exists_older: start_offset + indexed.len() < summaries.len(),
+        exists_newer: start_offset > 0,
         rows: indexed.into_iter().map(|(_, summary)| summary).collect(),
         start_offset,
-        has_more_scan,
     })
 }
 
@@ -239,65 +232,20 @@ fn is_newer_page(query: &NavigatorQuery) -> bool {
     )
 }
 
-async fn page_cursors<ExistsOlder, ExistsNewer, FutOlder, FutNewer>(
-    target: NavigatorTarget,
-    query: &NavigatorQuery,
+/// The page's next (older) and previous (newer) cursors: its oldest and newest items' own.
+fn page_cursors(
     items: &[NavigatorItem],
-    has_more_scan: bool,
-    exists_older: ExistsOlder,
-    exists_newer: ExistsNewer,
-) -> Result<(Option<String>, Option<String>), ProjectionError>
-where
-    ExistsOlder: FnOnce(NavigatorCursor) -> FutOlder,
-    ExistsNewer: FnOnce(NavigatorCursor) -> FutNewer,
-    FutOlder: std::future::Future<Output = Result<bool, ProjectionError>>,
-    FutNewer: std::future::Future<Output = Result<bool, ProjectionError>>,
-{
-    let mut next_cursor = None;
-    let mut prev_cursor = None;
-    let (Some(newest), Some(oldest)) = (items.first(), items.last()) else {
-        return Ok((next_cursor, prev_cursor));
-    };
-    let newest_cursor = newest.cursor(target);
-    let oldest_cursor = oldest.cursor(target);
-
-    match &query.mode {
-        NavigatorMode::Latest => {
-            if has_more_scan {
-                next_cursor = Some(oldest_cursor.encode());
-            }
-        }
-        NavigatorMode::Anchor { .. } => {
-            if exists_older(oldest_cursor.clone()).await? {
-                next_cursor = Some(oldest_cursor.encode());
-            }
-            if exists_newer(newest_cursor.clone()).await? {
-                prev_cursor = Some(newest_cursor.encode());
-            }
-        }
-        NavigatorMode::Page {
-            direction: NavigatorDirection::Older,
-            ..
-        } => {
-            if has_more_scan {
-                next_cursor = Some(oldest_cursor.encode());
-            }
-            if exists_newer(newest_cursor.clone()).await? {
-                prev_cursor = Some(newest_cursor.encode());
-            }
-        }
-        NavigatorMode::Page {
-            direction: NavigatorDirection::Newer,
-            ..
-        } => {
-            if exists_older(oldest_cursor.clone()).await? {
-                next_cursor = Some(oldest_cursor.encode());
-            }
-            if has_more_scan {
-                prev_cursor = Some(newest_cursor.encode());
-            }
-        }
-    }
-
-    Ok((next_cursor, prev_cursor))
+    exists_older: bool,
+    exists_newer: bool,
+) -> (Option<String>, Option<String>) {
+    (
+        items
+            .last()
+            .filter(|_| exists_older)
+            .map(|item| item.cursor.clone()),
+        items
+            .first()
+            .filter(|_| exists_newer)
+            .map(|item| item.cursor.clone()),
+    )
 }

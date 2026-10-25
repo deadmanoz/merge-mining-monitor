@@ -2,9 +2,7 @@ use anyhow::{Context, Result};
 use tokio_postgres::Client;
 
 use crate::normalize::Classification;
-use crate::query::{
-    NavigatorAxis, NavigatorCursor, NavigatorMode, NavigatorQuery, NavigatorTarget,
-};
+use crate::query::{NavigatorAxis, NavigatorCursor, NavigatorQuery, NavigatorTarget};
 
 use super::super::ProjectionError;
 use super::super::branch_summary::{BranchRow, branch_components};
@@ -12,8 +10,8 @@ use super::super::shared::{classification_filter_params, display_hash, stored_ha
 use super::keyset::{apply_first_index, fetch_time_keyset};
 use super::{
     BranchNavigatorSummary, NavigatorBranch, NavigatorFacets, NavigatorItem, NavigatorOrphan,
-    NavigatorPayload, NavigatorPosition, NavigatorView, PageEdge, is_newer_page,
-    page_branch_summaries, page_cursors,
+    NavigatorPayload, NavigatorPosition, NavigatorView, PageEdge, page_branch_summaries,
+    page_cursors,
 };
 
 #[derive(Debug, Clone)]
@@ -29,10 +27,7 @@ pub async fn orphans(
 ) -> Result<NavigatorPayload, ProjectionError> {
     debug_assert_eq!(query.target, NavigatorTarget::Orphan);
     let (class_values, include_pending) = classification_filter_params(&query.classification);
-    let mut page = fetch_time_keyset(client, query, &class_values, include_pending).await?;
-    if is_newer_page(query) {
-        page.rows.reverse();
-    }
+    let page = fetch_time_keyset(client, query, &class_values, include_pending).await?;
     let rows = page
         .rows
         .iter()
@@ -46,36 +41,9 @@ pub async fn orphans(
         .collect::<Result<Vec<_>>>()?;
 
     let mut items = rows.iter().map(orphan_item).collect::<Vec<_>>();
-    apply_first_index(
-        &mut items,
-        page.first_index(matches!(query.mode, NavigatorMode::Latest)),
-    );
-    let counts = page.facets.unwrap_or_default();
-    let (next_cursor, prev_cursor) = page_cursors(
-        NavigatorTarget::Orphan,
-        query,
-        &items,
-        page.has_more_scan,
-        |cursor| {
-            exists_orphan_across_edge(
-                client,
-                cursor,
-                &class_values,
-                include_pending,
-                PageEdge::Older,
-            )
-        },
-        |cursor| {
-            exists_orphan_across_edge(
-                client,
-                cursor,
-                &class_values,
-                include_pending,
-                PageEdge::Newer,
-            )
-        },
-    )
-    .await?;
+    apply_first_index(&mut items, page.first_index());
+    let counts = page.facets.clone().unwrap_or_default();
+    let (next_cursor, prev_cursor) = page_cursors(&items, page.exists_older(), page.exists_newer());
 
     Ok(NavigatorPayload::new(
         NavigatorTarget::Orphan,
@@ -112,6 +80,7 @@ fn orphan_item(row: &OrphanRow) -> NavigatorItem {
         branch: None,
         orphan: Some(NavigatorOrphan {
             btc_orphan_class: row.btc_orphan_class.clone(),
+            btc_header_time: row.header_time,
         }),
         view: Some(NavigatorView::UnheightedAnchor {
             anchor_hash: row.hash.clone(),
@@ -120,42 +89,6 @@ fn orphan_item(row: &OrphanRow) -> NavigatorItem {
         }),
         view_error: None,
     }
-}
-
-async fn exists_orphan_across_edge(
-    client: &Client,
-    cursor: NavigatorCursor,
-    class_values: &[String],
-    include_pending: bool,
-    edge: PageEdge,
-) -> Result<bool, ProjectionError> {
-    let hash = stored_hash_from_display(&cursor.hash)?;
-    let time = cursor.max;
-    let sql = match edge {
-        PageEdge::Older => {
-            "SELECT EXISTS (SELECT 1 FROM block \
-             WHERE kind = 'unknown' AND pow_validated \
-               AND ( \
-                   btc_orphan_class = ANY($3::text[]) \
-                   OR ($4::boolean AND btc_orphan_class IS NULL) \
-               ) \
-               AND (btc_header_time, btc_header_hash) < ($1, $2))"
-        }
-        PageEdge::Newer => {
-            "SELECT EXISTS (SELECT 1 FROM block \
-             WHERE kind = 'unknown' AND pow_validated \
-               AND ( \
-                   btc_orphan_class = ANY($3::text[]) \
-                   OR ($4::boolean AND btc_orphan_class IS NULL) \
-               ) \
-               AND (btc_header_time, btc_header_hash) > ($1, $2))"
-        }
-    };
-    let row = client
-        .query_one(sql, &[&time, &hash, &class_values, &include_pending])
-        .await
-        .context("probe orphan navigator edge")?;
-    Ok(row.get(0))
 }
 
 #[derive(Debug, Clone)]
@@ -190,21 +123,8 @@ pub async fn orphan_branches(
         .iter()
         .map(orphan_branch_item)
         .collect::<Result<Vec<_>>>()?;
-    apply_first_index(
-        &mut items,
-        page.rows.first().map(|_| page.start_offset as u64 + 1),
-    );
-    let older_summaries = &summaries;
-    let newer_summaries = &summaries;
-    let (next_cursor, prev_cursor) = page_cursors(
-        NavigatorTarget::OrphanBranch,
-        query,
-        &items,
-        page.has_more_scan,
-        |cursor| async move { orphan_branch_exists(older_summaries, &cursor, PageEdge::Older) },
-        |cursor| async move { orphan_branch_exists(newer_summaries, &cursor, PageEdge::Newer) },
-    )
-    .await?;
+    apply_first_index(&mut items, page.first_index());
+    let (next_cursor, prev_cursor) = page_cursors(&items, page.exists_older, page.exists_newer);
 
     Ok(NavigatorPayload::new(
         NavigatorTarget::OrphanBranch,
@@ -359,15 +279,4 @@ fn orphan_branch_matches_cursor(
                     && summary.root_hash < root_hash)
         }
     }
-}
-
-fn orphan_branch_exists(
-    summaries: &[OrphanBranchSummary],
-    cursor: &NavigatorCursor,
-    edge: PageEdge,
-) -> Result<bool, ProjectionError> {
-    stored_hash_from_display(&cursor.hash)?;
-    Ok(summaries
-        .iter()
-        .any(|summary| orphan_branch_matches_cursor(summary, cursor, edge)))
 }

@@ -15,6 +15,7 @@ pub enum NavigatorTarget {
     InvalidBlock,
     Orphan,
     OrphanBranch,
+    MixedSignal,
 }
 
 impl NavigatorTarget {
@@ -25,6 +26,7 @@ impl NavigatorTarget {
             "invalid-block" => Ok(Self::InvalidBlock),
             "orphan" => Ok(Self::Orphan),
             "orphan-branch" => Ok(Self::OrphanBranch),
+            "mixed-signal" => Ok(Self::MixedSignal),
             other => Err(ApiError::invalid_query(
                 format!("unknown navigator target {other:?}"),
                 json!({ "target": other }),
@@ -39,16 +41,21 @@ impl NavigatorTarget {
             Self::InvalidBlock => "invalid-block",
             Self::Orphan => "orphan",
             Self::OrphanBranch => "orphan-branch",
+            Self::MixedSignal => "mixed-signal",
         }
     }
 
+    /// Orphan targets filter their members by class, and so does `mixed-signal` for its
+    /// orphan members.
     pub fn accepts_classification(self) -> bool {
-        matches!(self, Self::Orphan | Self::OrphanBranch)
+        matches!(self, Self::Orphan | Self::OrphanBranch | Self::MixedSignal)
     }
 
     fn axis(self) -> NavigatorAxis {
         match self {
-            Self::Stale | Self::StaleBranch | Self::InvalidBlock => NavigatorAxis::Height,
+            Self::Stale | Self::StaleBranch | Self::InvalidBlock | Self::MixedSignal => {
+                NavigatorAxis::Height
+            }
             Self::Orphan | Self::OrphanBranch => NavigatorAxis::Time,
         }
     }
@@ -102,6 +109,14 @@ pub struct NavigatorCursor {
     pub min: i64,
     pub max: i64,
     pub hash: String,
+    /// The tiebreak a height-axis target orders one height's rows by (`mixed-signal`'s header
+    /// time); omitted when `0`, so targets without one keep their cursors.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub tiebreak: i64,
+}
+
+fn is_zero(value: &i64) -> bool {
+    *value == 0
 }
 
 impl NavigatorCursor {
@@ -118,7 +133,13 @@ impl NavigatorCursor {
             min,
             max,
             hash: hash.into(),
+            tiebreak: 0,
         }
+    }
+
+    pub fn with_tiebreak(mut self, tiebreak: i64) -> Self {
+        self.tiebreak = tiebreak;
+        self
     }
 
     pub fn encode(&self) -> String {
@@ -220,7 +241,7 @@ pub fn parse_navigator_query(
 
     if !target.accepts_classification() && params.contains_key("classification") {
         return Err(ApiError::invalid_query(
-            "classification applies only to orphan navigator targets",
+            "classification applies only to orphan and mixed-signal navigator targets",
             json!({ "target": target.as_str(), "classification": params.get("classification") }),
         ));
     }

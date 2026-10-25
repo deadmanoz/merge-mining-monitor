@@ -16,6 +16,8 @@ mod competitions;
 mod helpers;
 #[path = "api_db_integration/invalid_blocks.rs"]
 mod invalid_blocks;
+#[path = "api_db_integration/mixed_signals.rs"]
+mod mixed_signals;
 #[path = "api_db_integration/orphans.rs"]
 mod orphans;
 #[path = "api_db_integration/sources.rs"]
