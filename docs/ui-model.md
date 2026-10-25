@@ -63,8 +63,8 @@ Unsynced height windows surface the backend HTTP 409 `backbone_unsynced` / `back
 ### Tree navigator
 
 A single "Go to" navigator in the tree heading combines a target selector with shared `«` `‹` `›` `»` steppers (`‹` `›` step by 1; `«` `»` step by a coarse stride) and a position readout.
-The target locks when picked from the menu and otherwise follows node selection by precedence: branch > stale > invalid block > orphan branch > orphan.
-The select displays the active target (`Live tip`, `Stale`, `Branch`, `Invalid blocks`, `Orphan branch`, `Orphans`, `Height`, or `Date/Time`), while its menu lists the six `Latest ...` actions (re-picking the active action jumps back to the newest item).
+The target locks when picked from the menu and otherwise follows node selection by precedence: branch > stale > invalid block > orphan branch > orphan > mixed signals.
+The select displays the active target (`Live tip`, `Stale`, `Branch`, `Invalid blocks`, `Orphan branch`, `Orphans`, `Mixed signals`, `Height`, or `Date/Time`), while its menu lists `Live tip` and the six `Latest ...` actions (re-picking the active action jumps back to the newest item).
 
 | Menu Action | API Target / Mode | Readout Format | Selection & Stepping Behavior |
 |---|---|---|---|
@@ -74,6 +74,7 @@ The select displays the active target (`Live tip`, `Stale`, `Branch`, `Invalid b
 | `Latest invalid block` | `/api/v1/navigator/invalid-block` (`tree_window`) | `#<height> · n of N` | Steps newest-first by height then stored hash bytes (no `classification` filter). Clicking or restoring `?selected=` on an invalid block hydrates via `anchor_hash`. |
 | `Latest orphan` | `/api/v1/navigator/orphan` (`unheighted_anchor`) | `<YYYY-MM-DD> · n of N` + per-class counts | Filtered by active strict/weak orphan toggles; switches tree to `unheighted_anchor` mode (`±16` canonical context or flat time strip fallback). Coarse stride is 100. Toggling orphan classes re-drives the navigator (falling back to `Live tip` if empty). |
 | `Latest orphan branch` | `/api/v1/navigator/orphan-branch` (`unheighted_anchor`, `depth >= 2`) | `<YYYY-MM-DD> · depth <d> · n of N` | Anchors the tree on the component's `root_hash` via `unheighted_anchor` and renders all linked members. Reloads when orphan-class controls change. |
+| `Latest mixed signals` | `/api/v1/navigator/mixed-signal` (`tree_window`, or `unheighted_anchor` for an orphan) | `#<height> · n of N`, or `<YYYY-MM-DD> · near #<height> · n of N` for an orphan (the date alone before the stored chain) | Steps by height, then header time, through every mixed block the tree rings; an orphan steps at the latest canonical block at or before its time. Filtered by the active orphan classes and reloads when they change. Selecting a mixed block hydrates its position via `anchor_hash` unless another target claims it. |
 
 ## Filters
 

@@ -41,7 +41,7 @@ The Block Detail drawer resolves the pool, the decoded AuxPoW commitment, and ea
 Bitcoin pool attribution comes from coinbase tags and payout addresses.
 Child-chain identities use their own tags, reward addresses or miner fields, and remain separate from the Bitcoin parent pool.
 Mappings can be unknown or carry different confidence levels; see [attribution](docs/attribution.md) for the chain-specific evidence, including Qbit's native payout registry.
-When these name different pools, for example a Binance Pool block whose RSK reward address is registered to AntPool, the drawer lists every pool the block names under Relationship signals, the tree rings the block in amber, and the Mixed signals control highlights every such block ([relationship signals](docs/attribution.md#relationship-signals)).
+When these name different pools, for example a Binance Pool block whose RSK reward address is registered to AntPool, the drawer lists every pool the block names under Relationship signals, the tree rings the block in amber, the Mixed signals control highlights every such block, and `Latest mixed signals` steps through them across all history ([relationship signals](docs/attribution.md#relationship-signals)).
 
 The main view is a windowed Bitcoin header tree: the canonical spine, each block labelled with its pool, a badge for the number of chains that merge-mined it, and a second for the CORE and exSat declarations in its coinbase.
 From it you can:

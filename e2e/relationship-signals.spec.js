@@ -1,5 +1,5 @@
 const { expect, test } = require("@playwright/test");
-const { blockPayload, makeNode, stubApi, treeEnvelope } = require("./support/api-stubs");
+const { blockPayload, makeNode, navigatorPayload, stubApi, treeEnvelope } = require("./support/api-stubs");
 const fixture = require("../fixtures/api/block-relationship-signals.json");
 
 // The fixture's Binance Pool block, whose RSK reward address and exSat account name AntPool, plus
@@ -21,7 +21,7 @@ const signals = {
 const MIXED = "ce".repeat(32);
 const PLAIN = "cf".repeat(32);
 
-async function openTree(page, url = "/") {
+async function openTree(page, url = "/", options = {}) {
   const nodes = [
     makeNode(MIXED, 700000, null, "canonical", { relationship: { mixed: true, pools: signals.pools } }),
     makeNode(PLAIN, 700001, MIXED, "canonical", { relationship: { mixed: false, pools: [signals.reference_pool] } }),
@@ -29,8 +29,31 @@ async function openTree(page, url = "/") {
   await stubApi(page, [], {
     treePayload: (params) => treeEnvelope(params, { nodes }),
     blockPayload: (hash) => blockPayload(hash, { relationship_signals: signals }),
+    ...options,
   });
   await page.goto(url);
+}
+
+// A mixed-signal navigator item: a block with a height, or an orphan with its header time.
+function mixedItem(hash, step, index, orphanTime = null) {
+  const orphan = orphanTime == null
+    ? null
+    : { btc_orphan_class: "strict_btc_orphan", btc_header_time: orphanTime };
+  return {
+    id: `mixed-signal-${hash}`,
+    kind: "mixed-signal",
+    primary_hash: hash,
+    label: orphan ? `Mixed signals orphan ${orphanTime}` : `Mixed signals #${step}`,
+    position: { axis: "height", min: step, max: step },
+    index,
+    cursor: `mixed-cursor-${index}`,
+    branch: null,
+    orphan,
+    view: orphan
+      ? { mode: "unheighted_anchor", anchor_hash: hash, select_hash: hash, center_hash: hash }
+      : { mode: "tree_window", target_height: step, tree_from: step - 16, tree_to: step + 16, select_hash: hash, center_hash: hash },
+    view_error: null,
+  };
 }
 
 test("the drawer groups the signals by pool, collapsed, accents the group naming another pool and scrolls to them from the chip", async ({ page }) => {
@@ -99,4 +122,65 @@ test("the mixed signals toggle dims the other blocks through a filter change, a 
   await page.locator('input[name="mixed"]').uncheck();
   await expect(dimmed).toHaveCount(0);
   expect(new URL(page.url()).searchParams.get("mixed")).toBeNull();
+});
+
+test("Latest mixed signals steps by height through an orphan and back, reading each position", async ({ page }) => {
+  const navigatorRequests = [];
+  const items = [
+    mixedItem("d1".repeat(32), 949512, 1),
+    mixedItem("d2".repeat(32), 949500, 2, 1782893000),
+    mixedItem("d3".repeat(32), 0, 3, 1230000000),
+  ];
+  const pageAt = (at) => navigatorPayload("mixed-signal", {
+    items: [items[at]],
+    total: items.length,
+    next_cursor: at < items.length - 1 ? items[at].cursor : null,
+    prev_cursor: at > 0 ? items[at].cursor : null,
+  });
+  await stubApi(page, [], {
+    navigatorRequests,
+    navigator: (url) => {
+      const at = items.findIndex((item) => item.cursor === url.searchParams.get("cursor"));
+      if (at < 0) return pageAt(0);
+      return pageAt(url.searchParams.get("direction") === "older" ? at + 1 : at - 1);
+    },
+  });
+  await page.goto("/");
+  await expect(page.locator('#nav-goto option[value="mixedSignal"]')).toHaveText("Latest mixed signals");
+  await page.locator("#nav-goto").selectOption("mixedSignal");
+
+  const readout = page.locator("#nav-readout");
+  await expect(readout).toHaveText("#949,512 · 1 of 3");
+  expect(navigatorRequests[0].pathname).toMatch(/\/navigator\/mixed-signal$/);
+  expect(navigatorRequests[0].searchParams.get("classification")).toBe("strict_btc_orphan,weak_btc_orphan");
+  // An orphan reads the height it steps at; one older than the stored chain reads its date alone.
+  for (const text of ["2026-07-01 · near #949,500 · 2 of 3", "2008-12-23 · 3 of 3"]) {
+    await page.locator("#nav-older").click();
+    await expect(readout).toHaveText(text);
+  }
+  await expect(page.locator("#nav-older")).toBeDisabled();
+  for (const text of ["2026-07-01 · near #949,500 · 2 of 3", "#949,512 · 1 of 3"]) {
+    await page.locator("#nav-newer").click();
+    await expect(readout).toHaveText(text);
+  }
+});
+
+test("selecting a mixed block puts the stepper at its position, re-read when the orphan classes change, unless a stale target claims it", async ({ page }) => {
+  const STALE = "cd".repeat(32);
+  const stale = blockPayload(STALE, { relationship_signals: signals });
+  stale.block = { ...stale.block, kind: "stale" };
+  await openTree(page, `/?tree_height=700000&selected=${MIXED}`, {
+    navigator: (url, target) => navigatorPayload(target, {
+      items: [mixedItem(url.searchParams.get("anchor_hash"), 700000, 7)],
+      total: url.searchParams.get("classification")?.includes("weak") ? 42 : 40,
+    }),
+    blockPayloads: { [STALE]: stale },
+  });
+  await expect(page.locator("#nav-goto option[value='']")).toHaveText("Mixed signals");
+  await expect(page.locator("#nav-readout")).toHaveText("#700,000 · 7 of 42");
+  await page.locator('input[name="classification"][value="weak_btc_orphan"]').uncheck();
+  await expect(page.locator("#nav-readout")).toHaveText("#700,000 · 7 of 40");
+
+  await page.goto(`/?selected=${STALE}`);
+  await expect(page.locator("#nav-goto option[value='']")).toHaveText("Stale");
 });
