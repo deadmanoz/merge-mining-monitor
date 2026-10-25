@@ -10,6 +10,8 @@ use mmm_capture::child_payout::{PoolIdentityLookup, PoolIdentityRef};
 use mmm_capture::identity_registry::{IdentityRegistryEntry, distinct_pool_definitions};
 use mmm_capture::pool_resolver::PoolSnapshot;
 
+use crate::relationship_queue::QUEUE_CHANGED_IDENTITIES;
+
 /// One namespaced identity-to-pool mapping to upsert: `identifier` is the
 /// case-/format-preserved key stored in `pool_identity.identifier`, and
 /// `pool_slug` resolves to `pool.id` via the caller's slug map.
@@ -116,10 +118,15 @@ pub(crate) async fn upsert_pool_identities_for_namespace_with_policy(
             })?;
         let row = client
             .query_opt(
-                "INSERT INTO pool_identity (pool_id, namespace, identifier) \
-                 VALUES ($1, $2, $3) \
-                 ON CONFLICT (namespace, identifier) DO NOTHING \
-                 RETURNING id",
+                &format!(
+                    "WITH changed AS ( \
+                         INSERT INTO pool_identity (pool_id, namespace, identifier) \
+                         VALUES ($1, $2, $3) \
+                         ON CONFLICT (namespace, identifier) DO NOTHING \
+                         RETURNING id, namespace, identifier \
+                     ), {QUEUE_CHANGED_IDENTITIES} \
+                     SELECT id FROM changed"
+                ),
                 &[&pool_id, &namespace, &seed.identifier],
             )
             .await
@@ -192,7 +199,14 @@ pub async fn reconcile_identity_registry(
     let listed: Vec<&str> = entries.iter().map(|entry| entry.identifier).collect();
     client
         .execute(
-            "DELETE FROM pool_identity WHERE namespace = $1 AND identifier <> ALL($2::text[])",
+            &format!(
+                "WITH changed AS ( \
+                     DELETE FROM pool_identity \
+                      WHERE namespace = $1 AND identifier <> ALL($2::text[]) \
+                     RETURNING namespace, identifier \
+                 ), {QUEUE_CHANGED_IDENTITIES} \
+                 SELECT 1 FROM changed"
+            ),
             &[&namespace, &listed],
         )
         .await
@@ -263,7 +277,13 @@ async fn existing_pool_identity_id(
     }
     client
         .execute(
-            "UPDATE pool_identity SET pool_id = $1 WHERE id = $2",
+            &format!(
+                "WITH changed AS ( \
+                     UPDATE pool_identity SET pool_id = $1 WHERE id = $2 \
+                     RETURNING namespace, identifier \
+                 ), {QUEUE_CHANGED_IDENTITIES} \
+                 SELECT 1 FROM changed"
+            ),
             &[&registry_pool_id, &identity_id],
         )
         .await

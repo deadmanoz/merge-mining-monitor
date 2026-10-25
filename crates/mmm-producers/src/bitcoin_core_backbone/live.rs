@@ -389,6 +389,49 @@ where
         bookkeeping_failure_outcome_from(progress_before, progress_after)
     }
 
+    /// A tick's outcome once its batch and cache refresh are done: progress against
+    /// `progress_before`, after draining the relationship summaries the tick queued. They trail
+    /// their writes by about a tick; a failed drain leaves its rows queued for the next one.
+    async fn finish_tick(
+        &mut self,
+        progress_before: FollowProgress,
+        completed: bool,
+    ) -> Result<TickOutcome> {
+        let progress_after = match load_follow_progress(self.client, self.source_id).await {
+            Ok(progress) => progress,
+            Err(err) => {
+                tracing::warn!(
+                    error = format!("{err:#}"),
+                    "Bitcoin Core backbone live bookkeeping read failed after batch; retrying after interval"
+                );
+                return Ok(self
+                    .bookkeeping_failure_outcome(Some(progress_before))
+                    .await);
+            }
+        };
+        if let Err(err) = mmm_read_model::drain_relationship_refresh_queue(
+            self.client,
+            mmm_read_model::RELATIONSHIP_DRAIN_BATCH,
+            mmm_read_model::RELATIONSHIP_DRAIN_BATCHES,
+        )
+        .await
+        {
+            if must_propagate(&err) {
+                return Err(err);
+            }
+            tracing::warn!(
+                error = format!("{err:#}"),
+                "relationship summary refresh failed; retrying next tick"
+            );
+        }
+        Ok(TickOutcome {
+            progressed: progress_after.contiguous_complete_height
+                > progress_before.contiguous_complete_height,
+            idle_at_target: progress_after.caught_up(),
+            completed,
+        })
+    }
+
     async fn repair_near_tip(&mut self, schedule: NearTipRepairSchedule) -> Result<bool> {
         let (last_repair, repair_succeeded) = repair_near_tip_backbone_if_due(
             self.client,
@@ -538,25 +581,7 @@ where
                 .bookkeeping_failure_outcome(Some(progress_before))
                 .await);
         }
-        let progress_after = match load_follow_progress(self.client, self.source_id).await {
-            Ok(progress) => progress,
-            Err(err) => {
-                tracing::warn!(
-                    error = format!("{err:#}"),
-                    "Bitcoin Core backbone live bookkeeping read failed after batch; retrying after interval"
-                );
-                return Ok(self
-                    .bookkeeping_failure_outcome(Some(progress_before))
-                    .await);
-            }
-        };
-
-        Ok(TickOutcome {
-            progressed: progress_after.contiguous_complete_height
-                > progress_before.contiguous_complete_height,
-            idle_at_target: progress_after.caught_up(),
-            completed,
-        })
+        self.finish_tick(progress_before, completed).await
     }
 
     fn wait_after_tick(&mut self, result: Result<TickOutcome>) -> Result<Duration> {

@@ -9,6 +9,7 @@ use mmm_capture::capture::{ChildBlockObservation, ObservationKind};
 use mmm_capture::pool_resolver::RSK_MINER_ADDRESS_NAMESPACE;
 
 use crate::event::{Exactness, identity_conflict_clause};
+use crate::relationship_queue::enqueue_relationship_event_parent;
 
 /// Write an event's observation, before the event itself when it is new, and return its id.
 pub(crate) async fn write_event_observation<C: GenericClient>(
@@ -138,8 +139,9 @@ pub async fn upsert_child_only_observation<C: GenericClient>(
 
 /// Bring the event's observation's identities and child pool in line with the event's
 /// attribution rows (keeping the RSK miner identity the observation records), dropping
-/// identities the event no longer carries. Run once per event after its last attribution
-/// write (two statements: the identity insert and the update).
+/// identities the event no longer carries, and queue the parent's relationship summary. Run once
+/// per event after its last attribution write (three statements: the identity insert, the
+/// update and the queue row).
 pub async fn sync_event_observation_attribution<C: GenericClient>(
     client: &C,
     event_id: i64,
@@ -189,7 +191,7 @@ pub async fn sync_event_observation_attribution<C: GenericClient>(
         )
         .await
         .context("sync the event observation's child attribution")?;
-    Ok(())
+    enqueue_relationship_event_parent(client, event_id).await
 }
 
 /// The child evidence two records of one block must agree on where both hold it. With

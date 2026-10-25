@@ -6,8 +6,8 @@ use mmm_capture::capture::ClassificationProof;
 use mmm_capture::identity_registry::IdentityRegistryEntry;
 use mmm_capture::protocol_commitment::{DECODER_VERSION, EXSAT_ACCOUNT_NAMESPACE};
 use mmm_capture::source_registry::NAMECOIN_SOURCE_CODE;
-use mmm_producers::{run_reconcile_read_model_command, seed_protocol_account_identities};
-use mmm_read_model::{CaptureOutcome, ReconcileReadModelConfig};
+use mmm_producers::seed_protocol_account_identities;
+use mmm_read_model::CaptureOutcome;
 use mmm_store::{CaptureWrite, reconcile_identity_registry};
 use tokio_postgres::Client;
 
@@ -17,10 +17,10 @@ use crate::support::scenario::{
 use crate::support::seed::{hash_bytes, pool_id_for_slug};
 use crate::support::{
     CoreBlock, NamecoinEventFixture, capture_test_outcome, default_pool_snapshot,
-    namecoin_event_payload, parse_auxpow_fixture, secpool_blocks,
+    namecoin_event_payload, parse_auxpow_fixture, reconcile_command, secpool_blocks,
 };
 
-fn event_evidence(
+pub(crate) fn event_evidence(
     key: &'static str,
     child_height: i32,
     block: &CoreBlock,
@@ -125,22 +125,6 @@ async fn truncate_derived_rows(client: &Client) -> Result<()> {
         )
         .await?;
     Ok(())
-}
-
-/// Runs `reconcile-read-model args` through the command path with a stand-in for the Core
-/// bootstrap; returns whether the bootstrap ran.
-async fn reconcile_command(client: &mut Client, args: &[&str]) -> Result<bool> {
-    let mut bootstrapped = false;
-    run_reconcile_read_model_command(
-        client,
-        ReconcileReadModelConfig::from_args(args.iter().copied())?,
-        async |_: &mut Client| {
-            bootstrapped = true;
-            Ok(ConfiguredParentClassifier::Disabled)
-        },
-    )
-    .await?;
-    Ok(bootstrapped)
 }
 
 async fn rebuild(client: &mut Client) -> Result<()> {

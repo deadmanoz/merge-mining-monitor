@@ -44,6 +44,8 @@ mod reclassify_pools;
 mod reconcile_core;
 #[path = "db_integration/reconcile_repair.rs"]
 mod reconcile_repair;
+#[path = "db_integration/relationship_summary.rs"]
+mod relationship_summary;
 #[path = "db_integration/rsk.rs"]
 mod rsk;
 #[path = "db_integration/rsk_miner_identities.rs"]

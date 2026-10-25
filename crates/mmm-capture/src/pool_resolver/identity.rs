@@ -17,6 +17,10 @@ pub const DEFAULT_RSK_MINER_REGISTRY_JSON: &str =
 /// Attribution namespace `"rsk_miner_address"` for RSK `pool_identity` rows.
 pub const RSK_MINER_ADDRESS_NAMESPACE: &str = "rsk_miner_address";
 
+/// `pool_identity.namespace` for Elastos minerinfo tags: a label the child block and its coinbase
+/// declare, resolved through the Elastos minerinfo registry.
+pub const ELASTOS_MINERINFO_NAMESPACE: &str = "elastos_minerinfo";
+
 /// Deserialized `data/pools/child-identities/rsk_miner_registry.json`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RskMinerRegistry {

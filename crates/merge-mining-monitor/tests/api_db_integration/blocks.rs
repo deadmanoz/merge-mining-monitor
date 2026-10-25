@@ -15,11 +15,11 @@ use mmm_capture::capture::{
     PoolAttributionSide, RSK_PROOF_FORMAT_OPAQUE, RskEvidencePayload,
 };
 use mmm_capture::child_payout::NAMECOIN_PAYOUT_ADDRESS_NAMESPACE;
-use mmm_capture::protocol_commitment::DECODER_VERSION;
 use mmm_capture::source_registry::{NAMECOIN_SOURCE_CODE, RSK_SOURCE_CODE, SYSCOIN_SOURCE_CODE};
 use mmm_producers::seed_protocol_account_identities;
 use mmm_read_model::{
-    CoreCanonicalWrite, ReconcileReadModelConfig, run_reconcile_read_model, write_core_canonical,
+    CoreCanonicalWrite, ReconcileReadModelConfig, refresh_relationship_summaries,
+    run_reconcile_read_model, write_core_canonical,
 };
 use mmm_store::{
     ChildChainHeadOutcome, ChildChainHeadRecord, CurrentBlockParent, EvidenceMarker, get_source_id,
@@ -36,7 +36,8 @@ use crate::support::seed::{
     insert_pool_identity, insert_stale_with_event, set_block_pool,
 };
 use crate::support::{
-    coinbase_outputs_fixture, default_pool_snapshot, header_meeting_bits, secpool_blocks,
+    coinbase_outputs_fixture, default_pool_snapshot, header_meeting_bits,
+    mark_protocol_commitments_current, secpool_blocks,
 };
 
 use crate::helpers::{format_projection_error, project_tree, seed_canonical_chain};
@@ -683,12 +684,7 @@ async fn block_and_tree_serve_protocol_commitments_once_derived_for_the_decoder(
             )
             .apply(&mut client)
             .await?;
-        client
-            .execute(
-                "UPDATE read_model_invariant SET protocol_commitments_decoder_version = $1",
-                &[&DECODER_VERSION],
-            )
-            .await?;
+        mark_protocol_commitments_current(&client).await?;
 
         let section = protocol_commitments(&client, &secpool.hash)
             .await?
@@ -842,7 +838,8 @@ async fn block_protocol_commitments_report_the_state_of_stored_outputs() -> Resu
     })
 }
 
-/// The block page's relationship signals for one parent, once its tree node's summary agrees.
+/// The block page's relationship signals for one parent, once its tree node's summary and its
+/// stored `relationship_summary` agree.
 async fn relationship(client: &Client, height: i32, hash: &[u8]) -> Result<RelationshipSignals> {
     let block = project_block(client, hash).await?.relationship_signals;
     let tree = project_tree(client, Some(&format!("at_height={height}")))
@@ -866,6 +863,21 @@ async fn relationship(client: &Client, height: i32, hash: &[u8]) -> Result<Relat
             tree.mixed
         ),
         "block and tree agree"
+    );
+    refresh_relationship_summaries(client, &[hash.to_vec()]).await?;
+    let stored = client
+        .query_one(
+            "SELECT mixed, pool_ids FROM relationship_summary WHERE btc_header_hash = $1",
+            &[&hash],
+        )
+        .await?;
+    assert_eq!(
+        (stored.get::<_, bool>(0), stored.get::<_, Vec<i64>>(1)),
+        (
+            block.mixed,
+            block.pools.iter().filter_map(|pool| pool.id).collect()
+        ),
+        "the stored summary agrees with the block page"
     );
     Ok(block)
 }

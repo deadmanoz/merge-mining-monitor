@@ -15,7 +15,7 @@ use mmm_capture::capture::MergeMiningEventPayload;
 use mmm_capture::pool_resolver::PoolResolver;
 use mmm_read_model::{
     CaptureOutcome, ReconcileReadModelConfig, capture_in_txn, is_reconcile_budget_exhausted,
-    run_reconcile_read_model, skip_protocol_commitments_rebuild,
+    requested_rebuilds_current, run_reconcile_read_model,
 };
 use mmm_store::{self, CaptureWrite, get_source_id, upsert_pool_snapshot};
 
@@ -173,8 +173,9 @@ pub async fn bootstrap_core(pg_client: &mut Client) -> Result<ConfiguredParentCl
     Ok(parent_classifier)
 }
 
-/// `reconcile-read-model`: `bootstrap` contacts Bitcoin Core first, except for an `--if-needed`
-/// protocol commitment rebuild that the recorded decoder version already makes unnecessary.
+/// `reconcile-read-model`: `bootstrap` contacts Bitcoin Core first, except for `--if-needed`
+/// rebuilds that the recorded decoder version and relationship fingerprint already make
+/// unnecessary.
 pub async fn run_reconcile_read_model_command(
     pg_client: &mut Client,
     config: ReconcileReadModelConfig,
@@ -182,10 +183,15 @@ pub async fn run_reconcile_read_model_command(
 ) -> Result<usize> {
     // Return on a skip instead of letting the library check again: the version could change
     // in between.
-    if skip_protocol_commitments_rebuild(pg_client, &config).await? {
+    if requested_rebuilds_current(pg_client, &config).await? {
         return Ok(0);
     }
     let parent_classifier = bootstrap(pg_client).await?;
+    if config.rebuild_relationship_signals {
+        // The rebuild resolves snapshot slugs through `pool`, so a new snapshot's pools must
+        // exist before it records the snapshot's fingerprint.
+        upsert_pool_snapshot(pg_client, PoolResolver::from_default_snapshot()?.snapshot()).await?;
+    }
     run_reconcile_read_model(pg_client, &parent_classifier, config).await
 }
 
